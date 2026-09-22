@@ -1141,7 +1141,7 @@ namespace XREngine.Rendering.Vulkan
                                 checked((uint)framePlan.FrameSlot),
                                 request.NativeViewIndex,
                                 request.AmbientOcclusionTargetName,
-                                request.EnableDdgi,
+                                request.RequiresMaterialSurfaceExports,
                                 nativeStorage,
                                 out nativeClosure,
                                 out string nativeClosureReason))

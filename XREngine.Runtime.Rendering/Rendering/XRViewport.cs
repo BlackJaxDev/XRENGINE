@@ -96,6 +96,7 @@ namespace XREngine.Rendering
         private int _lastBackendPackageRegistryIdentity = int.MinValue;
         private int _lastBackendPackageResourceGeneration = int.MinValue;
         private int _lastBackendPackageDescriptorGeneration = int.MinValue;
+        private int _lastBackendPackageInstanceRevision = int.MinValue;
 
         /// <summary>
         /// Stable output ownership used to realize the configured pipeline asset for this viewport.
@@ -1486,8 +1487,10 @@ namespace XREngine.Rendering
             bool excludeProjectiveMirrors = false)
         {
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
+            _renderPipeline.PublishStagedImportedResources(activeGeneration);
             RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
             int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
+            int instanceRevision = activeRegistry?.InstanceRevision ?? 0;
             int registryIdentity = activeRegistry is null ? 0 : RuntimeHelpers.GetHashCode(activeRegistry);
             long collectGeneration = _renderPipeline.AssignedPipeline is ShadowRenderPipeline
                 ? BackendReadyFramePackageIdentity.RetainedCollectGeneration
@@ -1499,6 +1502,7 @@ namespace XREngine.Rendering
                 _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
+                instanceRevision,
                 ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
                 dimensions.DisplayWidth,
                 dimensions.DisplayHeight,
@@ -1506,18 +1510,21 @@ namespace XREngine.Rendering
                 dimensions.InternalHeight);
             if (_lastBackendPackageRegistryIdentity != registryIdentity ||
                 _lastBackendPackageResourceGeneration != identity.ResourceGeneration ||
-                _lastBackendPackageDescriptorGeneration != identity.DescriptorGeneration)
+                _lastBackendPackageDescriptorGeneration != identity.DescriptorGeneration ||
+                _lastBackendPackageInstanceRevision != identity.ResourceInstanceRevision)
             {
                 _lastBackendPackageRegistryIdentity = registryIdentity;
                 _lastBackendPackageResourceGeneration = identity.ResourceGeneration;
                 _lastBackendPackageDescriptorGeneration = identity.DescriptorGeneration;
+                _lastBackendPackageInstanceRevision = identity.ResourceInstanceRevision;
                 Debug.Rendering(
-                    "[RenderFramePackage] Captured package ownership. Viewport={0} Instance={1} Registry={2} PackageResource={3} PackageDescriptor={4} Collect={5}",
+                    "[RenderFramePackage] Captured package ownership. Viewport={0} Instance={1} Registry={2} PackageResource={3} PackageDescriptor={4} PackageInstanceRevision={5} Collect={6}",
                     Index,
                     _renderPipeline.InstanceId,
                     registryIdentity,
                     identity.ResourceGeneration,
                     identity.DescriptorGeneration,
+                    identity.ResourceInstanceRevision,
                     identity.CollectGeneration);
             }
             commandCollection.PrepareBackendReadyFramePackage(
@@ -3482,9 +3489,6 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            uint x = (uint)Math.Min(width - 1, (int)(normalizedViewportPosition.X * width));
-            uint y = (uint)Math.Min(height - 1, (int)(normalizedViewportPosition.Y * height));
-            AdvancedPickingQuery query = new(x, y, viewIndex);
             AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
             if (renderer is null)
             {
@@ -3492,6 +3496,25 @@ namespace XREngine.Rendering
                 failure = "The viewport has no renderer for Advanced picking readback.";
                 return false;
             }
+
+            uint x = (uint)Math.Min(width - 1, (int)(normalizedViewportPosition.X * width));
+            uint y = (uint)Math.Min(height - 1, (int)(normalizedViewportPosition.Y * height));
+            RuntimeGraphicsApiKind backend = renderer.GetAdvancedRenderPipelineCapabilities().Backend;
+            if (backend == RuntimeGraphicsApiKind.Unknown)
+                backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+
+            // Viewport coordinates are logically bottom-left-origin, while some
+            // backends store framebuffer texture row zero at the top. Convert at
+            // the readback boundary so camera rays and Default-pipeline picking
+            // retain the engine's normalized viewport convention.
+            if (backend != RuntimeGraphicsApiKind.Unknown &&
+                RenderClipSpacePolicy.FramebufferTextureYDirection(backend) ==
+                    ERenderClipSpaceYDirection.YDown)
+            {
+                y = (uint)(height - 1) - y;
+            }
+
+            AdvancedPickingQuery query = new(x, y, viewIndex);
 
             if (!TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
             {

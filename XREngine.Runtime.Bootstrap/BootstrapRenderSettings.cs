@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Runtime.Bootstrap;
@@ -177,7 +178,7 @@ public static class BootstrapRenderSettings
                 $"{settings.Rendering.RenderPipeline} does not support stereo bootstrap cameras."),
             _ => throw new InvalidOperationException($"Unsupported configured render pipeline '{settings.Rendering.RenderPipeline}'."),
         };
-        if (settings.GlobalIlluminationMode is { } mode && pipeline is IGlobalIlluminationPipelineProvider gi)
+        if (settings.GlobalIlluminationMode is { } mode && pipeline is IGlobalIlluminationPlanHost gi)
             gi.GlobalIlluminationMode = mode;
         return pipeline;
     }

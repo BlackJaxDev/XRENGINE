@@ -1,4 +1,6 @@
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.Integration;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
@@ -82,7 +84,7 @@ public partial class AdvancedRenderPipeline
         commands.Add<VPRC_GPUTimerBegin>().Label = descriptor.GpuLabel;
         var stageCommand = commands.Add<VPRC_AdvancedRenderStage>();
         stageCommand.SetStage(descriptor.Stage);
-        stageCommand.EnableDdgi = UsesDDGI && !UsesMinimalVisibilityOutput;
+        stageCommand.GlobalIlluminationPlan = GlobalIlluminationPlan;
 
         // The stage command retains the stable backend-facing frame-contract identity.
         // Commands which consume the native HDR/depth outputs are appended immediately
@@ -91,7 +93,7 @@ public partial class AdvancedRenderPipeline
         {
             case EAdvancedRenderStage.NativeOpaqueShading:
                 AppendAdvancedBackgroundCommands(commands);
-                AppendAdvancedDdgiCommands(commands);
+                AppendAdvancedGlobalIlluminationCommands(commands);
                 break;
             case EAdvancedRenderStage.LatePasses:
                 AppendAdvancedLatePassCommands(commands);
@@ -109,38 +111,14 @@ public partial class AdvancedRenderPipeline
         commands.Add<VPRC_GPUTimerEnd>().Label = descriptor.GpuLabel;
     }
 
-    /// <summary>Runs the shared DDGI lifecycle against Advanced native-shading outputs.</summary>
-    private void AppendAdvancedDdgiCommands(ViewportRenderCommandContainer commands)
+    /// <summary>Runs the selected shared GI module against Advanced native-shading outputs.</summary>
+    private void AppendAdvancedGlobalIlluminationCommands(ViewportRenderCommandContainer commands)
     {
-        commands.Add<VPRC_BuildAccelerationStructure>();
-        commands.Add<VPRC_DDGIEnvironmentPass>();
-        commands.Add<VPRC_DDGIPrepareGeometryPass>();
-        commands.Add<VPRC_DDGIRaygenPass>();
-        commands.Add<VPRC_DDGITracePass>();
-        commands.Add<VPRC_DDGIHitShadePass>();
-        commands.Add<VPRC_DDGIRelocatePass>();
-        commands.Add<VPRC_DDGIUpdateIrradiancePass>();
-        commands.Add<VPRC_DDGIUpdateVisibilityPass>();
-        commands.Add<VPRC_DDGIBorderCopyPass>();
-
-        var composite = commands.Add<VPRC_DDGICompositePass>();
-        composite.DepthTextureName = DepthViewTextureName;
-        composite.NormalTextureName = NormalTextureName;
-        composite.AlbedoTextureName = AlbedoOpacityTextureName;
-        composite.RMSETextureName = RMSETextureName;
-        composite.OutputTextureName = DDGITextureName;
-        composite.CompositeQuadFBOName = DDGICompositeFBOName;
-        composite.ForwardFBOName = ForwardPassFBOName;
-        composite.IrradianceAtlasTextureName = DDGIIrradianceAtlasTextureName;
-        composite.VisibilityAtlasTextureName = DDGIVisibilityAtlasTextureName;
-        composite.ProbeStateBufferName = DDGIProbeStateBufferName;
-        composite.RayBufferName = DDGIRayBufferName;
-        composite.HitBufferName = DDGIHitBufferName;
-        composite.AmbientOcclusionTextureName = AdvancedAmbientOcclusionContract.ResourceName;
-
-        var debug = commands.Add<VPRC_DDGIDebugVisualization>();
-        debug.ProbeStateBufferName = DDGIProbeStateBufferName;
-        debug.ForwardFBOName = ForwardPassFBOName;
+        GlobalIlluminationProviderRegistry.ContributePasses(commands,
+            new(new AdvancedGlobalIlluminationHostAdapter(UsesMinimalVisibilityOutput), GlobalIlluminationPlan,
+                EGlobalIlluminationExecutionAnchor.SurfaceResolve,
+                new(DepthViewTextureName, NormalTextureName, AlbedoOpacityTextureName,
+                    RMSETextureName, AdvancedAmbientOcclusionContract.ResourceName, ForwardPassFBOName)));
     }
 
     private void AppendAdvancedScreenSpaceUi(ViewportRenderCommandContainer commands)

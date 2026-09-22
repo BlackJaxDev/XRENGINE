@@ -28,8 +28,8 @@ public sealed record DDGIDiagnostics(uint CompletedUpdates, bool WarmingUp, stri
         pipeline.Variables.TryGet("DDGIGeometryNodeCount", out uint nodes);
         return new(state.FrameIndex, state.IsInvalidated, state.UpdateMode.ToString(), state.ActiveCascadeIndex,
             state.GetActiveCascade().ScheduledProbeCount, state.RaysPerProbe, state.MeasuredFrameTimeMs, offsets, updated, ready, triangles, nodes,
-            pipeline.GetBuffer(DefaultRenderPipeline.DDGIProbeStateBufferName)?.ElementCount ?? 0,
-            pipeline.GetBuffer(DefaultRenderPipeline.DDGIRayBufferName)?.ElementCount ?? 0, origins,
+            pipeline.GetBuffer(DDGIResourceNames.ProbeStateBuffer)?.ElementCount ?? 0,
+            pipeline.GetBuffer(DDGIResourceNames.RayBuffer)?.ElementCount ?? 0, origins,
             DDGIMemoryDiagnostics.Capture(pipeline, state.Cascades.Count),
             context.UpdateStage.ToString(), context.HasInitializedResources,
             DDGIEnvironmentResources.IsAvailable(pipeline), context.PendingSubmission?.ToString());

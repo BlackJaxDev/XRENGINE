@@ -96,7 +96,7 @@ uniform float AmbientOcclusionPower = 1.0f; // XRENGINE_FREQUENCY(Pass)
 uniform bool AmbientOcclusionMultiBounce = false; // XRENGINE_FREQUENCY(Pass)
 uniform bool SpecularOcclusionEnabled = false; // XRENGINE_FREQUENCY(Pass)
 uniform vec3 GlobalAmbient = vec3(0.03f); // XRENGINE_FREQUENCY(Pass)
-uniform bool UsesDDGI = false; // XRENGINE_FREQUENCY(Pass)
+uniform bool SuppressProbeDiffuse = false; // XRENGINE_FREQUENCY(Pass)
 
 // Debug: set via XRE_DEFERRED_DEBUG env var.
 // 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth,
@@ -480,7 +480,7 @@ void main()
                 probeAmbient = irradianceColor;
         } 
 
-        if (UsesDDGI)
+        if (SuppressProbeDiffuse)
         {
                 probeAmbient = vec3(0.0f);
         }

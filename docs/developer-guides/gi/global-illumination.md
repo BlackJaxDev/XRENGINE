@@ -1,135 +1,114 @@
-# Global Illumination Overview
+# Global Illumination Providers
 
-XREngine provides multiple global illumination (GI) strategies to simulate realistic indirect lighting. Each mode offers different trade-offs between quality, performance, and workflow complexity.
+Global illumination is selected once through `EGlobalIlluminationMode` and resolved by
+`GlobalIlluminationProviderRegistry`. The registry produces an immutable
+`GlobalIlluminationPlan`; Default and Advanced consume that same plan through their
+host adapters. A provider is not enabled merely because source code, a component, or
+a shader exists.
 
-## Available GI Modes
+## Current support
 
-| Mode | Type | Performance | Quality | Best For |
-|------|------|-------------|---------|----------|
-| [Light Probes & IBL](light-probes.md) | Baked/Hybrid | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Static scenes, VR |
-| [Light Volumes](light-volumes.md) | Baked | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Large open areas |
-| [Radiance Cascades](radiance-cascades.md) | Baked | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | High-quality static GI |
-| [Surfel GI](surfel-gi.md) | Real-time | ⭐⭐⭐ | ⭐⭐⭐⭐ | Dynamic scenes |
-| [DDGI](ddgi.md) | Real-time | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Dynamic scenes, multi-bounce GI |
-| [ReSTIR GI](restir-gi.md) | Real-time | ⭐⭐ | ⭐⭐⭐⭐⭐ | Ray tracing capable hardware |
-| [Voxel Cone Tracing](voxel-cone-tracing.md) | Hybrid | ⭐⭐⭐ | ⭐⭐⭐⭐ | Medium-scale dynamic scenes |
+| Selection | Registry status | Contracted output | Notes |
+|---|---|---|---|
+| Light Probes and IBL | Supported | Existing PBR probe/IBL bindings | No provider-owned screen field is needed. |
+| DDGI | Supported experimental path | Material-shaded, linear-HDR indirect diffuse for deferred opaque surfaces | Dynamic and baked Vulkan mono evidence is recorded in the modular-GI TODO. Forward, transparent, and world-space consumers are unsupported. |
+| Radiance Cascades | Unsupported | None at runtime | Its module-owned resolve layout exists, but injection, propagation, and update production are incomplete. Selecting it allocates no GI work. |
+| ReSTIR, voxel cone tracing, light volumes/LPV, Surfel GI | Unsupported | None at runtime | These have implementation TODOs and no verified modular provider. |
 
-## Selecting a GI Mode
+Unsupported selection is deliberate: the plan retains a diagnostic, but the registry
+does not call a module to declare resources or contribute passes. It never silently
+falls back to a CPU implementation or another GI method.
 
-Set the GI mode through code or user settings:
+## Provider boundary
 
-```csharp
-// Via user settings (persists across sessions)
-Engine.UserSettings.GlobalIlluminationMode = EGlobalIlluminationMode.RadianceCascades;
+The relevant types live under `XREngine.Runtime.Rendering/Rendering/GI/Contracts/`.
 
-// Via startup settings (per-launch override)
-var startup = new GameStartupSettings
-{
-    GlobalIlluminationModeOverride = new OverrideableSetting<EGlobalIlluminationMode>
-    {
-        Override = true,
-        Value = EGlobalIlluminationMode.SurfelGI
-    }
-};
-```
+| Type | Responsibility |
+|---|---|
+| `GlobalIlluminationProviderDescriptor` | Stable identity, selection enum, required host capabilities, output contribution/consumer coverage, static support, settings type, authoring/debug/bake metadata, and module factory. |
+| `GlobalIlluminationPlan` | Immutable selected provider and host capability decision shared by layout, command construction, bindings, and diagnostics. |
+| `IGlobalIlluminationHostAdapter` | Host identity, active execution owner, execution anchors, and neutral capabilities. |
+| `GlobalIlluminationHostResources` | Host-provided depth/material/AO inputs plus the provider output, composition material, and target identities. |
+| `IGlobalIlluminationModule` | Provider-owned support evaluation, resource declaration, pass contribution, invalidation, and release. |
 
-## Mode Details
+`EGlobalIlluminationProviderFeature` advertises editor integration surfaces:
+`Authoring`, `DebugPresentation`, and `Baking`. These flags are metadata only.
+`StaticSupport` and the module's runtime support evaluation remain the authority for
+whether a selection can execute. For example, Radiance Cascades declares authoring
+and debug metadata while remaining explicitly unsupported.
 
-### Light Probes & IBL (Default)
-The default mode uses a sparse grid of environment probes that capture and interpolate indirect lighting. Combined with Image-Based Lighting (IBL) from reflection probes, this provides efficient high-quality GI for static and mostly-static scenes.
+## Inputs, outputs, and ownership
 
-**Components:** <xref:XREngine.Components.Capture.Lights.LightProbeComponent>, <xref:XREngine.Components.Capture.LightProbeGridSpawnerComponent>
+Hosts own their frame targets and provide neutral named handles through
+`GlobalIlluminationHostResources`. A module may consume only the inputs it declares
+and must declare every resource it writes. Modules must not reference
+`DefaultRenderPipeline`, `AdvancedRenderPipeline`, their static resource constants,
+or their framebuffer factories.
 
-### Light Volumes
-Baked 3D irradiance volumes provide smooth, continuous GI sampling. Best for large open areas where probe interpolation would be too sparse.
+The current common screen contribution is linear HDR, material-shaded outgoing
+indirect diffuse radiance. DDGI applies its material response and ambient occlusion
+in its resolve; the generic compositor adds that result once and does not apply those
+terms again. Invalid, pending, or incomplete data is unavailable, not valid black.
+Screen output covers only the consumers named in the descriptor. It is not an
+implicit source for transparent, forward, world-space, or secondary-ray shading.
 
-**Components:** <xref:XREngine.Components.Lights.LightVolumeComponent>
+Provider state remains local to its algorithm. In particular, DDGI owns probe
+history, GPU geometry, direct-light buffers, environment capture, resource names,
+update receipts, and bake assets. Physical state is keyed to its pipeline/renderer
+owner and must be retired when that owner or resource generation changes. See
+[Global Illumination Ownership And Selection](../../architecture/rendering/global-illumination-ownership.md)
+for the lifetime and selection rules.
 
-### Radiance Cascades
-A cascaded 3D radiance volume system with multiple resolution levels. Higher-resolution cascades cover near-field GI while lower-resolution cascades extend coverage. Features temporal accumulation and half-resolution rendering options.
+## Adding a provider
 
-**Components:** <xref:XREngine.Components.Lights.RadianceCascadeComponent>
+1. Implement `IGlobalIlluminationModule` in an algorithm-owned GI directory.
+   Make `EvaluateSupport` return an honest diagnostic before any allocation.
+2. Add one descriptor in `GlobalIlluminationProviderRegistry`. Supply only the
+   capabilities and consumers the algorithm has actually validated. Attach a
+   component/settings type and `EGlobalIlluminationProviderFeature` metadata when
+   applicable; keep those types provider-owned.
+3. In `DeclareResources`, declare only provider-owned resources and use the neutral
+   context resources for host inputs/output. In `ContributePasses`, add only the
+   provider's own passes at an anchor advertised by the host adapter.
+4. Preserve the algorithm's submission, in-flight protection, invalidation, and
+   disposal rules. A rejected or partial GPU update must not publish a new result.
+5. Start with `StaticSupport.Unsupported(...)` until the runtime path has passed the
+   relevant host validation. A module factory alone is not support evidence.
+6. Document the signal convention, resolution/layer layout, validity semantics,
+   consumer coverage, debug behavior, authoring/bake surfaces, and known limits in
+   the algorithm TODO or developer guide.
 
-### Surfel GI
-A GIBS-inspired dynamic GI system using GPU-accelerated surfels (surface elements). Surfels are spawned from the G-Buffer, organized in a spatial hash grid, and used to accumulate and shade indirect lighting in real-time.
+Do not add pipeline booleans, per-method resource-profile bits, host framebuffer
+factories, class-name admission checks, or command-chain guards. The registry is the
+only serialized-selection mapping; common host code makes generic capability and
+contribution decisions only.
 
-**Render Pass:** <xref:XREngine.Rendering.Pipelines.Commands.VPRC_SurfelGIPass>
+## Settings, debug, and baking
 
-### DDGI (Dynamic Diffuse Global Illumination)
-A dynamic probe grid system based on Majercik et al. Probes trace rays against GPU BVH structures, accumulate irradiance and visibility octahedral maps via temporal hysteresis, and dynamically relocate probes away from surface interiors.
+The descriptor's `SettingsType` is the discovery point for provider-specific editor
+and authoring UI. DDGI registers `DDGIVolumeComponent` and advertises authoring,
+debug presentation, and baking. Its bake capture remains algorithm-local
+(`DDGIBaking`) and requires an accepted completed update and valid active resources.
 
-**Components:** <xref:XREngine.Components.Lights.DDGIVolumeComponent>  
-**Render Pass:** <xref:XREngine.Rendering.Pipelines.Commands.VPRC_DDGICompositePass>
+Debug views are presentation outputs, not a substitute for valid indirect radiance.
+They must use the selected plan and provider-owned resources; debug controls cannot
+force an unsupported provider to allocate graph work. Generic UI should show the
+plan diagnostic and descriptor metadata instead of re-creating method-specific
+selection logic.
 
-### ReSTIR GI
-Hardware ray-traced GI using NVIDIA's ReSTIR algorithm for efficient light path sampling. Provides the highest quality results but requires RTX-capable hardware and Vulkan rendering.
+## Validation paths
 
-**API:** <xref:XREngine.Rendering.GI.RestirGI>
+Every provider must validate both adapters before it is advertised as supported:
 
-### Voxel Cone Tracing
-Voxelizes the scene and traces cones through the voxel grid to approximate indirect lighting. Provides a balance between quality and performance for medium-scale scenes with some dynamic content.
+1. Build the rendering core and affected OpenGL/Vulkan projects without warnings.
+2. In a named isolated editor session, select the provider in the Default pipeline,
+   capture more than one camera view, inspect the images, and inspect the rendering
+   logs for shader/pipeline failures.
+3. Repeat with the Advanced pipeline, including its native stage family and any
+   minimal-output exclusion behavior.
+4. Exercise the exact claimed lifecycle: dynamic and baked updates where supported,
+   reset/invalidation, resize/view-layout changes, debug presentation, and each
+   advertised consumer. Keep unsupported consumers visibly unsupported.
 
-## Ambient Occlusion
-
-In addition to GI, XREngine supports multiple ambient occlusion (AO) techniques that can be combined with any GI mode:
-
-| AO Type | Description |
-|---------|-------------|
-| Screen-Space AO | Fast, depth-buffer based occlusion |
-| Multi-View AO | Uses multiple depth views for improved accuracy |
-| Horizon-Based AO | HBAO/HBAO+ style occlusion |
-| Scalable Ambient Obscurance | SAO algorithm |
-| Multi-Scale Volumetric Obscurance | MSVO for large-scale occlusion |
-| Spatial Hash Raytraced | Ray-marched AO using spatial hashing |
-
-Configure AO through the camera's post-process settings:
-
-```csharp
-var camera = GetComponent<CameraComponent>();
-var aoSettings = camera.PostProcessSettings.Get<AmbientOcclusionSettings>();
-aoSettings.Type = AmbientOcclusionSettings.EType.ScreenSpace;
-aoSettings.Intensity = 1.2f;
-aoSettings.Radius = 2.0f;
-```
-
-## Pipeline Integration
-
-The default render pipeline integrates GI through dedicated render passes:
-
-1. **G-Buffer Pass** - Generates depth, normals, albedo for GI sampling
-2. **GI Compute Pass** - Mode-specific GI calculation (varies by mode)
-3. **GI Composite Pass** - Blends GI results into the forward target
-4. **Post-Process** - Applies AO and other effects
-
-Each GI mode has its own composite FBO and texture targets managed by <xref:XREngine.Rendering.DefaultRenderPipeline>.
-
-## Performance Considerations
-
-### VR/Stereo Rendering
-All GI modes support stereo rendering with optimized shader variants that process both eyes in a single dispatch using `sampler2DArray` and `image2DArray`.
-
-### Half-Resolution Rendering
-Radiance Cascades and other compute-based modes support half-resolution rendering with depth-aware upscaling for improved performance:
-
-```csharp
-var cascades = GetComponent<RadianceCascadeComponent>();
-cascades.HalfResolution = true; // 4x faster, minimal quality loss
-```
-
-### Temporal Accumulation
-Dynamic GI modes use temporal blending to reduce noise and flickering:
-
-```csharp
-cascades.TemporalBlendFactor = 0.85f; // Higher = more stable, more ghosting
-```
-
-## See Also
-
-- [DDGI](ddgi.md) - Dynamic Diffuse Global Illumination with probe cascades and Chebyshev visibility
-- [DDGI Baking Workflow](ddgi-baking-workflow.md) - Precomputing and baking static DDGI assets
-- [Light Probes](light-probes.md) - Detailed light probe documentation
-- [Light Volumes](light-volumes.md) - Light volume configuration
-- [Radiance Cascades](radiance-cascades.md) - Cascaded radiance volumes
-- [Surfel GI](surfel-gi.md) - Dynamic surfel-based GI
-- [ReSTIR GI](restir-gi.md) - Hardware ray-traced GI
-- [Ambient Occlusion](ambient-occlusion.md) - AO configuration
+The complete phase plan, evidence ledger, and planned-method requirements are in
+[the modular GI architecture TODO](../../work/todo/rendering/global-illumination/modular-gi-architecture-todo.md).

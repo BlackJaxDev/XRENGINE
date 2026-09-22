@@ -16,6 +16,7 @@ internal sealed class VulkanFrameOpPlannerStateKeyComparer : IEqualityComparer<V
            x.OutputTargetIdentity == y.OutputTargetIdentity &&
            x.LogicalViewId == y.LogicalViewId &&
            x.ResourceRegistrySignature == y.ResourceRegistrySignature &&
+           x.ResourceRegistryInstanceRevision == y.ResourceRegistryInstanceRevision &&
            x.PassMetadataSignature == y.PassMetadataSignature &&
            x.ResourceGeneration == y.ResourceGeneration &&
            x.DescriptorGeneration == y.DescriptorGeneration &&
@@ -36,6 +37,7 @@ internal sealed class VulkanFrameOpPlannerStateKeyComparer : IEqualityComparer<V
             hash = (hash * 397) ^ value.OutputTargetIdentity;
             hash = (hash * 397) ^ value.LogicalViewId.GetHashCode();
             hash = (hash * 397) ^ value.ResourceRegistrySignature;
+            hash = (hash * 397) ^ value.ResourceRegistryInstanceRevision;
             hash = (hash * 397) ^ value.PassMetadataSignature;
             hash = (hash * 397) ^ value.ResourceGeneration.GetHashCode();
             hash = (hash * 397) ^ value.DescriptorGeneration.GetHashCode();

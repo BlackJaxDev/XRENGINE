@@ -7,6 +7,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -146,8 +147,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public int SourceRenderPassIndex { get; set; } = (int)EDefaultRenderPass.OpaqueDeferred;
 
-        public string OutputTextureName { get; set; } = DefaultRenderPipeline.SurfelGITextureName;
-        public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.SurfelGICompositeFBOName;
+        public string OutputTextureName { get; set; } = "SurfelGITexture";
+        public string CompositeQuadFBOName { get; set; } = "SurfelGICompositeFBO";
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -162,18 +163,16 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesSurfelGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.SurfelGI);
 
         protected override void Execute()
         {
-            bool usesSurfelGI =
-                ActivePipelineInstance.Pipeline is
-                    IGlobalIlluminationPipelineProvider { UsesSurfelGI: true };
             bool stereo =
                 ActivePipelineInstance.Pipeline is
                     ISceneRenderPipelineFeatureProvider { Stereo: true };
-            if (!usesSurfelGI)
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.SurfelGI))
                 return;
 
             // Mono-only for the first iteration.

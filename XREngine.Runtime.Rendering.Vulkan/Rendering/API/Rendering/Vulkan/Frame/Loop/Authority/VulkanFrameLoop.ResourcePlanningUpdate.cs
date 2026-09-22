@@ -314,6 +314,7 @@ internal sealed partial class VulkanFrameLoop
         ResourcePlannerFastPathKey fastPathKey = new(
             context.ResourceRegistry,
             context.ResourceRegistry?.DescriptorRevision ?? 0,
+            VulkanFramePlanner.ResolveFrameOpContextResourceRegistryInstanceRevision(context),
             activePassMetadata,
             VulkanFramePlanner.ComputePassMetadataRevisionStamp(activePassMetadata),
             activePassSetSignature,

@@ -28,7 +28,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     bool EnableLightProbesAndIbl = false,
     bool IsMinimalVisibilityOutput = false,
     uint NativeViewIndex = 0u,
-    bool EnableDdgi = false)
+    bool RequiresMaterialSurfaceExports = false)
 {
     /// <summary>
     /// Native-compute closure capture is required only by stages that consume
@@ -87,7 +87,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            RequireNativeOutput == other.RequireNativeOutput &&
            EnableBuiltInAmbientOcclusion == other.EnableBuiltInAmbientOcclusion &&
            EnableLightProbesAndIbl == other.EnableLightProbesAndIbl &&
-           EnableDdgi == other.EnableDdgi &&
+           RequiresMaterialSurfaceExports == other.RequiresMaterialSurfaceExports &&
            IsMinimalVisibilityOutput == other.IsMinimalVisibilityOutput &&
            ShadingDebugView == other.ShadingDebugView &&
            BackendPackage.Equals(other.BackendPackage) &&

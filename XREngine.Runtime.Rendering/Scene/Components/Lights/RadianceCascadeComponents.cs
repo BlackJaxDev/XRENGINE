@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Components;
@@ -37,6 +36,7 @@ namespace XREngine.Components.Lights
         public const int MaxCascades = 4;
 
         private readonly ObservableCollection<RadianceCascadeLevel> _cascades = [];
+        private RadianceCascadeLevel[] _activeCascades = [];
         private ColorF4 _tint = ColorF4.White;
         private float _intensity = 1.0f;
         private bool _cascadesEnabled = true;
@@ -140,13 +140,13 @@ namespace XREngine.Components.Lights
         /// </summary>
         [Browsable(false)]
         public bool HasValidCascades
-            => _cascadesEnabled && IsActiveInHierarchy && _cascades.Any(c => c.Enabled && c.RadianceTexture is not null);
+            => _cascadesEnabled && IsActiveInHierarchy && _activeCascades.Length > 0;
 
         /// <summary>
         /// Returns the active cascades limited to the supported maximum.
         /// </summary>
         public IReadOnlyList<RadianceCascadeLevel> GetActiveCascades()
-            => _cascades.Where(c => c.Enabled && c.RadianceTexture is not null).Take(MaxCascades).ToArray();
+            => _activeCascades;
 
         /// <summary>
         /// Computes a transform that converts world space into local cascade space.
@@ -188,6 +188,7 @@ namespace XREngine.Components.Lights
                     item.PropertyChanged += HandleCascadePropertyChanged;
             }
 
+            RebuildActiveCascades();
             RefreshRegistration();
         }
 
@@ -197,9 +198,29 @@ namespace XREngine.Components.Lights
             {
                 case nameof(RadianceCascadeLevel.RadianceTexture):
                 case nameof(RadianceCascadeLevel.Enabled):
+                    RebuildActiveCascades();
                     RefreshRegistration();
                     break;
             }
+        }
+
+        private void RebuildActiveCascades()
+        {
+            int count = 0;
+            for (int i = 0; i < _cascades.Count && count < MaxCascades; i++)
+                if (_cascades[i].Enabled && _cascades[i].RadianceTexture is not null)
+                    count++;
+
+            RadianceCascadeLevel[] active = new RadianceCascadeLevel[count];
+            int destination = 0;
+            for (int i = 0; i < _cascades.Count && destination < count; i++)
+            {
+                RadianceCascadeLevel candidate = _cascades[i];
+                if (candidate.Enabled && candidate.RadianceTexture is not null)
+                    active[destination++] = candidate;
+            }
+
+            _activeCascades = active;
         }
 
         private void RefreshRegistration()

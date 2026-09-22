@@ -4,6 +4,7 @@ using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
@@ -13,55 +14,44 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <summary>
     /// DDGI composite pass. Reconstructs world position and normal from G-buffer depth and normal textures,
     /// samples diffuse irradiance from the active DDGI volume using sampleDDGI with Chebyshev visibility testing,
-    /// modulates with material albedo, writes resolved diffuse GI to DDGITexture, and blends additively
-    /// into ForwardPassFBOName using an XRQuadFrameBuffer.
+    /// modulates with material albedo, and writes resolved diffuse GI to its provider output texture.
+    /// Presentation into a host-selected composition target is performed by the neutral GI composition command.
     /// </summary>
     [RenderPipelineScriptCommand]
     public class VPRC_DDGICompositePass : VPRC_DDGIComputePass
     {
-        public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
-        public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
-        public string AlbedoTextureName { get; set; } = DefaultRenderPipeline.AlbedoOpacityTextureName;
-        public string RMSETextureName { get; set; } = DefaultRenderPipeline.RMSETextureName;
-        public string OutputTextureName { get; set; } = DefaultRenderPipeline.DDGITextureName;
-        public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.DDGICompositeFBOName;
-        public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
-        public string IrradianceAtlasTextureName { get; set; } = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
-        public string VisibilityAtlasTextureName { get; set; } = DefaultRenderPipeline.DDGIVisibilityAtlasTextureName;
-        public string ProbeStateBufferName { get; set; } = DefaultRenderPipeline.DDGIProbeStateBufferName;
-        public string RayBufferName { get; set; } = DefaultRenderPipeline.DDGIRayBufferName;
-        public string HitBufferName { get; set; } = DefaultRenderPipeline.DDGIHitBufferName;
-        public string AmbientOcclusionTextureName { get; set; } = DefaultRenderPipeline.AmbientOcclusionIntensityTextureName;
+        public string DepthTextureName { get; set; } = string.Empty;
+        public string NormalTextureName { get; set; } = string.Empty;
+        public string AlbedoTextureName { get; set; } = string.Empty;
+        public string RMSETextureName { get; set; } = string.Empty;
+        public string OutputTextureName { get; set; } = DDGIResourceNames.ScreenDiffuse;
+        public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
+        public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
+        public string ProbeStateBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+        public string AmbientOcclusionTextureName { get; set; } = string.Empty;
 
         public EDDGIDebugMode DebugMode { get; set; } = EDDGIDebugMode.None;
 
         private XRRenderProgram? _screenSampleProgram;
         private XRRenderProgram? _screenSampleProgramStereo;
-        private const string CompositeDrawPassName = nameof(VPRC_DDGICompositePass) + "_Draw";
-        private int _compositeDrawPassIndex = int.MinValue;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.DDGI);
 
         protected override void ExecuteDDGI()
         {
-            bool usesDDGI =
-                ActivePipelineInstance.Pipeline is
-                    IGlobalIlluminationPipelineProvider { UsesDDGI: true };
-            if (!usesDDGI)
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
                 return;
 
             IRuntimeRenderWorld? world = ActivePipelineInstance.RenderState.WindowViewport?.World
                 ?? RuntimeEngine.Rendering.State.RenderingWorld;
-            DDGIVolumeComponent? activeVolume = null;
-            if (world is not null)
-                DDGIVolumeComponent.Registry.TryGetFirstActive(world, out activeVolume);
-
-            if (activeVolume is null || !activeVolume.VolumeEnabled || activeVolume.TotalProbeCount <= 0)
+            var context = DDGIFrameContext.Get(ActivePipelineInstance);
+            if (world is null || !context.TryGetSelectedVolume(world, out DDGIVolumeComponent? activeVolume) ||
+                activeVolume is null || !activeVolume.VolumeEnabled || activeVolume.TotalProbeCount <= 0)
                 return;
 
-            var context = DDGIFrameContext.Get(ActivePipelineInstance);
             if (activeVolume.UpdateMode == EDDGIUpdateMode.Baked && !context.PrepareBakedVolume(activeVolume))
                 return;
             if (!context.BindResources(ActivePipelineInstance))
@@ -91,12 +81,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!context.HasInitializedResources)
                 return;
 
-            var compositeFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(CompositeQuadFBOName);
-            string forwardTarget = ResolveForwardTarget();
-            var forwardFbo = ActivePipelineInstance.GetFBO<XRFrameBuffer>(forwardTarget);
-            if (compositeFbo is null || forwardFbo is null)
-                return;
-
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             if (region.Width <= 0 || region.Height <= 0)
                 return;
@@ -107,14 +91,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             var effectiveDebugMode = DebugMode != EDDGIDebugMode.None ? DebugMode : activeVolume.DebugMode;
 
             if (!EnsurePrograms(stereo))
-                return;
-
-            if (!TryResolveAuxiliaryPasses())
-                return;
-
-            // Do not author another sampled use unless the context has room to
-            // retain its post-draw GPU lifetime receipt.
-            if (!context.CanCompositeRead())
                 return;
 
             if (stereo)
@@ -130,41 +106,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                     return;
             }
 
-            // Debug views replace direct lighting; normal DDGI adds diffuse light.
-            if (compositeFbo.Material?.RenderOptions.BlendModeAllDrawBuffers is { } blend)
-                blend.RgbDstFactor = effectiveDebugMode == EDDGIDebugMode.None ? EBlendingFactor.One : EBlendingFactor.Zero;
-            // The compute output must transition to sampled access before the draw.
-            // A single graph pass cannot describe both accesses on Vulkan.
-            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_compositeDrawPassIndex))
-                compositeFbo.Render(forwardFbo, forceNoStereo: !stereo);
-            if (!context.RecordCompositeUse())
-                return;
-            if (effectiveDebugMode != EDDGIDebugMode.None)
-                context.MarkDiagnosticPresentation();
+            // The neutral composition command consumes this output only after the compute dispatch succeeds.
+            GlobalIlluminationCompositionState.Prepare(ActivePipelineInstance,
+                replaceDestination: effectiveDebugMode != EDDGIDebugMode.None,
+                isDiagnostic: effectiveDebugMode != EDDGIDebugMode.None);
+            if (effectiveDebugMode == EDDGIDebugMode.None)
+                GlobalIlluminationCompositionState.MarkOpaqueReplacementAvailable(ActivePipelineInstance);
         }
-
-        private bool TryResolveAuxiliaryPasses()
-        {
-            if (_compositeDrawPassIndex != int.MinValue)
-                return true;
-            if (ParentPipeline?.PassMetadata is { } metadata)
-                foreach (RenderPassMetadata pass in metadata)
-                {
-                    if (pass.Name == CompositeDrawPassName)
-                        _compositeDrawPassIndex = pass.PassIndex;
-                }
-            if (_compositeDrawPassIndex != int.MinValue)
-                return true;
-
-            Debug.RenderingWarningEvery("DDGI.Composite.MissingPass", TimeSpan.FromSeconds(2),
-                "DDGI composition is waiting for its graphics render-graph pass.");
-            return false;
-        }
-
-        private string ResolveForwardTarget()
-            => ParentPipeline is DefaultRenderPipeline &&
-                ForwardFBOName == DefaultRenderPipeline.ForwardPassFBOName && DefaultRenderPipeline.RuntimeEnableMsaaTargets
-                ? DefaultRenderPipeline.ForwardPassMsaaFBOName : ForwardFBOName;
 
         private bool EnsurePrograms(bool stereo)
         {
@@ -352,13 +300,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             builder.WriteTexture(MakeTextureResource(OutputTextureName));
 
-            var draw = context.GetOrCreateSyntheticPass(CompositeDrawPassName, ERenderGraphPassStage.Graphics);
-            draw.DependsOn(builder.PassIndex);
-            draw.UseEngineDescriptors();
-            draw.UseMaterialDescriptors();
-            draw.SampleTexture(MakeTextureResource(OutputTextureName));
-            draw.UseColorAttachment(MakeFboColorResource(ResolveForwardTarget()), ERenderGraphAccess.ReadWrite,
-                ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
         }
     }
 }

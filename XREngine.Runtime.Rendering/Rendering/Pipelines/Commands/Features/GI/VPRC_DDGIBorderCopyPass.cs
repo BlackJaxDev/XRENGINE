@@ -2,6 +2,7 @@ using System;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
@@ -17,24 +18,26 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_DDGIBorderCopyPass : VPRC_DDGIComputePass
     {
-        public string IrradianceAtlasTextureName { get; set; } = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
-        public string VisibilityAtlasTextureName { get; set; } = DefaultRenderPipeline.DDGIVisibilityAtlasTextureName;
+        public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
+        public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
 
         private XRRenderProgram? _irradianceBorderProgram;
         private XRRenderProgram? _visibilityBorderProgram;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.DDGI);
 
         protected override void ExecuteDDGI()
         {
-            if (ActivePipelineInstance.Pipeline is not IGlobalIlluminationPipelineProvider { UsesDDGI: true })
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
                 return;
 
             var world = ActivePipelineInstance.RenderState.WindowViewport?.World
                 ?? RuntimeEngine.Rendering.State.RenderingWorld;
-            if (world is null || !DDGIVolumeComponent.Registry.TryGetFirstActive(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
+            var context = DDGIFrameContext.Get(ActivePipelineInstance);
+            if (world is null || !context.TryGetSelectedVolume(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
                 return;
 
             int totalProbes = activeVolume.TotalProbeCount;
@@ -49,7 +52,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             EnsurePrograms();
 
-            var context = DDGIFrameContext.Get(ActivePipelineInstance);
             var state = context.State;
             if (!context.CanRun(EDDGIUpdateStage.Visibility))
                 return;
@@ -99,6 +101,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             var context = DDGIFrameContext.Get(ActivePipelineInstance);
             _irradianceBorderProgram = context.Program("ddgi_border_copy");
             _visibilityBorderProgram = context.Program("ddgi_border_copy_visibility");
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_DDGIBorderCopyPass), ERenderGraphPassStage.Compute);
+            builder.ReadWriteTexture(MakeTextureResource(IrradianceAtlasTextureName));
+            builder.ReadWriteTexture(MakeTextureResource(VisibilityAtlasTextureName));
         }
     }
 }

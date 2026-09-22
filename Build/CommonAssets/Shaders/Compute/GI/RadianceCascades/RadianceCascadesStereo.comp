@@ -4,6 +4,8 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(binding = 0) uniform sampler2DArray gDepth;
 layout(binding = 1) uniform sampler2DArray gNormal;
+layout(binding = 9) uniform sampler2DArray gAlbedo;
+layout(binding = 10) uniform sampler2DArray gRMSE;
 layout(binding = 2, rgba16f) uniform image2DArray gOutput; // read-write for temporal accumulation
 layout(binding = 7) uniform sampler2DArray gHistory; // previous frame GI for temporal accumulation
 layout(binding = 8, rgba16f) writeonly uniform image2DArray gCurrentHistory;
@@ -36,6 +38,7 @@ uniform int debugMode;             // 0 = off, 1 = show cascade index, 2 = show 
 
 const float CascadeBlendWidth = 0.1;
 const float CascadePriorityBias = 0.15;
+const float Pi = 3.14159265359;
 
 vec4 GetCascadeData(int idx)
 {
@@ -202,6 +205,9 @@ void ProcessEye(ivec2 pix, int eye)
 
     float hemisphereScale = max(0.0, normalWS.y * 0.35 + 0.65);
     vec3 gi = radiance * volumeTintIntensity.rgb * volumeTintIntensity.a * hemisphereScale;
+    vec3 albedo = max(texture(gAlbedo, vec3(uv, float(viewIndex))).rgb, vec3(0.0));
+    float metallic = clamp(texture(gRMSE, vec3(uv, float(viewIndex))).g, 0.0, 1.0);
+    gi *= albedo * (1.0 - metallic) / Pi;
 
     // Debug visualization modes
     if (debugMode == 1)

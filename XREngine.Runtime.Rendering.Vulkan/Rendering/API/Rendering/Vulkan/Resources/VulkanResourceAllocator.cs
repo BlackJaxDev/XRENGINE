@@ -30,6 +30,7 @@ internal sealed class VulkanResourceAllocator
     // generation must never rewrite metadata observed by the older generation.
     private readonly Dictionary<VulkanPhysicalImageGroup, VulkanImageAllocation[]> _logicalResourcesByPhysicalGroup = new();
     private readonly HashSet<VulkanPhysicalImageGroup> _borrowedPhysicalImageGroups = [];
+    private readonly List<VulkanAllocationRequest> _externalTextureRequests = [];
 
     private readonly Dictionary<string, VulkanBufferAllocation> _logicalBufferAllocations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<VulkanBufferAliasGroupKey, VulkanBufferAliasGroup> _bufferAliasGroups = new();
@@ -81,6 +82,7 @@ internal sealed class VulkanResourceAllocator
         _resourceToPhysicalGroup.Clear();
         _logicalResourcesByPhysicalGroup.Clear();
         _borrowedPhysicalImageGroups.Clear();
+        _externalTextureRequests.Clear();
 
         _logicalBufferAllocations.Clear();
         _bufferAliasGroups.Clear();
@@ -95,7 +97,10 @@ internal sealed class VulkanResourceAllocator
             // Keep external descriptors in the plan for graph dependencies, but
             // resolve their native storage through the bound texture wrapper.
             if (request.Descriptor.Lifetime == RenderResourceLifetime.External)
+            {
+                _externalTextureRequests.Add(request);
                 continue;
+            }
 
             // Candidate analysis is not native lifetime authority. Preserve
             // dedicated images even for explicitly opted-in descriptors.
@@ -116,6 +121,12 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanBufferAllocationRequest request in plan.AllBuffers())
         {
+            // Caller-owned imports must resolve through the registry binding.
+            // A planner allocation with the same logical name is unwritten and
+            // can otherwise be frozen as a plausible but incorrect fallback.
+            if (request.Descriptor.Lifetime == RenderResourceLifetime.External)
+                continue;
+
             VulkanBufferAliasGroupKey key = VulkanBufferAliasGroupKey.FromRequest(request);
             if (!_bufferAliasGroups.TryGetValue(key, out VulkanBufferAliasGroup? group))
             {
@@ -139,7 +150,8 @@ internal sealed class VulkanResourceAllocator
         bool supportsTransformFeedback,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         VulkanResourcePlanner planner,
-        VulkanResourceExtentContext extentContext)
+        VulkanResourceExtentContext extentContext,
+        RenderResourceRegistry? resourceRegistry = null)
     {
         DestroyPhysicalImages(backendContext);
         DestroyPhysicalBuffers(backendContext);
@@ -170,6 +182,8 @@ internal sealed class VulkanResourceAllocator
 
             _physicalGroups[group.Key] = physicalGroup;
         }
+
+        RegisterExternalPhysicalImages(backendContext, planner, extentContext, resourceRegistry);
 
         foreach ((string viewName, TextureResourceDescriptor descriptor) in planner.TextureViewDescriptors)
         {
@@ -216,6 +230,52 @@ internal sealed class VulkanResourceAllocator
             activeLazyGroupCount);
 
         LogDeferredLightingPhysicalPlan(passMetadata, planner);
+    }
+
+    private void RegisterExternalPhysicalImages(
+        VulkanBackendObjectContext backendContext,
+        VulkanResourcePlanner planner,
+        VulkanResourceExtentContext extentContext,
+        RenderResourceRegistry? resourceRegistry)
+    {
+        if (resourceRegistry is null)
+            return;
+
+        for (int index = 0; index < _externalTextureRequests.Count; index++)
+        {
+            VulkanAllocationRequest request = _externalTextureRequests[index];
+            if (!resourceRegistry.TryGetTexture(request.Name, out XRTexture? texture) || texture is null ||
+                backendContext.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source ||
+                !source.TryGetDescriptorSnapshot(
+                    requestedViewType: null,
+                    requestedAspectMask: null,
+                    "external render-graph image publication",
+                    allowSynchronousUpload: true,
+                    out VkImageDescriptorSnapshot snapshot) ||
+                !snapshot.IsReady)
+            {
+                continue;
+            }
+
+            VulkanAliasGroupKey key = VulkanAliasGroupKey.FromRequest(request);
+            var logicalGroup = new VulkanImageAliasGroup(key);
+            VulkanImageAllocation allocation = logicalGroup.Add(request);
+            Extent3D extent = ResolveExtent(request.SizePolicy, extentContext);
+            var physicalGroup = new VulkanPhysicalImageGroup(
+                logicalGroup,
+                extent,
+                snapshot.Format,
+                snapshot.Usage,
+                snapshot.MipLevels,
+                snapshot.Samples,
+                MemoryPropertyFlags.DeviceLocalBit,
+                VulkanTransientAttachmentPolicy.None);
+            physicalGroup.AddLogical(allocation);
+            physicalGroup.BindBorrowedExternal(snapshot.Image, snapshot.Memory, snapshot.TrackedLayout);
+            _logicalTextureAllocations[request.Name] = allocation;
+            _resourceToPhysicalGroup[request.Name] = physicalGroup;
+            _physicalGroups[key] = physicalGroup;
+        }
     }
 
     public void RebuildPhysicalPlan(

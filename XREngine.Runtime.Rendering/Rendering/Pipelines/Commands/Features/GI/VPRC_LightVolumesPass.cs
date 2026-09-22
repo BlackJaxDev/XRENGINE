@@ -5,6 +5,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 
@@ -27,23 +28,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
-        public string OutputTextureName { get; set; } = DefaultRenderPipeline.LightVolumeGITextureName;
-        public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.LightVolumeCompositeFBOName;
+        public string OutputTextureName { get; set; } = "LightVolumeGITexture";
+        public string CompositeQuadFBOName { get; set; } = "LightVolumeCompositeFBO";
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesLightVolumes: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.LightVolumes);
 
         protected override void Execute()
         {
-            bool usesLightVolumes =
-                ActivePipelineInstance.Pipeline is
-                    IGlobalIlluminationPipelineProvider { UsesLightVolumes: true };
             bool stereo =
                 ActivePipelineInstance.Pipeline is
                     ISceneRenderPipelineFeatureProvider { Stereo: true };
-            if (!usesLightVolumes)
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.LightVolumes))
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;

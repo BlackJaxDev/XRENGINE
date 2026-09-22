@@ -1,17 +1,15 @@
 # Voxel Cone Tracing And VXAO Implementation TODO
 
 Last Updated: 2026-03-11
-Current Status: the renderer has a placeholder voxel volume allocation, a voxelization material, and a placeholder `VPRC_VoxelConeTracingPass` that can populate a 3D texture and generate mipmaps. The default AO pipeline now also exposes a planned `VoxelAmbientOcclusion` / `VXAO` mode, but both working voxel cone tracing GI and working VXAO are still unimplemented.
+Current Status: VCT and VXAO are explicitly unsupported in the modular GI registry. Historical voxelization source remains for investigation, but neither Default nor Advanced allocates its volume or schedules its pass. Both working voxel cone tracing GI and working VXAO remain unimplemented.
 Scope: bring up a real shared voxel scene representation for voxel cone tracing GI first, then add VXAO as a second resolve path reading that same voxel data.
 
 ## Current Reality
 
 What is already true:
 
-- `EGlobalIlluminationMode.VoxelConeTracing` exists and routes through `DefaultRenderPipeline`.
-- `VoxelConeTracingVolumeTextureName` is allocated as a 128 cubed `RGBA8` 3D texture with mip generation enabled.
-- `CreateVoxelConeTracingVoxelizationMaterial()` builds a dedicated voxelization material using voxelization shaders.
-- `VPRC_VoxelConeTracingPass` can clear the shared volume, render opaque passes with the override material, and generate mipmaps.
+- `EGlobalIlluminationMode.VoxelConeTracing` exists, but its descriptor returns an explicit unsupported diagnostic and has no module factory.
+- Historical voxelization shaders can inform the eventual provider, but no VCT pass is retained in either host path.
 - `AmbientOcclusionSettings` now exposes a planned `VoxelAmbientOcclusion` / `VXAO` AO family with explicit settings and an honest stub path.
 
 What remains missing:
@@ -32,6 +30,19 @@ At the end of this work:
 - VXAO uses the same shared voxelization and volume settings as VCT
 - the engine has one authoritative voxel coverage and update policy rather than separate GI and AO voxel ownership
 - the editor and docs describe voxel features honestly as advanced, high-cost techniques with explicit limits
+
+## Modular-provider readiness gate
+
+Do not change the VCT descriptor to supported, add a provider factory, or restore
+host resource/pass ownership until all of the following are true:
+
+- the shared voxel coverage, transform, payload, and mip contracts in Phases 0-3 are complete;
+- a VCT-owned module declares its own resources and pass sequence using only neutral
+  GI host inputs, with no Default/Advanced resource factories, flags, or command guards;
+- the diffuse resolve and debug output in Phase 4 have working runtime evidence;
+- Default and Advanced validate the same provider output in mono and stereo, including
+  resource invalidation and no-work behavior when the provider is not selected; and
+- VXAO remains a separately advertised AO consumer until its own resolve is complete.
 
 ## Non-Goals
 

@@ -13,6 +13,8 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.Integration;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.PostProcessing;
@@ -52,7 +54,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     public const string SceneShaderPath = "Scene3D";
 
-    private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
     private readonly Lazy<XRMaterial> _fullOverdrawCountMaterial;
@@ -116,6 +117,13 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private const float TemporalConfidencePower = 0.55f;
 
     private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
+    private GlobalIlluminationPlan _globalIlluminationPlan = GlobalIlluminationProviderRegistry.Resolve(
+        EGlobalIlluminationMode.LightProbesAndIbl,
+        new AdvancedGlobalIlluminationHostAdapter(isMinimalOutput: false));
+
+    /// <summary>Immutable registry-resolved GI selection for the native stage family.</summary>
+    public GlobalIlluminationPlan GlobalIlluminationPlan => _globalIlluminationPlan;
+
     public EGlobalIlluminationMode GlobalIlluminationMode
     {
         get => _globalIlluminationMode;
@@ -124,11 +132,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             if (!SetField(ref _globalIlluminationMode, value))
                 return;
 
-            if (_globalIlluminationProvider is null ||
-                _globalIlluminationProvider is AdvancedLightProbesAndIblProvider or AdvancedDdgiProvider)
-                GlobalIlluminationProvider = value == EGlobalIlluminationMode.DDGI
-                    ? AdvancedDdgiProvider.Instance
-                    : AdvancedLightProbesAndIblProvider.Instance;
+            RefreshGlobalIlluminationPlan();
+
             // Construction initializes the chain after all stage settings and
             // lazy materials exist; later mode changes replace its frozen flags.
             if (CommandChain.Count != 0)
@@ -136,13 +141,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         }
     }
 
-    public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.PathTracing;
-    public bool UsesVoxelConeTracing => _globalIlluminationMode == EGlobalIlluminationMode.VoxelConeTracing;
-    public bool UsesLightVolumes => _globalIlluminationMode == EGlobalIlluminationMode.LightVolumes;
-    public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
-    public bool UsesRadianceCascades => _globalIlluminationMode == EGlobalIlluminationMode.RadianceCascades;
-    public bool UsesSurfelGI => _globalIlluminationMode == EGlobalIlluminationMode.SurfelGI;
-    public bool UsesDDGI => _globalIlluminationMode == EGlobalIlluminationMode.DDGI;
+    private void RefreshGlobalIlluminationPlan()
+        => _globalIlluminationPlan = GlobalIlluminationProviderRegistry.Resolve(
+            _globalIlluminationMode,
+            new AdvancedGlobalIlluminationHostAdapter(UsesMinimalVisibilityOutput));
 
     // Light probe debug accessors (for editor/state panels)
     public XRTexture2DArray? ProbeIrradianceArray => CurrentProbeResources?.IrradianceArray;
@@ -1493,8 +1495,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string TransformIdDebugQuadFBOName = "TransformIdDebugQuadFBO";
     public const string TransformIdDebugOutputTextureName = "TransformIdDebugOutputTexture";
     public const string TransformIdDebugOutputFBOName = "TransformIdDebugOutputFBO";
-    public const string RestirCompositeFBOName = "RestirCompositeFBO";
-    public const string LightVolumeCompositeFBOName = "LightVolumeCompositeFBO";
     public const string VelocityFBOName = "VelocityFBO";
     public const string HistoryCaptureFBOName = "HistoryCaptureFBO";
     public const string TemporalInputFBOName = "TemporalInputFBO";
@@ -1517,9 +1517,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
-    public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
-    public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
-    public const string DDGICompositeFBOName = "DDGICompositeFBO";
     public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
 
     //Textures
@@ -1559,9 +1556,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string BloomBlurTextureName = "BloomBlurTexture";
     public const string UserInterfaceTextureName = "HUDTex";
     public const string BRDFTextureName = EngineShaderBindingNames.Samplers.BRDF;
-    public const string RestirGITextureName = "RestirGITexture";
-    public const string LightVolumeGITextureName = "LightVolumeGITexture";
-    public const string VoxelConeTracingVolumeTextureName = "VoxelConeTracingVolume";
     public const string VelocityTextureName = "Velocity";
     public const string HistoryColorTextureName = "HistoryColor";
     public const string HistoryDepthStencilTextureName = "HistoryDepthStencil";
@@ -1572,15 +1566,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string MotionBlurTextureName = "MotionBlur";
     public const string DepthOfFieldTextureName = "DepthOfField";
     public const string TsrHistoryColorTextureName = "TsrHistoryColor";
-    public const string RadianceCascadeGITextureName = "RadianceCascadeGI";
-    public const string SurfelGITextureName = "SurfelGITexture";
-    public const string DDGITextureName = "DDGITexture";
-    public const string DDGIIrradianceAtlasTextureName = "DDGIIrradianceAtlas";
-    public const string DDGIVisibilityAtlasTextureName = "DDGIVisibilityAtlas";
-    public const string DDGIProbeStateBufferName = "DDGIProbeStateBuffer";
-    public const string DDGIRayBufferName = "DDGIRayBuffer";
-    public const string DDGIHitBufferName = "DDGIHitBuffer";
-    public const string DDGIRayRadianceBufferName = "DDGIRayRadianceBuffer";
 
     // MSAA deferred GBuffer texture names
     public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";
@@ -1659,7 +1644,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (debugMode >= 0 && debugMode <= 18)
             _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
-        _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -1766,7 +1750,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
                 return;
 
             ApplyAntiAliasingResolutionHint();
-            RebuildCommandChain();
+            EGlobalIlluminationMode mode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
+            if (GlobalIlluminationMode != mode)
+                GlobalIlluminationMode = mode;
+            else
+                RebuildCommandChain();
 
             foreach (var window in RuntimeEngine.Windows)
             {
@@ -1873,9 +1861,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return false;
     }
 
-    public XRMaterial GetVoxelConeTracingVoxelizationMaterial()
-        => _voxelConeTracingVoxelizationMaterial.Value;
-
     public XRMaterial GetMotionVectorsMaterial()
         => _motionVectorsMaterial.Value;
 
@@ -1969,7 +1954,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         program.Uniform("AmbientOcclusionPower", aoPower);
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
-        program.Uniform("UsesDDGI", UsesDDGI);
+        program.Uniform("SuppressProbeDiffuse", GlobalIlluminationCompositionState.ShouldSuppressBaselineDiffuse(
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline, GlobalIlluminationPlan));
 
         XRTexture? emission = GetTexture<XRTexture>(
             RuntimeEnableMsaaDeferred ? MsaaEmissionColorTextureName : EmissionColorTextureName);
@@ -1997,7 +1983,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         else
             program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
 
-        if (!UsesLightProbeGI && !UsesDDGI)
+        if (!GlobalIlluminationPlan.RequiresNativeProbeIblBindings)
         {
             BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
@@ -2595,33 +2581,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         && ReferenceEquals(state.ApiWrapperIdentityOwner, renderer.ApiWrapperIdentityOwner)
         && ReferenceEquals(state.WorldIdentity, worldIdentity)
         && state.IsTopologyResultCurrent(result, renderer.ApiWrapperIdentityOwner, worldIdentity);
-    private void ApplyRestirCompositeProgramBindings(XRRenderProgram program)
-    {
-    var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
-    private void ApplySurfelGICompositeProgramBindings(XRRenderProgram program)
-    {
-        var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
-    private void ApplyLightVolumeCompositeProgramBindings(XRRenderProgram program)
-    {
-        var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
     #endregion
 
     #region Highlighting

@@ -53,10 +53,22 @@ internal sealed partial class VulkanFramePlanner
                 return false;
             }
 
+            ulong nativeGeneration = backendContext?.Resources.GetPublishedGeneration(
+                ObjectType.Image,
+                nativeImage.Handle) ?? 0UL;
+            if (nativeGeneration == 0UL)
+            {
+                reason =
+                    $"Resource plan {state.ResourcePlannerRevision} cannot freeze image barrier " +
+                    $"'{barrier.ResourceName}' because image 0x{nativeImage.Handle:X} has no published generation.";
+                return false;
+            }
+
             frozenImageBarriers[index] = barrier with
             {
                 NativeImage = nativeImage,
                 NativeFormat = barrier.Group.Format,
+                NativeGeneration = nativeGeneration,
             };
         }
 

@@ -1,4 +1,5 @@
 using XREngine.Components.Lights;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.RenderGraph;
 
@@ -15,12 +16,13 @@ public sealed class VPRC_DDGIEnvironmentPass : ViewportRenderCommand
     private int _passIndex = int.MinValue;
 
     protected override bool ShouldExecuteThisFrame()
-        => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-            IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+        => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+            EGlobalIlluminationMode.DDGI);
 
     protected override void Execute()
     {
-        if (ActivePipelineInstance.Pipeline is not IGlobalIlluminationPipelineProvider { UsesDDGI: true })
+        if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
             return;
 
         if (_passIndex == int.MinValue && ParentPipeline?.TryGetRenderPassIndex(nameof(VPRC_DDGIEnvironmentPass), out int passIndex) == true)

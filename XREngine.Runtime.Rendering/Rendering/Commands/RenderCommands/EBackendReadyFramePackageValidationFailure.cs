@@ -13,4 +13,5 @@ public enum EBackendReadyFramePackageValidationFailure
     DescriptorGenerationMismatch = 5,
     RenderGraphGenerationMismatch = 6,
     ViewportMismatch = 7,
+    ResourceInstanceRevisionMismatch = 8,
 }

@@ -15,8 +15,8 @@ public partial class DefaultRenderPipeline
         float AmbientOcclusionPower,
         bool AmbientOcclusionMultiBounce,
         bool SpecularOcclusionEnabled,
-        bool UsesLightProbeGi,
-        bool UsesDdgi,
+        bool RequiresProbeIblBindings,
+        bool ReplacesProbeDiffuse,
         bool ProbeGiSamplingSuppressed,
         bool ProbeBindingResourcesEnabled,
         bool ProbeBindingUseGrid,
@@ -111,7 +111,7 @@ public partial class DefaultRenderPipeline
         bool probeGiSamplingSuppressed =
             IsProbeGiSamplingSuppressedForCurrentPass();
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        if ((UsesLightProbeGI || UsesDDGI) &&
+        if (GlobalIlluminationPlan.RequiresNativeProbeIblBindings &&
             !probeGiSamplingSuppressed &&
             ownsCurrentInstance &&
             probeState?.BindingStateFrameId != frameId)
@@ -149,8 +149,8 @@ public partial class DefaultRenderPipeline
             ambientOcclusionPower,
             ambientOcclusionMultiBounce,
             specularOcclusionEnabled,
-            UsesLightProbeGI,
-            UsesDDGI,
+            GlobalIlluminationPlan.RequiresNativeProbeIblBindings,
+            GlobalIlluminationPlan.ReplacesProbeDiffuse,
             probeGiSamplingSuppressed,
             probeState?.BindingResourcesEnabled ?? false,
             probeState?.BindingUseGrid ?? false,
