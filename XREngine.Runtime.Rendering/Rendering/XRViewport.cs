@@ -2256,6 +2256,12 @@ namespace XREngine.Rendering
                             snapshot.CommittedSequence,
                             snapshot.EffectiveCommitCount,
                             snapshot.EffectiveDiscardCount);
+
+                        // Desktop history authoring is deliberately all-or-nothing for the
+                        // scene, but the screen-space canvas is independent of that history.
+                        // Produce it through its own pipeline before declining the scene so
+                        // resize deferrals do not make native diagnostics disappear.
+                        RenderScreenSpaceUIOverlay(targetFbo);
                         frozenHistoryCandidate.Discard();
                         return false;
                     }

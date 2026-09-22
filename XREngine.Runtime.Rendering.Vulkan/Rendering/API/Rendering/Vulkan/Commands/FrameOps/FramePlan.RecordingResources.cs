@@ -91,8 +91,7 @@ internal sealed partial class FramePlan
                     out ResourcePlannerRuntimeState state))
                 return false;
 
-            if (state.ResourceAllocator is null || state.ResourceAllocator.IsRetired ||
-                state.ResourceAllocator.OwnershipId != state.AllocatorOwnershipId)
+            if (!state.HasLiveAllocatorOwnership)
                 return false;
             if (state.FrameOpResourcePlannerSwitchingState is null)
                 return false;

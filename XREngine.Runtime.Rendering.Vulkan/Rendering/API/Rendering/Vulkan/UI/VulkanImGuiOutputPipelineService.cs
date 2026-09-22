@@ -87,7 +87,10 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
     {
         HashCode hash = new();
         hash.Add(device.MutableCapabilities._useDynamicRenderingRenderTargets);
-        hash.Add(resources.SwapchainRenderPass.Handle);
+        if (!device.MutableCapabilities._useDynamicRenderingRenderTargets)
+            hash.Add(resources.SwapchainRenderPass.Handle);
+        hash.Add(output._imguiResources.DescriptorSetLayout.Handle);
+        hash.Add(resources.Descriptors.Heap.ActiveBackend);
         hash.Add((int)output.Desktop.ImageFormat);
         hash.Add((int)output.Desktop.ImageColorSpace);
         return unchecked((ulong)hash.ToHashCode());

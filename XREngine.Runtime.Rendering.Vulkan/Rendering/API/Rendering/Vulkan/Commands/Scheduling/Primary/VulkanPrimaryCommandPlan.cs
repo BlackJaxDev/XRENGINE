@@ -59,8 +59,10 @@ internal sealed class VulkanPrimaryCommandPlan
             if (kind == EVulkanPrimaryPlanNodeKind.Unsupported)
                 throw new InvalidOperationException("Frame operation stream contains an unsupported opcode.");
 
-            VulkanBarrierPlan? operationBarrierPlan = ResolveOperationBarrierPlan(
-                operations.GetContext(opIndex), header.PassIndex, barrierPlan, framePlan);
+            VulkanBarrierPlan? operationBarrierPlan = header.RequiresPrimaryRecordingContext
+                ? ResolveOperationBarrierPlan(
+                    operations.GetContext(opIndex), header.PassIndex, barrierPlan, framePlan)
+                : null;
             EVulkanPrimaryPlanAction actions = ResolveActions(
                 operations, opIndex, barrierPlanner, operationBarrierPlan);
             bool isDrawLike = kind is EVulkanPrimaryPlanNodeKind.MeshDraw or
@@ -220,6 +222,9 @@ internal sealed class VulkanPrimaryCommandPlan
         ref readonly FrameOperationHeader header = ref operations.GetHeader(operationIndex);
         EVulkanPrimaryPlanNodeKind kind = header.OpCode;
         EVulkanPrimaryPlanAction actions = EVulkanPrimaryPlanAction.RecordOperation;
+        if (!header.RequiresPrimaryRecordingContext)
+            return actions;
+
         if (kind != EVulkanPrimaryPlanNodeKind.TextureUpload)
             actions |= EVulkanPrimaryPlanAction.BarrierBatch;
         if ((barrierPlanner is not null && HasQueueOwnershipTransfer(barrierPlanner, header.PassIndex)) ||

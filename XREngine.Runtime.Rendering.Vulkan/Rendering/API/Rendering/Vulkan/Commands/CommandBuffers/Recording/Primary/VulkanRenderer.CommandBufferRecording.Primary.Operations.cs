@@ -1475,7 +1475,10 @@ internal sealed partial class VulkanCommandRuntime
         if (recorded)
         {
             if (target is null)
+            {
                 state.ActualSwapchainWriteCount++;
+                state.ArtifactOwner?.RecordPresentationSource(payload.Draw.WindowPresentationSourceMarker);
+            }
             MarkActualTerminalOutput(
                 ref state,
                 in state.ActiveContext,

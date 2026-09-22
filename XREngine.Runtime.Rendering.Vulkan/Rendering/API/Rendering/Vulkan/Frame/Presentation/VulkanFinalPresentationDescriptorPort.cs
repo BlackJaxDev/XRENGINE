@@ -114,6 +114,14 @@ internal sealed class VulkanFinalPresentationDescriptorPort(
         ulong backingImageGeneration = backingImageHandle == 0
             ? 0
             : resources.GetPublishedGeneration(ObjectType.Image, backingImageHandle);
+        _ = resources.TryGetImageAllocationExtent(
+            backingImageHandle,
+            out Extent3D backingImageExtent);
+        if (!resources.TryGetImageAllocationFormat(
+                backingImageHandle, out Format backingImageFormat, out SampleCountFlags backingImageSamples))
+        {
+            return;
+        }
         int targetSlot = commands.ResolveCommandBufferImageIndex(commandBuffer);
         if (targetSlot < 0)
             targetSlot = descriptorSlot;
@@ -131,6 +139,9 @@ internal sealed class VulkanFinalPresentationDescriptorPort(
                 samplerGeneration,
                 backingImageHandle,
                 backingImageGeneration,
+                backingImageExtent,
+                backingImageFormat,
+                backingImageSamples,
                 out _);
         if (trace)
             Debug.VulkanEvery(

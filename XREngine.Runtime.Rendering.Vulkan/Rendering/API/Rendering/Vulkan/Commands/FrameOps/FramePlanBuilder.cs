@@ -374,12 +374,14 @@ internal sealed class FramePlanBuilder
             slot,
             slot.Operations,
             outputCount,
-            openXrViewKind);
+            openXrViewKind,
+            dynamicOverlay: false);
         ApplyOutputAdmission(
             slot,
             slot.DynamicOverlayOperations,
             outputCount,
-            openXrViewKind);
+            openXrViewKind,
+            dynamicOverlay: true);
         if (!HasAdmittedOutput(slot, outputCount))
             slot.TextureUploadOperations.Reset();
         int textureUploadExecutionNodeIndex = ResolveTextureUploadExecutionNodeIndex(
@@ -505,6 +507,10 @@ internal sealed class FramePlanBuilder
     {
         for (int operationIndex = 0; operationIndex < operations.Count; operationIndex++)
         {
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(operationIndex);
+            if (!header.RequiresPrimaryRecordingContext)
+                continue;
+
             ref readonly FrameOpContext context = ref operations.GetContext(operationIndex);
             if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 })
                 continue;
@@ -1276,7 +1282,8 @@ internal sealed class FramePlanBuilder
         Slot slot,
         FrameOperationStream operations,
         int outputCount,
-        EVrOutputViewKind? openXrViewKind)
+        EVrOutputViewKind? openXrViewKind,
+        bool dynamicOverlay)
     {
         if (operations.Count == 0)
             return;
@@ -1300,8 +1307,21 @@ internal sealed class FramePlanBuilder
             {
                 if (!slot.Outputs[outputIndex].MatchesOutput(operationOutput))
                     continue;
-                if (slot.OutputExecutable[outputIndex])
+                // Recovery may compose a prepared, targetless native UI draw
+                // over its held desktop image even while the corresponding
+                // scene terminal is deferred. Retain only that narrow late
+                // overlay contract; all scene and target-owned work remains
+                // governed by its output-DAG terminal admission.
+                if (slot.OutputExecutable[outputIndex] ||
+                    (dynamicOverlay &&
+                     IsIndependentDesktopDynamicUiOperation(
+                         operations,
+                         operationIndex,
+                         in context,
+                         in operationOutput)))
+                {
                     slot.OperationOrderScratch[retainedCount++] = operationIndex;
+                }
                 break;
             }
         }
@@ -1309,6 +1329,27 @@ internal sealed class FramePlanBuilder
         if (retainedCount != operations.Count)
             operations.Retain(slot.OperationOrderScratch.AsSpan(0, retainedCount));
     }
+
+    private static bool IsIndependentDesktopDynamicUiOperation(
+        FrameOperationStream operations,
+        int operationIndex,
+        in FrameOpContext context,
+        in OutputRequest output)
+        // Screen-space canvases create their targetless commands in the
+        // UiPreview context even when they ultimately compose over the
+        // desktop image. The remaining checks keep this limited to that
+        // independent canvas draw, rather than admitting an arbitrary preview.
+        => (output.OutputKind is EFrameOutputKind.DesktopScene or
+                EFrameOutputKind.EditorScenePanel or
+                EFrameOutputKind.UiPreview) &&
+           output.ConsumerDependencySetId == 0UL &&
+           context.OutputFrameBuffer is null &&
+           operations.GetHeader(operationIndex).OpCode ==
+                EVulkanPrimaryPlanNodeKind.MeshDraw &&
+           operations.GetHeader(operationIndex).PassIndex ==
+                (int)EDefaultRenderPass.OnTopForward &&
+           operations.GetTarget(operationIndex) is null &&
+           context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
 
     private static EVrOutputViewKind? ResolveOperationViewKind(
         Slot slot,

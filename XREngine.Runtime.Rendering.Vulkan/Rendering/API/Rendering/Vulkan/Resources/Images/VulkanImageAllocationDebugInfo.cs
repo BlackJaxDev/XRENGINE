@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 internal readonly record struct VulkanImageAllocationDebugInfo(
@@ -10,9 +12,9 @@ internal readonly record struct VulkanImageAllocationDebugInfo(
     uint Depth,
     uint Layers,
     uint MipLevels,
-    string Format,
-    string Usage,
-    string Samples,
+    Format Format,
+    ImageUsageFlags Usage,
+    SampleCountFlags Samples,
     string AllocationClass,
     uint MemoryTypeIndex,
     string MemoryTypeFlags,

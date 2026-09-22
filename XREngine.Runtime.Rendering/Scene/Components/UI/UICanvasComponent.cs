@@ -307,10 +307,31 @@ namespace XREngine.Components
                 : canvasTransform.ActualLocalBottomLeftTranslation;
             framebufferScale = Vector2.One;
 
-            if (viewport is XRViewport concreteViewport && displaySize.X > 0.0f && displaySize.Y > 0.0f)
+            if (viewport is XRViewport concreteViewport)
             {
                 var region = concreteViewport.Region;
-                framebufferScale = new Vector2(region.Width / displaySize.X, region.Height / displaySize.Y);
+                if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+                {
+                    // ImGui lays out synchronously for this presentation. Native
+                    // canvas ActualSize belongs to the asynchronous layout/collect
+                    // generation and can still describe the preceding drag size.
+                    // Using it here stretches a newly authored UI instead of
+                    // laying it out at the render frame's latched client extent.
+                    if (concreteViewport.Window is { } window)
+                    {
+                        var framebuffer = window.RenderFramebufferSize;
+                        var client = window.RenderWindowSize;
+                        framebufferScale = new Vector2(
+                            client.X > 0 && framebuffer.X > 0 ? framebuffer.X / (float)client.X : 1f,
+                            client.Y > 0 && framebuffer.Y > 0 ? framebuffer.Y / (float)client.Y : 1f);
+                    }
+                    displaySize = new Vector2(
+                        region.Width / framebufferScale.X,
+                        region.Height / framebufferScale.Y);
+                    return displaySize.X > 0.0f && displaySize.Y > 0.0f;
+                }
+                if (displaySize.X > 0.0f && displaySize.Y > 0.0f)
+                    framebufferScale = new Vector2(region.Width / displaySize.X, region.Height / displaySize.Y);
             }
 
             return displaySize.X > 0.0f && displaySize.Y > 0.0f;

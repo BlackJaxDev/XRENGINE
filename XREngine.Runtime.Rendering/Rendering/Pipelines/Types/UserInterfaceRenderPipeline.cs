@@ -3,7 +3,6 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
-using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering;
@@ -41,46 +40,11 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     private XRMaterial MakeInvalidMaterial()
         => XRMaterial.CreateUnlitColorMaterialForward();
 
-    //FBOs
-    public const string ForwardPassFBOName = "ForwardPassFBO";
-    public const string PostProcessFBOName = "PostProcessFBO";
-
-    //Textures
+    // Legacy names remain public until the resource-lifecycle contract test is
+    // updated, but this pipeline intentionally has no managed texture layout.
     public const string DepthViewTextureName = "DepthView";
     public const string StencilViewTextureName = "StencilView";
     public const string DepthStencilTextureName = "DepthStencil";
-
-    protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
-    {
-        RenderResourceSizePolicy size = RenderResourceSizePolicy.Internal();
-        const RenderPipelineResourceUsage depthUsage =
-            RenderPipelineResourceUsage.SampledTexture |
-            RenderPipelineResourceUsage.DepthStencilAttachment;
-
-        builder.Texture(DepthStencilTextureName)
-            .Size(size)
-            .Usage(depthUsage)
-            .Format(EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248)
-            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
-            .Factory(CreateDepthStencilTexture)
-            .Add();
-
-        builder.TextureView(DepthViewTextureName, DepthStencilTextureName)
-            .Size(size)
-            .Usage(RenderPipelineResourceUsage.SampledTexture)
-            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
-            .DepthStencilAspect(EDepthStencilFmt.Depth)
-            .Factory(CreateDepthViewTexture)
-            .Add();
-
-        builder.TextureView(StencilViewTextureName, DepthStencilTextureName)
-            .Size(size)
-            .Usage(RenderPipelineResourceUsage.SampledTexture)
-            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
-            .DepthStencilAspect(EDepthStencilFmt.Stencil)
-            .Factory(CreateStencilViewTexture)
-            .Add();
-    }
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
@@ -151,42 +115,5 @@ public class UserInterfaceRenderPipeline : RenderPipeline
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
-
-    XRTexture CreateDepthStencilTexture()
-    {
-        var dsTex = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
-            EPixelInternalFormat.Depth24Stencil8,
-            EPixelFormat.DepthStencil,
-            EPixelType.UnsignedInt248,
-            EFrameBufferAttachment.DepthStencilAttachment);
-        dsTex.MinFilter = ETexMinFilter.Nearest;
-        dsTex.MagFilter = ETexMagFilter.Nearest;
-        dsTex.Resizable = false;
-        dsTex.Name = DepthStencilTextureName;
-        dsTex.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
-        return dsTex;
-    }
-
-    XRTexture CreateDepthViewTexture()
-        => new XRTexture2DView(
-            GetTexture<XRTexture2D>(DepthStencilTextureName)!,
-            0, 1,
-            ESizedInternalFormat.Depth24Stencil8,
-            false, false)
-        {
-            DepthStencilViewFormat = EDepthStencilFmt.Depth,
-            Name = DepthViewTextureName,
-        };
-
-    XRTexture CreateStencilViewTexture()
-        => new XRTexture2DView(
-            GetTexture<XRTexture2D>(DepthStencilTextureName)!,
-            0, 1,
-            ESizedInternalFormat.Depth24Stencil8,
-            false, false)
-        {
-            DepthStencilViewFormat = EDepthStencilFmt.Stencil,
-            Name = StencilViewTextureName,
-        };
 
 }

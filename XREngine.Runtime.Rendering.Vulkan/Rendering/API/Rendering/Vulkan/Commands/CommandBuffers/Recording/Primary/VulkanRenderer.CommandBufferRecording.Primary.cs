@@ -68,6 +68,22 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                // A required Present terminal may be synthetic even when scene
+                // operations exist. Only the recorded authored writes establish
+                // whether there is a new desktop image; the plan's missing
+                // contract alone must never suppress valid scene work.
+                if (recordingState.ActualSwapchainWriteCount == 0 &&
+                    recordingState.Policy.TransitionSwapchainToPresent &&
+                    !recordingState.Policy.IsExternalSwapchainTarget &&
+                    recordingState.FramePlan?.RequiresFreshEmptyTerminalWrite == true)
+                {
+                    context.NoAuthoredDesktopOutput = true;
+                    context.RecordingDeferredReason =
+                        "the desktop frame recorded no authored scene terminal write";
+                    _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
+                    return false;
+                }
+
                 using (VulkanCpuStageScope finalizationStage =
                        new(_frameTelemetry, EVulkanCpuStage.PrimaryFinalization))
                 {

@@ -103,28 +103,16 @@ namespace XREngine.Rendering.Vulkan
             VulkanResidentTemplateDependencyLease? heldContinuitySourceLease,
             bool requireHeldContinuitySource)
         {
-            VulkanPresentationSourceTuple source =
-                hasHeldContinuitySource
-                    ? heldContinuitySource
-                    : requireHeldContinuitySource
-                        ? default
-                        : _windowPresentSource.CaptureAnyCompleteBinding();
-            string unavailableReason;
-            bool sourceValid;
-            if (requireHeldContinuitySource)
+            VulkanPresentationSourceTuple source = heldContinuitySource;
+            VulkanResidentTemplateDependencyLease? sourceLease = heldContinuitySourceLease;
+            if (!hasHeldContinuitySource && !requireHeldContinuitySource)
             {
-                sourceValid = ResourceRuntime
-                    .TryValidateRetainedPresentationSourceForReplay(
-                        source,
-                        heldContinuitySourceLease,
-                        out unavailableReason);
+                _outputRuntime.PresentationSource.Submitted.Capture(out source, out sourceLease);
             }
-            else
-            {
-                sourceValid = ResourceRuntime.TryValidatePresentationSourceForReplay(
-                    source,
-                    out unavailableReason);
-            }
+            bool sourceValid = ResourceRuntime.TryValidateRetainedPresentationSourceForReplay(
+                source,
+                sourceLease,
+                out string unavailableReason);
             if (!sourceValid)
             {
                 Debug.VulkanEvery(
@@ -135,6 +123,27 @@ namespace XREngine.Rendering.Vulkan
                     unavailableReason);
                 return false;
             }
+
+            ImageSubresourceRange sourceRange = new()
+            {
+                AspectMask = source.Aspect,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            };
+            if (!_commandRuntime.Synchronization.TryGetSubmittedImageLayout(
+                    source.Image,
+                    in sourceRange,
+                    out ImageLayout submittedSourceLayout) ||
+                submittedSourceLayout == ImageLayout.Undefined)
+            {
+                return false;
+            }
+
+            // A rejected recording never commits its image transitions. Recover
+            // from the submitted ledger, not a descriptor's intended layout.
+            source = source with { ExpectedLayout = submittedSourceLayout };
 
             Image desktopImage = OutputRuntime.Desktop.Images is not null &&
                 attempt.ImageIndex < OutputRuntime.Desktop.Images.Length
@@ -215,7 +224,7 @@ namespace XREngine.Rendering.Vulkan
             toTransfer[0] = new ImageMemoryBarrier
             {
                 SType = StructureType.ImageMemoryBarrier,
-                SrcAccessMask = AccessFlags.ShaderReadBit,
+                SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
                 DstAccessMask = AccessFlags.TransferReadBit,
                 OldLayout = sourceInitialLayout,
                 NewLayout = ImageLayout.TransferSrcOptimal,
@@ -240,8 +249,7 @@ namespace XREngine.Rendering.Vulkan
             };
             encoder.PipelineBarrier(
                 commandBuffer,
-                PipelineStageFlags.FragmentShaderBit |
-                    PipelineStageFlags.ColorAttachmentOutputBit,
+                PipelineStageFlags.AllCommandsBit,
                 PipelineStageFlags.TransferBit,
                 0,
                 0,
@@ -290,7 +298,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.ImageMemoryBarrier,
                 SrcAccessMask = AccessFlags.TransferReadBit,
-                DstAccessMask = AccessFlags.ShaderReadBit,
+                DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
                 OldLayout = ImageLayout.TransferSrcOptimal,
                 NewLayout = sourceInitialLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -314,8 +322,7 @@ namespace XREngine.Rendering.Vulkan
             encoder.PipelineBarrier(
                 commandBuffer,
                 PipelineStageFlags.TransferBit,
-                PipelineStageFlags.FragmentShaderBit |
-                    PipelineStageFlags.ColorAttachmentOutputBit,
+                PipelineStageFlags.AllCommandsBit,
                 0,
                 0,
                 null,

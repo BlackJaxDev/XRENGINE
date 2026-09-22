@@ -459,7 +459,7 @@ internal sealed partial class VulkanFramePlanner
         return oldGroup;
     }
 
-    private static bool TryGetAutoExposurePhysicalGroup(
+    internal static bool TryGetAutoExposurePhysicalGroup(
         VulkanResourceAllocator allocator,
         out VulkanPhysicalImageGroup? group)
         => allocator.TryGetPhysicalGroupForResource(

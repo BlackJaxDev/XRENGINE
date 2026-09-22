@@ -220,6 +220,8 @@ internal ref struct VulkanFrameAttempt
     /// which may be necessary in scenarios where the swapchain needs to be updated or recreated due to changes in the rendering context or surface properties.
     /// </summary>
     public int SceneSwapchainWriteCount;
+    /// <summary>Scene work wrote the swapchain before any synthetic terminal or replay was appended.</summary>
+    public bool HasAuthoredSwapchainWrite;
     /// <summary>
     /// Indicates the number of times the swapchain has been written to during recovery operations for the current frame attempt,
     /// which may be necessary in scenarios where the swapchain needs to be updated or recreated due to changes in the rendering context or surface properties.

@@ -341,6 +341,26 @@ namespace XREngine.Rendering.Vulkan
                             attempt.AdvanceTo(EDesktopFramePhase.Submitted);
                             PublishAcceptedDesktopSubmissionReuseLedgers(ref attempt);
                             PublishDesktopReadbackReceipts(in attempt);
+                            if (submitReceipt.PostSubmissionPublicationSucceeded &&
+                                submitReceipt.LifetimePinsTransferred &&
+                                attempt.HasWindowPresentationSourceOwner &&
+                                attempt.HasAuthoredSwapchainWrite &&
+                                _primaryCommandArtifactOwners is { } presentationOwners &&
+                                attempt.ImageIndex < presentationOwners.Length &&
+                                presentationOwners[attempt.ImageIndex].PrimaryCommandBuffer.Handle == attempt.SceneCommandBuffer.Handle &&
+                                presentationOwners[attempt.ImageIndex].HasRecordedPresentationSource(attempt.PresentationSource) &&
+                                !_outputRuntime.PresentationSource.Submitted.TryCommit(
+                                    attempt.PresentationSource,
+                                    ResourceRuntime,
+                                    _commandRuntime.Synchronization,
+                                    out string replaySourceFailure))
+                            {
+                                Debug.VulkanWarningEvery(
+                                    "Vulkan.SubmittedPresentationSource.Unavailable",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan] Could not retain the submitted desktop source for recovery: {0}",
+                                    replaySourceFailure);
+                            }
                             if (attempt.UploadOwnership == EVulkanDesktopUploadOwnership.Recorded)
                                 attempt.TransitionUploadOwnership(
                                     EVulkanDesktopUploadOwnership.SubmittedDeferredFree);

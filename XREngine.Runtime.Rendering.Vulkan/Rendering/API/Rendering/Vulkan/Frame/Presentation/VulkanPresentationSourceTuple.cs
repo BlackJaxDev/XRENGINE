@@ -83,6 +83,9 @@ internal readonly record struct VulkanPresentationSourceTuple(
         ImageViewGeneration != 0 &&
         Sampler.Handle != 0 &&
         SamplerGeneration != 0 &&
+        Format != Format.Undefined &&
+        Aspect != ImageAspectFlags.None &&
+        Samples != 0 &&
         ExpectedLayout != ImageLayout.Undefined &&
         Width != 0 &&
         Height != 0 &&

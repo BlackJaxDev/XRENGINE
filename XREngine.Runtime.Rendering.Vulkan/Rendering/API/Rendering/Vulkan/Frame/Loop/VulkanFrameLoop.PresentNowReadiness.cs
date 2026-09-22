@@ -80,9 +80,7 @@ internal sealed partial class VulkanFrameLoop
             }
             watchdog.RecordProgress();
 
-            ClassifyIncompleteResizeReleaseSuccessorBeforeAcquire(
-                acceptedPlan,
-                ref attempt);
+            ClassifyIncompleteResizeReleaseSuccessorBeforeAcquire(ref attempt);
 
             if (!CompleteAcceptedPresentNowTextureReadiness(
                     acceptedPlan,

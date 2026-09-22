@@ -365,7 +365,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // Same physical-group handle changes mean the underlying image was reallocated.
         // A fresh VkImage starts in UNDEFINED even if the group object still has stale
         // layout state from the previous handle.
-        BackendContext.Resources.Images.ClearTrackedLayouts(_image);
+        // The old native image can still be retained for presentation replay.
+        // Its submitted ledger is retired with that image, not this wrapper.
         _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
 
         // Retire the old views before changing _image so cache removal targets the old handle.

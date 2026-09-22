@@ -71,6 +71,7 @@ namespace XREngine.Rendering.Vulkan
         // Deferred pipeline readiness is keyed by sealed stream ordinal.
         public HashSet<int> PipelineDeferredOperationIndices;
         public FrameOpContext InitialContext;
+        public int InitialPrimaryContextOperationIndex;
         public CommandChainKey[]? ScheduledCommandChainKeysByOpIndex;
         public CommandChain?[]? ScheduledCommandChainsByOpIndex;
         public Dictionary<CommandChainKey, CommandChain>? ScheduledCommandChainCache;

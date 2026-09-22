@@ -271,18 +271,88 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SwapchainFinalLayout = finalLayout;
         }
 
-        private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(scoped ref PrimaryCommandBufferRecordingState recordingState)
+        private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             VulkanPresentationSourceTuple presentationSource =
                 recordingState.PresentationSource;
+            return TryRefreshUnwrittenSwapchainFromPresentationSource(
+                ref recordingState,
+                presentationSource,
+                retainedSourceLease: null,
+                "LastPresentSourceBlit",
+                "last present source");
+        }
+
+        /// <summary>
+        /// Submits the useful nonterminal work of a fresh-empty successor while
+        /// preserving the last complete compositor base. The following authored
+        /// successor remains responsible for completing the resize handoff.
+        /// </summary>
+        private bool TryRecordResizeContinuityTerminal(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            VulkanCommandRecordingPolicySnapshot policy = recordingState.Policy;
+            if (!policy.HasResizeContinuityPresentationSource)
+                return false;
+
+            VulkanPresentationSourceTuple source =
+                policy.ResizeContinuityPresentationSource;
+            if (!TryRefreshUnwrittenSwapchainFromPresentationSource(
+                    ref recordingState,
+                    source,
+                    policy.ResizeContinuityPresentationSourceLease,
+                    "ResizeContinuityReplay",
+                    "resize continuity source"))
+            {
+                return false;
+            }
+
+            if (recordingState.FramePlan is { } framePlan)
+            {
+                for (int index = 0;
+                     index < framePlan.FreshEmptyTerminalOutputCount;
+                     index++)
+                {
+                    recordingState.ArtifactOwner?.RecordTerminalOutput(
+                        framePlan,
+                        framePlan.GetFreshEmptyTerminalOutputIndex(index),
+                        actualTarget: null);
+                }
+            }
+
+            Debug.VulkanEvery(
+                $"Vulkan.ResizeContinuityTerminal.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan][ResizeHandoff] Submitted fresh-empty successor work while preserving the retained {0}x{1} compositor base on image {2}.",
+                source.Width,
+                source.Height,
+                recordingState.ImageIndex);
+            return true;
+        }
+
+        private bool TryRefreshUnwrittenSwapchainFromPresentationSource(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            in VulkanPresentationSourceTuple presentationSource,
+            VulkanResidentTemplateDependencyLease? retainedSourceLease,
+            string writerLabel,
+            string sourceDescription)
+        {
             XRFrameBuffer? sourceFrameBuffer = presentationSource.FrameBuffer;
             string? unavailableReason = !presentationSource.HasLogicalSource
                 ? "no published presentation source"
                 : !recordingState.SwapchainTarget.IsValid
                     ? "swapchain target is invalid"
+                    : retainedSourceLease is not null
+                        ? !ResourceRuntime.TryValidateRetainedPresentationSourceForReplay(
+                            presentationSource,
+                            retainedSourceLease,
+                            out string retainedTupleFailure)
+                            ? retainedTupleFailure
+                            : null
                     : !ResourceRuntime.TryValidatePresentationSourceForReplay(
-                        presentationSource,
-                        out string tupleFailure)
+                            presentationSource,
+                            out string tupleFailure)
                         ? tupleFailure
                     : presentationSource.Width == 0 || presentationSource.Height == 0
                         ? $"published native source has zero size {presentationSource.Width}x{presentationSource.Height}"
@@ -294,7 +364,8 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanEvery(
                     $"Vulkan.LastPresentRefresh.Unavailable.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
-                    "[Vulkan] Unable to refresh unwritten swapchain image from last present source: {0}.",
+                    "[Vulkan] Unable to refresh unwritten swapchain image from {0}: {1}.",
+                    sourceDescription,
                     unavailableReason);
                 return false;
             }
@@ -309,7 +380,7 @@ namespace XREngine.Rendering.Vulkan
                 : recordingState.HasActiveContext
                     ? recordingState.ActiveContext
                     : recordingState.InitialContext;
-            _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
+            _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, writerLabel);
             bool blitRecorded = RecordPresentationSourceBlit(
                 recordingState.CommandBuffer,
                 recordingState.ImageIndex,
@@ -323,7 +394,8 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanEvery(
                     $"Vulkan.LastPresentRefresh.BlitRejected.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
-                    "[Vulkan] Unable to refresh unwritten swapchain image from last present source: blit from '{0}' was not recorded.",
+                    "[Vulkan] Unable to refresh unwritten swapchain image from {0}: blit from '{1}' was not recorded.",
+                    sourceDescription,
                     sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>");
                 return false;
             }
@@ -336,8 +408,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SwapchainBlitWrites++;
             recordingState.SceneSwapchainWriters++;
             MarkSwapchainStaticWriter(ref recordingState,
-                "LastPresentSourceBlit",
-                $"refreshed acquired swapchain image from '{sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>"}'",
+                writerLabel,
+                $"refreshed acquired swapchain image from {sourceDescription} '{sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>"}'",
                 passIndex,
                 recordingState.Ops.Length,
                 blitContext.PipelineIdentity);

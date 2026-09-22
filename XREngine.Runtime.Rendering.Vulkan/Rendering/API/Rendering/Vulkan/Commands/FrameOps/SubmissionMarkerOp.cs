@@ -9,4 +9,5 @@ internal sealed record SubmissionMarkerOp(
     : FrameOp(PassIndex, null, Context)
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.SubmissionMarker;
+    internal override bool RequiresPrimaryRecordingContext => false;
 }

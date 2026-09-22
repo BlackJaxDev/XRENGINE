@@ -53,9 +53,10 @@ internal sealed partial class FramePlan
     internal ulong DynamicOverlaySignature { get; private set; }
     internal ulong RenderGraphPlanSignature { get; private set; }
     /// <summary>
-    /// The PresentNow transaction had no authored terminal producer, so native
-    /// recording must write a deterministic fresh full-surface clear instead
-    /// of replaying or preserving an older presentation source.
+    /// The required transaction had no authored terminal producer. Exact external
+    /// targets may initialize their empty terminal, but desktop pacing/suspension
+    /// is not an authoritative empty scene: desktop recording routes this case to
+    /// explicitly classified recovery without completing scene output or history.
     /// </summary>
     internal bool RequiresFreshEmptyTerminalWrite { get; private set; }
     internal int FreshEmptyTerminalOutputCount =>

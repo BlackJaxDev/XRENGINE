@@ -671,11 +671,23 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         ActiveGeneration?.Key.ToString() ?? "<none>",
                         PendingGeneration?.Key.ToString() ?? "<none>",
                         viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}/{viewport.InternalWidth}x{viewport.InternalHeight}");
+                    RenderIndependentScreenSpaceUi(
+                        userInterface,
+                        viewport,
+                        targetFBO,
+                        "scene resource generation is still converging");
                     return DeclineRender(LastRenderDeclineReason ?? LastResourceGenerationFailure ?? "Resources do not match the current frame profile.");
                 }
                 _resizeCatchUpSkippedFrameId = ulong.MaxValue;
                 if (viewHistorySequenceId != 0UL && !RenderState.ViewHistoryCaptureAccepted)
+                {
+                    RenderIndependentScreenSpaceUi(
+                        userInterface,
+                        viewport,
+                        targetFBO,
+                        "the scene history capture was rejected");
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The frozen view-history capture was rejected.");
+                }
                 RenderFrameViewHistoryBackendReservation historyReservation = default;
                 bool historyReservationOwned = false;
                 AbstractRenderer? historyReservationOwner = null;
@@ -762,6 +774,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                                 viewport is not null);
                         }
                         candidate.Discard();
+                        RenderIndependentScreenSpaceUi(
+                            userInterface,
+                            viewport,
+                            targetFBO,
+                            "the scene history candidate no longer matches the viewport");
                         return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The frozen history candidate does not match the capture output.");
                     }
                     if (AbstractRenderer.Current is not { } renderer ||
@@ -772,6 +789,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                             out historyReservation))
                     {
                         candidate.Discard();
+                        RenderIndependentScreenSpaceUi(
+                            userInterface,
+                            viewport,
+                            targetFBO,
+                            "the scene history reservation is unavailable");
                         return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The backend could not reserve the capture's view-history candidate.");
                     }
                     historyReservationOwner = renderer;
@@ -916,6 +938,34 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return DeclineRender(reason);
     }
 
+    /// <summary>
+    /// Emits the independently collected screen-space UI when the enclosing
+    /// scene cannot author a history or exact-output terminal. The UI pipeline
+    /// owns no scene history or output-completion receipt, so this deliberately
+    /// does not make the failed scene producer appear complete.
+    /// </summary>
+    private static void RenderIndependentScreenSpaceUi(
+        IRuntimeScreenSpaceUserInterface? userInterface,
+        XRViewport? viewport,
+        XRFrameBuffer? targetFbo,
+        string sceneDeferralReason)
+    {
+        if (userInterface is not { IsActive: true, IsScreenSpace: true })
+            return;
+
+        using (AbstractRenderer.Current?.PushUiClipSpacePolicy())
+            userInterface.RenderScreenSpace(viewport, targetFbo);
+
+        if (Debug.ShouldLogEvery(
+                "RenderPipeline.IndependentScreenSpaceUi",
+                TimeSpan.FromSeconds(1)))
+        {
+            Debug.Rendering(
+                "[RenderResources] Attempted independent screen-space UI because {0}.",
+                sceneDeferralReason);
+        }
+    }
+
     internal void MarkForwardContactPrePassAvailable()
         => ForwardContactPrePassAvailableThisFrame = true;
 
@@ -944,16 +994,36 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport is not null
                 ? ResolveBackendReadyFramePackageDimensions(viewport)
                 : (identity.ViewportWidth, identity.ViewportHeight, identity.InternalWidth, identity.InternalHeight);
+        (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight)
+            resourceClassificationDimensions = viewport is not null
+                ? ResolvePipelineResourceDimensions(viewport)
+                : default;
+        bool usesLayoutlessTargetlessUi =
+            Pipeline is UserInterfaceRenderPipeline &&
+            RenderState.OutputFBO is null &&
+            ActiveGeneration is null &&
+            PendingGeneration is null &&
+            _requiresManagedResourceGeneration == false &&
+            _classifiedResourceLayoutKey is { } layoutlessKey &&
+            viewport is not null &&
+            layoutlessKey == BuildResourceGenerationKey(
+                resourceClassificationDimensions.DisplayWidth,
+                resourceClassificationDimensions.DisplayHeight,
+                resourceClassificationDimensions.InternalWidth,
+                resourceClassificationDimensions.InternalHeight,
+                viewport);
         bool allowViewportResizeLag =
             viewport?.Window?.IsInteractiveResizeInProgress == true &&
-            ActiveGeneration is { } activeResourceGeneration &&
-            identity.InternalWidth == checked((int)activeResourceGeneration.Key.InternalWidth) &&
-            identity.InternalHeight == checked((int)activeResourceGeneration.Key.InternalHeight) &&
-            dimensions.InternalWidth == identity.InternalWidth &&
-            dimensions.InternalHeight == identity.InternalHeight;
+            (usesLayoutlessTargetlessUi ||
+             (ActiveGeneration is { } activeResourceGeneration &&
+              identity.InternalWidth == checked((int)activeResourceGeneration.Key.InternalWidth) &&
+              identity.InternalHeight == checked((int)activeResourceGeneration.Key.InternalHeight) &&
+              dimensions.InternalWidth == identity.InternalWidth &&
+              dimensions.InternalHeight == identity.InternalHeight));
         // A fully published collection may describe the preceding drag extent.
-        // Only presentation size may lag: internal extents and every generation
-        // still have to match. Camera/UI commands use this callback's live extent.
+        // Managed pipelines permit only presentation-size lag; the layoutless,
+        // targetless UI exception owns no extent-bound resources. All command,
+        // descriptor, registry, pass, and collection identities still match.
         BackendReadyFramePackageValidationContext context = new(
             consumedCollectGenerationOverride ??
                 RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
@@ -1095,6 +1165,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (viewport?.RendersToExternalSwapchainTarget == true)
             return EnsureExternalSwapchainResourceGenerationForCurrentFrame(viewport, key);
+
+        // A successfully classified layoutless pipeline has no generation to
+        // prepare. Keep its exact resource-profile result hot rather than
+        // rebuilding an empty layout on every render call.
+        if (ActiveGeneration is null &&
+            PendingGeneration is null &&
+            _requiresManagedResourceGeneration == false &&
+            _classifiedResourceLayoutKey == key)
+        {
+            return true;
+        }
 
         if (ActiveGeneration is null && PendingGeneration is null)
             RequestResourceGeneration(key, "Initial");

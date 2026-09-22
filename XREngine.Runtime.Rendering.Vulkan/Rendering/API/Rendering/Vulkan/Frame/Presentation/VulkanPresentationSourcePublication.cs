@@ -246,6 +246,9 @@ internal sealed class VulkanPresentationSourcePublication
             0,
             0,
             0,
+            default,
+            Format.Undefined,
+            default,
             out source);
 
     internal bool TryBindDescriptor(
@@ -261,6 +264,9 @@ internal sealed class VulkanPresentationSourcePublication
         ulong samplerGeneration,
         ulong backingImageHandle,
         ulong backingImageGeneration,
+        Extent3D backingImageExtent,
+        Format backingImageFormat,
+        SampleCountFlags backingImageSamples,
         out VulkanPresentationSourceTuple source)
     {
         lock (_sync)
@@ -326,6 +332,12 @@ internal sealed class VulkanPresentationSourcePublication
                     : imageViewGeneration != 0
                         ? imageViewGeneration
                         : backingImageGeneration;
+            uint resolvedWidth = backingImageExtent.Width != 0
+                ? backingImageExtent.Width
+                : logicalSource.Width;
+            uint resolvedHeight = backingImageExtent.Height != 0
+                ? backingImageExtent.Height
+                : logicalSource.Height;
             VulkanPresentationSourceTuple binding = logicalSource with
             {
                 DescriptorResourceEpoch = resolvedDescriptorResourceEpoch,
@@ -337,11 +349,21 @@ internal sealed class VulkanPresentationSourcePublication
                 ImageViewGeneration = imageViewGeneration != 0 ? imageViewGeneration : logicalSource.ImageViewGeneration,
                 Sampler = imageInfo.Sampler,
                 SamplerGeneration = samplerGeneration != 0 ? samplerGeneration : logicalSource.SamplerGeneration,
+                // Accepted draw selection deliberately starts with logical-only
+                // ownership. Complete all native metadata with the descriptor,
+                // including the aspect used by recovery barriers and blits.
+                Format = backingImageFormat != Format.Undefined ? backingImageFormat : logicalSource.Format,
+                Aspect = backingImageFormat != Format.Undefined
+                    ? VulkanCommandRuntime.NormalizeBarrierAspectMask(backingImageFormat, ImageAspectFlags.None)
+                    : logicalSource.Aspect,
+                Samples = backingImageSamples != 0 ? backingImageSamples : logicalSource.Samples,
                 ExpectedLayout = imageInfo.ImageLayout != ImageLayout.Undefined
                     ? imageInfo.ImageLayout
                     : (logicalSource.ExpectedLayout != ImageLayout.Undefined
                         ? logicalSource.ExpectedLayout
                         : ImageLayout.ShaderReadOnlyOptimal),
+                Width = resolvedWidth,
+                Height = resolvedHeight,
                 DescriptorSet = descriptorSet,
                 DescriptorSetGeneration = descriptorSetGeneration,
                 DescriptorSlot = descriptorSlot,
@@ -367,6 +389,11 @@ internal sealed class VulkanPresentationSourcePublication
                     Sampler = imageInfo.Sampler,
                     SamplerGeneration = samplerGeneration != 0 ? samplerGeneration : _current.SamplerGeneration,
                     ExpectedLayout = binding.ExpectedLayout,
+                    Format = binding.Format,
+                    Aspect = binding.Aspect,
+                    Samples = binding.Samples,
+                    Width = resolvedWidth,
+                    Height = resolvedHeight,
                 };
             }
             source = binding;
