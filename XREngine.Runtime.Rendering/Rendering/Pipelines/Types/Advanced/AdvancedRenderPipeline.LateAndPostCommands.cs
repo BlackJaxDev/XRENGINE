@@ -420,13 +420,37 @@ public partial class AdvancedRenderPipeline
             return;
         }
 
+        // DLAA/DLSS/XeSS resolve the fully graded final post-process result.  The
+        // Advanced stage has already produced the matching depth and velocity
+        // inputs before this output stage; routing through the vendor command
+        // preserves that temporal contract and lets the command report an
+        // unavailable requested vendor capability instead of silently choosing
+        // a different anti-aliasing path.
+        var vendorOutput = commands.Add<VPRC_IfElse>();
+        vendorOutput.Label = "AdvancedVendorUpscaleOutput";
+        vendorOutput.ConditionEvaluator = () => RuntimeEnableVendorUpscale;
+        var vendorOutputCommands = new ViewportRenderCommandContainer(this);
+        var vendorUpscale = vendorOutputCommands.Add<VPRC_VendorUpscale>();
+        vendorUpscale.FrameBufferName = FinalPostProcessOutputFBOName;
+        vendorUpscale.SourceTextureName = FinalPostProcessOutputTextureName;
+        vendorUpscale.DepthTextureName = DepthViewTextureName;
+        vendorUpscale.DepthStencilTextureName = DepthStencilTextureName;
+        vendorUpscale.MotionTextureName = VelocityTextureName;
+        vendorUpscale.MotionFrameBufferName = VelocityFBOName;
+        vendorUpscale.AutoExposureTextureName = AutoExposureTextureName;
+        vendorUpscale.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        vendorOutput.TrueCommands = vendorOutputCommands;
+
+        var nonVendorOutput = new ViewportRenderCommandContainer(this);
+        vendorOutput.FalseCommands = nonVendorOutput;
+
         if (!AllowsPostAntiAliasing)
         {
-            AppendAdvancedWindowPresent(commands, FinalPostProcessOutputFBOName);
+            AppendAdvancedWindowPresent(nonVendorOutput, FinalPostProcessOutputFBOName);
             return;
         }
 
-        var output = commands.Add<VPRC_IfElse>();
+        var output = nonVendorOutput.Add<VPRC_IfElse>();
         output.Label = "AdvancedFinalOutputSource";
         output.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var antiAliasedOutput = new ViewportRenderCommandContainer(this);

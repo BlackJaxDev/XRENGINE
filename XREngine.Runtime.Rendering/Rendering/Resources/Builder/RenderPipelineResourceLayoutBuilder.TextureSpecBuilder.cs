@@ -15,6 +15,8 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         private uint _layers = 1u;
         private RenderResourceMipPolicy _mipPolicy = new();
         private bool _stereoCompatible;
+        private bool _arrayTarget;
+        private bool _multisample;
         private bool _requiresStorageUsage;
         private Func<XRTexture>? _factory;
 
@@ -96,6 +98,20 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
             return this;
         }
 
+        /// <summary>Declares an array texture even when it has only one layer.</summary>
+        public TextureSpecBuilder ArrayTarget(bool arrayTarget = true)
+        {
+            _arrayTarget = arrayTarget;
+            return this;
+        }
+
+        /// <summary>Declares multisample storage for the physical texture.</summary>
+        public TextureSpecBuilder Multisample(bool multisample = true)
+        {
+            _multisample = multisample;
+            return this;
+        }
+
         /// <summary>
         /// Sets whether the texture resource specification requires storage usage.
         /// </summary>
@@ -142,6 +158,8 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
                 _mipPolicy,
                 _stereoCompatible,
                 _requiresStorageUsage,
-                _factory));
+                _factory,
+                _arrayTarget,
+                _multisample));
     }
 }

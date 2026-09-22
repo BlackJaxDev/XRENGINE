@@ -24,6 +24,8 @@ namespace XREngine.Rendering.Resources;
 /// <param name="StereoCompatible">Indicates whether the texture resource is stereo compatible.</param>
 /// <param name="RequiresStorageUsage">Indicates whether the texture resource requires storage usage.</param>
 /// <param name="Factory">The factory function for creating the texture resource.</param>
+/// <param name="ArrayTarget">Whether the physical texture uses an array target, including one-layer arrays.</param>
+/// <param name="Multisample">Whether the physical texture uses multisample storage.</param>
 public sealed record TextureSpec(
     string Name,
     RenderResourceLifetime Lifetime,
@@ -43,7 +45,9 @@ public sealed record TextureSpec(
     RenderResourceMipPolicy MipPolicy,
     bool StereoCompatible,
     bool RequiresStorageUsage,
-    Func<XRTexture>? Factory)
+    Func<XRTexture>? Factory,
+    bool ArrayTarget = false,
+    bool Multisample = false)
     : RenderPipelineResourceSpec(
         Name,
         RenderPipelineResourceKind.Texture,
@@ -81,7 +85,9 @@ public sealed record TextureSpec(
             BaseMipLevel: MipPolicy.BaseMipLevel,
             MipLevelCount: Math.Max(1u, MipPolicy.MipLevelCount),
             BaseLayer: 0u,
-            LayerCount: Math.Max(1u, Layers));
+            LayerCount: Math.Max(1u, Layers),
+            ArrayTarget: ArrayTarget,
+            Multisample: Multisample);
 
     /// <summary>
     /// Resolves the format label for the texture resource.

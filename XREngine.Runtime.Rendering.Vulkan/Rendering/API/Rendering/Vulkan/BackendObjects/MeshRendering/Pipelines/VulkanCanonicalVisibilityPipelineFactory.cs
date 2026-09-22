@@ -35,9 +35,18 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             ? target.DynamicRenderingFormats.ColorAttachmentCount
             : program.MeshTaskProgramServices.GetRenderPassColorAttachmentCount(
                 target.RenderPass);
-        if (colorAttachmentCount != 3u)
+        uint expectedColorAttachmentCount = target.RasterizationSamples == SampleCountFlags.Count1Bit
+            ? 3u
+            : 4u;
+        if (colorAttachmentCount != expectedColorAttachmentCount)
         {
-            reason = $"visibility raster requires exactly three color attachments, received {colorAttachmentCount}";
+            reason = $"visibility raster requires exactly {expectedColorAttachmentCount} color attachments for {target.RasterizationSamples}, received {colorAttachmentCount}";
+            return false;
+        }
+        bool usesMultisampleRaster = target.RasterizationSamples != SampleCountFlags.Count1Bit;
+        if (usesMultisampleRaster && !program.MeshTaskBackendContext.DeviceContext.SampleRateShadingEnabled)
+        {
+            reason = "multisample visibility requires the Vulkan sampleRateShading feature; the device did not enable it";
             return false;
         }
 
@@ -109,6 +118,8 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             {
                 SType = StructureType.PipelineMultisampleStateCreateInfo,
                 RasterizationSamples = target.RasterizationSamples,
+                SampleShadingEnable = usesMultisampleRaster ? Vk.True : Vk.False,
+                MinSampleShading = usesMultisampleRaster ? 1.0f : 0.0f,
             };
             PipelineDepthStencilStateCreateInfo depth = new()
             {

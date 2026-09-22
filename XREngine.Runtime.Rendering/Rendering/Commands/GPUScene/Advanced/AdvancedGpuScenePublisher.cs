@@ -144,6 +144,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             RejectPublication("The canonical resident tables cannot grow at this frame boundary.");
             return;
         }
+        // Preflight checks each table's delta-journal capacity before opening
+        // the next publication. Reclaim acknowledged deltas here so a full
+        // journal cannot prevent the transaction that would normally reclaim it.
+        Database.ReclaimAcknowledgedTombstones();
         Array.Clear(
             _commandDrawHandles,
             0,

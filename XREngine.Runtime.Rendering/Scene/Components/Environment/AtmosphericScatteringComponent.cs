@@ -469,7 +469,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
             RenderPass = (int)EDefaultRenderPass.Background,
             RenderOptions = renderParams,
         };
-        _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: false);
+        _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: false, WritesOpaqueAlpha: true);
         _material.SettingUniforms += SetSkyUniforms;
         _renderCommand.RenderPass = _material.RenderPass;
 

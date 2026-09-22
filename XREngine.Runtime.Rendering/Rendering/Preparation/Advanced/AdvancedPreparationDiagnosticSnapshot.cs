@@ -6,4 +6,5 @@ public readonly record struct AdvancedPreparationDiagnosticSnapshot(
     string DeferralReason,
     string OutputReuseStatus,
     uint OutputReuseSlot,
-    string OutputReuseAuthority);
+    string OutputReuseAuthority,
+    AdvancedSharedPreparationTelemetry SharedTelemetry);

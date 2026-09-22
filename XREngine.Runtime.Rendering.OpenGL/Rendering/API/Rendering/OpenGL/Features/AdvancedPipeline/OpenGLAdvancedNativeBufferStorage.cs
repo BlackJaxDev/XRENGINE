@@ -56,7 +56,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
 
     internal void UploadPushConstants(uint width, uint height, uint viewCount, uint depthSlices, uint lightCount,
         bool requireNativeOutput, bool enableAmbientOcclusion, bool enableIbl, bool requireMaterialSurfaceExports,
-        EAdvancedShadingDebugView debugView)
+        EAdvancedShadingDebugView debugView, bool transparentBackground)
     {
         uint alignment = checked((uint)Math.Max(64, _renderer.RawGL.GetInteger((GLEnum)UniformBufferOffsetAlignment)));
         _pushStride = AlignUp(64u, alignment);
@@ -77,6 +77,8 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
         words[5] = viewCount; words[7] = flags; words[8] = depthSlices; words[9] = MaxLightIndices;
         words[10] = lightCount; words[11] = checked((uint)Math.Min(uint.MaxValue, (ulong)tilesX * tilesY * Math.Max(1u, viewCount) * MaxKernels));
         var clear = RuntimeEngine.StartupPresentationClearColor;
+        if (transparentBackground)
+            clear = default;
         words[12] = BitConverter.SingleToUInt32Bits(clear.R);
         words[13] = BitConverter.SingleToUInt32Bits(clear.G);
         words[14] = BitConverter.SingleToUInt32Bits(clear.B);

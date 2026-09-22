@@ -58,6 +58,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _buildIndirectProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _buildDepthPyramidProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _lateVisibilityProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _lateVisibilityNoHzbProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _multisampleResolveProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _multiviewMultisampleResolveProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueRasterProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedRasterProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueMeshRasterProgram);
@@ -246,6 +249,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return readiness;
 
+            readiness = PrepareMultisamplePrograms(out reason);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+
             readiness = PrepareNativeComputePipelines(out _preparedNativeComputePipelines, out reason);
             if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return readiness;
@@ -321,6 +328,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         WaitForPendingShaderCompiles(_buildIndirectProgram);
         WaitForPendingShaderCompiles(_buildDepthPyramidProgram);
         WaitForPendingShaderCompiles(_lateVisibilityProgram);
+        WaitForPendingShaderCompiles(_lateVisibilityNoHzbProgram);
+        WaitForPendingShaderCompiles(_multisampleResolveProgram);
+        WaitForPendingShaderCompiles(_multiviewMultisampleResolveProgram);
         WaitForPendingShaderCompiles(_opaqueRasterProgram);
         WaitForPendingShaderCompiles(_maskedRasterProgram);
         WaitForPendingShaderCompiles(_opaqueMeshRasterProgram);
@@ -350,6 +360,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         AddProgramIdentity(ref hash, _buildIndirectProgram);
         AddProgramIdentity(ref hash, _buildDepthPyramidProgram);
         AddProgramIdentity(ref hash, _lateVisibilityProgram);
+        AddProgramIdentity(ref hash, _lateVisibilityNoHzbProgram);
+        AddProgramIdentity(ref hash, _multisampleResolveProgram);
+        AddProgramIdentity(ref hash, _multiviewMultisampleResolveProgram);
         AddProgramIdentity(ref hash, _opaqueRasterProgram);
         AddProgramIdentity(ref hash, _maskedRasterProgram);
         AddProgramIdentity(ref hash, _opaqueMeshRasterProgram);
@@ -376,7 +389,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         if (!IsProgramCurrent(_earlyVisibilityProgram, compute: true) ||
             !IsProgramCurrent(_buildIndirectProgram, compute: true) ||
             !IsProgramCurrent(_buildDepthPyramidProgram, compute: true) ||
-            !IsProgramCurrent(_lateVisibilityProgram, compute: true))
+            !IsProgramCurrent(_lateVisibilityProgram, compute: true) ||
+            !IsProgramCurrent(_lateVisibilityNoHzbProgram, compute: true) ||
+            !IsProgramCurrent(_multisampleResolveProgram, compute: false))
         {
             return false;
         }
@@ -400,6 +415,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
         bool supportsMultiview =
             _resources.BackendObjectContext?.DeviceContext.AdvancedMultiviewEnabled == true;
+        if (supportsMultiview &&
+            !IsProgramCurrent(_multiviewMultisampleResolveProgram, compute: false))
+        {
+            return false;
+        }
         if (supportsMultiview &&
             (!IsProgramCurrent(_opaqueMultiviewRasterProgram, compute: false) ||
              !IsProgramCurrent(_maskedMultiviewRasterProgram, compute: false)))

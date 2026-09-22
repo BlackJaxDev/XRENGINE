@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Resources;
 
@@ -14,7 +15,8 @@ public sealed class RenderResourceGeneration(
     RenderPipelineResourceLayout layout,
     RenderPipeline? ownerPipeline = null,
     ulong pipelineRevision = 0,
-    bool isInitialBuild = false) : IDisposable
+    bool isInitialBuild = false,
+    IReadOnlyCollection<RenderPassMetadata>? passMetadata = null) : IDisposable
 {
     private readonly List<string> _diagnostics = [];
     private readonly Dictionary<string, IIncrementalFrameBufferFactory> _incrementalFrameBufferFactories = new(StringComparer.Ordinal);
@@ -43,6 +45,13 @@ public sealed class RenderResourceGeneration(
     /// The layout of the render pipeline resources.
     /// </summary>
     public RenderPipelineResourceLayout Layout { get; } = layout;
+    /// <summary>
+    /// Immutable render-graph metadata generated from <see cref="Layout"/>. Frame packages
+    /// and backend planners consume this snapshot so AA switches cannot reuse declarations
+    /// from an earlier resource layout.
+    /// </summary>
+    public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; } =
+        passMetadata ?? Array.Empty<RenderPassMetadata>();
     /// <summary>
     /// The registry of render resources for this generation.
     /// </summary>

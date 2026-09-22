@@ -45,7 +45,12 @@ public sealed partial class XRRenderPipelineInstance
             effectiveAntiAliasingCamera,
             effectiveAntiAliasingMode);
 
-        if (!RuntimeEngine.Rendering.State.IsSceneCapturePass && !RuntimeEngine.Rendering.State.IsLightProbePass)
+        // The bridge belongs to the viewport's outer render. A nested screen-space
+        // UI pipeline must not disable or recreate it while the scene generation
+        // is converging.
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null &&
+            !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
+            !RuntimeEngine.Rendering.State.IsLightProbePass)
             RuntimeRenderingHostServices.BackendInterop.PrepareUpscaleBridgeForFrame(viewport, this);
     }
 

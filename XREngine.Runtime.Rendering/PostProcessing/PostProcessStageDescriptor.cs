@@ -17,6 +17,11 @@ public sealed class PostProcessStageDescriptor(
     public Func<object>? BackingFactory { get; } = backingFactory;
 
     /// <summary>
+    /// Gets the editor section in which this stage is displayed.
+    /// </summary>
+    public PipelineEditorSection EditorSection { get; init; } = PipelineEditorSection.PostProcessing;
+
+    /// <summary>
     /// Optional stage-specific custom drawer that renders specialized UI extensions or parameter controls.
     /// </summary>
     public IPostProcessStageCustomDrawer? CustomDrawer { get; init; }

@@ -274,6 +274,8 @@ internal sealed partial class VulkanCommandRuntime
                 RecordAdvancedVisibilityLateComputePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
                 RecordAdvancedVisibilityLateRasterPayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.MultisampleResolve) =>
+                RecordAdvancedVisibilityMultisampleResolvePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.WorkClassification, EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete) =>
@@ -299,6 +301,9 @@ internal sealed partial class VulkanCommandRuntime
                 EVulkanCpuStage.PrimaryAdvancedLateComputeOperation,
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.LateRaster) =>
+                EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.MultisampleResolve) =>
                 EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
             (EAdvancedRenderStage.WorkClassification,
                 EAdvancedVisibilityStageBackendPhase.Complete) =>
@@ -409,51 +414,55 @@ internal sealed partial class VulkanCommandRuntime
         if (state.RenderScope.IsActive)
             EndActiveRenderPass(ref state);
 
+        bool buildDepthPyramid = payload.Request.MsaaSampleCount <= 1u;
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
         {
             if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
                 throw new VulkanPlanPreconditionException("Advanced late visibility could not resolve a sealed view segment.");
-            EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer, closure.DepthGroup, 0u, viewIndex,
-                ImageLayout.ShaderReadOnlyOptimal,
-                AccessFlags.ShaderReadBit,
-                PipelineStageFlags.ComputeShaderBit,
-                allowUndefined: false);
-            EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer, closure.PyramidGroup, 0u, viewIndex,
-                ImageLayout.General,
-                AccessFlags.ShaderWriteBit,
-                PipelineStageFlags.ComputeShaderBit,
-                allowUndefined: true);
-
-            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-                payload.BuildDepthPyramidPipeline);
-            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-                PipelineBindPoint.Compute, depth.PipelineLayout, in payload,
-                closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 0)]);
-            PushConstantsTracked(state.CommandBuffer, depth.PipelineLayout,
-                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
-                    DeviceContext), 0u,
-                new AdvancedVisibilityPreparationPushConstants(
-                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-            long buildRecordStart = Stopwatch.GetTimestamp();
-            using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
-                       state.CommandBuffer, NativeHiZBuildGpuProfilerPath))
+            if (buildDepthPyramid)
             {
-                Api.CmdDispatch(state.CommandBuffer,
-                    DivideRoundUp(closure.DepthGroup.ResolvedExtent.Width, 64u),
-                    DivideRoundUp(closure.DepthGroup.ResolvedExtent.Height, 64u), 1u);
+                EmitAdvancedVisibilityImageBarrier(
+                    state.CommandBuffer, closure.DepthGroup, 0u, viewIndex,
+                    ImageLayout.ShaderReadOnlyOptimal,
+                    AccessFlags.ShaderReadBit,
+                    PipelineStageFlags.ComputeShaderBit,
+                    allowUndefined: false);
+                EmitAdvancedVisibilityImageBarrier(
+                    state.CommandBuffer, closure.PyramidGroup, 0u, viewIndex,
+                    ImageLayout.General,
+                    AccessFlags.ShaderWriteBit,
+                    PipelineStageFlags.ComputeShaderBit,
+                    allowUndefined: true);
+
+                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                    payload.BuildDepthPyramidPipeline);
+                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                    PipelineBindPoint.Compute, depth.PipelineLayout, in payload,
+                    closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 0)]);
+                PushConstantsTracked(state.CommandBuffer, depth.PipelineLayout,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                        DeviceContext), 0u,
+                    new AdvancedVisibilityPreparationPushConstants(
+                        viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+                long buildRecordStart = Stopwatch.GetTimestamp();
+                using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
+                           state.CommandBuffer, NativeHiZBuildGpuProfilerPath))
+                {
+                    Api.CmdDispatch(state.CommandBuffer,
+                        DivideRoundUp(closure.DepthGroup.ResolvedExtent.Width, 64u),
+                        DivideRoundUp(closure.DepthGroup.ResolvedExtent.Height, 64u), 1u);
+                }
+                OcclusionTelemetry.RecordHiZBuild(
+                    closure.DepthGroup.ResolvedExtent.Width,
+                    closure.DepthGroup.ResolvedExtent.Height,
+                    Stopwatch.GetElapsedTime(buildRecordStart).TotalMilliseconds);
+                EmitAdvancedVisibilityImageBarrier(
+                    state.CommandBuffer, closure.PyramidGroup, 0u, viewIndex,
+                    ImageLayout.ShaderReadOnlyOptimal,
+                    AccessFlags.ShaderReadBit,
+                    PipelineStageFlags.ComputeShaderBit,
+                    allowUndefined: false);
             }
-            OcclusionTelemetry.RecordHiZBuild(
-                closure.DepthGroup.ResolvedExtent.Width,
-                closure.DepthGroup.ResolvedExtent.Height,
-                Stopwatch.GetElapsedTime(buildRecordStart).TotalMilliseconds);
-            EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer, closure.PyramidGroup, 0u, viewIndex,
-                ImageLayout.ShaderReadOnlyOptimal,
-                AccessFlags.ShaderReadBit,
-                PipelineStageFlags.ComputeShaderBit,
-                allowUndefined: false);
 
             // Build the depth pyramid even when the scene has no opaque draws.
             if (payload.State.PayloadCapacity != 0u)
@@ -501,16 +510,17 @@ internal sealed partial class VulkanCommandRuntime
         // This physical compute pass exits with the produced coarse tile
         // level in General, matching its declared read/write storage use rather than
         // leaking the internal sampled layout across the pass boundary.
-        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
-            EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer,
-                closure.PyramidGroup,
-                0u,
-                viewIndex,
-                ImageLayout.General,
-                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
-                PipelineStageFlags.ComputeShaderBit,
-                allowUndefined: false);
+        if (buildDepthPyramid)
+            for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+                EmitAdvancedVisibilityImageBarrier(
+                    state.CommandBuffer,
+                    closure.PyramidGroup,
+                    0u,
+                    viewIndex,
+                    ImageLayout.General,
+                    AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                    PipelineStageFlags.ComputeShaderBit,
+                    allowUndefined: false);
         return info.OperationIndex;
     }
 
@@ -535,6 +545,122 @@ internal sealed partial class VulkanCommandRuntime
             State = lateState,
         };
         return RecordAdvancedVisibilityRasterPayload(ref state, in latePayload, in info);
+    }
+
+    private int RecordAdvancedVisibilityMultisampleResolvePayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+    {
+        if (payload.Request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve ||
+            payload.Request.MsaaSampleCount <= 1u ||
+            !payload.State.IsValid || !payload.SceneState.IsValid ||
+            payload.NativeComputeClosure is not { IsValid: true, UsesMultisampleVisibility: true } closure ||
+            payload.NativeComputeDescriptorSet.Handle == 0 ||
+            !payload.MultisampleResolvePipeline.IsValid)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced MSAA visibility resolve reached recording without its sealed raw images, descriptor set, target, and graphics pipeline.");
+        }
+
+        VulkanAdvancedMsaaResolvePipeline resolve = payload.MultisampleResolvePipeline;
+        if (resolve.Program.LinkGeneration != resolve.ProgramLinkGeneration ||
+            resolve.TargetClosure != payload.TargetClosure)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced MSAA visibility resolve pipeline changed after frame-plan sealing.");
+        }
+        if (ResourceRuntime.BackendObjects.Get(payload.Request.Target) is not VkFrameBuffer targetWrapper)
+            throw new VulkanPlanPreconditionException(
+                "Advanced MSAA visibility resolve lost its authoritative canonical framebuffer wrapper.");
+        if (state.Policy.AllowSynchronousResourceUploads)
+            targetWrapper.EnsureCurrent();
+        if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
+                out VulkanRecordedRenderTargetSnapshot currentTarget) ||
+            currentTarget != payload.TargetClosure.NativeTarget)
+        {
+            string mismatch = currentTarget.IsComplete
+                ? payload.TargetClosure.NativeTarget.DescribeFirstMismatch(in currentTarget)
+                : "the current native target is incomplete";
+            throw new VulkanPlanPreconditionException(
+                $"Advanced MSAA visibility resolve target changed after sealing: {mismatch}.");
+        }
+
+        if (state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+        TrackAdvancedNativeShadeClosure(state.CommandBuffer, in closure);
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        {
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, closure.IdentityMultisample!, 0u, viewIndex,
+                ImageLayout.General, AccessFlags.ShaderReadBit,
+                PipelineStageFlags.FragmentShaderBit, allowUndefined: false);
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, closure.MetadataMultisample!, 0u, viewIndex,
+                ImageLayout.General, AccessFlags.ShaderReadBit,
+                PipelineStageFlags.FragmentShaderBit, allowUndefined: false);
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, closure.SelectionMultisample!, 0u, viewIndex,
+                ImageLayout.General, AccessFlags.ShaderReadBit,
+                PipelineStageFlags.FragmentShaderBit, allowUndefined: false);
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, closure.DepthMultisample!, 0u, viewIndex,
+                ImageLayout.ShaderReadOnlyOptimal, AccessFlags.ShaderReadBit,
+                PipelineStageFlags.FragmentShaderBit, allowUndefined: false);
+        }
+
+        BeginRenderPassForTarget(
+            ref state,
+            payload.Request.Target,
+            info.PassIndex,
+            state.ActiveContext,
+            clearPolicy: payload.TargetClosure.ClearPolicy);
+        if (!state.RenderScope.IsActive ||
+            state.RenderScope.Target != payload.TargetClosure.Target ||
+            state.RenderScope.UsesDynamicRendering != payload.TargetClosure.UsesDynamicRendering ||
+            state.RenderScope.DepthStencilReadOnly != payload.TargetClosure.DepthStencilReadOnly ||
+            payload.TargetClosure.UsesDynamicRendering &&
+                !state.RenderScope.DynamicRenderingFormats.Equals(
+                    payload.TargetClosure.DynamicRenderingFormats) ||
+            !payload.TargetClosure.UsesDynamicRendering &&
+                state.RenderScope.RenderPass.Handle != payload.TargetClosure.RenderPass.Handle)
+        {
+            throw new VulkanPlanPreconditionException(
+                "The active MSAA visibility resolve render scope does not match its sealed canonical target closure.");
+        }
+
+        Extent2D extent = new(
+            payload.TargetClosure.NativeTarget.Width,
+            payload.TargetClosure.NativeTarget.Height);
+        Viewport viewport = CreateVulkanViewport(extent);
+        Rect2D scissor = new(new Offset2D(0, 0), extent);
+        SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
+
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.MsaaResolve");
+        BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Graphics,
+            resolve.Pipeline);
+        BindAdvancedVisibilityDescriptorSets(
+            state.CommandBuffer,
+            PipelineBindPoint.Graphics,
+            resolve.PipelineLayout,
+            in payload,
+            payload.NativeComputeDescriptorSet);
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        {
+            RenderFrameViewDescriptor view = payload.Request.Views.GetView(
+                checked((int)viewIndex));
+            PushConstantsTracked(
+                state.CommandBuffer,
+                resolve.PipelineLayout,
+                ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                0u,
+                new AdvancedVisibilityMsaaResolvePushConstants(
+                    viewIndex,
+                    view.ReversedDepth ? 1u : 0u));
+            Api.CmdDraw(state.CommandBuffer, 3u, 1u, 0u, 0u);
+        }
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
     }
 
     private unsafe void EmitAdvancedVisibilityImageBarrier(
@@ -1105,6 +1231,10 @@ internal sealed partial class VulkanCommandRuntime
         uint PayloadBase,
         uint PayloadCapacity,
         uint RangeBase);
+
+    private readonly record struct AdvancedVisibilityMsaaResolvePushConstants(
+        uint ViewIndex,
+        uint ReversedDepth);
 
     /// <summary>
     /// Executes a planned non-graphics secondary range. The dense frame-op

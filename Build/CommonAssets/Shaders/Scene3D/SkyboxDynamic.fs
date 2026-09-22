@@ -2,7 +2,7 @@
 
 #pragma snippet "DDGIEnvironmentCapture"
 
-layout (location = 0) out vec3 OutColor;
+layout (location = 0) out vec4 OutColor;
 layout (location = 1) in vec3 FragWorldDir;
 
 uniform float SkyboxIntensity = 1.0;
@@ -361,5 +361,5 @@ void main()
         color = mix(vec3(0.05, 0.08, 0.15), vec3(0.30, 0.50, 0.85), h);
     }
 
-    OutColor = max(color, vec3(0.0)) * SkyboxIntensity;
+    OutColor = vec4(max(color, vec3(0.0)) * SkyboxIntensity, 1.0);
 }

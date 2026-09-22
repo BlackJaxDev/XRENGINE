@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.RenderGraph;
 
@@ -6,13 +7,32 @@ namespace XREngine.Rendering.RenderGraph;
 /// Carries state while walking the viewport command list to produce render-graph metadata.
 /// Tracks currently bound render targets so later commands can attribute their reads/writes.
 /// </summary>
-public sealed class RenderGraphDescribeContext(RenderPassMetadataCollection metadata)
+public sealed class RenderGraphDescribeContext(
+    RenderPassMetadataCollection metadata,
+    RenderPipelineResourceLayout? resourceLayout = null)
 {
     private readonly Stack<RenderTargetBinding> _targetStack = new();
     private readonly Dictionary<string, int> _syntheticPassIndices = new();
     private int _nextSyntheticPassIndex = 100000;
 
     public RenderPassMetadataCollection Metadata { get; } = metadata;
+
+    /// <summary>
+    /// The immutable resource layout the pass description must match. This is null only
+    /// while producing pipeline-level fallback metadata before a viewport has selected an
+    /// effective resource profile.
+    /// </summary>
+    public RenderPipelineResourceLayout? ResourceLayout { get; } = resourceLayout;
+
+    /// <summary>Gets the profile selected for the resource generation being described.</summary>
+    public RenderPipelineResourceProfile? ResourceProfile => ResourceLayout?.Profile;
+
+    /// <summary>
+    /// Returns whether the selected generation materializes a named resource. Commands use
+    /// this instead of mutable frame settings when declaring profile variants.
+    /// </summary>
+    public bool HasResource(string name)
+        => ResourceLayout?.ResourcesByName.ContainsKey(name) == true;
 
     public RenderTargetBinding? CurrentRenderTarget
         => _targetStack.Count > 0 ? _targetStack.Peek() : null;
@@ -42,5 +62,17 @@ public sealed class RenderGraphDescribeContext(RenderPassMetadataCollection meta
         }
 
         return Metadata.ForPass(passIndex, key, stage);
+    }
+
+    /// <summary>
+    /// Reserves a synthetic pass identity without adding a pass declaration. Profile variants
+    /// use this for optional passes so later indices stay stable when a pass is absent.
+    /// </summary>
+    public void ReserveSyntheticPassIndex(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || _syntheticPassIndices.ContainsKey(key))
+            return;
+
+        _syntheticPassIndices.Add(key, _nextSyntheticPassIndex++);
     }
 }

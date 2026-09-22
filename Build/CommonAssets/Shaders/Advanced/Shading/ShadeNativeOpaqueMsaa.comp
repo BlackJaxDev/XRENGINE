@@ -1,0 +1,182 @@
+#version 450
+#include "Advanced/Classification/ClassificationInterface.glslinc"
+#include "Advanced/Lighting/ClusteredLightingInterface.glslinc"
+#include "Advanced/Reconstruction/ReconstructSurface.glslinc"
+#include "StandardMaterial.glslinc"
+#include "StandardPBR.glslinc"
+#include "Advanced/Shading/StandardIbl.glslinc"
+#include "StandardShadow.glslinc"
+#include "AdvancedDecalModifier.glslinc"
+#pragma snippet "NormalEncoding"
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Raw visibility stays layered for mono and stereo. The dispatch selects one
+// physical layer through u_Push.viewIndex, matching the canonical resolve.
+XR_ADV_SHADING_LAYOUT(55) uniform usampler2DMSArray RawVisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(56) uniform usampler2DMSArray RawVisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(57) uniform usampler2DMSArray RawVisibilitySelection;
+XR_ADV_SHADING_LAYOUT(58) uniform sampler2DMSArray RawVisibilityDepth;
+XR_ADV_SHADING_LAYOUT(59) uniform sampler2DMSArray RawVisibilitySamplePosition;
+
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
+XR_ADV_SHADING_LAYOUT(50) uniform sampler2DArray AmbientOcclusion;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2DArray HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2DArray Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2DArray ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2DArray ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2DArray EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2DArray AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2DArray Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2DArray RMSE;
+#define XR_ADV_PIXEL(pixel, view) ivec3(pixel, view)
+#else
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_SHADING_LAYOUT(50) uniform sampler2D AmbientOcclusion;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2D EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2D AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2D Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
+#define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
+#endif
+
+#include "ShadeNativeOpaqueEvaluator.glslinc"
+
+const uint XR_ADV_VIEW_FLAG_REVERSED_DEPTH = 1u << 1u;
+
+bool XR_ADV_MsaaDepthIsValid(float depth)
+{
+    return !isnan(depth) && !isinf(depth) && depth >= 0.0 && depth <= 1.0;
+}
+
+bool XR_ADV_MsaaDepthIsCloser(float candidate, float current, bool reversedDepth)
+{
+    return reversedDepth ? candidate > current : candidate < current;
+}
+
+void XR_ADV_StoreUncoveredMsaaPixel(uvec2 pixel, uint viewIndex)
+{
+    imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex),
+        vec4(max(u_Push.backgroundColor.rgb, vec3(0.0)), 0.0));
+    imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+    imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+    imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(0u));
+    if (!XR_ADV_ExportsMaterialSurfaceInputs()) return;
+    imageStore(EmissionColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+    imageStore(AlbedoOpacity, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+    imageStore(Normal, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+    imageStore(RMSE, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+}
+
+void main()
+{
+#if defined(XR_ADV_SHADING_ADDRESS_ROOT_VERSION)
+    u_Push = XR_ADV_LoadShadingParameters();
+#endif
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uint viewIndex = u_Push.viewIndex;
+    if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount)
+        return;
+
+    ivec3 rawCoordinate = ivec3(pixel, int(viewIndex));
+    int sampleCount = textureSamples(RawVisibilityIdentity);
+    if (sampleCount <= 0)
+    {
+        XR_ADV_StoreUncoveredMsaaPixel(pixel, viewIndex);
+        return;
+    }
+
+    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    bool reversedDepth = (view.flags & XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
+        view.depthParams.w != 0.0;
+    float nearestDepth = reversedDepth ? 0.0 : 1.0;
+    float ambientOcclusion = texelFetch(
+        AmbientOcclusion, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+
+    int coveredCount = 0;
+    vec3 radianceSum = vec3(0.0);
+    float reactive = 0.0;
+    bool foundNearest = false;
+    bool mixedVisibility = false;
+    uvec4 firstTuple = uvec4(0u);
+    XRAdvancedOpaqueSampleResult firstResult = XR_ADV_NeutralOpaqueSampleResult();
+    XRAdvancedOpaqueSampleResult nearestResult = firstResult;
+
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        uvec2 identity = texelFetch(
+            RawVisibilityIdentity, rawCoordinate, sampleIndex).rg;
+        if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
+            continue;
+
+        uint metadata = texelFetch(
+            RawVisibilityMetadata, rawCoordinate, sampleIndex).r;
+        uint selection = texelFetch(
+            RawVisibilitySelection, rawCoordinate, sampleIndex).r;
+        float depth = texelFetch(
+            RawVisibilityDepth, rawCoordinate, sampleIndex).r;
+        vec2 samplePosition = texelFetch(
+            RawVisibilitySamplePosition, rawCoordinate, sampleIndex).rg;
+
+        XRAdvancedOpaqueSampleResult sampleResult;
+        XR_ADV_EvaluateNativeOpaqueSample(
+            pixel,
+            viewIndex,
+            identity,
+            metadata,
+            depth,
+            vec2(pixel) + samplePosition,
+            ambientOcclusion,
+            false,
+            0u,
+            false,
+            sampleResult);
+
+        radianceSum += max(sampleResult.radiance, vec3(0.0));
+        reactive = max(reactive, sampleResult.reactive);
+        uvec4 tuple = uvec4(identity, metadata, selection);
+        if (coveredCount == 0)
+        {
+            firstTuple = tuple;
+            firstResult = sampleResult;
+        }
+        else
+            mixedVisibility = mixedVisibility || any(notEqual(tuple, firstTuple));
+        ++coveredCount;
+
+        // Match ResolveAdvancedMsaaVisibility.frag exactly: only a finite
+        // normalized depth participates, strict comparison preserves the first
+        // sample on ties, and every chosen sidecar comes from this same sample.
+        if (XR_ADV_MsaaDepthIsValid(depth) &&
+            (!foundNearest || XR_ADV_MsaaDepthIsCloser(depth, nearestDepth, reversedDepth)))
+        {
+            foundNearest = true;
+            nearestDepth = depth;
+            nearestResult = sampleResult;
+        }
+    }
+
+    if (coveredCount == 0)
+    {
+        XR_ADV_StoreUncoveredMsaaPixel(pixel, viewIndex);
+        return;
+    }
+
+    XRAdvancedOpaqueSampleResult result = foundNearest ? nearestResult : firstResult;
+    float inverseSampleCount = 1.0 / float(sampleCount);
+    float coverage = float(coveredCount) * inverseSampleCount;
+    result.radiance = radianceSum * inverseSampleCount +
+        max(u_Push.backgroundColor.rgb, vec3(0.0)) * (1.0 - coverage);
+    result.opacity = coverage;
+    bool partialCoverage = coveredCount != sampleCount;
+    result.reactive = (partialCoverage || mixedVisibility) ? 1.0 : reactive;
+    XR_ADV_StoreOpaqueSampleResult(pixel, viewIndex, result);
+}

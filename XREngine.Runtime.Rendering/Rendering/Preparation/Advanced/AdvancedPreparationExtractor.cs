@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
@@ -59,6 +60,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     // deferred Vulkan consumer must obtain record data from the package's
     // retained publication, never by retaining this mutable GPUScene.
     private uint _preparedSceneIdentity;
+    internal long LastExtractionTicks { get; private set; }
 
     public AdvancedPreparationExtractor(AdvancedPreparationOptions options)
     {
@@ -190,6 +192,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers)
     {
+        LastExtractionTicks = 0;
         // Do not let deferred or failed preparation leave consumers observing
         // arrays tied to the preceding world frame.
         AdvanceVisibilityContentGeneration();
@@ -262,6 +265,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                     (uint)_options.MaximumDraws
                 : 0u;
 
+        long extractionStarted = Stopwatch.GetTimestamp();
         for (int commandIndex = 0;
              commandIndex < _drawCount;
              commandIndex++)
@@ -272,6 +276,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 frameId,
                 world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
         }
+        LastExtractionTicks = Stopwatch.GetTimestamp() - extractionStarted;
 
         _admission = _deformationJobs.FinalizeJobs(
             _options.DeformationBudget);

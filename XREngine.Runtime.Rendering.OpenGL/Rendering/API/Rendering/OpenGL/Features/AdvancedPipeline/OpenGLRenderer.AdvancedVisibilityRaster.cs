@@ -30,7 +30,14 @@ public partial class OpenGLRenderer
             reason = "OpenGL Advanced visibility has no prepared geometry atlas.";
             return false;
         }
-        bool stereo = request.Views.ViewCount == 2;
+        bool multisample = request.MsaaSampleCount > 1u;
+        Span<uint> multisampleIds = stackalloc uint[5];
+        if (multisample && (!TryEnsureAdvancedMultisamplePrograms(out reason) ||
+            !TryGetAdvancedMultisampleTextures(request.MsaaSampleCount, multisampleIds, out reason)))
+            return false;
+        // The layered per-view path supports multisample arrays without relying
+        // on the optional OVR multisampled-multiview attachment extension.
+        bool stereo = request.Views.ViewCount == 2 && !multisample;
         if (stereo && (!TryEnsureAdvancedStereoPrograms(out reason) ||
                        !TryBuildAdvancedStereoRasterStream(slot, late, out reason)))
             return false;
@@ -49,8 +56,9 @@ public partial class OpenGLRenderer
         int oldFront = RawGL.GetInteger(GLEnum.FrontFace);
         int* oldViewport = stackalloc int[4];
         RawGL.GetInteger(GLEnum.Viewport, oldViewport);
-        int* oldColorWrites = stackalloc int[12];
-        for (uint attachment = 0; attachment < 3; ++attachment)
+        uint colorCount = multisample ? 4u : 3u;
+        int* oldColorWrites = stackalloc int[16];
+        for (uint attachment = 0; attachment < colorCount; ++attachment)
             RawGL.GetInteger(GLEnum.ColorWritemask, attachment, oldColorWrites + attachment * 4);
         bool oldDepthTest = RawGL.IsEnabled(GLEnum.DepthTest);
         bool oldBlend = RawGL.IsEnabled(GLEnum.Blend);
@@ -58,6 +66,9 @@ public partial class OpenGLRenderer
         bool oldScissor = RawGL.IsEnabled(GLEnum.ScissorTest);
         bool oldStencil = RawGL.IsEnabled(GLEnum.StencilTest);
         bool oldDepthWrite = RawGL.GetBoolean(GLEnum.DepthWritemask);
+        bool oldMultisample = RawGL.IsEnabled(GLEnum.Multisample);
+        bool oldSampleShading = RawGL.IsEnabled(GLEnum.SampleShading);
+        float oldMinSampleShading = RawGL.GetFloat(GLEnum.MinSampleShadingValue);
         if (_advancedRasterFramebuffer == 0) _advancedRasterFramebuffer = RawGL.GenFramebuffer();
         try
         {
@@ -71,12 +82,20 @@ public partial class OpenGLRenderer
             RawGL.DepthMask(true);
             // Native identity/metadata/selection writes cannot inherit a preceding
             // depth-only or editor pass's color mask, including their clears.
-            for (uint attachment = 0; attachment < 3; ++attachment)
+            for (uint attachment = 0; attachment < colorCount; ++attachment)
                 RawGL.ColorMask(attachment, true, true, true, true);
+            if (multisample)
+            {
+                RawGL.Enable(GLEnum.Multisample);
+                RawGL.Enable(GLEnum.SampleShading);
+                RawGL.MinSampleShading(1f);
+            }
             RawGL.FrontFace(FrontFaceDirection.Ccw);
             RawGL.Viewport(0, 0, target.Width, target.Height);
-            uint* attachments = stackalloc uint[3] { (uint)GLEnum.ColorAttachment0, (uint)GLEnum.ColorAttachment1, (uint)GLEnum.ColorAttachment2 };
-            RawGL.DrawBuffers(3, (GLEnum*)attachments);
+            uint* attachments = stackalloc uint[4] { (uint)GLEnum.ColorAttachment0, (uint)GLEnum.ColorAttachment1, (uint)GLEnum.ColorAttachment2, (uint)GLEnum.ColorAttachment3 };
+            RawGL.DrawBuffers(colorCount, (GLEnum*)attachments);
+            if (!multisample)
+                RawGL.NamedFramebufferTexture(_advancedRasterFramebuffer, GLEnum.ColorAttachment3, 0u, 0);
             RawGL.BindBuffer(GLEnum.DrawIndirectBuffer, slot.Buffer(stereo ? 75u : late ? 70u : 58u));
             RawGL.BindBuffer(GLEnum.ParameterBuffer, slot.Buffer(stereo ? 76u : late ? 69u : 56u));
             Span<uint> push = stackalloc uint[4];
@@ -99,6 +118,8 @@ public partial class OpenGLRenderer
                     RawGL.NamedFramebufferTextureLayer(_advancedRasterFramebuffer, GLEnum.ColorAttachment1, target.MetadataId, 0, (int)view);
                     RawGL.NamedFramebufferTextureLayer(_advancedRasterFramebuffer, GLEnum.ColorAttachment2, target.SelectionId, 0, (int)view);
                     RawGL.NamedFramebufferTextureLayer(_advancedRasterFramebuffer, GLEnum.DepthAttachment, target.DepthId, 0, (int)view);
+                    if (multisample)
+                        RawGL.NamedFramebufferTextureLayer(_advancedRasterFramebuffer, GLEnum.ColorAttachment3, multisampleIds[4], 0, (int)view);
                 }
                 if (RawGL.CheckNamedFramebufferStatus(_advancedRasterFramebuffer, GLEnum.DrawFramebuffer) != GLEnum.FramebufferComplete)
                 {
@@ -177,7 +198,7 @@ public partial class OpenGLRenderer
             RawGL.Viewport(oldViewport[0], oldViewport[1], (uint)oldViewport[2], (uint)oldViewport[3]);
             RawGL.DepthFunc((DepthFunction)oldDepthFunc);
             RawGL.DepthMask(oldDepthWrite);
-            for (uint attachment = 0; attachment < 3; ++attachment)
+            for (uint attachment = 0; attachment < colorCount; ++attachment)
             {
                 int* write = oldColorWrites + attachment * 4;
                 RawGL.ColorMask(attachment, write[0] != 0, write[1] != 0, write[2] != 0, write[3] != 0);
@@ -189,6 +210,9 @@ public partial class OpenGLRenderer
             RestoreAdvancedEnable(GLEnum.CullFace, oldCullEnabled);
             RestoreAdvancedEnable(GLEnum.ScissorTest, oldScissor);
             RestoreAdvancedEnable(GLEnum.StencilTest, oldStencil);
+            RestoreAdvancedEnable(GLEnum.Multisample, oldMultisample);
+            RestoreAdvancedEnable(GLEnum.SampleShading, oldSampleShading);
+            RawGL.MinSampleShading(oldMinSampleShading);
         }
     }
 
@@ -204,8 +228,11 @@ public partial class OpenGLRenderer
             _advancedOutputRegistry is null || !_advancedOutputRegistry.TryGetRetainedSlot(request.Reservation, out var slot) ||
             slot is null || _advancedInputStorage is null)
             return false;
+        bool multisample = request.MsaaSampleCount > 1u;
+        if (multisample && !TryEnsureAdvancedMultisamplePrograms(out reason))
+            return false;
         GLRenderProgram? pyramid = GenericToAPI<GLRenderProgram>(_advancedDepthPyramidProgram);
-        GLRenderProgram? late = GenericToAPI<GLRenderProgram>(_advancedLateVisibilityProgram);
+        GLRenderProgram? late = GenericToAPI<GLRenderProgram>(multisample ? _advancedMsaaLateProgram : _advancedLateVisibilityProgram);
         if (pyramid is null || late is null) { reason = "OpenGL Advanced late programs are unavailable."; return false; }
         Span<uint> priorSampler = stackalloc uint[1];
         if (!TryBindAdvancedNativeSamplers(4u, priorSampler, out reason))
@@ -219,12 +246,15 @@ public partial class OpenGLRenderer
             push[0] = view; push[1] = view * count; push[2] = count;
             push[3] = view * checked((uint)_advancedInputStorage.IndirectRanges.Length);
             slot.UploadUniform(this, 0u, push);
+            if (!multisample)
+            {
             RawGL.BindTextureUnit(4u, target.DepthId);
             RawGL.BindImageTexture(5u, target.DepthPyramidId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.R32f);
             if (!pyramid.Use()) { reason = "OpenGL depth reduction program did not link."; return false; }
             RawGL.DispatchCompute((target.Width + 63u) / 64u, (target.Height + 63u) / 64u, 1u);
             RawGL.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit);
             RawGL.BindTextureUnit(4u, target.DepthPyramidId);
+            }
             if (!late.Use()) { reason = "OpenGL late visibility program did not link."; return false; }
             RawGL.DispatchCompute(Math.Max(1u, (count + 255u) / 256u), 1u, 1u);
             RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit | MemoryBarrierMask.CommandBarrierBit);

@@ -257,7 +257,8 @@ internal sealed class VulkanPrimaryCommandPlan
     private static bool IsAdvancedVisibilityRaster(
         in VulkanAdvancedVisibilityStageRequest request)
         => request.Stage == EAdvancedRenderStage.VisibilityRaster ||
-           request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster;
+           request.Phase is EAdvancedVisibilityStageBackendPhase.LateRaster or
+               EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
 
     private static bool EndsRenderScope(FrameOperationStream operations, int operationIndex)
     {

@@ -18,6 +18,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     private GlobalIlluminationPlan? _globalIlluminationPlan;
     internal const string LateVisibilityRasterPassName =
         "Advanced.LateVisibilityRaster";
+    internal const string MultisampleVisibilityResolvePassName =
+        "Advanced.MultisampleVisibilityResolve";
 
     private EAdvancedRenderStage _stage;
 
@@ -152,15 +154,20 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
+        uint samples = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa
+            ? AdvancedRenderPipeline.ResolveEffectiveMsaaSampleCount() : 1u;
+        bool multisampleRaster = samples > 1u && Stage is (EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster or EAdvancedRenderStage.DepthPyramidAndLateVisibility);
+        string targetName = multisampleRaster ? AdvancedVisibilityResourceNames.FrameBufferMultisample : AdvancedVisibilityResourceNames.FrameBuffer;
         if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(
-                AdvancedVisibilityResourceNames.FrameBuffer,
+                targetName,
                 out XRFrameBuffer? target) ||
             target is null)
         {
             ReportExecutionPrerequisiteRejection(
-                $"The active resource generation has no realized '{AdvancedVisibilityResourceNames.FrameBuffer}' target.");
+                $"The active resource generation has no realized '{targetName}' target.");
             Debug.Out(
-                $"Advanced visibility stage '{Stage}' has no realized '{AdvancedVisibilityResourceNames.FrameBuffer}' target in the active resource generation.");
+                $"Advanced visibility stage '{Stage}' has no realized '{targetName}' target in the active resource generation.");
             return;
         }
 
@@ -171,13 +178,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             publication,
             AdvancedSharedPreparationService.Instance.Extractor,
             world.FrameId,
-            state.FrameViewSet ?? throw new InvalidOperationException(
+            state.TemporalAuthoringViewSet ?? state.FrameViewSet ?? throw new InvalidOperationException(
                 "Advanced visibility requires an immutable frame view set."),
             target,
-            AdvancedVisibilityResourceNames.Identity,
-            AdvancedVisibilityResourceNames.Metadata,
-            AdvancedVisibilityResourceNames.Selection,
-            AdvancedVisibilityResourceNames.DepthStencil,
+            multisampleRaster ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity,
+            multisampleRaster ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata,
+            multisampleRaster ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection,
+            multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
             AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
             pipeline.ShadingDebugView,
@@ -197,6 +204,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             BackendReadyPackage = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
             FroxelDepthSlices = pipeline.FroxelDepthSlices,
+            MsaaSampleCount = samples,
+            HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
         };
 
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
@@ -215,6 +224,20 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     Phase = EAdvancedVisibilityStageBackendPhase.LateRaster,
                 },
                 LateVisibilityRasterPassName);
+            if (samples > 1u)
+            {
+                if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(AdvancedVisibilityResourceNames.FrameBuffer, out XRFrameBuffer? resolvedTarget) || resolvedTarget is null)
+                    throw new InvalidOperationException("Advanced MSAA requires the canonical visibility resolve framebuffer.");
+                EnqueueLatePhase(visibility, request with
+                {
+                    Phase = EAdvancedVisibilityStageBackendPhase.MultisampleResolve,
+                    Target = resolvedTarget,
+                    IdentityTargetName = AdvancedVisibilityResourceNames.Identity,
+                    MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
+                    SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
+                    DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
+                }, MultisampleVisibilityResolvePassName);
+            }
             return;
         }
 
@@ -268,7 +291,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     }
 
     private IDisposable? PushRenderGraphPass(string passName)
-        => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+        => ActivePipelineInstance.TryGetActiveRenderPassIndex(passName, out int passIndex)
             ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
             : null;
 
@@ -347,6 +370,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         AdvancedRenderStageDescriptor descriptor = Descriptor;
+        bool usesMultisampleVisibility = UsesMultisampleVisibility(context);
         // Stage ordinals describe the Advanced command chain, while the mesh
         // passes use the same small integers for their own collection keys.
         // Give graph nodes their own identities so these unrelated passes
@@ -356,26 +380,43 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             descriptor.RenderGraphStage);
 
         builder.UseEngineDescriptors();
-        DescribeVisibilityResources(builder, descriptor.Stage, GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true);
+        DescribeVisibilityResources(
+            builder,
+            descriptor.Stage,
+            GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
+            usesMultisampleVisibility);
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
-            DescribeLateRasterPass(context, builder.PassIndex);
+            // Reserve the optional node even when this generation is not MSAA so the
+            // following synthetic passes retain their stable execution identities.
+            context.ReserveSyntheticPassIndex(MultisampleVisibilityResolvePassName);
+            DescribeLateRasterPass(context, builder.PassIndex, usesMultisampleVisibility);
+            if (usesMultisampleVisibility)
+                DescribeMultisampleResolvePass(context);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion)
         {
-            builder.DependsOn(context.GetOrCreateSyntheticPass(
-                LateVisibilityRasterPassName,
-                ERenderGraphPassStage.Graphics).PassIndex);
+            builder.DependsOn(usesMultisampleVisibility
+                ? context.GetOrCreateSyntheticPass(
+                    MultisampleVisibilityResolvePassName,
+                    ERenderGraphPassStage.Graphics).PassIndex
+                : context.GetOrCreateSyntheticPass(
+                    LateVisibilityRasterPassName,
+                    ERenderGraphPassStage.Graphics).PassIndex);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
             // Classification consumes visibility, independently of GTAO. The
             // native overlap executor joins it with lighting preparation at shade.
-            builder.DependsOn(context.GetOrCreateSyntheticPass(
-                LateVisibilityRasterPassName,
-                ERenderGraphPassStage.Graphics).PassIndex);
+            builder.DependsOn(usesMultisampleVisibility
+                ? context.GetOrCreateSyntheticPass(
+                    MultisampleVisibilityResolvePassName,
+                    ERenderGraphPassStage.Graphics).PassIndex
+                : context.GetOrCreateSyntheticPass(
+                    LateVisibilityRasterPassName,
+                    ERenderGraphPassStage.Graphics).PassIndex);
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
     }
@@ -394,7 +435,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
     private static void DescribeLateRasterPass(
         RenderGraphDescribeContext context,
-        int computePassIndex)
+        int computePassIndex,
+        bool usesMultisampleVisibility)
     {
         RenderPassBuilder builder = context.GetOrCreateSyntheticPass(
                 LateVisibilityRasterPassName,
@@ -402,34 +444,44 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             .UseEngineDescriptors()
             .DependsOn(computePassIndex)
             .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
-            .ReadBuffer(AdvancedVisibilityResourceNames.Producers)
-            .UseColorAttachment(
-                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 0),
-                ERenderGraphAccess.ReadWrite,
-                ERenderPassLoadOp.Load,
-                ERenderPassStoreOp.Store)
-            .UseColorAttachment(
-                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 1),
-                ERenderGraphAccess.ReadWrite,
-                ERenderPassLoadOp.Load,
-                ERenderPassStoreOp.Store)
-            .UseColorAttachment(
-                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 2),
-                ERenderGraphAccess.ReadWrite,
-                ERenderPassLoadOp.Load,
-                ERenderPassStoreOp.Store)
-            .UseDepthAttachment(
-                RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
-                ERenderGraphAccess.ReadWrite,
-                ERenderPassLoadOp.Load,
-                ERenderPassStoreOp.Store);
+            .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
         DescribeLateRasterSlotResources(builder);
+        if (usesMultisampleVisibility)
+            DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load);
+        else
+            DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Load);
+    }
+
+    private static void DescribeMultisampleResolvePass(RenderGraphDescribeContext context)
+    {
+        RenderPassBuilder builder = context.GetOrCreateSyntheticPass(MultisampleVisibilityResolvePassName, ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(context.GetOrCreateSyntheticPass(LateVisibilityRasterPassName, ERenderGraphPassStage.Graphics).PassIndex)
+            .SampleTexture(Tex(AdvancedVisibilityResourceNames.IdentityMultisample))
+            .SampleTexture(Tex(AdvancedVisibilityResourceNames.MetadataMultisample))
+            .SampleTexture(Tex(AdvancedVisibilityResourceNames.SelectionMultisample))
+            .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencilMultisample));
+        for (int attachment = 0; attachment < 3; attachment++)
+            builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, attachment),
+                ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+        builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+    }
+
+    private static void DescribeMultisampleRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load)
+    {
+        for (int attachment = 0; attachment < 4; attachment++)
+            builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBufferMultisample, attachment),
+                ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
+        builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBufferMultisample),
+            ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
     }
 
     private static void DescribeVisibilityResources(
         RenderPassBuilder builder,
         EAdvancedRenderStage stage,
-        bool requiresMaterialSurfaceExports)
+        bool requiresMaterialSurfaceExports,
+        bool usesMultisampleVisibility)
     {
         switch (stage)
         {
@@ -471,29 +523,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 break;
 
             case EAdvancedRenderStage.VisibilityRaster:
+                if (usesMultisampleVisibility)
+                    DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Clear);
+                else
+                    DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Clear);
                 builder
                     .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
-                    .ReadBuffer(AdvancedVisibilityResourceNames.Producers)
-                    .UseColorAttachment(
-                        RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 0),
-                        ERenderGraphAccess.Write,
-                        ERenderPassLoadOp.Clear,
-                        ERenderPassStoreOp.Store)
-                    .UseColorAttachment(
-                        RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 1),
-                        ERenderGraphAccess.Write,
-                        ERenderPassLoadOp.Clear,
-                        ERenderPassStoreOp.Store)
-                    .UseColorAttachment(
-                        RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 2),
-                        ERenderGraphAccess.Write,
-                        ERenderPassLoadOp.Clear,
-                        ERenderPassStoreOp.Store)
-                    .UseDepthAttachment(
-                        RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
-                        ERenderGraphAccess.Write,
-                        ERenderPassLoadOp.Clear,
-                        ERenderPassStoreOp.Store);
+                    .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
                 for (uint slot = 0u;
                      slot < AdvancedFrameSlotContract.DefaultSlotCount;
                      slot++)
@@ -513,13 +549,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 break;
 
             case EAdvancedRenderStage.DepthPyramidAndLateVisibility:
-                builder
-                    .SampleTexture(Tex(
-                        AdvancedVisibilityResourceNames.DepthStencil))
-                    .ReadWriteTexture(Tex(
-                        AdvancedVisibilityResourceNames.CurrentDepthPyramid))
-                    .ReadWriteBuffer(
-                        AdvancedVisibilityResourceNames.PersistentState);
+                if (!usesMultisampleVisibility)
+                {
+                    builder
+                        .SampleTexture(Tex(
+                            AdvancedVisibilityResourceNames.DepthStencil))
+                        .ReadWriteTexture(Tex(
+                            AdvancedVisibilityResourceNames.CurrentDepthPyramid))
+                        .ReadWriteBuffer(
+                            AdvancedVisibilityResourceNames.PersistentState);
+                }
                 DescribeLateComputeSlotResources(builder);
                 break;
 
@@ -540,12 +579,22 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 break;
 
             case EAdvancedRenderStage.NativeOpaqueShading:
+                if (usesMultisampleVisibility)
+                {
+                    builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.IdentityMultisample))
+                        .SampleTexture(Tex(AdvancedVisibilityResourceNames.MetadataMultisample))
+                        .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencilMultisample))
+                        .SampleTexture(Tex(AdvancedVisibilityResourceNames.SamplePositionMultisample));
+                }
+                else
+                {
+                    builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
+                        .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
+                        .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil));
+                }
                 // ShadeNativeOpaque reconstructs the local surface on demand;
                 // there is no intermediate AttributeReconstruction pass.
-                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
-                    .SampleTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName))
+                builder.SampleTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
@@ -626,4 +675,28 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
     private static string Tex(string textureName)
         => RenderGraphResourceNames.MakeTexture(textureName);
+
+    private static bool UsesMultisampleVisibility(RenderGraphDescribeContext context)
+        => context.ResourceProfile is { AntiAliasingMode: EAntiAliasingMode.Msaa, MsaaSampleCount: > 1u }
+           && context.HasResource(AdvancedVisibilityResourceNames.FrameBufferMultisample)
+           && context.HasResource(AdvancedVisibilityResourceNames.IdentityMultisample)
+           && context.HasResource(AdvancedVisibilityResourceNames.DepthStencilMultisample);
+
+    private static void DescribeCanonicalRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load)
+    {
+        for (int attachment = 0; attachment < 3; attachment++)
+        {
+            builder.UseColorAttachment(
+                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, attachment),
+                ERenderGraphAccess.ReadWrite,
+                load,
+                ERenderPassStoreOp.Store);
+        }
+
+        builder.UseDepthAttachment(
+            RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.ReadWrite,
+            load,
+            ERenderPassStoreOp.Store);
+    }
 }

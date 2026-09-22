@@ -840,7 +840,8 @@ internal sealed partial class VulkanFramePlanner
         string opName,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)
     {
-        passMetadata ??= RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        passMetadata ??= pipeline?.ActiveGeneration?.PassMetadata ?? pipeline?.Pipeline?.PassMetadata;
 
         if (passIndex == VulkanBarrierPlanner.SwapchainPassIndex)
         {

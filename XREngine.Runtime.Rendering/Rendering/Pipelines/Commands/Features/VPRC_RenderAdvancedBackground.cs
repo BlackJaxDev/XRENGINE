@@ -13,6 +13,7 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
     private readonly Predicate<RenderCommand> _filter;
     private bool _stereo;
     private int _passIndex = int.MinValue;
+    private XRMaterial? _admittedMaterial;
 
     public VPRC_RenderAdvancedBackground() => _filter = IsEligible;
 
@@ -47,7 +48,19 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
         }
 
         using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
-        ActivePipelineInstance.ActiveMeshRenderCommands.RenderCPUFiltered((int)EDefaultRenderPass.Background, _filter);
+        bool previous = state.AdvancedMultisampleBackground;
+        _admittedMaterial = null;
+        state.AdvancedMultisampleBackground = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&
+            RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame() > 1u;
+        try
+        {
+            ActivePipelineInstance.ActiveMeshRenderCommands.RenderCPUFiltered((int)EDefaultRenderPass.Background, _filter);
+        }
+        finally
+        {
+            state.AdvancedMultisampleBackground = previous;
+            _admittedMaterial = null;
+        }
     }
 
     private bool IsEligible(RenderCommand command)
@@ -68,6 +81,12 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
                 : reason ?? "The background command has no material.");
             return false;
         }
+        if (_admittedMaterial is not null && !ReferenceEquals(_admittedMaterial, material))
+        {
+            ReportRejection(material, "Only one authored background material may populate native HDR coverage in a frame.");
+            return false;
+        }
+
         // A renderer can issue several material subdraws. A receipt on its primary
         // material alone cannot authorize a different submesh to modify native state.
         if (materialOverride is null)
@@ -79,7 +98,13 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
                     ReportRejection(submaterial, reason ?? "The background submesh has no admitted material.");
                     return false;
                 }
+                if (!ReferenceEquals(submaterial, material))
+                {
+                    ReportRejection(submaterial, "A background mesh may not mix materials because native HDR coverage has one ordered background lane.");
+                    return false;
+                }
             }
+        _admittedMaterial ??= material;
         return true;
     }
 

@@ -26,6 +26,7 @@ using XREngine.Scene.Transforms;
 using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Diagnostics;
+using XREngine.Editor.Services;
 using XREngine.Editor.TransformEditors;
 using XREngine.Editor.UI.Tools;
 
@@ -101,6 +102,7 @@ public static partial class EditorImGuiUI
         private static Vector4? _imguiBaseChildBg;
         private static Vector4? _imguiBaseDockingEmptyBg;
         private static bool _componentTypeCacheDirty = true;
+        private static int _typeCatalogInvalidationPending;
         private static SceneNode? _nodePendingRename;
         private static SceneNode? _nodePendingSelection;
         private static IReadOnlyList<SceneNode>? _nodesPendingAddComponent;
@@ -274,25 +276,39 @@ public static partial class EditorImGuiUI
 
         static EditorImGuiUI()
         {
-            AppDomain.CurrentDomain.AssemblyLoad += (_, _) =>
+            EditorTypeCatalogGeneration.Changed += static generation =>
             {
-                _componentTypeCacheDirty = true;
-                _assetTypeCacheDirty = true;
-                ClearAssetExplorerTypeCaches();
-                _collectionTypeDescriptorCache.Clear();
-                _collectionTypePickerSearch.Clear();
-                _transformEditorCache.Clear();
-                _structEditablePropertyCache.Clear();
-                _eventSignatureOptionsCache.Clear();
-                _eventMethodOptionsCache.Clear();
-                _hierarchyTraversalMembersCache.Clear();
-                ClearDroppedAssetLoadCache();
-                ClearThirdPartyImportSettingsCache();
+                ResetPropertyTypeDescriptorCache(generation);
+                Volatile.Write(ref _typeCatalogInvalidationPending, 1);
             };
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
             Engine.Time.Timer.UpdateFrame += EnsureScenePanelWindowHooked;
             Selection.SelectionChanged += HandleSceneSelectionChanged;
             Engine.WindowCloseRequested = HandleWindowCloseRequested;
+        }
+
+        /// <summary>
+        /// Clears ImGui-owned reflection state on the ImGui thread after a load-context
+        /// generation changes. Loader callbacks only set the atomic request flag.
+        /// </summary>
+        private static void ProcessPendingTypeCatalogInvalidation()
+        {
+            if (Interlocked.Exchange(ref _typeCatalogInvalidationPending, 0) == 0)
+                return;
+
+            _componentTypeCacheDirty = true;
+            _assetTypeCacheDirty = true;
+            ClearAssetExplorerTypeCaches();
+            _collectionTypeDescriptorCache.Clear();
+            _collectionTypePickerSearch.Clear();
+            _propertyTypePickerSearch.Clear();
+            _transformEditorCache.Clear();
+            _structEditablePropertyCache.Clear();
+            _eventSignatureOptionsCache.Clear();
+            _eventMethodOptionsCache.Clear();
+            _hierarchyTraversalMembersCache.Clear();
+            ClearDroppedAssetLoadCache();
+            ClearThirdPartyImportSettingsCache();
         }
 
         private static bool ShouldSuppressEditorImGuiForRuntimeVrView()
@@ -579,6 +595,8 @@ public static partial class EditorImGuiUI
         public static void RenderEditor()
         {
             using var profilerScope = Engine.Profiler.Start("EditorImGuiUI.RenderEditor");
+            CameraComponentEditor.ProcessTypeCatalogOwnerWork();
+            ProcessPendingTypeCatalogInvalidation();
 
             if (!ShouldRenderEditorImGui())
             {

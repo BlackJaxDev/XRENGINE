@@ -168,7 +168,7 @@ void main()
         vec2(1.0));
 
     vec2 velocity = FindClosestVelocity(uv);
-    vec2 historyUV = uv - velocity * 0.5;
+    vec2 historyUV = uv - velocity * 0.5 + PreviousJitterUv - CurrentJitterUv;
 
     vec4 currentSample = texture(TemporalColorInput, EyeUv(uv));
     vec3 currentColorRaw = currentSample.rgb;

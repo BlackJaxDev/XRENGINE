@@ -110,7 +110,10 @@ namespace XREngine.Rendering.OpenGL
             }
             protected override void DeleteObject()
             {
-                if (TryGetBindingId(out var bindingId))
+                // Teardown must not invoke the virtual lookup: framebuffer lookup can
+                // reattach textures after the CPU object has begun destruction, skipping
+                // PreDeleted's native detach and leaving stale driver attachments.
+                if (_bindingId is uint bindingId && bindingId != InvalidBindingId)
                     RemoveCacheEntry(bindingId);
 
                 base.DeleteObject();

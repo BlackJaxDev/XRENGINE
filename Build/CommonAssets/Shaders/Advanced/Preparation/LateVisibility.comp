@@ -10,7 +10,11 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
 #define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
+#if defined(XR_ADV_DISABLE_HZB_OCCLUSION)
+#define XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES 0
+#else
 #define XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES 1
+#endif
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -196,10 +200,18 @@ void main()
     }
     bool forceVisible = (candidate.Flags &
         (FLAG_NEW | FLAG_RESIZED | FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u;
-    if (forceVisible || !currentDepthOccludes(
+#if defined(XR_ADV_DISABLE_HZB_OCCLUSION)
+    // Per-sample visibility is resolved only after late raster. The current
+    // pyramid describes the previous canonical surface, so it cannot prove
+    // occlusion for this MSAA path; retain every deferred candidate instead.
+    bool visible = true;
+#else
+    bool visible = forceVisible || !currentDepthOccludes(
             candidate.BoundsMin,
             candidate.BoundsMax,
-            view))
+            view);
+#endif
+    if (visible)
     {
         uint outputIndex;
         if (!reserveLateOutput(outputIndex))

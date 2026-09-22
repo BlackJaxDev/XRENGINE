@@ -712,7 +712,7 @@ namespace XREngine.Rendering.Commands
                 _ownerPipeline as XRRenderPipelineInstance;
             RenderPipeline? pipeline = ownerPipeline?.Pipeline;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata =
-                pipeline?.PassMetadata;
+                ownerPipeline?.ActiveGeneration?.PassMetadata ?? pipeline?.PassMetadata;
             _updatingBackendReadyPackage.Prepare(
                 _updatingBackendReadyIdentity,
                 Interlocked.Increment(ref _backendReadyPackageGeneration),

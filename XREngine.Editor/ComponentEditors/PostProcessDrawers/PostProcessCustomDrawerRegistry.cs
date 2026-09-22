@@ -1,18 +1,21 @@
 using System;
 using System.Collections.Generic;
+using XREngine.Rendering;
 using XREngine.Rendering.PostProcessing;
 
 namespace XREngine.Editor.ComponentEditors.PostProcessDrawers;
 
 /// <summary>
-/// Registry mapping post-process stage keys to editor-specific custom drawers.
+/// Resolves editor-specific custom drawers for post-process stages.
 /// </summary>
 public static class PostProcessCustomDrawerRegistry
 {
-    private static readonly Dictionary<string, IPostProcessStageCustomDrawer> DrawersByStageKey = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, IPostProcessStageCustomDrawer> RegisteredDrawersByStageKey = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly IReadOnlyDictionary<Type, IPostProcessStageCustomDrawer> BuiltInDrawersByBackingType =
+        new Dictionary<Type, IPostProcessStageCustomDrawer>
     {
-        ["depth-of-field"] = new DepthOfFieldStageDrawer(),
-        ["color-grading"] = new ColorGradingStageDrawer(),
+        [typeof(DepthOfFieldSettings)] = new DepthOfFieldStageDrawer(),
+        [typeof(ColorGradingSettings)] = new ColorGradingStageDrawer(),
     };
 
     /// <summary>
@@ -21,18 +24,23 @@ public static class PostProcessCustomDrawerRegistry
     public static void Register(string stageKey, IPostProcessStageCustomDrawer drawer)
     {
         ArgumentNullException.ThrowIfNull(drawer);
-        DrawersByStageKey[stageKey] = drawer;
+        RegisteredDrawersByStageKey[stageKey] = drawer;
     }
 
     /// <summary>
     /// Retrieves the custom drawer for a stage descriptor, preferring an explicitly attached drawer
-    /// on the descriptor, or falling back to the registered editor drawer.
+    /// on the descriptor, then a user-registered stage override, and finally a built-in drawer selected by backing type.
     /// </summary>
     public static IPostProcessStageCustomDrawer? GetDrawer(PostProcessStageDescriptor descriptor)
     {
         if (descriptor.CustomDrawer is not null)
             return descriptor.CustomDrawer;
 
-        return DrawersByStageKey.TryGetValue(descriptor.Key, out var drawer) ? drawer : null;
+        if (RegisteredDrawersByStageKey.TryGetValue(descriptor.Key, out var drawer))
+            return drawer;
+
+        return descriptor.BackingType is not null && BuiltInDrawersByBackingType.TryGetValue(descriptor.BackingType, out drawer)
+            ? drawer
+            : null;
     }
 }

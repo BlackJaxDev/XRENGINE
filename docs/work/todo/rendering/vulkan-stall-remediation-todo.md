@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-21
+Last Updated: 2026-09-22
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S06/S07/S08/S09/S10 Validated; S04/S05 Pending
+Status: S00/S00a/S01/S02/S03/S06/S07/S08/S09/S10/S11 Validated; S12 Active; S04/S05 Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -159,8 +159,8 @@ gate record. No item is complete merely because this checklist was written.
 | S08 | [Index preparation before draw admission](../../investigations/rendering/2026-09-21-s08-index-preparation.md) | S07 disposition, measured join | Validated (PR #75 merged; normal Vulkan admission requests/polls exact-revision index preparation without joining) |
 | S09 | [Shared immutable helper geometry](../../investigations/rendering/2026-09-21-s09-shared-helper-geometry.md) | S07-S08 dispositions, measured duplication | Validated (fullscreen helpers share one leased CPU mesh per topology while retaining per-consumer renderer/material/stereo state) |
 | S10 | [Toolbar icon preparation](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md) | S02; default after S09 disposition | Validated (CPU preparation is off draw; bounded owner publication reaches 12/12 on Vulkan and OpenGL) |
-| S11 | Camera inspector metadata/discovery | S10 disposition, measured cost | Pending |
-| S12 | Shared Advanced extraction/publication | S02; default after S11 disposition | Pending |
+| S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
+| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active (three live warm windows measured; phase/multi-view/deformation gate incomplete) |
 | S13 | Recurring recording/source/upload preparation | S02; default after S12 disposition | Pending |
 | S14 | Actual Core update callbacks/registration | S02; default after S13 disposition | Pending |
 | S15 | Temporal correctness and original-regression decision | Baseline plus each affected runtime gate | Pending |
@@ -586,22 +586,45 @@ after restart showed the toolbar icons present and correctly oriented. See the
 
 Anchor: [CameraComponentEditor.cs](../../../../XREngine.Editor/ComponentEditors/CameraComponentEditor.cs#L343).
 
-- [ ] Measure first-use create/replace type discovery separately from warmed
+- [x] Measure first-use create/replace type discovery separately from warmed
   property drawing, enum arrays, attribute lookup and tooltips.
-- [ ] First, defer or precompute measured cold discovery. Validate first panel
-  open, create/replace menus, pending discovery, errors and script reload before
-  changing warmed metadata handling.
-- [ ] Then, if material, cache immutable setting descriptors/enum labels and avoid
-  tooltip metadata work until hovered. Validate this as a separate child item.
-- [ ] Key invalidation to script/assembly generations; do not indefinitely retain
-  collectible assemblies. Preserve settings mutation notifications, undo behavior,
-  labels, enum options, asset creation and failure diagnostics.
-- [ ] Validate different camera/pipeline settings, repeated panel opening,
+- [x] Defer measured cold discovery from passive drawing and run it only when
+  Create/Replace is requested.
+- [x] Validate first panel open, Create/Replace menus, pending discovery, errors
+  and script reload before changing warmed metadata handling.
+- [x] Then, if material, cache immutable setting descriptors/enum labels and avoid
+  tooltip metadata work until hovered. S11b is deferred: warmed camera settings
+  measured about 0.12-0.21 ms, below the 1.0 ms entry threshold.
+- [x] Key invalidation to script/assembly generations and avoid indefinitely
+  retaining collectible assemblies in editor discovery and fallback caches.
+- [x] Validate settings mutation notifications, undo behavior, labels, enum
+  options, asset creation and failure diagnostics in the live editor.
+- [x] Validate different camera/pipeline settings, repeated panel opening,
   changed script types, warmed no-hover drawing and tooltips. Inspect the UI and
   confirm allocations and retained metadata return to their expected baseline.
 
 Gate: no measured cold discovery blocks passive drawing, cached settings remain
 current after reload, and visible editing behavior is unchanged.
+
+Status: Validated. The first passive camera-settings draw spent 356.009 ms in
+synchronous creatable-type discovery. Discovery now starts from the requested
+Create/Replace popup on a serialized worker; passive Vulkan settings draws
+measured 0.120-0.213 ms in the changed Release run, with no synchronous discovery
+scope. An exact post-review Release editor build and composited Vulkan capture
+passed. Generation-owned caches, unloading-context filters, bounded retries and
+owner-thread retirement received an independent review with no blocking finding.
+The disposable XRENGINE `S11Smoke.xrproj` passed live pending/ready, creation,
+notification, undo/redo, constructor-failure preservation, discovery-failure
+Retry, search/empty-result and camera enum/tooltip checks. Reload replaced V4
+with V6 in the open picker while the old V4 instance was still alive; explicit
+unload cleared the discovery entries. That check exposed and fixed the game
+loader's weak context ownership, which could finalize a logically loaded
+assembly context. The loader now owns its context strongly until explicit
+unload; forced GC no longer hides current script types. The final Release build
+passed with zero warnings and errors. A passive per-frame selection closure was
+also removed. S11b remains deferred; new regression tests await explicit
+post-validation clearance. This is Validated, not Closed. See the
+[S11 gate record](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md).
 
 ## S12. Improve Shared Advanced Preparation Safely
 
@@ -623,6 +646,13 @@ Anchor: [AdvancedSharedPreparationService.cs](../../../../XREngine.Runtime.Rende
 Gate: extraction and contention meet budget; every consumer gets the right scene,
 view and generation; copied data remains coherent and retired storage is bounded.
 Do not mislabel nonblocking deformation polling as a proven GPU wait.
+
+Status: **Active**, not Validated. The [S12 gate record](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md)
+contains three 60-second Release Vulkan/Advanced windows with 393 draws/ranges,
+zero warmed build allocation and copy failures, and low measured shared-lock
+wait. No cache, lifetime, or range-planner optimization was made. Cold growth,
+multi-view, deformation, mutation, and retirement validation remain open; do not
+advance to S13 on this partial gate.
 
 ## S13. Reduce Recurring Recording And Source Preparation
 

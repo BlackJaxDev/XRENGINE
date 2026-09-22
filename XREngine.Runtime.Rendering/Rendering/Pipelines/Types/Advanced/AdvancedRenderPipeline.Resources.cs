@@ -381,8 +381,10 @@ public partial class AdvancedRenderPipeline
             .Color(0, HistoryColorTextureName).DepthStencil(HistoryDepthStencilTextureName).Factory(CreateHistoryCaptureFBO).Add();
         builder.FrameBuffer(TemporalInputFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TemporalColorInputTextureName).Factory(CreateTemporalInputFBO).Add();
-        builder.QuadMaterial(TemporalAccumulationFBOName).Lifetime(RenderResourceLifetime.Transient)
+        builder.FrameBuffer(TemporalAccumulationFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .DependsOn(TemporalColorInputTextureName, HistoryColorTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, HistoryExposureVarianceTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
+            .Color(0, HDRSceneTextureName).Color(1, TemporalExposureVarianceTextureName)
             .Factory(CreateTemporalAccumulationFBO).Add();
         builder.FrameBuffer(HistoryExposureFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, HistoryExposureVarianceTextureName).Factory(CreateHistoryExposureFBO).Add();

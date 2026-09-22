@@ -84,4 +84,9 @@ public sealed class PostProcessParameterDescriptor(
     /// This is a function that takes an object (typically the current state or context) and returns a boolean indicating whether the parameter should be visible.
     /// </summary>
     public Func<object, bool>? VisibilityCondition { get; } = visibilityCondition;
+
+    /// <summary>
+    /// Gets the optional editor section override. A null value inherits the containing stage's section.
+    /// </summary>
+    public PipelineEditorSection? EditorSection { get; init; }
 }

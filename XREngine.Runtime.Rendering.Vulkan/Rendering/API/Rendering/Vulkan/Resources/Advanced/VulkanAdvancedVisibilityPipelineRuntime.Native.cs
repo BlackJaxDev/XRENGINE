@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 {
-    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[6];
+    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[7];
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetNativeComputePipelines(
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
@@ -38,7 +38,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(5, "Advanced/Shading/ShadeNativeOpaque.comp",
             out VulkanAdvancedComputePipeline shade, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade);
+        readiness = TryGetNativeComputePipeline(6, "Advanced/Shading/ShadeNativeOpaqueMsaa.comp",
+            out VulkanAdvancedComputePipeline shadeMultisample, out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, shadeMultisample);
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
@@ -48,7 +51,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         binding = default;
         try
         {
-            bool addressRoot = index == 5 && VulkanNativeShadingRootPolicy.UsesAddress;
+            bool addressRoot = index is 5 or 6 && VulkanNativeShadingRootPolicy.UsesAddress;
             if (addressRoot && _resources.BackendObjectContext?.Supports(EVulkanDeviceCapability.BufferDeviceAddress) != true)
                 throw new NotSupportedException("The requested native shading BufferDeviceAddress root requires an enabled Vulkan bufferDeviceAddress feature.");
             XRRenderProgram source = _nativeComputePrograms[index] ??= CreateComputeProgram(

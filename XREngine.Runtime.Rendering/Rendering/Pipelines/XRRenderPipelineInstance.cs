@@ -841,7 +841,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
                 if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
                 {
-                    var passMetadata = Pipeline.PassMetadata;
+                    var passMetadata = ActiveGeneration?.PassMetadata ?? Pipeline.PassMetadata;
                     if (passMetadata is { Count: > 0 })
                     {
                         // Force a topological walk so dependency cycles/missing edges are caught
@@ -987,7 +987,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
         int instanceRevision = activeRegistry?.InstanceRevision ?? 0;
         int renderGraphGeneration =
-            Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
+            (activeGeneration?.PassMetadata ?? Pipeline?.PassMetadata) is RenderPassMetadataSnapshot snapshot
                 ? snapshot.RevisionStamp
                 : 0;
         (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) dimensions =
@@ -1549,12 +1549,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             DisposeGeneration(PendingGeneration, $"Superseded pending generation: {reason}");
         }
 
+        IReadOnlyCollection<RenderPassMetadata> passMetadata =
+            pipeline.GeneratePassMetadataForResourceLayout(layout);
         PendingGeneration = new RenderResourceGeneration(
             key,
             layout,
             pipeline,
             _appliedPipelineRevision,
-            isInitialBuild: ActiveGeneration is null);
+            isInitialBuild: ActiveGeneration is null,
+            passMetadata: passMetadata);
         ConfigurePendingGenerationDebounce(key, reason);
         Debug.Rendering(
             "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Active={2} Target={3} Delta={4} Resources={5} DebounceMs={6:F0}",
@@ -3652,7 +3655,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             branchExecutedPasses = [.. _executedBranchRenderGraphPassIndices];
         }
 
-        HashSet<int> metadataPassIndices = pipeline.PassMetadata
+        IReadOnlyCollection<RenderPassMetadata> passMetadata =
+            ActiveGeneration?.PassMetadata ?? pipeline.PassMetadata;
+        HashSet<int> metadataPassIndices = passMetadata
             .Select(m => m.PassIndex)
             .ToHashSet();
 
@@ -3691,5 +3696,29 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             messageTemplate,
             pipelineName,
             missingList);
+    }
+
+    /// <summary>
+    /// Resolves a pass identity from the active resource generation. Commands with optional
+    /// profile-specific passes must use this instead of the pipeline-wide fallback metadata.
+    /// </summary>
+    internal bool TryGetActiveRenderPassIndex(string passName, out int passIndex)
+    {
+        IReadOnlyCollection<RenderPassMetadata>? metadata =
+            ActiveGeneration?.PassMetadata ?? Pipeline?.PassMetadata;
+        if (metadata is not null)
+        {
+            foreach (RenderPassMetadata pass in metadata)
+            {
+                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                {
+                    passIndex = pass.PassIndex;
+                    return true;
+                }
+            }
+        }
+
+        passIndex = int.MinValue;
+        return false;
     }
 }

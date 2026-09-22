@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 
@@ -71,6 +72,14 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
     }
 
     public override string DebugName => "RvcRenderPipeline";
+
+    /// <summary>
+    /// Exposes diagnostics for the command family this RVC pipeline actually executes.
+    /// </summary>
+    public override IRenderPipelineEditorUIProvider? EditorUIProvider
+        => UsesAdvancedTwoPassEyeFamily()
+            ? GetAdvancedStageFamily().EditorUIProvider
+            : base.EditorUIProvider;
 
     AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition
         => GetAdvancedStageFamily();

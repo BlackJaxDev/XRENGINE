@@ -16,10 +16,10 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
-    private AdvancedRenderPipelinePostProcessUI? _postProcessUIProvider;
+    private AdvancedRenderPipelineEditorUI? _editorUIProvider;
 
-    public override IRenderPipelinePostProcessUIProvider? PostProcessUIProvider
-        => _postProcessUIProvider ??= new AdvancedRenderPipelinePostProcessUI(this);
+    public override IRenderPipelineEditorUIProvider? EditorUIProvider
+        => _editorUIProvider ??= new AdvancedRenderPipelineEditorUI(this);
 
     private static readonly string[] AdvancedPipelinePreferredPreviewTextureNames =
     [
@@ -43,17 +43,25 @@ public partial class AdvancedRenderPipeline
     public override IReadOnlyList<string> PreferredPreviewTextureNames => AdvancedPipelinePreferredPreviewTextureNames;
     public override IReadOnlyList<string> PreferredPreviewFrameBufferNames => AdvancedPipelinePreferredPreviewFrameBufferNames;
 
-    private sealed class AdvancedRenderPipelinePostProcessUI(AdvancedRenderPipeline pipeline) : IRenderPipelinePostProcessUIProvider
+    private sealed class AdvancedRenderPipelineEditorUI(AdvancedRenderPipeline pipeline) : IRenderPipelineEditorUIProvider
     {
-        public void DrawPipelineHeader(PipelineEditorContext context)
+        private static readonly EAdvancedShadingDebugView[] ShadingDebugViews = Enum.GetValues<EAdvancedShadingDebugView>();
+
+        public void DrawCameraSettings(PipelineEditorContext context)
+            => StandardPipelineEditorControls.DrawCameraSettings(context);
+
+        public void DrawDebug(PipelineEditorContext context)
         {
-            ImGui.Separator();
+            if (!ImGui.CollapsingHeader("Shading", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            ImGui.TextWrapped("Shared pipeline setting: affects all views using this pipeline.");
             ImGui.Text("Native Shading Debug View");
             EAdvancedShadingDebugView currentView = pipeline.ShadingDebugView;
             ImGui.SetNextItemWidth(-1.0f);
             if (ImGui.BeginCombo("##ShadingDebugViewCombo", currentView.ToString()))
             {
-                foreach (EAdvancedShadingDebugView view in Enum.GetValues<EAdvancedShadingDebugView>())
+                foreach (EAdvancedShadingDebugView view in ShadingDebugViews)
                 {
                     bool isSelected = view == currentView;
                     if (ImGui.Selectable(view.ToString(), isSelected))
@@ -67,9 +75,6 @@ public partial class AdvancedRenderPipeline
             }
         }
 
-        public void DrawPipelineFooter(PipelineEditorContext context)
-        {
-        }
     }
 
     private static readonly Vector3 DefaultHoverOutlineColor = new(1.0f, 1.0f, 0.0f);

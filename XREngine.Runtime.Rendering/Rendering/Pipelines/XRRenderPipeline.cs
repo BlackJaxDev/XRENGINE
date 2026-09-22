@@ -158,12 +158,11 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     public RenderPipelinePostProcessSchema PostProcessSchema => _postProcessSchema;
 
     /// <summary>
-    /// Optional editor UI provider allowing the pipeline to draw custom header and footer controls
-    /// in the Camera Component post-processing inspector.
+    /// Optional pipeline-owned controls for the camera's Post Processing and Debug tabs.
     /// </summary>
     [Browsable(false)]
     [YamlIgnore]
-    public virtual IRenderPipelinePostProcessUIProvider? PostProcessUIProvider => null;
+    public virtual IRenderPipelineEditorUIProvider? EditorUIProvider => null;
 
     private static readonly string[] DefaultPreferredPreviewTextureNames =
     [
@@ -531,12 +530,22 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     /// <returns>A read-only collection of render pass metadata.</returns>
     protected virtual IReadOnlyCollection<RenderPassMetadata> GeneratePassMetadata()
+        => GeneratePassMetadataForResourceLayout(null);
+
+    /// <summary>
+    /// Generates metadata for one immutable resource layout. The command chain remains
+    /// structurally shared, but each resource generation owns declarations for its effective
+    /// profile so an AA switch cannot leave phantom producers in backend planning.
+    /// </summary>
+    internal IReadOnlyCollection<RenderPassMetadata> GeneratePassMetadataForResourceLayout(
+        RenderPipelineResourceLayout? resourceLayout)
     {
         if (CommandChain is null)
             return [];
 
         RenderPassMetadataCollection collection = new();
-        CommandChain.BuildRenderPassMetadata(collection);
+        RenderGraphDescribeContext context = new(collection, resourceLayout);
+        CommandChain.BuildRenderPassMetadata(context);
         DescribeRenderPasses(collection);
         return collection.Build();
     }

@@ -31,8 +31,13 @@ public static partial class EditorUnitTests
     public static partial class UserInterface
     {
         private static readonly bool DockFPSTopLeft = false;
+#if DEBUG
+        private const string FpsOverlayBuildConfiguration = "Debug";
+#else
+        private const string FpsOverlayBuildConfiguration = "Release";
+#endif
         private const float FpsOverlayWidth = 1180.0f;
-        private const float FpsOverlayHeight = 210.0f;
+        private const float FpsOverlayHeight = 330.0f;
         private const float FpsOverlayBottomMargin = 26.0f;
         private const int FpsSampleCapacity = 60;
         private static readonly double[] _fpsFrameDurations = new double[FpsSampleCapacity];
@@ -215,6 +220,8 @@ public static partial class EditorUnitTests
             if (vrActive)
                 AppendVrDrawStats(builder, vrCounters);
 
+            AppendDiagnosticStatus(builder);
+
             var videoComp = _editorComponent?.SceneNode.FindFirstDescendantComponent<UIVideoComponent>();
             if (videoComp is not null)
             {
@@ -263,6 +270,116 @@ public static partial class EditorUnitTests
 
             return window.Viewports[0].RenderPipelineInstance.Pipeline?.GetType().Name
                 ?? "NoRenderPipeline";
+        }
+
+        /// <summary>
+        /// Appends the AA profile latched by the primary viewport's active render-pipeline instance.
+        /// This reports the camera-resolved frame profile rather than a requested global preference.
+        /// </summary>
+        private static void AppendPrimaryViewportAntiAliasingLabel(StringBuilder builder)
+        {
+            builder.Append("aa ");
+            if (RuntimeEngine.Windows.Count == 0)
+            {
+                builder.Append("pending");
+                return;
+            }
+
+            XRWindow? window = RuntimeEngine.Windows[0];
+            if (window is null || window.Viewports.Count == 0)
+            {
+                builder.Append("pending");
+                return;
+            }
+
+            XRRenderPipelineInstance pipeline = window.Viewports[0].RenderPipelineInstance;
+            if (pipeline.EffectiveAntiAliasingModeThisFrame is not EAntiAliasingMode mode ||
+                pipeline.EffectiveMsaaSampleCountThisFrame is not uint sampleCount)
+            {
+                builder.Append("pending");
+                return;
+            }
+
+            builder.Append(mode);
+            if (mode == EAntiAliasingMode.Msaa)
+            {
+                builder.Append(' ');
+                builder.Append(sampleCount);
+                builder.Append('x');
+            }
+        }
+
+        private static void AppendDiagnosticStatus(StringBuilder builder)
+        {
+            bool gpuPipelineTimingEnabled =
+                RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineProfilingEnabled;
+            bool gpuPipelineTimingSupported =
+                RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineProfilingSupported;
+            bool gpuPipelineTimingsReady =
+                RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineTimingsReady;
+            bool gpuTimestampsDenseMode = RuntimeEngine.Rendering.Stats.RendererState.GpuTimestampsDenseMode;
+
+            builder.Append("\ndiag:   build ");
+            builder.Append(FpsOverlayBuildConfiguration);
+            builder.Append(" | ");
+            AppendPrimaryViewportAntiAliasingLabel(builder);
+            builder.Append(" | debugger ");
+            builder.Append(System.Diagnostics.Debugger.IsAttached ? "attached" : "off");
+            builder.Append("\nprofiler: cpu ");
+            builder.Append(Engine.Profiler.EnableFrameLogging ? "active" : "off");
+            builder.Append(" | gpu pipeline ");
+            if (!gpuPipelineTimingEnabled)
+                builder.Append("off");
+            else if (!gpuPipelineTimingSupported)
+                builder.Append("unsupported");
+            else if (RuntimeEngine.Rendering.State.IsVulkan && !gpuTimestampsDenseMode)
+                builder.Append("off (dense disabled)");
+            else
+                builder.Append(gpuPipelineTimingsReady ? "active" : "pending");
+
+            builder.Append("\ntiming: gpu dense ");
+            builder.Append(gpuTimestampsDenseMode ? "active" : "off");
+
+            if (!RuntimeEngine.Rendering.State.IsVulkan)
+            {
+                builder.Append(" | render debug ");
+                builder.Append(RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled ? "active" : "off");
+                return;
+            }
+
+            builder.Append(" | vk coarse ");
+            builder.Append(ResolveVulkanCoarseTimestampLabel());
+
+            builder.Append("\nvulkan: validation ");
+            if (!RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled)
+                builder.Append("off");
+            else if (RuntimeEngine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled)
+                builder.Append("active + sync");
+            else
+                builder.Append("active");
+
+            builder.Append(" | callbacks ");
+            builder.Append(RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationMessageCount);
+            builder.Append(" | errors ");
+            builder.Append(RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationErrorCount);
+            builder.Append(" | requested ");
+            builder.Append(Engine.EffectiveSettings.VulkanDiagnosticFlags);
+        }
+
+        private static string ResolveVulkanCoarseTimestampLabel()
+        {
+            var timing = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferTimingSnapshot;
+            if (timing.LastCompleted.Availability == XREngine.Rendering.Vulkan.EVulkanGpuTimingAvailability.Completed)
+                return "active";
+
+            return timing.Current.Availability switch
+            {
+                XREngine.Rendering.Vulkan.EVulkanGpuTimingAvailability.Disabled => "off",
+                XREngine.Rendering.Vulkan.EVulkanGpuTimingAvailability.Pending => "pending",
+                XREngine.Rendering.Vulkan.EVulkanGpuTimingAvailability.Unavailable => "unavailable",
+                XREngine.Rendering.Vulkan.EVulkanGpuTimingAvailability.Completed => "active",
+                _ => "unknown",
+            };
         }
 
         private static string ResolveMeshSubmissionStrategyLabel()

@@ -14,6 +14,12 @@ public static class AdvancedVisibilityResourceNames
     public const string CurrentDepthPyramid = "Advanced.Visibility.DepthPyramid.Current";
     public const string PreviousDepthPyramid = "Advanced.Visibility.DepthPyramid.Previous";
     public const string FrameBuffer = "Advanced.Visibility.FrameBuffer";
+    public const string IdentityMultisample = Identity + ".Multisample";
+    public const string MetadataMultisample = Metadata + ".Multisample";
+    public const string SelectionMultisample = Selection + ".Multisample";
+    public const string DepthStencilMultisample = DepthStencil + ".Multisample";
+    public const string FrameBufferMultisample = FrameBuffer + ".Multisample";
+    public const string SamplePositionMultisample = "Advanced.Visibility.SamplePosition.Multisample";
     public const string DebugOutput = "Advanced.Visibility.DebugOutput";
     public const string DebugFrameBuffer = "Advanced.Visibility.DebugFrameBuffer";
     public const string Candidates = "Advanced.Visibility.Candidates";

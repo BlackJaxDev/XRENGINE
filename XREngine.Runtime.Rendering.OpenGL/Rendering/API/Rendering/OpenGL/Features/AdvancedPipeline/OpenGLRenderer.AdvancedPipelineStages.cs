@@ -69,6 +69,11 @@ public partial class OpenGLRenderer
             DestroyAdvancedProgram(_advancedBuildFroxelsProgram);
             DestroyAdvancedProgram(_advancedShadeNativeOpaqueProgram);
             DestroyAdvancedProgram(_advancedShadeBackgroundProgram);
+            DestroyAdvancedProgram(_advancedMsaaShadeProgram);
+            DestroyAdvancedProgram(_advancedMsaaLateProgram);
+            DestroyAdvancedProgram(_advancedMsaaResolveProgram);
+            if (_advancedMsaaResolveVao != 0u)
+                RawGL.DeleteVertexArray(_advancedMsaaResolveVao);
             DestroyAdvancedProgram(_advancedStereoIndirectProgram);
             DestroyAdvancedProgram(_advancedStereoRasterProgram);
             DestroyAdvancedProgram(_advancedStereoMaskedRasterProgram);
@@ -92,6 +97,10 @@ public partial class OpenGLRenderer
         _advancedBuildFroxelsProgram = null;
         _advancedShadeNativeOpaqueProgram = null;
         _advancedShadeBackgroundProgram = null;
+        _advancedMsaaShadeProgram = null;
+        _advancedMsaaLateProgram = null;
+        _advancedMsaaResolveProgram = null;
+        _advancedMsaaResolveVao = 0u;
         _advancedStageProgramFailure = null;
         _advancedStereoIndirectProgram = null;
         _advancedStereoRasterProgram = null;
@@ -364,7 +373,8 @@ public partial class OpenGLRenderer
     private XRRenderProgram CreateAdvancedComputeProgram(
         string name,
         string shaderPath,
-        EAdvancedTextureIndirectionMode textureMode)
+        EAdvancedTextureIndirectionMode textureMode,
+        string defines = "")
     {
         XRShader template = ShaderHelper.LoadEngineShader(shaderPath, EShaderType.Compute);
         uint pushBinding = shaderPath.StartsWith("Advanced/Preparation/", StringComparison.Ordinal)
@@ -375,7 +385,7 @@ public partial class OpenGLRenderer
             ResolveAdvancedShaderSource(template),
             AdvancedShaderAccessLibrary.BuildPreamble(
                 RuntimeGraphicsApiKind.OpenGL,
-                textureMode) + "\n#define XR_ADV_VISIBILITY_ARRAY 1\n"),
+                textureMode) + "\n#define XR_ADV_VISIBILITY_ARRAY 1\n" + defines),
             pushBinding);
         string sourcePath = string.IsNullOrWhiteSpace(template.Source.FilePath)
             ? shaderPath

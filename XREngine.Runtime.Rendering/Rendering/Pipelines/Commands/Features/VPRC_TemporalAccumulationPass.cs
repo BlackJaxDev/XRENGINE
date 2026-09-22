@@ -619,7 +619,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     }
 
     private int ResolvePassIndex(string passName)
-        => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+        => ActivePipelineInstance.TryGetActiveRenderPassIndex(passName, out int passIndex)
             ? passIndex
             : int.MinValue;
 
@@ -1218,7 +1218,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         bool leftMatricesValid = CaptureEyeTemporalState(
             camera,
             state.LeftEye,
-            state.HistoryGeneration.LeftEyeHistoryReady);
+            state.HistoryGeneration.LeftEyeHistoryReady,
+            GetFrozenAdvancedTemporalView(instance, camera));
         if (leftMatricesValid)
             state.HistoryGeneration.RecordCurrentMatrices(0b01u);
         else
@@ -1232,7 +1233,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             rightMatricesValid = CaptureEyeTemporalState(
                 rightEyeCamera!,
                 state.RightEye,
-                state.HistoryGeneration.RightEyeHistoryReady);
+                state.HistoryGeneration.RightEyeHistoryReady,
+                GetFrozenAdvancedTemporalView(instance, rightEyeCamera!));
         }
         else if (!requiresRightEye)
         {
@@ -1241,7 +1243,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             rightMatricesValid = CaptureEyeTemporalState(
                 camera,
                 state.RightEye,
-                state.HistoryGeneration.LeftEyeHistoryReady);
+                state.HistoryGeneration.LeftEyeHistoryReady,
+                GetFrozenAdvancedTemporalView(instance, camera));
         }
         else
         {
@@ -1271,37 +1274,78 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         PublishTemporalUniformData(state);
+        if (instance.Pipeline is IAdvancedRenderStageFamilyHost &&
+            instance.RenderState.FrameViewSet is { } logicalViews)
+        {
+            TemporalUniformData data = CreateTemporalUniformData(state.Key, state);
+            instance.RenderState.TemporalAuthoringViewSet =
+                RenderFrameTemporalViews.Create(logicalViews, data);
+        }
     }
 
-    private static bool CaptureEyeTemporalState(XRCamera camera, TemporalEyeState eyeState, bool historyReady)
+    private static RenderFrameViewDescriptor? GetFrozenAdvancedTemporalView(
+        XRRenderPipelineInstance instance, XRCamera camera)
     {
-        Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
-        Matrix4x4 baseProjection = camera.ProjectionMatrixUnjittered;
+        if (instance.Pipeline is not IAdvancedRenderStageFamilyHost ||
+            instance.RenderState.FrameViewSet is not { } views)
+            return null;
+
+        RenderFrameViewDescriptor? match = null;
+        for (int i = 0; i < views.ViewCount; i++)
+        {
+            RenderFrameViewDescriptor view = views.GetView(i);
+            if (view.SourceCameraIdentity == camera.RenderIdentity)
+            {
+                // Quad wide/inset projections cannot be identified by camera
+                // identity alone. Never borrow one of those projections.
+                if (match.HasValue)
+                    return null;
+                match = view;
+            }
+        }
+        return match;
+    }
+
+    private static bool CaptureEyeTemporalState(XRCamera camera, TemporalEyeState eyeState, bool historyReady,
+        RenderFrameViewDescriptor? frozenView = null)
+    {
+        Matrix4x4 viewMatrix = frozenView?.ViewMatrix ?? camera.Transform.InverseRenderMatrix;
+        Matrix4x4 baseProjection = frozenView is { } view
+            ? view.ProjectionMatrixUnjittered == default ? view.ProjectionMatrix : view.ProjectionMatrixUnjittered
+            : camera.ProjectionMatrixUnjittered;
         Matrix4x4 baseViewProjection = viewMatrix * baseProjection;
 
         if (historyReady && IsMatrixApproximatelyEqual(baseViewProjection, eyeState.PrevViewProjectionUnjittered))
             baseViewProjection = eyeState.PrevViewProjectionUnjittered;
 
-        Matrix4x4 jitteredProjection = camera.ProjectionMatrix;
+        Matrix4x4 jitteredProjection = frozenView.HasValue
+            ? XRCamera.ApplyProjectionJitter(baseProjection, camera.ProjectionJitter,
+                camera.Parameters is XROrthographicCameraParameters)
+            : camera.ProjectionMatrix;
         Matrix4x4 jitteredViewProjection = viewMatrix * jitteredProjection;
         bool invertible = Matrix4x4.Invert(jitteredViewProjection, out Matrix4x4 inverseViewProjection);
         if (!invertible)
             inverseViewProjection = Matrix4x4.Identity;
 
         eyeState.CurrViewMatrix = viewMatrix;
-        eyeState.CurrentCameraPosition = camera.Transform.RenderTranslation;
-        eyeState.CurrentCameraForward = NormalizeOrForward(camera.Transform.RenderForward);
+        eyeState.CurrentCameraPosition = frozenView is { } positionView
+            ? new Vector3(positionView.CameraPositionAndNear.X, positionView.CameraPositionAndNear.Y, positionView.CameraPositionAndNear.Z)
+            : camera.Transform.RenderTranslation;
+        eyeState.CurrentCameraForward = NormalizeOrForward(frozenView is { } forwardView
+            ? new Vector3(forwardView.CameraForwardAndFar.X, forwardView.CameraForwardAndFar.Y, forwardView.CameraForwardAndFar.Z)
+            : camera.Transform.RenderForward);
         eyeState.CurrViewProjectionUnjittered = baseViewProjection;
         eyeState.CurrProjection = jitteredProjection;
-        eyeState.CurrInverseProjection = camera.InverseProjectionMatrix;
+        bool projectionInvertible = Matrix4x4.Invert(jitteredProjection, out Matrix4x4 inverseProjection);
+        eyeState.CurrInverseProjection = inverseProjection;
         eyeState.CurrViewProjection = jitteredViewProjection;
         eyeState.CurrInverseViewProjection = inverseViewProjection;
-        return invertible
+        return invertible && projectionInvertible
             && IsTemporalMatrixFinite(viewMatrix)
             && IsTemporalMatrixFinite(baseProjection)
             && IsTemporalMatrixFinite(baseViewProjection)
             && IsTemporalMatrixFinite(jitteredProjection)
-            && IsTemporalMatrixFinite(camera.InverseProjectionMatrix)
+            && IsTemporalMatrixFinite(inverseProjection)
             && IsTemporalMatrixFinite(jitteredViewProjection)
             && IsTemporalMatrixFinite(inverseViewProjection);
     }
@@ -1730,7 +1774,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (Phase != EPhase.Accumulate)
             return;
 
-        EAntiAliasingMode antiAliasingMode = ResolveAntiAliasingMode();
+        EAntiAliasingMode antiAliasingMode = context.ResourceProfile?.AntiAliasingMode
+            ?? ResolveAntiAliasingMode();
         if (ShouldPopulateTemporalInput(antiAliasingMode))
             DescribeTemporalInputCopy(context);
 
