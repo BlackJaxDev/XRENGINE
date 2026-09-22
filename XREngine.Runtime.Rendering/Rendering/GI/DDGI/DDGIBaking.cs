@@ -39,9 +39,9 @@ public static class DDGIBaking
         // A cold-path capture must resolve the same accepted physical generation
         // as the rendered viewport, including its probe-buffer allocation.
         using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope(pipeline);
-        XRTexture? irradiance = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
-        XRTexture? visibility = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
-        XRDataBuffer? probes = pipeline.GetBuffer(DefaultRenderPipeline.DDGIProbeStateBufferName);
+        XRTexture? irradiance = pipeline.GetTexture<XRTexture>(DDGIResourceNames.IrradianceAtlas);
+        XRTexture? visibility = pipeline.GetTexture<XRTexture>(DDGIResourceNames.VisibilityAtlas);
+        XRDataBuffer? probes = pipeline.GetBuffer(DDGIResourceNames.ProbeStateBuffer);
         if (irradiance is null || visibility is null || probes is null)
         {
             failure = "The viewport has no active DDGI GPU resources.";

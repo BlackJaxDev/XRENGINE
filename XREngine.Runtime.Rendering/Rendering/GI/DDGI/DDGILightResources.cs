@@ -9,17 +9,24 @@ using XREngine.Scene;
 namespace XREngine.Rendering.GI.DDGI;
 
 /// <summary>Owns the bounded direct-light UBO used by DDGI hit shading.</summary>
-internal sealed class DDGILightResources
+internal static class DDGILightResources
 {
+    public const string BufferName = "DDGILightBlock";
     public const uint UniformBinding = 8;
     public const int Capacity = 255;
     private const uint RecordCount = Capacity + 1u;
-    private static readonly ConditionalWeakTable<XRRenderPipelineInstance, DDGILightResources> Resources = new();
 
-    private XRDataBuffer<DDGILightGPU>? _buffer;
-
-    private DDGILightResources(XRRenderPipelineInstance pipeline)
-        => pipeline.CacheClearing += Clear;
+    /// <summary>Creates the generation-owned direct-light buffer.</summary>
+    public static XRDataBuffer CreateBuffer()
+    {
+        var buffer = new XRDataBuffer<DDGILightGPU>(BufferName, EBufferTarget.UniformBuffer, RecordCount)
+        {
+            Usage = EBufferUsage.StreamDraw,
+        };
+        buffer.SetBlockIndex(UniformBinding);
+        buffer.PushData();
+        return buffer;
+    }
 
     /// <summary>Uploads every active dynamic scene light and binds the UBO at binding eight.</summary>
     public static bool Bind(XRRenderProgram program, XRRenderPipelineInstance pipeline, IRuntimeRenderWorld world)
@@ -27,13 +34,7 @@ internal sealed class DDGILightResources
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(pipeline);
         ArgumentNullException.ThrowIfNull(world);
-        return Resources.GetValue(pipeline, static instance => new DDGILightResources(instance)).UploadAndBind(program, pipeline, world);
-    }
-
-    private bool UploadAndBind(XRRenderProgram program, XRRenderPipelineInstance pipeline, IRuntimeRenderWorld world)
-    {
-        EnsureBuffer();
-        if (_buffer is null)
+        if (pipeline.GetBuffer(BufferName) is not XRDataBuffer<DDGILightGPU> buffer)
             return false;
 
         Lights3DCollection? lights = world.Lights;
@@ -52,67 +53,54 @@ internal sealed class DDGILightResources
             return false;
         }
 
-        _buffer.Set(0u, new DDGILightGPU
+        buffer.Set(0u, new DDGILightGPU
         {
             PositionOrDirectionAndType = new Vector4(directionalCount, pointCount, spotCount, 0.0f),
         });
         uint index = 1u;
         if (lights is not null)
         {
-            index = UploadDirectional(lights.DynamicDirectionalLights, index);
-            index = UploadPoints(lights.DynamicPointLights, index);
-            _ = UploadSpots(lights.DynamicSpotLights, index);
+            index = UploadDirectional(buffer, lights.DynamicDirectionalLights, index);
+            index = UploadPoints(buffer, lights.DynamicPointLights, index);
+            _ = UploadSpots(buffer, lights.DynamicSpotLights, index);
         }
-        _buffer.PushSubData(0, checked((uint)(total + 1) * (uint)Unsafe.SizeOf<DDGILightGPU>()));
-        DDGIResourceImports.BindDirectLights(pipeline, _buffer);
-        program.BindBuffer(_buffer, UniformBinding);
+        buffer.PushSubData(0, checked((uint)(total + 1) * (uint)Unsafe.SizeOf<DDGILightGPU>()));
+        program.BindBuffer(buffer, UniformBinding);
         return true;
     }
 
-    private void EnsureBuffer()
-    {
-        if (_buffer is not null && !_buffer.IsDestroyed)
-            return;
-        _buffer = new XRDataBuffer<DDGILightGPU>("DDGILightBlock", EBufferTarget.UniformBuffer, RecordCount)
-        {
-            Usage = EBufferUsage.StreamDraw,
-        };
-        _buffer.SetBlockIndex(UniformBinding);
-        _buffer.PushData();
-    }
-
-    private uint UploadDirectional(EventList<DirectionalLightComponent> lights, uint index)
+    private static uint UploadDirectional(XRDataBuffer<DDGILightGPU> buffer, EventList<DirectionalLightComponent> lights, uint index)
     {
         for (int i = 0; i < lights.Count; i++)
         {
             DirectionalLightComponent light = lights[i];
             if (!light.IsActiveInHierarchy)
                 continue;
-            _buffer!.Set(index++, CreateDirectional(light));
+            buffer.Set(index++, CreateDirectional(light));
         }
         return index;
     }
 
-    private uint UploadPoints(EventList<PointLightComponent> lights, uint index)
+    private static uint UploadPoints(XRDataBuffer<DDGILightGPU> buffer, EventList<PointLightComponent> lights, uint index)
     {
         for (int i = 0; i < lights.Count; i++)
         {
             PointLightComponent light = lights[i];
             if (!light.IsActiveInHierarchy)
                 continue;
-            _buffer!.Set(index++, CreatePoint(light));
+            buffer.Set(index++, CreatePoint(light));
         }
         return index;
     }
 
-    private uint UploadSpots(EventList<SpotLightComponent> lights, uint index)
+    private static uint UploadSpots(XRDataBuffer<DDGILightGPU> buffer, EventList<SpotLightComponent> lights, uint index)
     {
         for (int i = 0; i < lights.Count; i++)
         {
             SpotLightComponent light = lights[i];
             if (!light.IsActiveInHierarchy)
                 continue;
-            _buffer!.Set(index++, CreateSpot(light));
+            buffer.Set(index++, CreateSpot(light));
         }
         return index;
     }
@@ -152,10 +140,4 @@ internal sealed class DDGILightResources
             DirectionAndInnerCutoff = new Vector4(light.Transform.RenderForward, light.InnerCutoff),
             RadiusOuterExponentAndFlags = new Vector4(light.Distance, light.OuterCutoff, light.Exponent, light.CastsShadows ? 1.0f : 0.0f),
         };
-
-    private void Clear()
-    {
-        _buffer?.Dispose();
-        _buffer = null;
-    }
 }

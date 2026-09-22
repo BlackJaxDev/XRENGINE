@@ -4,6 +4,20 @@ Source design: `docs/work/design/global-illumination/lpv-global-illumination-des
 
 Goal: implement Light Propagation Volumes as an optional dynamic diffuse global illumination feature for XRENGINE, proving the OpenGL path first and leaving Vulkan integration as the final backend phase.
 
+## Modular-provider readiness gate
+
+`EGlobalIlluminationMode.LightVolumes` is currently an explicit unsupported
+selection in the modular GI registry. Existing light-volume source is not evidence
+of LPV injection, propagation, or runtime support, and neither host allocates LPV
+resources or schedules LPV work.
+
+Do not register an LPV module factory or mark the selection supported until a
+provider owns its settings, RSM/LPV resources, passes, debug surfaces, invalidation,
+and release lifecycle; declares only neutral GI host inputs/outputs; and has live
+Default and Advanced validation for its claimed backend, mono/stereo layout, and
+consumer coverage. The OpenGL-first work below may remain unsupported until the
+Vulkan and two-host acceptance boundary is explicitly revised and documented.
+
 ## Phase 0: Branch and planning setup
 
 - [ ] Create a dedicated branch for this todo list.

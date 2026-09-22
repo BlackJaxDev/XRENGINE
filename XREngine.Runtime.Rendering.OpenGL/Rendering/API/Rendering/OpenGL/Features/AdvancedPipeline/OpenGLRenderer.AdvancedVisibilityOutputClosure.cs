@@ -50,7 +50,7 @@ public partial class OpenGLRenderer
                  reactive!, reactiveLayers, diagnostics!, diagnosticsLayers, out reason)))
             return false;
 
-        if (requireNative && request.EnableDdgi &&
+        if (requireNative && request.RequiresMaterialSurfaceExports &&
             (!TryGetLayeredTexture(pipeline, DefaultRenderPipeline.EmissionColorTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out emissionColor, out emissionColorId, out uint emissionLayers, out reason) ||
              !TryGetLayeredTexture(pipeline, DefaultRenderPipeline.AlbedoOpacityTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out albedoOpacity, out albedoOpacityId, out uint albedoLayers, out reason) ||
              !TryGetLayeredTexture(pipeline, DefaultRenderPipeline.NormalTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out normal, out normalId, out uint normalLayers, out reason) ||
@@ -59,9 +59,9 @@ public partial class OpenGLRenderer
                  emissionColor!, emissionLayers, albedoOpacity!, albedoLayers, normal!, normalLayers, rmse!, rmseLayers, out reason)))
             return false;
 
-        if (requireNative && !request.EnableDdgi)
+        if (requireNative && !request.RequiresMaterialSurfaceExports)
         {
-            // Native opaque always declares the export images. When DDGI is inactive, bind HDR
+            // Native opaque always declares the export images. When no selected plan needs them, bind HDR
             // to those slots so the program remains valid without acquiring dormant G-buffer resources.
             emissionColor = hdr;
             albedoOpacity = hdr;

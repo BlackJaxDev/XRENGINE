@@ -33,6 +33,18 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+        private static int _scenePointerInputAllowed;
+
+        /// <summary>
+        /// True when the latest ImGui frame determined that the pointer belongs to the scene
+        /// rather than editor UI or another platform window.
+        /// </summary>
+        internal static bool IsScenePointerInputAllowed
+            => Volatile.Read(ref _scenePointerInputAllowed) != 0;
+
+        private static void SetScenePointerInputAllowed(bool allowed)
+            => Volatile.Write(ref _scenePointerInputAllowed, allowed ? 1 : 0);
+
         private const string HierarchyAddComponentPopupId = "HierarchyAddComponent";
         private static readonly List<ComponentTypeDescriptor> _componentTypeDescriptors = [];
         private static readonly byte[] _renameBuffer = new byte[256];
@@ -857,15 +869,26 @@ public static partial class EditorImGuiUI
                 RevertPrefabPreview();
 
             bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;
+            bool editorAcceptsInput =
+                Engine.PlayMode.State != EPlayModeState.EnteringPlay &&
+                !Engine.PlayMode.IsPlaying;
             bool allowEngineInputThroughScenePanel =
                 Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel &&
                 _scenePanelInteracting;
+            bool allowEngineInputThroughFullViewport =
+                Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.FullViewportBehindImGuiUI &&
+                io.MouseHoveredViewport == viewport.ID &&
+                !io.WantCaptureMouse;
+
+            SetScenePointerInputAllowed(
+                editorAcceptsInput &&
+                (allowEngineInputThroughScenePanel || allowEngineInputThroughFullViewport));
 
             // In FullViewportBehindImGuiUI mode, the dock space uses PassthruCentralNode so
             // WantCaptureMouse is already false over the scene area. No extra bypass needed
             // beyond the existing condition — but ensure we don't block engine input when
             // we're NOT in play mode and the mouse is NOT over an ImGui panel.
-            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
+            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && editorAcceptsInput);
         }
 
         /// <summary>
@@ -875,6 +898,7 @@ public static partial class EditorImGuiUI
         /// </summary>
         private static void RenderClosePromptOnly()
         {
+            SetScenePointerInputAllowed(false);
             if (!_closePromptOpen)
             {
                 Engine.Input.SetUIInputCaptured(false);

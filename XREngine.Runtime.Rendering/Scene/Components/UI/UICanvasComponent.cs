@@ -8,6 +8,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -321,8 +322,11 @@ namespace XREngine.Components
         void IRuntimeScreenSpaceUserInterface.PrepareBackendReadyFramePackage(
             IRuntimeViewportHost viewport)
         {
-            int descriptorGeneration =
-                _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
+            _renderPipeline.PublishStagedImportedResources(activeGeneration);
+            RenderResourceRegistry? registry = activeGeneration?.Registry;
+            int descriptorGeneration = registry?.DescriptorRevision ?? 0;
+            int instanceRevision = registry?.InstanceRevision ?? 0;
             var dimensions = _renderPipeline.ResolveBackendReadyFramePackageDimensions(viewport);
             BackendReadyFramePackageIdentity identity = new(
                 RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
@@ -330,6 +334,7 @@ namespace XREngine.Components
                 _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
+                instanceRevision,
                 ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
                 dimensions.DisplayWidth,
                 dimensions.DisplayHeight,

@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 internal readonly record struct ResourcePlannerFastPathKey(
     RenderResourceRegistry? Registry,
     int RegistryDescriptorRevision,
+    int RegistryInstanceRevision,
     IReadOnlyCollection<RenderPassMetadata>? ActivePassMetadata,
     int ActivePassMetadataRevision,
     int ActivePassSetSignature,
@@ -22,6 +23,7 @@ internal readonly record struct ResourcePlannerFastPathKey(
     public bool Matches(in ResourcePlannerFastPathKey other)
         => ReferenceEquals(Registry, other.Registry) &&
            RegistryDescriptorRevision == other.RegistryDescriptorRevision &&
+           RegistryInstanceRevision == other.RegistryInstanceRevision &&
            ReferenceEquals(ActivePassMetadata, other.ActivePassMetadata) &&
            ActivePassMetadataRevision == other.ActivePassMetadataRevision &&
            ActivePassSetSignature == other.ActivePassSetSignature &&

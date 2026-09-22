@@ -36,7 +36,6 @@ internal sealed partial class DDGIFrameContext
     private ulong _attemptedAssetRevision;
     private DDGIBakedAsset? _failedUploadAsset;
     private ulong _failedUploadRevision;
-    private ulong _diagnosticPresentationFrameId = ulong.MaxValue;
     private DDGIGpuTiming? _timing;
     private XRGpuFence? _completionFence;
     // True only when this receipt may advance the published DDGI history.
@@ -61,6 +60,14 @@ internal sealed partial class DDGIFrameContext
     private XRGpuFence? _pendingCompositeUseFence;
     private bool _compositeUseReceiptFailed;
     private WeakReference<DDGIVolumeComponent>? _frameOwnerVolume;
+    private IRuntimeRenderWorld? _selectionWorld;
+    private WeakReference<DDGIVolumeComponent>? _selectedVolume;
+    // This is authored-field identity for a per-frame selection snapshot only.
+    // Physical atlas ownership remains keyed by this pipeline instance and
+    // reference-checked below; matching component IDs never authorize reuse.
+    private Guid _selectedVolumeId;
+    private ulong _selectionFrameId = ulong.MaxValue;
+    private bool _hasSelectedVolume;
 
     public DDGIVolumeRuntimeState State { get; } = new();
     public bool HasInitializedResources { get; private set; }
@@ -108,15 +115,6 @@ internal sealed partial class DDGIFrameContext
         return state is not null;
     }
 
-    /// <summary>Returns whether this pipeline presented a DDGI diagnostic view in the current render frame.</summary>
-    internal static bool IsDiagnosticPresentationFrame(XRRenderPipelineInstance pipeline)
-        => Contexts.TryGetValue(pipeline, out DDGIFrameContext? context) &&
-            context._diagnosticPresentationFrameId == RuntimeEngine.Rendering.State.RenderFrameId;
-
-    /// <summary>Marks a successfully rendered DDGI diagnostic composite for this render frame.</summary>
-    internal void MarkDiagnosticPresentation()
-        => _diagnosticPresentationFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-
     public XRRenderProgram Program(string name)
     {
         if (_programs.TryGetValue(name, out XRRenderProgram? program))
@@ -135,6 +133,41 @@ internal sealed partial class DDGIFrameContext
         if (!program.IsLinked)
             program.Link();
         return program.IsLinked;
+    }
+
+    /// <summary>
+    /// Resolves the DDGI volume once per render frame for this pipeline. Every
+    /// DDGI command then uses the same authored-field snapshot and never depends
+    /// on registry insertion order or sees a mid-frame selection change.
+    /// </summary>
+    public bool TryGetSelectedVolume(IRuntimeRenderWorld world, out DDGIVolumeComponent? volume)
+    {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (_selectionFrameId != frameId || !ReferenceEquals(_selectionWorld, world))
+        {
+            _selectionFrameId = frameId;
+            _selectionWorld = world;
+            _hasSelectedVolume = DDGIVolumeComponent.Registry.TrySelectActive(world, out DDGIVolumeComponent? selected);
+            if (_hasSelectedVolume)
+            {
+                if (_selectedVolume is null)
+                    _selectedVolume = new(selected!);
+                else
+                    _selectedVolume.SetTarget(selected!);
+                _selectedVolumeId = selected!.ID;
+            }
+            else
+            {
+                _selectedVolume = null;
+                _selectedVolumeId = Guid.Empty;
+            }
+        }
+
+        if (_hasSelectedVolume && _selectedVolume is not null && _selectedVolume.TryGetTarget(out volume) && volume.ID == _selectedVolumeId)
+            return true;
+
+        volume = null;
+        return false;
     }
 
     public void Synchronize(DDGIVolumeComponent volume)
@@ -156,9 +189,9 @@ internal sealed partial class DDGIFrameContext
 
     public bool BindResources(XRRenderPipelineInstance pipeline)
     {
-        XRDataBuffer? probes = pipeline.GetBuffer(DefaultRenderPipeline.DDGIProbeStateBufferName);
-        XRTexture? irradiance = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
-        XRTexture? visibility = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
+        XRDataBuffer? probes = pipeline.GetBuffer(DDGIResourceNames.ProbeStateBuffer);
+        XRTexture? irradiance = pipeline.GetTexture<XRTexture>(DDGIResourceNames.IrradianceAtlas);
+        XRTexture? visibility = pipeline.GetTexture<XRTexture>(DDGIResourceNames.VisibilityAtlas);
         if (probes is null || irradiance is null || visibility is null)
             return false;
         // Authored settings can change while a new generation is being built.
@@ -293,9 +326,9 @@ internal sealed partial class DDGIFrameContext
         if (!ready || !pipeline.Variables.TryGet("DDGIGeometryReady", out bool geometryReady) || !geometryReady)
             return false;
         uint rayCount = checked((uint)(State.ScheduledProbeCount * State.RaysPerProbe));
-        if (pipeline.GetBuffer(DefaultRenderPipeline.DDGIRayBufferName) is not { } rays || rays.ElementCount < rayCount ||
-            pipeline.GetBuffer(DefaultRenderPipeline.DDGIHitBufferName) is not { } hits || hits.ElementCount < rayCount ||
-            pipeline.GetBuffer(DefaultRenderPipeline.DDGIRayRadianceBufferName) is not { } radiance || radiance.ElementCount < rayCount)
+        if (pipeline.GetBuffer(DDGIResourceNames.RayBuffer) is not { } rays || rays.ElementCount < rayCount ||
+            pipeline.GetBuffer(DDGIResourceNames.HitBuffer) is not { } hits || hits.ElementCount < rayCount ||
+            pipeline.GetBuffer(DDGIResourceNames.RayRadianceBuffer) is not { } radiance || radiance.ElementCount < rayCount)
             return false;
 
         // Render-frame modulo controls SlowUpdate cadence; completed-update modulo
@@ -938,9 +971,13 @@ internal sealed partial class DDGIFrameContext
         _attemptedAssetRevision = 0;
         _failedUploadAsset = null;
         _failedUploadRevision = 0;
-        _diagnosticPresentationFrameId = ulong.MaxValue;
         _volume = null;
         _frameOwnerVolume = null;
+        _selectionWorld = null;
+        _selectedVolume = null;
+        _selectedVolumeId = Guid.Empty;
+        _selectionFrameId = ulong.MaxValue;
+        _hasSelectedVolume = false;
         _clearedRevision = 0;
         _frameId = ulong.MaxValue;
         _frameOwnerFrameId = ulong.MaxValue;

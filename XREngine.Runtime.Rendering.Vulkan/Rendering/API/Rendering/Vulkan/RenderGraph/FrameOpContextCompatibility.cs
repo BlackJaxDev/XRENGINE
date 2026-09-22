@@ -40,6 +40,7 @@ internal static class FrameOpContextCompatibility
             ResourceGeneration = 0UL,
             DescriptorGeneration = 0UL,
             ResourceRegistrySignatureSnapshot = null,
+            ResourceRegistryInstanceRevisionSnapshot = null,
         });
         FrameOpContext normalizedSecond = NormalizeSchedulingMetadata(second with
         {
@@ -48,6 +49,7 @@ internal static class FrameOpContextCompatibility
             ResourceGeneration = 0UL,
             DescriptorGeneration = 0UL,
             ResourceRegistrySignatureSnapshot = null,
+            ResourceRegistryInstanceRevisionSnapshot = null,
         });
         return normalizedFirst.Equals(normalizedSecond);
     }

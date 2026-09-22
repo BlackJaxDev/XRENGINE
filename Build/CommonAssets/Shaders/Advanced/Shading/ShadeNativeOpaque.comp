@@ -44,14 +44,14 @@ float shadowVisibility = 1.0;
 vec3 directDiffuse = vec3(0.0);
 vec3 directSpecular = vec3(0.0);
 
-bool XR_ADV_ExportsDdgiSurfaceInputs()
+bool XR_ADV_ExportsMaterialSurfaceInputs()
 {
     return (u_Push.flags & 16u) != 0u;
 }
 
-void XR_ADV_StoreNeutralDdgiSurfaceInputs(uvec2 pixel, uint viewIndex)
+void XR_ADV_StoreNeutralMaterialSurfaceInputs(uvec2 pixel, uint viewIndex)
 {
-    if (!XR_ADV_ExportsDdgiSurfaceInputs()) return;
+    if (!XR_ADV_ExportsMaterialSurfaceInputs()) return;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
     ivec3 target = XR_ADV_PIXEL(pixel, viewIndex);
 #else
@@ -63,10 +63,10 @@ void XR_ADV_StoreNeutralDdgiSurfaceInputs(uvec2 pixel, uint viewIndex)
     imageStore(RMSE, target, vec4(1.0, 0.0, 0.0, 0.0));
 }
 
-void XR_ADV_StoreDdgiSurfaceInputs(uvec2 pixel, uint viewIndex, vec3 emittedRadiance,
+void XR_ADV_StoreMaterialSurfaceInputs(uvec2 pixel, uint viewIndex, vec3 emittedRadiance,
     vec4 base, vec3 normal, float roughness, float metallic, vec4 rmse, bool unlit)
 {
-    if (!XR_ADV_ExportsDdgiSurfaceInputs()) return;
+    if (!XR_ADV_ExportsMaterialSurfaceInputs()) return;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
     ivec3 target = XR_ADV_PIXEL(pixel, viewIndex);
 #else
@@ -193,7 +193,7 @@ void main()
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu, tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
-    XR_ADV_StoreNeutralDdgiSurfaceInputs(pixel, viewIndex);
+    XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
@@ -374,6 +374,6 @@ void main()
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(surface.motionNdc, 0.0, 0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4((surface.flags &
         (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0));
-    XR_ADV_StoreDdgiSurfaceInputs(pixel, viewIndex, emittedRadiance, base, N, roughness, metallic, rmse,
+    XR_ADV_StoreMaterialSurfaceInputs(pixel, viewIndex, emittedRadiance, base, N, roughness, metallic, rmse,
         (material.eligibilityFlags & 16u) != 0u);
 }

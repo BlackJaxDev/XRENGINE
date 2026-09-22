@@ -48,6 +48,7 @@ internal static class VulkanFrameOpSnapshotSignatures
         hash.Add(context.MultiviewEnabled);
         hash.Add(context.ResourceRegistrySignatureSnapshot ??
             context.ResourceRegistry?.DescriptorSignature ?? 0);
+        hash.Add(VulkanFramePlanner.ResolveFrameOpContextResourceRegistryInstanceRevision(context));
         hash.Add(ComputePassMetadataSignature(context.PassMetadata));
         hash.Add(context.ResourceGeneration);
         hash.Add(context.DescriptorGeneration);
@@ -70,6 +71,7 @@ internal static class VulkanFrameOpSnapshotSignatures
             context.LogicalViewId,
             context.ResourceRegistrySignatureSnapshot ??
                 context.ResourceRegistry?.DescriptorSignature ?? 0,
+            VulkanFramePlanner.ResolveFrameOpContextResourceRegistryInstanceRevision(context),
             ComputePassMetadataSignature(context.PassMetadata),
             context.ResourceGeneration,
             context.DescriptorGeneration,
@@ -97,6 +99,7 @@ internal static class VulkanFrameOpSnapshotSignatures
             context.LogicalViewId != key.LogicalViewId ||
             (context.ResourceRegistrySignatureSnapshot ??
                 context.ResourceRegistry?.DescriptorSignature ?? 0) != key.ResourceRegistrySignature ||
+            VulkanFramePlanner.ResolveFrameOpContextResourceRegistryInstanceRevision(context) != key.ResourceRegistryInstanceRevision ||
             context.ResourceGeneration != key.ResourceGeneration ||
             context.DescriptorGeneration != key.DescriptorGeneration ||
             context.SubmissionQueueFamily != key.SubmissionQueueFamily)

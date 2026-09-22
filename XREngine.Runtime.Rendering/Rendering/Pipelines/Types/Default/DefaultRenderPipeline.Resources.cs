@@ -3,7 +3,8 @@ using System.Runtime.InteropServices;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.GI.DDGI;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.Integration;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 
@@ -32,11 +33,6 @@ public partial class DefaultRenderPipeline
         MsaaTargetsEnabled = 1UL << 17,
         AtmosphereResourcesEnabled = 1UL << 18,
         VolumetricFogResourcesEnabled = 1UL << 19,
-        RestirGiResourcesEnabled = 1UL << 20,
-        LightVolumeGiResourcesEnabled = 1UL << 21,
-        RadianceCascadeGiResourcesEnabled = 1UL << 22,
-        SurfelGiResourcesEnabled = 1UL << 23,
-        VoxelConeTracingResourcesEnabled = 1UL << 24,
         DebugVisualizationResourcesEnabled = 1UL << 25,
         // AO mode field [bits 26-29]: 0=disabled/safe-path, (int)NormalizedType+1 for active modes.
         // Changing AO type replaces the generation so mode-specific FBOs are rebuilt.
@@ -45,7 +41,6 @@ public partial class DefaultRenderPipeline
         AoModeFieldBit2 = 1UL << 28,
         AoModeFieldBit3 = 1UL << 29,
         VelocityResourcesEnabled = 1UL << 30,
-        DdgiResourcesEnabled = 1UL << 31,
     }
 
     private const ulong AoModeFieldMask = 0xFUL << 26;
@@ -86,14 +81,7 @@ public partial class DefaultRenderPipeline
             Math.Max(height, 1u))) + 1);
 
     internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
-    {
-        if (!UsesDDGI)
-            return default;
-        var world = viewport?.World;
-        return world is not null && DDGIVolumeComponent.Registry.TryGetFirstActive(world, out var volume) && volume is not null
-            ? DDGIResourceDescriptor.FromVolume(volume).ToVariant()
-            : DDGIResourceDescriptor.Default.ToVariant();
-    }
+        => GlobalIlluminationProviderRegistry.BuildResourceVariant(GlobalIlluminationPlan, viewport);
 
     internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
@@ -164,16 +152,6 @@ public partial class DefaultRenderPipeline
                     mask |= DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled;
             }
 
-            mask |= GlobalIlluminationMode switch
-            {
-                EGlobalIlluminationMode.PathTracing => DefaultPipelineResourceFeature.RestirGiResourcesEnabled,
-                EGlobalIlluminationMode.LightVolumes => DefaultPipelineResourceFeature.LightVolumeGiResourcesEnabled,
-                EGlobalIlluminationMode.RadianceCascades => DefaultPipelineResourceFeature.RadianceCascadeGiResourcesEnabled,
-                EGlobalIlluminationMode.SurfelGI => DefaultPipelineResourceFeature.SurfelGiResourcesEnabled,
-                EGlobalIlluminationMode.VoxelConeTracing => DefaultPipelineResourceFeature.VoxelConeTracingResourcesEnabled,
-                EGlobalIlluminationMode.DDGI => DefaultPipelineResourceFeature.DdgiResourcesEnabled,
-                _ => DefaultPipelineResourceFeature.None,
-            };
         }
 
         GroundTruthAmbientOcclusionSettings.EResolution gtaoResolution = generationAoSettings?.GroundTruth.Resolution
@@ -1764,147 +1742,12 @@ public partial class DefaultRenderPipeline
 
     private void DeclareGlobalIlluminationResources(RenderPipelineResourceLayoutBuilder builder)
     {
-        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
-        uint layers = DeclaredLayerCount(builder);
-
-        DeclareGiTextureAndQuad(builder, RestirGITextureName, RestirCompositeFBOName, CreateRestirGITexture, CreateRestirCompositeFBO, UsesRestirGiResources, layers, internalSize);
-        DeclareRestirReservoirBuffers(builder);
-        DeclareGiTextureAndQuad(builder, LightVolumeGITextureName, LightVolumeCompositeFBOName, CreateLightVolumeGITexture, CreateLightVolumeCompositeFBO, UsesLightVolumeGiResources, layers, internalSize);
-        DeclareGiTextureAndQuad(builder, RadianceCascadeGITextureName, RadianceCascadeCompositeFBOName, CreateRadianceCascadeGITexture, CreateRadianceCascadeCompositeFBO, UsesRadianceCascadeGiResources, layers, internalSize, DepthViewTextureName, NormalTextureName);
-        DeclareRadianceCascadeHistoryTextures(builder, internalSize, layers);
-        DeclareGiTextureAndQuad(builder, SurfelGITextureName, SurfelGICompositeFBOName, CreateSurfelGITexture, CreateSurfelGICompositeFBO, UsesSurfelGiResources, layers, internalSize);
-        DeclareSurfelGiBuffers(builder);
-        DeclareGiTextureAndQuad(builder, DDGITextureName, DDGICompositeFBOName, CreateDDGITexture, CreateDDGICompositeFBO, UsesDdgiResources, layers, internalSize);
-        DeclareDdgiAtlasesAndBuffers(builder);
-
-        Texture(builder, VoxelConeTracingVolumeTextureName, RenderResourceSizePolicy.Absolute(128u, 128u),
-            RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage,
-            EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
-            CreateVoxelConeTracingVolumeTexture)
-            .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: true, RequireImmutableStorage: false))
-            .RequiresStorageUsage()
-            .When(UsesVoxelConeTracingResources)
-            .Add();
-    }
-
-    private void DeclareDdgiAtlasesAndBuffers(RenderPipelineResourceLayoutBuilder builder)
-    {
-        DDGIResourceImports.Declare(builder, UsesDdgiResources);
-        DDGIResourceDescriptor descriptor = DDGIResourceDescriptor.FromVariant(builder.Profile.ResourceVariant);
-        Texture(builder, DDGIEnvironmentResources.TextureName, RenderResourceSizePolicy.Absolute(DDGIEnvironmentResources.Resolution, DDGIEnvironmentResources.Resolution),
-            SampledColorAttachment,
-            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
-            DDGIEnvironmentResources.CreateRadianceTexture)
-            .When(UsesDdgiResources)
-            .Add();
-
-        Texture(builder, DDGIIrradianceAtlasTextureName, RenderResourceSizePolicy.Absolute(descriptor.IrradianceWidth, descriptor.IrradianceHeight),
-            RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage,
-            EPixelInternalFormat.R11fG11fB10f, EPixelFormat.Rgb, EPixelType.Float, ESizedInternalFormat.R11fG11fB10f,
-            () => DDGIVolumeRuntimeState.CreateIrradianceAtlasTextureArray((uint)descriptor.Cascades, (int)descriptor.IrradianceWidth, (int)descriptor.IrradianceHeight))
-            .Layers((uint)descriptor.Cascades)
-            .RequiresStorageUsage()
-            .When(UsesDdgiResources)
-            .Add();
-
-        Texture(builder, DDGIVisibilityAtlasTextureName, RenderResourceSizePolicy.Absolute(descriptor.VisibilityWidth, descriptor.VisibilityHeight),
-            RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage,
-            EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
-            () => DDGIVolumeRuntimeState.CreateVisibilityAtlasTextureArray((uint)descriptor.Cascades, (int)descriptor.VisibilityWidth, (int)descriptor.VisibilityHeight))
-            .Layers((uint)descriptor.Cascades)
-            .RequiresStorageUsage()
-            .When(UsesDdgiResources)
-            .Add();
-
-        DeclareDdgiBuffer(builder, DDGIProbeStateBufferName, (uint)Marshal.SizeOf<DDGIProbeGPU>(), descriptor.ProbeElements, () => DDGIVolumeRuntimeState.CreateDeclaredProbeBuffer(descriptor.ProbeElements));
-        DeclareDdgiBuffer(builder, DDGIRayBufferName, (uint)Marshal.SizeOf<DDGIRayGPU>(), descriptor.RayElements, () => DDGIVolumeRuntimeState.CreateDeclaredRayBuffer(descriptor.RayElements));
-        DeclareDdgiBuffer(builder, DDGIHitBufferName, (uint)Marshal.SizeOf<DDGIHitGPU>(), descriptor.RayElements, () => DDGIVolumeRuntimeState.CreateDeclaredHitBuffer(descriptor.RayElements));
-        DeclareDdgiBuffer(builder, DDGIRayRadianceBufferName, (uint)Marshal.SizeOf<DDGIRayRadianceGPU>(), descriptor.RayElements, () => DDGIVolumeRuntimeState.CreateDeclaredRayRadianceBuffer(descriptor.RayElements));
-    }
-
-    private static void DeclareDdgiBuffer(RenderPipelineResourceLayoutBuilder builder, string name, uint stride, uint elementCount, Func<XRDataBuffer> factory)
-        => builder.Buffer(name)
-            .Size(RenderResourceSizePolicy.Internal())
-            .Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat((ulong)stride * elementCount, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
-            .Elements(stride, elementCount)
-            .Factory(factory)
-            .When(UsesDdgiResources)
-            .Add();
-
-    private void DeclareRestirReservoirBuffers(RenderPipelineResourceLayoutBuilder builder)
-    {
-        uint elementCount = checked(Math.Max(1u, builder.Profile.InternalWidth) * Math.Max(1u, builder.Profile.InternalHeight));
-        DeclareRestirReservoirBuffer(builder, VPRC_ReSTIRPass.InitialReservoirBufferName, 3u, elementCount);
-        DeclareRestirReservoirBuffer(builder, VPRC_ReSTIRPass.TemporalReservoirBufferName, 4u, elementCount);
-        DeclareRestirReservoirBuffer(builder, VPRC_ReSTIRPass.SpatialReservoirBufferName, 5u, elementCount);
-    }
-
-    private static void DeclareRestirReservoirBuffer(RenderPipelineResourceLayoutBuilder builder, string name, uint bindingIndex, uint elementCount)
-        => builder.Buffer(name)
-            .Size(RenderResourceSizePolicy.Internal())
-            .Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat((ulong)elementCount * VPRC_ReSTIRPass.ReservoirStride, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
-            .Elements(VPRC_ReSTIRPass.ReservoirStride, elementCount)
-            .Factory(() => VPRC_ReSTIRPass.CreateDeclaredReservoirBuffer(name, bindingIndex, elementCount))
-            .When(UsesRestirGiResources)
-            .Add();
-
-    private static void DeclareSurfelGiBuffers(RenderPipelineResourceLayoutBuilder builder)
-    {
-        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.SurfelBufferName, VPRC_SurfelGIPass.SurfelStride, VPRC_SurfelGIPass.MaxSurfelsConst, VPRC_SurfelGIPass.CreateDeclaredSurfelBuffer);
-        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.CounterBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.CounterCount, VPRC_SurfelGIPass.CreateDeclaredCounterBuffer);
-        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.FreeStackBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.MaxSurfelsConst, VPRC_SurfelGIPass.CreateDeclaredFreeStackBuffer);
-        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.GridCountsBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.GridCellCount, VPRC_SurfelGIPass.CreateDeclaredGridCountsBuffer);
-        DeclareSurfelGiBuffer(builder, VPRC_SurfelGIPass.GridIndicesBufferName, VPRC_SurfelGIPass.ScalarStride, VPRC_SurfelGIPass.GridIndexCount, VPRC_SurfelGIPass.CreateDeclaredGridIndicesBuffer);
-    }
-
-    private static void DeclareSurfelGiBuffer(RenderPipelineResourceLayoutBuilder builder, string name, uint stride, uint elementCount, Func<XRDataBuffer> factory)
-        => builder.Buffer(name)
-            .Size(RenderResourceSizePolicy.Internal())
-            .Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat((ulong)stride * elementCount, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
-            .Elements(stride, elementCount)
-            .Factory(factory)
-            .When(UsesSurfelGiResources)
-            .Add();
-
-    private void DeclareRadianceCascadeHistoryTextures(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy size, uint layers)
-    {
-        DeclareRadianceCascadeHistoryTexture(builder, VPRC_RadianceCascadesPass.HistoryTextureAName, size, layers);
-        DeclareRadianceCascadeHistoryTexture(builder, VPRC_RadianceCascadesPass.HistoryTextureBName, size, layers);
-    }
-
-    private void DeclareRadianceCascadeHistoryTexture(RenderPipelineResourceLayoutBuilder builder, string name, RenderResourceSizePolicy size, uint layers)
-        => Texture(builder, name, size, SampledStorageTexture,
-                EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
-                () => CreateRadianceCascadeHistoryTexture(name))
-            .Layers(layers)
-            .StereoCompatible(layers > 1u)
-            .RequiresStorageUsage()
-            .History(RenderResourceHistoryPolicy.ClearOnCommit)
-            .When(UsesRadianceCascadeGiResources)
-            .Add();
-
-    private XRTexture CreateRadianceCascadeHistoryTexture(string name)
-    {
-        XRTexture texture = CreateRadianceCascadeGITexture();
-        texture.Name = name;
-        texture.SamplerName = "gHistory";
-        if (texture is XRTexture2D texture2D)
-        {
-            texture2D.MinFilter = ETexMinFilter.Linear;
-            texture2D.MagFilter = ETexMagFilter.Linear;
-        }
-        else if (texture is XRTexture2DArray textureArray)
-        {
-            textureArray.MinFilter = ETexMinFilter.Linear;
-            textureArray.MagFilter = ETexMagFilter.Linear;
-        }
-        return texture;
+        GlobalIlluminationProviderRegistry.DeclareResources(builder,
+            new(DefaultGlobalIlluminationHostAdapter.Instance, GlobalIlluminationPlan,
+                EGlobalIlluminationExecutionAnchor.ScenePreparation,
+                new(DepthViewTextureName, NormalTextureName, AlbedoOpacityTextureName,
+                    RMSETextureName, AmbientOcclusionIntensityTextureName,
+                    RuntimeEnableMsaaTargets ? ForwardPassMsaaFBOName : ForwardPassFBOName)));
     }
 
     private void DeclareDebugVisualizationResources(RenderPipelineResourceLayoutBuilder builder)
@@ -1964,32 +1807,6 @@ public partial class DefaultRenderPipeline
             .Factory(factory)
             .When(predicate)
             .Add();
-
-    private void DeclareGiTextureAndQuad(
-        RenderPipelineResourceLayoutBuilder builder,
-        string textureName,
-        string quadName,
-        Func<XRTexture> textureFactory,
-        Func<XRFrameBuffer> quadFactory,
-        RenderPipelineResourcePredicate predicate,
-        uint layers,
-        RenderResourceSizePolicy size,
-        params string[] extraDependencies)
-    {
-        Texture(builder, textureName, size, SampledStorageTexture,
-            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
-            textureFactory)
-            .Layers(layers)
-            .StereoCompatible(layers > 1u)
-            .RequiresStorageUsage()
-            .When(predicate)
-            .Add();
-
-        string[] dependencies = new string[extraDependencies.Length + 1];
-        dependencies[0] = textureName;
-        Array.Copy(extraDependencies, 0, dependencies, 1, extraDependencies.Length);
-        DeclareEffectQuad(builder, quadName, quadFactory, predicate, dependencies);
-    }
 
     private XRTexture CreateAmbientOcclusionIntensityTexture()
     {
@@ -2590,24 +2407,6 @@ public partial class DefaultRenderPipeline
 
     private static bool UsesVolumetricFogResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled) != 0;
-
-    private static bool UsesRestirGiResources(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.RestirGiResourcesEnabled) != 0;
-
-    private static bool UsesLightVolumeGiResources(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.LightVolumeGiResourcesEnabled) != 0;
-
-    private static bool UsesRadianceCascadeGiResources(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.RadianceCascadeGiResourcesEnabled) != 0;
-
-    private static bool UsesSurfelGiResources(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.SurfelGiResourcesEnabled) != 0;
-
-    private static bool UsesVoxelConeTracingResources(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.VoxelConeTracingResourcesEnabled) != 0;
-
-    private static bool UsesDdgiResources(RenderPipelineResourceProfile profile)
-        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.DdgiResourcesEnabled) != 0;
 
     private static bool UsesDebugVisualizationResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled) != 0;

@@ -49,6 +49,7 @@ namespace XREngine.Components.Lights
         private bool _disableCoarseVisibility = true;
         private float _cascadeBlendMargin = 0.1f;
         private bool _applyAmbientOcclusion = true;
+        private int _selectionPriority = 0;
 
         private IRuntimeRenderWorld? _registeredWorld;
 
@@ -321,6 +322,19 @@ namespace XREngine.Components.Lights
         }
 
         /// <summary>
+        /// Resolves competing active DDGI volumes by descending priority. A tie
+        /// intentionally disables DDGI instead of depending on registration
+        /// order. Bounds are not a selection input until multi-volume blending
+        /// has an explicit coverage policy.
+        /// </summary>
+        [Category("DDGI Volume")]
+        public int SelectionPriority
+        {
+            get => _selectionPriority;
+            set => SetField(ref _selectionPriority, value);
+        }
+
+        /// <summary>
         /// Multiplicative color applied when sampling the indirect radiance field.
         /// </summary>
         [Category("DDGI Volume")]
@@ -511,6 +525,7 @@ namespace XREngine.Components.Lights
                 or nameof(BakedAssetPath)
                 or nameof(BakedAsset)
                 or nameof(VolumeEnabled)
+                or nameof(SelectionPriority)
                 or nameof(Tint)
                 or nameof(Intensity)
                 or nameof(CascadeCount)
@@ -580,8 +595,20 @@ namespace XREngine.Components.Lights
                 }
             }
 
-            public static bool TryGetFirstActive(IRuntimeRenderWorld world, out DDGIVolumeComponent? component)
+            /// <summary>
+            /// Resolves the highest-priority active DDGI volume for a world. An
+            /// authoring object's stable ID identifies it in diagnostics, but
+            /// never grants GPU-resource sharing. Multi-volume blending and
+            /// bounds coverage are not implemented, so a highest-priority tie
+            /// disables DDGI rather than making registration order observable.
+            /// </summary>
+            public static bool TrySelectActive(IRuntimeRenderWorld world, out DDGIVolumeComponent? component)
             {
+                int highestPriority = int.MinValue;
+                int highestPriorityCount = 0;
+                DDGIVolumeComponent? selected = null;
+                Guid selectedId = Guid.Empty;
+                Guid conflictingId = Guid.Empty;
                 lock (s_lock)
                 {
                     if (s_perWorld.TryGetValue(world, out List<DDGIVolumeComponent>? list))
@@ -589,14 +616,41 @@ namespace XREngine.Components.Lights
                         for (int i = 0; i < list.Count; i++)
                         {
                             DDGIVolumeComponent candidate = list[i];
-                            if (candidate.HasValidVolume)
+                            if (!candidate.HasValidVolume)
+                                continue;
+
+                            if (candidate.SelectionPriority > highestPriority)
                             {
-                                component = candidate;
-                                return true;
+                                selected = candidate;
+                                selectedId = candidate.ID;
+                                highestPriority = candidate.SelectionPriority;
+                                highestPriorityCount = 1;
+                                conflictingId = Guid.Empty;
+                            }
+                            else if (candidate.SelectionPriority == highestPriority)
+                            {
+                                highestPriorityCount++;
+                                conflictingId = candidate.ID;
                             }
                         }
                     }
                 }
+
+                if (highestPriorityCount == 1)
+                {
+                    component = selected;
+                    return true;
+                }
+
+                if (highestPriorityCount > 1)
+                    Debug.RenderingWarningEvery(
+                        "DDGI.AmbiguousVolumeSelection",
+                        TimeSpan.FromSeconds(5),
+                        "DDGI found {0} active volumes tied at selection priority {1} (IDs {2:N} and {3:N}); the field selection was skipped instead of using registration order.",
+                        highestPriorityCount,
+                        highestPriority,
+                        selectedId,
+                        conflictingId);
 
                 component = null;
                 return false;

@@ -572,6 +572,7 @@ internal sealed partial class VulkanFramePlanner
         hash.Add(context.StereoEnabled);
         hash.Add(context.MultiviewEnabled);
         hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
+        hash.Add(VulkanFramePlanner.ResolveFrameOpContextResourceRegistryInstanceRevision(context));
         hash.Add(ComputePassMetadataSignature(context.PassMetadata));
         hash.Add(context.ResourceGeneration);
         hash.Add(context.SubmissionQueueFamily);

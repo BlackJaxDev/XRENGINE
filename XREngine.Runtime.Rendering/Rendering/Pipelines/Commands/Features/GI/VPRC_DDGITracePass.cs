@@ -2,6 +2,7 @@ using System;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
@@ -16,8 +17,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_DDGITracePass : VPRC_DDGIComputePass
     {
-        public string RayBufferName { get; set; } = DefaultRenderPipeline.DDGIRayBufferName;
-        public string HitBufferName { get; set; } = DefaultRenderPipeline.DDGIHitBufferName;
+        public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        public string HitBufferName { get; set; } = DDGIResourceNames.HitBuffer;
         public string ReadyVariableName { get; set; } = "DDGIGeometryReady";
         public string NodeCountVariableName { get; set; } = "DDGIGeometryNodeCount";
         public string NodeBufferVariableName { get; set; } = "DDGIGeometryNodes";
@@ -26,17 +27,19 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRRenderProgram? _traceProgram;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.DDGI);
 
         protected override void ExecuteDDGI()
         {
-            if (ActivePipelineInstance.Pipeline is not IGlobalIlluminationPipelineProvider { UsesDDGI: true })
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
                 return;
 
             var world = ActivePipelineInstance.RenderState.WindowViewport?.World
                 ?? RuntimeEngine.Rendering.State.RenderingWorld;
-            if (world is null || !DDGIVolumeComponent.Registry.TryGetFirstActive(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
+            var context = DDGIFrameContext.Get(ActivePipelineInstance);
+            if (world is null || !context.TryGetSelectedVolume(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
                 return;
 
             var variables = ActivePipelineInstance.Variables;
@@ -51,7 +54,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (rayBuffer is null || hitBuffer is null)
                 return;
 
-            var context = DDGIFrameContext.Get(ActivePipelineInstance);
             var state = context.State;
             if (!context.CanRun(EDDGIUpdateStage.Rays))
                 return;
@@ -108,6 +110,19 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void EnsureTraceProgram()
         {
             _traceProgram = DDGIFrameContext.Get(ActivePipelineInstance).Program("ddgi_trace");
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_DDGITracePass), ERenderGraphPassStage.Compute);
+            builder.ReadBuffer("DDGIGeometryMaterials");
+            builder.ReadBuffer("DDGIGeometryAttributes");
+            builder.SampleTexture(MakeTextureResource("DDGIMaterialTextures"));
+            builder.ReadBuffer(RayBufferName);
+            builder.ReadBuffer(NodeBufferVariableName);
+            builder.ReadBuffer(TriangleBufferVariableName);
+            builder.WriteBuffer(HitBufferName);
         }
 
 

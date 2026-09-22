@@ -97,8 +97,11 @@ public sealed class AdvancedMaterialDatabase
             publicationSequence,
             _materialLayoutHandles,
             LayoutMembers,
-            ConstantWords,
-            TextureBindings,
+            // Material records address fixed-stride payload slots by stable handle
+            // index. Publish the entire fixed-capacity arenas so a sparse live set
+            // cannot truncate the GPU-visible range below a valid logical slot.
+            _constantWords,
+            _textureBindings,
             _materials.Generations,
             _kernels.Generations,
             _layouts.Generations);

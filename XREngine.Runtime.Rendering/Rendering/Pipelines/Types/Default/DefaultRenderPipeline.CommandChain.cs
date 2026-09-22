@@ -4,6 +4,8 @@ using System.Numerics;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.Integration;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
@@ -134,8 +136,6 @@ public partial class DefaultRenderPipeline
         bool bypassVendorUpscale = RenderDiagnosticsFlags.BypassVendorUpscale;
 
         AppendTemporalBegin(c);
-
-        AppendVoxelConeTracingPass(c, enableComputePasses);
 
         c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
@@ -319,22 +319,6 @@ public partial class DefaultRenderPipeline
             && VolumetricFogVolumeComponent.Registry.HasActive(world);
     }
 
-    private void AppendVoxelConeTracingPass(ViewportRenderCommandContainer c, bool enableComputePasses)
-    {
-        if (enableComputePasses)
-        {
-            c.Add<VPRC_VoxelConeTracingPass>().SetOptions(
-                VoxelConeTracingVolumeTextureName,
-                [
-                    (int)EDefaultRenderPass.OpaqueDeferred,
-                    (int)EDefaultRenderPass.OpaqueForward,
-                    (int)EDefaultRenderPass.MaskedForward
-                ],
-                GPURenderDispatch,
-                true);
-        }
-    }
-
     private void AppendAmbientOcclusionSwitch(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
         var aoChoice = c.Add<VPRC_IfElse>();
@@ -463,7 +447,7 @@ public partial class DefaultRenderPipeline
     {
         var probeSync = c.Add<VPRC_IfElse>();
         probeSync.Label = "LightProbeSyncActive";
-        probeSync.ConditionEvaluator = () => UsesLightProbeGI;
+        probeSync.ConditionEvaluator = () => GlobalIlluminationPlan.RequiresNativeProbeIblBindings;
         var probeCommands = new ViewportRenderCommandContainer(this);
         probeCommands.Add<VPRC_SyncLightProbeResources>();
         probeSync.TrueCommands = probeCommands;
@@ -606,22 +590,12 @@ public partial class DefaultRenderPipeline
 
             if (enableComputePasses)
             {
-                c.Add<VPRC_ReSTIRPass>();
-                c.Add<VPRC_LightVolumesPass>();
-                c.Add<VPRC_RadianceCascadesPass>();
-                c.Add<VPRC_SurfelGIPass>();
-                c.Add<VPRC_BuildAccelerationStructure>();
-                c.Add<VPRC_DDGIEnvironmentPass>();
-                c.Add<VPRC_DDGIPrepareGeometryPass>();
-                c.Add<VPRC_DDGIRaygenPass>();
-                c.Add<VPRC_DDGITracePass>();
-                c.Add<VPRC_DDGIHitShadePass>();
-                c.Add<VPRC_DDGIRelocatePass>();
-                c.Add<VPRC_DDGIUpdateIrradiancePass>();
-                c.Add<VPRC_DDGIUpdateVisibilityPass>();
-                c.Add<VPRC_DDGIBorderCopyPass>();
-                c.Add<VPRC_DDGICompositePass>();
-                c.Add<VPRC_DDGIDebugVisualization>();
+                GlobalIlluminationProviderRegistry.ContributePasses(c,
+                    new(DefaultGlobalIlluminationHostAdapter.Instance, GlobalIlluminationPlan,
+                        EGlobalIlluminationExecutionAnchor.SurfaceResolve,
+                        new(DepthViewTextureName, NormalTextureName, AlbedoOpacityTextureName,
+                            RMSETextureName, AmbientOcclusionIntensityTextureName,
+                            RuntimeEnableMsaaTargets ? ForwardPassMsaaFBOName : ForwardPassFBOName)));
             }
 
             if (enableComputePasses)

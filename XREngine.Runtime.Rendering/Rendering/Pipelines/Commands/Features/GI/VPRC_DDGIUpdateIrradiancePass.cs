@@ -2,6 +2,7 @@ using System;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
@@ -16,27 +17,28 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_DDGIUpdateIrradiancePass : VPRC_DDGIComputePass
     {
-        public string RayBufferName { get; set; } = DefaultRenderPipeline.DDGIRayBufferName;
-        public string RayRadianceBufferName { get; set; } = DefaultRenderPipeline.DDGIRayRadianceBufferName;
-        public string IrradianceAtlasTextureName { get; set; } = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
+        public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        public string RayRadianceBufferName { get; set; } = DDGIResourceNames.RayRadianceBuffer;
+        public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
 
         private XRRenderProgram? _updateProgram;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.DDGI);
 
         protected override void ExecuteDDGI()
         {
-            if (ActivePipelineInstance.Pipeline is not IGlobalIlluminationPipelineProvider { UsesDDGI: true })
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
                 return;
 
             var world = ActivePipelineInstance.RenderState.WindowViewport?.World
                 ?? RuntimeEngine.Rendering.State.RenderingWorld;
-            if (world is null || !DDGIVolumeComponent.Registry.TryGetFirstActive(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
+            var context = DDGIFrameContext.Get(ActivePipelineInstance);
+            if (world is null || !context.TryGetSelectedVolume(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
                 return;
 
-            var context = DDGIFrameContext.Get(ActivePipelineInstance);
             var state = context.State;
             if (!context.CanRun(EDDGIUpdateStage.Relocation))
                 return;
@@ -88,6 +90,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void EnsureUpdateProgram()
         {
             _updateProgram = DDGIFrameContext.Get(ActivePipelineInstance).Program("ddgi_update_irradiance");
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_DDGIUpdateIrradiancePass), ERenderGraphPassStage.Compute);
+            builder.ReadBuffer(RayBufferName);
+            builder.ReadBuffer(RayRadianceBufferName);
+            builder.ReadWriteTexture(MakeTextureResource(IrradianceAtlasTextureName));
         }
     }
 }

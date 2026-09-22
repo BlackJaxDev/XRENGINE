@@ -17,15 +17,15 @@ public partial class OpenGLRenderer
         uint views = checked((uint)request.Views.ViewCount), depthSlices = Math.Max(1u, request.FroxelDepthSlices);
         buffers.Bind();
         if (buffers.PreparedRenderFrame != request.RenderFrameId || buffers.PreparedPublication != request.Publication.PublicationGeneration ||
-            buffers.PreparedDdgiSurfaceExports != request.EnableDdgi)
+            buffers.PreparedMaterialSurfaceExports != request.RequiresMaterialSurfaceExports)
         {
             buffers.EnsureCapacity(closure.Width, closure.Height, views, depthSlices);
             buffers.UploadPushConstants(closure.Width, closure.Height, views, depthSlices, _advancedSceneUploader?.LightCount ?? 0u,
-                request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.EnableDdgi,
+                request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.RequiresMaterialSurfaceExports,
                 request.ShadingDebugView);
             buffers.PreparedRenderFrame = request.RenderFrameId;
             buffers.PreparedPublication = request.Publication.PublicationGeneration;
-            buffers.PreparedDdgiSurfaceExports = request.EnableDdgi;
+            buffers.PreparedMaterialSurfaceExports = request.RequiresMaterialSurfaceExports;
         }
         Span<uint> priorSamplers = stackalloc uint[5];
         if (!TryBindAdvancedNativeSamplers(0u, priorSamplers, out reason))
