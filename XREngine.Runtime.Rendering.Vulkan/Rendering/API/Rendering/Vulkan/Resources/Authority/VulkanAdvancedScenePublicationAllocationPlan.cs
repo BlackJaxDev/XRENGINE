@@ -5,13 +5,6 @@ internal enum EVulkanAdvancedSceneResidentOwner
     Draws,
     Instances,
     Geometry,
-    StaticVertices,
-    Indices,
-    PreSkinnedCurrent,
-    PreSkinnedPrevious,
-    MeshletDescriptors,
-    MeshletVertexIndices,
-    MeshletTriangleWords,
     Transforms,
     Deformations,
     RenderStates,
@@ -146,5 +139,22 @@ internal sealed class VulkanAdvancedScenePublicationAllocationPlan
     {
         _transientBytes = checked(_transientBytes + bytes);
         RequiredBytes = checked(RequiredBytes + bytes);
+    }
+
+    /// <summary>Formats the exact packed byte budget only on a capacity failure.</summary>
+    internal string DescribeCompactStorage()
+    {
+        System.Text.StringBuilder detail = new();
+        for (int owner = 0; owner < _compactBytes.Length; owner++)
+        {
+            if (owner != 0)
+                detail.Append(", ");
+            detail.Append((EVulkanAdvancedSceneResidentOwner)owner);
+            detail.Append('=');
+            detail.Append(_compactBytes[owner]);
+        }
+        detail.Append(", Transient=");
+        detail.Append(_transientBytes);
+        return detail.ToString();
     }
 }

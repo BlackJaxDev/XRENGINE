@@ -1860,6 +1860,9 @@ namespace XREngine.Rendering
         public virtual AdvancedVisibilityPreparationDiagnosticsSnapshot? CaptureAdvancedVisibilityPreparationDiagnostics()
             => null;
 
+        public virtual object? CaptureAdvancedVisibilityInputCopyDiagnostics()
+            => null;
+
         /// <inheritdoc />
         public virtual object? CapturePipelineCompilationDiagnostics()
             => null;

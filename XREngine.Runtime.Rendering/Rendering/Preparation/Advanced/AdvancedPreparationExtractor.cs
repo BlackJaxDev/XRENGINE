@@ -41,6 +41,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private readonly int[] _drawDeformationCandidateIndices;
     private readonly uint[] _depthPyramidGenerations;
     private readonly ulong[] _viewHistoryKeys;
+    private readonly ulong[] _viewHistoryLastUsed;
     private readonly AdvancedBoneLodTier[] _boneTierScratch;
     private AdvancedDeformationAdmissionResult _admission;
     private AdvancedIndirectPreparationResult _indirectResult;
@@ -56,11 +57,20 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private long _visibilityContentGeneration;
     private AdvancedGpuScenePublication _preparedScenePublication;
     private RenderFrameViewSet? _lastVisibilityViewSet;
+    private GPUScene? _temporalScene;
+    private ulong _temporalDatabaseEpoch;
+    private GPUScene? _deformationScene;
+    private ulong _deformationDatabaseEpoch;
+    private ulong _deformationTopologyGeneration;
+    private ulong _nextViewHistoryUse;
+    private ulong _visibilityFeedbackEpoch = 1UL;
     // This is an identity-only guard for the fixed extractor columns.  A
     // deferred Vulkan consumer must obtain record data from the package's
     // retained publication, never by retaining this mutable GPUScene.
     private uint _preparedSceneIdentity;
     internal long LastExtractionTicks { get; private set; }
+    internal long LastIndirectPlanningTicks { get; private set; }
+    internal long LastInitialViewPlanningTicks { get; private set; }
 
     public AdvancedPreparationExtractor(AdvancedPreparationOptions options)
     {
@@ -119,6 +129,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             new int[options.MaximumDraws];
         _depthPyramidGenerations = new uint[options.MaximumViews];
         _viewHistoryKeys = new ulong[options.MaximumViews];
+        _viewHistoryLastUsed = new ulong[options.MaximumViews];
         _boneTierScratch = new AdvancedBoneLodTier[1];
     }
 
@@ -137,6 +148,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         => _preparedSceneIdentity != 0u && publication.GpuResourcesPublished &&
            publication.PublicationGeneration == _publicationGeneration &&
            publication.VisibilityContentGeneration == VisibilityContentGeneration &&
+           publication.VisibilityFeedbackEpoch == _visibilityFeedbackEpoch &&
            publication.ScenePublication == _preparedScenePublication &&
            publication.DrawCount == (uint)_drawCount &&
            publication.SceneIdentity == _preparedSceneIdentity &&
@@ -193,6 +205,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         EAdvancedPreparationConsumer consumers)
     {
         LastExtractionTicks = 0;
+        LastIndirectPlanningTicks = 0;
+        LastInitialViewPlanningTicks = 0;
         // Do not let deferred or failed preparation leave consumers observing
         // arrays tied to the preceding world frame.
         AdvanceVisibilityContentGeneration();
@@ -210,6 +224,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             publicationSnapshot.Submission.Sequence != world.GpuScene.AdvancedScenePublication.Sequence)
             return CreateDeferredPublication(world, consumers, 0u,
                 "The exact canonical scene publication is unavailable for advanced preparation.");
+
+        ResetTemporalStateForSceneEpoch(world.GpuScene, frameId);
         uint submissionCount = checked((uint)publicationSnapshot.Submission.Records.Length);
         ulong completedValue = frameId == 0UL ? 0UL : frameId - 1UL;
         if (!_frameUploadArena.TryBeginFrame(frameId, completedValue))
@@ -238,7 +254,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 completedValue,
                 _deformedArena.CurrentFrameSlot,
                 _deformedArena.PreviousFrameSlot,
-                _deformedArena.VertexCapacity))
+                _deformedArena.VertexCapacity,
+                world.GpuScene,
+                world.GpuScene.AdvancedScenePublication.Publication.DatabaseEpoch,
+                world.GpuScene.AdvancedScenePublication.Publication.TopologyGeneration))
         {
             _deformedArena.EndFrame(frameId);
             _frameUploadArena.EndFrame(frameId);
@@ -248,8 +267,12 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced deformation GPU output slot is not reusable.");
+                "The advanced deformation GPU output slot or static generation is not reusable.");
         }
+
+        ResetDeformationOwnersForGeneration(
+            world.GpuScene,
+            world.GpuScene.AdvancedScenePublication.Publication);
 
         try
         {
@@ -306,6 +329,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             throw new InvalidOperationException(
                 "The fixed advanced upload copy plan is smaller than its arena contract.");
         }
+        long indirectPlanningStarted = Stopwatch.GetTimestamp();
         _indirectResult = _indirectPlanner.Build(
             _visibilityPayloads.AsSpan(0, _drawCount),
             argumentBufferBase: 0u,
@@ -314,11 +338,14 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             countStride: 4u,
             submissionStrategy:
                 RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+        LastIndirectPlanningTicks = Stopwatch.GetTimestamp() - indirectPlanningStarted;
         _visibilityPlanCount = 0;
         if (viewSet is RenderFrameViewSet initialViews)
         {
             _lastVisibilityViewSet = initialViews;
+            long viewPlanningStarted = Stopwatch.GetTimestamp();
             AddVisibilityPlansCore(initialViews, replaceMask: true);
+            LastInitialViewPlanningTicks = Stopwatch.GetTimestamp() - viewPlanningStarted;
         }
 
         _publicationGeneration++;
@@ -364,7 +391,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             GpuResourcesPublished: true,
             AggregateDispatchExecuted: false,
             Backend: RuntimeGraphicsApiKind.Unknown,
-            DeformationGpuMilliseconds: 0.0);
+            DeformationGpuMilliseconds: 0.0,
+            VisibilityFeedbackEpoch: _visibilityFeedbackEpoch);
         }
         finally
         {
@@ -413,6 +441,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         in RenderFrameViewSet views,
         bool replaceMask)
     {
+        EnsureVisibilityPlanCapacity(in views);
         // A shared extraction can accumulate output-local view sets. Keep the
         // candidate mask as their exact union; early dispatch selects one
         // canonical view-id from that union for each set-1 segment.
@@ -553,13 +582,20 @@ public sealed class AdvancedPreparationExtractor : IDisposable
 
     /// <summary>
     /// Publishes a completion-gated CPU mirror of delayed GPU animation
-    /// relevance. Callers must never pass records from an unfinished frame.
+    /// relevance. The originating publication carries the scene-activation
+    /// epoch so a late callback from another world cannot enter this ring.
+    /// Callers must never pass records from an unfinished frame.
     /// </summary>
     public void PublishVisibilityFeedback(
-        ulong frameId,
+        in AdvancedPreparationPublication publication,
         ReadOnlySpan<AdvancedAnimationVisibilityFeedback> feedback,
         ulong completionValue)
     {
+        if (publication.VisibilityFeedbackEpoch != _visibilityFeedbackEpoch ||
+            publication.SceneIdentity != _preparedSceneIdentity ||
+            !_visibilityFeedbackRing.CanAcceptFrame(publication.FrameId))
+            return;
+
         if (feedback.Length > _visibilityFeedbackRing.RecordCapacity)
         {
             throw new ArgumentOutOfRangeException(
@@ -568,9 +604,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         }
 
         feedback.CopyTo(
-            _visibilityFeedbackRing.GetGpuWritableMirror(frameId));
+            _visibilityFeedbackRing.GetGpuWritableMirror(publication.FrameId));
         _visibilityFeedbackRing.SealGpuWrite(
-            frameId,
+            publication.FrameId,
             feedback.Length,
             completionValue);
     }
@@ -1176,14 +1212,124 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         for (int i = 0; i < _viewHistoryKeys.Length; i++)
         {
             if (_viewHistoryKeys[i] == historyKey)
+            {
+                _viewHistoryLastUsed[i] = NextViewHistoryUse();
                 return i;
+            }
             if (_viewHistoryKeys[i] == 0UL && empty < 0)
                 empty = i;
         }
 
         if (empty >= 0)
+        {
             _viewHistoryKeys[empty] = historyKey;
-        return empty;
+            _viewHistoryLastUsed[empty] = NextViewHistoryUse();
+            return empty;
+        }
+
+        int oldestInactive = -1;
+        ulong oldestUse = ulong.MaxValue;
+        for (int i = 0; i < _viewHistoryKeys.Length; i++)
+        {
+            if (FindCurrentPlan(_viewHistoryKeys[i]) >= 0 ||
+                _viewHistoryLastUsed[i] >= oldestUse)
+            {
+                continue;
+            }
+
+            oldestInactive = i;
+            oldestUse = _viewHistoryLastUsed[i];
+        }
+
+        if (oldestInactive >= 0)
+        {
+            _viewHistoryKeys[oldestInactive] = historyKey;
+            _depthPyramidGenerations[oldestInactive] = 0u;
+            _viewHistoryLastUsed[oldestInactive] = NextViewHistoryUse();
+        }
+        return oldestInactive;
+    }
+
+    private void EnsureVisibilityPlanCapacity(in RenderFrameViewSet views)
+    {
+        int requiredPlanCount = _visibilityPlanCount;
+        for (int viewIndex = 0; viewIndex < views.ViewCount; viewIndex++)
+        {
+            ulong historyKey = views.GetView(viewIndex).EffectiveHistoryKey;
+            if (FindCurrentPlan(historyKey) >= 0)
+                continue;
+
+            bool alreadyRequested = false;
+            for (int priorIndex = 0; priorIndex < viewIndex; priorIndex++)
+            {
+                if (views.GetView(priorIndex).EffectiveHistoryKey == historyKey)
+                {
+                    alreadyRequested = true;
+                    break;
+                }
+            }
+
+            if (!alreadyRequested)
+                requiredPlanCount++;
+        }
+
+        if (requiredPlanCount > _visibilityPlans.Length)
+        {
+            throw new InvalidOperationException(
+                $"Advanced preparation requires {requiredPlanCount} simultaneous views, " +
+                $"but its configured capacity is {_visibilityPlans.Length}.");
+        }
+    }
+
+    private void ResetTemporalStateForSceneEpoch(
+        GPUScene scene,
+        ulong frameId)
+    {
+        ulong databaseEpoch = scene.AdvancedSharedDatabase.DatabaseEpoch;
+        if (ReferenceEquals(_temporalScene, scene) &&
+            _temporalDatabaseEpoch == databaseEpoch)
+        {
+            return;
+        }
+
+        Array.Clear(_depthPyramidGenerations);
+        Array.Clear(_viewHistoryKeys);
+        Array.Clear(_viewHistoryLastUsed);
+        _nextViewHistoryUse = 0UL;
+        _visibilityFeedbackRing.ResetForSceneEpoch(frameId);
+        _visibilityFeedbackEpoch++;
+        if (_visibilityFeedbackEpoch == 0UL)
+            _visibilityFeedbackEpoch = 1UL;
+        _deformedArena.InvalidateAllHistoryForSceneEpoch();
+        _temporalScene = scene;
+        _temporalDatabaseEpoch = databaseEpoch;
+    }
+
+    private void ResetDeformationOwnersForGeneration(
+        GPUScene scene,
+        in AdvancedGpuScenePublication publication)
+    {
+        if (ReferenceEquals(_deformationScene, scene) &&
+            _deformationDatabaseEpoch == publication.DatabaseEpoch &&
+            _deformationTopologyGeneration == publication.TopologyGeneration)
+        {
+            return;
+        }
+
+        _deformedArena.ResetOwnersForCurrentFrame();
+        _deformationScene = scene;
+        _deformationDatabaseEpoch = publication.DatabaseEpoch;
+        _deformationTopologyGeneration = publication.TopologyGeneration;
+    }
+
+    private ulong NextViewHistoryUse()
+    {
+        _nextViewHistoryUse++;
+        if (_nextViewHistoryUse != 0UL)
+            return _nextViewHistoryUse;
+
+        Array.Clear(_viewHistoryLastUsed);
+        return ++_nextViewHistoryUse;
     }
 
     private int FindCurrentPlan(ulong historyKey)
@@ -1232,13 +1378,19 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             GpuResourcesPublished: false,
             AggregateDispatchExecuted: false,
             Backend: RuntimeGraphicsApiKind.Unknown,
-            DeformationGpuMilliseconds: 0.0);
+            DeformationGpuMilliseconds: 0.0,
+            VisibilityFeedbackEpoch: _visibilityFeedbackEpoch);
     }
 
     public void Dispose()
     {
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
+        _temporalScene = null;
+        _temporalDatabaseEpoch = 0UL;
+        _deformationScene = null;
+        _deformationDatabaseEpoch = 0UL;
+        _deformationTopologyGeneration = 0UL;
         _drawCount = 0;
         _visibilityPlanCount = 0;
         _gpuDeformation.Dispose();

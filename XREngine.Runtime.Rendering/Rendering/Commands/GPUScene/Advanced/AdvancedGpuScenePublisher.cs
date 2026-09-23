@@ -34,6 +34,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private ulong _lookupGeneration;
     private int _topologyDeltaCount;
     private int _contentDeltaCount;
+    private int _lastGeometryCompactionReplacementCount;
+    private ulong _lastGeometryCompactionReclaimedBytes;
+    private ulong _geometryCompactionCount;
+    private ulong _geometryCompactionReclaimedBytes;
     private bool _publicationRejected;
     private string? _lastPublicationFailure;
     private AdvancedGpuScenePublicationReference _currentPublication;
@@ -75,6 +79,21 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     public int TopologyDeltaCount => _topologyDeltaCount;
 
     public int ContentDeltaCount => _contentDeltaCount;
+
+    /// <summary>Geometry rows rebound by the most recently applied compaction.</summary>
+    public int LastGeometryCompactionReplacementCount
+        => _lastGeometryCompactionReplacementCount;
+
+    /// <summary>Canonical arena bytes reclaimed by the most recent compaction.</summary>
+    public ulong LastGeometryCompactionReclaimedBytes
+        => _lastGeometryCompactionReclaimedBytes;
+
+    /// <summary>Cumulative geometry arena generation replacements.</summary>
+    public ulong GeometryCompactionCount => _geometryCompactionCount;
+
+    /// <summary>Cumulative dead arena bytes omitted from successor generations.</summary>
+    public ulong GeometryCompactionReclaimedBytes
+        => _geometryCompactionReclaimedBytes;
 
     public bool PublicationRejected => _publicationRejected;
 
@@ -124,6 +143,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     {
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
+        _lastGeometryCompactionReplacementCount = 0;
+        _lastGeometryCompactionReclaimedBytes = 0u;
         _legacyMappingCount = 0;
         _dirtyOwnerRangeCount = 0;
         _publicationRejected = false;
@@ -158,9 +179,16 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             RejectPublication(planFailure);
             return;
         }
-        if (!TryEnsurePlannedGeometryBoundaryCapacity())
+        if (!TryEnsurePlannedGeometryBoundaryCapacity(
+                out AdvancedGeometryCompactionPlan? geometryCompaction))
         {
             RejectPublication("The canonical geometry arenas cannot satisfy the planned append.");
+            return;
+        }
+        if (!CanApplyPlannedSceneMutations(
+                geometryCompaction?.ReplacementCount ?? 0))
+        {
+            RejectPublication("The canonical geometry compaction exceeds the bounded publication journal.");
             return;
         }
         AdvancedGlobalResourceCapture acceptedGlobalResources =
@@ -189,6 +217,26 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
         try
         {
+            if (geometryCompaction is not null)
+            {
+                if (!Database.TryApplyGeometryCompaction(
+                        in transaction,
+                        geometryCompaction))
+                {
+                    Database.FaultActivePublication(
+                        in transaction,
+                        EAdvancedGpuScenePublicationFault.InvariantFailure);
+                    throw new InvalidOperationException(
+                        "Canonical geometry compaction failed after a successful publication preflight.");
+                }
+
+                ++_contentDeltaCount;
+                AdvanceNonZero(ref _contentGeneration);
+                _lastGeometryCompactionReplacementCount = geometryCompaction.ReplacementCount;
+                _lastGeometryCompactionReclaimedBytes = geometryCompaction.ReclaimedBytes;
+                _geometryCompactionCount++;
+                _geometryCompactionReclaimedBytes += geometryCompaction.ReclaimedBytes;
+            }
             ApplyPreflightedMaterialTransitions();
             ApplyPreflightedGlobalResources();
 
