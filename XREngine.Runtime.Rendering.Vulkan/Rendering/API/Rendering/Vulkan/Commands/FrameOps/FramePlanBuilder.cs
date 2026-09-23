@@ -29,40 +29,15 @@ internal sealed class FramePlanBuilder
 
     private readonly record struct ResourceVersionKey(ulong ResourceId, ulong Version);
     private readonly VulkanFrameOperationScheduler _frameScheduler = new();
+    private readonly VulkanAdvancedVisibilityInputCopyTelemetry _advancedVisibilityInputCopyTelemetry = new();
 
     private sealed class Slot
     {
         internal readonly ViewSetPlan ViewSet = new(ViewCapacity, fixedCapacity: true);
         internal readonly FramePlan Plan;
-        internal readonly FrameOperationStream Operations = new(
-            StaticOperationCapacity,
-            ResourceUseCapacity,
-            GeneralStaticPayloadCapacity,
-            StaticOperationCapacity,
-            texturePayloadCapacity: GeneralStaticPayloadCapacity,
-            advancedVisibilityDrawCapacity:
-                AdvancedPreparationOptions.Default.MaximumDraws,
-            advancedVisibilityRangeCapacity:
-                AdvancedPreparationOptions.Default.MaximumIndirectRanges,
-            lane: EVulkanAcceptedFrameLane.MainScene);
-        internal readonly FrameOperationStream DynamicOverlayOperations = new(
-            DynamicOperationCapacity,
-            ResourceUseCapacity / 8,
-            GeneralDynamicPayloadCapacity,
-            DynamicOperationCapacity,
-            texturePayloadCapacity: GeneralDynamicPayloadCapacity,
-            advancedVisibilityDrawCapacity: 0,
-            advancedVisibilityRangeCapacity: 0,
-            lane: EVulkanAcceptedFrameLane.Ui);
-        internal readonly FrameOperationStream TextureUploadOperations = new(
-            TextureUploadOperationCapacity,
-            ResourceUseCapacity / 4,
-            GeneralUploadPayloadCapacity,
-            meshPayloadCapacity: GeneralUploadPayloadCapacity,
-            texturePayloadCapacity: TextureUploadOperationCapacity,
-            advancedVisibilityDrawCapacity: 0,
-            advancedVisibilityRangeCapacity: 0,
-            lane: EVulkanAcceptedFrameLane.Upload);
+        internal readonly FrameOperationStream Operations;
+        internal readonly FrameOperationStream DynamicOverlayOperations;
+        internal readonly FrameOperationStream TextureUploadOperations;
         internal readonly FrameOperationIngress StaticIngress = new();
         internal readonly FrameOperationIngress DynamicIngress = new();
         internal readonly FrameOperationIngress TextureUploadIngress = new();
@@ -102,13 +77,46 @@ internal sealed class FramePlanBuilder
         internal VulkanRenderGraphPlan[] StaticPlannerContextPlans =
             new VulkanRenderGraphPlan[PlannerContextCapacity];
 
-        internal Slot() => Plan = new FramePlan(ViewSet, Operations);
+        internal Slot(VulkanAdvancedVisibilityInputCopyTelemetry advancedVisibilityInputCopyTelemetry)
+        {
+            Operations = new(
+                StaticOperationCapacity,
+                ResourceUseCapacity,
+                GeneralStaticPayloadCapacity,
+                StaticOperationCapacity,
+                texturePayloadCapacity: GeneralStaticPayloadCapacity,
+                advancedVisibilityDrawCapacity: AdvancedPreparationOptions.Default.MaximumDraws,
+                advancedVisibilityRangeCapacity: AdvancedPreparationOptions.Default.MaximumIndirectRanges,
+                lane: EVulkanAcceptedFrameLane.MainScene,
+                advancedVisibilityInputCopyTelemetry);
+            DynamicOverlayOperations = new(
+                DynamicOperationCapacity,
+                ResourceUseCapacity / 8,
+                GeneralDynamicPayloadCapacity,
+                DynamicOperationCapacity,
+                texturePayloadCapacity: GeneralDynamicPayloadCapacity,
+                advancedVisibilityDrawCapacity: 0,
+                advancedVisibilityRangeCapacity: 0,
+                lane: EVulkanAcceptedFrameLane.Ui,
+                advancedVisibilityInputCopyTelemetry);
+            TextureUploadOperations = new(
+                TextureUploadOperationCapacity,
+                ResourceUseCapacity / 4,
+                GeneralUploadPayloadCapacity,
+                meshPayloadCapacity: GeneralUploadPayloadCapacity,
+                texturePayloadCapacity: TextureUploadOperationCapacity,
+                advancedVisibilityDrawCapacity: 0,
+                advancedVisibilityRangeCapacity: 0,
+                lane: EVulkanAcceptedFrameLane.Upload,
+                advancedVisibilityInputCopyTelemetry);
+            Plan = new FramePlan(ViewSet, Operations);
+        }
     }
 
     // Only the target's active slots own heavy workspaces. OpenXR may reserve
     // additional indices at its existing frame-data provisioning boundary.
     private readonly Slot[] _slots = new Slot[VulkanMappedFrameArena.MaximumFrameSlotCount];
-    private readonly Slot[] _retiredSlots = [new(), new(), new(), new()];
+    private readonly Slot[] _retiredSlots;
     private readonly bool[] _provisionedAdvancedFamilies = new bool[VulkanAdvancedVisibilityOutputCapacity.Maximum];
     private readonly object _provisioningGate = new();
     private int _provisionedSlotCount;
@@ -120,7 +128,19 @@ internal sealed class FramePlanBuilder
     internal Action<AdvancedVisibilityFamilyReservation>? ReleaseAdvancedVisibilityPlanLease { private get; set; }
 
     internal FramePlanBuilder(int frameSlotCount)
-        => ProvisionFrameSlots(frameSlotCount);
+    {
+        _retiredSlots = [
+            new(_advancedVisibilityInputCopyTelemetry),
+            new(_advancedVisibilityInputCopyTelemetry),
+            new(_advancedVisibilityInputCopyTelemetry),
+            new(_advancedVisibilityInputCopyTelemetry),
+        ];
+        ProvisionFrameSlots(frameSlotCount);
+    }
+
+    internal VulkanAdvancedVisibilityInputCopyDiagnosticsSnapshot
+        CaptureAdvancedVisibilityInputCopyDiagnostics()
+        => _advancedVisibilityInputCopyTelemetry.Capture();
 
     /// <summary>
     /// Allocates newly activated target slots before their first frame can be
@@ -138,7 +158,7 @@ internal sealed class FramePlanBuilder
         {
             for (int index = _provisionedSlotCount; index < frameSlotCount; index++)
             {
-                Slot slot = new();
+                Slot slot = new(_advancedVisibilityInputCopyTelemetry);
                 for (int bankIndex = 0; bankIndex < _provisionedAdvancedFamilies.Length; bankIndex++)
                     if (_provisionedAdvancedFamilies[bankIndex])
                         slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);

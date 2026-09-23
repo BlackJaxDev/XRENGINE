@@ -88,6 +88,87 @@ public sealed class AdvancedImmutableByteArena
     }
 
     /// <summary>
+    /// Creates an empty, next-generation arena for a boundary-only copy-forward
+    /// transaction. The current backing image remains untouched until the caller
+    /// has copied every live reference and atomically adopts the successor.
+    /// </summary>
+    internal bool TryCreateSuccessorAtBoundary(
+        uint capacityBytes,
+        out AdvancedImmutableByteArena successor)
+    {
+        successor = null!;
+        if (capacityBytes > int.MaxValue || _generation == uint.MaxValue)
+            return false;
+
+        successor = new AdvancedImmutableByteArena(_bufferIndex, capacityBytes)
+        {
+            _generation = _generation + 1u,
+        };
+        return true;
+    }
+
+    /// <summary>
+    /// Copies a live reference into a staged successor while preserving its ABI
+    /// flags. The source handle and exact byte extent are validated so a stale
+    /// row cannot be made current by a compaction transaction.
+    /// </summary>
+    internal bool TryCopyReferenceTo(
+        AdvancedImmutableByteArena successor,
+        in AdvancedBufferReference source,
+        out AdvancedBufferReference remapped)
+    {
+        remapped = AdvancedBufferReference.Invalid;
+        ArgumentNullException.ThrowIfNull(successor);
+        if (!source.IsValid || source.Buffer != BufferHandle ||
+            source.ByteOffset > _countBytes ||
+            source.ByteLength > _countBytes - source.ByteOffset ||
+            source.ByteOffset % source.ElementStride != 0u ||
+            source.ElementOffset != source.ByteOffset / source.ElementStride ||
+            !successor.TryAppend(
+                _data.AsSpan(
+                    checked((int)source.ByteOffset),
+                    checked((int)source.ByteLength)),
+                source.ElementStride,
+                out AdvancedBufferReference copied))
+        {
+            return false;
+        }
+
+        remapped = copied with { Flags = source.Flags };
+        return true;
+    }
+
+    internal bool IsCurrentReference(in AdvancedBufferReference source)
+        => source.IsValid && source.Buffer == BufferHandle &&
+           source.ByteOffset <= _countBytes &&
+           source.ByteLength <= _countBytes - source.ByteOffset &&
+           source.ByteOffset % source.ElementStride == 0u &&
+           source.ElementOffset == source.ByteOffset / source.ElementStride;
+
+    /// <summary>
+    /// Replaces this arena with a fully staged successor. Call only after every
+    /// dependent geometry row has been preflighted for a coherent publication.
+    /// </summary>
+    internal bool TryAdoptSuccessorAtBoundary(AdvancedImmutableByteArena successor)
+    {
+        ArgumentNullException.ThrowIfNull(successor);
+        if (!CanAdoptSuccessorAtBoundary(successor))
+            return false;
+
+        _data = successor._data;
+        _countBytes = successor._countBytes;
+        _dirtyMin = successor._dirtyMin;
+        _dirtyMaxExclusive = successor._dirtyMaxExclusive;
+        _generation = successor._generation;
+        return true;
+    }
+
+    internal bool CanAdoptSuccessorAtBoundary(AdvancedImmutableByteArena successor)
+        => successor is not null && _generation < uint.MaxValue &&
+           successor._bufferIndex == _bufferIndex &&
+           successor._generation == _generation + 1u;
+
+    /// <summary>
     /// Invalidates every old reference and starts a new immutable generation.
     /// </summary>
     public void ResetAtBoundary()

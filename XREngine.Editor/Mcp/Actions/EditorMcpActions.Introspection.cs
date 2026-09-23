@@ -402,6 +402,24 @@ namespace XREngine.Editor.Mcp
                     publicationFailure = activeGpuScene.AdvancedPublicationFailure,
                     topologyDeltaCount = activeGpuScene.AdvancedTopologyDeltaCount,
                     contentDeltaCount = activeGpuScene.AdvancedContentDeltaCount,
+                    geometryCompactionReplacementCount = activeGpuScene.AdvancedGeometryCompactionReplacementCount,
+                    geometryCompactionReclaimedBytes = activeGpuScene.AdvancedGeometryCompactionReclaimedBytes,
+                    geometryCompactionCount = activeGpuScene.AdvancedGeometryCompactionCount,
+                    geometryCompactionReclaimedBytesTotal = activeGpuScene.AdvancedGeometryCompactionReclaimedBytesTotal,
+                    geometryArenaCommittedBytes = (ulong)activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.StaticVertexArena.CountBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.IndexArena.CountBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.PreSkinnedCurrentArena.CountBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.PreSkinnedPreviousArena.CountBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.MeshletDescriptorArena.CountBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.MeshletVertexIndexArena.CountBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.MeshletTriangleWordArena.CountBytes,
+                    geometryArenaCapacityBytes = (ulong)activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.StaticVertexArena.CapacityBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.IndexArena.CapacityBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.PreSkinnedCurrentArena.CapacityBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.PreSkinnedPreviousArena.CapacityBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.MeshletDescriptorArena.CapacityBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.MeshletVertexIndexArena.CapacityBytes +
+                        activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.MeshletTriangleWordArena.CapacityBytes,
                     residentDrawCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.Count,
                     residentInstanceCount = activeGpuScene.AdvancedSharedDatabase.Scene.Instances.Count,
                     residentGeometryCount = activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.Records.Count,

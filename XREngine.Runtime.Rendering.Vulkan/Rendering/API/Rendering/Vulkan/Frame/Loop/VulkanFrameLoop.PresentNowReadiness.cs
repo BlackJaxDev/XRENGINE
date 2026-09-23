@@ -43,6 +43,7 @@ internal sealed partial class VulkanFrameLoop
     {
         if (_presentNowTerminalFailure is { } terminalFailure)
         {
+            DiscardPausedPresentNowSceneWork();
             attempt.RejectedFailure = terminalFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
@@ -52,6 +53,7 @@ internal sealed partial class VulkanFrameLoop
         if (recoverableFailure is not null &&
             !TryBeginPresentNowRecoveryProbe(ref attempt, recoverableFailure))
         {
+            DiscardPausedPresentNowSceneWork();
             attempt.RejectedFailure = recoverableFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
@@ -1078,6 +1080,7 @@ internal sealed partial class VulkanFrameLoop
     {
         StorePresentNowTerminalFailure(ref attempt, failure);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        DiscardPausedPresentNowSceneWork();
         attempt.DeferredFailure = _presentNowTerminalFailure;
         attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
     }
@@ -1171,6 +1174,7 @@ internal sealed partial class VulkanFrameLoop
                 Volatile.Read(ref _presentNowRecoveryRequestSequence));
         }
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        DiscardPausedPresentNowSceneWork();
         attempt.RejectedFailure = failure;
         attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
         Debug.VulkanWarning(
@@ -1428,5 +1432,21 @@ internal sealed partial class VulkanFrameLoop
 
         acceptedPlan.Reset();
         attempt.AcceptedFramePlan = null;
+    }
+
+    private void DiscardPausedPresentNowSceneWork()
+    {
+        int discardedOperations =
+            _framePlanner.Operations.DiscardPausedSceneOperations();
+        int discardedMeshRequests = MeshOperationRequests.DiscardPending();
+        if (discardedOperations == 0 && discardedMeshRequests == 0)
+            return;
+
+        Debug.VulkanEvery(
+            $"Vulkan.PresentNow.PausedSceneWork.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan][PresentNow] Discarded paused scene work: operations={0} meshRequests={1}.",
+            discardedOperations,
+            discardedMeshRequests);
     }
 }

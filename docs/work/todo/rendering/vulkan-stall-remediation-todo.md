@@ -160,7 +160,7 @@ gate record. No item is complete merely because this checklist was written.
 | S09 | [Shared immutable helper geometry](../../investigations/rendering/2026-09-21-s09-shared-helper-geometry.md) | S07-S08 dispositions, measured duplication | Validated (fullscreen helpers share one leased CPU mesh per topology while retaining per-consumer renderer/material/stereo state) |
 | S10 | [Toolbar icon preparation](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md) | S02; default after S09 disposition | Validated (CPU preparation is off draw; bounded owner publication reaches 12/12 on Vulkan and OpenGL) |
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
-| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active (three live warm windows measured; phase/multi-view/deformation gate incomplete) |
+| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active (planner, lifetime, deformation and three-view stereo live-checked; actual alternating-world gate incomplete) |
 | S13 | Recurring recording/source/upload preparation | S02; default after S12 disposition | Pending |
 | S14 | Actual Core update callbacks/registration | S02; default after S13 disposition | Pending |
 | S15 | Temporal correctness and original-regression decision | Baseline plus each affected runtime gate | Pending |
@@ -630,13 +630,34 @@ post-validation clearance. This is Validated, not Closed. See the
 
 Anchor: [AdvancedSharedPreparationService.cs](../../../../XREngine.Runtime.Rendering/Rendering/Preparation/Advanced/AdvancedSharedPreparationService.cs).
 
-- [ ] Measure cache misses, cold capacity growth, extraction, deformation,
+Follow-up correctness dependency (2026-09-22): the later Debug AA verification
+observed repeated Vulkan 16-family authoring lease exhaustion after Sponza
+import. [AA-B1](advanced-pipeline-antialiasing-todo.md#aa-b1-vulkan-visibility-snapshot-lease-exhaustion--fixed-live-paused-path-verified)
+now retires receipt-bound scene work when PresentNow is terminal/recoverably
+paused; a reproduced terminal pause survived 37 later rejected frames without
+lease exhaustion. [AA-B1b](advanced-pipeline-antialiasing-todo.md#aa-b1b-vulkan-sponza-scene-publication-capacity--capacity-fixed-visual-gate-blocked)
+now shares immutable geometry across frame slots; the original Sponza image
+admits 465 draw records with about 704 MiB of shared geometry allocations and
+no recurrence of the frame-storage ceiling. Its fresh-output gate remains
+open under AA-B1c: texture-source rejection during streaming, a framebuffer
+construction/publication fault, background-only captures and a requested AA
+mode that did not become active before the editor exited. AA-B2/AA-B3 retain
+the OpenGL stage rejection and unfinished AA resource transition. Establish
+fresh mesh output before advancing shared preparation optimization or S15
+quality acceptance. Canonical append-only arena reclamation under long-running
+structural/material churn also remains unvalidated.
+The earlier Release warm windows remain valid evidence for their workload; no
+regression caused by S12 has been established. Keep one implementation item
+active under the protocol above, and record this disposition in S12's lifetime
+gate rather than duplicating its implementation here.
+
+- [x] Measure cache misses, cold capacity growth, extraction, deformation,
   publication/copy bytes and lock waits separately. Establish actual world/view
   consumers before assuming single-publication thrashing.
-- [ ] If growth matters, pre-size/reuse suitable storage first and validate it.
+- [x] If growth matters, pre-size/reuse suitable storage first and validate it.
   Only then consider moving measured construction out of the shared critical
   section as a separate lifetime-reviewed item.
-- [ ] Retain coherent immutable generations and consumer leases. Never expose
+- [x] Retain coherent immutable generations and consumer leases. Never expose
   mutable extractor spans to remove copies, and never reuse storage while a
   deferred consumer still reads it.
 - [ ] Validate stationary/moving scenes, changed geometry/materials, multiple
@@ -648,11 +669,20 @@ view and generation; copied data remains coherent and retired storage is bounded
 Do not mislabel nonblocking deformation polling as a proven GPU wait.
 
 Status: **Active**, not Validated. The [S12 gate record](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md)
-contains three 60-second Release Vulkan/Advanced windows with 393 draws/ranges,
-zero warmed build allocation and copy failures, and low measured shared-lock
-wait. No cache, lifetime, or range-planner optimization was made. Cold growth,
-multi-view, deformation, mutation, and retirement validation remain open; do not
-advance to S13 on this partial gate.
+contains matched 465-draw Release Vulkan/Advanced windows: the measured
+range-planner change cut warmed build means by more than 20% in each window,
+without warmed allocations or copy failures. Live material mutation, Sponza2
+structural churn with live-record copy-forward, and animated deformation
+reactivation passed narrow checks with bounded observed arena use. A repaired
+bounded static-deformation generation pool passed lifetime review, a clean
+Release build and a fresh animated Vulkan run. Emulated single-pass stereo
+published three views and produced distinct, visually checked left/right
+layers with zero family-copy failures. Actual alternating runtime-world
+owners have not been exercised: editor world snapshot restore reuses one
+GPU-scene owner. The unit-test project has an unrelated missing-type compile
+failure, and new test work awaits the repository-required user clearance.
+Keep S13 pending until the remaining gate is resolved or explicitly
+dispositioned.
 
 ## S13. Reduce Recurring Recording And Source Preparation
 

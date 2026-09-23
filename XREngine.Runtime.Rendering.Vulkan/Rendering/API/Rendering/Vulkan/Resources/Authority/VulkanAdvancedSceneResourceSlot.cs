@@ -36,13 +36,6 @@ internal sealed class VulkanAdvancedSceneResourceSlot
     internal VulkanAdvancedSceneResidentTable<AdvancedMaterialRecord> ResidentMaterials { get; } = new();
     internal VulkanAdvancedSceneResidentTable<AdvancedShadingKernelRecord> ResidentKernels { get; } = new();
     internal VulkanAdvancedSceneResidentTable<AdvancedMaterialLayoutRecord> ResidentLayouts { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentStaticVertices { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentIndices { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentPreSkinnedCurrent { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentPreSkinnedPrevious { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentMeshletDescriptors { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentMeshletVertexIndices { get; } = new();
-    internal VulkanAdvancedSceneResidentBytes ResidentMeshletTriangleWords { get; } = new();
     internal VulkanAdvancedSceneResidentBytes ResidentMaterialConstants { get; } = new();
     internal VulkanAdvancedSceneResidentBytes ResidentMaterialBindings { get; } = new();
     internal VulkanAdvancedSceneResidentTable<AdvancedTextureRecord> ResidentTextures { get; } = new();
@@ -62,9 +55,6 @@ internal sealed class VulkanAdvancedSceneResourceSlot
         ResidentMaterials.Clear(); ResidentKernels.Clear(); ResidentLayouts.Clear();
         ResidentTextures.Clear(); ResidentSamplers.Clear(); ResidentLights.Clear(); ResidentShadows.Clear();
         ResidentProbes.Clear(); ResidentEnvironments.Clear(); ResidentDecals.Clear(); ResidentGiResources.Clear();
-        ResidentStaticVertices.Clear(); ResidentIndices.Clear(); ResidentPreSkinnedCurrent.Clear();
-        ResidentPreSkinnedPrevious.Clear(); ResidentMeshletDescriptors.Clear();
-        ResidentMeshletVertexIndices.Clear(); ResidentMeshletTriangleWords.Clear();
         ResidentMaterialConstants.Clear(); ResidentMaterialBindings.Clear();
         ResidentLookups.Clear();
     }

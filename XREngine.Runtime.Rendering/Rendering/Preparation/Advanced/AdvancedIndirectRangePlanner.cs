@@ -13,6 +13,7 @@ public sealed class AdvancedIndirectRangePlanner
     private readonly int[] _payloadIndices;
     private readonly EAdvancedGeometryProducer[] _producers;
     private readonly EAdvancedGeometryProducer[] _producersByPayload;
+    private readonly int[] _rangeIndicesByPayload;
     private readonly uint[] _writeCursors;
     private int _rangeCount;
     private int _payloadCount;
@@ -33,6 +34,7 @@ public sealed class AdvancedIndirectRangePlanner
         _producers = new EAdvancedGeometryProducer[maximumPayloads];
         _producersByPayload =
             new EAdvancedGeometryProducer[maximumPayloads];
+        _rangeIndicesByPayload = new int[maximumPayloads];
         _writeCursors = new uint[maximumRanges];
     }
 
@@ -122,6 +124,10 @@ public sealed class AdvancedIndirectRangePlanner
                     CountWrittenByGpu: true);
             }
 
+            // Retain the first-pass classification; looking up every key
+            // again after ranges are complete doubles the quadratic search.
+            _rangeIndicesByPayload[payloadIndex] = rangeIndex;
+
             AdvancedIndirectRange range = _ranges[rangeIndex];
             _ranges[rangeIndex] = range with
             {
@@ -148,13 +154,7 @@ public sealed class AdvancedIndirectRangePlanner
              payloadIndex++)
         {
             EAdvancedGeometryProducer producer = _producersByPayload[payloadIndex];
-            int rangeIndex = FindRange(new AdvancedIndirectRangeKey(
-                payloads[payloadIndex].Geometry,
-                payloads[payloadIndex].RasterStateClass,
-                payloads[payloadIndex].Coverage,
-                payloads[payloadIndex].CullMode,
-                payloads[payloadIndex].PrimitiveTopology,
-                producer));
+            int rangeIndex = _rangeIndicesByPayload[payloadIndex];
             uint destination = _writeCursors[rangeIndex]++;
             _payloadIndices[destination] = payloadIndex;
             _producers[destination] = producer;

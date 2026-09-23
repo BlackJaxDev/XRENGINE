@@ -1,5 +1,291 @@
 # Advanced pipeline antialiasing investigation
 
+## AA-B1b visual revalidation: 2026-09-22 evening
+
+The second isolated Vulkan/Advanced/Sponza run used the same private world
+settings and named session `aa-b1b-0922`. All 469 meshes imported, the shared
+geometry cache again admitted 465 resident draws without the old frame-scene
+capacity or visibility-lease failure, and TSR was active at 1286x723 internal
+resolution with a 1920x1080 display. A grouped MCP readback contained nonzero
+visibility/depth and HDR color plus a populated full-resolution
+`TsrOutputTexture`. Moving the camera close to `(0.35, 0.12, 0)` exposed a large,
+dark Sponza facade in two inspected viewport PNGs. The earlier distant
+`(7, 2, 0)` viewpoint made the model occupy only a tiny central area, so its
+"background-only" description was too strong. The close captures establish
+mesh output, but the PNG tool does not expose the producing frame receipt;
+they do not establish temporal image quality or motion-vector correctness.
+
+The previous game-setting TAA request was masked by the Unit Testing World
+camera's `CameraAntiAliasingModeOverride = Tsr`. Setting the active camera's
+override to `Taa` triggered and committed a new resource generation at
+21:12:56: `aa:Tsr->Taa`, internal 1286x723 to 1920x1080. The first grouped TAA
+readback at 21:13:13 was black in visibility, HDR, scene-color and velocity;
+this is not a valid TAA quality sample. At frame 3265 the native stage rejected
+an outdated 8x8 `stone_trims_01_BaseColor` source after it had streamed to
+64x64. The rejection persisted through later sampled frames; by frame 3622
+the live source had reached 4096x4096 and the retained publication still had
+8x8 images. The canonical scene publication was frozen at sequence 207 with
+`The canonical material tables cannot accept the complete ownership
+transition.` The latest snapshot showed minimum acknowledged sequence 207,
+minimum reclaimable sequence 132, and a GPU pin on retained sequence 133.
+This is a material-publication capacity/retention blocker, not merely a
+transient texture-streaming mismatch. The exact table limit and pin owner need
+diagnosis before changing a capacity or lifetime rule.
+
+The editor then closed through `Editor.ClosePrompt.CloseWindow` at 21:16:11;
+the trigger was not established. The named session manager confirmed it
+stopped. The transient `XRFrameBuffer` wrapper-before-CPU-publication exception
+also recurred once at 21:05:25, then rendering resumed; it is a separate open
+resource-construction race. MSAA and DLAA were not run in this revalidation
+because a stale canonical scene could not supply a meaningful new-mode image.
+The broader still/motion/cut comparison, TSR jitter and velocity checks, and MSAA
+per-sample inspection remain open. Evidence is under
+`Build/_AgentValidation/20260922-202000-aa-b1b/` (`mcp-output/revalidation-*`,
+`mcp-captures/RenderPipeline_HDRSceneTex_20260922_210558.png`, the `210917`
+and `211036` viewport captures, and the `211313` TAA readbacks). This run's
+rendering and Vulkan logs were copied into the same evidence root's `logs/`
+folder. No tests were added or modified.
+
+## AA-B1b shared geometry residency: 2026-09-22
+
+The diagnostic Sponza run `aa-b1b-0922` reproduced a compact request of
+645,072,880 bytes at frame 3524. Its compact allocation breakdown, including
+the existing 16-byte stream alignment, was:
+
+| Scene data | Bytes |
+| --- | ---: |
+| Static canonical vertices | 543,568,256 |
+| Indices | 44,866,592 |
+| Meshlet descriptors | 10,709,360 |
+| Meshlet vertex indices | 33,983,024 |
+| Meshlet triangle words | 11,280,928 |
+| Two empty preskinned streams | 32 |
+| Frame tables, lookups and transient records | 664,688 |
+
+The geometry snapshots expose exact used byte counts, not reserved CPU
+capacity. The error was lifetime ownership: immutable scene geometry occupied
+every frame slot's packed scene lane. That lane reserves all eight supported
+slots, so increasing its 128 MiB ceiling to fit Sponza would exceed the frame
+arena's 1 GiB aggregate mapped-memory guard.
+
+`VulkanAdvancedGeometryResidentCache` now owns the seven geometry buffers
+across slots. The key is database epoch plus arena handle/generation. Appends
+write only an unpublished suffix; a growing bank preserves earlier buffers
+until all referencing slots complete. Empty streams retain a zero sentinel.
+The cache uses the existing tracked native buffer allocation, mapped-write,
+and retirement services. Publication failures roll back only newly acquired
+pins, preserving earlier accepted publications in the same slot.
+
+The explicit policy permits at most 1 GiB per image and 2 GiB across live and
+retiring allocations, checks storage-buffer descriptor limits, and rounds
+nonempty banks to 4 MiB with 12.5% growth spare. Intrinsically oversized
+seven-stream sets fail explicitly; temporary pin/retirement pressure retries.
+Native allocation failures remain visible. Frame-varying records keep the
+existing 128 MiB slot budget and 1 GiB frame-arena guard. Capacity diagnostics
+include exact remaining table owners; cold geometry allocations log requested,
+allocated and aggregate resident bytes.
+
+The final isolated Debug build completed with zero warnings/errors. Its live
+run imported 469 Sponza meshes. At frame 3726, the cache uploaded the exact
+543,568,256-byte vertex stream to one 612,368,384-byte allocation, plus indices
+and meshlet streams. Recorded resident allocations peaked at 738,197,616 bytes
+(704 MiB plus the earlier zero sentinels), with no further geometry allocations
+through frame 3770. The canonical publication admitted 465 draw records.
+Between frames 3726 and 3770, sampled frame-tree logs reported 31 Completed,
+5 Deferred and 1 Failed outcomes. None reported the prior compact-scene ceiling,
+geometry-cache capacity failure, terminal renderer latch or visibility lease
+exhaustion. This validates admission of the original oversized scene and
+cross-frame reuse of the shared geometry allocations.
+
+The visual exit gate remains open. Captures from `(7,2,0)` and `(-7,2,0)`, both
+looking toward `(0,3,0)`, were inspected and remained background-only. Frame
+3732 rejected `VisibilityPreparation` with `SourceMismatch` while a texture
+changed from 8x8 to 64x64. Frame 3763 later accepted the native stage sequence;
+enqueue acceptance and a Completed frame-tree outcome still do not certify
+fresh mesh output. Frame 3732 also logged an `XRFrameBuffer` wrapper request
+before CPU construction was published; subsequent frames resumed. A TAA request
+read back as TAA in game settings, but both later state samples still described
+the active TSR generation at 1286x723 internal resolution and 1920x1080 output.
+The named editor exited before a successful TAA transition or MSAA attempt;
+its exit cause was not established from the available logs. The session manager
+confirmed it stopped. These remaining checks are tracked as AA-B1c, and neither
+AA-B1b's original visual gate nor the wider AA quality audit is marked passed.
+
+Evidence lives under `Build/_AgentValidation/20260922-202000-aa-b1b/`, including
+`logs/final-build.log`, `logs/final-vulkan.log`, saved render-state responses
+and the inspected viewport captures. No tests were added or modified. The user
+has not reported whether the fix works in their normal editor session.
+This change does not close S12's multi-world/deformation/performance gates or
+the AA motion-quality work. Canonical CPU geometry currently appends replacement
+geometry without a `ResetAtBoundary` caller; long-running structural/material
+churn needs a separate bounded compaction policy.
+
+## AA-B1 lease-retirement fix: 2026-09-22
+
+The repeated Vulkan 16-family visibility lease exhaustion was downstream of a
+terminal PresentNow pause. In the original Sponza run, frame 3157 failed
+because its compact advanced-scene image needed 645,072,032 bytes per frame
+slot against the explicit 134,217,728-byte ceiling. Earlier texture-source
+mismatch rejections returned before `TryAcquireAdvancedVisibilityInput` and
+did not consume leases. The terminal latch then skipped accepted-plan capture
+and lowering, while each later CPU frame authored a distinct render-frame
+visibility family. The ordinary skipped-frame drain preserved receipt-bound
+operations for an output that could no longer be accepted; those operations
+kept their lease references until the 16-slot arena filled.
+
+`VulkanFrameOperationQueue.DiscardPausedSceneOperations` now settles all
+pending scene operation snapshots, submission markers, output-completion
+fences, and frame-view candidates at the pause boundary. It retains
+independent texture uploads. `VulkanFrameLoop` invokes it when entering a
+terminal or recoverable PresentNow pause and on subsequent rejected ticks,
+and discards queued mesh requests so recovery starts with fresh scene work.
+The arena capacity and immutable snapshot model are unchanged.
+
+The isolated Debug session `aa-b1-0922` used a private Vulkan/Advanced/TSR
+settings copy with Sponza enabled. The editor and Vulkan project builds had
+zero warnings/errors. Sponza import completed; frame 3565 reproduced the
+645,070,944-byte scene-image ceiling and terminal pause. Through 37 further
+rejected frames, the new path logged 7–19 discarded scene operations per tick
+and no lease-exhaustion warning. Two viewport captures at different camera
+positions were inspected and remained background-only. This validates the
+paused-path ownership fix, not fresh Sponza rendering or AA image quality.
+Evidence is under `Build/_AgentValidation/20260922-200000-aa-b1/`; the named
+session was stopped. No tests were added or run while the AA feature remains
+under live validation. The user has not reported whether the result works.
+
+The 128 MiB scene-publication ceiling is tracked separately as AA-B1b in the
+todo. Its allocation-plan breakdown and proper bounded capacity policy need
+investigation before Sponza and mode-transition quality verification can
+resume.
+
+## Follow-up quality verification: 2026-09-22
+
+The user requested a fresh verification of Advanced TAA/TSR, DLAA, and MSAA,
+with particular concern about TSR upscale resolution, velocity, jitter, and
+smearing during motion. Prior execution evidence does not establish motion
+quality or parity with Unreal Engine.
+
+- Result: quality verification failed. Isolated session `aa-quality-vk-0922`
+  ran Vulkan, then OpenGL with private settings, alongside independent temporal
+  and MSAA/vendor source audits. RenderDoc prerequisites passed, but no new GPU
+  frame was captured: stage rejection and resource publication already blocked
+  the requested comparison.
+- Disposable evidence: `Build/_AgentValidation/20260922-170000-aa-quality/`.
+- The optional broker's five tools are unavailable in this session; no broker
+  request was made. Native read-only rendering reviewers are assisting.
+- No tests have been added or modified. No user verdict on this follow-up's
+  visual result has been received.
+
+### Confirmed source defects in the follow-up
+
+1. **Vulkan temporal coordinate conversion.** Native reconstruction writes
+   current-minus-previous unjittered NDC to `Velocity`
+   (`Advanced/Reconstruction/ReconstructSurface.glslinc`,
+   `Advanced/Shading/ShadeNativeOpaqueEvaluator.glslinc`). Vulkan's default
+   clip Y-up / framebuffer texture Y-down policy uses a negative-height
+   viewport. `AdvancedViewAccess.glslinc` explicitly converts between those
+   spaces, but `TemporalAccumulation.fs` and `TemporalSuperResolution.fs`
+   subtract `velocity * 0.5` directly from framebuffer UV. The uploaded current
+   and previous jitter UVs likewise lack the framebuffer Y conversion.
+   Convert both displacement inputs consistently before history lookup;
+   preserve the native NDC velocity ABI for other consumers.
+2. **TSR depth history overwritten before resolve.** Advanced invokes temporal
+   accumulation before its TSR output pass. The non-TAA branch in
+   `VPRC_TemporalAccumulationPass.Accumulate` copies current color **and depth**
+   into the history framebuffer. TSR then samples that depth at reprojected
+   history UV as though it belonged to the previous frame. TSR color history
+   is captured later, but there is no corresponding delayed depth capture.
+   Retain prior depth through TSR resolve and commit current depth afterward,
+   keeping depth, color, and jitter generation ownership aligned.
+3. **Vendor motion direction.** `VPRC_VendorUpscale` sends a positive 0.5
+   normalization scale for both bridge and native Vulkan dispatch, while
+   native reconstruction writes current-minus-previous NDC. NVIDIA's
+   [DLSS programming guide](https://raw.githubusercontent.com/NVIDIA/DLSS/main/doc/DLSS_Programming_Guide_Release.pdf)
+   requires displacement from the current pixel to its previous-frame
+   position. Correct direction and backend Y convention at the vendor boundary;
+   successful NGX evaluation alone does not prove valid temporal inputs.
+4. **Biased jitter cycle.** The eight-entry `TemporalJitterSequence` contains
+   X=+0.375 twice and omits X=-0.375; its X mean is +0.09375 before scaling.
+   Y contains all eight distinct odd-eighth strata with zero mean. Restore a
+   balanced sequence and check its coverage over a full cycle. Current TSR
+   jitter is additionally limited to +/-0.175 input pixels by its 0.20 scale;
+   whether that range provides adequate reconstruction quality needs measured
+   edge comparisons, rather than an arbitrary sharpening increase.
+5. **Camera history invalidation is split across owners.** The frame-view
+   ledger invalidates for projection changes and camera history epochs, but
+   the temporal accumulator's separate history readiness resets for its own
+   dimensions/profile/pose checks and does not inspect the frozen descriptor's
+   history status. FOV changes or explicit camera invalidation can therefore
+   leave TAA/TSR blending history while native geometry reports invalid history.
+   Propagate the ledger's invalidation into accumulation and reseeding.
+6. **Reversed-depth velocity dilation chooses the farthest sample.** The mono
+   and stereo temporal shaders select the minimum raw depth when searching for
+   the closest velocity. Reversed depth requires the maximum. This is a
+   conditional defect; the default normal-depth run does not exercise it.
+
+Additional vendor/MSAA audit observations: vendor reconstruction currently
+runs after motion blur/DoF and other post effects, pairing their spatially
+mixed color with raw scene depth/motion. That ordering needs review for those
+effects. Ordinary MSAA source paths use coherent nearest-sample sidecars and
+per-sample shading; only the malformed-depth path disagrees on coverage (the
+canonical resolve rejects invalid depth, while shading counts valid identities
+before its depth check). Neither observation is a new runtime quality proof.
+
+These findings establish incorrect temporal inputs from source. Their visual
+severity has not yet been measured by controlled GPU captures in this run.
+
+### Live setup and Vulkan blocker
+
+The original local settings had Sponza disabled. The first run therefore
+rendered only background and is excluded from mesh-quality evidence. A private
+settings copy enables only the existing Sponza model; the original settings
+are unchanged. The isolated build passed with zero warnings and errors.
+
+Vulkan reported TSR internal size 1286x723 and output/history size 1920x1080,
+with history ready and finite output. After Sponza loaded (368 resident draws),
+native stages repeatedly rejected execution with:
+
+> The bounded advanced visibility authoring lease arena exhausted its 16 concurrent families.
+
+Captures remained background-only despite profile admission. Consequently this
+run does **not** verify Vulkan mesh AA or motion quality. Startup imports and
+shader/resource work also caused a readback timeout; that is separate from
+the repeated native-stage rejection. The same named session was stopped and
+restarted with an OpenGL private settings copy, reusing the validated binaries.
+
+### OpenGL result and verification limits
+
+OpenGL loaded 465 resident draws, but the sampled native shading stage reported
+`BackendEnqueueRejected` with `The OpenGL Advanced stage does not match its
+sealed family or required per-view order.` Startup shader work caused capture
+timeouts. A later successful capture showed background/editor gizmos rather
+than Sponza. Switching None then MSAA did not produce an active MSAA generation
+before closeout: frame 15137 still reported active TSR at 1286x723 with pending
+MSAA at 1920x1080. The `gl-msaa-capture` label records the **requested** mode;
+its resource/image data still belongs to TSR and must not be counted as MSAA.
+
+The session's OpenGL launch explicitly enabled the installed vendor bridge in
+its process environment. DLAA evaluation was not reached in this follow-up.
+The prior successful NGX evaluation remains historical execution evidence only.
+
+| Requested check | Follow-up result |
+| --- | --- |
+| TSR reduced-resolution allocation | Observed 1286x723 color/velocity and 1920x1080 output/history on both backends. |
+| TAA/TSR temporal correctness | Failed source audit: coordinate conversion, depth history ordering, history invalidation, jitter cycle; reversed-depth dilation additionally affected. |
+| TAA/TSR still/moving/cut quality and scale sweep | Blocked by native execution/resource startup; no valid comparison obtained. |
+| MSAA mesh coverage and raw sidecars | Not reverified; OpenGL request remained pending, Vulkan mesh execution failed. Prior coverage captures remain historical evidence. |
+| DLAA temporal correctness | Failed source audit of vendor motion direction; no fresh vendor evaluation obtained. |
+| Stereo/quad-view | Not exercised. |
+
+Useful current evidence is `vk-admit`, `gl-steady-check`, `gl-msaa-active`,
+`gl-msaa-pending`, and `gl-final-state` JSON in the run's `mcp-output/` folder.
+`gl-steady-view` and `gl-msaa-capture` record the inspected background-only
+outputs. Build and backend logs are copied to `logs/`. Only investigation/TODO
+documentation was changed; no renderer fixes or tests were added in this
+verification. Both backend runs used the same owned logical session, stopped
+through the session manager at closeout. The original local settings were not
+written. The user has not yet assessed a follow-up visual result.
+
 ## Problem
 
 The user reports that Sponza and other meshes show little or no antialiasing
