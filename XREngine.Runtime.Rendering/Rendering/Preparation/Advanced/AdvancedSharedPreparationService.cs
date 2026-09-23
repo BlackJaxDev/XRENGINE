@@ -22,21 +22,21 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     private long _cacheHitCount;
     private long _rebuildCount;
     private long _acquireLockWaitTicks;
+    private long _maximumAcquireLockWaitTicks;
     private long _buildTicks;
     private long _extractionTicks;
-    private long _rangePlanningTicks;
+    private long _indirectPlanningTicks;
+    private long _initialViewPlanningTicks;
+    private long _cacheHitViewCheckTicks;
     private long _deformationTicks;
     private long _copyCount;
     private long _copyFailureCount;
     private long _copyLockWaitTicks;
+    private long _maximumCopyLockWaitTicks;
     private long _copyTicks;
+    private long _maximumCopyTicks;
     private long _copiedBytes;
     private long _buildAllocatedBytes;
-    private long _acquireLockWaitMaxTicks;
-    private long _copyLockWaitMaxTicks;
-    private long _deferredFamilyCopyCount;
-    private long _deferredFamilyCopyTicks;
-    private long _deferredFamilyCopiedBytes;
 
     public AdvancedSharedPreparationService(AdvancedPreparationOptions options)
         => _extractor = new AdvancedPreparationExtractor(options);
@@ -62,23 +62,14 @@ public sealed class AdvancedSharedPreparationService : IDisposable
 
     private AdvancedSharedPreparationTelemetry GetTelemetryLocked() => new(
         _acquireCount, _cacheHitCount, _rebuildCount,
-        _acquireLockWaitTicks, _buildTicks, _extractionTicks,
+        _acquireLockWaitTicks, _maximumAcquireLockWaitTicks,
+        _buildTicks, _extractionTicks,
+        _indirectPlanningTicks, _initialViewPlanningTicks,
+        _cacheHitViewCheckTicks,
         _deformationTicks, _copyCount, _copyFailureCount,
-        _copyLockWaitTicks, _copyTicks, _copiedBytes,
-        _buildAllocatedBytes, _rangePlanningTicks,
-        _acquireLockWaitMaxTicks, _copyLockWaitMaxTicks,
-        Interlocked.Read(ref _deferredFamilyCopyCount),
-        Interlocked.Read(ref _deferredFamilyCopyTicks),
-        Interlocked.Read(ref _deferredFamilyCopiedBytes),
-        Stopwatch.Frequency);
-
-    /// <summary>Records the immutable authoring-lease to deferred-family retention copy.</summary>
-    public void RecordDeferredFamilyCopy(long elapsedTicks, long copiedBytes)
-    {
-        Interlocked.Increment(ref _deferredFamilyCopyCount);
-        Interlocked.Add(ref _deferredFamilyCopyTicks, elapsedTicks);
-        Interlocked.Add(ref _deferredFamilyCopiedBytes, copiedBytes);
-    }
+        _copyLockWaitTicks, _maximumCopyLockWaitTicks,
+        _copyTicks, _maximumCopyTicks, _copiedBytes,
+        _buildAllocatedBytes, Stopwatch.Frequency);
 
     public AdvancedPreparationPublication Acquire(
         in RenderWorldSnapshot world,
@@ -88,17 +79,23 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
         {
-            long waitTicks = Stopwatch.GetTimestamp() - waitStarted;
-            _acquireLockWaitTicks += waitTicks;
-            _acquireLockWaitMaxTicks = Math.Max(_acquireLockWaitMaxTicks, waitTicks);
+            long acquireLockWaitTicks = Stopwatch.GetTimestamp() - waitStarted;
+            _acquireLockWaitTicks += acquireLockWaitTicks;
+            _maximumAcquireLockWaitTicks = Math.Max(
+                _maximumAcquireLockWaitTicks,
+                acquireLockWaitTicks);
             _acquireCount++;
             if (_publication.FrameId == world.FrameId &&
-                ReferenceEquals(_publishedScene, world.GpuScene))
+                ReferenceEquals(_publishedScene, world.GpuScene) &&
+                _publication.ScenePublication ==
+                    world.GpuScene.AdvancedScenePublication.Publication)
             {
                 _cacheHitCount++;
                 EAdvancedPreparationConsumer addedConsumers =
                     consumers & ~_publication.Consumers;
+                long viewPlanningStarted = Stopwatch.GetTimestamp();
                 int viewCount = _extractor.AddVisibilityPlans(viewSet);
+                _cacheHitViewCheckTicks += Stopwatch.GetTimestamp() - viewPlanningStarted;
                 if (_publication.AggregateDispatchExecuted &&
                     !_extractor.DeformationJobs.IsEmpty &&
                     !_extractor.GpuDeformation.TryApplyConsumerBarriers(
@@ -131,7 +128,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             _buildAllocatedBytes +=
                 GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
             _extractionTicks += _extractor.LastExtractionTicks;
-            _rangePlanningTicks += _extractor.LastRangePlanningTicks;
+            _indirectPlanningTicks += _extractor.LastIndirectPlanningTicks;
+            _initialViewPlanningTicks += _extractor.LastInitialViewPlanningTicks;
             long deformationStarted = Stopwatch.GetTimestamp();
             bool executed = _publication.GpuResourcesPublished &&
                 _extractor.GpuDeformation.TryExecute(
@@ -175,9 +173,11 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
         {
-            long waitTicks = Stopwatch.GetTimestamp() - waitStarted;
-            _copyLockWaitTicks += waitTicks;
-            _copyLockWaitMaxTicks = Math.Max(_copyLockWaitMaxTicks, waitTicks);
+            long copyLockWaitTicks = Stopwatch.GetTimestamp() - waitStarted;
+            _copyLockWaitTicks += copyLockWaitTicks;
+            _maximumCopyLockWaitTicks = Math.Max(
+                _maximumCopyLockWaitTicks,
+                copyLockWaitTicks);
             _copyCount++;
             long copyStarted = Stopwatch.GetTimestamp();
             indirect = default;
@@ -252,7 +252,9 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                     return false;
                 }
             }
-            _copyTicks += Stopwatch.GetTimestamp() - copyStarted;
+            long copyTicks = Stopwatch.GetTimestamp() - copyStarted;
+            _copyTicks += copyTicks;
+            _maximumCopyTicks = Math.Max(_maximumCopyTicks, copyTicks);
             _copiedBytes +=
                 (long)sourcePayloads.Length *
                     (Unsafe.SizeOf<AdvancedVisibilityPayload>() +
@@ -268,17 +270,18 @@ public sealed class AdvancedSharedPreparationService : IDisposable
 
     /// <summary>
     /// Publishes delayed, completion-gated visibility feedback without
-    /// exposing a same-frame GPU readback path.
+    /// exposing a same-frame GPU readback path. The originating publication
+    /// is required to reject feedback from an earlier scene activation.
     /// </summary>
     public void PublishVisibilityFeedback(
-        ulong frameId,
+        in AdvancedPreparationPublication publication,
         ReadOnlySpan<AdvancedAnimationVisibilityFeedback> feedback,
         ulong completionValue)
     {
         lock (_sync)
         {
             _extractor.PublishVisibilityFeedback(
-                frameId,
+                in publication,
                 feedback,
                 completionValue);
         }

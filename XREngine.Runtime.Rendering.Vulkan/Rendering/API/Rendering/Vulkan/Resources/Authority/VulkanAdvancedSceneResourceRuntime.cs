@@ -37,6 +37,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
 
     private readonly object _gate = new();
     private readonly VulkanResourceRuntime _resources;
+    private readonly VulkanAdvancedGeometryResidentCache _geometryCache;
     private readonly VulkanAdvancedSceneResourceSlot[] _slots;
     private readonly ulong[] _storageCapacityPerFrameSlot;
     private readonly AdvancedSamplerRecord[] _samplerCacheRecords =
@@ -65,6 +66,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         int frameSlotCount)
     {
         _resources = resources ?? throw new ArgumentNullException(nameof(resources));
+        _geometryCache = new VulkanAdvancedGeometryResidentCache(resources);
         if (frameSlotCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(frameSlotCount));
 
@@ -304,6 +306,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     return false;
                 }
 
+                _geometryCache.ReleaseFrameSlot(frameSlot);
                 slot.BeginGeneration(frameGeneration);
             }
 
@@ -645,7 +648,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         ulong requiredCapacity = checked(compactConsumedBytes + compactRequiredBytes);
         if (requiredCapacity > MaximumStorageCapacityPerFrameSlot)
         {
-            reason = $"The compact advanced-scene image requires {requiredCapacity} bytes per frame slot, exceeding the explicit {MaximumStorageCapacityPerFrameSlot}-byte ceiling.";
+            reason = $"The compact advanced-scene image requires {requiredCapacity} bytes per frame slot, exceeding the explicit {MaximumStorageCapacityPerFrameSlot}-byte ceiling. Consumed={compactConsumedBytes}; {slot.AllocationPlan.DescribeCompactStorage()}";
             return false;
         }
 
@@ -778,6 +781,53 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             return false;
         }
 
+        if (!_geometryCache.TryPrepare(
+                frameSlot,
+                snapshot.DatabaseEpoch,
+                snapshot.GeometryPayloads,
+                out VulkanAdvancedGeometryPublication sharedGeometry,
+                out failure,
+                out reason))
+        {
+            return false;
+        }
+
+        bool published = false;
+        try
+        {
+            published = TryBuildPublicationWithGeometry(
+                slot, frameSlot, frameGeneration, snapshot, in sharedGeometry,
+                views, in frame, passes, diagnosticCount,
+                out state, out failure, out reason);
+            return published;
+        }
+        finally
+        {
+            if (!published)
+                _geometryCache.Rollback(frameSlot, in sharedGeometry);
+        }
+    }
+
+    /// <summary>Commits frame-owned tables while the shared geometry image is pinned.</summary>
+    private bool TryBuildPublicationWithGeometry(
+        VulkanAdvancedSceneResourceSlot slot,
+        int frameSlot,
+        ulong frameGeneration,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        in VulkanAdvancedGeometryPublication sharedGeometry,
+        ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        in BackendReadyCanonicalFrameRecord frame,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        int diagnosticCount,
+        out VulkanAdvancedScenePublicationState state,
+        out EVulkanAdvancedSceneResourceFailure failure,
+        out string reason)
+    {
+        state = default;
+        int textureHighWater = snapshot.Textures.PhysicalRecords.Length;
+        int samplerHighWater = snapshot.Samplers.PhysicalRecords.Length;
+        uint textureBase = slot.NextTextureDescriptor;
+        uint samplerBase = slot.NextSamplerDescriptor;
         VulkanAdvancedScenePublicationAllocationPlan allocationPlan =
             BuildPublicationAllocationPlan(
                 slot,
@@ -914,6 +964,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 slot,
                 allocationPlan,
                 snapshot,
+                in sharedGeometry,
                 textureHighWater,
                 samplerHighWater,
                  out VulkanFrameDataSlice drawSlice,
@@ -1497,6 +1548,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         VulkanAdvancedSceneResourceSlot slot,
         VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
         AdvancedGpuScenePublicationSnapshot snapshot,
+        in VulkanAdvancedGeometryPublication sharedGeometry,
         int textureHighWater,
         int samplerHighWater,
         out VulkanFrameDataSlice draws,
@@ -1541,13 +1593,13 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         draws = default;
         instances = default;
         geometry = default;
-        staticVertices = default;
-        indices = default;
-        preSkinnedCurrent = default;
-        preSkinnedPrevious = default;
-        meshletDescriptors = default;
-        meshletVertexIndices = default;
-        meshletTriangleWords = default;
+        staticVertices = sharedGeometry.StaticVertices;
+        indices = sharedGeometry.Indices;
+        preSkinnedCurrent = sharedGeometry.PreSkinnedCurrent;
+        preSkinnedPrevious = sharedGeometry.PreSkinnedPrevious;
+        meshletDescriptors = sharedGeometry.MeshletDescriptors;
+        meshletVertexIndices = sharedGeometry.MeshletVertexIndices;
+        meshletTriangleWords = sharedGeometry.MeshletTriangleWords;
         transforms = default;
         deformations = default;
         renderStates = default;
@@ -1586,13 +1638,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                    slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Geometry,
                    frameSlot, snapshot.Geometry.PhysicalRecords,
                    snapshot.Geometry, snapshot.DatabaseEpoch, slot.ResidentGeometry, out geometry) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.StaticVertices, frameSlot, snapshot.GeometryPayloads.StaticVertices, snapshot.DatabaseEpoch, slot.ResidentStaticVertices, out staticVertices) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Indices, frameSlot, snapshot.GeometryPayloads.Indices, snapshot.DatabaseEpoch, slot.ResidentIndices, out indices) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.PreSkinnedCurrent, frameSlot, snapshot.GeometryPayloads.PreSkinnedCurrent, snapshot.DatabaseEpoch, slot.ResidentPreSkinnedCurrent, out preSkinnedCurrent) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.PreSkinnedPrevious, frameSlot, snapshot.GeometryPayloads.PreSkinnedPrevious, snapshot.DatabaseEpoch, slot.ResidentPreSkinnedPrevious, out preSkinnedPrevious) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MeshletDescriptors, frameSlot, snapshot.GeometryPayloads.MeshletDescriptors, snapshot.DatabaseEpoch, slot.ResidentMeshletDescriptors, out meshletDescriptors) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MeshletVertexIndices, frameSlot, snapshot.GeometryPayloads.MeshletVertexIndices, snapshot.DatabaseEpoch, slot.ResidentMeshletVertexIndices, out meshletVertexIndices) &&
-               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MeshletTriangleWords, frameSlot, snapshot.GeometryPayloads.MeshletTriangleWords, snapshot.DatabaseEpoch, slot.ResidentMeshletTriangleWords, out meshletTriangleWords) &&
                TryUploadResident(
                    slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Transforms,
                    frameSlot, snapshot.Transforms.PhysicalRecords,
@@ -1712,20 +1757,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                EVulkanAdvancedSceneResidentOwner.Instances, slot.ResidentInstances.Slice) &&
            TryRetainPlannedResidentSlice(plan,
                EVulkanAdvancedSceneResidentOwner.Geometry, slot.ResidentGeometry.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.StaticVertices, slot.ResidentStaticVertices.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.Indices, slot.ResidentIndices.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.PreSkinnedCurrent, slot.ResidentPreSkinnedCurrent.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.PreSkinnedPrevious, slot.ResidentPreSkinnedPrevious.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.MeshletDescriptors, slot.ResidentMeshletDescriptors.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.MeshletVertexIndices, slot.ResidentMeshletVertexIndices.Slice) &&
-           TryRetainPlannedResidentSlice(plan,
-               EVulkanAdvancedSceneResidentOwner.MeshletTriangleWords, slot.ResidentMeshletTriangleWords.Slice) &&
            TryRetainPlannedResidentSlice(plan,
                EVulkanAdvancedSceneResidentOwner.Transforms, slot.ResidentTransforms.Slice) &&
            TryRetainPlannedResidentSlice(plan,
@@ -1852,28 +1883,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         slice = resident.CreateCurrentSlice(source.Length);
         return true;
     }
-
-    private bool TryUploadResidentBytes(
-        VulkanAdvancedSceneResourceSlot slot,
-        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
-        EVulkanAdvancedSceneResidentOwner owner,
-        int frameSlot,
-        in AdvancedImmutableByteArenaPublicationSnapshot snapshot,
-        ulong databaseEpoch,
-        VulkanAdvancedSceneResidentBytes resident,
-        out VulkanFrameDataSlice slice)
-        => TryUploadResidentBytes(
-            slot,
-            allocationPlan,
-            owner,
-            frameSlot,
-            snapshot.Data,
-            snapshot.DirtyByteRange,
-            snapshot.BufferHandle,
-            databaseEpoch,
-            0u,
-            resident,
-            out slice);
 
     private bool TryUploadResidentBytes(
         VulkanAdvancedSceneResourceSlot slot,
@@ -2832,6 +2841,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
 
     private void RetireNativeStorageNoLock()
     {
+        _geometryCache.RetireAll();
         if (_descriptorPool.Handle != 0)
         {
             _resources.DescriptorLifetime.RetireDescriptorPool(
@@ -2913,20 +2923,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             slot, snapshot.DatabaseEpoch, snapshot.Instances, slot.ResidentInstances);
         SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Geometry,
             slot, snapshot.DatabaseEpoch, snapshot.Geometry, slot.ResidentGeometry);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.StaticVertices,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.StaticVertices, slot.ResidentStaticVertices);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Indices,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.Indices, slot.ResidentIndices);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.PreSkinnedCurrent,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.PreSkinnedCurrent, slot.ResidentPreSkinnedCurrent);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.PreSkinnedPrevious,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.PreSkinnedPrevious, slot.ResidentPreSkinnedPrevious);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MeshletDescriptors,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.MeshletDescriptors, slot.ResidentMeshletDescriptors);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MeshletVertexIndices,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.MeshletVertexIndices, slot.ResidentMeshletVertexIndices);
-        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MeshletTriangleWords,
-            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.MeshletTriangleWords, slot.ResidentMeshletTriangleWords);
         SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Transforms,
             slot, snapshot.DatabaseEpoch, snapshot.Transforms, slot.ResidentTransforms);
         SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Deformations,
@@ -3133,22 +3129,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         ReadOnlySpan<byte> source,
         VulkanAdvancedSceneResidentBytes resident)
     {
-        bool patch = slot.EntryCount == 0 &&
-            slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
-            _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
-        ulong bytes = GetTableBytes<byte>(source.Length);
-        plan.SetPatch(owner, patch, bytes, bytes, GetResidentEnd(resident.Slice));
-    }
-
-    private void SetResidentDecision(
-        VulkanAdvancedScenePublicationAllocationPlan plan,
-        EVulkanAdvancedSceneResidentOwner owner,
-        VulkanAdvancedSceneResourceSlot slot,
-        ulong databaseEpoch,
-        in AdvancedImmutableByteArenaPublicationSnapshot snapshot,
-        VulkanAdvancedSceneResidentBytes resident)
-    {
-        ReadOnlySpan<byte> source = snapshot.Data;
         bool patch = slot.EntryCount == 0 &&
             slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
             _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);

@@ -12,6 +12,7 @@ public sealed class AdvancedVisibilityFeedbackRing
     private readonly ulong[] _frameIds;
     private readonly ulong[] _completionValues;
     private readonly bool[] _sealed;
+    private ulong _minimumAcceptedFrameId;
 
     public AdvancedVisibilityFeedbackRing(int slotCount, int recordCapacity)
     {
@@ -31,6 +32,9 @@ public sealed class AdvancedVisibilityFeedbackRing
 
     public int SlotCount => _slots.Length;
     public int RecordCapacity => _slots[0].Length;
+
+    public bool CanAcceptFrame(ulong frameId)
+        => frameId >= _minimumAcceptedFrameId;
 
     public Span<AdvancedAnimationVisibilityFeedback> GetGpuWritableMirror(
         ulong frameId)
@@ -91,6 +95,19 @@ public sealed class AdvancedVisibilityFeedbackRing
         feedback = _slots[selectedSlot].AsSpan(0, _counts[selectedSlot]);
         feedbackFrameId = selectedFrame;
         return true;
+    }
+
+    /// <summary>
+    /// Drops feedback produced for a prior scene epoch. This changes only CPU
+    /// mirror metadata and never reuses or overwrites an in-flight GPU slot.
+    /// </summary>
+    public void ResetForSceneEpoch(ulong minimumAcceptedFrameId)
+    {
+        Array.Clear(_counts);
+        Array.Clear(_frameIds);
+        Array.Clear(_completionValues);
+        Array.Clear(_sealed);
+        _minimumAcceptedFrameId = minimumAcceptedFrameId;
     }
 
     private int ResolveSlot(ulong frameId)

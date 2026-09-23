@@ -859,6 +859,72 @@ public sealed class AdvancedSharedGpuSceneDatabase
     }
 
     /// <summary>
+    /// Stages a successor generation for the canonical geometry arenas while no
+    /// publication is mutable. A failed stage leaves every live arena and row
+    /// unchanged so callers may retain the ordinary growth/rejection path.
+    /// </summary>
+    internal bool TryStageGeometryCompactionAtFrameBoundary(
+        in AdvancedGpuSceneCapacityProfile capacities,
+        out AdvancedGeometryCompactionPlan plan)
+    {
+        lock (_publicationSync)
+        {
+            plan = null!;
+            return !_publicationFaulted && !_terminalDisposalRequested &&
+                _activePublicationSequence == 0u &&
+                Scene.Geometry.TryStageCompactionAtBoundary(in capacities, out plan);
+        }
+    }
+
+    internal bool TryEstimateGeometryCompactionAtFrameBoundary(
+        out AdvancedGeometryCompactionEstimate estimate)
+    {
+        lock (_publicationSync)
+        {
+            estimate = default;
+            return !_publicationFaulted && !_terminalDisposalRequested &&
+                _activePublicationSequence == 0u &&
+                Scene.Geometry.TryEstimateCompactionAtBoundary(out estimate);
+        }
+    }
+
+    /// <summary>
+    /// Applies a fully staged geometry compaction to the currently reserved
+    /// publication. The caller must preflight the replacement journal entries
+    /// with all remaining planned scene mutations before opening the batch.
+    /// </summary>
+    internal bool TryApplyGeometryCompaction(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        AdvancedGeometryCompactionPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        lock (_publicationSync)
+        {
+            if (!IsActiveTransactionCurrent(in transaction) ||
+                !Scene.Geometry.TryApplyCompactionAtBoundary(plan))
+            {
+                return false;
+            }
+
+            _capacities = _capacities with
+            {
+                Scene = _capacities.Scene with
+                {
+                    StaticVertexBytes = plan.StaticVertices.CapacityBytes,
+                    IndexBytes = plan.Indices.CapacityBytes,
+                    PreSkinnedCurrentBytes = plan.PreSkinnedCurrent.CapacityBytes,
+                    PreSkinnedPreviousBytes = plan.PreSkinnedPrevious.CapacityBytes,
+                    MeshletBytes = plan.MeshletDescriptors.CapacityBytes,
+                    MeshletDescriptorBytes = plan.MeshletDescriptors.CapacityBytes,
+                    MeshletVertexIndexBytes = plan.MeshletVertexIndices.CapacityBytes,
+                    MeshletTriangleWordBytes = plan.MeshletTriangleWords.CapacityBytes,
+                },
+            };
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Releases tombstoned record slots that are acknowledged by every consumer
     /// and not retained by a package or GPU lease. Returns reclaimed slot count.
     /// </summary>

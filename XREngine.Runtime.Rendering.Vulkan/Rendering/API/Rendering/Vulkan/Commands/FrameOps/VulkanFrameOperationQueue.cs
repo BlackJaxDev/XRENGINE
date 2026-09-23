@@ -891,6 +891,41 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     }
 
     /// <summary>
+    /// Abandons scene work while PresentNow cannot accept a frame. Receipt-bound
+    /// operations cannot use the ordinary skip drain, which preserves them for a
+    /// future accepted output; a paused renderer has no such output until a
+    /// recovery probe succeeds. Independent texture uploads remain queued.
+    /// </summary>
+    internal int DiscardPausedSceneOperations()
+    {
+        using (SyncRoot.EnterScope())
+        {
+            Span<FrameOp> operations = CollectionsMarshal.AsSpan(Pending);
+            int retainedCount = 0;
+            for (int index = 0; index < operations.Length; index++)
+            {
+                FrameOp operation = operations[index];
+                if (operation is TextureUploadFrameOp)
+                {
+                    operations[retainedCount++] = operation;
+                    continue;
+                }
+
+                ReadOnlySpan<FrameOp> abandoned = operations.Slice(index, 1);
+                FailPendingSubmissionMarkers(abandoned);
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(abandoned);
+            }
+
+            int discardedCount = Pending.Count - retainedCount;
+            if (discardedCount != 0)
+                Pending.RemoveRange(retainedCount, discardedCount);
+            DiscardFrameViewHistory();
+            DiscardOutputCompletions();
+            return discardedCount;
+        }
+    }
+
+    /// <summary>
     /// Atomically abandons all unsubmitted queue work during renderer teardown
     /// or an explicit terminal reset.
     /// </summary>

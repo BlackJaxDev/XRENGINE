@@ -18,6 +18,7 @@ public sealed class AdvancedDeformedVertexArena
     private readonly uint[] _lodGenerations;
     private readonly ulong[] _lastFrames;
     private readonly byte[] _historyProduced;
+    private readonly byte[] _historyReset;
     private readonly ulong[] _slotSubmissionValues;
     private readonly byte[][][] _retiredStorage;
     private readonly ulong[] _retiredCompletionValues;
@@ -55,6 +56,7 @@ public sealed class AdvancedDeformedVertexArena
         _lodGenerations = new uint[ownerTableCapacity];
         _lastFrames = new ulong[ownerTableCapacity];
         _historyProduced = new byte[ownerTableCapacity];
+        _historyReset = new byte[ownerTableCapacity];
 
         _retiredStorage = new byte[options.RetiredGenerationCapacity][][];
         _retiredCompletionValues =
@@ -160,6 +162,7 @@ public sealed class AdvancedDeformedVertexArena
                 _frameId,
                 previousFrame,
                 _historyProduced[ownerSlot] != 0,
+                _historyReset[ownerSlot] != 0,
                 topologyChanged,
                 vertexCountChanged);
         if (velocityValidity != EAdvancedVelocityValidityReason.Valid)
@@ -173,6 +176,7 @@ public sealed class AdvancedDeformedVertexArena
         _topologyGenerations[ownerSlot] = topologyGeneration;
         _lodGenerations[ownerSlot] = lodGeneration;
         _lastFrames[ownerSlot] = _frameId;
+        _historyReset[ownerSlot] = 0;
 
         slice = new AdvancedDeformedArenaSlice(
             owner,
@@ -205,6 +209,68 @@ public sealed class AdvancedDeformedVertexArena
         int slot = FindOwner(owner);
         if (slot >= 0)
             _historyProduced[slot] = 0;
+    }
+
+    /// <summary>
+    /// Invalidates velocity history at a scene-epoch boundary without touching
+    /// current or previous storage that may still be owned by the GPU.
+    /// </summary>
+    public void InvalidateAllHistoryForSceneEpoch()
+    {
+        if (_frameOpen)
+        {
+            throw new InvalidOperationException(
+                "Deformation history can only be invalidated at a frame boundary.");
+        }
+
+        for (int slot = 0; slot < _owners.Length; slot++)
+        {
+            if (!_owners[slot].IsValid)
+                continue;
+
+            _historyProduced[slot] = 0;
+            _historyReset[slot] = 1;
+        }
+    }
+
+    /// <summary>
+    /// Releases all logical slice ownership at a scene-generation boundary.
+    /// The frame-slot byte storage remains intact until normal slot reuse has
+    /// established that it is safe to overwrite.
+    /// </summary>
+    public void ResetOwnersAtBoundary()
+    {
+        if (_frameOpen)
+        {
+            throw new InvalidOperationException(
+                "Deformation owners can only be reset at a frame boundary.");
+        }
+
+        ClearOwners();
+    }
+
+    /// <summary>
+    /// Releases logical ownership after the current output slot has been acquired.
+    /// Earlier output slots retain their bytes until their normal reuse boundary.
+    /// </summary>
+    public void ResetOwnersForCurrentFrame()
+    {
+        ThrowIfFrameClosed();
+        ClearOwners();
+    }
+
+    private void ClearOwners()
+    {
+        Array.Clear(_owners);
+        Array.Clear(_offsets);
+        Array.Clear(_vertexCounts);
+        Array.Clear(_topologyGenerations);
+        Array.Clear(_lodGenerations);
+        Array.Clear(_lastFrames);
+        Array.Clear(_historyProduced);
+        Array.Clear(_historyReset);
+        _nextVertexOffset = 0u;
+        _pendingVertexCapacity = _vertexCapacity;
     }
 
     public Span<AdvancedDeformedVertex> GetCurrentVertices(
@@ -372,6 +438,7 @@ public sealed class AdvancedDeformedVertexArena
         ulong currentFrame,
         ulong previousFrame,
         bool historyProduced,
+        bool historyReset,
         bool topologyChanged,
         bool vertexCountChanged)
     {
@@ -381,6 +448,8 @@ public sealed class AdvancedDeformedVertexArena
             return EAdvancedVelocityValidityReason.TopologyChanged;
         if (vertexCountChanged)
             return EAdvancedVelocityValidityReason.VertexCountChanged;
+        if (historyReset)
+            return EAdvancedVelocityValidityReason.HistoryReset;
         return historyProduced && previousFrame + 1UL == currentFrame
             ? EAdvancedVelocityValidityReason.Valid
             : EAdvancedVelocityValidityReason.FrameGap;

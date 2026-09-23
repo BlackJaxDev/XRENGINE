@@ -31,4 +31,5 @@ public readonly record struct AdvancedPreparationPublication(
     bool GpuResourcesPublished,
     bool AggregateDispatchExecuted,
     RuntimeGraphicsApiKind Backend,
-    double DeformationGpuMilliseconds);
+    double DeformationGpuMilliseconds,
+    ulong VisibilityFeedbackEpoch);

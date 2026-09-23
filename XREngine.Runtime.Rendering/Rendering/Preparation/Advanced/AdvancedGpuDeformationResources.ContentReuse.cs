@@ -27,6 +27,12 @@ public sealed partial class AdvancedGpuDeformationResources
     {
         LastOutputReuseSlot = slot;
         LastOutputReuseAuthority = "ProducerFence";
+        if (_slotReusePoisoned[slot])
+        {
+            LastOutputReuseAuthority = "MissingProducerFence";
+            LastOutputReuseStatus = EGpuBufferContentReuseStatus.Superseded;
+            return false;
+        }
         XRGpuFence? fence = _slotProducerFences[slot];
         if (fence is null)
         {

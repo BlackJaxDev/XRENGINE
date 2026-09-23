@@ -743,7 +743,7 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    private bool CanApplyPlannedSceneMutations()
+    private bool CanApplyPlannedSceneMutations(int geometryCompactionReplacementCount = 0)
     {
         int additions = 0;
         int structuralUpdates = 0;
@@ -787,13 +787,17 @@ public sealed partial class AdvancedGpuScenePublisher
             }
 
         AdvancedGpuSceneDatabase tables = Database.Scene;
-        return tables.Draws.CanApply(additions, structuralUpdates, tombstones) &&
+        return geometryCompactionReplacementCount >= 0 &&
+            tables.Draws.CanApply(additions, structuralUpdates, tombstones) &&
             tables.Instances.CanApply(additions, contentUpdates, tombstones) &&
             tables.Transforms.CanApply(
                 checked(additions * 2),
                 checked(contentUpdates * 2),
                 checked(tombstones * 2)) &&
-            tables.Geometry.Records.CanApply(additions, structuralUpdates, tombstones) &&
+            tables.Geometry.Records.CanApply(
+                checked(additions + structuralUpdates),
+                checked(geometryCompactionReplacementCount),
+                checked(tombstones + structuralUpdates)) &&
             tables.Deformations.CanApply(additions, structuralUpdates, tombstones) &&
             tables.RenderStates.CanApply(additions, structuralUpdates, tombstones) &&
             tables.EditorIdentities.CanApply(additions, contentUpdates, tombstones);

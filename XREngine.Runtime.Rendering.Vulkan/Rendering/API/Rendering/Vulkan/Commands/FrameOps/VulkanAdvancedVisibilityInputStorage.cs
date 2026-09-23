@@ -12,6 +12,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
 {
     private readonly bool _fixedCapacity;
     private readonly EVulkanAcceptedFrameLane _lane;
+    private readonly VulkanAdvancedVisibilityInputCopyTelemetry? _copyTelemetry;
     private AdvancedVisibilityPayload[] _payloads;
     private AdvancedVisibilityCandidate[] _candidates;
     private EAdvancedGeometryProducer[] _producers;
@@ -30,13 +31,15 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         int drawCapacity,
         int indirectRangeCapacity,
         bool fixedCapacity,
-        EVulkanAcceptedFrameLane lane)
+        EVulkanAcceptedFrameLane lane,
+        VulkanAdvancedVisibilityInputCopyTelemetry? copyTelemetry = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(drawCapacity);
         ArgumentOutOfRangeException.ThrowIfNegative(indirectRangeCapacity);
 
         _fixedCapacity = fixedCapacity;
         _lane = lane;
+        _copyTelemetry = copyTelemetry;
         _payloads = new AdvancedVisibilityPayload[drawCapacity];
         _candidates = new AdvancedVisibilityCandidate[drawCapacity];
         _producers = new EAdvancedGeometryProducer[drawCapacity];
@@ -189,6 +192,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             if (!MatchesRequest(in request) ||
                 !authoringInput.MatchesRequest(in request))
             {
+                _copyTelemetry?.RecordRejectedCopy();
                 throw new VulkanPlanPreconditionException(
                     "A frame-operation stream cannot retain more than one advanced visibility input family.");
             }
@@ -197,6 +201,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         }
         if (!authoringInput.MatchesRequest(in request))
         {
+            _copyTelemetry?.RecordRejectedCopy();
             throw new VulkanPlanPreconditionException(
                 "The advanced visibility authoring lease does not match the frame-operation family.");
         }
@@ -214,36 +219,52 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         ReadOnlySpan<AdvancedDeformedArenaSlice> deformationSlices =
             authoringInput.DeformationSlices;
 
-        long copyStarted = Stopwatch.GetTimestamp();
-        EnsureCapacity(ref _payloads, payloads.Length, "payload");
-        EnsureCapacity(ref _candidates, candidates.Length, "candidate");
-        EnsureCapacity(ref _producers, producers.Length, "producer");
-        EnsureCapacity(
-            ref _indirectRanges,
-            indirectRanges.Length,
-            "indirect-range");
-        EnsureCapacity(
-            ref _indirectPayloadIndices,
-            indirectPayloadIndices.Length,
-            "indirect-payload-index");
-        EnsureCapacity(ref _deformationSlices, deformationSlices.Length, "deformation-slice");
+        try
+        {
+            EnsureCapacity(ref _payloads, payloads.Length, "payload");
+            EnsureCapacity(ref _candidates, candidates.Length, "candidate");
+            EnsureCapacity(ref _producers, producers.Length, "producer");
+            EnsureCapacity(
+                ref _indirectRanges,
+                indirectRanges.Length,
+                "indirect-range");
+            EnsureCapacity(
+                ref _indirectPayloadIndices,
+                indirectPayloadIndices.Length,
+                "indirect-payload-index");
+            EnsureCapacity(ref _deformationSlices, deformationSlices.Length, "deformation-slice");
+        }
+        catch
+        {
+            _copyTelemetry?.RecordRejectedCopy();
+            throw;
+        }
 
-        payloads.CopyTo(_payloads);
-        candidates.CopyTo(_candidates);
-        producers.CopyTo(_producers);
-        indirectRanges.CopyTo(_indirectRanges);
-        indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
-        deformationSlices.CopyTo(_deformationSlices);
-        AdvancedSharedPreparationService.Instance.RecordDeferredFamilyCopy(
-            Stopwatch.GetTimestamp() - copyStarted,
-            (long)payloads.Length *
-                (Unsafe.SizeOf<AdvancedVisibilityPayload>() +
-                 Unsafe.SizeOf<AdvancedVisibilityCandidate>() +
-                 Unsafe.SizeOf<EAdvancedGeometryProducer>() +
-                 Unsafe.SizeOf<int>() +
-                 Unsafe.SizeOf<AdvancedDeformedArenaSlice>()) +
-            (long)indirectRanges.Length *
-                Unsafe.SizeOf<AdvancedIndirectRange>());
+        long copyStarted = Stopwatch.GetTimestamp();
+        bool copied = false;
+        try
+        {
+            payloads.CopyTo(_payloads);
+            candidates.CopyTo(_candidates);
+            producers.CopyTo(_producers);
+            indirectRanges.CopyTo(_indirectRanges);
+            indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
+            deformationSlices.CopyTo(_deformationSlices);
+            copied = true;
+        }
+        catch
+        {
+            _copyTelemetry?.RecordRejectedCopy();
+            throw;
+        }
+        finally
+        {
+            long copyTicks = Stopwatch.GetTimestamp() - copyStarted;
+            if (copied && _copyTelemetry is not null)
+                _copyTelemetry.RecordCopy(ComputeCopyByteCount(
+                    payloads.Length,
+                    indirectRanges.Length), copyTicks);
+        }
 
         _familyRequest = request;
         Publication = authoringInput.Publication;
@@ -290,4 +311,14 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             ref values,
             Math.Max(required, values.Length == 0 ? 4 : values.Length * 2));
     }
+
+    private static long ComputeCopyByteCount(int payloadCount, int indirectRangeCount)
+        => checked(
+            (long)payloadCount * (
+                Unsafe.SizeOf<AdvancedVisibilityPayload>() +
+                Unsafe.SizeOf<AdvancedVisibilityCandidate>() +
+                Unsafe.SizeOf<EAdvancedGeometryProducer>() +
+                Unsafe.SizeOf<int>() +
+                Unsafe.SizeOf<AdvancedDeformedArenaSlice>()) +
+            (long)indirectRangeCount * Unsafe.SizeOf<AdvancedIndirectRange>());
 }

@@ -354,6 +354,7 @@ namespace XREngine.Editor.Mcp
                 },
                 outputReservationDiagnostics = renderer?.CaptureAdvancedOutputReservationDiagnostics(),
                 preparationDiagnostics = renderer?.CaptureAdvancedVisibilityPreparationDiagnostics(),
+                framePlanInputCopyDiagnostics = renderer?.CaptureAdvancedVisibilityInputCopyDiagnostics(),
                 pipelineCompilationDiagnostics = renderer?.CapturePipelineCompilationDiagnostics(),
                 resourceMaterialization = new
                 {

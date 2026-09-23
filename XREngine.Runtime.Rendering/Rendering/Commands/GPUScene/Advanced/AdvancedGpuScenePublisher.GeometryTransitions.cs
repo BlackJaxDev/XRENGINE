@@ -150,8 +150,10 @@ public sealed partial class AdvancedGpuScenePublisher
     /// Preflights every immutable geometry append while growth is still legal.
     /// The publication transaction that follows may mutate only fixed storage.
     /// </summary>
-    private bool TryEnsurePlannedGeometryBoundaryCapacity()
+    private bool TryEnsurePlannedGeometryBoundaryCapacity(
+        out AdvancedGeometryCompactionPlan? compactionPlan)
     {
+        compactionPlan = null;
         AdvancedGeometryDatabase geometry = Database.Scene.Geometry;
         ulong staticVertexEnd = geometry.StaticVertexArena.CountBytes;
         ulong indexEnd = geometry.IndexArena.CountBytes;
@@ -257,8 +259,9 @@ public sealed partial class AdvancedGpuScenePublisher
             return true;
         }
 
+        AdvancedGpuSceneCapacityProfile currentCapacities = Database.Capacities.Scene;
         AdvancedGpuSceneCapacityProfile sceneCapacities =
-            Database.Capacities.Scene with
+            currentCapacities with
         {
             StaticVertexBytes = GetArenaBoundaryCapacity(
                 geometry.StaticVertexArena.CapacityBytes,
@@ -276,8 +279,147 @@ public sealed partial class AdvancedGpuScenePublisher
                 geometry.MeshletTriangleWordArena.CapacityBytes,
                 requiredMeshletTriangleWordBytes),
         };
+
+        if (Database.TryEstimateGeometryCompactionAtFrameBoundary(
+                out AdvancedGeometryCompactionEstimate estimate) &&
+            estimate.ReclaimedBytes != 0u)
+        {
+            AdvancedGpuSceneCapacityProfile compactedCapacities = currentCapacities with
+            {
+                StaticVertexBytes = GetArenaBoundaryCapacity(
+                    geometry.StaticVertexArena.CapacityBytes,
+                    GetCompactedRequiredEnd(
+                        estimate.StaticVertices,
+                        geometry.StaticVertexArena.CountBytes,
+                        requiredStaticVertexBytes,
+                        vertexStride)),
+                IndexBytes = GetArenaBoundaryCapacity(
+                    geometry.IndexArena.CapacityBytes,
+                    GetCompactedRequiredEnd(
+                        estimate.Indices,
+                        geometry.IndexArena.CountBytes,
+                        requiredIndexBytes,
+                        sizeof(uint))),
+                MeshletDescriptorBytes = GetArenaBoundaryCapacity(
+                    geometry.MeshletDescriptorArena.CapacityBytes,
+                    GetCompactedRequiredEnd(
+                        estimate.MeshletDescriptors,
+                        geometry.MeshletDescriptorArena.CountBytes,
+                        requiredMeshletDescriptorBytes,
+                        meshletDescriptorStride)),
+                MeshletVertexIndexBytes = GetArenaBoundaryCapacity(
+                    geometry.MeshletVertexIndexArena.CapacityBytes,
+                    GetCompactedRequiredEnd(
+                        estimate.MeshletVertexIndices,
+                        geometry.MeshletVertexIndexArena.CountBytes,
+                        requiredMeshletVertexIndexBytes,
+                        sizeof(uint))),
+                MeshletTriangleWordBytes = GetArenaBoundaryCapacity(
+                    geometry.MeshletTriangleWordArena.CapacityBytes,
+                    GetCompactedRequiredEnd(
+                        estimate.MeshletTriangleWords,
+                        geometry.MeshletTriangleWordArena.CountBytes,
+                        requiredMeshletTriangleWordBytes,
+                        sizeof(uint))),
+            };
+            if (ReducesGeometryCapacity(in compactedCapacities, in sceneCapacities) &&
+                Database.TryStageGeometryCompactionAtFrameBoundary(
+                    in compactedCapacities,
+                    out AdvancedGeometryCompactionPlan staged) &&
+                CanFitPlannedGeometryAfterCompaction(
+                    staged,
+                    geometry,
+                    requiredStaticVertexBytes,
+                    requiredIndexBytes,
+                    requiredMeshletDescriptorBytes,
+                    requiredMeshletVertexIndexBytes,
+                    requiredMeshletTriangleWordBytes,
+                    vertexStride,
+                    meshletDescriptorStride))
+            {
+                compactionPlan = staged;
+                return true;
+            }
+        }
+
         return Database.TryGrowGeometryArenasAtFrameBoundary(
             in sceneCapacities);
+    }
+
+    private static uint GetCompactedRequiredEnd(
+        uint compactedCount,
+        uint originalCount,
+        uint originalRequiredEnd,
+        uint elementStride)
+    {
+        if (originalRequiredEnd <= originalCount)
+            return compactedCount;
+
+        uint originalAlignedCount = AlignUp(originalCount, elementStride);
+        uint payloadBytes = checked(originalRequiredEnd - originalAlignedCount);
+        return checked(AlignUp(compactedCount, elementStride) + payloadBytes);
+    }
+
+    private static bool ReducesGeometryCapacity(
+        in AdvancedGpuSceneCapacityProfile compacted,
+        in AdvancedGpuSceneCapacityProfile ordinary)
+        => compacted.StaticVertexBytes < ordinary.StaticVertexBytes ||
+           compacted.IndexBytes < ordinary.IndexBytes ||
+           compacted.MeshletDescriptorBytes < ordinary.MeshletDescriptorBytes ||
+           compacted.MeshletVertexIndexBytes < ordinary.MeshletVertexIndexBytes ||
+           compacted.MeshletTriangleWordBytes < ordinary.MeshletTriangleWordBytes;
+
+    private static bool CanFitPlannedGeometryAfterCompaction(
+        AdvancedGeometryCompactionPlan plan,
+        AdvancedGeometryDatabase geometry,
+        uint requiredStaticVertexBytes,
+        uint requiredIndexBytes,
+        uint requiredMeshletDescriptorBytes,
+        uint requiredMeshletVertexIndexBytes,
+        uint requiredMeshletTriangleWordBytes,
+        uint vertexStride,
+        uint meshletDescriptorStride)
+        => CanAppendPlannedBytes(
+            plan.StaticVertices,
+            geometry.StaticVertexArena.CountBytes,
+            requiredStaticVertexBytes,
+            vertexStride) &&
+           CanAppendPlannedBytes(
+               plan.Indices,
+               geometry.IndexArena.CountBytes,
+               requiredIndexBytes,
+               sizeof(uint)) &&
+           CanAppendPlannedBytes(
+               plan.MeshletDescriptors,
+               geometry.MeshletDescriptorArena.CountBytes,
+               requiredMeshletDescriptorBytes,
+               meshletDescriptorStride) &&
+           CanAppendPlannedBytes(
+               plan.MeshletVertexIndices,
+               geometry.MeshletVertexIndexArena.CountBytes,
+               requiredMeshletVertexIndexBytes,
+               sizeof(uint)) &&
+           CanAppendPlannedBytes(
+               plan.MeshletTriangleWords,
+               geometry.MeshletTriangleWordArena.CountBytes,
+               requiredMeshletTriangleWordBytes,
+               sizeof(uint));
+
+    private static bool CanAppendPlannedBytes(
+        AdvancedImmutableByteArena successor,
+        uint originalCount,
+        uint originalRequiredEnd,
+        uint elementStride)
+    {
+        if (originalRequiredEnd <= originalCount)
+            return true;
+
+        uint originalAlignedCount = AlignUp(originalCount, elementStride);
+        if (originalRequiredEnd < originalAlignedCount)
+            return false;
+        return successor.CanAppend(
+            originalRequiredEnd - originalAlignedCount,
+            elementStride);
     }
 
     private bool RequiresGeometryAppend(
@@ -324,6 +466,14 @@ public sealed partial class AdvancedGpuScenePublisher
         return checked((uint)Math.Min(
             int.MaxValue,
             Math.Max(doubled, requiredCapacity)));
+    }
+
+    private static uint AlignUp(uint value, uint alignment)
+    {
+        uint remainder = value % alignment;
+        return remainder == 0u
+            ? value
+            : checked(value + alignment - remainder);
     }
 
     private bool HasGeometryScratchCapacity(
