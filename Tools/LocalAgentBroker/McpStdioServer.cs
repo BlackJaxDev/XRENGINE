@@ -145,7 +145,10 @@ internal sealed class McpStdioServer(
     {
         string objective = RequiredString(arguments, "objective");
         IReadOnlyList<string> constraints = ReadStringArray(arguments, "constraints");
-        return AgentRouteAdvisor.Recommend(objective, constraints);
+        string modelFamily = arguments.TryGetProperty("model_family", out JsonElement family)
+            ? family.GetString() ?? string.Empty
+            : "gpt-6";
+        return AgentRouteAdvisor.Recommend(objective, constraints, modelFamily);
     }
 
     private object StartRun(JsonElement arguments)
@@ -159,6 +162,7 @@ internal sealed class McpStdioServer(
             runId,
             status = snapshot.Status,
             requestedModel = snapshot.RequestedModel,
+            deprecatedModel = AgentModelCatalog.IsDeprecated(snapshot.RequestedModel),
             actualModel = string.Empty,
             requestedReasoningEffort = snapshot.RequestedReasoningEffort,
             requestedTextVerbosity = snapshot.RequestedTextVerbosity,
@@ -170,6 +174,8 @@ internal sealed class McpStdioServer(
             contextRawBytes = snapshot.ContextRawBytes,
             repositoryAccessEnabled = snapshot.RepositoryAccessEnabled,
             useBackgroundMode = snapshot.UseBackgroundMode,
+            swarmEnabled = request.Swarm is not null,
+            swarm = snapshot.SwarmOptions,
             message = "Run queued. Poll get_agent_run until status is terminal.",
         };
     }
@@ -211,7 +217,7 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.9.0",
+                ["version"] = "0.10.0",
             },
             ["capabilities"] = new JsonObject
             {

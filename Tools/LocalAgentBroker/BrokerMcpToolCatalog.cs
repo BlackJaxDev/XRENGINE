@@ -12,17 +12,24 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "recommend_agent_route",
-            Description = "Recommend Luna, Terra, or Sol under the XRENGINE routing policy. This never launches or switches a model.",
+            Description = "Recommend an exact GPT-5.6 or GPT-6 model under the XRENGINE routing policy. This never launches or switches a model.",
             IsReadOnly = true,
             InputSchema = ObjectSchema(
                 required: ["objective"],
                 ("objective", StringSchema("Task objective to classify.")),
-                ("constraints", StringArraySchema("Relevant task constraints."))),
+                ("constraints", StringArraySchema("Relevant task constraints.")),
+                ("model_family", new JsonObject
+                {
+                    ["type"] = "string",
+                    ["enum"] = new JsonArray("gpt-6", "gpt-5.6"),
+                    ["default"] = "gpt-6",
+                    ["description"] = "GPT-6 is preferred. GPT-5.6 is deprecated and available only for explicit legacy selection.",
+                })),
         },
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start one bounded OpenAI Responses API worker with exact model, response controls, optional snapshotted repository context, opt-in read-only repository tools, and optional controlled editor tools. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
+            Description = "Start a bounded exact-model Responses API worker, or opt into a hierarchical GPT-6 Luna Max code swarm with the swarm object. Swarms return parent-reviewed code changes by default; auto_apply explicitly authorizes host writes to allowed_paths. Returns a run ID immediately.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
@@ -68,7 +75,11 @@ internal static class BrokerMcpToolCatalog
             ("requested_model", new JsonObject
             {
                 ["type"] = "string",
+                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-5.6 selections are deprecated but remain explicitly callable.",
                 ["enum"] = new JsonArray(
+                    AgentModelCatalog.Luna6,
+                    AgentModelCatalog.Sol6,
+                    AgentModelCatalog.Astra6,
                     AgentModelCatalog.Luna,
                     AgentModelCatalog.Terra,
                     AgentModelCatalog.Sol),
@@ -194,7 +205,22 @@ internal static class BrokerMcpToolCatalog
                     ["max_concurrency"] = IntegerSchema(1, 8, 1),
                 },
             }),
+            ("swarm", SwarmSchema()),
             ("additional_instructions", StringSchema("Optional task-specific instructions.")));
+
+    private static JsonObject SwarmSchema()
+        => ObjectSchema(
+            required: ["allowed_paths"],
+            ("allowed_paths", StringArraySchema("Exact source file paths to assign to leaves. Existing files are snapshotted in full; new files require existing parent directories. No wildcards. Contents are sent to the API.")),
+            ("auto_apply", BooleanSchema(false)),
+            ("max_depth", IntegerSchema(1, 6, 3)),
+            ("max_agents", IntegerSchema(2, 64, 16)),
+            ("max_children", IntegerSchema(1, 8, 4)),
+            ("max_parallel_agents", IntegerSchema(1, 8, 3)),
+            ("max_output_tokens", IntegerSchema(16, 1_048_576, 131_072, "Hard whole-swarm output/reasoning token reservation ceiling. Each phase reserves its full allowance without refund.")),
+            ("max_phase_output_tokens", IntegerSchema(16, 32_768, 8_192)),
+            ("max_elapsed_seconds", IntegerSchema(1, 3_600, 900)),
+            ("max_changed_lines_per_leaf", IntegerSchema(1, 500, 120)));
 
     private static JsonObject ObjectSchema(
         string[] required,

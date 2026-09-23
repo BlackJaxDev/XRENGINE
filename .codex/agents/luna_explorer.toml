@@ -1,6 +1,6 @@
 name = "luna_explorer"
-description = "Fast read-only worker for deterministic repository searches, inventories, extraction, classification, documentation drafts, and log summaries."
-model = "gpt-5.6-luna"
+description = "Fast GPT-6 Luna read-only worker for deterministic repository searches, inventories, extraction, classification, documentation drafts, and log summaries."
+model = "gpt-6-luna"
 model_reasoning_effort = "low"
 sandbox_mode = "read-only"
 developer_instructions = """

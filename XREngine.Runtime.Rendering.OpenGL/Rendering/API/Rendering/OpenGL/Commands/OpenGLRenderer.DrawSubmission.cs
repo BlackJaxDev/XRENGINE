@@ -356,11 +356,16 @@ public partial class OpenGLRenderer
             string? verStr = Version;
             if (!string.IsNullOrWhiteSpace(verStr))
             {
-                var parts = verStr.Split(' ');
-                var num = parts[0].Split('.');
-                if (num.Length >= 2 && int.TryParse(num[0], out int maj) && int.TryParse(num[1], out int min))
+                ReadOnlySpan<char> version = verStr.AsSpan();
+                int majorEnd = version.IndexOf('.');
+                if (majorEnd > 0 && int.TryParse(version[..majorEnd], out int maj))
                 {
-                    if (maj > 4 || (maj == 4 && min >= 6))
+                    ReadOnlySpan<char> minorVersion = version[(majorEnd + 1)..];
+                    int minorEnd = minorVersion.IndexOfAny('.', ' ');
+                    if (minorEnd >= 0)
+                        minorVersion = minorVersion[..minorEnd];
+                    if (int.TryParse(minorVersion, out int min) &&
+                        (maj > 4 || (maj == 4 && min >= 6)))
                         return true;
                 }
             }

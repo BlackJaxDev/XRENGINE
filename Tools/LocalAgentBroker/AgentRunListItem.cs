@@ -47,4 +47,6 @@ public sealed record AgentRunListItem
     public int AttemptCount { get; init; }
 
     public int RetryCount { get; init; }
+
+    public bool SwarmEnabled { get; init; }
 }

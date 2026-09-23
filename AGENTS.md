@@ -25,37 +25,39 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 
 Optimize for the lowest cost per successfully validated task, not the lowest cost per request. Rework from an underpowered route can cost more than using the appropriate model once. Do not use fixed workload percentages or file counts as routing rules; classify the ambiguity, reasoning difficulty, risk, and strength of the available validation.
 
-- Use GPT-5.6 Terra as the default coordinator and implementer for repository exploration, scoped design and implementation, ordinary debugging, code review, refactoring, integration, and test iteration.
-- Use GPT-5.6 Luna for bounded, reversible, low-ambiguity work with deterministic acceptance checks: searches and inventories, mechanical edits, boilerplate, documentation, straightforward test scaffolding, build/test execution, and log classification. Do not choose Luna for unresolved architecture, novel algorithms, ambiguous root-cause analysis, security-sensitive changes, or subtle concurrency, lifetime, unsafe-code, renderer, GPU, or performance work.
-- Use GPT-5.6 Sol only for the difficult or high-risk reasoning slice: cross-subsystem architecture, unclear root causes after evidence-driven investigation, complex concurrency or GPU/rendering failures, sophisticated algorithms, security or data-loss risk, and final review of consequential changes. Once that slice is resolved, move routine implementation and verification back to Terra or Luna.
+- Use GPT-6 Sol as the default coordinator and implementer for repository exploration, scoped design and implementation, ordinary debugging, code review, refactoring, integration, and test iteration.
+- Use GPT-6 Luna for bounded, reversible, low-ambiguity work with deterministic acceptance checks: searches and inventories, mechanical edits, boilerplate, documentation, straightforward test scaffolding, build/test execution, and log classification. Do not choose Luna for unresolved architecture, novel algorithms, ambiguous root-cause analysis, security-sensitive changes, or subtle concurrency, lifetime, unsafe-code, renderer, GPU, or performance work.
+- Use GPT-6 Astra only for the difficult or high-risk reasoning slice: cross-subsystem architecture, unclear root causes after evidence-driven investigation, complex concurrency or GPU/rendering failures, sophisticated algorithms, security or data-loss risk, and final review of consequential changes. Once that slice is resolved, move routine implementation and verification back to GPT-6 Sol or Luna.
+- GPT-5.6 Sol, Terra, and Luna selections are deprecated. Retain exact legacy API support only for explicitly requested legacy runs; never recommend or silently fall back to GPT-5.6. GPT-6 Sol replaces Terra's implementation role, and GPT-6 Astra replaces the former Sol escalation role.
 - Give an expensive model a compact evidence packet instead of the repository's entire history. Include only the objective, success criteria, constraints, relevant files and symbols, current diff, commands and results, failed hypotheses, unresolved questions, and next decision.
 - For repeated workloads, compare the current reasoning effort with one level lower on representative tasks. Keep the cheaper setting only when the same validation passes. Reserve high, xhigh, max, or pro-style execution for measured quality gains; never use them merely because a task is large.
 - The user controls native or in-place model switches for the current Codex
   task. Separately billed broker workers have standing repository authorization
   within the bounded policy below; do not ask for per-run API-spend permission.
 
-When the active model is Terra, treat these user instructions as routing commands:
+Treat these user instructions as routing commands, preserving the exact named GPT-6 tier:
 
-- **"Escalate to Sol"**: stop substantive Terra work at a coherent boundary, preserve all completed work, and hand the unfinished task to `gpt-5.6-sol`. Provide the compact evidence packet above so Sol does not repeat discovery. Do not wait for an arbitrary failure count when the user has explicitly requested escalation.
-- **"De-escalate to Luna"**: stop substantive Terra work at a coherent boundary, preserve all completed work, and hand the unfinished task to `gpt-5.6-luna`. Convert the remaining work into a bounded checklist with exact files, constraints, acceptance criteria, and validation commands. Carry forward any known risk or ambiguity instead of hiding it.
+- **"Escalate to Astra"**: stop substantive work at a coherent boundary, preserve all completed work, and hand the difficult unfinished slice to `gpt-6-astra`. Provide the compact evidence packet above so Astra does not repeat discovery. Do not wait for an arbitrary failure count when escalation was explicitly requested.
+- **"Escalate to Sol"**: hand work from Luna or a legacy model to `gpt-6-sol`, preserving completed work and a compact evidence packet. Sol now denotes the GPT-6 implementation tier.
+- **"De-escalate to Luna"**: stop substantive work at a coherent boundary, preserve all completed work, and hand the unfinished task to `gpt-6-luna`. Convert the remaining work into a bounded checklist with exact files, constraints, acceptance criteria, and validation commands. Carry forward any known risk or ambiguity instead of hiding it.
 - Use an in-place model switch or supported handoff when the current Codex surface provides one. Otherwise, state that the runtime cannot switch itself and return the handoff packet for the user to continue with the named model. Never claim a switch occurred when it did not.
 - A routing command does not authorize creating a new task, thread, branch, or worktree, committing, pushing, or performing external writes. Do not create those merely to simulate a model switch unless the user separately asks for them.
 - After a handoff, continue from the recorded state. Do not redo completed investigation, edits, or validation unless the evidence is stale or the receiving model identifies a concrete reason.
 
 ### Native Agent Roles
 
-Project-scoped Codex defaults use Terra at medium effort for the coordinator and
-Luna at low effort for spawned agents. Proactively delegate independent bounded
+Project-scoped Codex defaults use GPT-6 Sol at medium effort for the coordinator and
+GPT-6 Luna at low effort for spawned agents. Proactively delegate independent bounded
 slices without asking the user when parallel work will materially improve speed
 or keep noisy evidence out of the coordinator context. Use the custom agents in
 `.codex/agents/` by responsibility:
 
-- `luna_explorer`: read-only searches, inventories, extraction, classification,
+- `luna_explorer` (GPT-6 Luna): read-only searches, inventories, extraction, classification,
   deterministic documentation drafts, and log summaries.
-- `terra_worker`: ordinary scoped implementation, refactoring, integration, and
+- `terra_worker` (GPT-6 Sol; retained role name): ordinary scoped implementation, refactoring, integration, and
   task-authorized filesystem operations after ownership and acceptance criteria
   are clear.
-- `sol_architect`: read-only max-effort escalation for consequential architecture,
+- `sol_architect` (GPT-6 Astra; retained role name): read-only max-effort escalation for consequential architecture,
   ambiguous root cause, concurrency, GPU/rendering, security, data-loss risk, or
   final review.
 
@@ -85,8 +87,12 @@ Call `start_agent_run` only when all of these conditions are true:
 - The coordinator automatically selects the exact supported model ID for each
   bounded slice unless the user pins a model or tier ceiling. Use
   `recommend_agent_route` plus the routing policy above, and pass its exact
-  `gpt-5.6-luna`, `gpt-5.6-terra`, or `gpt-5.6-sol` result to
+  `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-6-luna`,
+  `gpt-6-sol`, or `gpt-6-astra` result to
   `start_agent_run`. Do not stop to ask the user which tier to use.
+  `recommend_agent_route` defaults to the GPT-6 family. Use the deprecated
+  `model_family: "gpt-5.6"` only for an explicit legacy request. GPT-6 maps bounded
+  work to Luna, ordinary work to Sol, and difficult/high-risk work to Astra.
 - The five broker tools are callable in the current session. If they are
   missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
   project trust, and restart requirements. Do not simulate a broker run.
@@ -120,6 +126,24 @@ requires it and the expected validation benefit justifies the additional cost.
 Global broker concurrency remains bounded by
 `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 
+#### Opt-In Hierarchical Code Swarms
+
+When the user requests a hierarchical swarm, `start_agent_run` also accepts
+`swarm` with exact `gpt-6-luna` and `reasoning_effort: "max"`. Keep the node,
+depth, fanout, concurrency, output-reservation, and elapsed-time bounds narrow.
+Supply exact `allowed_paths` and any read-only `context_files`. Every node
+either decomposes/reviews or proposes one small code replacement. Agents have
+no shell, Git, editor, or filesystem tools in this mode.
+
+Reviewed proposals are the default. Set `swarm.auto_apply: true` only when the
+user selected automatic application for that run and the underlying task
+authorizes those source edits. Parent approval alone does not confer extra
+authority. The host checks base hashes, merges disjoint replacements, applies
+changes, and reads them back. Inspect `code_changes`, the node review chain,
+failures, and `applied_paths`, then perform the relevant local build/runtime
+validation. A swarm review does not establish that the code works. These
+opt-in source changes are separate from the editor mutation policy below.
+
 #### Required Coordinator Workflow
 
 1. Keep the current Codex agent as coordinator. Use native Codex subagents for
@@ -129,8 +153,8 @@ Global broker concurrency remains bounded by
    native Codex handoff for routing an entire coding task.
 2. Partition broker work into coherent bounded slices and route
    each slice to the lowest-cost tier likely to validate successfully: Luna for
-   deterministic inventory, evidence extraction, and classification; Terra for
-   ordinary scoped analysis and integration; Sol for unresolved architecture,
+   deterministic inventory, evidence extraction, and classification; GPT-6 Sol for
+   ordinary scoped analysis and integration; GPT-6 Astra for unresolved architecture,
    GPU/concurrency root cause, or consequential final review. After an
    expensive reasoning slice resolves the ambiguity, route later mechanical
    slices back down instead of retaining the expensive tier.

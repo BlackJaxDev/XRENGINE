@@ -53,6 +53,9 @@ public sealed record AgentRunRequest
 
     public AgentRunBudget Budget { get; init; } = new();
 
+    /// <summary>Opt-in bounded hierarchical Luna Max code swarm, executed by the broker host.</summary>
+    public AgentSwarmOptions? Swarm { get; init; }
+
     public IReadOnlyList<AgentHostedTool> HostedTools { get; init; } = [];
 
     public bool UseCompactHandoffPrompt { get; init; } = true;

@@ -19,6 +19,35 @@ internal sealed class BrokerRunRecord
     private int _retryCount;
     private DateTimeOffset _updatedUtc;
     private string _progressMessage = "queued";
+    private AgentSwarmSnapshot? _swarm;
+    private IReadOnlyList<string> _appliedPaths = [];
+    private IReadOnlyList<AgentSwarmCodeChange> _codeChanges = [];
+
+    public void SetCodeChanges(IReadOnlyList<AgentSwarmCodeChange> changes)
+    {
+        lock (_sync)
+            _codeChanges = changes.ToArray();
+    }
+
+    public void UpdateSwarm(AgentSwarmSnapshot snapshot)
+    {
+        lock (_sync)
+        {
+            _swarm = snapshot;
+            _usage = snapshot.Usage;
+            string? observedModel = snapshot.Nodes.Select(static node => node.ActualModel)
+                .FirstOrDefault(static model => !string.IsNullOrEmpty(model));
+            if (observedModel is not null)
+                _actualModel = observedModel;
+            _updatedUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public void SetAppliedPaths(IReadOnlyList<string> paths)
+    {
+        lock (_sync)
+            _appliedPaths = paths.ToArray();
+    }
 
     public BrokerRunRecord(string runId, AgentRunRequest request)
     {
@@ -167,6 +196,10 @@ internal sealed class BrokerRunRecord
                 RetryCount = _retryCount,
                 ProviderAttempts = _providerAttempts.ToArray(),
                 Result = _result,
+                Swarm = _swarm,
+                SwarmOptions = Request.Swarm,
+                AppliedPaths = _appliedPaths,
+                CodeChanges = _codeChanges,
             };
         }
     }

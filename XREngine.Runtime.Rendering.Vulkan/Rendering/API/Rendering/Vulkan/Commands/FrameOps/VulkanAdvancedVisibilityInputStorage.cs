@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -211,6 +214,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         ReadOnlySpan<AdvancedDeformedArenaSlice> deformationSlices =
             authoringInput.DeformationSlices;
 
+        long copyStarted = Stopwatch.GetTimestamp();
         EnsureCapacity(ref _payloads, payloads.Length, "payload");
         EnsureCapacity(ref _candidates, candidates.Length, "candidate");
         EnsureCapacity(ref _producers, producers.Length, "producer");
@@ -230,6 +234,16 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         indirectRanges.CopyTo(_indirectRanges);
         indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
         deformationSlices.CopyTo(_deformationSlices);
+        AdvancedSharedPreparationService.Instance.RecordDeferredFamilyCopy(
+            Stopwatch.GetTimestamp() - copyStarted,
+            (long)payloads.Length *
+                (Unsafe.SizeOf<AdvancedVisibilityPayload>() +
+                 Unsafe.SizeOf<AdvancedVisibilityCandidate>() +
+                 Unsafe.SizeOf<EAdvancedGeometryProducer>() +
+                 Unsafe.SizeOf<int>() +
+                 Unsafe.SizeOf<AdvancedDeformedArenaSlice>()) +
+            (long)indirectRanges.Length *
+                Unsafe.SizeOf<AdvancedIndirectRange>());
 
         _familyRequest = request;
         Publication = authoringInput.Publication;

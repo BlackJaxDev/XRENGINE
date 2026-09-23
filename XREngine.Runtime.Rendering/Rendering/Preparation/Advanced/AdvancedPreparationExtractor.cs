@@ -61,6 +61,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     // retained publication, never by retaining this mutable GPUScene.
     private uint _preparedSceneIdentity;
     internal long LastExtractionTicks { get; private set; }
+    internal long LastRangePlanningTicks { get; private set; }
 
     public AdvancedPreparationExtractor(AdvancedPreparationOptions options)
     {
@@ -193,6 +194,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         EAdvancedPreparationConsumer consumers)
     {
         LastExtractionTicks = 0;
+        LastRangePlanningTicks = 0;
         // Do not let deferred or failed preparation leave consumers observing
         // arrays tied to the preceding world frame.
         AdvanceVisibilityContentGeneration();
@@ -306,6 +308,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             throw new InvalidOperationException(
                 "The fixed advanced upload copy plan is smaller than its arena contract.");
         }
+        long rangePlanningStarted = Stopwatch.GetTimestamp();
         _indirectResult = _indirectPlanner.Build(
             _visibilityPayloads.AsSpan(0, _drawCount),
             argumentBufferBase: 0u,
@@ -314,6 +317,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             countStride: 4u,
             submissionStrategy:
                 RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+        LastRangePlanningTicks = Stopwatch.GetTimestamp() - rangePlanningStarted;
         _visibilityPlanCount = 0;
         if (viewSet is RenderFrameViewSet initialViews)
         {

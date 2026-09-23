@@ -14,7 +14,7 @@ Internet-facing editor bridge.
 | Project | Owns | Must not own |
 |---|---|---|
 | `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
-| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, repository snapshot/path/read policy, named-session resolution, provider composition, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, repository mutation, API-key persistence |
+| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, bounded swarm scheduler and approved patch application, repository snapshot/path/read policy, named-session resolution, provider composition, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, agent-controlled filesystem tools, API-key persistence |
 | `Tools/LocalAgentBroker.Shared` | Tray/history contracts, checkout-local paths, atomic record and settings storage | MCP transport, API calls, Windows UI |
 | `Tools/LocalAgentBroker.Tray` | Windows notifications and notification icon, running-task menu, live prompt/response viewer, idle exit, history cleanup | API keys, provider calls, broker process ownership |
 | `XREngine.Editor` | ImGui messages/segments, preferences, local tools, viewport presentation, in-process MCP startup | A second OpenAI function loop |
@@ -256,13 +256,100 @@ elapsed timer; explicit positive values retain their former hard-limit
 semantics. Caller cancellation, model/provider output limits, rate limits, and
 other bounded tool/run controls remain in force.
 
-The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
-`gpt-5.6-sol`. Route advice implements the repository policy but has no launch
+The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`,
+`gpt-5.6-sol`, `gpt-6-luna`, `gpt-6-sol`, and `gpt-6-astra`.
+Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same
 exact ID; aliases and dated snapshot suffixes are terminal substitution failures
 rather than silently accepted replacements. Re-check the
-[current GPT-5.6 guidance](https://developers.openai.com/api/docs/guides/latest-model)
+[current model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 before distribution.
+
+## Hierarchical Swarms (0.10.0)
+
+The five-tool MCP surface is unchanged. An optional `AgentRunRequest.Swarm`
+selects host-controlled recursive scheduling. `AgentRunRegistry` delegates to
+a fresh `AgentSwarmRunner` and retains a single root history record. The normal
+run path remains unchanged when `swarm` is absent. Family-aware advisory routing
+adds `model_family` (`gpt-6` by default; `gpt-5.6` is an explicitly selected,
+deprecated compatibility route). Recommendations and starts identify deprecated
+model selection. Model controls are validated
+against `AgentModelCatalog` before any paid request.
+
+`SwarmRequestValidator` enforces bounded options and exact Luna/max selection.
+`SwarmWorkspace` captures authorized paths plus optional reference context,
+using existing secret/path/context policies. Missing explicitly named files
+receive the `missing` base-hash sentinel. Models never discover a path or gain
+filesystem tools implicitly.
+
+```mermaid
+flowchart TD
+    Root[Root plans] --> Branch[Child orchestrator plans]
+    Branch --> LeafA[Leaf proposes one small change]
+    Branch --> LeafB[Leaf proposes another small change]
+    LeafA --> Merge[Host checks exact bases and disjoint text ranges]
+    LeafB --> Merge
+    Merge --> Review[Child orchestrator reviews unchanged proposals]
+    Review --> RootReview[Root reviews combined proposals]
+    RootReview --> Result[Reviewed code_changes and hierarchy]
+    Result --> Apply[Optional host auto_apply and readback]
+```
+
+Every leaf owns one replacement in one file. Children may share a path to split
+a larger file into independent edits; each child's path list is unique and
+the union covers the parent scope. `AgentSwarmChangeMerger` resolves every
+replacement against the immutable original, rejects ambiguous or overlapping
+ranges, and merges from the end of the source so offsets remain valid. New
+files can have one creation proposal. Parents receive the original individual
+artifacts and can only approve or reject them. The returned `code_changes`
+remain the exact reviewed leaf proposals; a merged whole-file replacement is
+used only during deterministic host application.
+
+Planning, coding, and review are separate single-turn executions of the shared
+orchestrator. All request `gpt-6-luna`, `reasoning_effort: max`, and no tools,
+background mode, or retries. JSON contracts enforce roles rather than granting
+spawn or write functions to the model. No automatic repair run follows a
+rejection. Node failures and model mismatches prevent the root from approving.
+The caller is responsible for subsequent compilation and runtime validation.
+
+Each phase reserves its entire positive output allowance from a shared
+whole-swarm counter before launch. Reservations are not refunded, including
+failed requests whose usage may be unknown. The ceiling bounds visible and
+reasoning output but does not bound input tokens or dollars. The scheduler
+enforces total nodes, depth, fanout, per-swarm parallelism, and elapsed time.
+Ordinary runs and active swarm phases share the registry semaphore; waiting
+parents hold no provider permits. A failed child cancels siblings and waits for
+settlement before returning. Root cancellation propagates through the tree.
+
+Admission limits serialized root metadata to 65,536 characters. Accepted leaf
+artifacts reserve at most 131,072 aggregate serialized characters without
+refund, keeping all ancestor review prompts below the shared request-text cap.
+The reservation counters are visible in swarm snapshots.
+
+Snapshots retain node IDs, parents, roles, states, model identities, usage,
+provider attempts, provisional artifacts, and review decisions. Root
+`code_changes` are populated only after the entire review chain succeeds.
+`applied_paths` report host write outcomes separately. The tray renders the
+hierarchy and exact proposals in its existing offline preview; source snippets
+in proposals are intentionally retained in history. History also retains
+`swarm_options`, including authorized paths, budgets, and auto-apply selection.
+
+Auto-application is opt-in through `swarm.auto_apply`, independent of editor
+mutation flags. `SwarmWorkspace` serializes broker applications with a named
+repository mutex, preflights every hash, revalidates paths, rejects hardlinks
+on Windows, checks the opened handle's final path, opens existing files
+exclusively, writes, flushes, and reads back.
+New files use `CreateNew`. Existing UTF-8 BOM and uniform newline style are
+preserved; mixed newline files are rejected for application. Conditional
+rollback restores a partial existing-file write while its exclusive handle is
+still owned. Later rollback checks complete output hashes before restoration,
+avoids overwriting a subsequently changed file, and reports residual paths if
+restoration fails. Newly created files remain for inspection on batch failure;
+the broker never deletes a path after releasing its ownership handle.
+Auto-apply requires Windows; read-only proposal generation does not.
+This is not a crash-atomic multi-file transaction
+or an OS sandbox against a hostile process concurrently replacing directory
+ancestors. Agents have no shell, Git, or filesystem tool surface.
 
 ## Repository And Editor Tool Security
 
@@ -353,10 +440,11 @@ The pointer affects only future launches. Existing Codex tasks retain their
 current stdio process and pipes; stopping that process closes the transport and
 requires a task/app restart rather than hot-rebinding the new deployment.
 
-The same project configuration selects Terra at medium effort for the primary
-Codex coordinator, Luna at low effort for default subagents, and four native
-subagent threads. Project custom agents define the read-only Luna explorer,
-workspace-writing Terra implementer, and read-only max-effort Sol architect.
+The project configuration selects GPT-6 Sol at medium effort for new primary
+Codex tasks. Project custom agents define the read-only GPT-6 Luna explorer,
+workspace-writing GPT-6 Sol implementer, and read-only max-effort GPT-6 Astra
+architect. The historical `terra_worker` and `sol_architect` role names are
+retained. These defaults apply after reload and do not switch an active task.
 `AGENTS.md` provides standing bounded broker-spend authorization while retaining
 task-specific mutation and destructive-operation boundaries.
 

@@ -81,9 +81,10 @@ public class XRDataBuffer<T> : XRDataBuffer where T : unmanaged
             return;
 
         XRBufferWriteOptions options = XRBufferWriteOptions.FromBuffer(this).WithWriteMode(XRBufferWriteMode.Preserve);
-        using XRBufferWriter<T> writer = base.Alloc<T>(Math.Max(ElementCount, elementOffset + (uint)data.Length), options);
-        data.CopyTo(writer.Span.Slice(checked((int)elementOffset), data.Length));
-        writer.MarkDirty(elementOffset, (uint)data.Length);
+        // The exact writer range is committed on dispose. Using a whole-buffer
+        // writer plus MarkDirty allocated a list and array for every write.
+        using XRBufferWriter<T> writer = base.AllocAt<T>(elementOffset, (uint)data.Length, options);
+        data.CopyTo(writer.Span);
         SetField(ref _typedElementCount, Math.Max(_typedElementCount, elementOffset + (uint)data.Length), nameof(TypedElementCount));
     }
 
