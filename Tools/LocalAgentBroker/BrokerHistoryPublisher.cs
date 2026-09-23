@@ -120,15 +120,19 @@ internal sealed class BrokerHistoryPublisher : IAsyncDisposable
             ActualModel = snapshot.ActualModel,
             EditorSession = snapshot.EditorSession,
             ProgressMessage = snapshot.ProgressMessage,
-            ResponseText = string.IsNullOrEmpty(result?.FinalText)
+            ResponseText = SwarmPresentation.Render(snapshot, string.IsNullOrEmpty(result?.FinalText)
                 ? snapshot.IncrementalText
-                : result.FinalText,
+                : result.FinalText),
             FailureSummary = result?.Failure?.Summary ?? string.Empty,
             FailureDetail = result?.Failure?.DiagnosticDetail ?? string.Empty,
             Usage = snapshot.Usage,
             TurnCount = result?.TurnCount ?? 0,
             ToolCallCount = result?.ToolCallCount ?? snapshot.ToolEvidence.Count,
             RetryCount = snapshot.RetryCount,
+            Swarm = snapshot.Swarm,
+            SwarmOptions = snapshot.SwarmOptions,
+            CodeChanges = snapshot.CodeChanges,
+            AppliedPaths = snapshot.AppliedPaths,
         };
     }
 }

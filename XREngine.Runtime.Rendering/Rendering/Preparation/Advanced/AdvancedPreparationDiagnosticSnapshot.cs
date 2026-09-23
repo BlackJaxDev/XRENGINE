@@ -7,4 +7,6 @@ public readonly record struct AdvancedPreparationDiagnosticSnapshot(
     string OutputReuseStatus,
     uint OutputReuseSlot,
     string OutputReuseAuthority,
-    AdvancedSharedPreparationTelemetry SharedTelemetry);
+    AdvancedSharedPreparationTelemetry SharedTelemetry,
+    AdvancedDeformedVertexArenaTelemetry ArenaTelemetry,
+    AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry);

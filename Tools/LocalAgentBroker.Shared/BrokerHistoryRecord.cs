@@ -51,6 +51,16 @@ public sealed record BrokerHistoryRecord
 
     public int RetryCount { get; init; }
 
+    /// <summary>Hierarchy and node review state, retained with the root prompt.</summary>
+    public AgentSwarmSnapshot? Swarm { get; init; }
+
+    /// <summary>Immutable admission authority, including exact paths and explicit auto-apply selection.</summary>
+    public AgentSwarmOptions? SwarmOptions { get; init; }
+
+    public IReadOnlyList<AgentSwarmCodeChange> CodeChanges { get; init; } = [];
+
+    public IReadOnlyList<string> AppliedPaths { get; init; } = [];
+
     public bool IsActive
         => Status is AgentRunStatus.Queued or AgentRunStatus.Running;
 }

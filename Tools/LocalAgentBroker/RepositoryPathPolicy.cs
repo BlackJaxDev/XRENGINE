@@ -68,6 +68,8 @@ internal sealed class RepositoryPathPolicy
         _repositoryRootPrefix = _repositoryRoot + Path.DirectorySeparatorChar;
     }
 
+    internal string RepositoryRoot => _repositoryRoot;
+
     public IReadOnlyList<string> ResolveAllowedRoots(IReadOnlyList<string> relativeRoots)
     {
         ArgumentNullException.ThrowIfNull(relativeRoots);
@@ -116,6 +118,28 @@ internal sealed class RepositoryPathPolicy
         if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
             throw new ArgumentException($"Repository path '{normalized}' is not an ordinary text file.");
         EnsureNoReparsePoints(fullPath);
+        return fullPath;
+    }
+
+    /// <summary>
+    /// Resolves an allowed repository text-file path which may not exist yet.
+    /// Existing paths are required to be ordinary files. Every existing ancestor
+    /// is checked so a later create cannot traverse a reparse point.
+    /// </summary>
+    public string ResolvePotentialTextFile(string relativePath)
+    {
+        string normalized = NormalizeRelativePath(relativePath, allowRepositoryRoot: false);
+        EnsureTextFileNameAllowed(normalized);
+        string fullPath = ResolveContainedFullPath(normalized);
+        EnsureNoReparsePointsThroughExistingPath(fullPath);
+        if (Directory.Exists(fullPath))
+            throw new ArgumentException($"Repository path '{normalized}' is a directory, not a text file.");
+        if (!File.Exists(fullPath))
+            return fullPath;
+
+        FileAttributes attributes = File.GetAttributes(fullPath);
+        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            throw new ArgumentException($"Repository path '{normalized}' is not an ordinary text file.");
         return fullPath;
     }
 
@@ -263,6 +287,29 @@ internal sealed class RepositoryPathPolicy
         foreach (string segment in relativePath.Split(Path.DirectorySeparatorChar))
         {
             current = Path.Combine(current, segment);
+            FileAttributes attributes = File.GetAttributes(current);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new ArgumentException(
+                    $"Repository path '{ToRelativePath(current)}' crosses a reparse point.");
+            }
+        }
+    }
+
+    private void EnsureNoReparsePointsThroughExistingPath(string fullPath)
+    {
+        EnsureContained(fullPath);
+        string relativePath = Path.GetRelativePath(_repositoryRoot, fullPath);
+        if (relativePath == ".")
+            return;
+
+        string current = _repositoryRoot;
+        foreach (string segment in relativePath.Split(Path.DirectorySeparatorChar))
+        {
+            current = Path.Combine(current, segment);
+            if (!File.Exists(current) && !Directory.Exists(current))
+                return;
+
             FileAttributes attributes = File.GetAttributes(current);
             if ((attributes & FileAttributes.ReparsePoint) != 0)
             {

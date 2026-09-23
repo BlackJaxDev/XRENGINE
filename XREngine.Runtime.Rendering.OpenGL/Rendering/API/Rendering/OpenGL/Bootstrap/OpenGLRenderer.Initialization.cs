@@ -32,6 +32,14 @@ public partial class OpenGLRenderer
 {
     private void InitGL(GL api)
     {
+        // The extension set belongs to this context and cannot change during
+        // its lifetime. Resolve once instead of allocating in every frame's
+        // mesh-submission capability query.
+        _meshShaderDialect = api.IsExtensionPresent("GL_EXT_mesh_shader")
+            ? EMeshShaderDialect.OpenGLEXT
+            : NVMeshShader is not null
+                ? EMeshShaderDialect.OpenGLNV
+                : EMeshShaderDialect.None;
         string version;
         unsafe
         {

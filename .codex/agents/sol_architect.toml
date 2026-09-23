@@ -1,6 +1,6 @@
 name = "sol_architect"
-description = "Read-only escalation worker for consequential architecture, ambiguous root causes, concurrency, GPU/rendering, security, and final review."
-model = "gpt-5.6-sol"
+description = "Read-only GPT-6 Astra escalation worker for consequential architecture, ambiguous root causes, concurrency, GPU/rendering, security, and final review."
+model = "gpt-6-astra"
 model_reasoning_effort = "max"
 sandbox_mode = "read-only"
 developer_instructions = """

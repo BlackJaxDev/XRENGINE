@@ -67,4 +67,15 @@ public sealed record AgentRunSnapshot
     public IReadOnlyList<AgentProviderAttemptDiagnostic> ProviderAttempts { get; init; } = [];
 
     public AgentRunResult? Result { get; init; }
+
+    /// <summary>Current hierarchy and reviewed code artifacts for an opt-in swarm.</summary>
+    public AgentSwarmSnapshot? Swarm { get; init; }
+
+    public AgentSwarmOptions? SwarmOptions { get; init; }
+
+    /// <summary>Exact paths successfully written by optional host application.</summary>
+    public IReadOnlyList<string> AppliedPaths { get; init; } = [];
+
+    /// <summary>Only the artifacts approved through the entire parent chain.</summary>
+    public IReadOnlyList<AgentSwarmCodeChange> CodeChanges { get; init; } = [];
 }

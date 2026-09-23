@@ -18,4 +18,10 @@ public readonly record struct AdvancedSharedPreparationTelemetry(
     long CopyTicks,
     long CopiedBytes,
     long BuildAllocatedBytes,
+    long RangePlanningTicks,
+    long AcquireLockWaitMaxTicks,
+    long CopyLockWaitMaxTicks,
+    long DeferredFamilyCopyCount,
+    long DeferredFamilyCopyTicks,
+    long DeferredFamilyCopiedBytes,
     long StopwatchFrequency);

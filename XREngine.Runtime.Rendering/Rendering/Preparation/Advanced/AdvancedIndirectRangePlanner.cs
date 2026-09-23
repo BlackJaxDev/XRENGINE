@@ -13,7 +13,12 @@ public sealed class AdvancedIndirectRangePlanner
     private readonly int[] _payloadIndices;
     private readonly EAdvancedGeometryProducer[] _producers;
     private readonly EAdvancedGeometryProducer[] _producersByPayload;
+    private readonly int[] _rangeIndicesByPayload;
     private readonly uint[] _writeCursors;
+    private readonly int[] _lookupRangeIndices;
+    private readonly uint[] _lookupEpochs;
+    private readonly int _lookupMask;
+    private uint _lookupEpoch;
     private int _rangeCount;
     private int _payloadCount;
     private ulong _structuralSignature;
@@ -33,7 +38,23 @@ public sealed class AdvancedIndirectRangePlanner
         _producers = new EAdvancedGeometryProducer[maximumPayloads];
         _producersByPayload =
             new EAdvancedGeometryProducer[maximumPayloads];
+        _rangeIndicesByPayload = new int[maximumPayloads];
         _writeCursors = new uint[maximumRanges];
+
+        // At most one new range can be created for each payload. Keeping the
+        // lookup at or below half full bounds probes without a per-build clear.
+        long minimumLookupCapacity = 2L * Math.Min(maximumPayloads, maximumRanges);
+        int lookupCapacity = 1;
+        while (lookupCapacity < minimumLookupCapacity)
+        {
+            if (lookupCapacity > int.MaxValue / 2)
+                throw new ArgumentOutOfRangeException(nameof(maximumRanges));
+            lookupCapacity *= 2;
+        }
+
+        _lookupRangeIndices = new int[lookupCapacity];
+        _lookupEpochs = new uint[lookupCapacity];
+        _lookupMask = lookupCapacity - 1;
     }
 
     public ReadOnlySpan<AdvancedIndirectRange> Ranges
@@ -58,6 +79,15 @@ public sealed class AdvancedIndirectRangePlanner
             throw new ArgumentOutOfRangeException(nameof(payloads));
         if (argumentStride == 0u || countStride == 0u)
             throw new ArgumentOutOfRangeException(nameof(argumentStride));
+
+        // A failed build can leave scratch entries behind. A new epoch makes
+        // retries independent without clearing the table on every frame.
+        _lookupEpoch = unchecked(_lookupEpoch + 1u);
+        if (_lookupEpoch == 0u)
+        {
+            Array.Clear(_lookupEpochs);
+            _lookupEpoch = 1u;
+        }
 
         _rangeCount = 0;
         _payloadCount = 0;
@@ -101,8 +131,9 @@ public sealed class AdvancedIndirectRangePlanner
                 payload.CullMode,
                 payload.PrimitiveTopology,
                 producer);
-            int rangeIndex = FindRange(key);
-            if (rangeIndex < 0)
+            int lookupSlot = FindRangeSlot(key);
+            int rangeIndex;
+            if (_lookupEpochs[lookupSlot] != _lookupEpoch)
             {
                 if (_rangeCount >= _ranges.Length)
                 {
@@ -120,8 +151,13 @@ public sealed class AdvancedIndirectRangePlanner
                         countBufferBase +
                         (uint)rangeIndex * countStride),
                     CountWrittenByGpu: true);
+                _lookupRangeIndices[lookupSlot] = rangeIndex;
+                _lookupEpochs[lookupSlot] = _lookupEpoch;
             }
+            else
+                rangeIndex = _lookupRangeIndices[lookupSlot];
 
+            _rangeIndicesByPayload[payloadIndex] = rangeIndex;
             AdvancedIndirectRange range = _ranges[rangeIndex];
             _ranges[rangeIndex] = range with
             {
@@ -148,13 +184,7 @@ public sealed class AdvancedIndirectRangePlanner
              payloadIndex++)
         {
             EAdvancedGeometryProducer producer = _producersByPayload[payloadIndex];
-            int rangeIndex = FindRange(new AdvancedIndirectRangeKey(
-                payloads[payloadIndex].Geometry,
-                payloads[payloadIndex].RasterStateClass,
-                payloads[payloadIndex].Coverage,
-                payloads[payloadIndex].CullMode,
-                payloads[payloadIndex].PrimitiveTopology,
-                producer));
+            int rangeIndex = _rangeIndicesByPayload[payloadIndex];
             uint destination = _writeCursors[rangeIndex]++;
             _payloadIndices[destination] = payloadIndex;
             _producers[destination] = producer;
@@ -195,12 +225,29 @@ public sealed class AdvancedIndirectRangePlanner
             submissionStrategy,
             payload);
 
-    private int FindRange(in AdvancedIndirectRangeKey key)
+    private int FindRangeSlot(in AdvancedIndirectRangeKey key)
     {
-        for (int i = 0; i < _rangeCount; i++)
-            if (_ranges[i].Key == key)
-                return i;
-        return -1;
+        int slot = (int)ComputeRangeLookupHash(key) & _lookupMask;
+        while (_lookupEpochs[slot] == _lookupEpoch)
+        {
+            if (_ranges[_lookupRangeIndices[slot]].Key == key)
+                break;
+            slot = (slot + 1) & _lookupMask;
+        }
+        return slot;
+    }
+
+    private static ulong ComputeRangeLookupHash(in AdvancedIndirectRangeKey key)
+    {
+        ulong hash = 14695981039346656037UL;
+        HashValue(ref hash, key.Geometry.Index);
+        HashValue(ref hash, key.Geometry.Generation);
+        HashValue(ref hash, key.RasterStateClass);
+        HashValue(ref hash, (uint)key.Coverage);
+        HashValue(ref hash, key.CullMode);
+        HashValue(ref hash, key.PrimitiveTopology);
+        HashValue(ref hash, (uint)key.Producer);
+        return hash ^ (hash >> 32);
     }
 
     private ulong ComputeStructuralSignature()

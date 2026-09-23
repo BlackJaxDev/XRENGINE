@@ -1,6 +1,6 @@
 name = "terra_worker"
-description = "Everyday implementation worker for scoped code changes, refactoring, integration, and task-authorized filesystem operations."
-model = "gpt-5.6-terra"
+description = "Everyday GPT-6 Sol implementation worker for scoped code changes, refactoring, integration, and task-authorized filesystem operations. The terra_worker role name is retained for compatibility."
+model = "gpt-6-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """

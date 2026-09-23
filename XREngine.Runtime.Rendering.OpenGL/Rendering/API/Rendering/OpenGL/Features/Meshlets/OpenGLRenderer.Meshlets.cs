@@ -7,13 +7,10 @@ namespace XREngine.Rendering.OpenGL;
 public unsafe partial class OpenGLRenderer
 {
     private nint _glMultiDrawMeshTasksIndirectCountExt;
+    private EMeshShaderDialect _meshShaderDialect;
 
     public override EMeshShaderDialect MeshShaderDialect
-        => Api.IsExtensionPresent("GL_EXT_mesh_shader")
-            ? EMeshShaderDialect.OpenGLEXT
-            : NVMeshShader is not null
-            ? EMeshShaderDialect.OpenGLNV
-            : EMeshShaderDialect.None;
+        => _meshShaderDialect;
 
     public override bool SupportsDirectMeshTaskDispatch()
         => NVMeshShader is not null;

@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-22
+Last Updated: 2026-09-23
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S06/S07/S08/S09/S10/S11 Validated; S12 Active; S04/S05 Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11/S12 Validated; S13a-S13i Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -65,6 +65,71 @@ Keep durable results in the linked investigation and concise gate status here.
 - Existing native caches, background compilation, resident-table reuse, family
   leases and transactional resource generations must be audited and reused.
   Unchecked historical backlog entries do not prove those mechanisms are absent.
+
+### September 22-23 Publication And Recording Follow-Up
+
+The [frame-rate investigation](../../investigations/rendering/2026-09-22-framerate-cpu-gpu-attribution.md)
+is a separate Debug reproduction, not a replacement for the earlier Release
+gates. Its stationary profiler-off window had median present interval 121.594 ms,
+Vulkan CPU time 40.074 ms, primary recording 28.503 ms, nested encoding 8.666 ms,
+and coarse GPU time 15.423 ms. Completed render-pass swap scopes sampled
+42.272-65.660 ms; those samples are not a distribution or exclusive leaf costs.
+The two 20-second profiler-on/off windows are diagnostic entry evidence only.
+They do not establish debugger overhead, Release performance, or effect-level GPU
+cost. Do not subtract independent medians to claim an attributed recording leaf.
+
+The subsequent source audit identified a concrete publication-to-dirty feedback
+path and recurring LOD/material registration work before the unchanged-data
+check. It also identified repeated Vulkan family/stage preparation as a candidate.
+The September 23 experiment below subsequently measured the identity feedback
+and enclosing GPU-scene update callbacks. Attribution inside those callbacks and
+the repeated family/stage preparation candidate remain open. S13a-S13i own that
+verification and any justified fixes. Successful S02 equality remediation and
+S12's inexpensive measured extractor lock do not validate these other paths.
+
+### September 23 Collect Wait: Measured Cause And Remaining Questions
+
+Durable record: [Vulkan render<-collect investigation](../../investigations/rendering/2026-09-23-vulkan-render-collect-wait.md).
+This is diagnostic entry evidence, not a retained fix or a completed S13 gate.
+The observed workload used AdvancedRenderPipeline, CpuDirect, TSR, 1920x1080
+output / 1286x723 internal resolution and 393 canonical resident draws. The
+Release backend comparison reused one binary with only the render API changed;
+the CPU profiler was active, the debugger detached, and Vulkan validation off.
+
+| Observation | Recorded result | What it establishes |
+| --- | --- | --- |
+| Debug Vulkan without debugger | Twenty wait samples mostly 61-73 ms; completed command-swap scopes about 55-62 ms. | The long wait reproduces without an attached debugger; it does not quantify the debugger's additional cost. |
+| Release Vulkan baseline | Twenty wait samples about 49-59 ms; completed command-swap scopes about 48-62 ms. | Optimized code still has the problem. |
+| Release OpenGL comparison | Twenty wait samples about 2.6-3.3 ms with one zero; completed command-swap scopes about 0.5 ms. | Backend-associated behavior differs; equal resident counts alone do not prove equal collected/accepted work or image correctness. |
+| Temporary callback timing | One Vulkan swap contained 393 callbacks; sampled callback totals were about 48-51 ms. OpenGL histories contained 4-6 callbacks across multiple frames. | Repeated `GPUScene.TryUpdateMeshCommand` calls own the large enclosing elapsed interval. OpenGL counts must not be compared as single-frame totals. |
+| Temporary identity-notification exclusion | Twenty warmed Vulkan wait samples 3.0-5.7 ms, mean 3.51 ms; sampled scene-command swap about 0.001 ms with the 393 callbacks absent. | Excluding publication identity from generic dirtiness removes the measured trigger. This is a causal experiment, not mutation/history validation. |
+
+The code path is `PublishSourceDrawIdentities` ->
+`RenderCommandMesh3D.PublishCanonicalDrawIdentities` -> `SetField` ->
+`RenderCommand.OnPropertyChanged` -> dirty queue -> `SwapBuffers` callback ->
+`VisualScene3D.OnRenderableSwapBuffers` -> `GPUScene.TryUpdateMeshCommand`.
+The temporary candidate excluded only the caller-member notification
+`nameof(PublishCanonicalDrawIdentities)` through `IsRenderStateDirtyProperty`;
+both identity snapshots and their `SetField` notifications were still published.
+That candidate and the per-callback profiler scopes were removed. S13b must
+review and validate a permanent implementation; do not assume the experiment
+left a fix in the checkout or blindly reinstate it as a completed phase.
+
+`render<-collect` is elapsed waiting for a freshly published collect generation.
+The collect thread must finish command swapping before releasing that wait.
+`collect<-render` is previous-render backpressure and can overlap other work;
+do not add the two counters or subtract unrelated sampled medians. The narrow
+frame-package publication counter excludes the later command-swap callbacks,
+so its small value does not contradict the large generation wait.
+
+The callback timer includes acquisition, held-body work and any descheduling;
+it does not separately measure a dictionary, registration routine or lock wait.
+Their shares remain S13a evidence, and any residual optimization belongs to
+S13c/S13d/S13h only after S13b is measured. About 3 ms of Advanced publication
+remained in both backends and in the exclusion experiment. Separate Vulkan
+recording costs and GPU time are not fixed by this experiment. The original
+attached-debugger screenshot's exact split, full-window tails, visual/temporal
+correctness and the reason for OpenGL's smaller queue remain unverified.
 
 ## Mandatory One-By-One Protocol
 
@@ -152,16 +217,25 @@ gate record. No item is complete merely because this checklist was written.
 | S01 | [Correct profiler duration/identity reporting](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting) | S00 | Validated (normal, linked async/parallel, and lifecycle identity proven) |
 | S02 | Attribute warmed recording and waits | S01 | Validated (boxed stable-bin identity comparisons identified and removed; matched live A/B passed) |
 | S03 | Nonblocking Advanced pipeline readiness | S02, confirmed cold-path trigger | Validated (cold/reload phases measured; zero attributed foreground joins; explicit unavailable capability rejected without fallback) |
-| S04 | Dependency-scoped compile invalidation | S03, lifetime design review | Pending |
-| S05 | Cache publication and foreground native creation | S04, measured remaining cost | Pending |
+| S04 | [Dependency-scoped compile invalidation](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s04-gate-record-dependency-scoped-compile-invalidation) | S03, lifetime design review | Validated (existing detailed gate below; scoped invalidation and retirement passed) |
+| S05 | [Cache publication and foreground native creation](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s05-gate-record-bounded-cache-and-native-creation-work) | S04, measured remaining cost | Validated (existing detailed gate below; measured native/cache paths and rejected-cache recovery passed) |
 | S06 | [Bounded initial resource materialization](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s06-gate-record-bounded-initial-resource-materialization) | S02; default after S05 disposition | Validated |
 | S07 | [CPU mesh preparation and wrapper publication](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s07-gate-record-separate-mesh-cpu-data-and-wrapper-publication) | S06, measured construction cost | Validated |
 | S08 | [Index preparation before draw admission](../../investigations/rendering/2026-09-21-s08-index-preparation.md) | S07 disposition, measured join | Validated (PR #75 merged; normal Vulkan admission requests/polls exact-revision index preparation without joining) |
 | S09 | [Shared immutable helper geometry](../../investigations/rendering/2026-09-21-s09-shared-helper-geometry.md) | S07-S08 dispositions, measured duplication | Validated (fullscreen helpers share one leased CPU mesh per topology while retaining per-consumer renderer/material/stereo state) |
 | S10 | [Toolbar icon preparation](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md) | S02; default after S09 disposition | Validated (CPU preparation is off draw; bounded owner publication reaches 12/12 on Vulkan and OpenGL) |
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
-| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active (three live warm windows measured; phase/multi-view/deformation gate incomplete) |
-| S13 | Recurring recording/source/upload preparation | S02; default after S12 disposition | Pending |
+| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Validated (measured planner fix lowered warmed Build 30-34%; desktop, emulated views, active deformation, mutations, copies and teardown checked) |
+| S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | Pending |
+| S13a | Current workload, leaf attribution, backend divergence and acceptance budgets | S12 validated or explicitly dispositioned under the protocol | Pending (September 23 diagnostic entry evidence recorded; full gate outstanding) |
+| S13b | Separate publication identity from command dirtiness | S13a; confirmed identity-only dirty callbacks | Pending (causal candidate measured and reverted; permanent fix and correctness gates outstanding) |
+| S13c | Generation-based logical mesh/LOD registration | S13b disposition; measured recurring registration | Pending |
+| S13d | Mutation-scoped material/state/auxiliary updates | S13c disposition; measured redundant writes/resolution | Pending |
+| S13e | Prepare compatible Advanced scene state once per family | S13d disposition; measured repeated preparation | Pending |
+| S13f | Retain plan-derived operation metadata | S13e disposition; measured repeated plan scans | Pending |
+| S13g | Bound warmed pipeline-readiness validation | S13f disposition; measured repeated readiness work | Pending |
+| S13h | Shorten or partition a measured serialized critical section | S13g disposition; residual critical-path evidence and lifetime review | Pending |
+| S13i | Cumulative publication/recording reproduction gate | All S13 child dispositions; applicable S15 checks | Pending |
 | S14 | Actual Core update callbacks/registration | S02; default after S13 disposition | Pending |
 | S15 | Temporal correctness and original-regression decision | Baseline plus each affected runtime gate | Pending |
 | S16 | Integrated acceptance and closeout | All applicable prior gates | Pending |
@@ -630,56 +704,489 @@ post-validation clearance. This is Validated, not Closed. See the
 
 Anchor: [AdvancedSharedPreparationService.cs](../../../../XREngine.Runtime.Rendering/Rendering/Preparation/Advanced/AdvancedSharedPreparationService.cs).
 
-- [ ] Measure cache misses, cold capacity growth, extraction, deformation,
+- [x] Measure cache misses, cold capacity growth, extraction, deformation,
   publication/copy bytes and lock waits separately. Establish actual world/view
   consumers before assuming single-publication thrashing.
-- [ ] If growth matters, pre-size/reuse suitable storage first and validate it.
+- [x] If growth matters, pre-size/reuse suitable storage first and validate it.
   Only then consider moving measured construction out of the shared critical
-  section as a separate lifetime-reviewed item.
-- [ ] Retain coherent immutable generations and consumer leases. Never expose
+  section as a separate lifetime-reviewed item. Observed arena/upload growth and
+  shared-lock waits did not justify either intervention; the measured range
+  planner was optimized with preallocated lookup storage instead.
+- [x] Retain coherent immutable generations and consumer leases. Never expose
   mutable extractor spans to remove copies, and never reuse storage while a
   deferred consumer still reads it.
-- [ ] Validate stationary/moving scenes, changed geometry/materials, multiple
-  views and actual alternating worlds, deformation where active, supersession
-  and consumer teardown. Introduce per-world caching only if evidence warrants it.
+- [x] Validate stationary/moving scenes, changed geometry/materials, multiple
+  views, deformation where active, supersession and consumer teardown. Audit
+  whether actual same-frame alternating worlds can occur: first-wins world
+  publication makes that case unreachable, so it is explicitly dispositioned,
+  not claimed as a live test. Introduce per-world caching only if evidence
+  warrants it.
 
 Gate: extraction and contention meet budget; every consumer gets the right scene,
 view and generation; copied data remains coherent and retired storage is bounded.
 Do not mislabel nonblocking deformation polling as a proven GPU wait.
 
-Status: **Active**, not Validated. The [S12 gate record](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md)
-contains three 60-second Release Vulkan/Advanced windows with 393 draws/ranges,
-zero warmed build allocation and copy failures, and low measured shared-lock
-wait. No cache, lifetime, or range-planner optimization was made. Cold growth,
-multi-view, deformation, mutation, and retirement validation remain open; do not
-advance to S13 on this partial gate.
+Status: **Validated for reachable S12 paths**. The [S12 gate record](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md)
+contains matched three-window Release Vulkan/Advanced measurements: the
+range planner cost 0.152-0.154 ms per rebuild before remediation, then
+0.043-0.053 ms; total Build mean fell 30-34%. Both retained Vulkan copy
+boundaries measured about 0.010-0.013 ms per successful family, and the
+shared lock was inexpensive. The active-deformation typed write and OpenGL
+capability queries no longer allocate per warmed extractor Build. Live gates
+covered stationary/moving views, scene/material/transform changes, three
+emulated visibility views, active deformation, copy/publication retry,
+supersession and session teardown/recreation. Arena and upload retention
+remained bounded. Forced growth, duplicate published geometry keys and
+production XR hardware were not exercised; actual same-frame alternating
+worlds are prohibited by upstream first-wins publication. S12 does not claim
+to resolve the original severe Vulkan frame-time report or S13's recurring
+publication/recording costs.
 
 ## S13. Reduce Recurring Recording And Source Preparation
 
-Use the S02 trace to choose one owner, not a batch of speculative micro-optimizations.
+Status: Pending. The child phases below are future work, not implemented fixes.
+S12's reachable gate is validated; S13a may begin under its own protocol.
+Each child has its own entry evidence, one implementation change, focused build,
+live validation and gate record. If a child needs independent changes, split it
+again and validate each increment. Disprove/defer candidates that are already
+cheap or eliminated by an earlier phase instead of implementing them anyway.
 
-- [ ] Attribute command scans, interface fingerprints, source metadata checks,
-  descriptors and texture readiness by count/bytes/hit/miss/dirty generation.
-  Account for resident-table and family-lease reuse already present.
-- [ ] For a demonstrated recurring cost, cache or patch by real mutation identity:
-  shader configuration, layout/device, material/texture content and metadata,
-  sampler epochs and accepted output/view generation. Do not remove frame IDs
-  without an equivalent freshness proof.
-- [ ] Validate unchanged reuse and one mutation of each relevant input, resize,
-  view changes, reload and stale completion. Confirm unchanged inputs reduce work
-  and changed inputs invalidate precisely the required artifacts.
-- [ ] If remaining cost is cold canonical raster PSO admission, pre-admit that
-  work through existing queues as a separate item with pending/failure validation.
-- [ ] If required texture upload/finalization is responsible, separately prepare
-  and budget it using the upload queue/generation ledger. Validate transfer
-  completion before descriptor publication, failed/stale uploads and retirement.
-- [ ] Check that reducing recording does not increase resource-preparation time,
-  worker backlog, GPU time, missing content or successful-present latency.
+The intended steady-state contract is retained mesh/material/plan state plus
+bounded updates for genuine mutations. Publication must expose a fresh, coherent
+snapshot without using its advancing identity as evidence that scene content
+changed. Reuse the existing canonical database, dirty queues, frame packages,
+generation tracking, resource planners and lifetime leases. A second cache or
+publication service is not the default remedy.
+Run affected S15 temporal checks after every identity/publication change. Reopen
+validated S02/S04/S05 work only with evidence of a regression in its owned mechanism;
+the header/ledger now agree with those already-recorded S04/S05 validation results.
 
-Gate: a measured repeated cost decreases within the declared budget without stale
-bindings or data. Each chosen owner/mutation contract gets its own child gate.
-If the warm GPU workload remains limiting, record a separately scoped GPU task
-instead of declaring CPU changes sufficient or adding unvalidated GPU edits.
+Execution order for the measured collect wait: use S13a to close the evidence
+and workload-comparability gaps, then implement and validate S13b, including its
+affected S15 checks, before continuing with residual S13c-S13h candidates. This
+fix belongs in S13b now; it does not wait for S14, completion of all recording
+optimizations, or the later integrated S15/S16 closeout. Reuse the recorded
+causal result and S12 findings when their identities remain applicable. Refresh
+the comparison for changed source/binaries or missing controls, and label why a
+rerun was needed rather than restarting the investigation without a reason.
+
+Planning estimates for this bounded continuation are 2-4 hours for the permanent
+identity fix plus mutation/ordering validation, 1-3 hours for its temporal checks,
+and an initial 1-3 hours to explain the OpenGL queue difference. Allow roughly one
+focused working day, with shared setup/evidence work overlapping; this is not an
+estimate for all of S13. A timing-dependent backend divergence may require another
+day, and a newly exposed concurrency/temporal defect needs its own scoped estimate.
+Reassess after the first correlated backend trace and mutation run. Estimates are
+planning guidance, never a reason to waive or mark a gate passed.
+
+### S13a. Reproduce And Attribute The Current Publication/Recording Path
+
+Owner: Profiler with Runtime Rendering and Vulkan. This phase changes observation
+only if existing telemetry cannot answer the questions; validate that change
+before drawing conclusions from it.
+
+The September 23 controlled comparison and temporary causal test are recorded in
+the [collect-wait investigation](../../investigations/rendering/2026-09-23-vulkan-render-collect-wait.md)
+and summarized in the evidence section above.
+They isolate the current ~50 ms Release Vulkan `render<-collect` delay to 393
+identity-dirtied mesh swap callbacks entering `GPUScene.TryUpdateMeshCommand`;
+excluding only the identity notification reduced the wait to 3.0–5.7 ms.
+That diagnostic edit was removed. This evidence establishes the S13b entry
+candidate but does not close S13a's matched-window, inner-call attribution,
+observer-overhead or mutation-validation gates.
+
+- [ ] Freeze the revision/diff and exact binaries. Record Debug/Release, debugger
+  attachment, actual Vulkan validation, CPU profiling, dense/coarse GPU timing,
+  diagnostics/logging, effective AA, device/driver/power state, scene, camera,
+  internal/output resolution, accepted draw counts and submission path. The HUD
+  draw count is not the full Advanced native workload; use canonical/native
+  counts too. Verify the requested HUD labels against runtime state.
+- [ ] Carry the September 23 reports and representative scope identities into
+  the new gate record. Distinguish the unchanged baseline binary, the temporary
+  callback-instrumented binary and the identity-exclusion binary. Recover their
+  revision/diff/build manifests where available; mark missing identifiers rather
+  than assigning the current checkout's identity to historical samples. Preserve
+  durable numeric results if ignored evidence has expired. The twenty-sample
+  reports are sparse diagnostic observations, not all-frame p95/p99 results or
+  completion of the required paired 60-second windows.
+- [ ] Reproduce the user's Debug Unit Testing World configuration and establish a
+  separate optimized Release baseline. Measure debugger attachment separately
+  when available; an unavailable attached run stays unverified. Never combine
+  build or observer conditions into one before/after speedup. Reuse S00's minimum
+  three matched pairs and at least 60-second warmed windows, with cold and
+  controlled-motion cases separately identified.
+- [ ] Trace completed, correlated frame/publication/thread spans through dirty
+  queue processing, `TryUpdateMeshCommand`, LOD registration, material/state
+  resolution, Advanced publication, primary preparation and command encoding.
+  Split lock acquisition wait from held-body work, GC pauses and descheduling.
+  Apply S02's attribution/observer gate; preserve unexplained time explicitly.
+- [ ] Count dirty causes, unique commands/submeshes visited, identity-only changes,
+  registration/rebuild/cache-hit counts, allocation bytes, dirty/upload bytes,
+  full operation scans, families/stages, scene-preparation calls, readiness
+  checks and retained leases. Attribute allocations to the actual owner/thread;
+  do not use a single thread counter as a cross-worker total. Keep counters
+  bounded and aggregate off the hot path; avoid per-draw strings or logging.
+- [ ] Explain the Vulkan/OpenGL dirty-queue difference from the September 23
+  investigation. Use the same binary, scene, camera, submission strategy and
+  observer settings; match actual collected command identities and accepted
+  workload, not just resident draw counts. Correlate publication identity changes,
+  property notifications, dirty enqueue/skip reasons, collection authority,
+  swap order and callback acknowledgement for the same stationary commands.
+  Identify the first differing event and confirm its causal effect with one
+  controlled change. Classify the result as extra Vulkan work, missing OpenGL
+  updates, different collection membership, or another measured cause; a small
+  OpenGL queue alone does not prove correct rendering. Verify a real mutation
+  reaches the rendered output on both backends. Preserve any remaining gap
+  explicitly rather than labeling shared code as inherently Vulkan-only.
+- [ ] In that backend comparison, distinguish a reused publication from a new
+  sequence using `AdvancedGpuScenePublisher.TryReuseUnchangedPublication` and
+  `HasPlannedPublicationMutation`; record the reason for a new publication.
+  Neither advancing sequence nor a small queue alone explains their relationship.
+  Track stable source/primitive identity, owning world/view/collection, actual
+  notification name, dirty state at collection, any earlier authoritative swap
+  and acknowledgement before the measured pass. Include off-camera resident
+  commands and multi-view duplicates so different membership cannot masquerade
+  as faster processing. Do not assume a FrameGap, changed material or reuse
+  failure is the cause until the correlated event trace demonstrates it.
+- [ ] Complete the OpenGL comparison with a durable sequence showing the first
+  differing event, one controlled confirmation, both backends' accepted output
+  after a genuine mutation, and its S13b implication. If a separate OpenGL
+  correctness defect is found, give it an explicit owner and gate. Keep shared
+  correctness claims pending until resolved; do not expand this into unrelated
+  backend optimization or waive S13b's relevant cross-backend validation.
+- [ ] Keep residual canonical scene publication distinct from S12 shared
+  extraction and S13e Vulkan family preparation. The experiment left about 3 ms
+  in `GPUScene.SwapCommandBuffers.AdvancedPublication`; measure its remaining
+  owner after S13b under a predeclared entry threshold. If actionable, give the
+  measured publisher operation a separate Runtime Rendering child and gate
+  before changing it. Do not assume an inexpensive S12 extractor or one Vulkan
+  family-preparation reuse change also removes this shared publication cost.
+- [ ] Before each later edit, declare the mechanism's entry threshold, target
+  p50/p95/p99 and allocation/write budget, paired-run tolerance, accepted workload
+  identity and permitted frame latency. Choose timing tolerances from repeated
+  baseline variability, not a convenient post-change percentage. A reduced call
+  count proves a mechanism change, but does not by itself prove a frame-rate fix.
+
+Gate: the current workload and costly owner are reproducible, new observation
+passes its overhead gate, and each proposed fix has a falsifiable entry condition
+and predeclared acceptance. Earlier Debug samples alone cannot close this phase.
+
+### S13b. Break Publication-Identity Feedback Without Losing Scene Changes
+
+Owner: Runtime Rendering. Anchors:
+[identity publication](../../../../XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandMesh3D.cs),
+[dirty notifications](../../../../XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommand.cs),
+and [Advanced publisher](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/Advanced/AdvancedGpuScenePublisher.cs).
+
+The measured candidate is available to implement now after the S13a entry gate.
+Its exact diagnostic filter was the caller-member name
+`nameof(PublishCanonicalDrawIdentities)`, not the two backing-field names or a
+blanket suppression of mesh property changes. Review the notification contract
+before choosing the permanent representation. Retain the fix only after the
+checks below; the earlier speed measurement is supporting evidence, not their
+substitute.
+
+- [ ] Demonstrate the chain on a settled static command: successful publication
+  advances its embedded publication identity; `SetField` notifies; generic dirty
+  handling enqueues the command; the next swap invokes GPU scene update. Record
+  the reason and counts rather than assuming every dirty command is redundant.
+- [ ] Separate publication-only notification/invalidation from actual draw-state
+  mutation. Keep `XRBase.SetField` and required notifications. Do not bypass them
+  with direct field writes, suppress all property changes, freeze publication
+  sequences, or treat stable handles as permission to reuse an old snapshot.
+- [ ] Keep the exact accepted canonical and render-buffer identity available at
+  the existing publication boundary. Review commit/abort/retry ordering so a
+  provisional publication cannot become a consumable stale snapshot. Preserve
+  real dirty reasons arriving before, during or after publication and the next
+  owning update boundary; clearing one reason must not clear another.
+- [ ] Acknowledge only the mutation state captured by the accepted swap. Exercise
+  mutation during a swap callback and after capture, duplicate notifications and
+  disposal: the callback's return must not clear a newer dirty transition. Check
+  that command fields, canonical identity and previous/current transforms belong
+  to one coherent admitted snapshot, including after abort/retry.
+- [ ] Review `RenderCommand.SwapBuffers` clearing `_dirty` after invoking callbacks
+  and the owning collection clearing queued membership. State which mutation
+  state each acknowledgement accepts; reproduce a real change during the
+  callback and after capture using a controlled live scenario. If newer updates
+  are lost, make the acknowledgement correction an explicit bounded prerequisite
+  or child with its own gate. A broader generation/concurrency redesign requires
+  evidence and ownership review; do not silently bundle it into the identity filter.
+- [ ] Exercise add/remove/re-add, visibility/pass changes, transform and material
+  changes, mesh replacement, world/pipeline switch and failed/superseded
+  publication. Check command membership, accepted generations and rendered
+  content. Cover previous-transform settling, camera motion and an animated
+  object so velocity/history updates survive unchanged-scene optimization.
+- [ ] Execute and record the mutation/temporal matrix below in the isolated editor
+  using repeatable scene actions. For each row, record the source command/primitive,
+  world/view, mutation and publication identity, admitted/consumed frame, expected
+  visibility boundary and actual output. Inspect saved images or sequences and
+  relevant velocity/history buffers. Use approved runtime diagnostics for cases
+  ordinary scene actions cannot reach; an unreached race/failure remains unverified.
+  This checklist does not authorize adding regression tests before live validation
+  and explicit test clearance.
+
+| Scenario | Required proof before S13b can be validated |
+| --- | --- |
+| Stationary commands; new publication with unchanged handles; reused publication | Identity snapshots identify the accepted publication while identity-only changes produce zero scene-content dirty callbacks. Genuine handle-set/topology replacement is covered separately; no stale snapshot is reused just because handles are stable. |
+| Transform change, sustained motion, then stop | The real mutation reaches the declared admitted frame; previous/current transforms advance and settle correctly after motion. Velocity is meaningful during motion and returns to the correct stationary state without requiring redundant publication callbacks. |
+| Material value/resource/override, pass/visibility, mesh or primitive-count change | Required membership, bindings, geometry and identity changes reach every affected consumer; unrelated commands stay unchanged. Compare accepted draw coverage and visible output, including an initially off-camera object moved into view. |
+| Add/remove/re-add; shared mesh/material; repeated edits before one swap | The final intended state is visible; removed or recycled identities cannot expose stale resources. Coalescing redundant notifications cannot erase a later real change. |
+| Mutation during callback or after capture; secondary view and authoritative collection | Acknowledging the captured state leaves any newer mutation pending for its next owning boundary. Shared views cannot clear each other's required updates; no new deadlock or unbounded retry occurs. |
+| Rejected, aborted, retried or superseded publication; disposal | A provisional identity never becomes a consumable failed snapshot. Retry publishes coherent content once accepted, prior accepted state obeys its lifetime, and teardown leaves no stale queued command or leaked lease. |
+| Camera motion/cut, disocclusion, moving object, resize and pipeline/world/view switch | Run the affected S15 checks here: correlate exact frame/view/history identity, jitter, previous/current matrices, velocity, depth and reset events. Inspect matched stationary and motion sequences at multiple camera positions for stale content, trails or invalid history. |
+| Vulkan/OpenGL and affected multi-view consumption | Repeat representative unchanged, mutation and motion cases with matched accepted work and settings. Record the explained backend difference and any unsupported hardware/scenario; missing evidence limits or blocks the corresponding claim. |
+
+- [ ] Compare the permanent candidate against the unmodified and previous
+  validated baselines in S13a's matched windows. Report actual callback counts,
+  swap/generation-wait and successful-present distributions, observer overhead,
+  allocations, accepted draws and resource/lease retention. The earlier mean
+  3.51 ms is a reference result, not a predeclared universal acceptance threshold.
+  Check that removed callback work did not move into collection, update, native
+  preparation or a later frame. Keep the residual Advanced publication, recording
+  and GPU costs separately reported and owned.
+- [ ] Remove temporary per-command probes or validate any retained bounded
+  telemetry's overhead, then rebuild and recheck the exact final source/binary.
+  Retain the implementation once its live correctness and performance gates pass;
+  record whether the fix is present, reverted or blocked instead of describing
+  the original diagnostic experiment as the final deliverable. Keep later test
+  clearance/closure status separate. Restore temporary scene/settings changes
+  and stop only owned editor sessions before publishing the gate record.
+
+Gate: after warm-up, publication-only changes generate **zero scene-content dirty
+events or update callbacks** for the controlled unchanged commands. Their render
+snapshots still track the accepted publication. Every real mutation becomes
+visible at the declared boundary with no lost/coalesced-away final state, stale
+handle or temporal regression. Compare callback count/time, swap p95/p99 and
+successful-present latency; validate this change before optimizing its callees.
+
+### S13c. Retain Logical Mesh/LOD Registration By Real Mutation Identity
+
+Owner: GPUScene. Anchor:
+[logical mesh registration](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AtlasManagement.cs).
+
+- [ ] After S13b, measure remaining registration calls, including genuinely moving
+  meshes whose geometry/LOD definitions remain unchanged. Attribute the two LOD
+  lists, four temporary arrays, referenced-mesh hash sets, residency checks and
+  logical-table writes. Do not infer their total cost from the enclosing swap.
+- [ ] Define the retained registration's complete dependency set: renderable and
+  submesh mapping, authoritative LOD snapshot generation, mesh/topology revisions,
+  LOD membership/order/thresholds, mandatory resident mesh, streaming policy/epoch,
+  residency and atlas relocation/generation. Identify the owner that advances
+  each version. A transform-only update must not reconstruct LOD registration
+  when those inputs are unchanged.
+- [ ] Reuse existing logical-mesh state on a valid hit. Restrict reconstruction,
+  reference-count changes and dirty ranges to real registration mutations. Keep
+  scratch bounded and reusable for misses; do not replace fresh arrays with an
+  unbounded cache. Preserve existing constant-time meshlet freshness checks.
+- [ ] Validate single/multiple LODs, shared meshes/submeshes, threshold edits,
+  active LOD changes, streaming completion/eviction, atlas relocation, geometry
+  replacement and removal/re-addition. Include a failed registration and retry;
+  partial state must not leak residency references or become the accepted cache.
+  Preserve the prior accepted registration on failure/supersession. Check reference
+  counts and retirement after repeated create/destroy cycles and atlas-slot reuse.
+
+Gate: warmed unchanged registration, including transform-only motion, allocates
+**zero temporary LOD lists/arrays/hash sets** and performs zero atlas-ensure calls,
+redundant logical-table writes or residency deltas on an exact current hit.
+Each dependency mutation produces correct IDs,
+LOD selection and dirty ranges for every consuming frame slot. Retention is
+bounded and the phase's registration/allocation/tail budgets pass. If S13b removed
+this work entirely for the target workload, require a measured remaining trigger
+or defer this phase with that evidence.
+
+### S13d. Update Material/Draw Auxiliary State Only When Its Inputs Change
+
+Owner: GPUScene. Anchors:
+[command updates](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandConversion.cs),
+[material IDs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.MeshMaterialIds.cs),
+and [state classes](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs).
+
+- [ ] Measure the residual repeated material ID probes, state-class construction,
+  transparency writes, mesh-data writes, transform/bounds computation and value
+  comparisons. Select one measured owner per increment; do not batch unrelated
+  dictionary, equality and bounds changes under this phase's name.
+- [ ] Retain stable IDs/state with explicit source revisions and move the unchanged
+  check before unnecessary reconstruction. Define which inputs affect each
+  column: material override/content, transparency, pass, layer/flags, instance
+  count, transform, bounds and deformation. Keep structural registration separate
+  from dynamic data and preserve previous-frame/animation semantics.
+- [ ] Include consumed material interface, texture/sampler epochs and layout/pass
+  dependencies in the relevant key. Count draw metadata, transform, bounds,
+  transparency, state-class, LOD-transition and BVH writes independently; a
+  `DrawMetadata` equality result cannot stand in for every auxiliary dependency.
+- [ ] Make dirty/write decisions against each destination's accepted generation.
+  Include initial population, rotating frame buffers, newly allocated backing and
+  retry after failure; an unchanged CPU object does not prove a GPU slot is current.
+  Do not hide required writes by merely disabling dirty-byte telemetry.
+- [ ] Exercise one mutation per dependency, multiple edits before a swap, shared
+  materials, override removal, opacity/pass transitions, changing instance count,
+  moving/stopping objects, texture/sampler replacement and skinning/deformation.
+  Confirm affected records and
+  images update, unrelated records retain stable identities, and removing/reusing
+  an ID cannot reuse an old cached binding. Compare actual dirty/upload ranges.
+
+Gate: an already-current destination receives **zero redundant writes or heap
+allocations from the selected unchanged-state path**; initialization and real
+changes still reach all required consumers. Targeted time/bytes improve within
+the predeclared budget without moving cost into uploads or rendering stale data.
+Dictionary replacement alone is not an acceptance criterion. Each independently
+changed owner has its own completed gate before proceeding.
+
+### S13e. Prepare Shared Advanced Scene State Once Per Compatible Family
+
+Owner: Vulkan resource/command preparation. Anchor:
+[Advanced family preparation](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs).
+
+- [ ] Count and time `TryPrepareAdvancedVisibilityScenePublication` invocations
+  within a family. Separate real preparation/upload/lifetime work from existing
+  cache hits. Compare full input identities before concluding stages duplicate
+  work; S12 extractor reuse does not establish Vulkan scene preparation reuse.
+- [ ] Establish a family preparation boundary and its exact compatibility key:
+  renderer/device, backend package/database/publication, native/planner resource
+  generations, frame-plan generation, resource frame slot and GPU frame slot,
+  family reservation, authoring views and every consumed binding/layout dependency.
+  Document stage-varying inputs. Split incompatible contexts instead
+  of asserting that every stage or every eye can share one result.
+- [ ] Prepare once per compatible key through the existing resource planner and
+  consume the accepted immutable result across that family's stages. Preserve
+  per-stage target/attachment validation, ordering/barriers and freshness checks.
+  Reuse may skip repeated work, never required validation or an upload dependency.
+- [ ] Define lifetime ownership for reuse, successful transfer, partial failure,
+  retry, cancellation and frame-slot retirement. Each native resource remains
+  retained until all recorded/in-flight consumers complete. Avoid duplicate
+  retains, early releases and caching a failed/partial preparation as ready.
+  Associate shared state only after complete success. Account for partial lifetime
+  transfer/association on retry so each retained dependency is retired exactly once.
+- [ ] Exercise multiple families and views, early/late visibility stages, alternating
+  frame slots, resize/AA change, material/texture replacement, shader reload,
+  supersession and teardown with work in flight. Inspect images and publication,
+  descriptor/resource and lease identities; missing XR hardware limits the claim.
+
+Gate: on the unchanged successful path, shared scene preparation executes once
+per **distinct compatible key**, with remaining stage work identified separately.
+Every incompatible mutation refreshes the required state. Preparation p95/p99
+and total recording meet their budgets, lease/resource counts settle after churn,
+and there are zero stale-generation uses, lost uploads or validation errors.
+Failed attempts/retries are separately counted, not hidden as cache misses.
+
+### S13f. Retain Plan-Derived Operation Metadata
+
+Owner: Vulkan command planning. Uses the same primary-preparation anchor as S13e.
+
+- [ ] Measure residual full-operation traversals and family discovery after S13e.
+  Count operations, families, visits and allocations on still and moving views.
+  Audit existing sealed-plan, variant-manifest and admitted-frame-data reuse first.
+- [ ] If actionable, prepare immutable operation-family indices, stage coverage or
+  other selected structural metadata once per genuine sealed-plan generation.
+  State the complete invalidation key. Keep dynamic availability, frame-slot
+  leases, current output/reservation identity and producer readiness checks live.
+  Do not remove duplicate-stage or ordering validation merely to reduce scans.
+  Include operation-stream sealing revision, graph/planner generation and changed
+  target backing in the applicable dependencies, even if a frame-plan object is reused.
+- [ ] Validate changed operation order/count, added/removed passes, multiple output
+  families, view/AA/target changes, progressive admission, deferred/retried frames
+  and superseded plans. Prove coverage and dependency ordering by identity/count,
+  including rejected malformed/stale plans using the existing validation path.
+
+Gate: unchanged structural planning performs zero rebuilds for a retained valid
+plan; unavoidable per-frame visits are counted and justified. Each structural
+change invalidates precisely the dependent metadata. The selected scan's time
+and allocation budget passes without missing operations, incorrect ordering,
+retention growth or increased lowering/encoding time. Defer if current plans do
+not admit safe reuse or the measured residual cost is below the entry threshold.
+
+### S13g. Bound Warmed Pipeline-Readiness Work
+
+Owner: Vulkan pipeline runtime. Anchor:
+[Advanced readiness](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Advanced/VulkanAdvancedVisibilityPipelineRuntime.Preparation.cs).
+
+- [ ] Prove the actual call chain and frequency from family/stage preparation to
+  readiness checks. Time lock wait/body, shader/source identity evaluation and
+  program-currentness checks separately. Cold compilation and warmed identity
+  validation have different owners; reuse S03-S05 instead of redoing their work.
+- [ ] If costly, reuse readiness for an exact accepted dependency generation or
+  propagate its immutable result within a compatible preparation transaction.
+  Retain reliable invalidation for generated source, shader edits, layout/device
+  recreation and capability changes. Do not bypass checks without proving every
+  mutation producer advances the key; file events alone may be insufficient.
+- [ ] Validate unchanged reuse, unrelated versus dependent shader edits, rapid
+  successive reloads, failed compilation, pending preparation, cancelled/stale
+  completion and device-generation replacement through the supported lifecycle.
+  Preserve explicit pending/failure behavior and zero foreground compilation joins.
+  Pending-to-ready and retryable-failure recovery must remain observable when the
+  plan stays unchanged; never freeze a pending result behind a structural cache key.
+
+Gate: the selected unchanged readiness path avoids repeated expensive evaluation,
+meets its measured budget and introduces no hot-path allocation. All relevant
+mutations invalidate before consumption; stale results never become ready.
+S03-S05 nonblocking and resource-retirement guarantees still pass. Record cheap
+existing validation as Deferred/Not Applicable rather than removing it speculatively.
+
+### S13h. Change Synchronization Only For A Measured Remaining Bottleneck
+
+Owner: Runtime Rendering/Vulkan with explicit concurrency/lifetime design review.
+This conditional phase follows removal of redundant work; it is not a mandate
+to delete locks or parallelize recording.
+
+- [ ] Remeasure the GPUScene mutation lock and Vulkan Advanced storage gate
+  separately. Capture wait/hold distributions, contender/owner identities,
+  serialized publication time and worker utilization. Do not apply S12's shared
+  extractor lock result to either gate, or call long held-body work contention.
+- [ ] Choose one residual owner. Prefer moving proven immutable computation or
+  narrowing a critical section over adding threads to repeated work. Document
+  source snapshot ownership, lock order, generation recheck, commit/rollback,
+  bounded retry/backpressure and resource retirement before implementing.
+  The Advanced storage gate currently protects shared arena lanes, transactional
+  rollback and preparation scratch used by parallel eye workers. Preserve or
+  explicitly replace that ownership proof; a shorter lock alone is insufficient.
+- [ ] If parallel recording is justified, assign worker/frame-slot-owned command
+  and descriptor pools and sufficiently large batches using existing facilities.
+  Do not share externally synchronized Vulkan pools unsafely, invent a second job
+  system, or change publication order/drop required work to make a wait disappear.
+- [ ] Exercise actual concurrent mutation/publication, competing views/families,
+  delayed completion, cancellation, resize and teardown. Verify complete accepted
+  outputs, bounded progress/backlog, no deadlock/data race/use-after-free, and no
+  publication of partially prepared state. Include failure paths and repeated churn.
+
+Gate: the measured critical path improves by the declared amount with identical
+accepted work and frame-latency semantics. Wait reduction alone fails if hold
+time, retries, worker backlog or another stage absorbs the cost. Absent a measured
+residual bottleneck or adequate concurrent-lifetime evidence, defer the change.
+
+### S13i. Prove The Cumulative Fix On The Reported Workload
+
+Owner: Rendering with Profiler. This is an additional S13 acceptance gate, not a
+substitute for any child gate, S15 temporal validation or S16 integrated closeout.
+
+- [ ] Repeat S13a's matched matrices against both the original current-source
+  baseline and the previous validated increment. Keep Debug/debugger observations
+  separate from Release claims. Record every child disposition and retained diff.
+- [ ] Report dirty causes/callbacks, registration rebuilds, allocations/GC, real
+  dirty/upload bytes, preparation calls/scans, lock wait/hold, publication latency,
+  Vulkan preparation/encoding, successful-present intervals and queue/lease
+  retention. Show that removed work stayed removed during still and moving views
+  and genuine mutations. Check all-frame p50/p95/p99/max, not only average FPS.
+- [ ] Confirm identical scene content, native/canonical draw coverage, effective
+  AA/resolution and feature state, then inspect stationary, motion and disocclusion
+  images/sequences. No speedup claim may depend on missing draws, stale output,
+  reduced quality, skipped required updates or a silent CPU fallback. Validate
+  affected OpenGL/shared paths and multi-view paths with explicit coverage limits.
+- [ ] Retain valid coarse GPU query identities/coverage and compare GPU and CPU
+  independently. If GPU attribution remains open, obtain dense pass timings in a
+  separately validated observer configuration and one-effect-at-a-time evidence;
+  distinguish enabled preferences from executed passes. Record a separate GPU
+  remediation item if needed instead of bundling unvalidated effect changes here.
+- [ ] If attribution instead finds cold canonical PSO admission or required texture
+  finalization, create/disposition a separate child under the existing pipeline or
+  upload owner. Require pending/failure/stale-completion, transfer-before-binding
+  and retirement validation. Do not hide remaining work in this closeout phase.
+
+Gate: each retained change has mechanism and correctness evidence plus its
+predeclared performance result; cumulative tails, resources and adjacent stages
+pass. Account explicitly for remaining CPU/GPU latency and unexplained intervals.
+The original frame-rate/TSR report remains open wherever reproduction, temporal
+correctness or user confirmation is missing. Test clearance stays separate under
+the existing policy; writing these phases runs or authorizes no new tests.
 
 ## S14. Address The Actual Core Update Owner
 
