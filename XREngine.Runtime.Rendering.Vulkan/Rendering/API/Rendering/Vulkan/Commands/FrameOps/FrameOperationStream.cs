@@ -97,7 +97,8 @@ internal sealed class FrameOperationStream
         int texturePayloadCapacity,
         int advancedVisibilityDrawCapacity,
         int advancedVisibilityRangeCapacity,
-        EVulkanAcceptedFrameLane lane)
+        EVulkanAcceptedFrameLane lane,
+        VulkanAdvancedVisibilityInputCopyTelemetry? advancedVisibilityInputCopyTelemetry = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(operationCapacity);
         ArgumentOutOfRangeException.ThrowIfNegative(resourceUseCapacity);
@@ -108,7 +109,8 @@ internal sealed class FrameOperationStream
             advancedVisibilityDrawCapacity,
             advancedVisibilityRangeCapacity,
             fixedCapacity: true,
-            lane);
+            lane,
+            advancedVisibilityInputCopyTelemetry);
         _ownsPayloads = true;
         _fixedCapacity = true;
         _lane = lane;

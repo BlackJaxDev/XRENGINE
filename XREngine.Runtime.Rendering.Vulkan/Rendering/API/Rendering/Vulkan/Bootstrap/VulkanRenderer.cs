@@ -475,6 +475,8 @@ public sealed partial class VulkanRenderer :
         => _commandRuntime.CaptureAdvancedOutputReservationDiagnostics();
     public override AdvancedVisibilityPreparationDiagnosticsSnapshot? CaptureAdvancedVisibilityPreparationDiagnostics()
         => _resourceRuntime.CaptureAdvancedVisibilityPreparationDiagnostics();
+    public override object CaptureAdvancedVisibilityInputCopyDiagnostics()
+        => _framePlanner.FramePlanBuilder.CaptureAdvancedVisibilityInputCopyDiagnostics();
     public VulkanNativeShadingRootDiagnosticSnapshot CaptureNativeShadingRootDiagnostics()
         => _commandRuntime.CaptureNativeShadingRootDiagnostics();
     public bool TryBeginOrderedComputeBatch() => _frameLoop.TryBeginOrderedComputeBatch();

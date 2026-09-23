@@ -65,6 +65,7 @@ internal sealed class FrameOperationPayloadStore
 {
     private readonly bool _fixedCapacity;
     private readonly EVulkanAcceptedFrameLane _lane;
+    private readonly VulkanAdvancedVisibilityInputCopyTelemetry? _advancedVisibilityInputCopyTelemetry;
 
     internal TextureUploadPayload[] TextureUploads;
     internal BlitPayload[] Blits;
@@ -112,7 +113,8 @@ internal sealed class FrameOperationPayloadStore
         int advancedVisibilityDrawCapacity,
         int advancedVisibilityRangeCapacity,
         bool fixedCapacity,
-        EVulkanAcceptedFrameLane lane)
+        EVulkanAcceptedFrameLane lane,
+        VulkanAdvancedVisibilityInputCopyTelemetry? advancedVisibilityInputCopyTelemetry = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(generalCapacity);
         ArgumentOutOfRangeException.ThrowIfNegative(meshCapacity);
@@ -120,6 +122,7 @@ internal sealed class FrameOperationPayloadStore
 
         _fixedCapacity = fixedCapacity;
         _lane = lane;
+        _advancedVisibilityInputCopyTelemetry = advancedVisibilityInputCopyTelemetry;
         TextureUploads = new TextureUploadPayload[textureCapacity];
         Blits = new BlitPayload[generalCapacity];
         Clears = new ClearPayload[generalCapacity];
@@ -162,7 +165,11 @@ internal sealed class FrameOperationPayloadStore
     {
         if (Volatile.Read(ref AdvancedVisibilityInputs[bankIndex]) is null)
             Volatile.Write(ref AdvancedVisibilityInputs[bankIndex], new(
-                _advancedVisibilityDrawCapacity, _advancedVisibilityRangeCapacity, _fixedCapacity, _lane));
+                _advancedVisibilityDrawCapacity,
+                _advancedVisibilityRangeCapacity,
+                _fixedCapacity,
+                _lane,
+                _advancedVisibilityInputCopyTelemetry));
     }
 
     internal VulkanAdvancedVisibilityInputStorage CaptureAdvancedVisibilityInput(

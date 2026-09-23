@@ -3,9 +3,9 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Immutable Vulkan lowering of one exact retained canonical publication. All
-/// slices belong to the stated frame slot and remain valid while its paired
-/// publication use is owned by frame-slot retirement.
+/// Immutable Vulkan lowering of one exact retained canonical publication. Frame data
+/// belongs to the stated slot; shared immutable geometry is pinned through the
+/// same publication-use and frame-slot retirement boundary.
 /// </summary>
 internal readonly record struct VulkanAdvancedScenePublicationState(
     int FrameSlot,

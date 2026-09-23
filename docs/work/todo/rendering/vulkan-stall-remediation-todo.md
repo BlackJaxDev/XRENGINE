@@ -2,7 +2,7 @@
 
 Last Updated: 2026-09-23
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11/S12 Validated; S13a-S13i Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Active for merged lifetime gates; S13a-S13i Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -225,7 +225,7 @@ gate record. No item is complete merely because this checklist was written.
 | S09 | [Shared immutable helper geometry](../../investigations/rendering/2026-09-21-s09-shared-helper-geometry.md) | S07-S08 dispositions, measured duplication | Validated (fullscreen helpers share one leased CPU mesh per topology while retaining per-consumer renderer/material/stereo state) |
 | S10 | [Toolbar icon preparation](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md) | S02; default after S09 disposition | Validated (CPU preparation is off draw; bounded owner publication reaches 12/12 on Vulkan and OpenGL) |
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
-| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Validated (measured planner fix lowered warmed Build 30-34%; desktop, emulated views, active deformation, mutations, copies and teardown checked) |
+| S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active for merged lifetime gates (local reachable gate passed; incoming distinct-world lifetime validation remains open; preserve both parent evidence sets) |
 | S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | Pending |
 | S13a | Current workload, leaf attribution, backend divergence and acceptance budgets | S12 validated or explicitly dispositioned under the protocol | Pending (September 23 diagnostic entry evidence recorded; full gate outstanding) |
 | S13b | Separate publication identity from command dirtiness | S13a; confirmed identity-only dirty callbacks | Pending (causal candidate measured and reverted; permanent fix and correctness gates outstanding) |
@@ -704,6 +704,27 @@ post-validation clearance. This is Validated, not Closed. See the
 
 Anchor: [AdvancedSharedPreparationService.cs](../../../../XREngine.Runtime.Rendering/Rendering/Preparation/Advanced/AdvancedSharedPreparationService.cs).
 
+Merge disposition (2026-09-23): local `3893e7e6d` and incoming `4a0d4a2f6`
+independently optimized the same planner. Retain the local hash lookup and
+remembered payload-range indices once, plus incoming scene/publication identity,
+temporal/feedback epochs, view-capacity handling, geometry compaction and bounded
+static-deformation generations. The gate record preserves both parents' evidence
+with their workload identities; the 393-draw and 465-draw speedups are neither
+additive nor measurements of the merged binary. Equivalent timing counters are
+consolidated; renderer-owned `framePlanInputCopyDiagnostics` owns the second copy.
+
+Incoming AA lifetime dependency: [AA-B1](advanced-pipeline-antialiasing-todo.md#aa-b1-vulkan-visibility-snapshot-lease-exhaustion--fixed-live-paused-path-verified)
+retires receipt-bound work on a terminal/recoverable PresentNow pause; its
+reproduced pause survived 37 further rejected frames without the 16-family lease
+exhaustion. [AA-B1b](advanced-pipeline-antialiasing-todo.md#aa-b1b-vulkan-sponza-scene-publication-capacity--capacity-fixed-visual-gate-blocked)
+shares immutable geometry across frame slots; its 465-draw fixture admitted about
+704 MiB of shared geometry without the old frame-storage ceiling. Retain AA-B1c's
+fresh-output/streaming/framebuffer/active-mode gate and AA-B2/AA-B3's OpenGL stage
+and AA transition issues under that ledger. Later narrow Release S12 captures and
+short compaction/reactivation plateaus do not close those Debug AA or long-running
+structural/material churn gates. Require fresh accepted mesh output for each
+workload comparison; no S12 regression is established by those earlier AA failures.
+
 - [x] Measure cache misses, cold capacity growth, extraction, deformation,
   publication/copy bytes and lock waits separately. Establish actual world/view
   consumers before assuming single-publication thrashing.
@@ -726,7 +747,7 @@ Gate: extraction and contention meet budget; every consumer gets the right scene
 view and generation; copied data remains coherent and retired storage is bounded.
 Do not mislabel nonblocking deformation polling as a proven GPU wait.
 
-Status: **Validated for reachable S12 paths**. The [S12 gate record](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md)
+Local parent result: **Validated for its reachable S12 paths**. The [S12 gate record](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md)
 contains matched three-window Release Vulkan/Advanced measurements: the
 range planner cost 0.152-0.154 ms per rebuild before remediation, then
 0.043-0.053 ms; total Build mean fell 30-34%. Both retained Vulkan copy
@@ -742,10 +763,45 @@ worlds are prohibited by upstream first-wins publication. S12 does not claim
 to resolve the original severe Vulkan frame-time report or S13's recurring
 publication/recording costs.
 
+Current combined status: **Active for the merged lifetime scope**. The incoming
+parent additionally passed narrow geometry compaction/live-record copy-forward,
+animated reactivation and distinct inspected single-pass stereo-layer checks.
+Its bounded static-generation change has not been exercised with two distinct
+runtime-world owners. First-wins publication prohibits same-frame alternation;
+it does not exclude owner changes across frames with older work in flight.
+
+- [x] Record a merged Release build and live Vulkan/Advanced smoke with fresh
+  inspected output, canonical draw/range counts, both copy boundaries and warmed
+  allocation/failure deltas. Do not infer a new performance gate from a smoke run.
+- [x] Validate the merged view-capacity failure ordering: oversized request,
+  identical retry, then a valid set. Both oversized attempts must reject without
+  remembering success or admitting stale plans; the valid request must still work.
+- [ ] Validate distinct runtime owners across frames, retained GPU consumers,
+  deformation/static-generation identity, topology replacement and teardown, or
+  explicitly disposition the missing fixture. The same-host snapshot/restore
+  exercise is not evidence for this gate. Keep generations bounded and retire
+  only after completion; do not add per-world caches without measured need.
+- [ ] Revisit the incoming unit-test compile blocker (absent
+  `IAdvancedGlobalIlluminationProvider`) when running existing targeted tests;
+  record its current result. New integration tests still require explicit
+  post-validation clearance. Preserve unexercised forced-failure, duplicate-key,
+  hardware XR and long-duration churn limits rather than marking them passed.
+
+Merge validation: the final Release editor built with zero warnings/errors.
+Vulkan retained 393 draws/ranges across 1,147 warmed rebuilds with zero Build
+allocation bytes or copy-failure increase; both copy diagnostics were live.
+The isolated capacity-retry probe passed for initial and incremental requests.
+Focused, settled captures showed Sponza geometry after the origin views proved
+inconclusive; this is limited smoke coverage, not a new AA/interior-shading or
+temporal-quality pass. Details and evidence limits are in the S12 gate record.
+
 ## S13. Reduce Recurring Recording And Source Preparation
 
 Status: Pending. The child phases below are future work, not implemented fixes.
-S12's reachable gate is validated; S13a may begin under its own protocol.
+S12's local reachable gate passed; its merged lifetime gate remains open.
+Preserve the September 23 S13 entry evidence and plan. Resolve or explicitly
+disposition that S12 integration gate before dependent S13 implementation work;
+this does not erase the already measured and reverted identity-filter experiment.
 Each child has its own entry evidence, one implementation change, focused build,
 live validation and gate record. If a child needs independent changes, split it
 again and validate each increment. Disprove/defer candidates that are already

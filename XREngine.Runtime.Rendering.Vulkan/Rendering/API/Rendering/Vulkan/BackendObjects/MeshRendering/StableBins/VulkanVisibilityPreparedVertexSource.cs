@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Exact prepared vertex-buffer source selected for one visibility draw. Static
-/// geometry remains in the canonical frame arena; GPU deformation uses a
+/// geometry uses the shared canonical resident cache; GPU deformation uses a
 /// generation-checked external native range.
 /// </summary>
 internal readonly record struct VulkanVisibilityPreparedVertexSource(

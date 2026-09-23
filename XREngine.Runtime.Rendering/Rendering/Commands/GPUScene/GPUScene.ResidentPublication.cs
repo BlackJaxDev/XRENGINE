@@ -28,6 +28,18 @@ public partial class GPUScene
     public int AdvancedContentDeltaCount
         => _advancedScenePublisher.ContentDeltaCount;
 
+    public int AdvancedGeometryCompactionReplacementCount
+        => _advancedScenePublisher.LastGeometryCompactionReplacementCount;
+
+    public ulong AdvancedGeometryCompactionReclaimedBytes
+        => _advancedScenePublisher.LastGeometryCompactionReclaimedBytes;
+
+    public ulong AdvancedGeometryCompactionCount
+        => _advancedScenePublisher.GeometryCompactionCount;
+
+    public ulong AdvancedGeometryCompactionReclaimedBytesTotal
+        => _advancedScenePublisher.GeometryCompactionReclaimedBytes;
+
     public bool AdvancedPublicationRejected
         => _advancedScenePublisher.PublicationRejected;
 

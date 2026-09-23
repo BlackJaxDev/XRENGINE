@@ -103,6 +103,12 @@ public interface IRuntimeRendererHost
         => null;
 
     /// <summary>
+    /// Captures backend-owned immutable Advanced-input copy telemetry.
+    /// </summary>
+    object? CaptureAdvancedVisibilityInputCopyDiagnostics()
+        => null;
+
+    /// <summary>
     /// Captures backend-owned pipeline compilation and invalidation diagnostics.
     /// Null means the backend does not expose this diagnostic surface.
     /// </summary>
