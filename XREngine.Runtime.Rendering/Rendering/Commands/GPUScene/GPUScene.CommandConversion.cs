@@ -6,6 +6,7 @@
 using XREngine.Extensions;
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -41,7 +42,7 @@ namespace XREngine.Rendering.Commands
         /// <returns>The two canonical stream records, or null if publication failed.</returns>
         private (DrawMetadata Metadata, BoundsGpu Bounds)? CreateStageNativeDrawRecords(
             RenderInfo renderInfo,
-            IRenderCommandMesh command,
+            in GpuSceneMeshCommandSnapshot snapshot,
             XRMesh? mesh,
             XRMaterial? material,
             uint meshID,
@@ -58,7 +59,7 @@ namespace XREngine.Rendering.Commands
 
             GetOrCreateMaterialID(material, out uint materialID);
 
-            Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix ? command.WorldMatrix : Matrix4x4.Identity;
+            Matrix4x4 modelMatrix = snapshot.ModelMatrix;
 
             DrawMetadata metadata = new()
             {
@@ -66,12 +67,12 @@ namespace XREngine.Rendering.Commands
                 MeshID = meshID,
                 SubmeshID = (meshID << 16) | (submeshLocalIndex & 0xFFFF),
                 MaterialID = materialID,
-                RenderPass = (uint)command.RenderPass,
-                InstanceCount = command.Instances == 0 ? 1u : command.Instances,
+                RenderPass = (uint)snapshot.RenderPass,
+                InstanceCount = snapshot.Instances == 0 ? 1u : snapshot.Instances,
                 LayerMask = 0xFFFFFFFF,
                 Flags = 0,
                 LodPolicy = 0,
-                RenderIdentityID = command.StableQueryKey,
+                RenderIdentityID = snapshot.StableQueryKey,
                 LogicalMeshID = logicalMeshID,
                 TransformID = transformId,
                 SkinID = skinId,
@@ -79,18 +80,18 @@ namespace XREngine.Rendering.Commands
                 BoundsID = boundsId,
             };
 
-            BoundsGpu bounds = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, boundsId + 1u);
+            BoundsGpu bounds = ComputeRenderCullingBoundsGpu(snapshot.Owner, mesh.Bounds, modelMatrix, boundsId + 1u);
 
-            if (renderInfo is RenderInfo3D info3d)
-                metadata.LayerMask = 1u << info3d.Layer;
+            if (snapshot.Owner.Is3D)
+                metadata.LayerMask = snapshot.Owner.LayerMask;
 
-            metadata.Flags = ComposeDrawFlags(renderInfo, command, mesh, material, modelMatrix, lodCount);
+            metadata.Flags = ComposeDrawFlags(renderInfo, snapshot, mesh, material, modelMatrix, lodCount);
             return (metadata, bounds);
         }
 
         private static uint ComposeDrawFlags(
             RenderInfo renderInfo,
-            IRenderCommandMesh command,
+            in GpuSceneMeshCommandSnapshot snapshot,
             XRMesh mesh,
             XRMaterial material,
             in Matrix4x4 modelMatrix,
@@ -100,11 +101,11 @@ namespace XREngine.Rendering.Commands
             if (material.IsTransparentLike())
                 flags |= GPUIndirectRenderFlags.Transparent;
 
-            if (renderInfo is RenderInfo3D info3d)
+            if (snapshot.Owner.Is3D)
             {
-                if (info3d.CastsShadows)
+                if (snapshot.Owner.CastsShadows)
                     flags |= GPUIndirectRenderFlags.CastShadow;
-                if (info3d.ReceivesShadows)
+                if (snapshot.Owner.ReceivesShadows)
                     flags |= GPUIndirectRenderFlags.ReceiveShadows;
             }
 
@@ -112,7 +113,7 @@ namespace XREngine.Rendering.Commands
                 flags |= GPUIndirectRenderFlags.Skinned;
             if (mesh.HasBlendshapes)
                 flags |= GPUIndirectRenderFlags.BlendShapes;
-            if (command.Instances > 1u)
+            if (snapshot.Instances > 1u)
                 flags |= GPUIndirectRenderFlags.Instanced;
             if (lodCount > 1u)
                 flags |= GPUIndirectRenderFlags.LODEnabled;
@@ -124,9 +125,9 @@ namespace XREngine.Rendering.Commands
                 flags |= GPUIndirectRenderFlags.NonCanonicalRasterState;
             if (!MeshletTransformEligibility.HasUniformPositiveScale(modelMatrix))
                 flags |= GPUIndirectRenderFlags.Dynamic;
-            if (command.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
+            if (snapshot.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
                 flags |= GPUIndirectRenderFlags.CpuFallbackOnly;
-            uint editorHighlightBits = command.EditorHighlightBits;
+            uint editorHighlightBits = snapshot.EditorHighlightBits;
             if ((editorHighlightBits & 1u) != 0u)
                 flags |= GPUIndirectRenderFlags.EditorHovered;
             if ((editorHighlightBits & 2u) != 0u)
@@ -145,18 +146,82 @@ namespace XREngine.Rendering.Commands
             if (renderInfo is null || meshCmd is null)
                 return false;
 
+            return TryUpdateMeshCommand(renderInfo, meshCmd,
+                GpuSceneMeshCommandSnapshot.CaptureLive(renderInfo, meshCmd));
+        }
+
+        internal bool TryUpdateMeshCommand(RenderInfo renderInfo, IRenderCommandMesh meshCmd,
+            in GpuSceneMeshCommandSnapshot snapshot)
+        {
+            if (renderInfo is null || meshCmd is null)
+                return false;
+
+            if (!S13aPublicationTelemetry.Enabled)
+            {
+                MeshUpdateObservation disabledObservation = default;
+                return TryUpdateMeshCommandCore(renderInfo, meshCmd, snapshot, ref disabledObservation);
+            }
+
+            // This scope stays on the callback thread. Allocation deltas are never
+            // summed from another worker's thread-local GC counter.
+            MeshUpdateObservation observation = default;
+            long started = Stopwatch.GetTimestamp();
+            long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+            bool changed = false;
+            bool completed = false;
+            try
+            {
+                changed = TryUpdateMeshCommandCore(renderInfo, meshCmd, snapshot, ref observation);
+                completed = true;
+                return changed;
+            }
+            finally
+            {
+                long totalTicks = Stopwatch.GetTimestamp() - started;
+                S13aPublicationTelemetry.MeshUpdate(changed, completed, observation.LockWaitTicks,
+                    Math.Max(0L, totalTicks - observation.LockWaitTicks),
+                    GC.GetAllocatedBytesForCurrentThread() - allocatedBefore,
+                    observation.Submeshes, observation.RegistrationAttempts, observation.MetadataWrites,
+                    observation.StateClassWrites, observation.TransparencyWrites,
+                    observation.MaterialTicks, observation.RegistrationTicks, observation.WriteTicks);
+            }
+        }
+
+        private struct MeshUpdateObservation
+        {
+            public long LockWaitTicks;
+            public int Submeshes;
+            public int RegistrationAttempts;
+            public int MetadataWrites;
+            public int StateClassWrites;
+            public int TransparencyWrites;
+            public long MaterialTicks;
+            public long RegistrationTicks;
+            public long WriteTicks;
+        }
+
+        private bool TryUpdateMeshCommandCore(RenderInfo renderInfo, IRenderCommandMesh meshCmd,
+            in GpuSceneMeshCommandSnapshot snapshot,
+            ref MeshUpdateObservation observation)
+        {
+
             bool rebuildRenderable = false;
             bool anyChanged = false;
 
+            long beforeLock = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
             using (_lock.EnterScope())
             {
+                if (S13aPublicationTelemetry.Enabled)
+                    observation.LockWaitTicks = Stopwatch.GetTimestamp() - beforeLock;
+                // Disposal runs for every early return, including removal and add paths.
+                using var heldBody = S13aPublicationTelemetry.BeginLockBody();
                 if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
                 {
-                    Add(renderInfo);
+                    Add(renderInfo, meshCmd, snapshot);
                     return true;
                 }
 
-                XRMeshRenderer? meshRenderer = meshCmd.Mesh;
+                XRMeshRenderer? meshRenderer = snapshot.Renderer;
                 if (meshRenderer is null)
                 {
                     if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
@@ -166,13 +231,15 @@ namespace XREngine.Rendering.Commands
                     return true;
                 }
 
-                Matrix4x4 modelMatrix = meshCmd.WorldMatrixIsModelMatrix ? meshCmd.WorldMatrix : Matrix4x4.Identity;
+                Matrix4x4 modelMatrix = snapshot.ModelMatrix;
 
                 uint minIndex = uint.MaxValue;
                 uint maxIndex = 0;
 
                 for (int i = 0; i < indices.Count; i++)
                 {
+                    if (S13aPublicationTelemetry.Enabled)
+                        observation.Submeshes++;
                     uint index = indices[i];
                     if (index >= UpdatingCommandCount)
                         continue;
@@ -187,7 +254,7 @@ namespace XREngine.Rendering.Commands
                         break;
                     }
 
-                    XRMaterial? material = meshCmd.MaterialOverride ?? mat;
+                    XRMaterial? material = snapshot.MaterialOverride ?? mat;
                     if (mesh is null || material is null)
                     {
                         rebuildRenderable = true;
@@ -202,17 +269,26 @@ namespace XREngine.Rendering.Commands
 
                     if (!ValidateMeshForGpu(mesh, out var validationFailure))
                     {
-                        string meshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
+                        string meshLabel = EnsureMeshDebugLabel(mesh, snapshot.Renderer, renderInfo, subMeshIndex);
                         RecordUnsupportedMesh(mesh, meshLabel, validationFailure);
 
                         RemoveMeshCommandIndices(meshCmd, indices);
                         return true;
                     }
 
+                    long phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
                     GetOrCreateMaterialID(material, out uint newMaterialID);
+                    if (S13aPublicationTelemetry.Enabled)
+                        observation.MaterialTicks += Stopwatch.GetTimestamp() - phaseStarted;
 
-                    string resolvedMeshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
-                    if (!ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, resolvedMeshLabel, out uint newMeshID, out uint newLogicalMeshID, out uint lodCount, out var atlasFailure))
+                    string resolvedMeshLabel = EnsureMeshDebugLabel(mesh, snapshot.Renderer, renderInfo, subMeshIndex);
+                    if (S13aPublicationTelemetry.Enabled)
+                        observation.RegistrationAttempts++;
+                    phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
+                    bool registered = ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, resolvedMeshLabel, out uint newMeshID, out uint newLogicalMeshID, out uint lodCount, out var atlasFailure);
+                    if (S13aPublicationTelemetry.Enabled)
+                        observation.RegistrationTicks += Stopwatch.GetTimestamp() - phaseStarted;
+                    if (!registered)
                     {
                         atlasFailure ??= "atlas registration failed";
                         RecordUnsupportedMesh(mesh, resolvedMeshLabel, atlasFailure);
@@ -224,21 +300,39 @@ namespace XREngine.Rendering.Commands
                     var updated = existing;
 
                     bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix);
-                    BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);
+                    BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(snapshot.Owner, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);
                     updated.MeshID = newMeshID;
                     updated.SubmeshID = (newMeshID << 16) | ((uint)subMeshIndex & 0xFFFF);
                     updated.MaterialID = newMaterialID;
-                    updated.InstanceCount = meshCmd.Instances == 0 ? 1u : meshCmd.Instances;
-                    updated.RenderPass = (uint)meshCmd.RenderPass;
+                    updated.InstanceCount = snapshot.Instances == 0 ? 1u : snapshot.Instances;
+                    updated.RenderPass = (uint)snapshot.RenderPass;
                     updated.LogicalMeshID = newLogicalMeshID;
                     updated.DrawID = index;
                     updated.BoundsID = index;
-                    updated.StateClassID = ResolveStateClassId(material, meshCmd.RenderPass, newMaterialID);
+                    phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
+                    updated.StateClassID = ResolveStateClassId(material, snapshot.RenderPass, newMaterialID);
+                    if (S13aPublicationTelemetry.Enabled)
+                    {
+                        observation.StateClassWrites++;
+                        observation.MaterialTicks += Stopwatch.GetTimestamp() - phaseStarted;
+                    }
 
-                    if (renderInfo is RenderInfo3D info3d)
-                        updated.LayerMask = 1u << info3d.Layer;
-                    updated.Flags = ComposeDrawFlags(renderInfo, meshCmd, mesh, material, modelMatrix, lodCount);
-                    UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(material));
+                    if (snapshot.Owner.Is3D)
+                        updated.LayerMask = snapshot.Owner.LayerMask;
+                    updated.Flags = ComposeDrawFlags(renderInfo, snapshot, mesh, material, modelMatrix, lodCount);
+                    GPUTransparencyMetadata transparency = GPUTransparencyMetadata.FromMaterial(material);
+                    GPUTransparencyMetadata priorTransparency =
+                        UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(index);
+                    bool transparencyChanged = priorTransparency.PackedModeAndDomain != transparency.PackedModeAndDomain ||
+                        priorTransparency.SortPriority != transparency.SortPriority ||
+                        priorTransparency.AlphaCutoffBits != transparency.AlphaCutoffBits ||
+                        priorTransparency.Flags != transparency.Flags;
+                    if (transparencyChanged)
+                    {
+                        UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, transparency);
+                        if (S13aPublicationTelemetry.Enabled)
+                            observation.TransparencyWrites++;
+                    }
 
                     if (existing.LogicalMeshID != newLogicalMeshID)
                     {
@@ -251,6 +345,9 @@ namespace XREngine.Rendering.Commands
 
                     if (!existing.Equals(updated) || transformChanged || boundsChanged)
                     {
+                        phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
+                        if (S13aPublicationTelemetry.Enabled)
+                            observation.MetadataWrites++;
                         WriteDrawMetadata(index, updated);
                         WriteBounds(index, updatedBounds);
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
@@ -259,7 +356,17 @@ namespace XREngine.Rendering.Commands
                             QueueCpuLodTransitionWrite(index);
                         }
                         if (_useInternalBvh)
-                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
+                            WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
+                        anyChanged = true;
+                        minIndex = Math.Min(minIndex, index);
+                        maxIndex = Math.Max(maxIndex, index);
+                        if (S13aPublicationTelemetry.Enabled)
+                            observation.WriteTicks += Stopwatch.GetTimestamp() - phaseStarted;
+                    }
+                    else if (transparencyChanged)
+                    {
+                        // The render-side transparency stream is copied when the command
+                        // content version advances, even if its draw row stayed identical.
                         anyChanged = true;
                         minIndex = Math.Min(minIndex, index);
                         maxIndex = Math.Max(maxIndex, index);
@@ -291,8 +398,12 @@ namespace XREngine.Rendering.Commands
                 if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
                     Debug.MeshesWarning($"[GPUScene] Rebuilding renderable GPU commands due to structural mismatch. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
 
-                Remove(renderInfo);
-                Add(renderInfo);
+                using (_lock.EnterScope())
+                {
+                    if (_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var staleIndices))
+                        RemoveMeshCommandIndices(meshCmd, staleIndices);
+                }
+                Add(renderInfo, meshCmd, snapshot);
                 return true;
             }
 
@@ -304,11 +415,17 @@ namespace XREngine.Rendering.Commands
             foreach (uint idx in indices.OrderByDescending(v => v))
                 RemoveCommandAtIndex(idx);
 
-            FlushCpuLodTransitionWrites();
-
             indices.Clear();
             _commandIndicesPerMeshCommand.Remove(meshCmd);
             meshCmd.GPUCommandIndex = uint.MaxValue;
+            VerifyUpdatingBufferSize(UpdatingCommandCount);
+            FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
+            FlushCpuLodTransitionWrites();
+            FlushMeshDataDirtyRange();
+            MarkUpdatingCommandsDirty();
+            if (_gpuBvhTree is not null)
+                MarkBvhDirty();
+            RebuildAtlasIfDirty();
         }
 
         private string EnsureMeshDebugLabel(XRMesh mesh, XRMeshRenderer? renderer, RenderInfo renderInfo, int subMeshIndex)

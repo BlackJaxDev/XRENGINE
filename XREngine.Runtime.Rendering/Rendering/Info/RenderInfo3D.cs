@@ -238,8 +238,24 @@ namespace XREngine.Rendering.Info
                 case nameof(CullingOffsetMatrix):
                 case nameof(LocalCullingVolume):
                     TryQueueOctreeMove();
+                    InvalidateRenderCommandsForOwnerState();
+                    break;
+                case nameof(Layer):
+                case nameof(CastsShadows):
+                case nameof(ReceivesShadows):
+                    InvalidateRenderCommandsForOwnerState();
                     break;
             }
+        }
+
+        /// <summary>
+        /// GPU scene metadata and bounds depend on these owner fields even when no
+        /// render-command property changes. Rebuild them at the next swap boundary.
+        /// </summary>
+        private void InvalidateRenderCommandsForOwnerState()
+        {
+            foreach (RenderCommand command in RenderCommands)
+                command.MarkDirty();
         }
 
         protected override void RenderCullingVolume()

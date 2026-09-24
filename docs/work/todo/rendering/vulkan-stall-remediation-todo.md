@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-23
+Last Updated: 2026-09-24
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Active for merged lifetime gates; S13a-S13i Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Active for merged lifetime gates; S13a evidence handed off with validation gate open; S13b candidate implemented with validation gate open; S13c-S13i Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -227,8 +227,8 @@ gate record. No item is complete merely because this checklist was written.
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
 | S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active for merged lifetime gates (local reachable gate passed; incoming distinct-world lifetime validation remains open; preserve both parent evidence sets) |
 | S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | Pending |
-| S13a | Current workload, leaf attribution, backend divergence and acceptance budgets | S12 validated or explicitly dispositioned under the protocol | Pending (September 23 diagnostic entry evidence recorded; full gate outstanding) |
-| S13b | Separate publication identity from command dirtiness | S13a; confirmed identity-only dirty callbacks | Pending (causal candidate measured and reverted; permanent fix and correctness gates outstanding) |
+| S13a | [Current workload, leaf attribution, backend divergence and acceptance budgets](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md) | S12 validated or explicitly dispositioned under the protocol | Evidence handoff completed by user direction; three frozen-binary observer pairs, Debug without debugger, both-backend mutation checks, matching fixture-specific published-package identities, and lossless CPU/GC traces recorded; validation gate remains open for S12 disposition, final-build overhead/retention, attached debugger, callback-correlated CPU/scheduling attribution, and historical backend-divergence evidence |
+| S13b | [Separate publication identity from command dirtiness](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md) | S13a; confirmed identity-only dirty callbacks | Candidate implemented; stationary identity-only callbacks and several real mutations validated live on Vulkan/OpenGL; final Vulkan timing improved, but retention and the full correctness/performance matrix remain open |
 | S13c | Generation-based logical mesh/LOD registration | S13b disposition; measured recurring registration | Pending |
 | S13d | Mutation-scoped material/state/auxiliary updates | S13c disposition; measured redundant writes/resolution | Pending |
 | S13e | Prepare compatible Advanced scene state once per family | S13d disposition; measured repeated preparation | Pending |
@@ -826,6 +826,15 @@ causal result and S12 findings when their identities remain applicable. Refresh
 the comparison for changed source/binaries or missing controls, and label why a
 rerun was needed rather than restarting the investigation without a reason.
 
+September 23 scope decision: the user explicitly requested wrapping the current
+S13a observation and executing S13b now. S13a's existing evidence is handed off
+without marking its open composite gate Validated or Closed. S12's distinct-world
+lifetime check, final S13a observer/retention checks, attached-debugger condition,
+historical backend divergence and exact callback interval attribution remain open.
+Proceed with S13b's narrow identity feedback change under its own live correctness
+and performance gates; do not treat this decision as evidence that those prior
+checks passed or start residual S13c behavior changes on that basis.
+
 Planning estimates for this bounded continuation are 2-4 hours for the permanent
 identity fix plus mutation/ordering validation, 1-3 hours for its temporal checks,
 and an initial 1-3 hours to explain the OpenGL queue difference. Allow roughly one
@@ -850,6 +859,14 @@ excluding only the identity notification reduced the wait to 3.0–5.7 ms.
 That diagnostic edit was removed. This evidence establishes the S13b entry
 candidate but does not close S13a's matched-window, inner-call attribution,
 observer-overhead or mutation-validation gates.
+
+The elevated September 23 ETW capture now attributes the current registration CPU
+path to `SyncLegacyDynamicAtlasState`: atlas ensuring clears and recopies the
+legacy index list and mesh-offset map before the already-resident mesh early
+return. The [S13a gate record](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md#elevated-cpu-and-gc-capture)
+preserves sampled managed stacks, scheduler totals, GC suspension intervals and
+their limits. This identifies an inner owner; it does not close the exact-span
+or observer/retention gates, or bypass S13b before remeasuring residual S13c work.
 
 - [ ] Freeze the revision/diff and exact binaries. Record Debug/Release, debugger
   attachment, actual Vulkan validation, CPU profiling, dense/coarse GPU timing,
@@ -934,13 +951,28 @@ Owner: Runtime Rendering. Anchors:
 [dirty notifications](../../../../XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommand.cs),
 and [Advanced publisher](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/Advanced/AdvancedGpuScenePublisher.cs).
 
-The measured candidate is available to implement now after the S13a entry gate.
-Its exact diagnostic filter was the caller-member name
+The candidate is implemented and under live validation. The earlier diagnostic
+filter and current implementation both identify the caller-member name
 `nameof(PublishCanonicalDrawIdentities)`, not the two backing-field names or a
-blanket suppression of mesh property changes. Review the notification contract
-before choosing the permanent representation. Retain the fix only after the
+blanket suppression of mesh property changes. Retain the fix only after the
 checks below; the earlier speed measurement is supporting evidence, not their
 substitute.
+
+September 24 gate note: the final Release Vulkan binary published all 393
+fixture draws and held zero identity-only dirty callbacks, other dirty callbacks,
+queue additions, swap callbacks, mesh updates, and failures over a 20.1-second
+post-mutation stationary interval. Add/remove/re-add, transform settling,
+shadow-flag changes on both backends, and Vulkan layer-mask changes reached
+accepted rows. A 61.505-second telemetry-off stationary run completed 3,578
+frames (58.17/s) with `RenderWaitForCollect` p50/p95 3.280/4.029 ms. The pre-edit
+9.64 frames/s capture overlapped a build, and candidate runs varied from 39 to
+58 frames/s, so the uplift magnitude is not yet a validated matched comparison.
+The final run failed retention (native live resources +1,806; descriptor sets
++1,800). Callback/after-capture races, rejected publication, material/mesh
+replacement, multi-view and exact temporal/velocity checks remain open. See
+the [S13b investigation](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md)
+for exact evidence and binary hashes. Keep S13c pending until this gate is
+dispositioned.
 
 - [ ] Demonstrate the chain on a settled static command: successful publication
   advances its embedded publication identity; `SetField` notifies; generic dirty

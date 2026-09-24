@@ -218,17 +218,21 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Configure(EBatchMarkerKind kind, int groupIndex, int zIndex)
         {
+            bool markerChanged = _kind != kind || _groupIndex != groupIndex;
             _kind = kind;
             _groupIndex = groupIndex;
+            if (markerChanged)
+                MarkDirty();
             ZIndex = zIndex;
             Enabled = true;
         }
 
         public override void SwapBuffers()
         {
-            base.SwapBuffers();
+            long capturedVersion = BeginSwapBuffers();
             _renderKind = _kind;
             _renderGroupIndex = _groupIndex;
+            CompleteSwapBuffers(capturedVersion);
         }
 
         public override void Render()

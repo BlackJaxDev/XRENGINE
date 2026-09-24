@@ -54,7 +54,7 @@ public sealed partial class AdvancedGpuScenePublisher
         out EAdvancedCanonicalCompatibilityReason reason)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (_publicationRejected || Database.PublicationFaulted)
+        if (PublicationRejected || Database.PublicationFaulted)
         {
             reason = EAdvancedCanonicalCompatibilityReason.None;
             return false;
@@ -745,9 +745,11 @@ public sealed partial class AdvancedGpuScenePublisher
 
     private bool CanApplyPlannedSceneMutations(int geometryCompactionReplacementCount = 0)
     {
+        AdvancedGpuSceneDatabase tables = Database.Scene;
         int additions = 0;
         int structuralUpdates = 0;
         int contentUpdates = 0;
+        int drawFlagUpdates = 0;
         for (int commandIndex = 0; commandIndex < _plannedCommandCount; ++commandIndex)
         {
             ref readonly AdvancedGpuSceneCommandTransition plan =
@@ -766,12 +768,15 @@ public sealed partial class AdvancedGpuScenePublisher
                 return false;
             AdvancedGpuHandle existingTarget =
                 _plannedMaterials[plan.MaterialPlanIndex].ExistingHandle;
-            if (plan.StructuralSignature != registration.StructuralSignature ||
+            bool structuralUpdate = plan.StructuralSignature != registration.StructuralSignature ||
                 !existingTarget.IsValid ||
-                registration.Material != existingTarget)
-            {
+                registration.Material != existingTarget;
+            if (structuralUpdate)
                 ++structuralUpdates;
-            }
+            else if (!tables.Draws.TryGet(registration.Draw, out AdvancedDrawRecord draw))
+                return false;
+            else if (draw.Flags != (plan.Command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask))
+                ++drawFlagUpdates;
             if (plan.ContentSignature != registration.ContentSignature)
                 ++contentUpdates;
         }
@@ -786,9 +791,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 ++tombstones;
             }
 
-        AdvancedGpuSceneDatabase tables = Database.Scene;
         return geometryCompactionReplacementCount >= 0 &&
-            tables.Draws.CanApply(additions, structuralUpdates, tombstones) &&
+            tables.Draws.CanApply(additions, checked(structuralUpdates + drawFlagUpdates), tombstones) &&
             tables.Instances.CanApply(additions, contentUpdates, tombstones) &&
             tables.Transforms.CanApply(
                 checked(additions * 2),

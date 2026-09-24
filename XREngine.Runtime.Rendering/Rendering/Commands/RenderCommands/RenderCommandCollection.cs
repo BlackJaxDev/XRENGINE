@@ -266,6 +266,8 @@ namespace XREngine.Rendering.Commands
     /// </summary>
     public sealed partial class RenderCommandCollection : XRBase
     {
+        private readonly long _s13aCollectionId = S13aPublicationTelemetry.AllocateCollectionId();
+        private long _s13aSwapCycle;
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
         private static readonly CpuSoftwareOcclusionCuller s_cpuSoftwareOcclusionCuller = new();
         private static int s_addCpuMissingPassDiagCount = 0;
@@ -921,7 +923,16 @@ namespace XREngine.Rendering.Commands
                         item._authoritativePublishQueued = true;
                 }
 
-                if (needsPublish && _updatingSwapQueueMembership.Add(item))
+                bool addedToQueue = needsPublish && _updatingSwapQueueMembership.Add(item);
+                S13aPublicationTelemetry.QueueDecision(needsPublish, addedToQueue);
+                S13aPublicationTelemetry.Trace(!needsPublish
+                        ? S13aPublicationTraceEventKind.QueueClean
+                        : addedToQueue
+                            ? S13aPublicationTraceEventKind.QueueAdded
+                            : S13aPublicationTraceEventKind.QueueDuplicate,
+                    item.StableQueryKey, _s13aCollectionId, _s13aSwapCycle + 1L,
+                    detail: IsRenderCommandSnapshotAuthority ? 1 : 0);
+                if (addedToQueue)
                 {
                     _updatingSwapQueue.Add(item);
                 }
@@ -2364,6 +2375,11 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                long traceCycle = S13aPublicationTelemetry.TraceEnabled
+                    ? ++_s13aSwapCycle : 0L;
+                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapBegin,
+                    collectionId: _s13aCollectionId, collectionCycle: traceCycle,
+                    detail: IsRenderCommandSnapshotAuthority ? 1 : 0);
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 long publishStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool preparedLate =
@@ -2391,6 +2407,9 @@ namespace XREngine.Rendering.Commands
                     // snapshot fields live on the RenderCommand instance itself. They still swap their
                     // own pass membership, and can publish commands that no authoritative view collected.
                     var queue = _renderingSwapQueue;
+                    int callbacks = 0;
+                    int authorityYields = 0;
+                    int queued = queue.Count;
                     if (IsRenderCommandSnapshotAuthority)
                     {
                         int queueCount = queue.Count;
@@ -2400,7 +2419,18 @@ namespace XREngine.Rendering.Commands
                             if (cmd is null)
                                 continue;
                             if (cmd._dirty || !cmd.HasSwappedBuffers)
+                            {
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapCallback,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle);
                                 cmd.SwapBuffers();
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapAcknowledged,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle,
+                                    detail: cmd._dirty ? 1 : 0);
+                                callbacks++;
+                            }
+                            else
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapCleanSkip,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle);
                             cmd._authoritativePublishQueued = false;
                         }
                     }
@@ -2412,10 +2442,28 @@ namespace XREngine.Rendering.Commands
                             var cmd = queue[i];
                             if (cmd is null)
                                 continue;
+                            if (cmd._authoritativePublishQueued)
+                            {
+                                authorityYields++;
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapAuthorityYield,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle);
+                            }
                             if (!cmd._authoritativePublishQueued && (cmd._dirty || !cmd.HasSwappedBuffers))
+                            {
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapCallback,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle);
                                 cmd.SwapBuffers();
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapAcknowledged,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle,
+                                    detail: cmd._dirty ? 1 : 0);
+                                callbacks++;
+                            }
+                            else if (!cmd._authoritativePublishQueued)
+                                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.SwapCleanSkip,
+                                    cmd.StableQueryKey, _s13aCollectionId, traceCycle);
                         }
                     }
+                    S13aPublicationTelemetry.Swap(queued, callbacks, authorityYields);
                     queue.Clear();
                     _renderingSwapQueueMembership.Clear();
                 }

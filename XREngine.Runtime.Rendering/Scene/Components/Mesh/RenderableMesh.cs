@@ -139,9 +139,15 @@ namespace XREngine.Components.Scene.Mesh
                             MarkSkinnedDataDirty();
                             MarkSkinnedBoneCullingVolumesDirty();
                             RefreshSkinnedCullingIntersectionOverride();
+                            // Logical LOD registration includes inactive renderers. The active
+                            // command can retain the same renderer reference after this edit.
+                            _rc?.MarkDirty();
                         }
                         else if (e.PropertyName == nameof(SubMeshLOD.Material))
+                        {
                             renderer.Material = lod.Material;
+                            _rc?.MarkDirty();
+                        }
                     }
                     lod.PropertyChanged += UpdateReferences;
                     LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels));

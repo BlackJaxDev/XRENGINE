@@ -66,12 +66,18 @@ namespace XREngine.Rendering.Info
             item.OnCollectedForRender -= CollectedForRender;
             item.OnSwapBuffers -= SwapBuffers;
             if (ReferenceEquals(item.OwnerRenderInfo, this))
+            {
+                if (item is RenderCommandMesh3D meshCommand)
+                    meshCommand.DetachRendererMutationTracking();
                 item.OwnerRenderInfo = null;
+            }
         }
 
         private void Added(RenderCommand item)
         {
             item.OwnerRenderInfo = this;
+            if (item is RenderCommandMesh3D meshCommand)
+                meshCommand.AttachRendererMutationTracking();
             item.OnCollectedForRender += CollectedForRender;
             item.OnSwapBuffers += SwapBuffers;
         }

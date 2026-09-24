@@ -536,7 +536,12 @@ namespace XREngine.Scene
         {
             if ((_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
                 && command is IRenderCommandMesh meshCmd)
-                GPUCommands.TryUpdateMeshCommand(info, meshCmd);
+            {
+                GpuSceneMeshCommandSnapshot snapshot = command is RenderCommandMesh3D mesh3D
+                    ? mesh3D.CaptureGpuSceneSnapshot()
+                    : GpuSceneMeshCommandSnapshot.CaptureLive(info, meshCmd);
+                GPUCommands.TryUpdateMeshCommand(info, meshCmd, snapshot);
+            }
         }
 
         private void RefreshSkinnedCpuCullingBounds()
