@@ -21,6 +21,14 @@ namespace XREngine.Rendering.Vulkan
                 ?? throw new InvalidOperationException("The desktop generation has no WSI completion authority.");
             if (!presentCompletion.TryReserve(out attempt.PresentReservation))
             {
+                if (presentCompletion.IsStreamlineProxy)
+                    Debug.VulkanEvery(
+                        $"Vulkan.Streamline.ProxyPresentAdmission.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Streamline proxy present admission deferred. Submitted={0} Completed={1} CapacityDeferrals={2}. An intercepted lifecycle drain is required if proxy ownership cannot advance.",
+                        presentCompletion.SubmittedCount,
+                        presentCompletion.CompletedCount,
+                        presentCompletion.CapacityDeferrals);
                 attempt.AcquireResult = Result.NotReady;
                 attempt.Timing.AcquireUnavailableCount++;
                 VulkanDesktopAcquireOutcome unavailable = DesktopWsiOutput.ClassifyAcquire(Result.NotReady);

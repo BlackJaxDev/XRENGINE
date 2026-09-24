@@ -12,5 +12,6 @@ Focused validation plans for features whose implementation work has landed but s
 - [Physics Chain Performance](physics-chain-performance.md)
 - [Texture Management Runtime Baseline](texture-management-runtime-baseline-2026-05-01.md)
 - [Texture Runtime Streaming Validation](texture-runtime-streaming-validation.md)
+- [Vulkan Lifecycle Evidence Harness](rendering/vulkan-lifecycle-evidence-harness.md)
 - [Texture Streaming Run Analysis - 2026-05-01 18:06](texture-streaming-run-analysis-2026-05-01-180642.md)
 - [XRDataBuffer RHI Write Model Validation](xrdatabuffer-rhi-write-model-validation.md)

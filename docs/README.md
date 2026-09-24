@@ -15,6 +15,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Getting Started In The Codebase](architecture/getting-started-in-codebase.md)
 - [Rendering Architecture](architecture/rendering/README.md)
 - [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
+- [Advanced TSR Sampling, History, And Diagnostics](architecture/rendering/default-render-pipeline-notes.md#advanced-tsr-sample-and-history-contract)
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
@@ -81,6 +82,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
+- [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)

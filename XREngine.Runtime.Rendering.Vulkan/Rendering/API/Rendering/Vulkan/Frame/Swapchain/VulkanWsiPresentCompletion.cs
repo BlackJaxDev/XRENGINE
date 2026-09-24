@@ -16,22 +16,25 @@ internal sealed unsafe class VulkanWsiPresentCompletion
     private readonly EVulkanWsiPresentState[] _states;
     private readonly ulong[] _serials;
     private readonly bool[] _needsReset;
+    private readonly bool _streamlineProxy;
+    private long _pendingProxyPresentCount;
     private bool _sealed;
     private bool _destroyed;
     private ulong _nextSerial;
 
-    internal VulkanWsiPresentCompletion(Vk api, Device device, int imageCount, bool maintenanceEnabled)
+    internal VulkanWsiPresentCompletion(Vk api, Device device, int imageCount, bool maintenanceEnabled, bool streamlineProxy = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(imageCount);
         _api = api;
         _device = device;
         MaintenanceEnabled = maintenanceEnabled;
-        int capacity = maintenanceEnabled ? imageCount : 1;
+        _streamlineProxy = streamlineProxy;
+        int capacity = maintenanceEnabled || streamlineProxy ? imageCount : 1;
         _fences = new Fence[capacity];
         _states = new EVulkanWsiPresentState[capacity];
         _serials = new ulong[capacity];
         _needsReset = new bool[capacity];
-        if (!maintenanceEnabled)
+        if (!maintenanceEnabled || streamlineProxy)
             return;
 
         FenceCreateInfo info = new() { SType = StructureType.FenceCreateInfo };
@@ -65,7 +68,7 @@ internal sealed unsafe class VulkanWsiPresentCompletion
         {
             if (_states[index] != EVulkanWsiPresentState.Free)
                 continue;
-            if (_needsReset[index])
+            if (_needsReset[index] && !_streamlineProxy)
             {
                 Check(_api.ResetFences(_device, 1, in _fences[index]), "reset completed WSI presentation fence");
                 _needsReset[index] = false;
@@ -92,7 +95,17 @@ internal sealed unsafe class VulkanWsiPresentCompletion
             return;
         }
         bool enqueued = VulkanWsiPresentResult.EnqueuesPresentationRelease(result);
-        if (!MaintenanceEnabled)
+        if (_streamlineProxy)
+        {
+            // Streamline's intercepted present does not accept our maintenance1
+            // fence. A successful handoff releases admission, but its SDK-side
+            // native use remains owned until an intercepted device-idle drain.
+            _states[reservation.Slot] = enqueued
+                ? EVulkanWsiPresentState.Free : EVulkanWsiPresentState.Quarantined;
+            if (enqueued)
+                _pendingProxyPresentCount++;
+        }
+        else if (!MaintenanceEnabled)
         {
             HasUnprovenLegacyPresent = true;
             _states[reservation.Slot] = enqueued
@@ -141,11 +154,24 @@ internal sealed unsafe class VulkanWsiPresentCompletion
 
     internal void Seal() => _sealed = true;
 
+    internal bool IsStreamlineProxy => _streamlineProxy;
+
+    /// <summary>Records SDK-side completion only after Streamline's intercepted device idle succeeds.</summary>
+    internal void MarkStreamlineProxyDrained()
+    {
+        if (!_streamlineProxy)
+            throw new InvalidOperationException("Only a Streamline proxy generation can be marked drained.");
+        CompletedCount += _pendingProxyPresentCount;
+        _pendingProxyPresentCount = 0;
+    }
+
     internal bool PollRetirement()
     {
         if (_destroyed)
             return true;
         Poll();
+        if (_pendingProxyPresentCount != 0)
+            return false;
         if (HasUnprovenLegacyPresent)
             return false;
         for (int index = 0; index < _states.Length; index++)
@@ -158,6 +184,19 @@ internal sealed unsafe class VulkanWsiPresentCompletion
     internal void WaitForShutdown()
     {
         Seal();
+        if (_streamlineProxy)
+        {
+            if (_pendingProxyPresentCount != 0)
+                throw new InvalidOperationException("Streamline proxy presentation has not completed its intercepted device-idle drain.");
+            for (int index = 0; index < _states.Length; index++)
+            {
+                if (_states[index] == EVulkanWsiPresentState.Reserved)
+                    _states[index] = EVulkanWsiPresentState.Free;
+                if (_states[index] == EVulkanWsiPresentState.Quarantined)
+                    throw new InvalidOperationException("Streamline proxy presentation is indeterminate; native ownership is retained.");
+            }
+            return;
+        }
         if (HasUnprovenLegacyPresent)
             throw new NotSupportedException("WSI teardown lacks presentation release proof: VK_EXT_swapchain_maintenance1 is required. Native ownership is retained.");
         long start = Stopwatch.GetTimestamp();

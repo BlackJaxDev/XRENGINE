@@ -767,11 +767,71 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
+    internal bool TryGetRetainedPresentationImageNoLock(
+        ulong commandBufferHandle,
+        VulkanResourceLifetimeKey key,
+        out VulkanResourceLifetimeRecord image)
+    {
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        if (key.Type == ObjectType.Image &&
+            tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime) &&
+            lifetime.RetainedPresentationImageSlot.IsValid &&
+            lifetime.Dependencies.TryGetValue(key, out ulong generation) &&
+            tracker.TryResolveResourceSlotNoLock(lifetime.RetainedPresentationImageSlot, out image) &&
+            tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? keyedImage) &&
+            ReferenceEquals(keyedImage, image) &&
+            image.Key == key && image.Generation == generation &&
+            image.Pins.HasRecordedReferences &&
+            (image.State & EVulkanResourceLifetimeState.Destroyed) == 0)
+            return true;
+
+        image = null!;
+        return false;
+    }
+
+    internal ulong GetCommandBufferImageGeneration(CommandBuffer commandBuffer, ulong imageHandle)
+    {
+        VulkanResourceLifetimeKey key = new(ObjectType.Image, imageHandle);
+        ulong publishedGeneration = Lifetime.Tracker.GetPublishedGeneration(key);
+        if (publishedGeneration != 0UL)
+            return publishedGeneration;
+
+        lock (Lifetime.Tracker.SyncRoot)
+            return TryGetRetainedPresentationImageNoLock(
+                unchecked((ulong)commandBuffer.Handle), key, out VulkanResourceLifetimeRecord image)
+                    ? image.Generation
+                    : 0UL;
+    }
+
+    internal bool HasSubmittedRetainedPresentationImageNoLock(
+        ulong commandBufferHandle,
+        VulkanResourceLifetimeKey key,
+        ulong generation)
+    {
+        if (!TryGetRetainedPresentationImageNoLock(commandBufferHandle, key, out VulkanResourceLifetimeRecord image) ||
+            image.Generation != generation ||
+            !Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime) ||
+            !lifetime.SubmissionPinReceipt.IsActive)
+            return false;
+
+        ReadOnlySpan<VulkanResourceSlotHandle> slots = lifetime.SubmissionPinReceipt.Resources;
+        for (int index = 0; index < slots.Length; ++index)
+            if (slots[index] == image.Slot)
+                return true;
+        return false;
+    }
+
     internal bool TryValidateCommandBufferDependencyNoLock(
         ulong commandBufferHandle,
         VulkanResourceLifetimeKey key,
         out string reason)
     {
+        if (TryGetRetainedPresentationImageNoLock(commandBufferHandle, key, out _))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
         VulkanResourceLifetimeRecord resource = Lifetime.Tracker.GetOrRegisterResourceNoLock(key, "CommandRuntime.TrackingBatch");
         if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
         {
@@ -810,6 +870,9 @@ internal sealed partial class VulkanResourceRuntime
         VulkanCommandBufferLifetimeRecord lifetime,
         VulkanResourceLifetimeKey key)
     {
+        if (TryGetRetainedPresentationImageNoLock(commandBufferHandle, key, out _))
+            return;
+
         VulkanResourceLifetimeRecord resource = Lifetime.Tracker.GetOrRegisterResourceNoLock(key, "CommandRuntime.TrackingBatch");
         if (!lifetime.Dependencies.TryGetValue(key, out ulong generation) || generation != resource.Generation)
         {
@@ -850,6 +913,7 @@ internal sealed partial class VulkanResourceRuntime
                 generation);
 
         lifetime.Dependencies.Clear();
+        lifetime.RetainedPresentationImageSlot = VulkanResourceSlotHandle.Invalid;
         lifetime.TouchedDependencies.Clear();
         lifetime.InvalidateSealedSubmissionContract();
     }
@@ -1364,6 +1428,7 @@ internal sealed partial class VulkanResourceRuntime
                 generation);
 
         lifetime.Dependencies.Clear();
+        lifetime.RetainedPresentationImageSlot = VulkanResourceSlotHandle.Invalid;
         lifetime.TouchedDependencies.Clear();
     }
 

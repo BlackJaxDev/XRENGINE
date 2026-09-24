@@ -17,6 +17,12 @@ internal static class VulkanQueueFamilySelector
         for (uint i = 0; i < queueFamilies.Length; i++)
         {
             QueueFamilyProperties queueFamily = queueFamilies[(int)i];
+            // Streamline's native optical-flow path owns queue zero exclusively.
+            // Some drivers advertise transfer support on that family as well;
+            // selecting it for engine uploads would consume the sole queue.
+            const QueueFlags opticalFlowBitNv = (QueueFlags)0x00000100;
+            if (queueFamily.QueueCount == 0 || (queueFamily.QueueFlags & opticalFlowBitNv) != 0)
+                continue;
             if ((queueFamily.QueueFlags & QueueFlags.GraphicsBit) != 0 &&
                 !indices.GraphicsFamilyIndex.HasValue)
             {

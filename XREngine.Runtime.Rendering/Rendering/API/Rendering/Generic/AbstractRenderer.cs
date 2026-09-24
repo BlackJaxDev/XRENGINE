@@ -301,6 +301,9 @@ namespace XREngine.Rendering
         /// </summary>
         public virtual void ProcessPendingUploads() { }
 
+        /// <summary>Allows the backend to pace a desktop frame before scene preparation begins.</summary>
+        public virtual void PrepareRenderFramePacing() { }
+
         /// <summary>Executes one renderer frame independently from host loop ownership.</summary>
         public void RenderFrame(double delta)
             => RenderFrameCallback(delta);

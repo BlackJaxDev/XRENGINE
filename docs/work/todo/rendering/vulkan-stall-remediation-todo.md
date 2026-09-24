@@ -2,7 +2,7 @@
 
 Last Updated: 2026-09-24
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Active for merged lifetime gates; S13a evidence handed off with validation gate open; S13b candidate implemented with validation gate open; S13c-S13i Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Active for merged lifetime gates; S13a/S13b Blocked with validation gates open; S13c-S13i Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -227,8 +227,8 @@ gate record. No item is complete merely because this checklist was written.
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
 | S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active for merged lifetime gates (local reachable gate passed; incoming distinct-world lifetime validation remains open; preserve both parent evidence sets) |
 | S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | Pending |
-| S13a | [Current workload, leaf attribution, backend divergence and acceptance budgets](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md) | S12 validated or explicitly dispositioned under the protocol | Evidence handoff completed by user direction; three frozen-binary observer pairs, Debug without debugger, both-backend mutation checks, matching fixture-specific published-package identities, and lossless CPU/GC traces recorded; validation gate remains open for S12 disposition, final-build overhead/retention, attached debugger, callback-correlated CPU/scheduling attribution, and historical backend-divergence evidence |
-| S13b | [Separate publication identity from command dirtiness](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md) | S13a; confirmed identity-only dirty callbacks | Candidate implemented; stationary identity-only callbacks and several real mutations validated live on Vulkan/OpenGL; final Vulkan timing improved, but retention and the full correctness/performance matrix remain open |
+| S13a | [Current workload, leaf attribution, backend divergence and acceptance budgets](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md) | S12 validated or explicitly dispositioned under the protocol | **Blocked**: observation handoff and causal identity-feedback evidence are recorded, but S12's distinct-world lifetime gate, exact-final-binary observer/retention matrix, attached debugger, correlated callback CPU/GC/scheduling attribution, and historical backend-divergence disposition remain open |
+| S13b | [Separate publication identity from command dirtiness](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md) | S13a; confirmed identity-only dirty callbacks | **Blocked**: corrected local descriptor identity passes targeted camera retention and texture rehydration passes two live renderer restarts; validation-layer compatibility, broader retention, complete mutation/temporal, multi-view, failure/retry, matched-performance, and applicable test-clearance gates remain open |
 | S13c | Generation-based logical mesh/LOD registration | S13b disposition; measured recurring registration | Pending |
 | S13d | Mutation-scoped material/state/auxiliary updates | S13c disposition; measured redundant writes/resolution | Pending |
 | S13e | Prepare compatible Advanced scene state once per family | S13d disposition; measured repeated preparation | Pending |
@@ -239,6 +239,107 @@ gate record. No item is complete merely because this checklist was written.
 | S14 | Actual Core update callbacks/registration | S02; default after S13 disposition | Pending |
 | S15 | Temporal correctness and original-regression decision | Baseline plus each affected runtime gate | Pending |
 | S16 | Integrated acceptance and closeout | All applicable prior gates | Pending |
+
+### September 24 S13a/S13b closure audit
+
+Neither item meets this TODO's Validated or Closed definition. The September 23
+direction allowed the completed S13a observation to hand off to S13b; it did
+not waive S12 or S13a's unfinished gate. Do not promote S13c, S13i, or S16
+from the current evidence.
+
+- S13a's 393-draw identity-feedback mechanism and registration leaf are
+  established. Three earlier observer pairs passed the positive-overhead
+  tolerance but all failed native/descriptor retention and preceded later
+  instrumentation corrections. A September 24 180-second warmup produced one
+  flat 60-second stationary resource window. An independent 180-second warmup
+  run gained 1,961 native resources and 1,955 descriptor sets by the endpoint
+  **after** its 60-second stationary and 60-second motion phases. Later live
+  evidence traced large motion increments to retained mesh descriptor variants.
+  The later probe-free 180-second-warmup run was flat for its 60-second
+  stationary window, then gained 1,641 native resources and 1,625 descriptor
+  sets after the controlled view transition. That binary failed motion
+  retention. The later local-descriptor identity correction passes its targeted
+  camera matrix; it does not supply the full S13a observer/attribution matrix.
+  The [gate record](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md#september-24-closeout-audit)
+  preserves the exact binary and observer limits.
+- S13b's publication-only feedback filter, callback boundary guard, primitive
+  reconciliation, material-header normalization, and exact-primitive
+  preparation fixes have passed focused live Vulkan checks. A final read-only
+  lifetime review found and repaired retained sidecar/scratch references and
+  protected sidecar inspection with a scoped publication lease. Shared material
+  retirement cleared old image/view/sampler backlogs in the isolated Vulkan run,
+  but the mesh full-key cache kept older local allocation variants. A local
+  binding-payload probe then found 918 duplicate variants caused by unconsumed
+  snapshot resources. The corrected identity produced zero duplicate variants
+  in the probe and flat mesh allocations through the probe-free camera matrix.
+  A positive renderer-restart check subsequently failed texture upload readiness.
+  The corrected recovery now claims and publishes a newer upload generation on
+  the replacement device; two consecutive restarts and A/B/A view sequences
+  passed with advancing presents, unchanged return-view mesh allocations, and
+  zero retirement backlog. Cumulative validation exposed two startup errors
+  involving descriptor-heap structures unknown to the installed layer; they
+  remain visible, with no additional rendering/recovery errors observed.
+  The complete
+  mutation/temporal matrix and matched final-source performance pairs remain
+  unverified; broader retention and lifecycle gates remain open. The
+  [S13b gate record](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md)
+  lists the observed cases and limits.
+- Regression-test work is still uncleared under the repository testing policy.
+  No new regression tests were written or run for these live integration fixes.
+  Closure requires successful live gates first, then explicit test clearance
+  and applicable focused checks or an explicit documented scope disposition.
+
+### September 24 handoff: remaining closeout work
+
+**Current disposition:** S13a and S13b remain **Blocked**. The user selected
+continued validation, not a scope waiver. This handoff ends the current work
+session; it does not close the remediation items. The named isolated editor
+`descriptor-local-0924` is stopped. No further run, SDK change, commit, or
+regression-test work is implied by this documentation update.
+
+**Preserve completed results:** the local descriptor-identity correction removed
+918 duplicate physical-payload variants in the diagnostic comparison; its
+probe-free repeated/unseen-camera run kept mesh allocations flat. Shared
+material retirement cleared the observed old image/view/sampler backlog. The
+texture rehydration correction passed two manually reviewed renderer restarts,
+reaching 7,891 and 6,678 completed presents with zero retirement backlog. These
+are scoped live results, not the complete acceptance matrix. Do not rerun the
+root-cause investigation without new contradictory evidence.
+
+The later Python collection produced **21 screenshots** and raw telemetry on a
+newer build. Those screenshots and logs are **not yet reviewed**. Its automated
+statuses do not supersede the earlier reviewed results or establish new passes.
+See the [collection record](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#automated-evidence-collection-awaiting-review)
+and [harness instructions](../../testing/rendering/vulkan-lifecycle-evidence-harness.md).
+
+| Remaining issue or gate | Work required | Evidence needed to resolve it |
+| --- | --- | --- |
+| Collected screenshots/logs await review | Review the 14 camera/shader/restart observations and seven warmup/transform/activation/material observations. Correlate each image with frame progress, current Advanced output, resource counts, and cumulative messages. Verify mutations actually changed and restored the intended state. Separate startup/teardown messages, historical readiness retries, and capture-induced allocations from steady rendering. | A durable per-case disposition with exact binary identity, meaningful resource deltas, and image/log findings. Fix and rerun only failing or inconclusive cases. |
+| World snapshot fails before restoration | `snapshot_world_state` throws inside `AssetManager.Serializer.Serialize(world)`. The MCP wrapper discards the exception details from its response and sends them only to `Debug.LogError`, whose body is compiled out in this Release configuration. Expose bounded, sanitized exception type/inner-exception/property context through the MCP response or a Release-capable diagnostic sink. Rerun only the snapshot operation, identify the actual offending object/property, and correct its serialization contract. Do not guess the cause from the generic message. | The actual exception and responsible member are recorded; snapshot and restore succeed with scene integrity and continued rendering. Current evidence establishes a serialization failure, not a Vulkan lifetime failure. |
+| S12 distinct-world lifetime dependency | After snapshot diagnostics are resolved, exercise genuinely different world instances/assets and trace world, publication, view, and accepted-package ownership through replacement. Verify old publication/scratch/descriptor references are released after their legitimate owners finish. Account for undo/snapshot references explicitly. A YAML roundtrip preserving IDs and undo references cannot substitute for this case. | Distinct old/new world identity, correct new-world rendering, and bounded retirement/reference retention under the S12 gate. Update the S12 owner record and its S13a dependency disposition. |
+| Two startup Vulkan validation errors | The installed layer reports unknown descriptor-heap properties/features structures (`1000135008`/`1000135009`) and an unknown `VK_EXT_descriptor_heap` extension. Confirm compatibility using a validation layer that understands the enabled extension; any SDK/layer installation or upgrade requires the applicable tooling approval. Rerun standard and synchronization validation, including device creation and teardown. Preserve errors rather than suppressing them to obtain a pass. | Clean applicable validation or an explicitly approved, evidenced compatibility disposition. The earlier steady rendering/recovery run added no errors beyond these two startup reports; it was not a zero-error run. |
+| Complete S13b mutation and temporal behavior | Extend the reviewed positive transform/activation/scalar-material cases to the declared geometry/primitive, material-state, texture-generation, visibility, and temporal-history cases. Verify both real changes and unchanged/publication-only updates. Include in-place native arena-buffer replacement; shader reload and renderer restart do not cover that race. Track the existing dark/high-contrast and temporal image-quality limits separately. | Correct accepted identities, descriptor payloads, invalidation/history behavior, visible outputs, and no unintended recurring dirty callbacks or retained owners for each applicable case. |
+| Multi-view and upload failure/retry coverage | Exercise simultaneous views with distinct visibility/state, then bounded upload cancellation, failed admission, failed successor upload, competing transitions, and replacement during pending work. Retain exact generation/ticket evidence. | No cross-view stale state, premature native readiness, unbounded retry loop, double retirement, or leaked owner. Successful recovery and explicit terminal failure occur in their intended cases. |
+| S13a final-binary observer/retention matrix | Freeze the final source, binary hashes, settings, workload and observation budgets. Run the predeclared three observer pairs, keeping stationary and moving intervals separate. Capture usable GPU timing coverage and the attached-debugger condition when available. Concurrent pipeline changes and historical binaries prevent isolated performance claims from the current mixed evidence. | All paired overhead/retention budgets pass on the same final binary; debugger availability and any unavailable evidence are explicitly recorded. |
+| Callback attribution and historical backend divergence | Correlate callback spans with CPU execution, GC pauses, scheduler-ready and blocked time. Complete callback-to-publication/view ownership joins on Vulkan and OpenGL. Reproduce the first differing historical event under controlled conditions, or obtain an explicit scope disposition if it cannot be reproduced. Historical missing binary manifests remain unknown; do not reconstruct them by assumption. | Residual wall time and the first differing event have evidence-backed causal dispositions that satisfy S13a. No scope waiver is currently authorized. |
+| Regression-test clearance and coverage | Complete relevant live feature validation first, then obtain the user's explicit clearance for test work under `AGENTS.md`. Add/run focused deterministic coverage for descriptor identity/invalidation, exact-lifetime retirement, and rehydration generation/admission/cancellation behavior. Keep live-only rendering cases in the runtime matrix. | Recorded clearance and passing applicable checks, with any remaining hardware/runtime cases explicitly tracked. The Python evidence collector does not grant this clearance or replace regression tests. |
+
+**Resume order:** review the existing packet first; recover the missing snapshot
+exception and repair that path; complete world/lifetime, validation-layer, and
+mutation/failure/multi-view gaps; freeze the resulting binary for the observer
+and attribution gates; then obtain test clearance and complete focused coverage.
+Record each result in the existing S12/S13a/S13b owner documents. Promote an item
+only when its declared acceptance conditions are met. S13c-S13h are later
+optimization work, and S13i/S15/S16 provide cumulative acceptance; none
+automatically resolves or waives the blockers above.
+
+Disposable packet entry point:
+`Build/_AgentValidation/20260924-102959-s13-closeout/reports/python-lifecycle-review.md`.
+It links `python-lifecycle-ready` and `python-lifecycle-mutations`; both used the
+same DLL hashes recorded in the collection record. If these ignored files are
+cleaned up before review, recollect with the documented harness rather than
+claiming the missing evidence passed. Preserve required conclusions in tracked
+documentation after review.
 
 ## S00. Establish A Comparable Baseline
 
@@ -958,7 +1059,7 @@ blanket suppression of mesh property changes. Retain the fix only after the
 checks below; the earlier speed measurement is supporting evidence, not their
 substitute.
 
-September 24 gate note: the final Release Vulkan binary published all 393
+Earlier September 24 gate note: that Release Vulkan candidate published all 393
 fixture draws and held zero identity-only dirty callbacks, other dirty callbacks,
 queue additions, swap callbacks, mesh updates, and failures over a 20.1-second
 post-mutation stationary interval. Add/remove/re-add, transform settling,
@@ -973,6 +1074,62 @@ replacement, multi-view and exact temporal/velocity checks remain open. See
 the [S13b investigation](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md)
 for exact evidence and binary hashes. Keep S13c pending until this gate is
 dispositioned.
+
+Current September 24 disposition: **Blocked**. Subsequent primitive/material,
+exact-mesh, sidecar-lifetime, cross-command callback, and publication-lease
+repairs passed focused Release builds and live Vulkan checks. The corrected
+presentation ledger captured 128 accepted frames, including 64 where the frame
+slot differed from the swapchain image, with zero invariant failures. A repeated
+180-second-warmup run still failed retention (+1,961 native resources and +1,955
+descriptor sets), and the remaining mutation/temporal, multi-view, failure,
+matched-performance, dependency, and test-clearance gates below have not passed.
+An isolated camera-transition capture localized the retention rise to 372 new
+immutable-resource fingerprints on 339 existing mesh descriptor owner groups;
+structural owner counts stayed fixed, and repeated identical motion later reused
+the retained variants. A follow-up sampled owner showed that `Texture0` and
+`Texture1` acquired new native image/view/sampler generations, changing the
+published sampler signature and allocation key. That sample does not explain
+every variant or prove when old generations can retire; 12 Images, 12
+ImageViews, and 12 Samplers were still queued in its final lifetime readback.
+The two runs with growing endpoints measured them after camera motion, so they
+do not establish stationary-window accumulation. Keep separate stationary and
+motion retention gates.
+An exact lifetime probe subsequently found that the queued old textures were
+pinned by shared `VkMaterial` descriptor sets after GPU completion. The
+candidate frame-boundary cleanup now detaches the exact material program state
+and retires its pool through normal lifetime tracking. In an isolated live run,
+image/view/sampler backlogs cleared and stayed at zero in bounded samples
+through 8,400 preparation calls, with completed Vulkan presents and visible
+controlled-camera readbacks. Mesh full-key variants and their local sets still
+accumulated after a distinct view transition, so native/descriptor retention and the final-binary
+observer matrix remain **open**. The probe was removed; neither S13a nor S13b
+is promoted to Validated or Closed.
+A subsequent probe-free Release build passed with zero warnings and errors.
+After roughly 180 seconds of warmup, one stationary 60-second window remained
+flat at 15,203 native live resources and 11,651 tracked descriptor sets. A
+controlled view change followed by 60 seconds at the second view ended at
+16,844 and 13,276 respectively (+1,641/+1,625); image/view/sampler backlogs
+remained zero. Returning to the first view added 244 more mesh allocation
+variants, while revisiting the second view added none. The motion-phase
+retention gate failed on that binary even though stationary retention and old-texture
+retirement improved. The exact endpoints and DLL hashes are in the
+[S13b gate record](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#probe-free-final-source-retention-check).
+The later [local descriptor correction](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#local-descriptor-identity-correction-final-build-retention)
+removes unconsumed snapshot resources from eligible local allocation identity.
+It eliminated 918 duplicate payload variants in the diagnostic comparison and
+kept 801 mesh variants/4,005 mesh sets flat across the probe-free repeated and
+unseen camera views. The final stationary interval was flat at 11,410 native
+resources and 7,856 tracked sets with zero retirement backlog. These are scoped
+retention results; concurrent pipeline changes prevent an isolated performance
+claim. Renderer restart then exposed a separate upload-registration failure for
+an already published texture generation. Its corrected recovery passed two
+successive live restarts, reaching 7,891 and 6,678 presents after A/B/A sequences.
+The [restart evidence](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#corrected-renderer-restart-repeated-live-validation)
+preserves the exact counts, cumulative validation-layer compatibility errors,
+and limits. Broader lifecycle validation remains open.
+The [September 24 closeout review](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#september-24-lifetime-reuse-and-closeout-review)
+and [descriptor-retention capture](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#september-24-descriptor-retention-owner-capture)
+record the exact evidence. Preserve S13c as Pending.
 
 - [ ] Demonstrate the chain on a settled static command: successful publication
   advances its embedded publication identity; `SetField` notifies; generic dirty

@@ -923,7 +923,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             record.RetirementTicket = ticket;
             lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
             if (key.Type == ObjectType.Buffer)
-                lifetime.EnqueueSupersededBufferDescriptorOwner(key, record.Generation);
+                lifetime.EnqueueSupersededResourceDescriptorOwner(key, record.Generation);
             return ticket;
         }
     }

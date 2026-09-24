@@ -377,11 +377,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
     {
         EAntiAliasingMode mode = effectiveAntiAliasingMode;
-        if (mode == EAntiAliasingMode.Dlaa)
-            return 1.0f;
-
         if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
+
+        if (mode == EAntiAliasingMode.Dlaa)
+            return 1.0f;
 
         if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())
             return null;
@@ -437,6 +437,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa
         || VendorUpscaleRuntime.IsDlssFrameGenerationRequested;
 
+    private static bool RuntimeSuppressOwnAntiAliasing
+        => !IsRenderingExternalSwapchainTarget()
+        && (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+            || RuntimeEngine.EffectiveSettings.EnableIntelXess
+            || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa);
+
     private static bool RuntimeRequestXessVendorFeature
         => ResolveAntiAliasingMode() != EAntiAliasingMode.Dlaa
         && (RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration);
@@ -446,21 +452,21 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
     private static bool RuntimeEnableFxaa
-        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
+        => !RuntimeSuppressOwnAntiAliasing && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
 
     /// <summary>
     /// True when SMAA should be active for the current rendering camera.
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
     private static bool RuntimeEnableSmaa
-        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
+        => !RuntimeSuppressOwnAntiAliasing && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
 
     /// <summary>
     /// True when the current camera's AA mode is TSR and internal resolution is
     /// below 100%, meaning a dedicated upscale pass is required.
     /// </summary>
     private static bool RuntimeNeedsTsrUpscale
-        => !RuntimeEnableVendorUpscale
+        => !RuntimeSuppressOwnAntiAliasing
         && !DisableHistoryBasedVrEffects()
         && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
 
@@ -803,12 +809,28 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return !HasSingleColorTarget(fbo, TsrHistoryColorTextureName);
     }
 
+    private bool NeedsRecreateTsrHistoryMetadataOutputFbo(XRFrameBuffer fbo)
+        => !fbo.IsLastCheckComplete || !HasSingleColorTarget(fbo, TsrHistoryMetadataOutputTextureName);
+
+    private bool NeedsRecreateTsrHistoryMetadataFbo(XRFrameBuffer fbo)
+        => !fbo.IsLastCheckComplete || !HasSingleColorTarget(fbo, TsrHistoryMetadataTextureName);
+
+    private bool NeedsRecreateTsrAccumulationFbo(XRFrameBuffer fbo)
+        => !fbo.IsLastCheckComplete || !HasSingleColorTarget(fbo, TsrAccumulationTextureName);
+
     private bool NeedsRecreateTsrUpscaleFbo(XRFrameBuffer fbo)
     {
-        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+        if (!fbo.IsLastCheckComplete)
             return true;
 
-        if (!HasSingleColorTarget(fbo, TsrOutputTextureName))
+        if (fbo.Targets is not { Length: 3 } targets ||
+            !HasTextureAttachment(targets[0], TsrOutputTextureName, EFrameBufferAttachment.ColorAttachment0) ||
+            !HasTextureAttachment(targets[1], TsrHistoryMetadataOutputTextureName, EFrameBufferAttachment.ColorAttachment1) ||
+            !HasTextureAttachment(targets[2], TsrAccumulationTextureName, EFrameBufferAttachment.ColorAttachment2))
+            return true;
+
+        // The presentation, metadata, and accumulation attachments share the HDR format.
+        if (targets[0].Target is not XRTexture output || !MatchesPostProcessIntermediateTextureFormat(output))
             return true;
 
         if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
@@ -818,7 +840,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 7)
+        if (textures.Count != 8)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
@@ -827,14 +849,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
             || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
+            || !ReferenceEquals(textures[7], GetTexture<XRTexture>(TsrHistoryMetadataTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
         if (fragmentShaders.Count != 1)
             return true;
 
-        XRShader expectedShader = CreateAdvancedTemporalShader(Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
+        XRShader expectedShader = CreateAdvancedTsrShader(Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 
@@ -1516,6 +1539,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string SmaaEdgeFBOName = SmaaFBOName + "_EdgeFBO";
     public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
+    public const string TsrAccumulationTextureName = "TsrAccumulationTexture";
+    public const string TsrAccumulationFBOName = "TsrAccumulationFBO";
+    public const string TsrHistoryMetadataOutputTextureName = "TsrHistoryMetadataOutput";
+    public const string TsrHistoryMetadataOutputFBOName = "TsrHistoryMetadataOutputFBO";
+    public const string TsrHistoryMetadataFBOName = "TsrHistoryMetadataFBO";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
 
@@ -1566,6 +1594,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string MotionBlurTextureName = "MotionBlur";
     public const string DepthOfFieldTextureName = "DepthOfField";
     public const string TsrHistoryColorTextureName = "TsrHistoryColor";
+    public const string TsrHistoryMetadataTextureName = "TsrHistoryMetadata";
 
     // MSAA deferred GBuffer texture names
     public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";
@@ -1800,15 +1829,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     private void ApplyAntiAliasingResolutionHint()
     {
-        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
-        {
-            RequestedInternalResolution = 1.0f;
-            return;
-        }
-
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
         {
             RequestedInternalResolution = vendorScale;
+            return;
+        }
+
+        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
+        {
+            RequestedInternalResolution = 1.0f;
             return;
         }
 
@@ -1842,7 +1871,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && VendorUpscaleRuntime.IsDlssSupported)
         {
             scale = VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
-            return scale < 1.0f;
+            return true;
         }
 
         scale = 1.0f;

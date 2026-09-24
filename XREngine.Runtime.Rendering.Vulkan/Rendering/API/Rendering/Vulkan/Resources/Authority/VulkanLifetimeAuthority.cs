@@ -13,8 +13,8 @@ internal sealed class VulkanLifetimeAuthority(
     VulkanResourceRetirementQueue retirement)
 {
     private VulkanRetirementDependencyPublicationPort? _retirementDependencyPublications;
-    private readonly System.Collections.Concurrent.ConcurrentQueue<VulkanSupersededBufferDescriptorOwner>
-        _supersededBufferDescriptorOwners = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<VulkanSupersededResourceDescriptorOwner>
+        _supersededResourceDescriptorOwners = new();
 
     internal VulkanResourceLifetimeTracker Tracker { get; } =
         tracker ?? throw new ArgumentNullException(nameof(tracker));
@@ -42,16 +42,22 @@ internal sealed class VulkanLifetimeAuthority(
         VulkanResourceLifetimeKey resourceKey)
         => Volatile.Read(ref _retirementDependencyPublications)?.Publish(resourceKey);
 
-    internal void EnqueueSupersededBufferDescriptorOwner(
+    internal void EnqueueSupersededResourceDescriptorOwner(
         VulkanResourceLifetimeKey resourceKey,
         ulong generation)
     {
-        if (resourceKey.Type == Silk.NET.Vulkan.ObjectType.Buffer && generation != 0)
-            _supersededBufferDescriptorOwners.Enqueue(
-                new VulkanSupersededBufferDescriptorOwner(resourceKey, generation));
+        if (generation == 0 || resourceKey.Type is not (
+                Silk.NET.Vulkan.ObjectType.Buffer or
+                Silk.NET.Vulkan.ObjectType.Image or
+                Silk.NET.Vulkan.ObjectType.ImageView or
+                Silk.NET.Vulkan.ObjectType.Sampler))
+            return;
+
+        _supersededResourceDescriptorOwners.Enqueue(
+            new VulkanSupersededResourceDescriptorOwner(resourceKey, generation));
     }
 
-    internal bool TryDequeueSupersededBufferDescriptorOwner(
-        out VulkanSupersededBufferDescriptorOwner owner)
-        => _supersededBufferDescriptorOwners.TryDequeue(out owner);
+    internal bool TryDequeueSupersededResourceDescriptorOwner(
+        out VulkanSupersededResourceDescriptorOwner owner)
+        => _supersededResourceDescriptorOwners.TryDequeue(out owner);
 }

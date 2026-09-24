@@ -473,7 +473,9 @@ internal sealed partial class VulkanTextureUploadService
             failureDisposition);
     }
 
-    private void RefreshRequiredUploadGenerations(VulkanTextureUploadManifest manifest)
+    private void RefreshRequiredUploadGenerations(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest manifest)
     {
         for (int index = 0; index < manifest.Count; index++)
         {
@@ -544,6 +546,39 @@ internal sealed partial class VulkanTextureUploadService
                 continue;
             }
 
+            if (TryGetRehydrationFailure(
+                    texture,
+                    requiredGeneration,
+                    publishedGeneration,
+                    hasPendingTransition,
+                    out string rehydrationFailure))
+            {
+                manifest.FailCapture(
+                    rehydrationFailure,
+                    EVulkanPresentNowFailureDisposition.RendererTerminal);
+                manifest.ResolveUnresolved(index);
+                continue;
+            }
+
+            if (publishedGeneration == requiredGeneration &&
+                uploadGeneration >= requiredGeneration &&
+                !hasPendingTransition &&
+                TryRequestMissingPublishedGenerationRehydration(
+                    context,
+                    texture,
+                    requiredGeneration,
+                    out bool terminalRecoveryFailure,
+                    out string recoveryDetail))
+            {
+                manifest.FailCapture(
+                    recoveryDetail,
+                    terminalRecoveryFailure
+                        ? EVulkanPresentNowFailureDisposition.RendererTerminal
+                        : EVulkanPresentNowFailureDisposition.RetryFrame);
+                manifest.ResolveUnresolved(index);
+                continue;
+            }
+
             if (publishedGeneration > requiredGeneration ||
                 uploadGeneration > requiredGeneration ||
                 uploadGeneration == requiredGeneration && !hasPendingTransition)
@@ -554,6 +589,169 @@ internal sealed partial class VulkanTextureUploadService
                     EVulkanPresentNowFailureDisposition.RetryFrame);
                 manifest.ResolveUnresolved(index);
             }
+        }
+    }
+
+    /// <summary>
+    /// Claims one native-residency restoration only for a service with no upload
+    /// history for this texture. The old accepted generation remains unresolved;
+    /// a later accepted frame must capture the newly published generation.
+    /// </summary>
+    private bool TryRequestMissingPublishedGenerationRehydration(
+        VulkanTextureUploadSchedulingContext context,
+        XRTexture2D texture,
+        long requiredGeneration,
+        out bool terminalFailure,
+        out string detail)
+    {
+        terminalFailure = false;
+        detail = "Vulkan texture residency restoration is waiting for the current renderer.";
+        if (!context.IsOwnerCurrent ||
+            !context.IsDeviceOperational ||
+            System.Threading.Volatile.Read(ref _preparationRetirementStarted) != 0)
+            return false;
+
+        VulkanTextureUploadGenerationRecord record = _uploadGenerations.GetValue(
+            texture,
+            static _ => new VulkanTextureUploadGenerationRecord());
+        bool claim;
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
+        {
+            if (record.LatestPublishedStreamingGeneration != 0)
+                return false;
+            for (int entryIndex = 0; entryIndex < record.Entries.Count; entryIndex++)
+            {
+                VulkanTextureUploadGenerationState state = record.Entries[entryIndex].State;
+                if (state is not (VulkanTextureUploadGenerationState.Canceled or
+                    VulkanTextureUploadGenerationState.Failed))
+                    return false;
+            }
+            claim = record.RehydrationSourceGeneration == 0;
+            if (claim)
+                record.RehydrationSourceGeneration = requiredGeneration;
+        }
+        if (!claim)
+        {
+            detail = "Vulkan texture residency restoration is already in progress.";
+            return true;
+        }
+
+        bool ScheduleOnCurrentService(
+            TextureStreamingResidentData residentData,
+            bool includeMipChain,
+            uint targetResidentMaxDimension,
+            long streamingGeneration,
+            Func<bool> isCurrentTransition,
+            System.Threading.CancellationToken cancellationToken,
+            Action<XRTexture2D> onFinished,
+            Action<Exception> onError,
+            Action onCanceled)
+            => TryScheduleImportedTextureUpload(
+                context,
+                texture,
+                residentData,
+                includeMipChain,
+                targetResidentMaxDimension,
+                streamingGeneration,
+                TextureUploadPriorityClass.VisibleNow,
+                isCurrentTransition,
+                onFinished,
+                onCanceled,
+                onError,
+                cancellationToken,
+                out _);
+
+        bool scheduled = ImportedTextureStreamingManager.Instance
+            .TrySchedulePublishedResidentDataForVulkanRehydration(
+                texture,
+                requiredGeneration,
+                System.Threading.CancellationToken.None,
+                ScheduleOnCurrentService,
+                out long scheduledGeneration,
+                out string? failureReason,
+                out bool competingTransition);
+        if (scheduled)
+        {
+            using (VulkanFrameLockScope.Enter(
+                       record.Sync,
+                       EVulkanFrameWaitReason.UploadLock))
+                record.RehydrationUploadGeneration = scheduledGeneration;
+            detail =
+                $"Restoring published texture generation {requiredGeneration} as native Vulkan upload generation {scheduledGeneration}.";
+            return true;
+        }
+
+        if (competingTransition)
+        {
+            using (VulkanFrameLockScope.Enter(
+                       record.Sync,
+                       EVulkanFrameWaitReason.UploadLock))
+            {
+                if (record.RehydrationSourceGeneration == requiredGeneration &&
+                    record.RehydrationUploadGeneration == 0 &&
+                    record.RehydrationFailureDetail is null)
+                    record.RehydrationSourceGeneration = 0L;
+            }
+            detail = failureReason ?? "A newer texture streaming transition is pending.";
+            return true;
+        }
+
+        terminalFailure = true;
+        detail = failureReason ?? "Published texture residency could not be restored on the current Vulkan renderer.";
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
+            record.RehydrationFailureDetail = detail;
+        return true;
+    }
+
+    private bool TryGetRehydrationFailure(
+        XRTexture2D texture,
+        long requiredGeneration,
+        long publishedGeneration,
+        bool hasPendingTransition,
+        out string detail)
+    {
+        detail = string.Empty;
+        if (!_uploadGenerations.TryGetValue(
+                texture,
+                out VulkanTextureUploadGenerationRecord? record))
+            return false;
+
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
+        {
+            if (record.RehydrationSourceGeneration != requiredGeneration)
+                return false;
+            if (hasPendingTransition || publishedGeneration > requiredGeneration)
+                return false;
+            if (!string.IsNullOrEmpty(record.RehydrationFailureDetail))
+            {
+                detail = record.RehydrationFailureDetail;
+                return true;
+            }
+            if (record.RehydrationUploadGeneration <= requiredGeneration)
+                return false;
+
+            for (int entryIndex = 0; entryIndex < record.Entries.Count; entryIndex++)
+            {
+                VulkanTextureUploadGenerationEntry entry = record.Entries[entryIndex];
+                if (entry.StreamingGeneration != record.RehydrationUploadGeneration)
+                    continue;
+                if (entry.State is not (VulkanTextureUploadGenerationState.Canceled or
+                    VulkanTextureUploadGenerationState.Failed))
+                    return false;
+                detail = "Texture residency restoration upload ended without publishing native Vulkan residency.";
+                record.RehydrationFailureDetail = detail;
+                return true;
+            }
+
+            detail = "Texture residency restoration upload lost its native generation ticket.";
+            record.RehydrationFailureDetail = detail;
+            return true;
         }
     }
 }

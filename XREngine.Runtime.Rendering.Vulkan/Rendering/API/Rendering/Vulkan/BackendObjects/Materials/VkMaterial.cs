@@ -486,6 +486,7 @@ namespace XREngine.Rendering.Vulkan
 					? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, setCount)
 					: [];
             DescriptorSet[][] descriptorSets = new DescriptorSet[frameCount][];
+            VulkanResourceSlotHandle[] materialSetLifetimeSlots = new VulkanResourceSlotHandle[frameCount];
             DescriptorHeapPushDataPayload[] descriptorHeapPushData = new DescriptorHeapPushDataPayload[frameCount];
             for (int frame = 0; frame < frameCount; frame++)
             {
@@ -530,6 +531,14 @@ namespace XREngine.Rendering.Vulkan
 						materialOwner,
 						VulkanDescriptorManager.MaterialSetIndex,
                     bindings);
+                VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
+                lock (tracker.SyncRoot)
+                {
+                    if (!tracker.TryGetResourceSlotNoLock(
+                            new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, materialSet.Handle),
+                            out materialSetLifetimeSlots[frame]))
+                        throw new InvalidOperationException($"Material descriptor set 0x{materialSet.Handle:X} has no native lifetime slot.");
+                }
                 BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
                 descriptorSets[frame] = frameSets;
                 descriptorHeapPushData[frame] = VulkanDescriptorManager.CreateHeapPushDataPayload(program.DescriptorHeapLayout);
@@ -549,6 +558,7 @@ namespace XREngine.Rendering.Vulkan
                 ProgramLinkGeneration = program.LinkGeneration,
                 Bindings = bindings,
                 DescriptorSets = descriptorSets,
+                MaterialSetLifetimeSlots = materialSetLifetimeSlots,
                 DescriptorHeapPushData = descriptorHeapPushData,
                 UniformBindings = uniformResources,
                 HasMaterialParameterOrSamplerBindings = hasMaterialBindings,

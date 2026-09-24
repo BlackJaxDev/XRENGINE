@@ -4,6 +4,11 @@
 #pragma snippet "TemporalSuperResolutionCore"
 
 layout(location = 0) out vec4 OutColor;
+#ifdef XR_TSR_STABLE_OUTPUT
+layout(location = 1) out vec4 OutHistoryMetadata;
+layout(location = 2) out vec4 OutAccumulation;
+uniform sampler2D TsrHistoryMetadata;
+#endif
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D PostProcessOutputTexture;
@@ -150,8 +155,11 @@ vec2 FindClosestVelocity(vec2 uv)
 }
 
 // ── Neighborhood bounds in YCoCg (source resolution) ──────────────
-void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor, out vec3 meanColor)
+void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor,
+    out vec3 meanColor, out vec3 sampleMin, out vec3 sampleMax)
 {
+    sampleMin = vec3(1e20);
+    sampleMax = vec3(-1e20);
     vec3 m1 = vec3(0.0f);
     vec3 m2 = vec3(0.0f);
     vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
@@ -162,6 +170,8 @@ void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor, ou
         {
             vec2 sampleUv = ClampSourceUv(uv + vec2(float(x), float(y)) * sourceTexelSize);
             vec3 s = TsrRgbToYCoCg(texture(PostProcessOutputTexture, sampleUv).rgb);
+            sampleMin = min(sampleMin, s);
+            sampleMax = max(sampleMax, s);
             m1 += s;
             m2 += s * s;
         }
@@ -198,30 +208,61 @@ vec3 EncodeVelocityDebug(vec2 velocity)
     return vec3(velocity.x * 0.25f + 0.5f, velocity.y * 0.25f + 0.5f, magnitude);
 }
 
+#ifdef XR_TSR_STABLE_OUTPUT
+float TsrLoadCurrentDepth(ivec2 pixel) { return texelFetch(DepthView, pixel, 0).r; }
+vec2 TsrLoadVelocity(ivec2 pixel) { return texelFetch(Velocity, pixel, 0).xy; }
+float TsrLoadHistoryDepth(ivec2 pixel) { return texelFetch(HistoryDepth, pixel, 0).r; }
+vec4 TsrLoadHistoryColor(ivec2 pixel) { return texelFetch(TsrHistoryColor, pixel, 0); }
+vec4 TsrLoadHistoryMetadata(ivec2 pixel) { return texelFetch(TsrHistoryMetadata, pixel, 0); }
+vec3 TsrLoadCurrentColor(ivec2 pixel) { return texelFetch(PostProcessOutputTexture, pixel, 0).rgb; }
+float TsrLoadCurrentReactivity(ivec2 pixel) { return texelFetch(AdvancedReactiveMask, pixel, 0).r; }
+#endif
+#pragma snippet "TemporalSuperResolutionSurface"
+#pragma snippet "TemporalSuperResolutionCoverage"
+
 void main()
 {
     vec2 clipXY = FragPos.xy;
     if (clipXY.x < -1.0f || clipXY.x > 1.0f || clipXY.y < -1.0f || clipXY.y > 1.0f)
         discard;
 
-    vec2 uv = ClampSourceUv(
-        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)));
+    vec2 outputUv = XRENGINE_FramebufferUV(
+        gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight));
+    vec2 currentJitter = TsrFramebufferUvDisplacement(CurrentJitterUv, FramebufferTextureYDirection);
+    vec2 previousJitter = TsrFramebufferUvDisplacement(PreviousJitterUv, FramebufferTextureYDirection);
+#ifdef XR_TSR_STABLE_OUTPUT
+    // Advanced draws its scene and overlays before removing projection jitter.
+    vec2 sourceUv = outputUv + currentJitter;
+#else
+    // Default composites unjittered overlays before TSR and retains its current grid.
+    vec2 sourceUv = outputUv;
+#endif
+    vec2 uv = ClampSourceUv(sourceUv);
+    float postTemporalCoverage = SamplePostTemporalForwardMask(uv);
+    bool isPostTemporalForward = postTemporalCoverage > 0.5f;
 
-    // MotionVectors.fs writes unjittered current-minus-previous NDC. The
-    // projection-sample displacement is therefore applied exactly once below.
     float depthDiscontinuity = EvaluateDepthDiscontinuity(uv);
+#ifdef XR_TSR_STABLE_OUTPUT
+    TsrSurfaceSample surface = TsrSelectSurface(uv);
+    vec2 velocity = surface.velocity;
+#else
     vec2 velocity = texture(Velocity, uv).xy;
     if (depthDiscontinuity > 1e-4f)
         velocity = FindClosestVelocity(uv);
+#endif
 
-    float postTemporalCoverage = SamplePostTemporalForwardMask(uv);
-    bool isPostTemporalForward = postTemporalCoverage > 0.5f;
     if (isPostTemporalForward)
         velocity = vec2(0.0f);
 
-    // Velocity is encoded from unjittered NDC matrices. Convert it to UV and
-    // account for projection-sample displacement exactly once here.
-    vec2 historyUV = uv - velocity * 0.5f + PreviousJitterUv - CurrentJitterUv;
+#ifdef XR_TSR_STABLE_OUTPUT
+    // Color history is stable; its raw depth companion retains previous jitter.
+    vec2 historyUV = outputUv - TsrFramebufferUvDisplacement(velocity * 0.5f, FramebufferTextureYDirection);
+    vec2 historyDepthUv = historyUV + previousJitter;
+#else
+    vec2 historyUV = uv - TsrFramebufferUvDisplacement(velocity * 0.5f, FramebufferTextureYDirection)
+        + previousJitter - currentJitter;
+    vec2 historyDepthUv = historyUV;
+#endif
     vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
     vec2 historyTexelSize = TextureTexelSize(TsrHistoryColor);
     bool nativeResolution = all(equal(
@@ -229,28 +270,48 @@ void main()
         textureSize(TsrHistoryColor, 0)));
 
     vec3 currentColorRaw = texture(PostProcessOutputTexture, uv).rgb;
+#ifdef XR_TSR_STABLE_OUTPUT
+    // Surface ownership and current color use the same positive bilinear taps.
+    vec3 currentColor = currentColorRaw;
+#else
     vec3 currentColorFiltered = SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize);
-    // At 1:1 resolution retain the exact current sample and continue through
-    // temporal reprojection/history accumulation. Only the spatial upscale
-    // reconstruction is bypassed; TSR is not reduced to a spatial copy.
-    vec3 currentColor = nativeResolution
+    // The selected source grid also applies at native resolution. Stencil-tagged
+    // overlays bypass spatial reconstruction and temporal blending.
+    vec3 currentColor = nativeResolution || isPostTemporalForward
         ? currentColorRaw
         : mix(currentColorRaw, currentColorFiltered, 0.25f);
+#endif
     vec3 currentYCoCg = TsrRgbToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
 
     // Neighborhood in YCoCg at source resolution
-    vec3 minBound, maxBound, meanYCoCg;
-    ComputeNeighborhoodBounds(uv, minBound, maxBound, meanYCoCg);
+    vec3 minBound, maxBound, meanYCoCg, sampleMin, sampleMax;
+    ComputeNeighborhoodBounds(uv, minBound, maxBound, meanYCoCg, sampleMin, sampleMax);
+    float historyAge = 0.0;
 
     float currentDepth = texture(DepthView, uv).r;
     vec3 historyYCoCg = currentYCoCg;
     bool canUseHistory = TsrCanSampleHistory(HistoryReady, historyUV);
+    canUseHistory = canUseHistory && !isPostTemporalForward
+        && TsrIsValidUv(sourceUv) && TsrIsValidUv(historyDepthUv);
+#ifdef XR_TSR_STABLE_OUTPUT
+    bool historyAllowed = canUseHistory;
+    float surfaceSupport = 0.0;
+    float rejectionReason = 1.0;
+#endif
 
     if (canUseHistory)
     {
+#ifdef XR_TSR_STABLE_OUTPUT
+        vec3 historyRGB;
+        canUseHistory = TsrSampleSurfaceHistory(surface, historyUV,
+            currentJitter, previousJitter, historyRGB, surfaceSupport, historyAge, rejectionReason);
+        if (canUseHistory)
+            historyYCoCg = TsrRgbToYCoCg(historyRGB);
+#else
         vec2 historySampleUv = ClampHistoryUv(historyUV);
-        float historyDepth = texture(HistoryDepth, historySampleUv).r;
+        float historyDepth = texture(HistoryDepth,
+            ClampUvToTexels(historyDepthUv, TextureTexelSize(HistoryDepth))).r;
         if (TsrDepthMatches(currentDepth, historyDepth, DepthRejectThreshold))
         {
             // Bicubic Catmull-Rom on full-resolution history
@@ -261,8 +322,37 @@ void main()
         {
             canUseHistory = false;
         }
+#endif
     }
 
+    // Mature, surface-validated detail may use the observed neighborhood range.
+    // A rare thin foreground sample otherwise falls outside mean +/- sigma.
+#ifdef XR_TSR_STABLE_OUTPUT
+    float canonicalReactive = clamp(texture(AdvancedReactiveMask, uv).r, 0.0, 1.0);
+    TsrCoverageResult coverage = TsrResolveCoverage(uv, historyUV, currentJitter, previousJitter,
+        historyAllowed, isPostTemporalForward ? 1.0 : canonicalReactive,
+        TsrComputeMotionMask(velocity, ReactiveVelocityScale), currentLuma, depthDiscontinuity);
+    if (coverage.historyValid)
+    {
+        canUseHistory = true;
+        historyAge = coverage.historyAge;
+        historyYCoCg = TsrRgbToYCoCg(coverage.historyColor);
+    }
+    else if (coverage.currentCoverage >= 0.0)
+    {
+        // Seed color and coverage together. An ordinary history mixture has
+        // no matching coverage state and cannot be relabeled as this frame.
+        canUseHistory = false;
+        historyAge = 0.0;
+        historyYCoCg = currentYCoCg;
+    }
+    float detailProtection = TsrComputeDetailProtection(canUseHistory, historyAge,
+        TsrComputeMotionMask(velocity, ReactiveVelocityScale), canonicalReactive);
+    minBound = mix(minBound, min(minBound, sampleMin), detailProtection);
+    maxBound = mix(maxBound, max(maxBound, sampleMax), detailProtection);
+    minBound = mix(minBound, min(minBound, coverage.colorMin), coverage.retention);
+    maxBound = mix(maxBound, max(maxBound, coverage.colorMax), coverage.retention);
+#endif
     // Clip toward AABB center
     vec3 clippedHistory = TsrClipHistoryToNeighborhood(historyYCoCg, minBound, maxBound);
     float historyLuma = clippedHistory.x;
@@ -295,6 +385,20 @@ void main()
     if (isPostTemporalForward)
         historyWeight = 0.0f;
 
+#ifdef XR_TSR_STABLE_OUTPUT
+    historyWeight = mix(historyWeight, max(historyWeight, clamp(FeedbackMax, 0.0, 0.99)), coverage.retention);
+    OutHistoryMetadata = vec4(TsrAdvanceHistoryAge(canUseHistory, historyAge, reactiveMask),
+        coverage.historyValid ? mix(coverage.currentCoverage, coverage.historyCoverage, historyWeight)
+            : coverage.currentCoverage,
+        TsrCompressLuma(currentLuma), coverage.flicker);
+#endif
+
+    vec3 resolved = mix(currentYCoCg, clippedHistory, historyWeight);
+    vec3 result = TsrYCoCgToRgb(resolved);
+#ifdef XR_TSR_STABLE_OUTPUT
+    // Persist the real, unsharpened resolve even while viewing diagnostics.
+    OutAccumulation = vec4(max(result, vec3(0.0)), 1.0);
+#endif
     if (DebugMode != 0)
     {
         vec3 debugColor = vec3(0.0f);
@@ -315,15 +419,26 @@ void main()
             case 5:
                 debugColor = canUseHistory ? vec3(0.0f, 1.0f, historyWeight) : vec3(1.0f, 0.0f, 0.0f);
                 break;
+#ifdef XR_TSR_STABLE_OUTPUT
+            case 6:
+                debugColor = vec3(rejectionReason * 0.25, surfaceSupport, coverage.historyValid ? 1.0 : 0.0);
+                break;
+            case 7:
+                debugColor = coverage.currentCoverage < 0.0 ? vec3(0.0)
+                    : vec3(coverage.currentCoverage, OutHistoryMetadata.y, coverage.failureReason / 7.0);
+                break;
+            case 8:
+                debugColor = vec3(abs(coverage.flicker), coverage.retention, coverage.flicker < 0.0 ? 1.0 : 0.0);
+                break;
+            case 9:
+                debugColor = abs(historyYCoCg - clippedHistory) * 4.0;
+                break;
+#endif
         }
 
         OutColor = vec4(debugColor, 1.0f);
         return;
     }
-
-    // Blend in YCoCg, convert back
-    vec3 resolved = mix(currentYCoCg, clippedHistory, historyWeight);
-    vec3 result = TsrYCoCgToRgb(resolved);
 
     // Post-resolve sharpening — stronger than TAA because we're upscaling from low res.
     // Uses current frame detail to restore high-frequency edges. Skip the
@@ -340,6 +455,12 @@ void main()
             nativeResolution,
             historyWeight,
             reactiveMask);
+#ifdef XR_TSR_STABLE_OUTPUT
+        sharpenStrength *= TsrComputeSharpenStability(canUseHistory, historyAge,
+            geometryInstability, motionMask, reactiveMask,
+            currentLuma, historyYCoCg.x, ReactiveLumaThreshold);
+        sharpenStrength *= 1.0 - coverage.retention;
+#endif
         result += highFreq * sharpenStrength;
     }
 

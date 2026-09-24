@@ -1,5 +1,6 @@
 using System.Globalization;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -85,9 +86,9 @@ internal static class VulkanPresentationProfileResolver
                         "FrameGeneration presentation was requested, but the Vulkan device was not provisioned for Streamline/DLSS frame generation.");
                 }
 
-                nativeMode = Contains(modes, PresentModeKHR.MailboxKhr)
-                    ? PresentModeKHR.MailboxKhr
-                    : RequireMode(modes, PresentModeKHR.ImmediateKhr, requested);
+                // Streamline owns generated-frame pacing. Vulkan DLSS-G does not
+                // support VSync scheduling, including Mailbox replacement.
+                nativeMode = RequireMode(modes, PresentModeKHR.ImmediateKhr, requested);
                 maximumFramesAhead = 1;
                 frameGenerationEnabled = true;
                 break;
@@ -120,8 +121,13 @@ internal static class VulkanPresentationProfileResolver
         return new VulkanPresentationProfileResolution(nativeMode, snapshot);
     }
 
-    private static EVulkanPresentationProfile ResolveRequestedProfile()
+    internal static EVulkanPresentationProfile ResolveRequestedProfile()
     {
+        // Enabling the feature must provision its proxy presentation path even
+        // when the user's normal pacing profile is Stable or LowLatency.
+        if (NvidiaDlssManager.IsFrameGenerationRequested)
+            return EVulkanPresentationProfile.FrameGeneration;
+
         EVulkanPresentationProfile requested =
             RuntimeRenderingHostServices.Settings.VulkanPresentationProfile;
         string? raw = Environment.GetEnvironmentVariable(

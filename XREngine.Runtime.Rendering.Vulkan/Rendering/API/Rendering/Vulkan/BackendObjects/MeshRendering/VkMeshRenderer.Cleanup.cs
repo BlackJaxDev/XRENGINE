@@ -107,11 +107,12 @@ internal unsafe partial class VkMeshRenderer
 
 	/// <summary>
 	/// Drops only immutable descriptor allocations whose locally-owned set tier
-	/// still names a superseded native buffer generation. Shared material tiers
+	/// still names an exact retiring native resource generation. Shared material tiers
 	/// are intentionally excluded because this renderer does not own them.
 	/// </summary>
 	internal int ReleaseSupersededDescriptorAllocations(
-		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets,
+		in VulkanSupersededResourceDescriptorOwner pending)
 	{
 		int detachedCount = 0;
 		lock (_recordDrawSync)
@@ -121,7 +122,7 @@ internal unsafe partial class VkMeshRenderer
 			{
 				foreach (KeyValuePair<DescriptorAllocationKey, DescriptorAllocation> pair in _descriptorAllocations)
 				{
-					if (AllocationOwnsAffectedDescriptorSet(pair.Value, affectedSets))
+					if (AllocationOwnsAffectedDescriptorSet(pair.Value, affectedSets, pending))
 						(keysToRelease ??= []).Add(pair.Key);
 				}
 			}
@@ -182,23 +183,47 @@ internal unsafe partial class VkMeshRenderer
 		}
 	}
 
-	private static bool AllocationOwnsAffectedDescriptorSet(
+	private bool AllocationOwnsAffectedDescriptorSet(
 		DescriptorAllocation allocation,
-		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets,
+		in VulkanSupersededResourceDescriptorOwner pending)
 	{
-		for (int frameSlot = 0; frameSlot < allocation.Sets.Length; frameSlot++)
+		VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
+		lock (tracker.SyncRoot)
 		{
-			DescriptorSet[] sets = allocation.Sets[frameSlot];
-			for (int setIndex = 0; setIndex < sets.Length; setIndex++)
+			for (int frameSlot = 0; frameSlot < allocation.SetLifetimeSlots.Length; frameSlot++)
 			{
-				if (setIndex >= 32 || (allocation.ActiveSetMask & (1u << setIndex)) == 0)
+				VulkanResourceSlotHandle[]? slots = allocation.SetLifetimeSlots[frameSlot];
+				DescriptorSet[]? sets = allocation.Sets[frameSlot];
+				if (slots is null || sets is null)
 					continue;
-
-				ulong handle = sets[setIndex].Handle;
-				for (int affectedIndex = 0; affectedIndex < affectedSets.Length; affectedIndex++)
+				for (int setIndex = 0; setIndex < sets.Length; setIndex++)
 				{
-					if (affectedSets[affectedIndex].Set.Handle == handle)
-						return true;
+					if (setIndex >= 32 || (allocation.ActiveSetMask & (1u << setIndex)) == 0 ||
+						setIndex >= slots.Length || !slots[setIndex].IsValid)
+						continue;
+
+					ulong handle = sets[setIndex].Handle;
+					if (handle == 0 ||
+						!tracker.TryResolveResourceSlotNoLock(
+							slots[setIndex],
+							out VulkanResourceLifetimeRecord resource) ||
+						resource.Key != new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, handle) ||
+						!tracker.DescriptorSetLifetimes.TryGetValue(
+							handle,
+							out VulkanDescriptorSetLifetimeRecord? state) ||
+						state.Pool.Handle != allocation.Pool.Handle ||
+						!state.PinnedReferences.TryGetValue(
+							pending.ResourceKey,
+							out ulong pinnedGeneration) ||
+						pinnedGeneration != pending.Generation)
+						continue;
+
+					for (int affectedIndex = 0; affectedIndex < affectedSets.Length; affectedIndex++)
+					{
+						if (affectedSets[affectedIndex].Set.Handle == handle)
+							return true;
+					}
 				}
 			}
 		}
@@ -255,6 +280,8 @@ internal unsafe partial class VkMeshRenderer
         _descriptorAllocations.Clear();
         _descriptorAllocationsByDrawSlot.Clear();
         _descriptorAllocationsByOwner.Clear();
+		Array.Clear(_localDescriptorFingerprintMemo);
+		_nextLocalDescriptorFingerprintMemoSlot = 0;
 
 		if (!activePoolReleased && _descriptorPool.Handle != 0)
 			ReleaseDescriptorPool(_descriptorPool, destroyPoolImmediately);

@@ -281,8 +281,8 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
                 StageMask = (PipelineStageFlags2)(ulong)dstStageMask,
                 AccessMask = (AccessFlags2)(ulong)barrier.DstAccessMask,
                 QueueFamilyIndex = barrier.DstQueueFamilyIndex,
-                ResourceGeneration = Runtime.ResourceRuntime.GetPublishedGeneration(
-                    ObjectType.Image,
+                ResourceGeneration = Runtime.ResourceRuntime.GetCommandBufferImageGeneration(
+                    commandBuffer,
                     barrier.Image.Handle),
             };
             RecordImageAccess(

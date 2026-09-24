@@ -335,7 +335,10 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, SmaaBlendTextureName, windowSize, layers, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8);
         DeclareLatePostColor(builder, SmaaOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, TsrAccumulationTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryColorTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
+        DeclareLatePostColor(builder, TsrHistoryMetadataOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, TsrHistoryMetadataTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil).Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent).Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
             .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers).Target(array: Stereo, multisample: false)
@@ -393,9 +396,12 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostDestination(builder, SmaaBlendFBOName, SmaaBlendTextureName, windowSize, CreateSmaaBlendFBO);
         DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
         DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);
+        DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
+        DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
+        DeclareLatePostDestination(builder, TsrHistoryMetadataFBOName, TsrHistoryMetadataTextureName, windowSize, CreateTsrHistoryMetadataFBO);
         builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)
             .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
 
     }

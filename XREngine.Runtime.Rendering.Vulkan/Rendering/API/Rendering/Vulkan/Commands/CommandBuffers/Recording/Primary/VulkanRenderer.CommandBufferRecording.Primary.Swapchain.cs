@@ -370,6 +370,14 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            if (retainedSourceLease is not null &&
+                !ResourceRuntime.TryAdoptRetainedPresentationImageForRecording(
+                    recordingState.CommandBuffer,
+                    presentationSource,
+                    retainedSourceLease,
+                    out _))
+                return false;
+
             EnsureSwapchainColorAttachmentLayoutForBlit(ref recordingState);
 
             int passIndex = recordingState.ActivePassIndex != int.MinValue

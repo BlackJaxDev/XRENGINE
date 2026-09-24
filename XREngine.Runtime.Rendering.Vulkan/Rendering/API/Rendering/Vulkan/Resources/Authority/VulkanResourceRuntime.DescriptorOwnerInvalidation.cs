@@ -1,13 +1,14 @@
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanResourceRuntime
 {
     /// <summary>
-    /// Retires descriptor cache owners which still publish an exact superseded
-    /// buffer generation. Call only at a normal frame preparation boundary,
+    /// Retires descriptor cache owners which still publish an exact retiring
+    /// native resource generation. Call only at a normal frame preparation boundary,
     /// before command recording starts for that frame.
     /// </summary>
     internal int DrainPendingSupersededDescriptorOwners()
@@ -19,18 +20,26 @@ internal sealed partial class VulkanResourceRuntime
             DescriptorLifetime.DrainPendingMeshDescriptorPoolSlabRetirements();
         releasedOwnerCount +=
             DescriptorLifetime.DrainPendingMeshDescriptorSetRetirements();
-        while (Lifetime.TryDequeueSupersededBufferDescriptorOwner(
-                   out VulkanSupersededBufferDescriptorOwner pending))
+        while (Lifetime.TryDequeueSupersededResourceDescriptorOwner(
+                   out VulkanSupersededResourceDescriptorOwner pending))
         {
             try
             {
                 VulkanDescriptorSetGenerationReference[] affected =
-                    SnapshotDescriptorOwnersForSupersededBuffer(pending);
+                    SnapshotDescriptorOwnersForSupersededResource(pending);
                 if (affected.Length == 0)
                     continue;
 
                 releasedOwnerCount +=
                     Descriptors.RetireSupersededComputeDescriptorPools(affected);
+
+                VkObject<XRMaterial>[] materials = BackendObjects.Snapshot<XRMaterial>();
+                for (int index = 0; index < materials.Length; index++)
+                {
+                    if (materials[index] is VkMaterial material)
+                        releasedOwnerCount +=
+                            material.ReleaseSupersededDescriptorProgramStates(affected, pending);
+                }
 
                 VkObject<XRMeshRenderer.BaseVersion>[] meshes =
                     BackendObjects.Snapshot<XRMeshRenderer.BaseVersion>();
@@ -38,14 +47,14 @@ internal sealed partial class VulkanResourceRuntime
                 {
                     if (meshes[index] is VkMeshRenderer mesh)
                         releasedOwnerCount +=
-                            mesh.ReleaseSupersededDescriptorAllocations(affected);
+                            mesh.ReleaseSupersededDescriptorAllocations(affected, pending);
                 }
             }
             catch
             {
                 // Keep the exact generation queued for a later normal boundary;
                 // cache eviction must never turn a transient failure into a leak.
-                Lifetime.EnqueueSupersededBufferDescriptorOwner(
+                Lifetime.EnqueueSupersededResourceDescriptorOwner(
                     pending.ResourceKey,
                     pending.Generation);
                 throw;
@@ -69,8 +78,8 @@ internal sealed partial class VulkanResourceRuntime
     }
 
     private VulkanDescriptorSetGenerationReference[]
-        SnapshotDescriptorOwnersForSupersededBuffer(
-            in VulkanSupersededBufferDescriptorOwner pending)
+        SnapshotDescriptorOwnersForSupersededResource(
+            in VulkanSupersededResourceDescriptorOwner pending)
     {
         lock (Lifetime.Tracker.SyncRoot)
         {

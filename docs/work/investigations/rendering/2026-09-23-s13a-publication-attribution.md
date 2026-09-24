@@ -1,12 +1,16 @@
 # S13a publication and collect-wait attribution
 
-Status: Evidence handoff completed at the user's September 23 direction; the S13a validation gate remains open. This is the S13a observation record. S12's merged distinct-world lifetime gate is still active and has not been dispositioned. At this handoff, S13a had not changed production dirty-state behavior; the separately tracked S13b candidate follows this observation.
+Status: Blocked. The evidence handoff completed at the user's September 23
+direction, but the S13a validation gate remains open. This is the S13a
+observation record. S12's merged distinct-world lifetime gate is still active
+and has not been dispositioned. At the handoff, S13a had not changed production
+dirty-state behavior; the separately tracked S13b candidate followed it.
 
 ## Frozen workload and historical evidence
 
 The pre-instrumentation checkout was `cee30cd5790a019c2fe42ed163208d91bd1dc8ce` with no tracked diff. Its isolated Release editor DLL SHA256 was `0FAEB94EC72780D26DB0E18289D56C3D702383468C4C706C00BEA524AE556E0`. The live observer-enabled isolated Release editor DLL SHA256 was `982D7B35E5EFE85B1759CBCB173B9EA3DF47D0E194635FADC5B172F8054409D0`. A final shared-output Release rebuild for the paired matrix has editor executable/DLL/Rendering DLL SHA256 values `48E88D219AB464BB0312B2749E016A7D29BAD842AC52E7A29F6E04E1C1C14499`, `B8E66F0FF77A06C359AFADA7283649103E5602830B58968A8F889227FC53BD3B`, and `DB8434AD70DBEFB948CE1ED4552A5ED9B920728BF61617D52083EB4110AFD133`. The observer build includes the S13a source instrumentation and no intended change to publication behavior. Both isolated Release builds and the final shared-output rebuild passed with zero warnings and errors. Observer-off and observer-on comparisons use the same final shared-output binary.
 
-The later telemetry-corrected shared-output Release editor DLL and Rendering DLL SHA256 values are `1C2955F0F5C24D0FFD7EB3056B514E9DCF8A9503814D8159CE9BACCFF2B5785A` and `1A3014378AE6673393886AF71538FE7E351A583B74DA60E34D2B721E96AA183E`; its editor executable SHA256 remained `48E88D219AB464BB0312B2749E016A7D29BAD842AC52E7A29F6E04E1C1C14499`. The Debug editor DLL SHA256 is `87C9B38965737D7DDC640DF335D564E4E7226F605EB1BD416D81446539C4316A`. The final live Vulkan trace/mutation and separate Debug/cold captures use these later binaries. The six observer pairs and all-frame OpenGL comparison use the earlier matrix binary above; no performance comparison silently crosses these build identities.
+The later telemetry-corrected shared-output Release editor DLL and Rendering DLL SHA256 values are `1C2955F0F5C24D0FFD7EB3056B514E9DCF8A9503814D8159CE9BACCFF2B5785A` and `1A3014378AE6673393886AF71538FE7E351A583B74DA60E34D2B721E96AA183E`; its editor executable SHA256 remained `48E88D219AB464BB0312B2749E016A7D29BAD842AC52E7A29F6E04E1C1C14499`. The Debug editor DLL SHA256 is `87C9B38965737D7DDC640DF335D564E4E7226F605EB1BD416D81446539C4316A`. The final live Vulkan trace/mutation and separate Debug/cold captures use these later binaries. The six observer runs (three pairs) and all-frame OpenGL comparison use the earlier matrix binary above; no performance comparison silently crosses these build identities.
 
 The subsequent read-only identity-manifest export rebuilt Release again. Its shared-output Editor DLL and Rendering DLL SHA256 values are `B33B5C383C40CC97B3D80BDA2BBE6193A0D75BFEAF5A1474C3D69A1F85263AC3` and `4890F5AC2FACCB21122EFBEC77056874B44B37624587A1F630D5C9333D03544B`. Vulkan and OpenGL manifests were copied from the same isolated Release editor build with this source and telemetry off. No frame-rate result is attributed to the manifest-only build.
 
@@ -128,10 +132,98 @@ The CPU profiler dump was taken after WPR saving and reports incomplete active s
 
 ## Open gates and next decisions
 
-- Repeat the predeclared observer overhead gate on the final corrected binary if retention is brought within S00 limits. The six frozen-binary pairs passed their positive-overhead tolerance but had large off-run variability and all failed retention, so they cannot close the gate.
+- Repeat the predeclared observer overhead gate on the final corrected binary if retention is brought within S00 limits. The six frozen-binary runs formed three pairs; all three pairs passed their positive-overhead tolerance, but off-run variability was large and every run failed retention, so they cannot close the gate.
 - Measure attached-debugger behavior if available. The current Debug run had no debugger; the cold-cache Release case is recorded separately from the warmed windows and does not measure its initial 10-second readiness wait.
 - Trace source/primitive and world/view/collection ownership through exact accepted publication and render preparation on both backends. The final trace proves one accepted commit after identity delivery, and published-package manifests match all 393 fixture-specific resident identities plus mapped pass membership. They still lack a general stable owner path/ordinal and a full callback-to-package/view join. Confirm the first historical backend divergence with one controlled change only if the differing event is reproduced.
 - Split callback wall time into on-CPU work, GC pauses and descheduling. Account for remaining callback time, registration cache outcomes, dirty/upload bytes, operation scans, preparation, encoding and retained leases. The current aggregate supports a strong registration-cost hypothesis but does not complete S02's attribution gate.
-- Recheck native-resource/descriptor/backlog retention after its owner resolves the failed endpoints. S12 must be validated or explicitly dispositioned before S13a can close. No S13b behavior edit has begun.
+- Recheck native-resource/descriptor/backlog retention after its owner resolves the failed endpoints. S12 must be validated or explicitly dispositioned before S13a can close. The later S13b candidate is tracked separately below and in its own gate record.
 
 No regression tests were added or run while this live integration is under investigation, following the repository testing policy.
+
+## September 24 closeout audit
+
+S13a is **Blocked**, not Validated or Closed. The observation work establishes the
+identity-feedback owner and a registration hot path, but the protocol's complete
+attribution and acceptance gates have not passed. The later S13b behavior changes
+do not retroactively validate the S13a observer binary.
+
+Three additional Release Vulkan `ReleaseBenchmark` captures used the frozen
+393-resident-draw Sponza fixture, Advanced/CpuDirect/TSR, the same stationary camera,
+and workload identity `10991459253885323059`. All had one captured identity,
+verified camera/admission images, lossless diagnostics, required backlogs at the
+endpoint, and zero sampled failed Vulkan frames. They were separate processes;
+the first two used an earlier September 24 candidate, while the third included
+the sidecar/scratch lifetime repair but preceded the final lease and ledger edits.
+
+| Warmup / stationary / motion | `render<-collect` p50 / p95 | Native live start -> end | Descriptor sets start -> end | Retention |
+| --- | ---: | ---: | ---: | --- |
+| 25 s / 60 s / 60 s | 2.827 / 3.409 ms | 15,370 -> 15,637 | 11,801 -> 12,071 | Failed |
+| 180 s / 60 s / none | 3.014 / 3.875 ms | 14,131 -> 14,131 | 10,141 -> 10,141 | Passed once |
+| 180 s / 60 s / 60 s | 3.253 / 4.478 ms | 13,588 -> 15,549 | 9,991 -> 11,946 | Failed |
+
+The corresponding summaries are under
+`Build/_AgentValidation/20260924-102959-s13-closeout/reports/` as
+`final-clean-vulkan/summary.json`, `final-clean-vulkan-deepwarm/summary.json`,
+and `final-post-lifetime-vulkan/summary.json`. The retention endpoint for
+the first and third runs was taken **after** controlled camera motion, so
+their increase cannot be labeled stationary-window accumulation. Coarse GPU
+timing coverage was 0.906%, 0%, and
+54.545% respectively, so these captures cannot support a comparable GPU-time
+distribution. One deep-warm plateau does not explain the repeat failure or
+establish a stationary leak. A later isolated live capture attributed the
+motion increments to new immutable-resource fingerprints on existing mesh
+descriptor owner groups. A subsequent sample found the same managed textures
+published under new native image/view/sampler generations and a changed
+sampler signature; see the S13b investigation. Whether those older fingerprints
+are still needed requires an exact owner/command-lifetime trace and a bounded
+retirement rule. The observer gate still needs matched final-binary endpoints.
+
+The remaining S13a closure conditions are: disposition the S12 distinct-world
+lifetime dependency; run the predeclared three observer pairs on the exact final
+binary with retention and GPU coverage; obtain the attached-debugger condition
+when available; correlate callback spans with on-CPU, GC, ready, and blocked
+time; and either reproduce and causally classify the historical Vulkan/OpenGL
+first differing event or record an explicit scope disposition for its current
+non-reproduction. The historical 20-sample binary manifests cannot be recovered
+from expired ignored outputs, so their identity remains unknown. Applicable
+test clearance has not been given.
+
+A later S13b lifetime probe traced the pending old texture generations to
+shared material descriptor pins. Targeted material program-state retirement
+cleared the image/view/sampler backlog in one isolated live run, while the mesh
+full-key cache still retained additional local descriptor variants after a
+distinct view. That candidate was measured with a temporary probe and does not
+replace S13a's final probe-free observer pairs or its other open gates; see the
+[S13b gate record](2026-09-23-s13b-identity-feedback.md#exact-retired-texture-owner-and-candidate-cleanup).
+A later probe-free Release run kept native resources and descriptor sets flat
+through a 60-second stationary interval after warmup, then retained another
+1,641 native resources and 1,625 descriptor sets after a controlled view
+transition. Its old-texture retirement backlog stayed zero. This failed motion
+endpoint still prevents the S13a retention/observer matrix from passing; it
+was one live run, not the predeclared three observer pairs.
+
+The subsequent S13b local-payload probe found that the affected mesh variants
+had identical physical dynamic-uniform-buffer writes despite different captured
+texture signatures. The narrowed allocation identity eliminated 918 duplicate
+payload variants in the diagnostic comparison. A later probe-free build kept
+801 mesh variants/4,005 mesh sets flat through repeated and unseen camera views;
+its final stationary interval also kept native resources/total descriptor sets
+flat at 11,410/7,856 with zero pending retirement. Those results supersede the
+specific mesh-duplication failure, while the full observer matrix remains open.
+A supported renderer restart then exposed missing backend upload registration
+for an already published logical texture generation. The
+[current S13b record](2026-09-23-s13b-identity-feedback.md#renderer-restart-follow-up-exposed-during-validation)
+preserves that lifecycle failure and its follow-up. The correction subsequently
+passed two live Vulkan restarts and A/B/A view sequences, reaching 7,891 and
+6,678 completed presents with zero retirement backlog. Cumulative validation
+retained two startup descriptor-heap compatibility errors on each device, with
+no additional rendering/recovery errors. These scoped results do not complete
+the observer matrix or other open gates. S13a remains Blocked.
+
+The September 24 [remaining closeout work](../../todo/rendering/vulkan-stall-remediation-todo.md#september-24-handoff-remaining-closeout-work)
+is the consolidated resumption checklist. Later automated screenshot/log
+collection is awaiting review and does not satisfy the final-binary observer
+gate. The world snapshot attempt failed before restoration; its missing
+exception diagnostics must be repaired before that route can support the S12
+distinct-world investigation. The current session is stopped, with no waiver or
+regression-test clearance granted.

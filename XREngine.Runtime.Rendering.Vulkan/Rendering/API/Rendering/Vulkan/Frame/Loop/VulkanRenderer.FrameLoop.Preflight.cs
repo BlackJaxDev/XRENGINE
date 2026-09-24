@@ -119,7 +119,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool frameGenerationProxyRequired =
-                OutputRuntime.Desktop.PresentationProfile.FrameGenerationEnabled;
+                VulkanPresentationProfileResolver.ResolveRequestedProfile() == EVulkanPresentationProfile.FrameGeneration;
             bool frameGenerationProxyIncludesDlss =
                 frameGenerationProxyRequired && _outputRuntime._streamlineDlssProvisioned;
             if (OutputRuntime.Desktop.StreamlineFrameGenerationActive != frameGenerationProxyRequired ||

@@ -1,6 +1,6 @@
 # Vulkan Upscale Bridge
 
-Last updated: 2026-07-19
+Last updated: 2026-09-24
 
 The Vulkan upscale bridge lets the OpenGL renderer use Vulkan-only vendor upscalers without migrating the whole renderer to Vulkan. OpenGL remains authoritative for the frame graph and final present, while a per-viewport Vulkan sidecar owns shared bridge images, imports them through Win32 external-memory interop, runs DLSS or XeSS, and returns the upscaled output to OpenGL through external semaphore synchronization.
 
@@ -130,20 +130,54 @@ XeSS frame generation remains intentionally out of scope for this bridge because
 
 ## Native Vulkan DLSS And Frame Generation
 
-The native Vulkan default pipeline now routes DLSS Super Resolution through the main Vulkan renderer instead of the OpenGL bridge. `VPRC_VendorUpscale` resolves the source color, depth, motion-vector, and optional exposure textures from the default pipeline, validates that the DLSS inputs share the same internal extent, allocates a storage-capable output color texture at the final output extent, and enqueues a DLSS frame op before the final present quad samples that output. Selecting anti-aliasing mode `DLAA` requests the same DLSS/Streamline path at native internal resolution, so Streamline receives `DLAA` mode instead of an upscaling mode.
+Default and Advanced desktop pipelines treat super-resolution and frame
+generation as separate choices. Enabling DLSS Super Resolution suppresses engine
+MSAA, TAA, TSR, FXAA, and SMAA in the effective frame profile; it preserves the
+authored AA selection for restoration when DLSS is disabled. DLSS still receives
+jitter, velocity, depth, and temporal history metadata. Frame generation alone
+preserves the selected AA and consumes its resolved output, including TSR.
+
+With TSR plus frame generation, HUD-less color is display-sized while depth and
+motion remain render-sized. The vendor command validates these dimensions
+separately and captures its matrices/reset state from temporal Begin. Spatial AA
+with frame generation also advances temporal metadata, without projection jitter.
+Fixed upscale ratios do not enable Streamline's dynamic-resolution pacing mode.
+
+An enabled DLSS frame-generation request selects the FrameGeneration presentation
+profile automatically, including when the normal profile is Stable or LowLatency.
+Changing the request recreates the proxy/direct swapchain as needed; disabling it
+restores the configured presentation profile. Engine queue selection reserves
+optical-flow families for Streamline even when they also advertise transfer support.
+Vulkan FG requires Immediate presentation; the SDK owns its frame pacing. Proxy
+images use Streamline's acquire/present semaphore protocol, without direct WSI
+maintenance fences. Lifecycle transitions establish release proof through the
+intercepted device-idle hook under exclusive queue admission. Because the SDK
+allows only one proxy, replacement waits for the previous generation's graphics
+and resource retirement before creating another swapchain.
+
+The SDK's presented-frame count includes the real frame: a value of two means
+one real plus one generated frame. Do not add one again when estimating FPS.
+Validate generated presentation with the output window visible and focused,
+including after swapchain recreation. Hardware runs have shown one presentation
+per rendered frame in the background and two after refocusing without changing
+rendering settings; record background behavior separately.
+See the [current live investigation](../../work/investigations/rendering/2026-09-24-vulkan-dlss-aa-frame-generation.md)
+for measured acceptance and remaining limitations.
+
+The native Vulkan Default and Advanced pipelines route DLSS Super Resolution through the main Vulkan renderer instead of the OpenGL bridge. `VPRC_VendorUpscale` resolves the source color, depth, motion-vector, and optional exposure textures from the active pipeline, validates that the DLSS inputs share the same internal extent, allocates a storage-capable output color texture at the final output extent, and enqueues a DLSS frame op before the final present quad samples that output. Selecting anti-aliasing mode `DLAA` requests the same DLSS/Streamline path at native internal resolution, so Streamline receives `DLAA` mode instead of an upscaling mode.
 
 The queued DLSS op records inside the frame command buffer. It transitions the tagged images to `General`, passes the renderer-owned Vulkan image/memory/view handles to Streamline, uploads constants, tags resources, and calls `slEvaluateFeature`. Preflight failures and command-recording failures are logged as render errors. A requested DLSS path does not silently fall back to a regular blit.
 
 Before creating the native Vulkan instance and device, the renderer initializes Streamline in manual-hooking mode and calls `slGetFeatureRequirements` for every enabled feature. DLSS-G queries include DLSS-G, Reflex, and PCL, plus DLSS Super Resolution when it is also selected. The renderer merges all reported instance/device extensions, Vulkan 1.2/1.3 feature names, and extra graphics/compute/optical-flow queue counts into its normal Vulkan bootstrap. Streamline receives the actual reserved queue-family and starting-index ranges through `slSetVulkanInfo`; native optical flow also enables `VkPhysicalDeviceOpticalFlowFeaturesNV`. Missing requirements fail before swapchain creation with a specific diagnostic instead of producing a partially initialized feature later in the frame.
 
-DLSS frame generation is wired on the native Vulkan default renderer:
+DLSS frame generation is wired on native Vulkan for the Default and Advanced render pipelines:
 
 - NVIDIA DLSS frame generation requests use `EnableNvidiaDlssFrameGeneration` plus `NvidiaDlssFrameGenerationMode` (`OneX`, `TwoX`, or `ThreeX`). These map to Streamline `numFramesToGenerate` values of 1, 2, and 3.
 - DLSS-G can run with DLSS Super Resolution or by itself. When DLSS SR is active, the DLSS output is the HUD-less color input for DLSS-G. When only DLSS-G is active, the source color buffer must already be a HUD-less full-backbuffer-size image, and the command queues a dedicated `DlssFrameGenerationOp` before the final passthrough quad.
 - When frame generation is enabled, the Vulkan swapchain is created through Streamline and frame acquire/present route through Streamline's `vkAcquireNextImageKHR` and `vkQueuePresentKHR` proxy functions.
 - The native DLSS command tags depth, motion vectors, scaling input/output, exposure, and the HUD-less color output for Streamline. When frame generation is active, the resources needed by DLSS-G are tagged with `ValidUntilPresent`, and constants use the same frame index as the Reflex/PCL present markers.
-- Reflex is enabled through `slReflexSetOptions`, and the Vulkan frame loop emits Streamline PCL markers around render-submit and present. The required frame-generation runtime set includes `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, and `nvngx_dlssg.dll`.
-- Swapchain recreation and destruction send `DLSSGMode.Off` first, because Streamline requires frame generation to be disabled before fullscreen/window/resolution manipulation. HDR DLSS-G prefers RGB10/UINT10 HDR10 swapchain formats and rejects FP16/scRGB backbuffers. SDR DLSS-G selects an `UNORM` back buffer with the nonlinear sRGB color space because Streamline rejects sRGB Vulkan back-buffer formats; the final vendor-output blit performs the required linear-to-sRGB encoding. Vulkan DLSS-G prefers `Mailbox` or `Immediate` present modes; `FIFO` fallback is logged because Vulkan VSync with DLSS-G is not supported by Streamline.
+- Reflex options are enabled through `slReflexSetOptions`, and the Vulkan frame loop emits Streamline PCL markers around render-submit and present. `slReflexSleep` paces the upcoming frame before desktop scene preparation, using the same frame token as its constants and presentation markers. Simulation markers and full Reflex latency validation remain outstanding. The required frame-generation runtime set includes `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, and `nvngx_dlssg.dll`.
+- Swapchain recreation and destruction send `DLSSGMode.Off` first, because Streamline requires frame generation to be disabled before fullscreen/window/resolution manipulation. HDR DLSS-G prefers RGB10/UINT10 HDR10 swapchain formats and rejects FP16/scRGB backbuffers. SDR DLSS-G selects an `UNORM` back buffer with the nonlinear sRGB color space because Streamline rejects sRGB Vulkan back-buffer formats; the final vendor-output blit performs the required linear-to-sRGB encoding. Vulkan DLSS-G requires `Immediate`; unsupported presentation modes fail explicitly because the SDK owns generated-frame pacing.
 - DLSS-G resource tags and common constants are recorded before `slDLSSGSetOptions` enables generation for that frame. Deferred or failed command recording therefore leaves generation disabled instead of presenting with missing/stale frame metadata. Repeated recording of the same engine frame does not repeat the options call.
 - Streamline frame tokens use the upcoming Vulkan callback index because viewport commands are prepared before the callback advances the renderer counter; this keeps DLSS/DLSS-G constants aligned with PCL and proxy-present markers.
 - If Vulkan must present previously completed fallback content for a rejected/deferred frame, it sends `DLSSGMode.Off` before that proxy present because the rejected frame has no current tags or constants. The next successfully recorded DLSS-G operation re-enables generation after publishing valid metadata.

@@ -681,7 +681,7 @@ public sealed class AdvancedGpuMaterialPublisher
                     EAdvancedMaterialEligibilityFlags.LateRefractive,
                 _ => EAdvancedMaterialEligibilityFlags.Unsupported,
             };
-        EAdvancedMaterialRequiredAttributeMask requiredAttributes = GetRequiredAttributes(layout);
+        EAdvancedMaterialRequiredAttributeMask requiredAttributes = GetKernelRequiredAttributes(layout);
         if (!isProjectiveMirror &&
             material?.GetSurfaceTexture(EMaterialTextureSemantic.Emissive) is { TexCoordSet: 1 })
         {

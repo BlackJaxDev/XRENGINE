@@ -195,6 +195,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 out Matrix4x4 world,
                 out Matrix4x4 previousWorld,
                 out BoundsGpu bounds,
+                out XRMeshRenderer? renderer,
                 out XRMesh? mesh,
                 out XRMaterial? material,
                 out int sourcePrimitiveCount);
@@ -204,6 +205,7 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.World = world;
             plan.PreviousWorld = previousWorld;
             plan.Bounds = bounds;
+            plan.Renderer = renderer;
             plan.Mesh = mesh;
             plan.Geometry = CreateGeometry(scene, mesh, in bounds, in command);
             plan.RenderState = CreateRenderState(mesh, in command);
@@ -1098,6 +1100,7 @@ public sealed partial class AdvancedGpuScenePublisher
         public Matrix4x4 World;
         public Matrix4x4 PreviousWorld;
         public BoundsGpu Bounds;
+        public XRMeshRenderer? Renderer;
         public XRMesh? Mesh;
         public AdvancedGeometryRecord Geometry;
         public AdvancedRenderStateRecord RenderState;

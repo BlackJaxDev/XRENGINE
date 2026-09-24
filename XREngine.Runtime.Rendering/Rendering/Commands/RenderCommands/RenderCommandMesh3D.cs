@@ -418,6 +418,7 @@ namespace XREngine.Rendering.Commands
                 bool changed = SetField(ref _worldMatrix, value);
 
                 if (changed && RuntimeRenderingHostServices.FrameTiming.IsRenderThread &&
+                    !IsInsideSynchronousCallback &&
                     System.Threading.Volatile.Read(ref _swapCaptureInProgress) == 0 &&
                     System.Threading.Volatile.Read(ref _identityNotificationInProgress) == 0)
                     ApplyLateRenderThreadWorldMatrix(value);
@@ -679,6 +680,7 @@ namespace XREngine.Rendering.Commands
                 publication,
                 handleSet);
             System.Threading.Interlocked.Increment(ref _identityNotificationInProgress);
+            EnterSynchronousCallback();
             try
             {
                 SetField(ref _canonicalDrawIdentitySnapshot, snapshot);
@@ -690,6 +692,7 @@ namespace XREngine.Rendering.Commands
             }
             finally
             {
+                LeaveSynchronousCallback();
                 System.Threading.Interlocked.Decrement(ref _identityNotificationInProgress);
             }
             if (_canonicalDrawIdentitySnapshot != snapshot ||

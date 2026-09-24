@@ -154,6 +154,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private void PublishCore(GPUScene scene, ulong frameId, in AdvancedGlobalResourceCapture globalResources)
     {
+        // Plans and submission sources are scratch closures, not publication leases.
+        // Release the prior frame's references even if this boundary rejects early.
+        Array.Clear(_plannedCommands, 0, _plannedCommandCount);
+        Array.Clear(_plannedDeformationSources, 0, _legacyMappingCount);
+        _plannedCommandCount = 0;
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
         _lastGeometryCompactionReplacementCount = 0;
@@ -318,7 +323,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     plan.Source is RenderCommand renderCommand
                         ? renderCommand.OwnerRenderInfo
                         : null,
-                    plan.Source.Mesh,
+                    plan.Renderer,
+                    plan.Mesh,
                     checked((uint)Math.Max(0, plan.MeshVertexCount)),
                     plan.ContentSignature, plan.StructuralSignature);
             }
@@ -1022,6 +1028,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         out Matrix4x4 world,
         out Matrix4x4 previousWorld,
         out BoundsGpu bounds,
+        out XRMeshRenderer? capturedRenderer,
         out XRMesh? mesh,
         out XRMaterial? material,
         out int sourcePrimitiveCount)
@@ -1047,6 +1054,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         bounds = command.BoundsID < scene.CullBoundsBuffer.ElementCount
             ? scene.CullBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(command.BoundsID)
             : default;
+        capturedRenderer = snapshot.Renderer;
         sourcePrimitiveCount = Math.Max(1, snapshot.Renderer?.Submeshes.Count ?? 0);
         if (snapshot.Renderer is not { } renderer ||
             !renderer.TryGetMesh(primitiveIndex, out mesh, out material))

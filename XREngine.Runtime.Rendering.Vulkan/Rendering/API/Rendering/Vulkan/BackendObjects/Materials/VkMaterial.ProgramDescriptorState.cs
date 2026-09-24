@@ -29,6 +29,9 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public required DescriptorSet[][] DescriptorSets { get; init; }
 
+            /// <summary>Native lifetime identity of each material set in <see cref="DescriptorSets"/>.</summary>
+            public required VulkanResourceSlotHandle[] MaterialSetLifetimeSlots { get; init; }
+
             /// <summary>
             /// Per-frame descriptor heap push-data payloads. Populated alongside descriptor
             /// set writes and used only when <c>VK_EXT_descriptor_heap</c> is active.

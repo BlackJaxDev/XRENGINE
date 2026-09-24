@@ -414,11 +414,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
     {
         EAntiAliasingMode mode = effectiveAntiAliasingMode;
-        if (mode == EAntiAliasingMode.Dlaa)
-            return 1.0f;
-
         if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
+
+        if (mode == EAntiAliasingMode.Dlaa)
+            return 1.0f;
 
         if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())
             return null;
@@ -483,6 +483,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         }
     }
 
+    private static bool RuntimeSuppressOwnAntiAliasing
+        => !IsRenderingExternalSwapchainTarget()
+        && (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+            || RuntimeEngine.EffectiveSettings.EnableIntelXess
+            || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa);
+
     private static bool RuntimeRequestDlssVendorFeature
         => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
         || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa
@@ -511,14 +517,14 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
     private static bool RuntimeEnableFxaa
-        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
+        => !RuntimeSuppressOwnAntiAliasing && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
 
     /// <summary>
     /// True when SMAA should be active for the current rendering camera.
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
     private static bool RuntimeEnableSmaa
-        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
+        => !RuntimeSuppressOwnAntiAliasing && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
 
     /// <summary>
     /// True when SMAA resources are part of the pipeline-owned resource layout.
@@ -531,7 +537,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     /// below 100%, meaning a dedicated upscale pass is required.
     /// </summary>
     private static bool RuntimeNeedsTsrUpscale
-        => !RuntimeEnableVendorUpscale
+        => !RuntimeSuppressOwnAntiAliasing
         && !DisableHistoryBasedVrEffects()
         && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
 
@@ -540,9 +546,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa;
 
     private static bool RuntimeNeedsTemporalAaResources
-        => !RuntimeEnableVendorUpscale
-        && !DisableHistoryBasedVrEffects()
-        && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa;
+        => !DisableHistoryBasedVrEffects()
+        && (((RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+                || VendorUpscaleRuntime.IsDlssFrameGenerationRequested
+                || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa) && RuntimeEnableVendorUpscale)
+            || (!RuntimeSuppressOwnAntiAliasing
+                && ResolveAntiAliasingMode() is (EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa)));
 
     private static bool ShouldGenerateVelocityBuffer()
         => RuntimeEnableVendorUpscale
@@ -1816,15 +1825,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     private void ApplyAntiAliasingResolutionHint()
     {
-        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
-        {
-            RequestedInternalResolution = 1.0f;
-            return;
-        }
-
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
         {
             RequestedInternalResolution = vendorScale;
+            return;
+        }
+
+        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
+        {
+            RequestedInternalResolution = 1.0f;
             return;
         }
 
@@ -1858,7 +1867,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && VendorUpscaleRuntime.IsDlssSupported)
         {
             scale = VendorUpscaleRuntime.GetDlssRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
-            return scale < 1.0f;
+            return true;
         }
 
         scale = 1.0f;

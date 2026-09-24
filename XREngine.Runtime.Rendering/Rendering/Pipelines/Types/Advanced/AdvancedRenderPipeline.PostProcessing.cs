@@ -372,14 +372,63 @@ public partial class AdvancedRenderPipeline
         bool historyReady = false;
         Vector2 currentJitterUv = Vector2.Zero;
         Vector2 previousJitterUv = Vector2.Zero;
+        Vector2 currentJitterUvRight = Vector2.Zero;
+        Vector2 previousJitterUvRight = Vector2.Zero;
+        Matrix4x4 currentToPreviousClip = Matrix4x4.Identity;
+        Matrix4x4 previousInverseProjection = Matrix4x4.Identity;
+        Matrix4x4 currentToPreviousClipRight = Matrix4x4.Identity;
+        Matrix4x4 previousInverseProjectionRight = Matrix4x4.Identity;
+        bool depthReprojectionReady = false;
+        bool depthZeroToOne = RuntimeEngine.Rendering.EffectiveClipDepthRange == ERenderClipDepthRange.ZeroToOne;
+        bool depthZeroToOneRight = depthZeroToOne;
+        bool reversedDepth = false;
+        bool reversedDepthRight = false;
         bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
         if (temporalHistoryAllowed && CurrentRenderingPipeline is { } pipeline &&
-            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipeline, out var temporalData))
+            VPRC_TemporalAccumulationPass.TryGetTsrResolveUniformData(pipeline, out var temporalData))
         {
             // TSR owns a full-resolution color history; the exposure-variance history is only produced by the TAA resolve.
             historyReady = temporalData.HistoryReady;
+            depthZeroToOne = temporalData.DepthZeroToOne;
+            depthZeroToOneRight = temporalData.RightEyeDepthZeroToOne;
+            reversedDepth = temporalData.ReversedDepth;
+            reversedDepthRight = temporalData.RightEyeReversedDepth;
             currentJitterUv = new Vector2(temporalData.CurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.CurrentJitter.Y / Math.Max(1u, InternalHeight));
             previousJitterUv = new Vector2(temporalData.PreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.PreviousJitter.Y / Math.Max(1u, InternalHeight));
+            currentJitterUvRight = new Vector2(temporalData.RightEyeCurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.RightEyeCurrentJitter.Y / Math.Max(1u, InternalHeight));
+            previousJitterUvRight = new Vector2(temporalData.RightEyePreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.RightEyePreviousJitter.Y / Math.Max(1u, InternalHeight));
+
+            bool leftMatricesReady = temporalData.LeftEyeHistoryReady &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.CurrViewProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.CurrInverseViewProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.PrevViewProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.PrevProjection) &&
+                Matrix4x4.Invert(temporalData.CurrViewProjection, out _) &&
+                Matrix4x4.Invert(temporalData.PrevViewProjection, out _) &&
+                Matrix4x4.Invert(temporalData.PrevProjection, out previousInverseProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(previousInverseProjection);
+            if (leftMatricesReady)
+            {
+                currentToPreviousClip = temporalData.CurrInverseViewProjection * temporalData.PrevViewProjection;
+                leftMatricesReady = VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(currentToPreviousClip);
+            }
+
+            bool rightMatricesReady = !Stereo;
+            if (Stereo && temporalData.RightEyeHistoryReady &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyeCurrViewProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyeCurrInverseViewProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyePrevViewProjection) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyePrevProjection) &&
+                Matrix4x4.Invert(temporalData.RightEyeCurrViewProjection, out _) &&
+                Matrix4x4.Invert(temporalData.RightEyePrevViewProjection, out _) &&
+                Matrix4x4.Invert(temporalData.RightEyePrevProjection, out previousInverseProjectionRight) &&
+                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(previousInverseProjectionRight))
+            {
+                currentToPreviousClipRight = temporalData.RightEyeCurrInverseViewProjection * temporalData.RightEyePrevViewProjection;
+                rightMatricesReady = VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(currentToPreviousClipRight);
+            }
+
+            depthReprojectionReady = historyReady && leftMatricesReady && rightMatricesReady;
         }
         else if (temporalHistoryAllowed)
         {
@@ -400,6 +449,17 @@ public partial class AdvancedRenderPipeline
         program.Uniform("HistoryTexelSize", new Vector2(1.0f / historyWidth, 1.0f / historyHeight));
         program.Uniform("CurrentJitterUv", currentJitterUv);
         program.Uniform("PreviousJitterUv", previousJitterUv);
+        program.Uniform("CurrentJitterUvRight", currentJitterUvRight);
+        program.Uniform("PreviousJitterUvRight", previousJitterUvRight);
+        program.Uniform("TsrCurrentToPreviousClip", currentToPreviousClip);
+        program.Uniform("TsrPreviousInverseProjection", previousInverseProjection);
+        program.Uniform("TsrCurrentToPreviousClipRight", currentToPreviousClipRight);
+        program.Uniform("TsrPreviousInverseProjectionRight", previousInverseProjectionRight);
+        program.Uniform("TsrDepthReprojectionReady", depthReprojectionReady);
+        program.Uniform("TsrClipDepthZeroToOne", depthZeroToOne);
+        program.Uniform("TsrClipDepthZeroToOneRight", depthZeroToOneRight);
+        program.Uniform("TsrReversedDepth", reversedDepth);
+        program.Uniform("TsrReversedDepthRight", reversedDepthRight);
         program.Uniform("FeedbackMin", temporalSettings.FeedbackMin);
         program.Uniform("FeedbackMax", temporalSettings.FeedbackMax);
         program.Uniform("VarianceGamma", temporalSettings.VarianceGamma);
