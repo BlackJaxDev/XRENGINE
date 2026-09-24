@@ -323,6 +323,15 @@ sidecars, and correct background pixels at partial coverage.
   coverage. The current captures prove execution, fresh output, and MSAA edge
   coverage but are not a full quality assessment.
 
+  The 2026-09-24 Advanced Vulkan TSR changes improve mean stationary edge
+  stability, but localized thin-edge shimmer remains at 0.67 scale; temporal
+  variance is essentially unchanged and occasional edge spikes remain. Quality
+  signoff is still outstanding. User-scene confirmation, dense consecutive-frame
+  motion/disocclusion captures, live OpenGL/stereo validation of these changes,
+  and dense-geometry GPU timing remain open under
+  [ARP-V17](vulkan-xr-and-advanced-rendering-todo.md#motion-history-and-reset-matrix).
+  See the [measured results and limitations](../../investigations/rendering/2026-09-24-advanced-vulkan-tsr-jitter.md#final-coverage-validation).
+
 Exit criterion: before/after captures show that each mode affects mesh edges as
 intended, with stable scene color, camera motion, and mode transitions. Record
 the actual backend, profile, frame state, captures, and observed limitations in

@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanCommandBufferLifetimeRecord
 {
     public readonly Dictionary<VulkanResourceLifetimeKey, ulong> Dependencies = new(64);
+    public VulkanResourceSlotHandle RetainedPresentationImageSlot;
     public readonly List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> TouchedDependencies = new(64);
     public ulong RecordingGeneration;
     public int QueuedSubmissionCount;

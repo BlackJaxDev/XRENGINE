@@ -23,6 +23,7 @@ internal unsafe partial class VkMeshRenderer
         public DescriptorPool Pool;
         public MeshDescriptorPoolSlabLease? PoolSlabLease;
         public DescriptorSet[][] Sets = [];
+        public VulkanResourceSlotHandle[][] SetLifetimeSlots = [];
         public DescriptorHeapPushDataPayload[] DescriptorHeapPushData = [];
         public DescriptorSetLayout[] Layouts = [];
         public uint[] VariableDescriptorCounts = [];

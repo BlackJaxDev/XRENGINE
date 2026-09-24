@@ -226,8 +226,8 @@ internal sealed partial class VulkanResourceRuntime
             out _,
             out int invalidatedDescriptorSetCount,
             out bool beganRetirement);
-        if (beganRetirement && key.Type == ObjectType.Buffer)
-            Lifetime.EnqueueSupersededBufferDescriptorOwner(key, generation);
+        if (beganRetirement)
+            Lifetime.EnqueueSupersededResourceDescriptorOwner(key, generation);
         if (invalidatedDescriptorSetCount != 0)
             Debug.VulkanEvery(
                 $"Vulkan.ResourceLifetime.TargetedDescriptorInvalidation.{key.Type}",

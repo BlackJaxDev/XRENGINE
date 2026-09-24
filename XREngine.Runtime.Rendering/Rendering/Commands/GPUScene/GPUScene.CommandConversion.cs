@@ -5,6 +5,7 @@
 
 using XREngine.Extensions;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
@@ -236,7 +237,9 @@ namespace XREngine.Rendering.Commands
                 uint minIndex = uint.MaxValue;
                 uint maxIndex = 0;
 
-                for (int i = 0; i < indices.Count; i++)
+                rebuildRenderable = HasPrimitiveMembershipMismatch(renderInfo, meshCmd, snapshot, meshRenderer, indices);
+
+                for (int i = 0; !rebuildRenderable && i < indices.Count; i++)
                 {
                     if (S13aPublicationTelemetry.Enabled)
                         observation.Submeshes++;
@@ -408,6 +411,62 @@ namespace XREngine.Rendering.Commands
             }
 
             return anyChanged;
+        }
+
+        /// <summary>
+        /// Compares the renderer's publishable primitives with the rows owned by this command.
+        /// A stack or pooled membership map keeps the dirty-command update linear.
+        /// </summary>
+        private bool HasPrimitiveMembershipMismatch(RenderInfo renderInfo, IRenderCommandMesh meshCmd,
+            in GpuSceneMeshCommandSnapshot snapshot, XRMeshRenderer meshRenderer, List<uint> indices)
+        {
+            int primitiveCount = Math.Max(1, meshRenderer.Submeshes.Count);
+            int eligibleCount = 0;
+            byte[]? rentedMembership = primitiveCount > 256 ? ArrayPool<byte>.Shared.Rent(primitiveCount) : null;
+            Span<byte> membership = rentedMembership is null
+                ? stackalloc byte[primitiveCount]
+                : rentedMembership.AsSpan(0, primitiveCount);
+            membership.Clear();
+
+            try
+            {
+                foreach (uint index in indices)
+                {
+                    if (!_commandIndexLookup.TryGetValue(index, out var lookup) ||
+                        !ReferenceEquals(lookup.command, meshCmd) ||
+                        lookup.subMeshIndex < 0 || lookup.subMeshIndex >= primitiveCount ||
+                        membership[lookup.subMeshIndex] != 0)
+                        return true;
+
+                    membership[lookup.subMeshIndex] = 1;
+                }
+
+                for (int primitiveIndex = 0; primitiveIndex < primitiveCount; primitiveIndex++)
+                {
+                    if (!meshRenderer.TryGetMesh(primitiveIndex, out XRMesh? mesh, out XRMaterial? material) ||
+                        mesh is null || (snapshot.MaterialOverride ?? material) is null ||
+                        _unsupportedMeshMessages.ContainsKey(mesh))
+                        continue;
+
+                    if (!ValidateMeshForGpu(mesh, out string validationFailure))
+                    {
+                        string meshLabel = EnsureMeshDebugLabel(mesh, meshRenderer, renderInfo, primitiveIndex);
+                        RecordUnsupportedMesh(mesh, meshLabel, validationFailure);
+                        continue;
+                    }
+
+                    eligibleCount++;
+                    if (membership[primitiveIndex] == 0)
+                        return true;
+                }
+
+                return eligibleCount != indices.Count;
+            }
+            finally
+            {
+                if (rentedMembership is not null)
+                    ArrayPool<byte>.Shared.Return(rentedMembership);
+            }
         }
 
         private void RemoveMeshCommandIndices(IRenderCommandMesh meshCmd, List<uint> indices)

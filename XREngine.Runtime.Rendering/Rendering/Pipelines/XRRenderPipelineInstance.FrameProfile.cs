@@ -24,12 +24,21 @@ public sealed partial class XRRenderPipelineInstance
         EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
             ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
             ?? frameTiming.DefaultOutputHDR;
-        EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
+        // DLSS Super Resolution supplies its own anti-aliasing. Keep the authored
+        // camera/settings mode intact so it resumes when DLSS is disabled, but
+        // prevent the frame profile from allocating or executing engine AA.
+        bool useDlssSuperResolution = RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+            && Pipeline is (DefaultRenderPipeline or AdvancedRenderPipeline)
+            && viewport?.RendersToExternalSwapchainTarget != true
+            && AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget != true;
+        EffectiveAntiAliasingModeThisFrame = useDlssSuperResolution
+            ? EAntiAliasingMode.None
+            : effectiveAntiAliasingMode;
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
             FinalOutput?.Properties.SampleCount ??
             effectiveAntiAliasingCamera?.MsaaSampleCountOverride ??
             frameTiming.DefaultMsaaSampleCount);
-        EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
+        EffectiveTsrRenderScaleThisFrame = !useDlssSuperResolution && effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
             ? Math.Clamp(
                 effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? frameTiming.DefaultTsrRenderScale,
                 0.5f,

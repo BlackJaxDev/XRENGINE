@@ -681,7 +681,7 @@ void main()
             bool vendorChanged = _bridgeVendorHistoryValid && _lastBridgeVendor != vendor;
             bool resetHistory = !_bridgeDispatchHistoryValid || vendorChanged;
 
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalResolveUniformData(ActivePipelineInstance, out var temporalData))
             {
                 currentViewProjectionUnjittered = temporalData.CurrViewProjectionUnjittered;
                 previousViewProjectionUnjittered = temporalData.HistoryReady
@@ -1326,6 +1326,7 @@ void main()
             XRTexture sourceColor,
             XRTexture depth,
             XRTexture motion,
+            bool superResolutionRequested,
             uint outputWidth,
             uint outputHeight,
             out string failureReason)
@@ -1334,15 +1335,15 @@ void main()
             (uint depthWidth, uint depthHeight) = ResolveTextureExtent(depth);
             (uint motionWidth, uint motionHeight) = ResolveTextureExtent(motion);
 
-            if (depthWidth != sourceWidth || depthHeight != sourceHeight)
+            if (superResolutionRequested && (depthWidth != sourceWidth || depthHeight != sourceHeight))
             {
                 failureReason = $"NVIDIA DLSS depth size mismatch: expected {sourceWidth}x{sourceHeight}, got {depthWidth}x{depthHeight}.";
                 return false;
             }
 
-            if (motionWidth != sourceWidth || motionHeight != sourceHeight)
+            if (motionWidth != depthWidth || motionHeight != depthHeight)
             {
-                failureReason = $"NVIDIA DLSS motion size mismatch: expected {sourceWidth}x{sourceHeight}, got {motionWidth}x{motionHeight}.";
+                failureReason = $"NVIDIA DLSS motion size mismatch: expected {depthWidth}x{depthHeight}, got {motionWidth}x{motionHeight}.";
                 return false;
             }
 
@@ -1505,7 +1506,7 @@ void main()
             XRViewport viewport,
             XRCamera camera,
             ColorGradingSettings? colorGrading,
-            XRTexture sourceColorTexture,
+            XRTexture depthTexture,
             uint outputWidth,
             uint outputHeight,
             bool outputHdr,
@@ -1523,7 +1524,7 @@ void main()
             Vector2 jitter = Vector2.Zero;
             bool resetHistory = !_nativeDlssDispatchHistoryValid;
 
-            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalResolveUniformData(ActivePipelineInstance, out var temporalData))
             {
                 currentViewProjectionUnjittered = temporalData.CurrViewProjectionUnjittered;
                 previousViewProjectionUnjittered = temporalData.HistoryReady
@@ -1554,13 +1555,23 @@ void main()
             if (!float.IsFinite(verticalFovRadians) || verticalFovRadians <= 0.0f)
                 verticalFovRadians = 60.0f * (MathF.PI / 180.0f);
 
-            (uint inputWidth, uint inputHeight) = ResolveTextureExtent(sourceColorTexture);
+            // Frame generation consumes display-size resolved color with render-size
+            // depth/motion when TSR performed the upscale. Keep these extents separate.
+            (uint inputWidth, uint inputHeight) = ResolveTextureExtent(depthTexture);
             resetHistory |= ShouldResetNativeDlssHistory(
                 camera,
-                sourceColorTexture,
+                depthTexture,
                 outputWidth,
                 outputHeight,
                 outputHdr);
+
+            // Engine velocity is current-minus-previous NDC. Streamline wants
+            // current-to-previous displacement in the tagged texture's axes.
+            float motionScaleY = RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan)
+                == ERenderClipSpaceYDirection.YDown ? 0.5f : -0.5f;
+            // Jitter describes the current projection offset, not a backward
+            // motion vector, so only convert its Y axis to framebuffer pixels.
+            jitter.Y *= motionScaleY > 0.0f ? -1.0f : 1.0f;
 
             parameters = new VulkanUpscaleBridgeDispatchParameters
             {
@@ -1585,8 +1596,8 @@ void main()
                 JitterOffsetY = jitter.Y,
                 HasExposureTexture = hasExposureTexture,
                 ExposureScale = ResolveBridgeExposureScale(colorGrading),
-                MotionVectorScaleX = BridgeMotionVectorNormalizationScale,
-                MotionVectorScaleY = BridgeMotionVectorNormalizationScale,
+                MotionVectorScaleX = -0.5f,
+                MotionVectorScaleY = motionScaleY,
                 CameraViewToClip = cameraViewToClip,
                 ClipToCameraView = clipToCameraView,
                 ClipToPrevClip = currentInverseViewProjectionUnjittered * previousViewProjectionUnjittered,
@@ -1879,7 +1890,7 @@ void main()
             bool outputHdr = ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false;
             (uint outputWidth, uint outputHeight) = ResolveNativeDlssOutputExtent(viewport);
 
-            if (!ValidateNativeDlssInputSizes(sourceColorTexture, depthTexture, motionTexture, outputWidth, outputHeight, out string sizeFailure))
+            if (!ValidateNativeDlssInputSizes(sourceColorTexture, depthTexture, motionTexture, dlssRequested, outputWidth, outputHeight, out string sizeFailure))
             {
                 failureReason = sizeFailure;
                 return false;
@@ -1911,7 +1922,7 @@ void main()
                     viewport,
                     camera,
                     colorGrading,
-                    sourceColorTexture,
+                    depthTexture,
                     outputWidth,
                     outputHeight,
                     outputHdr,

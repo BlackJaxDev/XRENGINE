@@ -180,7 +180,9 @@ public partial class AdvancedRenderPipeline
     // so resize and camera-cut invalidation are observed before the TSR pass.
     private bool ShouldUseAdvancedTemporalAccumulationResources()
         => AllowsTemporalHistory &&
-           (RuntimeNeedsTemporalAaVelocityBuffer || RuntimeNeedsTsrUpscale);
+           (RuntimeNeedsTemporalAaVelocityBuffer || RuntimeNeedsTsrUpscale ||
+            (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || VendorUpscaleRuntime.IsDlssFrameGenerationRequested)
+                && RuntimeEnableVendorUpscale);
     private void AppendAdvancedTemporalAccumulation(ViewportRenderCommandContainer commands)
     {
         var temporal = commands.Add<VPRC_IfElse>();
@@ -230,7 +232,9 @@ public partial class AdvancedRenderPipeline
             .SetRenderGraphResources(CreateAdvancedTsrResources());
         var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
         captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
-        captureTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
+        captureTsrHistory.ConfigureTsrHistoryTargets(
+            TsrAccumulationFBOName, TsrHistoryColorFBOName,
+            TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
         var fxaa = postAaCommands.Add<VPRC_IfElse>();
@@ -420,51 +424,62 @@ public partial class AdvancedRenderPipeline
             return;
         }
 
-        // DLAA/DLSS/XeSS resolve the fully graded final post-process result.  The
-        // Advanced stage has already produced the matching depth and velocity
-        // inputs before this output stage; routing through the vendor command
-        // preserves that temporal contract and lets the command report an
-        // unavailable requested vendor capability instead of silently choosing
-        // a different anti-aliasing path.
-        var vendorOutput = commands.Add<VPRC_IfElse>();
-        vendorOutput.Label = "AdvancedVendorUpscaleOutput";
-        vendorOutput.ConditionEvaluator = () => RuntimeEnableVendorUpscale;
-        var vendorOutputCommands = new ViewportRenderCommandContainer(this);
-        var vendorUpscale = vendorOutputCommands.Add<VPRC_VendorUpscale>();
-        vendorUpscale.FrameBufferName = FinalPostProcessOutputFBOName;
-        vendorUpscale.SourceTextureName = FinalPostProcessOutputTextureName;
-        vendorUpscale.DepthTextureName = DepthViewTextureName;
-        vendorUpscale.DepthStencilTextureName = DepthStencilTextureName;
-        vendorUpscale.MotionTextureName = VelocityTextureName;
-        vendorUpscale.MotionFrameBufferName = VelocityFBOName;
-        vendorUpscale.AutoExposureTextureName = AutoExposureTextureName;
-        vendorUpscale.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
-        vendorOutput.TrueCommands = vendorOutputCommands;
+        // Vendor output draws a quad directly into the desktop target. Match
+        // the full display area and crop used by the Default pipeline; the
+        // preceding post-process stage leaves the internal scene area active.
+        using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = false))
+            AppendAdvancedDesktopOutputCommands(commands);
+    }
 
-        var nonVendorOutput = new ViewportRenderCommandContainer(this);
-        vendorOutput.FalseCommands = nonVendorOutput;
-
+    private void AppendAdvancedDesktopOutputCommands(ViewportRenderCommandContainer commands)
+    {
         if (!AllowsPostAntiAliasing)
         {
-            AppendAdvancedWindowPresent(nonVendorOutput, FinalPostProcessOutputFBOName);
+            AppendAdvancedResolvedOutput(commands, FinalPostProcessOutputFBOName, FinalPostProcessOutputTextureName);
             return;
         }
 
-        var output = nonVendorOutput.Add<VPRC_IfElse>();
+        var output = commands.Add<VPRC_IfElse>();
         output.Label = "AdvancedFinalOutputSource";
         output.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var antiAliasedOutput = new ViewportRenderCommandContainer(this);
         var tsr = antiAliasedOutput.Add<VPRC_IfElse>();
         tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
-        tsr.TrueCommands = CreateAdvancedPresentCommands(TsrUpscaleFBOName);
+        tsr.TrueCommands = CreateAdvancedResolvedOutputCommands(TsrUpscaleFBOName, TsrOutputTextureName);
         var postAa = new ViewportRenderCommandContainer(this);
         var fxaa = postAa.Add<VPRC_IfElse>();
         fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
-        fxaa.TrueCommands = CreateAdvancedPresentCommands(FxaaFBOName);
-        fxaa.FalseCommands = CreateAdvancedPresentCommands(SmaaFBOName);
+        fxaa.TrueCommands = CreateAdvancedResolvedOutputCommands(FxaaFBOName, FxaaOutputTextureName);
+        fxaa.FalseCommands = CreateAdvancedResolvedOutputCommands(SmaaFBOName, SmaaOutputTextureName);
         tsr.FalseCommands = postAa;
         output.TrueCommands = antiAliasedOutput;
-        output.FalseCommands = CreateAdvancedPresentCommands(FinalPostProcessOutputFBOName);
+        output.FalseCommands = CreateAdvancedResolvedOutputCommands(FinalPostProcessOutputFBOName, FinalPostProcessOutputTextureName);
+    }
+
+    private ViewportRenderCommandContainer CreateAdvancedResolvedOutputCommands(string sourceFboName, string sourceTextureName)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        AppendAdvancedResolvedOutput(commands, sourceFboName, sourceTextureName);
+        return commands;
+    }
+
+    private void AppendAdvancedResolvedOutput(ViewportRenderCommandContainer commands, string sourceFboName, string sourceTextureName)
+    {
+        var vendorOutput = commands.Add<VPRC_IfElse>();
+        vendorOutput.Label = "AdvancedVendorOutput";
+        vendorOutput.ConditionEvaluator = () => RuntimeEnableVendorUpscale;
+        var vendorCommands = new ViewportRenderCommandContainer(this);
+        var vendor = vendorCommands.Add<VPRC_VendorUpscale>();
+        vendor.FrameBufferName = sourceFboName;
+        vendor.SourceTextureName = sourceTextureName;
+        vendor.DepthTextureName = DepthViewTextureName;
+        vendor.DepthStencilTextureName = DepthStencilTextureName;
+        vendor.MotionTextureName = VelocityTextureName;
+        vendor.MotionFrameBufferName = VelocityFBOName;
+        vendor.AutoExposureTextureName = AutoExposureTextureName;
+        vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        vendorOutput.TrueCommands = vendorCommands;
+        vendorOutput.FalseCommands = CreateAdvancedPresentCommands(sourceFboName);
     }
 
     private static void AppendAdvancedOffscreenOutputCommands(
@@ -544,7 +559,8 @@ public partial class AdvancedRenderPipeline
             .SampleTexture(HistoryDepthViewTextureName)
             .SampleTexture(TsrHistoryColorTextureName)
             .SampleTexture(StencilViewTextureName)
-            .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName);
+            .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
+            .SampleTexture(TsrHistoryMetadataTextureName);
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedMotionBlurResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(MotionBlurTextureName).SampleTexture(VelocityTextureName).SampleTexture(DepthViewTextureName);

@@ -2,8 +2,8 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Identifies one descriptor owner independently of transient draw occurrence
-/// slots. Immutable snapshot, renderer-buffer, and mapped-arena identities keep
-/// the generation fast path exact without rebuilding a reflected fingerprint.
+/// slots. Local dynamic uniform sets use their physical buffer identity; other
+/// layouts retain the published snapshot and renderer-buffer identities.
 /// </summary>
 internal readonly record struct DescriptorOwnerLookupKey(
     ulong LayoutFingerprint,
@@ -13,6 +13,7 @@ internal readonly record struct DescriptorOwnerLookupKey(
     ulong MaterialBindingLayoutVersion,
     int ViewFamilyIdentity,
     int DescriptorOwnerSlot,
+    bool UsesLocalPhysicalResourceIdentity,
     ulong SnapshotLayoutSignature,
     ulong SnapshotResourceSignature,
     ulong RendererBufferResourceSignature,

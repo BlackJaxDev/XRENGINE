@@ -95,6 +95,32 @@ internal sealed partial class VulkanFrameLoop
     private VulkanStreamlineDeviceBinding StreamlineDeviceBinding
         => _outputRuntime.CaptureStreamlineDeviceBinding(_deviceContext);
 
+    private ulong _lastReflexSleepFrameNumber;
+
+    internal void PrepareDesktopFramePacing()
+    {
+        if (!_outputRuntime._streamlineFrameGenerationProvisioned ||
+            !OutputRuntime.Desktop.StreamlineFrameGenerationActive ||
+            !NvidiaDlssManager.IsFrameGenerationRequested ||
+            !_deviceContext.IsOperational)
+            return;
+
+        ulong frameNumber = checked(AcceptedAttemptCount + 1UL);
+        if (_lastReflexSleepFrameNumber == frameNumber)
+            return;
+
+        uint frameIndex = unchecked((uint)Math.Min(uint.MaxValue, frameNumber));
+        if (!NvidiaDlssManager.Native.TrySleepForFrameGeneration(
+                StreamlineDeviceBinding, frameIndex, out string failureReason))
+        {
+            string message = $"NVIDIA DLSS frame generation Reflex sleep failed: {failureReason}";
+            Debug.RenderingError(message);
+            throw new InvalidOperationException(message);
+        }
+
+        _lastReflexSleepFrameNumber = frameNumber;
+    }
+
     private void MarkDlssFrameGenerationPclMarker(
         NvidiaDlssManager.Native.StreamlinePclMarker marker)
     {
@@ -439,7 +465,7 @@ internal sealed partial class VulkanFrameLoop
             }
             else if (requiresFinalSourceDescriptor &&
                      (descriptor.Sequence == 0 ||
-                      descriptor.DescriptorSlot != unchecked((int)attempt.ImageIndex)))
+                      descriptor.DescriptorSlot != attempt.FrameSlot))
             {
                 invariantFailed = true;
                 invariantFailure =

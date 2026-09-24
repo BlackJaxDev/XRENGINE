@@ -590,6 +590,47 @@ internal sealed partial class VulkanCommandRuntime
         return result;
     }
 
+    /// <summary>
+    /// Submits an empty graphics-queue retirement marker in the same sequence
+    /// order as tracked work so its fence can prove earlier queue submissions.
+    /// </summary>
+    internal Result SubmitRetirementMarkerTracked(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanFrameTelemetry telemetry,
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        string operation)
+    {
+        if (submitInfo.CommandBufferCount != 0 || fence.Handle == 0 ||
+            queue.Handle != deviceContext.GraphicsQueue.Handle)
+            throw new ArgumentException("A graphics retirement marker requires an empty submission and a fence.");
+
+        using SubmissionStateScope submissionState = new(CommandBuffers.SubmissionStateGate);
+        VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+            tracker.LifetimeSubmissions.EnsureCapacity(checked(tracker.LifetimeSubmissions.Count + 1));
+
+        Result result = SubmitToQueueTracked(
+            api, deviceContext, telemetry, queue, ref submitInfo, fence, operation);
+        if (result != Result.Success)
+            return result;
+
+        lock (tracker.SyncRoot)
+        {
+            ulong sequence = ++tracker.LastGraphicsSequence;
+            tracker.LifetimeSubmissions.Add(new VulkanLifetimeSubmission(
+                unchecked((ulong)queue.Handle),
+                EVulkanLifetimeQueueDomain.Graphics,
+                sequence,
+                0,
+                0,
+                unchecked((ulong)fence.Handle)));
+        }
+        return result;
+    }
+
     internal VulkanExactInvalidationResult InvalidateCachedCommandBuffers(
         ReadOnlySpan<ulong> dependentCommandBuffers,
         string reason)

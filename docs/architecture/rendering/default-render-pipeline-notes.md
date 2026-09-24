@@ -567,6 +567,88 @@ The temporal resolve already used motion vectors, depth rejection, neighborhood 
 - In the editor, these Temporal AA controls only affect the camera that is actually driving the active viewport. If the scene panel is rendering through the editor flying camera, changing a different camera component's Temporal AA settings will not change the scene panel output.
 - The Temporal AA controls only affect the live output when the active camera's effective AA mode is `TAA` or `TSR`; if the camera is using `None`, `MSAA`, `FXAA`, `SMAA`, or `DLAA`, the temporal resolve settings are intentionally inert. `DLAA` still uses temporal jitter and motion/depth inputs, but the resolve is owned by NVIDIA DLSS/Streamline rather than the engine's temporal accumulation shader.
 
+### Advanced TSR sample and history contract
+
+Advanced selects `XR_TSR_STABLE_OUTPUT` for both mono and stereo TSR. Its current
+color/depth/motion inputs remain jittered, while resolved color history is on a
+stable output grid. Convert clip-axis UV displacements into framebuffer-texture
+axes, including Vulkan's Y inversion. For output UV `U`, current-minus-previous
+NDC motion `v`, and jitter `j`, sample current inputs at `U + T(j_current)`,
+color history at `H = U - T(v / 2)`, and raw previous depth at
+`H + T(j_previous)`. Check each history UV before clamping to its own extent.
+
+Keep previous depth intact until TSR finishes. The early Advanced passthrough
+copies color only; the post-TSR history command captures full-resolution unsharpened
+color, RGBA16F history metadata, and raw depth, recording coverage only after backend acceptance
+for all required layers. Rendergraph
+transfers must describe the same lifetime.
+
+Advanced surface rejection pairs depth and velocity from the same source texel
+within the current color's bilinear footprint. Each actual bilinear history
+contributor is checked against a corresponding previous-camera surface-depth
+prediction; a matching unrelated neighbor must not admit a wider color filter.
+Current and historical surface selection use the same footprint. Logical
+clip-depth/reversed-depth conventions and per-eye jitter/matrices travel with
+the temporal snapshot. A depth-convention change invalidates history.
+Advanced TSR reads a dedicated draw snapshot captured at temporal Begin, after
+both eyes have been populated. Commit advances the general history state without
+replacing this resolve's preceding matrices or jitter; explicit reset and missing
+snapshot handling also invalidate the resolve snapshot. Deferred Vulkan bindings
+must consume this frame pair before the next Begin for the same pipeline instance.
+Projected-depth slopes are limited at local extrema and predictions outside
+the previous clip volume reject history. Camera-only depth prediction is not
+valid for arbitrary independent object motion; disagreement with motion-vector
+correspondence currently rejects that reuse.
+
+Advanced current color uses positive bilinear taps, with no wider prefilter whose
+surface ownership is absent from the coverage model. A bounded 3x3 neighborhood
+identifies two coherent, contrasting depth clusters; it supplies geometry
+witnesses and a color envelope, not extra color reconstruction taps. Previous
+color contributors must match exactly one nearby projected current depth witness
+within 1.5 internal pixels and the bounded view-depth tolerance. Their labels must
+agree with the previous pair's foreground/background labels. Context samples
+outside the positive color footprint may fail matching, but do not count toward
+the required two supported witnesses per cluster. Depth gaps between witnesses
+are not filled by interpolation. Every current finite witness checks
+its own motion vector, and foreground/background reprojections must agree within
+0.25 internal pixel. A third surface or unverified mixture uses strict rejection.
+Sky mixtures require a stationary camera; finite far-plane projection is not a
+substitute for rotation-only infinite-background reprojection.
+
+History metadata stores age, accumulated foreground coverage, previous raw-sample
+compressed luminance, and signed flicker confidence. Coverage -1 means no validated
+pair. A cold pair seeds color and coverage together. Known mixed history cannot
+bypass pair validation through the ordinary single-surface path. Coverage uses
+the color accumulation weight; signed flicker state comes from one dominant
+validated history contributor. Only luminance reversals explained by coverage
+build retention. Unexplained significant shading changes, motion, reactivity,
+and invalid geometry clear continuity. Features absent from the whole witness
+neighborhood cannot be resurrected by this bounded state.
+
+Mature ordinary history retains the observed neighborhood range. Validated
+flickering mixtures may relax clipping toward the two-surface color envelope.
+Sharpening is suppressed on retained thin detail and writes only presentation
+color. MRT0 is presentation, MRT1 is metadata, and MRT2 is unsharpened accumulation;
+the color-history copy reads a color0 view of MRT2's texture. Diagnostics also
+preserve real accumulation/metadata, so debug colors never feed Advanced history.
+The two metadata textures and extra accumulation texture use 24 bytes per output
+pixel per eye (about 47.5 MiB at 1920x1080 mono), plus the metadata history copy.
+
+Advanced-specific temporal debug views expose surface rejection (red reason,
+green strict support, blue mixture acceptance), instantaneous/accumulated
+coverage (red/green, blue rejection reason divided by seven), flicker
+confidence/retention, and history clipping displacement.
+
+The existing eight-sample jitter pattern remains in use. Wider and longer
+Halton patterns increased silhouette rejection in controlled live comparisons;
+broader jitter requires coverage reconstruction beyond the current depth-only
+surface association. Do not increase the footprint without matching stationary
+and moving thin-edge validation. TAA and Default TSR retain their patterns.
+
+Default retains its existing TSR grid and early depth capture because its later
+unjittered overlays can be untagged and can write depth. Do not enable Advanced's
+stable-output variant there without separating that overlay composition.
+
 ---
 
 ## 20. Light Shadow Inspector Naming

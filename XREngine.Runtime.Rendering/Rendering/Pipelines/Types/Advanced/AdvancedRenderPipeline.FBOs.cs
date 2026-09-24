@@ -462,6 +462,8 @@ public partial class AdvancedRenderPipeline
         private int _stage;
         private XRTexture[]? _textureReferences;
         private XRTexture? _outputTexture;
+        private XRTexture? _metadataOutputTexture;
+        private XRTexture? _accumulationTexture;
         private XRShader? _shader;
         private XRMaterial? _material;
         private XRQuadFrameBuffer? _frameBuffer;
@@ -503,6 +505,8 @@ public partial class AdvancedRenderPipeline
                     _shader = null;
                     _textureReferences = null;
                     _outputTexture = null;
+                    _metadataOutputTexture = null;
+                    _accumulationTexture = null;
                     _transferred = true;
                     _stage++;
                     return true;
@@ -522,9 +526,12 @@ public partial class AdvancedRenderPipeline
                 GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
                 GetTexture<XRTexture>(StencilViewTextureName)!,
                 GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
+                GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
             ];
             _outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
-            _shader = CreateAdvancedTemporalShader(
+            _metadataOutputTexture = GetTexture<XRTexture>(TsrHistoryMetadataOutputTextureName)!;
+            _accumulationTexture = GetTexture<XRTexture>(TsrAccumulationTextureName)!;
+            _shader = CreateAdvancedTsrShader(
                 owner.Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
         }
 
@@ -560,8 +567,15 @@ public partial class AdvancedRenderPipeline
             frameBuffer.PrepareForInitialRendering();
             if (_outputTexture is not IFrameBufferAttachement outputAttachment)
                 throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
+            if (_metadataOutputTexture is not IFrameBufferAttachement metadataOutputAttachment)
+                throw new InvalidOperationException("TSR history metadata output texture is not an FBO-attachable texture.");
+            if (_accumulationTexture is not IFrameBufferAttachement accumulationAttachment)
+                throw new InvalidOperationException("TSR accumulation texture is not an FBO-attachable texture.");
 
-            frameBuffer.SetRenderTargets((outputAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            frameBuffer.SetRenderTargets(
+                (outputAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (metadataOutputAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (accumulationAttachment, EFrameBufferAttachment.ColorAttachment2, 0, -1));
             frameBuffer.SettingUniforms += owner.ApplyTsrUpscaleProgramBindings;
         }
 
@@ -577,6 +591,8 @@ public partial class AdvancedRenderPipeline
             _shader = null;
             _textureReferences = null;
             _outputTexture = null;
+            _metadataOutputTexture = null;
+            _accumulationTexture = null;
         }
     }
 
@@ -590,6 +606,28 @@ public partial class AdvancedRenderPipeline
         {
             ForceOvrMultiview = Stereo,
             Name = TsrHistoryColorFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateTsrAccumulationFBO()
+        => CreateTsrColorViewFBO(TsrAccumulationTextureName, TsrAccumulationFBOName);
+
+    private XRFrameBuffer CreateTsrHistoryMetadataOutputFBO()
+        => CreateTsrColorViewFBO(TsrHistoryMetadataOutputTextureName, TsrHistoryMetadataOutputFBOName);
+
+    private XRFrameBuffer CreateTsrHistoryMetadataFBO()
+        => CreateTsrColorViewFBO(TsrHistoryMetadataTextureName, TsrHistoryMetadataFBOName);
+
+    private XRFrameBuffer CreateTsrColorViewFBO(string textureName, string fboName)
+    {
+        XRTexture texture = GetTexture<XRTexture>(textureName)!;
+        if (texture is not IFrameBufferAttachement attachment)
+            throw new InvalidOperationException("TSR color view texture is not an FBO-attachable texture.");
+
+        return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            ForceOvrMultiview = Stereo,
+            Name = fboName
         };
     }
 

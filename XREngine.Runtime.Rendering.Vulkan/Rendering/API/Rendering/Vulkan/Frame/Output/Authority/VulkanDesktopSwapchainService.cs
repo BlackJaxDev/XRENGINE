@@ -47,6 +47,8 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     private readonly IVulkanTargetOutputHost _services;
     private readonly int _frameSlotCount;
     private long _lastGenerationDrainFrame = long.MinValue;
+    private RetiredSwapchainGeneration? _stagedRetiringGeneration;
+    private long _nextProxyRetirementDiagnosticTimestamp;
 
     internal VulkanDesktopSwapchainService(
         VulkanOutputRuntime output,
@@ -135,6 +137,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     {
         if (_resources.Lifetime.Tracker.DeviceLost)
             return;
+        DrainStreamlineProxyPresentationForLifecycle("shutdown");
         _output.Desktop.PresentCompletion?.WaitForShutdown();
         for (int index = 0; index < _output._retiredSwapchainGenerations.Count; index++)
             _output._retiredSwapchainGenerations[index].PresentCompletion?.WaitForShutdown();
@@ -184,8 +187,29 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 return false;
             }
 
-            DisableStreamlineFrameGenerationBeforeMutation("swapchain recreation");
-            if (!TryPrepareRetirementMarkers(out Fence graphicsMarker))
+            bool successorUsesProxy =
+                VulkanPresentationProfileResolver.ResolveRequestedProfile() ==
+                    EVulkanPresentationProfile.FrameGeneration;
+            bool hasLiveGeneration = _output.Desktop.Swapchain.Handle != 0;
+            if (!hasLiveGeneration)
+            {
+                DrainRetiredGenerations();
+                if (_stagedRetiringGeneration is { } stagedRetiringGeneration)
+                {
+                    if (_output._retiredSwapchainGenerations.Contains(stagedRetiringGeneration))
+                        return false;
+                    _stagedRetiringGeneration = null;
+                }
+                for (int index = 0; index < _output._retiredSwapchainGenerations.Count; index++)
+                    if (_output._retiredSwapchainGenerations[index].StreamlineProxy &&
+                        _output._retiredSwapchainGenerations[index].Swapchain.Handle != 0)
+                        return false;
+            }
+            else
+                DrainStreamlineProxyPresentationForLifecycle("swapchain recreation", disableCurrent: true);
+
+            Fence graphicsMarker = default;
+            if (hasLiveGeneration && !TryPrepareRetirementMarkers(out graphicsMarker))
                 return false;
 
             SwapchainKHR oldSwapchain = _output.Desktop.Swapchain;
@@ -238,6 +262,14 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 oldSwapchain, oldImages, oldImageLifetimeSlots, oldViews, oldFramebuffers,
                 oldPresentBridges, oldClear, oldLoad, graphicsMarker, oldPresentCompletion,
                 oldStreamlineProxy, oldWidth, oldHeight, Stopwatch.GetTimestamp());
+            if (hasLiveGeneration && (oldStreamlineProxy || successorUsesProxy))
+            {
+                _output.Desktop.ImageTimelineValues = null;
+                _services.PublishDesktopImageTimelineValues(null);
+                QueueRetiredGeneration(retired);
+                _stagedRetiringGeneration = retired;
+                return false;
+            }
             try
             {
                 CreateSwapchain(oldSwapchain);
@@ -304,22 +336,26 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _services.PublishDesktopImageTimelineValues(null);
                 _output.Desktop.StreamlineFrameGenerationActive = false;
                 _output.Desktop.StreamlineFrameGenerationIncludesDlss = false;
-                QueueRetiredGeneration(new(
-                    failedSwapchain,
-                    failedImages,
-                    failedImageLifetimeSlots,
-                    failedViews,
-                    [],
-                    failedPresentBridges,
-                    clear, load, default, failedPresentCompletion,
-                    failedStreamlineProxy,
-                    failedWidth, failedHeight,
-                    Stopwatch.GetTimestamp()));
+                if (failedSwapchain.Handle != 0 || failedImages.Length != 0 ||
+                    failedViews.Length != 0 || failedPresentBridges.Length != 0 ||
+                    clear.Handle != 0 || load.Handle != 0)
+                    QueueRetiredGeneration(new(
+                        failedSwapchain,
+                        failedImages,
+                        failedImageLifetimeSlots,
+                        failedViews,
+                        [],
+                        failedPresentBridges,
+                        clear, load, default, failedPresentCompletion,
+                        failedStreamlineProxy,
+                        failedWidth, failedHeight,
+                        Stopwatch.GetTimestamp()));
                 throw;
             }
             finally
             {
-                QueueRetiredGeneration(retired);
+                if (hasLiveGeneration)
+                    QueueRetiredGeneration(retired);
             }
         }
         finally
@@ -456,8 +492,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             throw new InvalidOperationException($"Failed to fetch swapchain images ({result}).");
 
         _output.Desktop.PresentCompletion = new VulkanWsiPresentCompletion(
-            _api, _device.Device, checked((int)imageCount), _output.Desktop.Maintenance1Enabled);
-        if (!_output.Desktop.Maintenance1Enabled)
+            _api, _device.Device, checked((int)imageCount), _output.Desktop.Maintenance1Enabled,
+            _output.Desktop.StreamlineFrameGenerationActive);
+        if (!_output.Desktop.Maintenance1Enabled && !_output.Desktop.StreamlineFrameGenerationActive)
             Debug.VulkanWarning("[Vulkan] Swapchain maintenance1 unavailable: presented generations retain native ownership; asynchronous recreation is bounded and shutdown requires process-lifetime quarantine.");
 
         _output.Desktop.ImageFormat = surfaceFormat.Format;
@@ -489,20 +526,23 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (_output.Desktop.Swapchain.Handle == 0)
             return;
 
+        VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
+        bool streamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
+        _output.Desktop.PresentCompletion?.Seal();
+        if (streamlineProxy && !_resources.Lifetime.Tracker.DeviceLost &&
+            _output.Desktop.PresentCompletion is { } liveCompletion &&
+            !liveCompletion.PollRetirement())
+            throw new InvalidOperationException("Cannot destroy a Streamline proxy swapchain before intercepted presentation drain proof.");
+        if (streamlineProxy &&
+            !NvidiaDlssManager.Native.TryDestroyProxySwapchain(binding, _output.Desktop.Swapchain, out string failureReason))
+            throw new InvalidOperationException($"NVIDIA DLSS frame generation could not destroy its proxy swapchain: {failureReason}");
+
         _output.Desktop.PresentCompletion?.Seal();
         _output.Desktop.PresentCompletion?.Destroy(_resources.Lifetime.Tracker.DeviceLost);
         _output.Desktop.PresentCompletion = null;
 
-        VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
-        KhrSwapchain swapchainExtension = RequireSwapchainExtension();
-        if (_output.Desktop.StreamlineFrameGenerationActive &&
-            !NvidiaDlssManager.Native.TryDestroyProxySwapchain(binding, _output.Desktop.Swapchain, out string failureReason))
-        {
-            Debug.RenderingError("NVIDIA DLSS frame generation failed to destroy the Streamline proxy swapchain cleanly ({0}). Attempting direct VK_KHR_swapchain destruction for teardown cleanup.", failureReason);
-            swapchainExtension.DestroySwapchain(_device.Device, _output.Desktop.Swapchain, null);
-        }
-        else if (!_output.Desktop.StreamlineFrameGenerationActive)
-            swapchainExtension.DestroySwapchain(_device.Device, _output.Desktop.Swapchain, null);
+        if (!streamlineProxy)
+            RequireSwapchainExtension().DestroySwapchain(_device.Device, _output.Desktop.Swapchain, null);
 
         ResetLiveSwapchainState();
     }
@@ -516,7 +556,34 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
         for (int index = 0; index < viewports.Count; index++)
             if (!NvidiaDlssManager.Native.TryDisableFrameGeneration(binding, viewports[index], out string failureReason))
-                Debug.RenderingError("NVIDIA DLSS frame generation could not be disabled before {0} for viewport {1}: {2}", reason, viewports[index].Index, failureReason);
+                throw new InvalidOperationException($"NVIDIA DLSS frame generation could not be disabled before {reason} for viewport {viewports[index].Index}: {failureReason}");
+    }
+
+    private void DrainStreamlineProxyPresentationForLifecycle(string reason, bool disableCurrent = false)
+    {
+        bool hasProxy = _output.Desktop.PresentCompletion?.IsStreamlineProxy == true;
+        for (int index = 0; index < _output._retiredSwapchainGenerations.Count; index++)
+            hasProxy |= _output._retiredSwapchainGenerations[index].PresentCompletion?.IsStreamlineProxy == true;
+        if (!hasProxy)
+            return;
+
+        // Disable, intercepted idle, and publication of completion proof share
+        // one exclusive queue-admission scope. Graphics marker submission comes
+        // afterward, once the output host has released that scope.
+        if (!_services.TryDrainStreamlineProxyPresentation(
+                disableCurrent ? () => DisableStreamlineFrameGenerationBeforeMutation(reason) : null,
+                MarkProxyGenerationsDrained,
+                out string failureReason))
+            throw new InvalidOperationException($"Streamline proxy presentation could not drain before {reason}: {failureReason}");
+    }
+
+    private void MarkProxyGenerationsDrained()
+    {
+        if (_output.Desktop.PresentCompletion is { IsStreamlineProxy: true } current)
+            current.MarkStreamlineProxyDrained();
+        for (int index = 0; index < _output._retiredSwapchainGenerations.Count; index++)
+            if (_output._retiredSwapchainGenerations[index].PresentCompletion is { IsStreamlineProxy: true } retired)
+                retired.MarkStreamlineProxyDrained();
     }
 
     internal void DrainStreamlineFrameGenerationDisableBeforePresent()
@@ -793,7 +860,8 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         {
             DrainOrphanedMarkers(force);
             long frameSerial = _resources.GetRetirementMeterSnapshot().FrameSerial;
-            if (!force && _lastGenerationDrainFrame == frameSerial)
+            if (!force && _lastGenerationDrainFrame == frameSerial &&
+                _output.Desktop.Swapchain.Handle != 0)
                 return;
             DrainCompletedDependencies();
             int drained = 0;
@@ -802,16 +870,26 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 RetiredSwapchainGeneration generation = _output._retiredSwapchainGenerations[index];
                 if (!force &&
                     !IsMarkerComplete(generation.GraphicsMarkerFence))
+                {
+                    ReportStagedRetirementBlock(generation, "graphics marker pending");
                     continue;
+                }
                 // Even forced healthy-device teardown needs the independent WSI
                 // proof; a graphics marker never proves presentation release.
                 if (!_resources.Lifetime.Tracker.DeviceLost &&
                     generation.PresentCompletion is { } completion && !completion.PollRetirement())
+                {
+                    ReportStagedRetirementBlock(generation, "presentation drain proof pending");
                     continue;
+                }
 
                 PublishCompletedMarker(generation.GraphicsMarkerFence, force);
                 if (!force && HasLiveDependencies(generation))
+                {
+                    if (ShouldReportStagedRetirementBlock(generation))
+                        ReportStagedRetirementBlock(generation, DescribeLiveDependency(generation));
                     continue;
+                }
 
                 DestroyGeneration(generation, force);
                 DestroyMarker(generation.GraphicsMarkerFence);
@@ -852,7 +930,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     private bool TrySubmitRetirementMarker(Queue queue, Fence fence, string owner)
     {
         SubmitInfo submitInfo = new() { SType = StructureType.SubmitInfo };
-        Result result = _services.SubmitToQueueTracked(queue, ref submitInfo, fence, owner);
+        Result result = _services.SubmitRetirementMarkerTracked(queue, ref submitInfo, fence, owner);
         if (result == Result.Success)
             return true;
         Debug.VulkanWarning("[Vulkan] Swapchain retirement marker submission failed. Owner={0} Result={1}.", owner, result);
@@ -931,30 +1009,126 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         return false;
     }
 
+    private void ReportStagedRetirementBlock(RetiredSwapchainGeneration generation, string reason)
+    {
+        if (!ShouldReportStagedRetirementBlock(generation))
+            return;
+
+        long now = Stopwatch.GetTimestamp();
+        _nextProxyRetirementDiagnosticTimestamp = now + Stopwatch.Frequency;
+        Debug.VulkanWarning(
+            "[Vulkan] Staged swapchain retirement blocked. Proxy={0} Handle=0x{1:X} Marker=0x{2:X} Reason={3} Pending={4}.",
+            generation.StreamlineProxy,
+            generation.Swapchain.Handle,
+            generation.GraphicsMarkerFence.Handle,
+            reason,
+            _output._retiredSwapchainGenerations.Count);
+    }
+
+    private bool ShouldReportStagedRetirementBlock(RetiredSwapchainGeneration generation)
+        => ReferenceEquals(_stagedRetiringGeneration, generation) &&
+            _output.Desktop.Swapchain.Handle == 0 &&
+            Stopwatch.GetTimestamp() >= _nextProxyRetirementDiagnosticTimestamp;
+
+    private string DescribeLiveDependency(RetiredSwapchainGeneration generation)
+    {
+        VulkanResourceLifetimeTracker tracker = _resources.Lifetime.Tracker;
+        for (int index = 0; index < generation.ImageViews.Length; index++)
+            if (_resources.Lifetime.ImageViews.LiveHandles.ContainsKey(generation.ImageViews[index].Handle))
+            {
+                ulong handle = generation.ImageViews[index].Handle;
+                lock (tracker.SyncRoot)
+                    return tracker.ResourceLifetimes.TryGetValue(new(ObjectType.ImageView, handle), out VulkanResourceLifetimeRecord? view)
+                        ? DescribeTrackedRetirementDependency(tracker, view, $"image view 0x{handle:X}")
+                        : $"image view 0x{handle:X} still live without a lifetime record";
+            }
+
+        lock (tracker.SyncRoot)
+        {
+            for (int index = 0; index < generation.Framebuffers.Length; index++)
+                if (tracker.ResourceLifetimes.TryGetValue(new(ObjectType.Framebuffer, generation.Framebuffers[index].Handle), out VulkanResourceLifetimeRecord? lifetime) &&
+                    (lifetime.State & EVulkanResourceLifetimeState.Destroyed) == 0)
+                    return DescribeTrackedRetirementDependency(tracker, lifetime, $"framebuffer 0x{generation.Framebuffers[index].Handle:X}");
+
+            for (int index = 0; index < generation.ImageLifetimeSlots.Length; index++)
+                if (!tracker.IsDetachedResourceSlotRetirementReadyNoLock(generation.ImageLifetimeSlots[index]))
+                {
+                    VulkanResourceSlotHandle slot = generation.ImageLifetimeSlots[index];
+                    if (!tracker.TryResolveResourceSlotNoLock(slot, out VulkanResourceLifetimeRecord record))
+                        return $"detached image slot {slot.Index} generation {slot.Generation} unresolved";
+                    VulkanResourceGenerationPins pins = record.Pins;
+                    string recordedOwner = "none found";
+                    foreach ((ulong commandHandle, VulkanCommandBufferLifetimeRecord command) in tracker.CommandBufferLifetimes)
+                        if (command.Dependencies.TryGetValue(record.Key, out ulong dependencyGeneration) &&
+                            dependencyGeneration == record.Generation)
+                        {
+                            VulkanResourceLifetimeKey commandKey = new(ObjectType.CommandBuffer, commandHandle);
+                            if (tracker.ResourceLifetimes.TryGetValue(commandKey, out VulkanResourceLifetimeRecord? commandResource))
+                                recordedOwner = $"0x{commandHandle:X} owner={commandResource.Owner} state={commandResource.State} retirement={commandResource.RetirementOwner ?? "<none>"}";
+                            else
+                                recordedOwner = $"0x{commandHandle:X} lifetime only";
+                            break;
+                        }
+                    return $"detached image slot {slot.Index} generation {slot.Generation} pending: " +
+                        $"pins descriptor/template/recorded/queued={pins.DescriptorReferenceCount}/" +
+                        $"{pins.TemplateReferenceCount}/{pins.RecordedReferenceCount}/{pins.QueuedReferenceCount}, " +
+                        $"last graphics/transfer/other={pins.LastGraphicsSequence}/{pins.LastTransferSequence}/" +
+                        $"{pins.LastOtherSequence}, completed={tracker.CompletedGraphicsSequence}/" +
+                        $"{tracker.CompletedTransferSequence}/{tracker.CompletedOtherSequence}, " +
+                        $"recorded owner={recordedOwner}";
+                }
+        }
+
+        return "dependency changed while checking";
+    }
+
+    private static string DescribeTrackedRetirementDependency(
+        VulkanResourceLifetimeTracker tracker,
+        VulkanResourceLifetimeRecord resource,
+        string label)
+    {
+        VulkanResourceGenerationPins pins = resource.Pins;
+        string recordedOwner = "none found";
+        if (pins.RecordedReferenceCount != 0)
+            foreach ((ulong commandHandle, VulkanCommandBufferLifetimeRecord command) in tracker.CommandBufferLifetimes)
+                if (command.Dependencies.TryGetValue(resource.Key, out ulong generation) &&
+                    generation == resource.Generation)
+                {
+                    VulkanResourceLifetimeKey commandKey = new(ObjectType.CommandBuffer, commandHandle);
+                    recordedOwner = tracker.ResourceLifetimes.TryGetValue(commandKey, out VulkanResourceLifetimeRecord? commandResource)
+                        ? $"0x{commandHandle:X} owner={commandResource.Owner} state={commandResource.State}"
+                        : $"0x{commandHandle:X} lifetime only";
+                    break;
+                }
+        return $"{label} state={resource.State} owner={resource.Owner} " +
+            $"pins descriptor/template/recorded/queued={pins.DescriptorReferenceCount}/" +
+            $"{pins.TemplateReferenceCount}/{pins.RecordedReferenceCount}/{pins.QueuedReferenceCount}, " +
+            $"last graphics/transfer/other={pins.LastGraphicsSequence}/{pins.LastTransferSequence}/" +
+            $"{pins.LastOtherSequence}, completed={tracker.CompletedGraphicsSequence}/" +
+            $"{tracker.CompletedTransferSequence}/{tracker.CompletedOtherSequence}, " +
+            $"recorded owner={recordedOwner}";
+    }
+
     private void DestroyGeneration(RetiredSwapchainGeneration generation, bool force)
     {
+        if (generation.StreamlineProxy && !_resources.Lifetime.Tracker.DeviceLost &&
+            generation.PresentCompletion is { } completion && !completion.PollRetirement())
+            throw new InvalidOperationException("Cannot destroy a retired Streamline proxy swapchain before intercepted presentation drain proof.");
+        if (generation.Swapchain.Handle != 0 && generation.StreamlineProxy &&
+            !NvidiaDlssManager.Native.TryDestroyProxySwapchain(
+                _output.CaptureStreamlineDeviceBinding(_device),
+                generation.Swapchain,
+                out string failureReason))
+            throw new InvalidOperationException($"NVIDIA DLSS frame generation could not destroy a retired proxy swapchain: {failureReason}");
+
         generation.PresentCompletion?.Destroy(_resources.Lifetime.Tracker.DeviceLost);
         DestroyRenderPass(generation.ClearRenderPass, force);
         DestroyRenderPass(generation.LoadRenderPass, force);
         for (int i = 0; i < generation.PresentBridgeSemaphores.Length; i++)
             if (generation.PresentBridgeSemaphores[i].Handle != 0)
                 _api.DestroySemaphore(_device.Device, generation.PresentBridgeSemaphores[i], null);
-        if (generation.Swapchain.Handle != 0)
-        {
-            if (generation.StreamlineProxy &&
-                !NvidiaDlssManager.Native.TryDestroyProxySwapchain(
-                    _output.CaptureStreamlineDeviceBinding(_device),
-                    generation.Swapchain,
-                    out string failureReason))
-            {
-                Debug.RenderingError(
-                    "NVIDIA DLSS frame generation failed to destroy retired proxy swapchain cleanly ({0}). Falling back to VK_KHR_swapchain destruction.",
-                    failureReason);
-                RequireSwapchainExtension().DestroySwapchain(_device.Device, generation.Swapchain, null);
-            }
-            else if (!generation.StreamlineProxy)
-                RequireSwapchainExtension().DestroySwapchain(_device.Device, generation.Swapchain, null);
-        }
+        if (generation.Swapchain.Handle != 0 && !generation.StreamlineProxy)
+            RequireSwapchainExtension().DestroySwapchain(_device.Device, generation.Swapchain, null);
         for (int i = 0; i < generation.Images.Length; i++)
             _resources.CompleteDetachedExternalResourceDestruction(
                 ObjectType.Image,

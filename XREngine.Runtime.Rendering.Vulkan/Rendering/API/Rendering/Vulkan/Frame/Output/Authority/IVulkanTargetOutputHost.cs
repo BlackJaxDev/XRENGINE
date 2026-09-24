@@ -19,6 +19,7 @@ internal interface IVulkanTargetOutputHost
     bool StreamlineDlssProvisioned { get; }
     bool StreamlineFrameGenerationProvisioned { get; }
     VulkanStreamlineDeviceBinding CaptureStreamlineDeviceBinding();
+    bool TryDrainStreamlineProxyPresentation(Action? beforeWait, Action afterWait, out string failureReason);
     CommandBuffer[] CreateDesktopOutputArtifacts(int imageCount);
     int ReserveOpenXrFrameDataSlots(int desktopImageCount);
     void PublishDesktopImageTimelineValues(ulong[]? timelineValues);
@@ -48,6 +49,7 @@ internal interface IVulkanTargetOutputHost
     bool TryBeginReleaseExternalImage(Image image, string owner);
     void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner);
     Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller);
+    Result SubmitRetirementMarkerTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller);
     Result PresentToQueueTracked(KhrSwapchain swapchainApi, Queue queue, ref PresentInfoKHR presentInfo, string caller);
     bool TryReadMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryReadCallback<TState> callback);
     bool TryWriteMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryWriteCallback<TState> callback);

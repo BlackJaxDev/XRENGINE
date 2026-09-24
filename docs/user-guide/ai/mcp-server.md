@@ -340,6 +340,14 @@ call, including recordings later discarded. It proves recording reach, not GPU
 execution or completion. Correlate it with completed Advanced scene outputs and
 viewed synchronization validation when comparing barrier changes.
 
+`get_render_profiler_stats.vulkan.validation.cumulative` returns device-lifetime
+error/warning totals, bounded message samples, overflow counts, and the effective
+standard/synchronization validation and debug-messenger flags. These totals
+survive frames with no messages and reset when the Vulkan device is recreated.
+The sibling `message_count` and `error_count` fields describe only the last
+frame. Check the enabled flags before interpreting zero errors as validation
+evidence; Release builds can omit ordinary debug-log calls.
+
 `get_render_profiler_stats.vulkan.descriptor_heap` exposes cumulative native
 sampler/resource heap binds, heap pushes, successful sampler/resource descriptor
 writes, and payload-object allocations. Profile NDJSON exports the corresponding

@@ -834,6 +834,14 @@ internal sealed partial class VulkanFrameLoop
         }
 
         _commandRuntime.CompleteTrackedFence(slot.Fence);
+        Result resetResult = _commandRuntime.ResetTrackedCommandBuffer(slot.CommandBuffer);
+        if (resetResult != Result.Success)
+        {
+            string error = $"Could not reset completed Vulkan screenshot readback command buffer for slot {slotIndex} ({resetResult}).";
+            if (resetResult == Result.ErrorDeviceLost)
+                MarkDeviceLost(error, "vkResetCommandBuffer.ScreenshotReadback", resetResult);
+            throw new InvalidOperationException(error);
+        }
         if (!ReadbackOutputResources.TryCompleteStagingSlice(slot.StagingSlice))
         {
             DeliverScreenshotReadbackFailure(

@@ -636,15 +636,17 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             StateClassID = submission.StateClass,
             InstanceCount = submission.InstanceCount,
         };
-        IRenderCommandMesh? source = publication.Submission.DeformationSources[commandIndex].Source;
+        AdvancedManagedDeformationSourceRow deformationSource =
+            publication.Submission.DeformationSources[commandIndex];
+        IRenderCommandMesh? source = deformationSource.Source;
         AdvancedMeshRenderSnapshot snapshot = CaptureSnapshot(source);
         AdvancedGpuHandle draw = submission.Draw;
         AdvancedGpuHandle geometry = submission.Geometry;
         AdvancedGpuHandle material = submission.Material;
         AdvancedGpuHandle deformation = submission.Deformation;
         bool commandChanged = false;
-        XRMeshRenderer? renderer = snapshot.Renderer;
-        XRMesh? mesh = renderer?.Mesh;
+        XRMeshRenderer? renderer = deformationSource.Renderer;
+        XRMesh? mesh = deformationSource.Mesh;
 
         EAdvancedVisibilityPreparationFlags visibilityFlags =
             commandChanged
@@ -674,8 +676,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             in canonicalGeometry,
             command.SkinID);
         bool skinned =
-            (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u &&
-            mesh is { VertexCount: > 0 };
+            (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u;
+        if (skinned && (renderer is null || mesh is not { VertexCount: > 0 }))
+            throw new InvalidOperationException(
+                $"Advanced draw {draw} requires a captured primitive mesh and renderer for deformation.");
         bool meshletsResident = hasCanonicalGeometry &&
             canonicalGeometry.MeshletCount != 0u &&
             canonicalGeometry.MeshletDescriptors.IsValid &&
@@ -752,7 +756,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 IndexCount: hasCanonicalGeometry
                     ? canonicalGeometry.IndexCount
                     : 0u,
-                VertexCount: checked((uint)Math.Max(0, mesh?.VertexCount ?? 0)),
+                VertexCount: hasCanonicalGeometry ? canonicalGeometry.VertexCount : 0u,
                 RasterStateClass: command.StateClassID,
                 Coverage: ResolveCoverage(command),
                 CullMode:
@@ -760,8 +764,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                      (uint)GPUIndirectRenderFlags.DoubleSided) != 0u
                         ? 0u
                         : 1u,
-                PrimitiveTopology: checked((uint)(
-                    mesh?.Type ?? EPrimitiveType.Triangles)),
+                PrimitiveTopology: checked((uint)canonicalGeometry.PrimitiveTopology),
                 Skinned: skinned,
                 MeshletsResident: meshletsResident,
                 ForceCpuDiagnostic:

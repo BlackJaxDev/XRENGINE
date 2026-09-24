@@ -186,16 +186,16 @@ public static partial class EditorUnitTests
 
             if (Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration)
             {
-                uint generatedPresented = VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresented;
+                uint framesPresented = VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresented;
                 uint maximumGenerated = VendorUpscaleRuntime.DlssFrameGenerationMaximumFramesToGenerate;
-                float estimatedPresentedHz = averageHz * (1.0f + generatedPresented);
+                float estimatedPresentedHz = averageHz * framesPresented;
                 builder.Append("\ndlss-g: presented ");
                 AppendFixed(builder, estimatedPresentedHz, "F0", 3);
-                builder.Append("hz est | generated +");
-                builder.Append(generatedPresented);
-                builder.Append(" | total ");
+                builder.Append("hz est | presented since query ");
+                builder.Append(framesPresented);
+                builder.Append(" | presented total ");
                 builder.Append(VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresentedTotal);
-                builder.Append(" | max ");
+                builder.Append(" | max generated ");
                 builder.Append(maximumGenerated);
             }
 

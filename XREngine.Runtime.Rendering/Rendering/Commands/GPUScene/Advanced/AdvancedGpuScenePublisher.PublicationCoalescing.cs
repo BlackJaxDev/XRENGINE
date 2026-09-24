@@ -10,8 +10,6 @@ public sealed partial class AdvancedGpuScenePublisher
     /// </summary>
     private bool TryReuseUnchangedPublication(ulong frameId)
     {
-        // Preserve the short-circuit order: probing a missing snapshot or mutation
-        // must not create a publication lease merely to explain a reuse miss.
         if (!_currentPublication.IsValid)
         {
             S13aPublicationTelemetry.PublicationMissing();
@@ -19,17 +17,45 @@ public sealed partial class AdvancedGpuScenePublisher
                 publicationSequence: _currentPublication.Sequence, frameId: frameId);
             return false;
         }
-        if (!Database.TryGetPublicationSnapshot(_currentPublication, out _))
+        AdvancedGpuScenePublicationReference candidate = _currentPublication;
+        if (!Database.TryAcquirePublicationLease(
+                in candidate,
+                EAdvancedGpuScenePublicationPinKind.Package,
+                out AdvancedGpuScenePublicationLease inspectionLease))
         {
             S13aPublicationTelemetry.PublicationExpired();
             S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationExpired,
-                publicationSequence: _currentPublication.Sequence, frameId: frameId);
+                publicationSequence: candidate.Sequence, frameId: frameId);
             return false;
         }
-        if (HasPlannedPublicationMutation(frameId))
-            return false;
 
-        _sequence = _currentPublication.Sequence;
+        bool hasMutation;
+        try
+        {
+            // Reclamation clears managed sidecars after the final pin is released.
+            // Keep this inspection lease until the retained span comparison ends.
+            if (!Database.TryGetPublicationSnapshot(in candidate, out AdvancedGpuScenePublicationSnapshot retainedPublication))
+                return false;
+            hasMutation = HasPlannedPublicationMutation(frameId, retainedPublication.Submission.DeformationSources);
+        }
+        finally
+        {
+            inspectionLease.Dispose();
+        }
+
+        if (hasMutation)
+            return false;
+        // The inspection lease may have been the last pin. A retired candidate
+        // must be republished before its identity can reach the next package.
+        if (!Database.TryGetPublicationSnapshot(in candidate, out _))
+        {
+            S13aPublicationTelemetry.PublicationExpired();
+            S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationExpired,
+                publicationSequence: candidate.Sequence, frameId: frameId);
+            return false;
+        }
+
+        _sequence = candidate.Sequence;
         for (int commandIndex = 0;
              commandIndex < _plannedCommandCount;
              ++commandIndex)
@@ -80,7 +106,9 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    private bool HasPlannedPublicationMutation(ulong frameId)
+    private bool HasPlannedPublicationMutation(
+        ulong frameId,
+        ReadOnlySpan<AdvancedManagedDeformationSourceRow> retainedSources)
     {
         if (_plannedLightMutationCount != 0 ||
             _plannedMaterialReleaseCount != 0 ||
@@ -111,6 +139,7 @@ public sealed partial class AdvancedGpuScenePublisher
             }
         }
 
+        int retainedSourceIndex = 0;
         for (int commandIndex = 0;
              commandIndex < _plannedCommandCount;
              ++commandIndex)
@@ -138,7 +167,10 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration.Material != material ||
                 registration.StructuralSignature != plan.StructuralSignature ||
                 registration.ContentSignature != plan.ContentSignature ||
-                registration.LegacyCommandIndex != checked((uint)commandIndex))
+                registration.LegacyCommandIndex != checked((uint)commandIndex) ||
+                retainedSourceIndex >= retainedSources.Length ||
+                !ReferenceEquals(retainedSources[retainedSourceIndex].Renderer, plan.Renderer) ||
+                !ReferenceEquals(retainedSources[retainedSourceIndex].Mesh, plan.Mesh))
             {
                 S13aPublicationTelemetry.PublicationCommandMutation();
                 S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationCommandMutation,
@@ -147,6 +179,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     detail: commandIndex);
                 return true;
             }
+            ++retainedSourceIndex;
             if (plan.TemporalEventReason != EAdvancedVelocityValidityReason.Valid)
             {
                 S13aPublicationTelemetry.PublicationTemporalMutation();
@@ -157,6 +190,9 @@ public sealed partial class AdvancedGpuScenePublisher
                 return true;
             }
         }
+
+        if (retainedSourceIndex != retainedSources.Length)
+            return true;
 
         for (int registrationIndex = 0;
              registrationIndex < _registrationCount;

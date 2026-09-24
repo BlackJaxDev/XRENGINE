@@ -239,6 +239,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 // snapshot at this legal boundary and leave retained snapshots
                 // untouched for their current consumers.
                 _publicationSnapshots[ringIndex].ResourcePayloads.ReleaseRetainedSources();
+                _publicationSnapshots[ringIndex].Submission.ReleaseRetainedSources();
                 _publicationSnapshots[ringIndex] =
                     new AdvancedGpuScenePublicationSnapshot(this, _capacities);
                 if (!CanPreparePublicationCore(ringIndex))
@@ -634,6 +635,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         for (int index = 0; index < _publicationSnapshots.Length; ++index)
         {
             _publicationSnapshots[index].ResourcePayloads.ReleaseRetainedSources();
+            _publicationSnapshots[index].Submission.ReleaseRetainedSources();
             _publicationRing[index] = default;
         }
         _publicationCount = 0;
@@ -795,6 +797,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
                     continue;
 
                 _publicationSnapshots[index].ResourcePayloads.ReleaseRetainedSources();
+                _publicationSnapshots[index].Submission.ReleaseRetainedSources();
                 _publicationSnapshots[index] =
                     new AdvancedGpuScenePublicationSnapshot(this, _capacities);
             }
@@ -1054,6 +1057,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 // reachable. Release it before this reusable snapshot is
                 // swapped into a later free ring slot.
                 _publicationSnapshots[sourceIndex].ResourcePayloads.ReleaseRetainedSources();
+                _publicationSnapshots[sourceIndex].Submission.ReleaseRetainedSources();
                 _publicationRing[sourceIndex] = default;
                 _packagePinCounts[sourceIndex] = 0u;
                 _gpuPinCounts[sourceIndex] = 0u;
@@ -1202,6 +1206,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
             ? EAdvancedGpuScenePublicationFault.InvariantFailure
             : fault;
         _publicationFaultSequence = transaction.Sequence;
+        _publicationSnapshots[transaction.RingIndex].Submission.ReleaseRetainedSources();
         _preparedPublication = default;
         _publicationPrepared = false;
     }

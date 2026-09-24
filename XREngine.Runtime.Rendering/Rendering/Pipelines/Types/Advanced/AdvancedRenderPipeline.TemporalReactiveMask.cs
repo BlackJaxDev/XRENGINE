@@ -13,6 +13,11 @@ public partial class AdvancedRenderPipeline
             "XR_ADVANCED_REACTIVE_MASK")
         ?? throw new InvalidOperationException($"Advanced temporal shader '{fileName}' is unavailable.");
 
+    /// <summary>Resolves jittered Advanced inputs onto a stable TSR output/history grid.</summary>
+    private static XRShader CreateAdvancedTsrShader(string fileName)
+        => ShaderHelper.CreateDefinedShaderVariant(CreateAdvancedTemporalShader(fileName), "XR_TSR_STABLE_OUTPUT")
+        ?? throw new InvalidOperationException($"Advanced TSR shader '{fileName}' is unavailable.");
+
     private void BindAdvancedTemporalReactiveMask(XRRenderProgram program)
         => program.Sampler("AdvancedReactiveMask",
             GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)

@@ -2,6 +2,14 @@
 // points. History rejection, neighborhood clamping, confidence, and sharpening
 // live here so their numerical policy cannot drift between those entry points.
 
+// Jitter UV offsets and NDC-derived motion retain the projection's axes.
+// Framebuffer texture coordinates can have the opposite Y direction (Vulkan).
+vec2 TsrFramebufferUvDisplacement(vec2 clipUvDisplacement, int framebufferTextureYDirection)
+{
+    return vec2(clipUvDisplacement.x,
+        framebufferTextureYDirection == 1 ? -clipUvDisplacement.y : clipUvDisplacement.y);
+}
+
 vec3 TsrRgbToYCoCg(vec3 rgb)
 {
     float y = dot(rgb, vec3(0.25, 0.5, 0.25));
@@ -103,6 +111,17 @@ float TsrComputeHistoryWeight(
     return canUseHistory ? mix(feedbackMin, feedbackMax, confidence) : 0.0;
 }
 
+float TsrComputeDetailProtection(bool canUseHistory, float historyAge, float motionMask, float reactiveMask)
+{
+    return canUseHistory ? smoothstep(2.0, 8.0, historyAge)
+        * (1.0 - motionMask) * (1.0 - clamp(reactiveMask, 0.0, 1.0)) : 0.0;
+}
+
+float TsrAdvanceHistoryAge(bool canUseHistory, float historyAge, float reactiveMask)
+{
+    return canUseHistory && reactiveMask < 0.1 ? min(historyAge + 1.0, 32.0) : 1.0;
+}
+
 float TsrComputeSharpenStrength(
     bool nativeResolution,
     float historyWeight,
@@ -111,4 +130,17 @@ float TsrComputeSharpenStrength(
     return (nativeResolution ? 0.08 : 0.18)
         * (1.0 - historyWeight)
         * (1.0 - 0.5 * reactiveMask);
+}
+
+float TsrComputeSharpenStability(bool canUseHistory, float historyAge,
+    float geometryInstability, float motionMask, float reactiveMask,
+    float currentLuma, float historyLuma, float lumaThreshold)
+{
+    // Fresh/rejected history must not receive extra current-frame detail: that
+    // is precisely where subpixel coverage is least stable. Compare unclipped
+    // history so clipping cannot hide the disagreement that causes shimmer.
+    float disagreement = smoothstep(0.25 * max(lumaThreshold, 1e-5),
+        max(lumaThreshold, 1e-5), abs(currentLuma - historyLuma));
+    return TsrComputeDetailProtection(canUseHistory, historyAge, motionMask, reactiveMask)
+        * (1.0 - clamp(geometryInstability, 0.0, 1.0)) * (1.0 - disagreement);
 }

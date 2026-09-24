@@ -20,6 +20,16 @@ namespace XREngine.Rendering.Commands
 
         private static long s_nextStableQueryKey;
 
+        // Property notifications can synchronously mutate a different command on this thread.
+        [ThreadStatic]
+        private static int s_synchronousCallbackDepth;
+
+        protected static bool IsInsideSynchronousCallback => s_synchronousCallbackDepth != 0;
+
+        protected static void EnterSynchronousCallback() => ++s_synchronousCallbackDepth;
+
+        protected static void LeaveSynchronousCallback() => --s_synchronousCallbackDepth;
+
         private static uint AllocateStableQueryKey()
         {
             long value = System.Threading.Interlocked.Increment(ref s_nextStableQueryKey);
@@ -189,7 +199,15 @@ namespace XREngine.Rendering.Commands
         {
             _hasSwappedBuffers = true;
             _renderEnabled = _enabled;
-            OnSwapBuffers?.Invoke(this);
+            EnterSynchronousCallback();
+            try
+            {
+                OnSwapBuffers?.Invoke(this);
+            }
+            finally
+            {
+                LeaveSynchronousCallback();
+            }
             // Another command collection may have acknowledged a newer snapshot. Never move
             // the acknowledgement backwards, and never erase a mutation made by a callback.
             long acknowledged = System.Threading.Volatile.Read(ref _acknowledgedVersion);

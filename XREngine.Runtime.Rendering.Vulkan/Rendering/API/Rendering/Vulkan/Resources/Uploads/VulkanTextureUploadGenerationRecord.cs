@@ -12,4 +12,7 @@ internal sealed class VulkanTextureUploadGenerationRecord
     internal readonly List<VulkanTextureUploadGenerationEntry> Entries =
         new(Capacity);
     internal long LatestPublishedStreamingGeneration;
+    internal long RehydrationSourceGeneration;
+    internal long RehydrationUploadGeneration;
+    internal string? RehydrationFailureDetail;
 }

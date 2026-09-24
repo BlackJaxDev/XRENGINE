@@ -172,6 +172,10 @@ namespace XREngine.Rendering.Vulkan
             if (!target.IsValid)
                 return false;
 
+            if (!ResourceRuntime.TryAdoptRetainedPresentationImageForRecording(
+                    commandBuffer, source, sourceLease, out unavailableReason))
+                return false;
+
             bool recorded = RecordRejectedDesktopPresentationBlit(
                 commandBuffer,
                 source,

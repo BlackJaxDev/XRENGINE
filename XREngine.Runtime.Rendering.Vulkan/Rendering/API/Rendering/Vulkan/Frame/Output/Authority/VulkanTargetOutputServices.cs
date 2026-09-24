@@ -22,6 +22,33 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
     public bool StreamlineFrameGenerationProvisioned => _outputRuntime._streamlineFrameGenerationProvisioned;
     public VulkanStreamlineDeviceBinding CaptureStreamlineDeviceBinding()
         => _outputRuntime.CaptureStreamlineDeviceBinding(_deviceContext);
+    public bool TryDrainStreamlineProxyPresentation(Action? beforeWait, Action afterWait, out string failureReason)
+    {
+        var admissionGate = _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
+        admissionGate.EnterWriteLock();
+        try
+        {
+            if (!_deviceContext.IsOperational)
+            {
+                failureReason = "Vulkan device is not operational.";
+                return false;
+            }
+
+            beforeWait?.Invoke();
+            Interlocked.Increment(ref _deviceWaitIdleCalls);
+            if (!XREngine.Rendering.DLSS.NvidiaDlssManager.Native.TryWaitForProxyDeviceIdle(
+                    CaptureStreamlineDeviceBinding(), out failureReason))
+                return false;
+
+            _commandRuntime.CompleteTrackedDevice();
+            afterWait();
+            return true;
+        }
+        finally
+        {
+            admissionGate.ExitWriteLock();
+        }
+    }
     public CommandBuffer[] CreateDesktopOutputArtifacts(int imageCount)
         => _commandRuntime.CreateDesktopOutputArtifacts(
             Api,
@@ -352,6 +379,19 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
     {
         ThrowIfVulkanDeviceOperationNotAdmitted(caller);
         return _commandRuntime.SubmitToQueueTracked(
+            Api,
+            _deviceContext,
+            _telemetry,
+            queue,
+            ref submitInfo,
+            fence,
+            caller);
+    }
+
+    public Result SubmitRetirementMarkerTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
+    {
+        ThrowIfVulkanDeviceOperationNotAdmitted(caller);
+        return _commandRuntime.SubmitRetirementMarkerTracked(
             Api,
             _deviceContext,
             _telemetry,

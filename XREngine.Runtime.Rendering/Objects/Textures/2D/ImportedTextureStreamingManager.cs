@@ -213,6 +213,159 @@ internal sealed partial class ImportedTextureStreamingManager
         return queued;
     }
 
+    /// <summary>
+    /// Recreates native Vulkan residency from the retained published mip payload
+    /// after a renderer restart. The claim is conditional on the exact published
+    /// generation and never replaces another streaming transition.
+    /// </summary>
+    internal bool TrySchedulePublishedResidentDataForVulkanRehydration(
+        XRTexture2D texture,
+        long expectedPublishedGeneration,
+        CancellationToken cancellationToken,
+        VulkanResidentRehydrationUploadScheduler scheduleUpload,
+        out long scheduledGeneration,
+        out string? failureReason,
+        out bool competingTransition)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        ArgumentNullException.ThrowIfNull(scheduleUpload);
+        scheduledGeneration = 0L;
+        failureReason = null;
+        competingTransition = false;
+        if (expectedPublishedGeneration <= 0 ||
+            cancellationToken.IsCancellationRequested ||
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+        {
+            failureReason = "Vulkan texture rehydration is unavailable for this renderer.";
+            return false;
+        }
+
+        EnsureCallbacksSubscribed();
+        ImportedTextureStreamingRecord record = GetOrCreateRecord(texture, texture.FilePath);
+        CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        TextureStreamingResidentData residentData;
+        bool includeMipChain;
+        uint targetDimension;
+        long frameId = Volatile.Read(ref _collectFrameId);
+        lock (record.Sync)
+        {
+            if (record.PublishedGeneration != expectedPublishedGeneration ||
+                record.UploadGeneration < expectedPublishedGeneration ||
+                record.UploadGeneration == long.MaxValue ||
+                record.PendingLoadCts is not null ||
+                record.PendingMaxDimension != 0)
+            {
+                cts.Dispose();
+                competingTransition = true;
+                failureReason = "Published texture generation changed or another transition is pending.";
+                return false;
+            }
+
+            Mipmap2D[]? retainedMips = texture.Mipmaps;
+            if (record.SourceWidth == 0 || record.SourceHeight == 0 ||
+                record.ResidentMaxDimension == 0 ||
+                retainedMips is not { Length: > 0 })
+            {
+                cts.Dispose();
+                failureReason = "Published texture has no retained resident mip payload or source dimensions.";
+                return false;
+            }
+
+            Mipmap2D[] frozenMips = new Mipmap2D[retainedMips.Length];
+            for (int mipIndex = 0; mipIndex < retainedMips.Length; mipIndex++)
+            {
+                Mipmap2D? mip = retainedMips[mipIndex];
+                if (mip is null || !mip.HasData() || mip.Width == 0 || mip.Height == 0)
+                {
+                    cts.Dispose();
+                    failureReason = $"Published texture mip {mipIndex} has no resident data.";
+                    return false;
+                }
+                frozenMips[mipIndex] = mip;
+            }
+
+            // A canceled native upload may already have prepared a larger CPU
+            // mip payload without advancing the published resident dimension.
+            targetDimension = Math.Max(frozenMips[0].Width, frozenMips[0].Height);
+            residentData = new TextureStreamingResidentData(
+                frozenMips,
+                record.SourceWidth,
+                record.SourceHeight,
+                targetDimension);
+            if (residentData.SizedInternalFormat != record.Format)
+            {
+                cts.Dispose();
+                failureReason = "Published texture mip format differs from its retained streaming format.";
+                return false;
+            }
+
+            includeMipChain = frozenMips.Length > 1;
+            long residentBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
+            if (!_transitionQueue.TryBeginTransition(
+                    record,
+                    cts,
+                    targetDimension,
+                    SparseTextureStreamingPageSelection.Full,
+                    frameId,
+                    pressureDemotion: false,
+                    previousResidentSize: record.ResidentMaxDimension,
+                    previousCommittedBytes: 0L,
+                    targetCommittedBytes: residentBytes,
+                    backendName: VulkanDenseBackend.Name,
+                    reason: "restore published native Vulkan residency",
+                    priority: JobPriority.High,
+                    uploadPriorityClass: TextureUploadPriorityClass.VisibleNow,
+                    out CancellationTokenSource? previousPendingLoad))
+            {
+                cts.Dispose();
+                failureReason = "Published texture rehydration transition could not be claimed.";
+                return false;
+            }
+
+            if (previousPendingLoad is not null)
+                throw new InvalidOperationException("Texture rehydration replaced a pending transition.");
+            scheduledGeneration = record.UploadGeneration;
+            record.Backend = VulkanDenseBackend;
+            record.PublicationEligibleGeneration = scheduledGeneration;
+        }
+
+        bool IsCurrentTransition()
+        {
+            lock (record.Sync)
+                return ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested;
+        }
+
+        bool queued;
+        try
+        {
+            queued = scheduleUpload(
+                residentData,
+                includeMipChain,
+                targetDimension,
+                scheduledGeneration,
+                IsCurrentTransition,
+                cts.Token,
+                completed => ClearPendingTransition(record, cts, completed, targetDimension, frameId),
+                error => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true),
+                () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId));
+        }
+        catch (Exception error)
+        {
+            ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true);
+            Debug.TexturesWarning($"Vulkan texture rehydration upload admission failed: {error}");
+            failureReason = "Vulkan texture rehydration upload admission failed on the current renderer.";
+            return false;
+        }
+        if (!queued)
+        {
+            ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true);
+            failureReason = "Vulkan texture rehydration upload was rejected before scheduling.";
+            return false;
+        }
+
+        return true;
+    }
+
     internal bool TryDescribeActiveStartupTextureWork(out string reason)
     {
         int activeImportScopes = Volatile.Read(ref _activeImportedModelImports);

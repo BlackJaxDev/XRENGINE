@@ -201,6 +201,79 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
+    /// <summary>
+    /// Transfers an exact retained image generation into a command recording.
+    /// The template lease may be released after this independent recorded pin
+    /// is published; ordinary retired resources remain inadmissible.
+    /// </summary>
+    internal bool TryAdoptRetainedPresentationImageForRecording(
+        CommandBuffer commandBuffer,
+        in VulkanPresentationSourceTuple source,
+        VulkanResidentTemplateDependencyLease? lease,
+        out string failureReason)
+    {
+        if (!TryValidateRetainedPresentationSourceForReplay(source, lease, out failureReason))
+            return false;
+
+        ulong commandHandle = unchecked((ulong)commandBuffer.Handle);
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            if (tracker.DeviceLost ||
+                !TryValidateCommandBufferRecordingAdmissionNoLock(commandHandle, out failureReason) ||
+                lease is null || !lease.IsActive ||
+                !TryValidateRetainedPresentationDependency(
+                    tracker,
+                    lease.Dependencies[0],
+                    ObjectType.Image,
+                    source.Image.Handle,
+                    source.ImageAllocationGeneration,
+                    out failureReason))
+                return false;
+
+            if (!tracker.CommandBufferLifetimes.TryGetValue(commandHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                lifetime = new VulkanCommandBufferLifetimeRecord();
+                tracker.CommandBufferLifetimes.Add(commandHandle, lifetime);
+            }
+
+            VulkanResourceSlotHandle slot = lease.Dependencies[0];
+            VulkanResourceLifetimeKey key = new(ObjectType.Image, source.Image.Handle);
+            if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? keyedImage) ||
+                keyedImage.Slot != slot ||
+                keyedImage.Generation != source.ImageAllocationGeneration)
+            {
+                failureReason = "The retained presentation image is no longer the keyed native generation.";
+                return false;
+            }
+            if ((lifetime.RetainedPresentationImageSlot.IsValid &&
+                 lifetime.RetainedPresentationImageSlot != slot) ||
+                (lifetime.Dependencies.TryGetValue(key, out ulong recordedGeneration) &&
+                 recordedGeneration != source.ImageAllocationGeneration))
+            {
+                failureReason = "The command buffer already records another generation of the presentation image.";
+                return false;
+            }
+
+            if (!lifetime.Dependencies.ContainsKey(key))
+            {
+                lifetime.Dependencies.EnsureCapacity(lifetime.Dependencies.Count + 1);
+                lifetime.TouchedDependencies.EnsureCapacity(lifetime.Dependencies.Count + 1);
+                _ = tracker.TryResolveResourceSlotNoLock(slot, out VulkanResourceLifetimeRecord image);
+                image.Pins.AddRecordedReference();
+                image.State |= EVulkanResourceLifetimeState.Recorded;
+                lifetime.Dependencies.Add(key, image.Generation);
+            }
+            else
+                lifetime.TouchedDependencies.EnsureCapacity(lifetime.Dependencies.Count);
+
+            lifetime.RetainedPresentationImageSlot = slot;
+            lifetime.RefreshTouchedDependencies();
+            failureReason = string.Empty;
+            return true;
+        }
+    }
+
     private static bool TryValidateRetainedPresentationDependency(
         VulkanResourceLifetimeTracker tracker,
         VulkanResourceSlotHandle slot,

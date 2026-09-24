@@ -21,11 +21,21 @@ public sealed class AdvancedSceneSubmissionPublicationSnapshot
             Array.Resize(ref _records, records.Length);
         if (_deformationSources.Length < sources.Length)
             Array.Resize(ref _deformationSources, sources.Length);
+        if (sources.Length < Count)
+            Array.Clear(_deformationSources, sources.Length, Count - sources.Length);
         records.CopyTo(_records);
         sources.CopyTo(_deformationSources);
         Count = records.Length;
         Sequence = sequence;
         return true;
+    }
+
+    /// <summary>Releases managed source references after this publication has no pins.</summary>
+    internal void ReleaseRetainedSources()
+    {
+        Array.Clear(_deformationSources);
+        Count = 0;
+        Sequence = 0u;
     }
 }
 
@@ -34,6 +44,7 @@ public readonly record struct AdvancedManagedDeformationSourceRow(
     IRenderCommandMesh? Source,
     RenderInfo? AuthoringRenderInfo,
     XRMeshRenderer? Renderer,
+    XRMesh? Mesh,
     uint MeshVertexCount,
     ulong SourceVersion,
     ulong MeshVersion);

@@ -94,7 +94,8 @@ public partial class DefaultRenderPipeline
         bool usesStereoResources = UsesStereoResources(instance, viewport);
         AmbientOcclusionSettings? generationAoSettings = ResolveAmbientOcclusionSettings(instance, viewport);
 
-        if (EnableDeferredMsaa && !useOpenXrVulkanSafePath)
+        if (EnableDeferredMsaa && !useOpenXrVulkanSafePath &&
+            ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
         if (!useOpenXrVulkanSafePath && ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
             mask |= DefaultPipelineResourceFeature.MsaaTargetsEnabled;
@@ -135,9 +136,12 @@ public partial class DefaultRenderPipeline
                 mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
 
             EAntiAliasingMode antiAliasingMode = ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport);
-            bool useTemporalResources = !useVendorUpscale
-                && !DisableHistoryBasedVrEffects()
-                && antiAliasingMode is EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa;
+            bool useTemporalResources = !DisableHistoryBasedVrEffects()
+                && (((RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+                        || VendorUpscaleRuntime.IsDlssFrameGenerationRequested
+                        || antiAliasingMode == EAntiAliasingMode.Dlaa) && useVendorUpscale)
+                    || (!RuntimeSuppressOwnAntiAliasing
+                        && antiAliasingMode is (EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa)));
             if (useTemporalResources)
                 mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
             if (useVendorUpscale || useTemporalResources || useMotionBlur)

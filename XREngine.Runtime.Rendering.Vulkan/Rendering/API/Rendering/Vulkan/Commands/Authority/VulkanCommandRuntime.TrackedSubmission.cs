@@ -1722,6 +1722,9 @@ internal sealed partial class VulkanCommandRuntime
 
         uint submissionQueueFamilyIndex = ResolveQueueFamilyIndex(queue);
         using (VulkanFrameLockScope.Enter(
+                   ResourceRuntime.Lifetime.Tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+        using (VulkanFrameLockScope.Enter(
                    Synchronization._vulkanImageLayoutLock,
                    EVulkanFrameWaitReason.SynchronizationLock))
         {
@@ -1738,7 +1741,12 @@ internal sealed partial class VulkanCommandRuntime
                          recorded.TouchedSubresources)
                 {
                     ulong generation = ResourceRuntime.GetPublishedGeneration(ObjectType.Image, pair.Key.ImageHandle);
-                    if (pair.Value.ResourceGeneration != 0 && generation != pair.Value.ResourceGeneration)
+                    if (pair.Value.ResourceGeneration != 0 &&
+                        generation != pair.Value.ResourceGeneration &&
+                        !ResourceRuntime.HasSubmittedRetainedPresentationImageNoLock(
+                            handle,
+                            new VulkanResourceLifetimeKey(ObjectType.Image, pair.Key.ImageHandle),
+                            pair.Value.ResourceGeneration))
                         continue;
                     if (!Synchronization._trackedImageSubresourceStates.TryGetValue(
                             pair.Key,

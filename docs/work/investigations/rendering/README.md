@@ -16,6 +16,13 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Other open investigations
 
+- [Vulkan DLSS, Engine AA, And Frame Generation](2026-09-24-vulkan-dlss-aa-frame-generation.md):
+  Default/Advanced AA selection, TSR with frame generation, and native DLSS
+  dispatch/presentation revalidation.
+- [Advanced Vulkan TSR Jitter And Aliasing](2026-09-24-advanced-vulkan-tsr-jitter.md):
+  resolve-grid alignment, Vulkan Y conversion, depth ordering, and deferred
+  jitter snapshot lifetime are fixed; coverage tracking, flicker retention, and
+  unsharpened history have live mono validation with remaining quality limits.
 - [Editor Hidden Scene And Camera Input](editor-hidden-scene-input-2026-07-08.md):
   live OpenXR/editor input and preview validation remains.
 - [OpenGL GPU Pipeline Timestamp Readiness](opengl-gpu-pipeline-timestamp-readiness-2026-07-28.md):

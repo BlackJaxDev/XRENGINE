@@ -1429,6 +1429,7 @@ namespace XREngine.Editor.Mcp
                             message_count = VulkanStats.VulkanValidationMessageCount,
                             error_count = VulkanStats.VulkanValidationErrorCount,
                             last_message = VulkanStats.VulkanLastValidationMessage,
+                            cumulative = activeVulkanRenderer?.CaptureValidationDiagnostics(),
                         },
                         diagnostics = new
                         {

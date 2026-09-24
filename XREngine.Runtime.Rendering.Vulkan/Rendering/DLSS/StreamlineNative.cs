@@ -84,6 +84,7 @@ namespace XREngine.Rendering.DLSS
             private static nint _setFrameGenerationOptions;
             private static nint _getFrameGenerationState;
             private static nint _setReflexOptions;
+            private static nint _reflexSleep;
             private static nint _setPclMarker;
             private static nint _vkGetDeviceProcAddrProxy;
             private static nint _vkCreateSwapchainProxy;
@@ -617,6 +618,10 @@ namespace XREngine.Rendering.DLSS
                         return true;
                     }
 
+                    if (!_frameGenerationOptionsCacheValid || _frameGenerationOptionsMode != mode)
+                        Debug.Rendering("[NvidiaDLSS] Recorded frame-generation options: frame={0}, viewport={1}, mode={2}, requested={3}, hostEnabled={4}.",
+                            parameters.FrameIndex, viewport.Value, mode, frameGenerationRequested, _frameGenerationHostEnabled);
+
                     StreamlineDlssGOptions options = CreateFrameGenerationOptions(
                         output,
                         in parameters,
@@ -932,18 +937,12 @@ namespace XREngine.Rendering.DLSS
                 SwapchainKHR swapchain,
                 out string failureReason)
             {
-                try
-                {
-                    if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
-                        return false;
+                if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
+                    return false;
 
-                    CallVkDestroySwapchainProxy(renderer.Device, swapchain, null);
-                    return true;
-                }
-                finally
-                {
-                    ReleaseFrameGenerationProxySwapchain();
-                }
+                CallVkDestroySwapchainProxy(renderer.Device, swapchain, null);
+                ReleaseFrameGenerationProxySwapchain();
+                return true;
             }
 
             internal static unsafe bool TryDestroyProxySwapchain(
@@ -951,23 +950,15 @@ namespace XREngine.Rendering.DLSS
                 SwapchainKHR swapchain,
                 out string failureReason)
             {
-                try
-                {
-                    if (!EnsureFrameGenerationVulkanProxyReady(
-                            binding,
-                            binding.FrameGenerationSwapchainIncludesDlss,
-                            out failureReason))
-                    {
-                        return false;
-                    }
+                if (!EnsureFrameGenerationVulkanProxyReady(
+                        binding,
+                        binding.FrameGenerationSwapchainIncludesDlss,
+                        out failureReason))
+                    return false;
 
-                    CallVkDestroySwapchainProxy(binding.Device, swapchain, null);
-                    return true;
-                }
-                finally
-                {
-                    ReleaseFrameGenerationProxySwapchain();
-                }
+                CallVkDestroySwapchainProxy(binding.Device, swapchain, null);
+                ReleaseFrameGenerationProxySwapchain();
+                return true;
             }
 
             internal static unsafe bool TryGetProxySwapchainImages(
@@ -1089,6 +1080,32 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
+            /// <summary>
+            /// Drains Streamline's proxy presentation work at a swapchain
+            /// lifecycle boundary. Direct Vulkan device idle does not prove
+            /// completion of work retained by the interposer.
+            /// </summary>
+            internal static bool TryWaitForProxyDeviceIdle(
+                VulkanStreamlineDeviceBinding binding,
+                out string failureReason)
+            {
+                if (!EnsureFrameGenerationVulkanProxyReady(
+                    binding,
+                    binding.FrameGenerationSwapchainIncludesDlss,
+                    out failureReason))
+                    return false;
+
+                Result result = CallVkDeviceWaitIdleProxy(binding.Device);
+                if (result == Result.Success)
+                {
+                    failureReason = string.Empty;
+                    return true;
+                }
+
+                failureReason = $"Streamline-intercepted vkDeviceWaitIdle failed: {result}.";
+                return false;
+            }
+
             internal static bool TryMarkFrameGenerationPclMarker(
                 VulkanRenderer renderer,
                 StreamlinePclMarker marker,
@@ -1099,6 +1116,53 @@ namespace XREngine.Rendering.DLSS
                     marker,
                     frameIndex,
                     out failureReason);
+
+            internal static bool TrySleepForFrameGeneration(
+                VulkanStreamlineDeviceBinding binding,
+                uint frameIndex,
+                out string failureReason)
+            {
+                IntPtr frameToken;
+                nint sleepFunction;
+                lock (Sync)
+                {
+                    if (!EnsureNativeVulkanRuntime(
+                            binding,
+                            includeFrameGeneration: true,
+                            out failureReason,
+                            includeDlss: binding.FrameGenerationSwapchainIncludesDlss) ||
+                        !ResolveFrameGenerationFeatureFunctions(out failureReason) ||
+                        !EnsureReflexEnabled(out failureReason))
+                        return false;
+
+                    StreamlineResult tokenResult = CallGetNewFrameToken(out frameToken, ref frameIndex);
+                    if (tokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
+                    {
+                        failureReason = $"slGetNewFrameToken failed for Reflex sleep with {tokenResult}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    sleepFunction = _reflexSleep;
+                }
+
+                StreamlineResult sleepResult = ((delegate* unmanaged[Cdecl]<IntPtr, StreamlineResult>)sleepFunction)(frameToken);
+                if (sleepResult == StreamlineResult.Ok)
+                {
+                    failureReason = string.Empty;
+                    return true;
+                }
+
+                failureReason = $"slReflexSleep failed with {sleepResult}.";
+                lock (Sync)
+                {
+                    string? streamlineMessage = _lastStreamlineWarningOrError ?? _lastStreamlineMessage;
+                    if (!string.IsNullOrWhiteSpace(streamlineMessage))
+                        failureReason += $" Last Streamline message: {streamlineMessage}.";
+                    _lastError = failureReason;
+                }
+                return false;
+            }
 
             internal static bool TryMarkFrameGenerationPclMarker(
                 VulkanStreamlineDeviceBinding binding,
@@ -1471,6 +1535,7 @@ namespace XREngine.Rendering.DLSS
                 if (!TryResolveFeatureFunction(FeatureDlssG, "slDLSSGSetOptions", out _setFrameGenerationOptions)
                     || !TryResolveFeatureFunction(FeatureDlssG, "slDLSSGGetState", out _getFrameGenerationState)
                     || !TryResolveFeatureFunction(FeatureReflex, "slReflexSetOptions", out _setReflexOptions)
+                    || !TryResolveFeatureFunction(FeatureReflex, "slReflexSleep", out _reflexSleep)
                     || !TryResolveFeatureFunction(FeaturePcl, "slPCLSetMarker", out _setPclMarker))
                 {
                     failureReason = _lastError ?? "Failed to resolve one or more Streamline DLSS-G/Reflex/PCL exports.";
@@ -1747,18 +1812,18 @@ namespace XREngine.Rendering.DLSS
                 uint inputWidth = Math.Max(1u, parameters.InputWidth);
                 uint inputHeight = Math.Max(1u, parameters.InputHeight);
 
-                StreamlineDlssGFlags flags = StreamlineDlssGFlags.None;
-                if (inputWidth != colorWidth || inputHeight != colorHeight)
-                    flags |= StreamlineDlssGFlags.DynamicResolutionEnabled;
-
                 return new StreamlineDlssGOptions
                 {
                     Base = CreateBase(DlssGOptionsStructType, 5),
-                    Mode = StreamlineDlssGMode.On,
+                    Mode = mode == ENvidiaDlssFrameGenerationMode.Off
+                        ? StreamlineDlssGMode.Off
+                        : StreamlineDlssGMode.On,
                     NumFramesToGenerate = ResolveFramesToGenerate(mode),
-                    Flags = flags,
-                    DynamicResWidth = inputWidth,
-                    DynamicResHeight = inputHeight,
+                    // A fixed upscale ratio is not dynamic resolution. Enabling
+                    // its pacing mode here destabilizes ordinary TSR/DLSS output.
+                    Flags = StreamlineDlssGFlags.None,
+                    DynamicResWidth = 0,
+                    DynamicResHeight = 0,
                     NumBackBuffers = Math.Max(1u, output.ImageCount),
                     MvecDepthWidth = inputWidth,
                     MvecDepthHeight = inputHeight,
@@ -1980,6 +2045,7 @@ namespace XREngine.Rendering.DLSS
                 _setFrameGenerationOptions = 0;
                 _getFrameGenerationState = 0;
                 _setReflexOptions = 0;
+                _reflexSleep = 0;
                 _setPclMarker = 0;
                 _vkGetDeviceProcAddrProxy = 0;
                 _vkCreateSwapchainProxy = 0;
@@ -2465,7 +2531,7 @@ namespace XREngine.Rendering.DLSS
                         PrevClipToClip = ToFloat4x4(parameters.PrevClipToClip),
                         JitterOffset = new StreamlineFloat2(parameters.JitterOffsetX, parameters.JitterOffsetY),
                         MotionVectorScale = new StreamlineFloat2(parameters.MotionVectorScaleX, parameters.MotionVectorScaleY),
-                        CameraPinholeOffset = new StreamlineFloat2(float.MaxValue, float.MaxValue),
+                        CameraPinholeOffset = new StreamlineFloat2(0.0f, 0.0f),
                         CameraPosition = new StreamlineFloat3(parameters.CameraPosition.X, parameters.CameraPosition.Y, parameters.CameraPosition.Z),
                         CameraUp = new StreamlineFloat3(parameters.CameraUp.X, parameters.CameraUp.Y, parameters.CameraUp.Z),
                         CameraRight = new StreamlineFloat3(parameters.CameraRight.X, parameters.CameraRight.Y, parameters.CameraRight.Z),
@@ -2728,7 +2794,7 @@ namespace XREngine.Rendering.DLSS
                         PrevClipToClip = ToFloat4x4(parameters.PrevClipToClip),
                         JitterOffset = new StreamlineFloat2(parameters.JitterOffsetX, parameters.JitterOffsetY),
                         MotionVectorScale = new StreamlineFloat2(parameters.MotionVectorScaleX, parameters.MotionVectorScaleY),
-                        CameraPinholeOffset = new StreamlineFloat2(float.MaxValue, float.MaxValue),
+                        CameraPinholeOffset = new StreamlineFloat2(0.0f, 0.0f),
                         CameraPosition = new StreamlineFloat3(parameters.CameraPosition.X, parameters.CameraPosition.Y, parameters.CameraPosition.Z),
                         CameraUp = new StreamlineFloat3(parameters.CameraUp.X, parameters.CameraUp.Y, parameters.CameraUp.Z),
                         CameraRight = new StreamlineFloat3(parameters.CameraRight.X, parameters.CameraRight.Y, parameters.CameraRight.Z),
@@ -3102,7 +3168,7 @@ namespace XREngine.Rendering.DLSS
                         PrevClipToClip = ToFloat4x4(parameters.PrevClipToClip),
                         JitterOffset = new StreamlineFloat2(parameters.JitterOffsetX, parameters.JitterOffsetY),
                         MotionVectorScale = new StreamlineFloat2(parameters.MotionVectorScaleX, parameters.MotionVectorScaleY),
-                        CameraPinholeOffset = new StreamlineFloat2(float.MaxValue, float.MaxValue),
+                        CameraPinholeOffset = new StreamlineFloat2(0.0f, 0.0f),
                         CameraPosition = new StreamlineFloat3(parameters.CameraPosition.X, parameters.CameraPosition.Y, parameters.CameraPosition.Z),
                         CameraUp = new StreamlineFloat3(parameters.CameraUp.X, parameters.CameraUp.Y, parameters.CameraUp.Z),
                         CameraRight = new StreamlineFloat3(parameters.CameraRight.X, parameters.CameraRight.Y, parameters.CameraRight.Z),
@@ -3413,6 +3479,9 @@ namespace XREngine.Rendering.DLSS
                 => ((delegate* unmanaged[Cdecl]<Queue, PresentInfoKHR*, Result>)_vkQueuePresentProxy)(
                     queue,
                     presentInfo);
+
+            private static Result CallVkDeviceWaitIdleProxy(Device device)
+                => ((delegate* unmanaged[Cdecl]<Device, Result>)_vkDeviceWaitIdleProxy)(device);
 
             private enum StreamlineResult
             {

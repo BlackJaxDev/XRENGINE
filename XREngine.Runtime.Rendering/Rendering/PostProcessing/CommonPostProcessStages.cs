@@ -6,16 +6,6 @@ using XREngine.Rendering.PostProcessing;
 
 namespace XREngine.Rendering.PostProcessing;
 
-public enum TemporalDebugViewMode
-{
-    Disabled = 0,
-    HistoryWeight = 1,
-    Velocity = 2,
-    GeometryInstability = 3,
-    ReactiveMask = 4,
-    HistoryAcceptance = 5,
-}
-
 public static class CommonPostProcessStages
 {
     public static class StageKeys

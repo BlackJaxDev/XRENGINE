@@ -339,11 +339,11 @@ internal sealed partial class VulkanTextureUploadService
         out bool madeProgress)
     {
         ulong initialProgressVersion = manifest.ProgressVersion;
-        RefreshRequiredUploadGenerations(manifest);
+        RefreshRequiredUploadGenerations(context, manifest);
         context.Resources.Allocations.Staging.EnsureForegroundReserve(context.BackendObjects);
         bool preparationReady = DrainRequiredUploadPreparation(context, manifest);
         bool transfersReady = DrainRequiredTextureTransfers(context, manifest);
-        RefreshRequiredUploadGenerations(manifest);
+        RefreshRequiredUploadGenerations(context, manifest);
         madeProgress = manifest.ProgressVersion != initialProgressVersion;
         return preparationReady && transfersReady &&
             (manifest.AreAllReady ||

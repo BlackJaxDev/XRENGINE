@@ -3384,6 +3384,7 @@ namespace XREngine.Rendering
 
                 if (!interactiveResizeFrame)
                 {
+                    frameRenderer.PrepareRenderFramePacing();
                     using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
                     try
                     {
