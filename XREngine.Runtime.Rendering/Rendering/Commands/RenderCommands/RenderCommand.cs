@@ -82,8 +82,9 @@ namespace XREngine.Rendering.Commands
 
         // Dirty-delta swap support.
         //
-        // _dirty: any property change marks this true via OnPropertyChanged. Cleared at the end of
-        // SwapBuffers() once the per-command publish has run. The render-side snapshot fields
+        // A mutation version advances for each render-state change. SwapBuffers acknowledges only
+        // the version captured before its snapshot, so mutations during capture remain pending.
+        // The render-side snapshot fields
         // (RenderEnabled / per-derived-class snapshot copies) are owned by the command instance.
         // Collections that are passive consumers of an already-swapped authoritative collection can
         // set RenderCommandCollection.IsRenderCommandSnapshotAuthority=false. Do not use that mode for
@@ -93,7 +94,10 @@ namespace XREngine.Rendering.Commands
         // queue-membership bit here: desktop, OpenXR eye, shadow, and capture viewports can collect
         // the same command into different collections before any of them swaps. The authority flag
         // below is only a yield marker for non-authoritative collections, not membership in a queue.
-        internal volatile bool _dirty = true;
+        private long _mutationVersion = 1;
+        private long _acknowledgedVersion;
+        internal virtual bool _dirty => System.Threading.Volatile.Read(ref _mutationVersion) !=
+            System.Threading.Volatile.Read(ref _acknowledgedVersion);
         internal volatile bool _authoritativePublishQueued = false;
 
         internal bool HasSwappedBuffers => _hasSwappedBuffers;
@@ -172,13 +176,31 @@ namespace XREngine.Rendering.Commands
         /// <param name="shadowPass"></param>
         public virtual void SwapBuffers()
         {
+            long capturedVersion = BeginSwapBuffers();
+            CompleteSwapBuffers(capturedVersion);
+        }
+
+        /// <summary>Capture the mutations included before a derived command copies its render state.</summary>
+        protected long BeginSwapBuffers()
+            => System.Threading.Volatile.Read(ref _mutationVersion);
+
+        /// <summary>Acknowledge only a successfully published snapshot.</summary>
+        protected void CompleteSwapBuffers(long capturedVersion)
+        {
             _hasSwappedBuffers = true;
             _renderEnabled = _enabled;
             OnSwapBuffers?.Invoke(this);
-            // Clear after publish so subsequent collections that share this command in the
-            // same frame can short-circuit, and so the next frame only re-publishes if a
-            // property actually mutated in the interim.
-            _dirty = false;
+            // Another command collection may have acknowledged a newer snapshot. Never move
+            // the acknowledgement backwards, and never erase a mutation made by a callback.
+            long acknowledged = System.Threading.Volatile.Read(ref _acknowledgedVersion);
+            while (acknowledged < capturedVersion)
+            {
+                long previous = System.Threading.Interlocked.CompareExchange(
+                    ref _acknowledgedVersion, capturedVersion, acknowledged);
+                if (previous == acknowledged)
+                    break;
+                acknowledged = previous;
+            }
             _authoritativePublishQueued = false;
         }
 
@@ -192,7 +214,22 @@ namespace XREngine.Rendering.Commands
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             if (IsRenderStateDirtyProperty(propName))
-                _dirty = true;
+            {
+                // The caller-member name identifies both canonical snapshot setters.
+                bool identity = propName == nameof(RenderCommandMesh3D.PublishCanonicalDrawIdentities);
+                S13aPublicationTelemetry.DirtyNotification(
+                    identity, _dirty);
+                S13aPublicationTelemetry.Trace(identity
+                        ? S13aPublicationTraceEventKind.IdentityNotification
+                        : S13aPublicationTraceEventKind.OtherDirtyNotification,
+                    StableQueryKey, detail: _dirty ? 1 : 0,
+                    propertyCode: S13aPublicationTelemetry.TraceEnabled
+                        ? S13aPublicationTelemetry.ClassifyProperty(propName)
+                        : S13aRenderCommandProperty.Other,
+                    propertyNameHash: S13aPublicationTelemetry.TraceEnabled
+                        ? S13aPublicationTelemetry.HashPropertyName(propName) : 0u);
+                System.Threading.Interlocked.Increment(ref _mutationVersion);
+            }
 
             base.OnPropertyChanged(propName, prev, field);
         }
@@ -204,6 +241,12 @@ namespace XREngine.Rendering.Commands
         /// Manual dirty hook for paths that mutate render-command state without using
         /// <c>SetField</c>. Safe to call from any thread.
         /// </summary>
-        public void MarkDirty() => _dirty = true;
+        public void MarkDirty()
+        {
+            S13aPublicationTelemetry.ManualDirty();
+            S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.ManualDirty,
+                StableQueryKey, detail: _dirty ? 1 : 0);
+            System.Threading.Interlocked.Increment(ref _mutationVersion);
+        }
     }
 }

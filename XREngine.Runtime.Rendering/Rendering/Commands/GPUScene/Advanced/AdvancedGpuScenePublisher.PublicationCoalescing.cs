@@ -10,12 +10,24 @@ public sealed partial class AdvancedGpuScenePublisher
     /// </summary>
     private bool TryReuseUnchangedPublication(ulong frameId)
     {
-        if (!_currentPublication.IsValid ||
-            !Database.TryGetPublicationSnapshot(_currentPublication, out _) ||
-            HasPlannedPublicationMutation())
+        // Preserve the short-circuit order: probing a missing snapshot or mutation
+        // must not create a publication lease merely to explain a reuse miss.
+        if (!_currentPublication.IsValid)
         {
+            S13aPublicationTelemetry.PublicationMissing();
+            S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationMissing,
+                publicationSequence: _currentPublication.Sequence, frameId: frameId);
             return false;
         }
+        if (!Database.TryGetPublicationSnapshot(_currentPublication, out _))
+        {
+            S13aPublicationTelemetry.PublicationExpired();
+            S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationExpired,
+                publicationSequence: _currentPublication.Sequence, frameId: frameId);
+            return false;
+        }
+        if (HasPlannedPublicationMutation(frameId))
+            return false;
 
         _sequence = _currentPublication.Sequence;
         for (int commandIndex = 0;
@@ -43,17 +55,41 @@ public sealed partial class AdvancedGpuScenePublisher
                 in registration);
         }
 
-        PublishSourceDrawIdentities(in _currentPublication);
+        _identityDeliveryIncomplete = true;
+        try
+        {
+            PublishSourceDrawIdentities(in _currentPublication);
+            _identityDeliveryIncomplete = false;
+        }
+        catch (Exception exception)
+        {
+            _identityDeliveryIncomplete = true;
+            RejectPublication(exception.Message);
+            throw;
+        }
+        // A reuse is successful only after mappings and source identities have
+        // been refreshed; a failure during either step must not count as reuse.
+        S13aPublicationTelemetry.PublicationReuse();
+        S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationReused,
+            publicationSequence: _currentPublication.Sequence, frameId: frameId,
+            databaseEpoch: _currentPublication.Publication.DatabaseEpoch,
+            frameGeneration: _currentPublication.Publication.FrameGeneration,
+            topologyGeneration: _currentPublication.Publication.TopologyGeneration,
+            contentGeneration: _currentPublication.Publication.ContentGeneration,
+            lookupGeneration: _currentPublication.Publication.LookupGeneration);
         return true;
     }
 
-    private bool HasPlannedPublicationMutation()
+    private bool HasPlannedPublicationMutation(ulong frameId)
     {
         if (_plannedLightMutationCount != 0 ||
             _plannedMaterialReleaseCount != 0 ||
             _resourceAcquireCount != 0 ||
             _resourceReleaseCount != 0)
         {
+            S13aPublicationTelemetry.PublicationResourceMutation();
+            S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationResourceMutation,
+                publicationSequence: _currentPublication.Sequence, frameId: frameId);
             return true;
         }
 
@@ -67,6 +103,10 @@ public sealed partial class AdvancedGpuScenePublisher
                 request.AcquireCount != 0u ||
                 request.RequiresPayloadUpdate)
             {
+                S13aPublicationTelemetry.PublicationMaterialMutation();
+                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationMaterialMutation,
+                    publicationSequence: _currentPublication.Sequence, frameId: frameId,
+                    detail: materialIndex);
                 return true;
             }
         }
@@ -80,7 +120,14 @@ public sealed partial class AdvancedGpuScenePublisher
             if (!plan.Supported)
                 continue;
             if (plan.RegistrationIndex < 0)
+            {
+                S13aPublicationTelemetry.PublicationCommandMutation();
+                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationCommandMutation,
+                    plan.Source is RenderCommand source ? source.StableQueryKey : 0u,
+                    publicationSequence: _currentPublication.Sequence, frameId: frameId,
+                    detail: commandIndex);
                 return true;
+            }
 
             ref readonly AdvancedResidentRegistration registration =
                 ref _registrations[plan.RegistrationIndex];
@@ -93,10 +140,22 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration.ContentSignature != plan.ContentSignature ||
                 registration.LegacyCommandIndex != checked((uint)commandIndex))
             {
+                S13aPublicationTelemetry.PublicationCommandMutation();
+                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationCommandMutation,
+                    plan.Source is RenderCommand source ? source.StableQueryKey : 0u,
+                    publicationSequence: _currentPublication.Sequence, frameId: frameId,
+                    detail: commandIndex);
                 return true;
             }
             if (plan.TemporalEventReason != EAdvancedVelocityValidityReason.Valid)
+            {
+                S13aPublicationTelemetry.PublicationTemporalMutation();
+                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationTemporalMutation,
+                    plan.Source is RenderCommand source ? source.StableQueryKey : 0u,
+                    publicationSequence: _currentPublication.Sequence, frameId: frameId,
+                    detail: (int)plan.TemporalEventReason);
                 return true;
+            }
         }
 
         for (int registrationIndex = 0;
@@ -106,6 +165,10 @@ public sealed partial class AdvancedGpuScenePublisher
             if (_registrations[registrationIndex].Active &&
                 _preflightSeenStamps[registrationIndex] != _preflightSeenGeneration)
             {
+                S13aPublicationTelemetry.PublicationRegistrationRemoval();
+                S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationRegistrationRemoval,
+                    publicationSequence: _currentPublication.Sequence, frameId: frameId,
+                    detail: registrationIndex);
                 return true;
             }
         }

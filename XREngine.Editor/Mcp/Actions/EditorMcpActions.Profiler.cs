@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
@@ -11,6 +12,8 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Vulkan;
+using XREngine.Components.Scene.Mesh;
+using XREngine.Rendering.Info;
 using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
@@ -22,6 +25,156 @@ namespace XREngine.Editor.Mcp
 {
     public sealed partial class EditorMcpActions
     {
+        [XRMcp(Name = "get_s13b_owner_state", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Inspect mesh owner flags and command ownership for a selected scene node.")]
+        public static Task<McpToolResponse> GetS13bOwnerStateAsync(
+            McpToolContext context,
+            [McpName("node_id"), Description("Scene node ID containing a renderable component.")] string nodeId)
+        {
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
+                return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
+
+            var components = node.Components.OfType<RenderableComponent>()
+                .Select(component => new
+                {
+                    component = component.Name,
+                    component.MeshLayer,
+                    component.MeshCastsShadows,
+                    meshCount = component.Meshes.Count,
+                    owners = component.Meshes.Take(8).Select(mesh => new
+                    {
+                        mesh.RenderInfo.Layer,
+                        mesh.RenderInfo.CastsShadows,
+                        mesh.RenderInfo.ReceivesShadows,
+                        commands = mesh.RenderInfo.RenderCommands.OfType<RenderCommandMesh3D>()
+                            .Select(command => new
+                            {
+                                command.StableQueryKey,
+                            }).ToArray(),
+                    }).ToArray(),
+                }).ToArray();
+            return Task.FromResult(new McpToolResponse("Captured mesh owner state.", new { components }));
+        }
+
+        [XRMcp(Name = "get_s13a_identity_manifest", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Copy the selected viewport pipeline's published canonical resident identities and pass membership on demand. Fixture keys remain null where stable source hierarchy ownership is unavailable.")]
+        public static async Task<McpToolResponse> GetS13aIdentityManifestAsync(
+            McpToolContext context,
+            [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo.")] string? vrEye = null,
+            [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
+            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            CancellationToken token = default)
+        {
+            if (!TryResolveStrictViewport(
+                    context, cameraNodeId, vrEye, windowIndex, viewportIndex,
+                    out XRViewport? viewport, out string? viewportError))
+                return new McpToolResponse(viewportError!, isError: true);
+
+            XRViewport targetViewport = viewport!;
+            XRWindow? window = targetViewport.Window
+                ?? RuntimeEngine.Windows.FirstOrDefault(candidate => candidate.Viewports.Contains(targetViewport));
+            if (window is null)
+                return new McpToolResponse("The selected viewport has no owning window.", isError: true);
+            XRWindow targetWindow = window;
+            XRRenderPipelineInstance instance = ResolveSelectedPipelineInstance(targetViewport, vrEye);
+            try
+            {
+                var result = await RunOnViewportRenderThreadAsync(
+                    targetViewport,
+                    targetWindow,
+                    "MCP: Capture S13a identity manifest",
+                    renderer =>
+                    {
+                        if (!RuntimeEngine.IsRenderThread ||
+                            !ReferenceEquals(renderer, targetWindow.Renderer) ||
+                            !renderer.AcceptsBackendWork || renderer.IsDeviceLost)
+                            throw new InvalidOperationException(
+                                "The selected window renderer no longer owns an available render-thread callback.");
+                        if (!TryResolveStrictViewport(
+                                context, cameraNodeId, vrEye, windowIndex, viewportIndex,
+                                out XRViewport? selectedNow, out _) ||
+                            !ReferenceEquals(selectedNow, targetViewport) ||
+                            !ReferenceEquals(targetWindow,
+                                targetViewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(
+                                    candidate => candidate.Viewports.Contains(targetViewport))) ||
+                            !ReferenceEquals(instance, ResolveSelectedPipelineInstance(targetViewport, vrEye)))
+                            throw new InvalidOperationException(
+                                "The selected viewport, window, or pipeline changed before its manifest was captured.");
+
+                        S13aIdentityManifest manifest = instance.MeshRenderCommands.CaptureS13aIdentityManifest();
+                        DrawMetadata legacyRow = default;
+                        bool legacyAvailable = manifest.Submissions.Length > 0 &&
+                            context.RenderWorld.VisualScene.GPUCommands.TryGetAdvancedPreparationCommand(
+                                manifest.Submissions[0].LegacyCommandIndex, out legacyRow);
+                        return new
+                        {
+                            selection = new
+                            {
+                                camera_node_id = cameraNodeId,
+                                vr_eye = vrEye,
+                                window_index = windowIndex,
+                                viewport_index = targetViewport.Index,
+                                pipeline_instance_id = instance.InstanceId,
+                                pipeline = instance.DebugName,
+                                viewport_width = targetViewport.Width,
+                                viewport_height = targetViewport.Height,
+                            },
+                            manifest,
+                            legacy_probe = new
+                            {
+                                available = legacyAvailable,
+                                flags = legacyAvailable ? legacyRow.Flags : (uint?)null,
+                                layer_mask = legacyAvailable ? legacyRow.LayerMask : (uint?)null,
+                            },
+                            selection_limits = new
+                            {
+                                fixture_keys = "Unavailable without authoritative imported hierarchy and owner ordinal.",
+                                source_labels = "Copied from current aligned source objects while the package is retained; source properties may change independently.",
+                                scope = "One selected viewport pipeline package; off-camera resident submissions are included, other pipelines require separate calls.",
+                            },
+                        };
+                    },
+                    token).ConfigureAwait(false);
+
+                return new McpToolResponse(
+                    result.manifest.Complete
+                        ? "Captured the selected published identity manifest."
+                        : result.manifest.IncompleteReason ?? "The selected identity manifest is incomplete.",
+                    result,
+                    isError: !result.manifest.Complete);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return new McpToolResponse($"Failed to capture the selected identity manifest: {ex.Message}", isError: true);
+            }
+        }
+
+        [XRMcp(Name = "get_s13a_publication_telemetry", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Read bounded publication and command-swap counters. Set XRE_S13A_PUBLICATION_TELEMETRY=1 before editor launch to enable observation.")]
+        public static Task<McpToolResponse> GetS13aPublicationTelemetryAsync(McpToolContext context)
+            => Task.FromResult(new McpToolResponse(
+                "Retrieved S13a publication telemetry.",
+                S13aPublicationTelemetry.CaptureSnapshot()));
+
+        [XRMcp(Name = "get_s13a_publication_trace", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Read a page of numeric command/publication events. Set XRE_S13A_PUBLICATION_TRACE=1 before launch; optionally restrict retained command events with XRE_S13A_TRACE_COMMAND_ID. Continue from next_sequence; zero command_id includes all retained commands.")]
+        public static Task<McpToolResponse> GetS13aPublicationTraceAsync(
+            McpToolContext context,
+            [McpName("after_sequence"), Description("Last trace sequence already read; zero starts at the oldest retained event.")]
+            long afterSequence = 0,
+            [McpName("max_events"), Description("Maximum events to return, capped at 4096.")]
+            int maxEvents = 2048,
+            [McpName("command_id"), Description("Optional StableQueryKey to filter command events; global publication events remain included.")]
+            uint commandId = 0)
+            => Task.FromResult(new McpToolResponse(
+                "Retrieved S13a publication trace.",
+                S13aPublicationTelemetry.CaptureTrace(afterSequence, maxEvents, commandId)));
+
         [XRMcp(Name = "dump_cpu_frame_profile", Permission = McpPermissionLevel.ReadOnly)]
         [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump the latest CPU profiler frame snapshot to an LLM-readable log file in the current Build/Logs run directory.")]

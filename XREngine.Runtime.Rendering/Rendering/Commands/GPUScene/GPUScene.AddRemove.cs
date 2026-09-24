@@ -38,6 +38,10 @@ namespace XREngine.Rendering.Commands
         /// </remarks>
         /// <param name="renderInfo">The render info containing commands to add.</param>
         public void Add(RenderInfo renderInfo)
+            => Add(renderInfo, null, default);
+
+        private void Add(RenderInfo renderInfo, IRenderCommandMesh? capturedCommand,
+            in GpuSceneMeshCommandSnapshot capturedSnapshot)
         {
             if (renderInfo is null || renderInfo.RenderCommands.Count == 0)
                 return;
@@ -61,14 +65,20 @@ namespace XREngine.Rendering.Commands
                         SceneLog($"Skipping adding command of type {command.GetType().Name}");
                         continue; // Only mesh commands supported
                     }
+                    if (capturedCommand is not null && !ReferenceEquals(meshCmd, capturedCommand))
+                        continue;
 
-                    var subMeshes = meshCmd.Mesh?.GetMeshes();
+                    GpuSceneMeshCommandSnapshot snapshot = ReferenceEquals(meshCmd, capturedCommand)
+                        ? capturedSnapshot
+                        : GpuSceneMeshCommandSnapshot.CaptureLive(renderInfo, meshCmd);
+
+                    var subMeshes = snapshot.Renderer?.GetMeshes();
                     if (subMeshes is null || subMeshes.Length == 0)
                     {
-                        SceneLog($"Skipping mesh command with no submeshes. Renderable={ResolveOwnerLabel(renderInfo.Owner)} Mesh={(meshCmd.Mesh != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
-                        if (meshCmd.Mesh != null)
+                        SceneLog($"Skipping mesh command with no submeshes. Renderable={ResolveOwnerLabel(renderInfo.Owner)} Mesh={(snapshot.Renderer != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
+                        if (snapshot.Renderer != null)
                         {
-                            SceneLog($"  Mesh details: Name={meshCmd.Mesh.Mesh?.Name ?? "<null>"}, Submeshes.Count={meshCmd.Mesh.Submeshes.Count}");
+                            SceneLog($"  Mesh details: Name={snapshot.Renderer.Mesh?.Name ?? "<null>"}, Submeshes.Count={snapshot.Renderer.Submeshes.Count}");
                         }
                         continue;
                     }
@@ -91,14 +101,14 @@ namespace XREngine.Rendering.Commands
                             continue;
                         }
 
-                        XRMaterial? m = meshCmd.MaterialOverride ?? mat;
+                        XRMaterial? m = snapshot.MaterialOverride ?? mat;
                         if (m is null)
                         {
                             SceneLog($"Skipping mesh command submesh {subMeshIndex} due to null material. Renderable={ResolveOwnerLabel(renderInfo.Owner)} Mesh={mesh.Name ?? "<unnamed>"}");
                             continue;
                         }
 
-                        string meshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
+                        string meshLabel = EnsureMeshDebugLabel(mesh, snapshot.Renderer, renderInfo, subMeshIndex);
 
                         if (_unsupportedMeshMessages.ContainsKey(mesh))
                         {
@@ -118,17 +128,17 @@ namespace XREngine.Rendering.Commands
                             continue;
                         }
 
-                        Matrix4x4 modelMatrix = meshCmd.WorldMatrixIsModelMatrix ? meshCmd.WorldMatrix : Matrix4x4.Identity;
+                        Matrix4x4 modelMatrix = snapshot.ModelMatrix;
                         uint transformId = AllocateTransformId(modelMatrix);
                         uint skinId = AllocateSkinId(false);
                         GetOrCreateMaterialID(m, out uint materialIDForState);
-                        uint stateClassId = ResolveStateClassId(m, meshCmd.RenderPass, materialIDForState);
+                        uint stateClassId = ResolveStateClassId(m, snapshot.RenderPass, materialIDForState);
                         uint index = UpdatingCommandCount++;
                         uint boundsId = index;
 
                         var stageNativeRecords = CreateStageNativeDrawRecords(
                             renderInfo,
-                            meshCmd,
+                            snapshot,
                             mesh,
                             m,
                             meshID,
@@ -160,7 +170,7 @@ namespace XREngine.Rendering.Commands
                         WriteBounds(boundsId, stageNativeRecords.Value.Bounds);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
                         if (_useInternalBvh)
-                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
+                            WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
                                                 LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
 

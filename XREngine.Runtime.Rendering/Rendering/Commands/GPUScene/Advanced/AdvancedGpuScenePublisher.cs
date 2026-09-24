@@ -41,6 +41,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private bool _publicationRejected;
     private string? _lastPublicationFailure;
     private AdvancedGpuScenePublicationReference _currentPublication;
+    private bool _identityDeliveryIncomplete;
+    private int _publishInProgress;
     private int _dirtyOwnerRangeCount;
     private uint _registrationLookupGeneration;
     private uint _preflightSeenGeneration;
@@ -95,7 +97,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     public ulong GeometryCompactionReclaimedBytes
         => _geometryCompactionReclaimedBytes;
 
-    public bool PublicationRejected => _publicationRejected;
+    public bool PublicationRejected => _publicationRejected || _identityDeliveryIncomplete;
 
     /// <summary>
     /// Gets the most recent reason a canonical scene publication was rejected.
@@ -107,15 +109,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     public bool PublicationFaulted => Database.PublicationFaulted;
 
     public AdvancedGpuScenePublicationReference CurrentPublication
-        => _currentPublication;
+        => _identityDeliveryIncomplete ? default : _currentPublication;
 
     public ReadOnlySpan<LegacyCanonicalDrawMapping> LegacyMappings
-        => _publicationRejected || Database.PublicationFaulted
+        => _publicationRejected || _identityDeliveryIncomplete || Database.PublicationFaulted
             ? ReadOnlySpan<LegacyCanonicalDrawMapping>.Empty
             : _legacyMappings.AsSpan(0, _legacyMappingCount);
 
     public ReadOnlySpan<AdvancedGpuDirtyOwnerRange> DirtyOwnerRanges
-        => _publicationRejected || Database.PublicationFaulted
+        => _publicationRejected || _identityDeliveryIncomplete || Database.PublicationFaulted
             ? ReadOnlySpan<AdvancedGpuDirtyOwnerRange>.Empty
             : _dirtyOwnerRanges.AsSpan(0, _dirtyOwnerRangeCount);
 
@@ -129,13 +131,24 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         ulong frameId,
         in AdvancedGlobalResourceCapture globalResources)
     {
+        // Property notifications during identity delivery can call back into
+        // the publisher. A nested publication would overwrite the outer plan.
+        if (System.Threading.Interlocked.CompareExchange(ref _publishInProgress, 1, 0) != 0)
+            throw new InvalidOperationException("Canonical scene publication is already in progress.");
         try
         {
             PublishCore(scene, frameId, in globalResources);
         }
         finally
         {
-            ReleasePlannedMirrorSnapshots();
+            try
+            {
+                ReleasePlannedMirrorSnapshots();
+            }
+            finally
+            {
+                System.Threading.Volatile.Write(ref _publishInProgress, 0);
+            }
         }
     }
 
@@ -354,8 +367,6 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
             }
 
-            PublishSourceDrawIdentities(in provisional);
-            CaptureAndClearDirtyOwnerRanges();
             if (!Database.TryCommitPreparedPublication(
                     in transaction,
                     out AdvancedGpuScenePublicationReference committed))
@@ -368,18 +379,39 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     "Canonical scene commit failed after preparing a complete publication.");
             }
 
-            _currentPublication = committed;
             publicationCommitted = true;
+            // Hide the accepted image until every command has received its
+            // corresponding identity. Notifications can call back into readers.
+            _identityDeliveryIncomplete = true;
+            _currentPublication = committed;
+            // Command snapshots become consumable only after the exact scene
+            // publication has been accepted by the database.
+            CaptureAndClearDirtyOwnerRanges();
+            // Report only accepted database publications, after the commit has
+            // installed the exact tuple consumed by subsequent scene readers.
+            S13aPublicationTelemetry.TracePublicationCommitted(
+                committed.Publication, frameId);
+            PublishSourceDrawIdentities(in committed);
+            _identityDeliveryIncomplete = false;
             ClearPublicationFailure();
         }
         catch (Exception exception)
         {
             if (!publicationCommitted)
+            {
                 provisional.Snapshot?.ResourcePayloads.AbortSourceCapture();
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.InvariantFailure);
+            }
+            else
+            {
+                // The database has accepted this publication. Hide it from
+                // frame-package consumers until a later retry delivers every
+                // command identity; it cannot be aborted as an active transaction.
+                _identityDeliveryIncomplete = true;
+            }
             RejectPublication(exception.Message);
-            Database.FaultActivePublication(
-                in transaction,
-                EAdvancedGpuScenePublicationFault.InvariantFailure);
             throw;
         }
     }
@@ -521,7 +553,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         geometry = AdvancedGpuHandle.Invalid;
         material = AdvancedGpuHandle.Invalid;
         deformation = AdvancedGpuHandle.Invalid;
-        if (_publicationRejected || Database.PublicationFaulted ||
+        if (PublicationRejected || Database.PublicationFaulted ||
             commandIndex >= (uint)_commandDrawHandles.Length)
             return false;
 
@@ -546,7 +578,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         int primitiveIndex,
         out AdvancedGpuHandle draw)
     {
-        if (_publicationRejected || Database.PublicationFaulted)
+        if (PublicationRejected || Database.PublicationFaulted)
         {
             draw = AdvancedGpuHandle.Invalid;
             return false;
@@ -565,7 +597,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     public bool WasDrawAddedThisPublication(AdvancedGpuHandle draw)
     {
-        if (_publicationRejected || Database.PublicationFaulted)
+        if (PublicationRejected || Database.PublicationFaulted)
             return false;
 
         ReadOnlySpan<AdvancedGpuRecordPublicationDelta> deltas =
@@ -777,7 +809,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         if (content == registration.ContentSignature)
             return;
 
+        if (!Database.Scene.Draws.TryGet(registration.Draw, out AdvancedDrawRecord contentDraw))
+            throw new InvalidOperationException("Canonical content draw is unavailable after successful preflight.");
+        uint contentDrawFlags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask;
+        bool drawFlagsChanged = contentDraw.Flags != contentDrawFlags;
         if (!CanUpdateRegistrationContent(registration) ||
+            (drawFlagsChanged && !Database.Scene.Draws.CanApply(0, 1, 0)) ||
             !Database.Scene.Transforms.TryReplace(
             registration.PreviousTransform,
             CreateTransform(previousWorld)) ||
@@ -792,6 +829,16 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             CreateEditorIdentity(plan.Source, in command)))
         {
             throw new InvalidOperationException("Canonical content update failed after successful preflight.");
+        }
+        if (drawFlagsChanged)
+        {
+            contentDraw.Flags = contentDrawFlags;
+            if (!Database.Scene.Draws.TryReplace(
+                    registration.Draw, contentDraw,
+                    EAdvancedGpuMutationDomain.RecordingTopology))
+                throw new InvalidOperationException("Canonical draw flags update failed after successful preflight.");
+            ++_topologyDeltaCount;
+            AdvanceNonZero(ref _topologyGeneration);
         }
         registration.World = world;
         registration.ContentSignature = content;
@@ -1164,7 +1211,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Residency = EAdvancedGeometryResidency.Pending,
             MissingBehavior = EAdvancedMissingGeometryBehavior.SkipDraw,
             CookedLayoutVersion = AdvancedGeometryCookedLayout.CurrentVersion,
-            Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
+            // Shadow participation belongs to the draw, not immutable geometry.
+            Flags = StructuralDrawFlags(command.Flags),
         };
     }
 
@@ -1177,7 +1225,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
             CullMode = (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u ? 0u : 1u,
-            Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
+            Flags = StructuralDrawFlags(command.Flags),
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(
@@ -1200,6 +1248,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         };
     }
 
+    private static uint StructuralDrawFlags(uint flags)
+        => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
+            (uint)GPUIndirectRenderFlags.CastShadow |
+            (uint)GPUIndirectRenderFlags.ReceiveShadows);
+
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,
         XRMesh? mesh,
@@ -1215,7 +1268,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         hash = Mix(hash, command.StateClassID);
         // Hover/selection updates the editor identity in place; it must not
         // retire geometry or change native draw handles on a pointer move.
-        hash = Mix(hash, command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask);
+        hash = Mix(hash, StructuralDrawFlags(command.Flags));
         hash = Mix(hash, checked((uint)Math.Max(0, primitiveIndex)));
         hash = Mix(hash, checked((uint)Math.Max(0, mesh?.VertexCount ?? 0)));
         hash = Mix(hash, checked((uint)Math.Max(0, mesh?.IndexCount ?? 0)));
@@ -1234,7 +1287,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         XRMaterial? material)
     {
         ulong hash = Mix(command.TransformID, command.InstanceCount);
-        hash = Mix(hash, command.Flags & (uint)GPUIndirectRenderFlags.EditorHighlightMask);
+        hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
+            (uint)GPUIndirectRenderFlags.CastShadow |
+            (uint)GPUIndirectRenderFlags.ReceiveShadows));
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, bounds.BoundsVersion);
         hash = Mix(hash, material?.BindingValueVersion ?? 0u);

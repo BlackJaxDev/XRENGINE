@@ -9,6 +9,9 @@ public sealed partial class AdvancedGpuScenePublisher
     /// </summary>
     public void Dispose()
     {
+        if (System.Threading.Volatile.Read(ref _publishInProgress) != 0)
+            throw new InvalidOperationException("Cannot dispose the canonical publisher during publication.");
+
         if (_publishedLightCount == 0 && _publishedProbeCount == 0)
         {
             Database.ReleasePublicationSnapshotsForDisposal();

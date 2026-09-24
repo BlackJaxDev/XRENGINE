@@ -37,7 +37,7 @@ public partial class XRMesh
     {
         if (VertexCount <= 0)
         {
-            _bounds = new AABB(Vector3.Zero, Vector3.Zero);
+            Bounds = new AABB(Vector3.Zero, Vector3.Zero);
             return;
         }
 
@@ -51,7 +51,7 @@ public partial class XRMesh
             max = Vector3.Max(max, position);
         }
 
-        _bounds = new AABB(min, max);
+        Bounds = new AABB(min, max);
     }
 
     public void ClearAccelerationCaches()

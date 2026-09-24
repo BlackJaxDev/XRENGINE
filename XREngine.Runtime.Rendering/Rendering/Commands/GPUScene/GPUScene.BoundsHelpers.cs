@@ -137,7 +137,7 @@ namespace XREngine.Rendering.Commands
         }
 
         private static BoundsGpu ComputeRenderCullingBoundsGpu(
-            RenderInfo? renderInfo,
+            in GpuSceneOwnerSnapshot owner,
             in AABB fallbackLocal,
             in Matrix4x4 fallbackMatrix,
             uint version)
@@ -145,11 +145,11 @@ namespace XREngine.Rendering.Commands
             AABB localBounds = fallbackLocal;
             Matrix4x4 basis = fallbackMatrix;
 
-            if (renderInfo is RenderInfo3D info3d)
+            if (owner.Is3D)
             {
-                if (info3d.LocalCullingVolume is AABB localOverride)
+                if (owner.LocalCullingVolume is AABB localOverride)
                     localBounds = localOverride;
-                basis = info3d.CullingOffsetMatrix;
+                basis = owner.CullingOffsetMatrix;
             }
 
             return ComputeWorldBoundsGpu(localBounds, basis, version);
@@ -359,6 +359,15 @@ namespace XREngine.Rendering.Commands
             RenderInfo? renderInfo,
             in AABB fallbackLocal,
             in Matrix4x4 fallbackMatrix)
+            => WriteTightCommandAabb(commandIndex,
+                GpuSceneOwnerSnapshot.CaptureLive(renderInfo), fallbackLocal,
+                fallbackMatrix);
+
+        private void WriteTightCommandAabb(
+            uint commandIndex,
+            in GpuSceneOwnerSnapshot owner,
+            in AABB fallbackLocal,
+            in Matrix4x4 fallbackMatrix)
         {
             // Path A: GPU owns this slot. Seed with +inf/-inf so the per-frame atomic
             // reduce produces the correct envelope. Do not perform the CPU 8-corner
@@ -372,11 +381,11 @@ namespace XREngine.Rendering.Commands
             AABB localBounds = fallbackLocal;
             Matrix4x4 basis = fallbackMatrix;
 
-            if (renderInfo is RenderInfo3D info3d)
+            if (owner.Is3D)
             {
-                if (info3d.LocalCullingVolume is AABB localOverride)
+                if (owner.LocalCullingVolume is AABB localOverride)
                     localBounds = localOverride;
-                basis = info3d.CullingOffsetMatrix;
+                basis = owner.CullingOffsetMatrix;
             }
 
             // 8-corner AABB transform (handles arbitrary rotation/scale tightly).

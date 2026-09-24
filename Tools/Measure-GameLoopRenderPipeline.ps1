@@ -455,38 +455,44 @@ function Test-AdmissionScreenshotContent {
         [int]$MinimumColorBuckets
     )
 
-    Add-Type -AssemblyName System.Drawing
-    $bitmap = [System.Drawing.Bitmap]::new($Path)
-    try {
-        $colorBuckets = [System.Collections.Generic.HashSet[int]]::new()
-        $minimumLuminance = 255
-        $maximumLuminance = 0
-        $stepX = [Math]::Max(1, [int]($bitmap.Width / 64))
-        $stepY = [Math]::Max(1, [int]($bitmap.Height / 36))
-        for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {
-            for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {
-                $color = $bitmap.GetPixel($x, $y)
-                $bucket = (($color.R -shr 4) -shl 8) -bor
-                    (($color.G -shr 4) -shl 4) -bor
-                    ($color.B -shr 4)
-                $null = $colorBuckets.Add($bucket)
-                $luminance = [int](0.2126 * $color.R + 0.7152 * $color.G + 0.0722 * $color.B)
-                $minimumLuminance = [Math]::Min($minimumLuminance, $luminance)
-                $maximumLuminance = [Math]::Max($maximumLuminance, $luminance)
-            }
-        }
+    # MCP screenshots can contain PNG metadata that GDI+ rejects, even though
+    # Windows Imaging Component and image viewers decode the pixels correctly.
+    Add-Type -AssemblyName PresentationCore
+    $bitmap = [System.Windows.Media.Imaging.BitmapImage]::new([uri]::new($Path))
+    $converted = [System.Windows.Media.Imaging.FormatConvertedBitmap]::new(
+        $bitmap, [System.Windows.Media.PixelFormats]::Bgra32, $null, 0)
+    $stride = $converted.PixelWidth * 4
+    $pixels = [byte[]]::new($stride * $converted.PixelHeight)
+    $converted.CopyPixels($pixels, $stride, 0)
 
-        if ($colorBuckets.Count -lt $MinimumColorBuckets) {
-            throw "Viewport screenshot is visually empty (colorBuckets=$($colorBuckets.Count)/$MinimumColorBuckets, luminanceRange=$($maximumLuminance - $minimumLuminance))."
-        }
-
-        return [pscustomobject]@{
-            ColorBuckets = $colorBuckets.Count
-            LuminanceRange = $maximumLuminance - $minimumLuminance
+    $colorBuckets = [System.Collections.Generic.HashSet[int]]::new()
+    $minimumLuminance = 255
+    $maximumLuminance = 0
+    $stepX = [Math]::Max(1, [int]($converted.PixelWidth / 64))
+    $stepY = [Math]::Max(1, [int]($converted.PixelHeight / 36))
+    for ($y = 0; $y -lt $converted.PixelHeight; $y += $stepY) {
+        for ($x = 0; $x -lt $converted.PixelWidth; $x += $stepX) {
+            $offset = $y * $stride + $x * 4
+            $blue = [int]$pixels[$offset]
+            $green = [int]$pixels[$offset + 1]
+            $red = [int]$pixels[$offset + 2]
+            $bucket = (($red -shr 4) -shl 8) -bor
+                (($green -shr 4) -shl 4) -bor
+                ($blue -shr 4)
+            $null = $colorBuckets.Add($bucket)
+            $luminance = [int](0.2126 * $red + 0.7152 * $green + 0.0722 * $blue)
+            $minimumLuminance = [Math]::Min($minimumLuminance, $luminance)
+            $maximumLuminance = [Math]::Max($maximumLuminance, $luminance)
         }
     }
-    finally {
-        $bitmap.Dispose()
+
+    if ($colorBuckets.Count -lt $MinimumColorBuckets) {
+        throw "Viewport screenshot is visually empty (colorBuckets=$($colorBuckets.Count)/$MinimumColorBuckets, luminanceRange=$($maximumLuminance - $minimumLuminance))."
+    }
+
+    return [pscustomobject]@{
+        ColorBuckets = $colorBuckets.Count
+        LuminanceRange = $maximumLuminance - $minimumLuminance
     }
 }
 
