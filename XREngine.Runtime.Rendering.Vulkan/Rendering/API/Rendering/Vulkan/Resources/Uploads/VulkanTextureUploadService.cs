@@ -734,17 +734,21 @@ internal sealed partial class VulkanTextureUploadService
             priorityClass,
             cancellationToken);
 
-        if (!RegisterUploadGeneration(texture, request, out string? ledgerFailure))
+        string? ledgerFailure = null;
+        bool injectedAdmissionFailure = VulkanTextureUploadFaultInjection.TryConsumeAdmissionFailure();
+        if (injectedAdmissionFailure || !RegisterUploadGeneration(texture, request, out ledgerFailure))
         {
             InvalidOperationException failure = new(
-                ledgerFailure ??
-                "The Vulkan texture upload generation ledger rejected the request.");
+                injectedAdmissionFailure
+                    ? "Injected validation admission failure before upload generation registration."
+                    : ledgerFailure ?? "The Vulkan texture upload generation ledger rejected the request.");
             Interlocked.Increment(ref s_failedUploads);
             onError?.Invoke(failure);
             return false;
         }
 
         if ((shouldAcceptResult is not null && !shouldAcceptResult())
+            || VulkanTextureUploadFaultInjection.TryConsumeCancellation()
             || !TryQueueImportedTextureUpload(request, streamingGeneration, out _))
         {
             RecordState(request, VulkanTextureUploadGenerationState.Canceled, "stale or canceled before resource preparation");

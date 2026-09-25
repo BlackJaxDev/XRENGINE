@@ -12,7 +12,8 @@ internal sealed class VulkanWrapperPortBinding(
     VulkanMeshOperationRequestQueue? meshRequests,
     VulkanWrapperLookupPort lookup)
 {
-    internal void AttachPlannerOperationHandlers(VkRenderProgram program)
+    internal Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)>?>? AttachPlannerOperationHandlers(
+        VkRenderProgram program)
         => programPlanner?.Attach(program);
     internal VulkanProgramCreationPort? TryGetProgramCreation() => programCreation;
     internal VulkanProgramPlannerPort? TryGetProgramPlanner() => programPlanner;

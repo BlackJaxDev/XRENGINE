@@ -102,6 +102,39 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
         probe.AutoShowPreviewOnSelect.ShouldBeTrue();
     }
 
+    [Test]
+    public void YamlSerializer_RoundTrips_DisabledAutoCaptureOnActivate()
+    {
+        // The property initializes to true; omitted-default serialization must still write false.
+        SceneNode original = new("LightProbeNode", new Transform());
+        LightProbeComponent probe = original.AddComponent<LightProbeComponent>()!;
+        probe.AutoCaptureOnActivate = false;
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+
+        SceneNode? cloneNode = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        LightProbeComponent? clone = cloneNode?.GetComponent<LightProbeComponent>();
+        clone.ShouldNotBeNull();
+        clone!.AutoCaptureOnActivate.ShouldBeFalse();
+    }
+
+    [Test]
+    public void YamlSerializer_RoundTrips_GridSpawnerDisabledAutoCaptureOnActivate()
+    {
+        RuntimeShaderServices.Current = new ThrowingRuntimeShaderServices();
+        SceneNode original = new("Spawner", new Transform());
+        LightProbeGridSpawnerComponent spawner = original.AddComponent<LightProbeGridSpawnerComponent>()!;
+        spawner.PreviewProbes = false;
+        spawner.AutoCaptureOnActivate = false;
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+
+        SceneNode? cloneNode = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        LightProbeGridSpawnerComponent? clone = cloneNode?.GetComponent<LightProbeGridSpawnerComponent>();
+        clone.ShouldNotBeNull();
+        clone!.AutoCaptureOnActivate.ShouldBeFalse();
+    }
+
     private static ConcurrentDictionary<Type, byte> GetUnsupportedMemoryPackTypes()
     {
         FieldInfo field = typeof(CookedBinarySerializer).GetField(

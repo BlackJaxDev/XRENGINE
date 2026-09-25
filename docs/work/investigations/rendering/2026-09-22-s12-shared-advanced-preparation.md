@@ -1,6 +1,6 @@
 # S12: Shared Advanced Preparation
 
-Status: Active for the merged lifetime scope. The local reachable-path gate passed; the incoming separate-world lifetime gate is still open. Neither parent reproduced the reported 153-165 ms stall, and neither closes the overall Vulkan stall investigation.
+Status: Validated for its reachable scope. The local reachable-path gate passed, and the separate-world lifetime gate was dispositioned Not Applicable on September 25 by explicit user decision because no supported runtime path alternates distinct `GPUScene` owners (see [September 25 distinct-world disposition](#september-25-distinct-world-disposition)). Neither parent reproduced the reported 153-165 ms stall, and neither closes the overall Vulkan stall investigation.
 
 ## September 23 Merge Disposition
 
@@ -20,7 +20,7 @@ Remaining integration gates:
 
 - [x] Build the merged Release editor and inspect an isolated live Vulkan/Advanced run; verify canonical draws/ranges, both copy diagnostics, zero warmed allocations/copy failures, and viewed fresh output. This is smoke coverage, not a repeated three-window benchmark or proof of every mutation/lifetime path; see the camera/output limits below.
 - [x] Exercise oversized view request -> rejection -> identical retry -> rejection -> valid request; verify no false cache hit or omitted view is admitted. The isolated public-method probe below passed; it is not a GPU publication/lifetime test. No new regression tests without the repository-required post-validation clearance.
-- [ ] Exercise two distinct runtime-world owners across frames with in-flight consumers, deformation/static inputs, same-owner topology replacement, and teardown; prove bounded generations, completion-gated reuse, correct output and no stale feedback. Use a supported runtime fixture or explicitly disposition the missing fixture before closing S12. Do not repeat the same-host world-restore experiment as proof.
+- [x] Dispositioned Not Applicable (September 25, user decision): exercise two distinct runtime-world owners across frames with in-flight consumers, deformation/static inputs, same-owner topology replacement, and teardown. No supported runtime fixture exists; the evidence and reopening condition are recorded below. The same-host world-restore experiment was not used as proof.
 - [ ] Retain the incoming AA output/resource-transition dependencies and the explicitly untested forced growth/failure, duplicate-key, hardware XR and long-duration churn limits. Narrow passing churn/stereo checks do not close those separate gates.
 
 The September 23 `render<-collect` experiment and the full S13a-S13i plan remain in the [stall TODO](../../todo/rendering/vulkan-stall-remediation-todo.md) and [collect-wait investigation](2026-09-23-vulkan-render-collect-wait.md). The temporary identity filter was reverted; this merge does not implement S13 or claim the roughly 60 ms wait is fixed. Resolve or explicitly disposition the remaining S12 integration gate before promoting dependent S13 implementation work.
@@ -306,3 +306,31 @@ and 0.868 ms. Warm build allocation and family-copy failure deltas were zero
 in every window. The Sponza viewport was captured and viewed after moving
 the camera near its ornament geometry; fresh geometry remained visible.
 This clean session was stopped through its named owner manager.
+
+## September 25 distinct-world disposition
+
+The separate-world lifetime gate requires two distinct runtime `GPUScene` owners
+to alternate across frames while older GPU work is retained. A source audit of
+every supported path that changes the rendered world found none that does so:
+
+- MCP `restore_world_state` and `load_world` call `RetargetWorld`, which reuses
+  the existing runtime host, its `VisualScene3D` and its `GPUScene`.
+- Play mode's `SerializeAndRestore` restores scenes inside the same source world
+  and host; `ReloadFromAsset` is an unimplemented stub; `PersistChanges` does not
+  change worlds.
+- `Engine.GetOrCreateWorld` does create a separate host per `XRWorld`, but in the
+  editor it is reached only by viewport rebinding to the configured startup world
+  (unset for the Unit Testing World) and by standalone dialog windows, whose
+  worlds use the UI pipeline rather than Advanced shared preparation.
+- `RenderWorldSnapshotPublication` remains first-wins within a frame.
+
+On September 25 the user explicitly chose to disposition the gate rather than
+add a diagnostic fixture that retargets a window to a second runtime world. The
+gate is therefore **Not Applicable** for the current product paths. Reopen it,
+and exercise the bounded static-deformation generations, completion-gated reuse
+and teardown with genuinely distinct owners, when any of these become supported:
+multiple windows or viewports rendering different worlds through the Advanced
+pipeline, a play-mode or world-load path that creates a new runtime host, or an
+implemented `ReloadFromAsset`. S12's other passing named subgates and its
+explicitly untested limits (forced growth/failure, duplicate published geometry
+keys, production XR hardware, long-duration churn) are unchanged.

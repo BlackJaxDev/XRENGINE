@@ -251,6 +251,10 @@ internal sealed partial class VulkanFrameLoop
                         _deviceContext.FirstNativeDeviceFault?.Operation),
                     failures);
             }
+            // A failed pass leaves the generation quarantined with its complete
+            // owner graph, so thread-local state is released only after a clean one.
+            if (failures.Count == 0)
+                RunCleanupStep("per-thread workspaces", ReleasePerThreadWorkspaces, failures);
             cleanupReachedCompletion = true;
         }
         finally
@@ -458,6 +462,26 @@ internal sealed partial class VulkanFrameLoop
 
     private void DestroyDanglingWrappers()
         => _resourceRuntime.BackendObjects.DestroyDanglingWrappers();
+
+    /// <summary>
+    /// Disposes the generation's thread-local workspaces. Render, recording, and
+    /// worker threads outlive a renderer generation, and each thread's slot for an
+    /// undisposed <see cref="ThreadLocal{T}"/> roots its value. These values
+    /// reference generation-owned wrappers or runtimes, so without disposal every
+    /// restarted generation stays reachable. Runs last because earlier teardown
+    /// steps still record through these workspaces.
+    /// </summary>
+    private void ReleasePerThreadWorkspaces()
+    {
+        _resourceRuntime.WrapperColdComposition.ReleaseThreadWorkspaces();
+        MeshOperationRequests.ReleaseThreadCaptures();
+        _resourceRuntime.Uploads.PublicationState.ReleaseThreadBatches();
+        _outputRuntime.OpenXrBackend.ReleaseThreadExecutionStates();
+        _framePlanner.Operations.Dispose();
+        _commandRuntime.CommandBuffers.RecordingScratch.Dispose();
+        _commandRuntime.Synchronization._synchronizationThreadWorkspace.Dispose();
+        _commandRuntime.ThreadWorkspace.Dispose();
+    }
 
     private void InitializeDeviceBootstrap()
     {

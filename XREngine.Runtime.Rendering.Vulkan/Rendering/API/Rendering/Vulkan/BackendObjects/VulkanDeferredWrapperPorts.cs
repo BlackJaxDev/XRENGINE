@@ -35,6 +35,10 @@ internal sealed class VulkanWrapperColdComposition(VulkanWrapperLookupPort looku
     internal void PublishProgramCreation(VulkanProgramCreationPort port)
         => Publish(ref _programCreation, port, "program creation");
 
+    /// <summary>Releases the published program port's per-thread workspaces after generation teardown.</summary>
+    internal void ReleaseThreadWorkspaces()
+        => Volatile.Read(ref _programCreation)?.ReleaseThreadWorkspaces();
+
     internal void PublishProgramCommandOperations(VulkanCommandRuntime commandRuntime)
         => Publish(ref _programCommandOperations, new VulkanProgramCommandOperations(commandRuntime), "program command operations");
 

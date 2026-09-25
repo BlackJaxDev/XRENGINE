@@ -22,6 +22,16 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
             "The Vulkan program binding workspace has been disposed.");
 
     /// <summary>
+    /// Releases every thread's binding workspace once the generation has finished
+    /// teardown. Pooled capture states keep frame snapshots that reference this
+    /// generation's wrappers, and a long-lived thread's thread-local slot keeps
+    /// them reachable (and through them the whole generation) until the owning
+    /// <see cref="ThreadLocal{T}"/> is disposed; finalization cannot break that cycle.
+    /// </summary>
+    internal void ReleaseThreadWorkspaces()
+        => _bindingWorkspace.Dispose();
+
+    /// <summary>
     /// Creates a shader dependency through the generation's cold wrapper
     /// boundary. Program linking can discover shaders before the renderer-level
     /// cache has observed them, so an identity-only retained lookup is

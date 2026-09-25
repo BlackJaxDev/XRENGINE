@@ -242,6 +242,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             ClearPublicationFailure();
             return;
         }
+        if (AdvancedPublicationFaultInjection.TryConsumePreflightRejection())
+        {
+            RejectPublication("Injected validation rejection before opening a publication.");
+            return;
+        }
         if (!Database.TryBeginPublication(
                 out AdvancedGpuScenePublicationTransaction transaction))
         {

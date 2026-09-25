@@ -105,6 +105,10 @@ internal sealed partial class VulkanFrameLoop
                     pending.Ticket);
             if (snapshot.TerminalFailure || !snapshot.Found)
             {
+                // The ticket can no longer publish. Forget it so the caller's next
+                // bounded retry schedules a successor upload instead of re-reading
+                // the same canceled or failed ticket until its retry budget is spent.
+                _texturePreviewUploads.Remove(texture);
                 failureReason = snapshot.Detail ??
                     $"Vulkan preview upload ticket {pending.Ticket.Sequence} is no longer available.";
                 return false;

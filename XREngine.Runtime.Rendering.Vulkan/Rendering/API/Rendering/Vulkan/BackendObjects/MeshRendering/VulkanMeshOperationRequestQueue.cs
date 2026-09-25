@@ -50,6 +50,15 @@ internal sealed class VulkanMeshOperationRequestQueue
     private int _mainSceneCount;
     private int _shadowCount;
     private VulkanMeshRequestLaneCapacityFailure _lastCapacityFailure;
+
+    /// <summary>
+    /// Drops every thread's capture state after generation teardown so a
+    /// long-lived thread's thread-local slot cannot keep captured requests, and
+    /// through them this generation, reachable.
+    /// </summary>
+    internal void ReleaseThreadCaptures()
+        => _threadCapture.Dispose();
+
     internal EMeshRequestScheduleResult TryEnqueue(in VulkanMeshRenderRequest request)
     {
         ThreadCaptureState rootCapture = _threadCapture.Value

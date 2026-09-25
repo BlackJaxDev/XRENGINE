@@ -6,7 +6,12 @@ namespace XREngine.Rendering.Vulkan;
 /// Command-runtime-local per-thread state. Renderer scopes explicitly install and
 /// restore values; this workspace never owns a renderer or native device.
 /// </summary>
-internal sealed class VulkanCommandThreadWorkspace
+/// <remarks>
+/// Each per-thread context references the owning command runtime, so a thread
+/// that outlives the renderer generation keeps that generation reachable until
+/// this workspace is disposed at the end of generation teardown.
+/// </remarks>
+internal sealed class VulkanCommandThreadWorkspace : IDisposable
 {
     private readonly ThreadLocal<VulkanCommandThreadContext> _current;
 
@@ -43,4 +48,8 @@ internal sealed class VulkanCommandThreadWorkspace
         if (_current.IsValueCreated)
             _current.Value!.Reset();
     }
+
+    /// <summary>Drops every thread's context after the generation has finished teardown.</summary>
+    public void Dispose()
+        => _current.Dispose();
 }

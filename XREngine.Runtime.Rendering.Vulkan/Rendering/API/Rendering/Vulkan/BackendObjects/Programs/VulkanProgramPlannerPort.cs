@@ -10,14 +10,20 @@ internal sealed class VulkanProgramPlannerPort(
     VulkanCommandThreadWorkspace commandWorkspace)
 {
     /// <summary>
-    /// The planning authority owns the callback registration.  The program
-    /// wrapper retains neither this port nor a planner callback.
+    /// Subscribes the planner's dispatch handler to the program's dispatch requests
+    /// and returns it. The program wrapper keeps only that handler so retirement can
+    /// unsubscribe it; the engine program outlives renderer generations, and a
+    /// handler left attached keeps its wrapper, and through it the whole generation,
+    /// reachable (and would dispatch twice after a same-generation wrapper replacement).
     /// </summary>
-    internal void Attach(VkRenderProgram program)
+    internal Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)>?> Attach(
+        VkRenderProgram program)
     {
         ArgumentNullException.ThrowIfNull(program);
-        program.Data.DispatchComputeRequested += (x, y, z, textures)
-            => program.HandlePlannerDispatch(this, x, y, z, textures);
+        Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)>?> handler =
+            (x, y, z, textures) => program.HandlePlannerDispatch(this, x, y, z, textures);
+        program.Data.DispatchComputeRequested += handler;
+        return handler;
     }
 
     internal void TrackBufferBinding(XRDataBuffer buffer)

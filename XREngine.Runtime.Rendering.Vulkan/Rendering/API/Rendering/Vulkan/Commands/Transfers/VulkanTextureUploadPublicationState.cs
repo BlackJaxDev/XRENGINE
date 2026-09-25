@@ -22,6 +22,13 @@ internal sealed class VulkanTextureUploadPublicationState
 
     public List<PendingRecordedTextureUploadPublication> PendingTimelinePublications { get; } = [];
 
+    /// <summary>
+    /// Drops every recording thread's batch list after generation teardown so a
+    /// long-lived thread cannot keep this generation's uploads reachable.
+    /// </summary>
+    internal void ReleaseThreadBatches()
+        => _recordedForSubmit.Dispose();
+
     internal void QueueRecordedForTimeline(
         ulong timelineValue,
         string uploadSource)

@@ -190,7 +190,12 @@ public class LightProbeGridSpawnerComponent : XRComponent
         }
     }
 
+    /// <summary>
+    /// Default applied to spawned probes. The declared default matches the field initializer
+    /// so default-omitting YAML keeps an explicit <see langword="false"/>.
+    /// </summary>
     [Category("Probe Defaults")]
+    [DefaultValue(true)]
     public bool AutoCaptureOnActivate
     {
         get => _autoCaptureOnActivate;

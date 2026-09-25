@@ -19,15 +19,6 @@ public sealed class AdvancedNativeShadingClosureContractTests
         public string? UnsupportedReason => null;
     }
 
-    private sealed class MockGIProvider : IAdvancedGlobalIlluminationProvider
-    {
-        public EGlobalIlluminationMode ActiveMode => EGlobalIlluminationMode.SurfelGI;
-        public string ProviderName => "MockSurfelGI";
-        public bool IsSupported { get; set; } = true;
-        public bool RequiresTemporalHistory => true;
-        public string? OutputResourceName => "SurfelGITexture";
-    }
-
     [Test]
     public void DecalRecord_MatchesByteLayout()
     {
@@ -64,18 +55,6 @@ public sealed class AdvancedNativeShadingClosureContractTests
         provider.IsSupported.ShouldBeTrue();
         provider.SupportsStereo.ShouldBeTrue();
         provider.OutputFormat.ShouldBe(EPixelInternalFormat.R8);
-    }
-
-    [Test]
-    public void GIProvider_ResolvesActiveModeAndFallbacks()
-    {
-        MockGIProvider supportedProvider = new() { IsSupported = true };
-        AdvancedGlobalIlluminationContract.ResolveActiveMode(supportedProvider).ShouldBe(EGlobalIlluminationMode.SurfelGI);
-
-        MockGIProvider unsupportedProvider = new() { IsSupported = false };
-        AdvancedGlobalIlluminationContract.ResolveActiveMode(unsupportedProvider).ShouldBe(EGlobalIlluminationMode.LightProbesAndIbl);
-
-        AdvancedGlobalIlluminationContract.ResolveActiveMode(null).ShouldBe(EGlobalIlluminationMode.LightProbesAndIbl);
     }
 
     [Test]

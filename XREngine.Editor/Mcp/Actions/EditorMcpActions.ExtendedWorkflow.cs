@@ -1361,7 +1361,16 @@ namespace XREngine.Editor.Mcp
             catch (Exception ex)
             {
                 Debug.LogError($"[MCP] YAML serialization failed during '{operation}' for '{instance.GetType().FullName}': {ex}");
-                error = new McpToolResponse($"Serialization failed during '{operation}'. See the general log for details.", isError: true);
+                error = new McpToolResponse(
+                    $"Serialization failed during '{operation}': {ex.GetType().Name}.",
+                    new
+                    {
+                        operation,
+                        instanceType = instance.GetType().FullName,
+                        serializerDepthAfterFailure = DepthTrackingEventEmitter.CurrentDepth,
+                        exception = McpExceptionDiagnostics.Describe(ex),
+                    },
+                    isError: true);
                 return false;
             }
         }
@@ -1386,7 +1395,10 @@ namespace XREngine.Editor.Mcp
             catch (Exception ex)
             {
                 Debug.LogError($"[MCP] YAML deserialization failed during '{operation}' for '{typeof(T).FullName}': {ex}");
-                error = new McpToolResponse($"Deserialization failed during '{operation}'. See the general log for details.", isError: true);
+                error = new McpToolResponse(
+                    $"Deserialization failed during '{operation}': {ex.GetType().Name}.",
+                    new { operation, targetType = typeof(T).FullName, exception = McpExceptionDiagnostics.Describe(ex) },
+                    isError: true);
                 return false;
             }
         }

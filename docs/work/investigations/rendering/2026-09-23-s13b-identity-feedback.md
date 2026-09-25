@@ -904,3 +904,311 @@ is the current resumption checklist, including required evidence and ordering.
 The current work session is wrapped up with the isolated editor stopped;
 S13a/S13b remain **Blocked**, and screenshot/log review and test clearance remain
 pending.
+
+## September 25 closeout continuation
+
+Source: `03161bc5e` plus the working-tree changes named in each subsection. The
+isolated Release editor session `s13-closeout-0925` used the same frozen Sponza
+fixture settings (`unit-world-current.jsonc`), Vulkan, Advanced/CpuDirect/TSR,
+validation layers off. Every isolated build below completed with zero warnings
+and errors. Evidence is under
+`Build/_AgentValidation/20260924-102959-s13-closeout/` (`mcp-captures/`,
+`mcp-output/`, `logs/`); the durable conclusions are recorded here.
+
+### Review of the September 24 automated packet
+
+All 21 screenshots were viewed and every per-interval sample in both collections
+was read. Findings, in collection order:
+
+| Case | Disposition |
+| --- | --- |
+| warmup-A, stationary-A | Presents advanced every sample. Stationary 60 s held 11,221 native resources, 7,706 tracked sets, 802 mesh variants, zero retirement backlog. Image shows the expected curtain/foliage view. Pass for this scoped check. |
+| camera-B, return-A, repeat-B, unseen-C, return-C-A | Images change with the camera and return to the A view. The first B and first return to A added +49/+40 and +144/+120 native/sets once; repeats and unseen C added nothing; mesh variants stayed 802. Pass for the scoped repeated/unseen-view check. |
+| shader-reload | Mesh variants 802 → 816 (+14 program identities), native fell 11,415 → 10,779, backlog zero, image unchanged. Pass. |
+| restart1/2 A, B, return-A | Presents advanced on each replacement device; historical readiness retries stayed frozen. **Defect:** both post-restart A images show different background shadowing from the pre-restart A image while the matching return-A images are correct. Root-caused and fixed below. |
+| transform-changed/restored | Sponza visibly shifted by the +0.25 Y edit and returned. Pass. |
+| node-inactive/reactivated | Inactive showed only the environment backdrop; reactivation restored the view. Pass. |
+| material-changed/restored | The collector changed `leaf` Roughness 0.9 → 0.2. The capture is visually identical apart from the hover outline, so this does **not** demonstrate a visible material propagation; a discriminating material case is still required. |
+
+Both collections reported exactly the two known descriptor-heap startup errors
+per device, 14 warnings (13 after restart), and no overflow. The mutation-run
+warmup settled at 1,196 mesh variants versus 802 in the first collection with the
+same DLL hashes; it passed through a 1,483-entry pending-retirement transient
+during startup and was flat afterwards. That startup-dependent plateau is noted,
+not treated as growth.
+
+### Renderer restart left shadow atlas tiles stale (fixed)
+
+Reproduced on `03161bc5e`: after `restart_renderer`, view A still showed the wrong
+background shadowing 30 s and 90 s later with the camera held still; moving to B
+and back corrected it. The generic Vulkan mesh-allocation count stayed at 14 at
+view A after restart (versus about 400 before restart and after the B move),
+meaning no shadow casters were re-rendered on the new device. Pixel comparison
+against the pre-restart A image: 13.1% of pixels differed by more than 24 summed
+RGB levels (mean 27.3).
+
+Cause: `ShadowAtlasManager` residency and the lights' tile content hashes carry
+across a renderer replacement, but the atlas pages' backend storage is recreated
+unwritten by the new renderer. With unchanged lights and camera, every tile was
+judged reusable until a projection change forced a refresh.
+
+Fix (`ShadowAtlasManager.WriterRenderer.cs`, two call sites in
+`ShadowAtlasManager.cs`): both render-thread atlas entry points compare the
+current `AbstractRenderer` with the last writer (held weakly). On a change they
+drop the previous writer's pending write receipts and request the existing
+planning-thread reset for directional, spot and point atlases. No per-frame
+allocation is added; the reset path is the existing per-kind reset.
+
+Validation with Editor/Rendering/Vulkan DLL SHA256
+`570BD42FE0FC1052DE9E05E46894C558EAAB0C5E01A5E9EA296BC37BEEECD4A6`,
+`C6D31F4DE335EEC69E480A9553651678B3AAE3A31AFC0033AED949B7F1B69F34`,
+`EB6AE36125C1D5424EADD0D6670C6844F2670F97C5D3E793EDA93EE484E9FEEF`:
+after restart, view A had 407 mesh allocations at 30 s with no camera motion, and
+its image differed from the pre-restart A image in 1.4% of pixels (mean 1.69) at
+both 30 s and 90 s. Two correct captures of view A across a restart (return-A
+after camera motion) differ by 1.0–2.1% in the same fixture (TSR jitter and the
+editor hover outline), so the fixed result is inside the observed noise band.
+Presents kept advancing and retirement backlog stayed zero. Captures are in
+`mcp-captures/restart-shadow-0925a/` (before) and
+`mcp-captures/restart-shadow-0925b-fixed/` (after); the comparison script is
+`scratch/png_diff.py`. This is not an S13b identity-feedback regression: the
+shadow content hash never depended on publication identity.
+
+### World snapshot and restore repairs
+
+**Missing exception detail.** `TrySerializeYamlForMcp` and its deserialization
+counterpart now return a bounded, path-sanitized exception description in the MCP
+error payload (`McpExceptionDiagnostics`: exception type chain, trimmed messages,
+up to 24 method frames without file names), plus the serializer depth observed
+after the failure. The first rerun reported the actual cause:
+`InvalidOperationException: Type 'XREngine.Rendering.Materials.MaterialSurfaceTextureBinding'
+cannot be deserialized because it does not have a default constructor or a type
+converter`, raised from `XRMaterialYamlTypeConverter.WriteYaml` under the
+serializer's `EnsureRoundtrip()` traversal.
+
+**Serialization contract.** `XRMaterial.SurfaceTextureBindings` (added
+September 21) is a serialized public property, but its element record had only a
+parameterful constructor, so every world containing imported surface bindings
+failed to snapshot or save; `save_world` and play-mode `SerializeAndRestore` share
+the same serializer. `MaterialSurfaceTextureBinding` now has a private
+serializer-only parameterless constructor that leaves every member at its type
+default, so values omitted by `OmitDefaults` read back exactly. Live: the snapshot
+then succeeded, and after a restore the `leaf` material's two bindings
+(`sponza_thorn_diff` BaseColor sRGB and `sponza_thorn_mask` Opacity linear,
+texcoord 0, channel 0, Repeat wrap, UV `<1,1,0,0>`) compared equal field by field.
+
+**Restored probe capture policy.** The first successful restore sent Vulkan into
+a terminal PresentNow failure: `FramePlanCapacityExceeded lane=Terminal
+meshLane=TerminalComposition actual=326 configured=256`. The fixture sets
+`LightProbeCapture: None`, yet all 72 restored probes and their spawner reported
+`AutoCaptureOnActivate = true`. The serializer's `OmitDefaults` compares against
+the *type* default, so an explicit `false` on a property whose field initializer is
+`true` is omitted and reads back as `true`. `LightProbeComponent` and
+`LightProbeGridSpawnerComponent` now declare `[DefaultValue(true)]` on
+`AutoCaptureOnActivate`, following the existing `LightComponent.CastsShadows`
+pattern. Live: probes and spawner kept `false` across a restore (72 probes), scene
+integrity reported zero errors and warnings, and presents kept advancing with
+Completed frames (34,559 → 37,821) instead of going terminal.
+
+Limits and separately owned findings:
+
+- The successful restore used a snapshot taken right after world readiness, before
+  the asynchronous Sponza import populated the scene; the restored world rendered
+  the environment only. It validates policy preservation and non-terminal restore,
+  not a full Sponza round-trip.
+- With this build, `snapshot_world_state` issued after the fixture settled did not
+  reply within 900 s (and did not reply within 400 s after a renderer restart).
+  CPU and working set stayed at the steady rendering level, and a full managed dump
+  showed no thread in MCP or YAML code, but only 37 of 71 threads had recoverable
+  managed stacks. The cause is open; the snapshot tool is no longer on the S12
+  path (see the S12 disposition), so this is recorded for the editor MCP owner.
+- The engine-wide `OmitDefaults` behaviour affects any serialized member whose
+  initializer differs from its type default; only the probe capture policy was
+  corrected here. A systemic change would alter the saved format of every asset
+  and needs its own owner and approval.
+- `DepthTrackingEventEmitter` keeps a thread-static depth that is not unwound when
+  serialization throws; a later root serialization on that thread could be treated
+  as nested (reference emission, missing root type tag). Found by inspection only;
+  no failure after the contract fix exercised it.
+- Independently of snapshots, Vulkan light-probe and scene-capture mesh requests
+  use the 256-entry terminal-composition lane; a capture of a scene with more
+  visible meshes than that becomes `RendererTerminal`. This predates S13
+  (lane split `2583a2d4d`, August 25) and needs a capture lane with deferral under
+  the Vulkan frame-loop owner.
+
+### Validation layer upgrade and teardown finding
+
+With the user's approval, LunarG Vulkan SDK 1.4.357.0 was installed machine-wide
+(installer SHA256 `81f474711e9042f4cd22b31b2f7a8870db2e428b21586fb43dd80150be97310d`,
+matching LunarG's published value). Its validation layer is now the only
+registered `VK_LAYER_KHRONOS_validation`, `VULKAN_SDK` points to it, and its
+headers define `VK_EXT_descriptor_heap`. SDK 1.4.328.1 remains installed.
+Side effects to note: a build from a fresh shell rebuilds the VMA bridge against
+the new SDK headers; the opt-in Slang path is pinned to slangc 2026.8 and neither
+SDK ships that version (1.4.328.1 ships 2025.17.2, 1.4.357.0 ships 2026.13.1),
+so its status is unchanged. The validation runs below used binaries built in
+shells that still carried the old `VULKAN_SDK`, so their VMA bridge was unchanged.
+
+A Debug isolated editor built from the same source (zero warnings and errors)
+ran with standard and synchronization validation: settle, A/B/A, renderer
+restart, A/B/A. Every cumulative snapshot on both devices reported **zero
+validation errors**; the two descriptor-heap startup errors seen with 1.4.328.1
+no longer occur. Warnings were 13 on the first device and 12 on the second:
+loader registry notices, one `WARNING-Shader-OutputNotConsumed` (an unused
+vertex attribute at location 2 in one pipeline), and 10 suppressed
+unused-attachment warnings. Every sampled frame completed, retirement backlog and
+binding failures were zero, and the viewed captures show correct output,
+including view A immediately after the restart.
+
+The Debug log, which also covers device destruction, shows a real failure the
+per-device cumulative store cannot: both the restart teardown and the final
+shutdown report `VUID-vkDestroyDevice-device-05137` with 412 and 409 leaked child
+objects. Every listed object is a `VkPipeline`. Shared graphics pipelines and
+libraries are destroyed during teardown, so these pipelines are held outside
+those caches.
+
+A temporary creation-site probe (removed after use) recorded every successfully
+created pipeline and dropped it at both native destroy sites. At the restart
+teardown it found 411 live pipelines, all worker-compiled depth-only monolithic
+graphics pipelines (`CreateGraphicsPipelineOnWorker` → `CreateMonolithicGraphicsPipeline`),
+none of them ever retired. At that point the shared cache held only 2 entries,
+while `_supersededSharedGraphicsPipelines` held 411. Program destruction during
+teardown invalidates each program's cache entries into that superseded queue;
+the queue is drained only by later compile-queue activity, and the device
+teardown step `DestroySharedGraphicsPipelines` destroyed the cache but never the
+queue. Every device teardown therefore leaked those pipelines.
+
+Fix (`VulkanPipelineManager.DestroySharedGraphicsPipelines`): after destroying
+the drained cache it also dequeues and immediately destroys every superseded
+pipeline, de-duplicating handles. GPU idle is already established at that
+teardown step, and cached entries were already destroyed immediately there.
+
+The teardown leak report also named one `VkPipelineLayout`. With the pipeline
+fix in place, a rerun left exactly that layout. `VulkanImGuiOutputPipelineService.RetirePipelinePair`
+discarded the result of `TryBeginDestroyPipelineLayout`; a `true` result means
+retirement is already complete and the caller owns the native destroy (as
+`VkRenderProgram` does), so with the GPU idle at teardown the ImGui layout was
+untracked but never destroyed. The service now destroys the layout when that
+call returns `true`.
+
+Final validation run (Debug, standard + synchronization validation, 1.4.357.0
+layer, both fixes, temporary probe removed; zero build warnings and errors):
+settle, A/B/A, renderer restart, A/B/A, then session stop. Every cumulative
+snapshot reported zero errors (13 and 12 warnings as described above, no
+overflow), every sampled frame completed with zero binding failures and zero
+retirement backlog, and the Vulkan log contains **no leaked-object reports and
+no error lines** across the restart teardown and the final shutdown teardown.
+The standard and synchronization validation gate, including device creation and
+teardown, therefore passes on this fixture. For teardown checks, stop the named
+session with `-StopTimeoutSeconds 90`: the editor vetoed the first close request
+and allowed it about 20 s later, and the default 15 s timeout force-stops the
+process before teardown is logged.
+
+### S13b mutation, temporal, and multi-view matrix
+
+Release, Vulkan Advanced, CpuDirect, TSR, 393-draw Sponza fixture, reviewed
+screenshots per case. Cases were driven through MCP scene edits with S13a
+publication telemetry enabled.
+
+| Case | Result |
+| --- | --- |
+| Stationary | Pass. Zero identity-only dirty notifications. The remaining periodic dirty traffic (about every 7.5 s) is the editor hover highlight, not identity feedback. |
+| Add / remove / re-add node | Pass. Publication advances once per real change; the view shows and removes the object. |
+| Visibility toggle | Pass. |
+| Repeated edits | Pass. One publication per real change; no recurring dirty callbacks afterwards. |
+| Publication rejection | Pass. Injected preflight rejections held the accepted publication; the next attempt advanced it. A dark band seen once during rejection did not reproduce. |
+| Camera and object motion velocity | Pass (EXR velocity captures, signed values). Per-frame velocity for continuously animated objects was not sampled: MCP updates are slower than the frame rate. |
+| Material value and shared material | Pass, including a Sponza material shared across many draws. |
+| Emulated stereo (desktop + two eye layers) | Pass. One publication serves every view; a real mutation reaches every view and stationary identity feedback stays absent. |
+
+Separate findings recorded and left open: `duplicate_scene_node` clones share
+material GUIDs; the engine-wide `DefaultValuesHandling.OmitDefaults` loses
+`false` on true-initialized booleans unless annotated with `DefaultValue(true)`;
+the YAML depth-tracking emitter keeps a nonzero depth after a failed
+serialization; terminal-lane sequence captures need `overflow_policy="drop"`.
+
+### Upload failure and retry coverage
+
+Development-only diagnostics were added: MCP `arm_vulkan_texture_upload_faults`
+(admission failures take the generation-ledger rejection path; cancellations
+take the stale/canceled path after registration) and
+`arm_advanced_publication_rejection`. Both are inert unless armed and cost one
+volatile read per schedule or publication.
+
+Measured on the final leak-fixed build (time to first completed frame after
+`restart_renderer`):
+
+| Case | First completed frame | Outcome |
+| --- | --- | --- |
+| Control restart | 10.0 s | Recovers. Transient `RequiredUploadCompletion` retry details are normal rehydration handoff. |
+| 3 admission failures during rehydration | 7.8 s | Recovers; no terminal failure; failure counter rises by exactly the injected count. |
+| 3 cancellations during rehydration | 7.6 s | Recovers. |
+| 3 admission failures during a streaming transition (camera far, then back) | frames never stop | Failed promotions enter the existing exponential cooldown (180 to 1,800 frames); no retry storm; textures settle after returning. |
+| 12 cancellations | frames never stop | Transform toolbar icons exhaust their three bounded attempts each and show the explicit text fallback; other textures recover. |
+
+Defect found and fixed: an editor-preview upload whose ticket was canceled or
+failed was reported as terminal, but `VulkanFrameLoop.TryRequestTexturePreviewUpload`
+kept the dead ticket, so every bounded retry re-read it and never scheduled a
+successor. The ticket is now dropped when it can no longer publish. Before the
+fix, three injected cancellations left the rotate/scale/translate toolbar icons
+as text for the renderer's lifetime; after it, they recover.
+
+Earlier 25-36 s post-restart stalls were caused by the leak below, not by the
+upload path.
+
+### Renderer restart leaked every old generation (fixed)
+
+Each `restart_renderer` retained about 1.3 GB of managed memory (5.7 GB to
+12.3 GB over five restarts; the Vulkan device allocation count stayed flat).
+Heap dumps showed all six `VulkanRenderer` generations alive. The leaking code
+predates this work (introduced 2026-08-10). Four independent roots were found with
+`gcroot` and fixed:
+
+1. Generation-owned `ThreadLocal` workspaces were never disposed. Per-thread
+   values reference their generation, and a long-lived thread's slot array
+   roots them, so finalization can never break the cycle. The frame-loop
+   teardown now ends with a `per-thread workspaces` step (only after a clean
+   pass, preserving quarantine) that disposes the program binding workspace,
+   command thread workspace, mesh-request capture, texture-upload batches,
+   OpenXR execution state, frame-operation queue, recording scratch, and
+   synchronization workspace.
+2. `VulkanProgramPlannerPort.Attach` subscribed an anonymous dispatch lambda to
+   `XRRenderProgram.DispatchComputeRequested` that nothing could remove. It now
+   returns the handler; `VkRenderProgram.UnlinkData` unsubscribes it.
+3. `XREventBase` applies adds and removes only on the next invocation, so a
+   rarely invoked event kept every add/remove pair and its targets. A removal
+   whose add is still pending now cancels it (listener counts unchanged for
+   every interleaving).
+4. `XRRenderProgram.LinkRequested`/`UseRequested` are internal backend hooks
+   and are now plain events, so a retired wrapper's unsubscription applies
+   immediately.
+
+After the fixes, five restarts leave two renderers alive (current plus the
+previous one still referenced by `VPRC_RenderToWindow`'s bounded 1,024-entry
+deferred presentation ring, which is overwritten as frames advance). The GC
+heap is 4.6 GB instead of 9.3 GB, and private memory falls back after
+collection. The ring retention is a bounded follow-up.
+
+### Regression tests
+
+Written after the live gates, per the user's clearance: `XREventPendingListenerTests`,
+`XRRenderProgramBackendHookTests`, `ValidationFaultInjectionTests`,
+`MaterialSurfaceTextureBindingSerializationTests`, and two
+`AutoCaptureOnActivate` YAML cases in `LightProbeComponentYamlDeserializationTests`.
+They are **not executed**: `XREngine.UnitTests` does not compile because five
+pre-existing test files still reference API removed by the GI/pipeline rewrite
+(`DDGIScaffoldingContractTests`, `ProbeGridLookupTests`,
+`RenderPipelineResourceLifecycleTests`, `BackendReadyFramePackageTests`,
+`BlendshapeGpuEfficiencyTests`). The obsolete GI-provider test in
+`AdvancedNativeShadingClosureContractTests` was removed; the replacement GI
+contracts have no unit coverage yet.
+
+### Remaining S13a/S13b gates
+
+- S13b matrix smoke on the final binary (the leak fixes landed after the matrix
+  passed; the rerun was blocked by the agent permission classifier).
+- S13a final-binary observer matrix (three off/on pairs).
+- Elevated WPR and attached-debugger captures (user-run), then callback
+  attribution and the historical backend divergence disposition.
+- Repair the five broken test files and run the new tests.
+- OpenGL representative comparison.
