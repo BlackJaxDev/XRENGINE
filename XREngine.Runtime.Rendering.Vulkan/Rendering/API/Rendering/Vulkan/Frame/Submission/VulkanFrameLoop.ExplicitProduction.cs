@@ -575,8 +575,10 @@ internal sealed partial class VulkanFrameLoop
                 requestCount,
                 allowPreparedCohort: true,
                 out string meshFailure,
+                out _,
                 ref watchdog,
-                sourceFrameId: frameNumber))
+                sourceFrameId: frameNumber,
+                sliceColdPreparation: false))
         {
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.MeshMaterialization,

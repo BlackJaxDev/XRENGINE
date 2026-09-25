@@ -863,6 +863,10 @@
           "$ref": "#/definitions/EVulkanPresentationProfile",
           "markdownDescription": "Supported values: `Stable`, `LowLatency`, `Uncapped`, `FrameGeneration`.",
           "description": "Selects the PresentationProfile enum value."
+        },
+        "TargetRefreshHz": {
+          "type": "number",
+          "description": "Generated from TargetRefreshHz on UnitTestingVulkanRenderSettings."
         }
       }
     },

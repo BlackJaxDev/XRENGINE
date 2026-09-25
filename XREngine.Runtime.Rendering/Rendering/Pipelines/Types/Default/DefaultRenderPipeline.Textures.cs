@@ -10,21 +10,8 @@ public partial class DefaultRenderPipeline
     private const uint DefaultBrdfLutSize = 512u;
     private const uint OpenXrVulkanSafePathBrdfLutSize = 256u;
 
-    private static uint ResolveBrdfLutSize()
+    private XRTexture CreateBRDFTexture(uint size)
     {
-        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        XRViewport? viewport = pipeline?.RenderState.WindowViewport ?? pipeline?.LastWindowViewport;
-        return ResolveBrdfLutSize(viewport);
-    }
-
-    private static uint ResolveBrdfLutSize(XRViewport? viewport)
-        => UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport)
-            ? OpenXrVulkanSafePathBrdfLutSize
-            : DefaultBrdfLutSize;
-
-    private XRTexture CreateBRDFTexture()
-    {
-        uint size = ResolveBrdfLutSize();
         var tex = CreateBrdfLookupTexture(size, size);
         tex.Name ??= BRDFTextureName;
         tex.SamplerName ??= BRDFTextureName;

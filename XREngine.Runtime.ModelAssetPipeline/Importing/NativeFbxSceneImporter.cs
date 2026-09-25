@@ -202,6 +202,11 @@ internal static class NativeFbxSceneImporter
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFilePath);
 
         XREngine.Fbx.FbxTrace.LogSink ??= static message => Debug.Meshes(message);
+        XREngine.Fbx.FbxTrace.DiagnosticSink ??= static (severity, message) => Debug.Log(
+            ELogCategory.Meshes,
+            EOutputVerbosity.Normal,
+            false,
+            $"[{(severity == XREngine.Fbx.FbxLogVerbosity.Errors ? "ERROR" : "WARN")}] {message}");
         XREngine.Fbx.FbxTrace.ProfilerScopeFactory ??= static scopeName => RuntimeModelImportServices.Current.StartProfileScope(scopeName);
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
 
@@ -319,9 +324,10 @@ internal static class NativeFbxSceneImporter
                                 hasSkinBinding
                                     ? BuildSkinWeightsByControlPoint(
                                         skinBinding,
-                                        sceneNode.Transform.BindMatrix,
+                                        sceneNode.Transform,
                                         importWorld,
-                                        nodesByObjectId)
+                                        nodesByObjectId,
+                                        meshGeometry.ControlPoints.Count)
                                     : null;
 
                             workItems.Add(new MeshBuildWorkItem(
@@ -518,19 +524,34 @@ internal static class NativeFbxSceneImporter
     private static Dictionary<long, SceneNode> BuildSceneNodes(SceneNode rootNode, FbxSemanticDocument semantic, int importLayer, CancellationToken cancellationToken)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
-        Dictionary<long, SceneNode> nodesByObjectId = new(semantic.IntermediateScene.Nodes.Count);
-        foreach (FbxIntermediateNode node in semantic.IntermediateScene.Nodes)
+        IReadOnlyList<FbxIntermediateNode> nodes = semantic.IntermediateScene.Nodes;
+        Dictionary<long, SceneNode> nodesByObjectId = new(nodes.Count);
+        Stack<int> pendingNodes = new();
+        for (int index = nodes.Count - 1; index >= 0; index--)
+            if (nodes[index].ParentNodeIndex is null)
+                pendingNodes.Push(index);
+
+        // FBX object order is not hierarchy order. Construct parents first so both
+        // parenting and the captured world bind matrices use the complete ancestry.
+        while (pendingNodes.TryPop(out int nodeIndex))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            FbxIntermediateNode node = nodes[nodeIndex];
 
             SceneNode parent = node.ParentNodeIndex is int parentIndex
-                ? nodesByObjectId[semantic.IntermediateScene.Nodes[parentIndex].ObjectId]
+                ? nodesByObjectId[nodes[parentIndex].ObjectId]
                 : rootNode;
 
             SceneNode sceneNode = new(parent, node.Name) { Layer = importLayer };
             ApplyLocalMatrix(sceneNode, node.LocalTransform);
             nodesByObjectId[node.ObjectId] = sceneNode;
+
+            for (int childIndex = node.ChildNodeIndices.Count - 1; childIndex >= 0; childIndex--)
+                pendingNodes.Push(node.ChildNodeIndices[childIndex]);
         }
+
+        if (nodesByObjectId.Count != nodes.Count)
+            throw new InvalidDataException("The FBX model hierarchy contains nodes that cannot be reached from a root.");
 
         return nodesByObjectId;
     }
@@ -715,6 +736,13 @@ internal static class NativeFbxSceneImporter
                             if (finalMesh is not null)
                                 UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(finalSubMesh, finalMesh, meshWorldMatrix, rootTransform);
                         }
+                    }
+                    for (int finalIndex = 0; finalIndex < finalSubMeshes.Count; finalIndex++)
+                    {
+                        XRMesh? finalMesh = finalSubMeshes[finalIndex].LODs.Min?.Mesh;
+                        if (finalMesh?.HasSkinning == true)
+                            AdvancedGpuDeformationResources.PrepareImportedMesh(
+                                finalMesh, cancellationToken);
                     }
                     subMeshes.AddRange(finalSubMeshes);
                     lock (createdAssetsSync)
@@ -946,16 +974,14 @@ internal static class NativeFbxSceneImporter
 
     private static Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> BuildSkinWeightsByControlPoint(
         FbxSkinBinding skinBinding,
-        Matrix4x4 meshBindWorldMatrix,
+        TransformBase meshTransform,
         Matrix4x4 importRootBindMatrix,
-        IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
+        IReadOnlyDictionary<long, SceneNode> nodesByObjectId,
+        int controlPointCount)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
+        Matrix4x4 meshBindWorldMatrix = meshTransform.BindMatrix;
         Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> weightsByControlPoint = new();
-        FbxClusterBinding? referenceCluster = skinBinding.Clusters.FirstOrDefault(static cluster => cluster.HasTransformMatrix);
-        Matrix4x4 referenceBindEngine = referenceCluster is not null
-            ? referenceCluster.TransformMatrix * importRootBindMatrix
-            : meshBindWorldMatrix;
         foreach (FbxClusterBinding cluster in skinBinding.Clusters)
         {
             if (!nodesByObjectId.TryGetValue(cluster.BoneModelObjectId, out SceneNode? boneNode))
@@ -963,23 +989,29 @@ internal static class NativeFbxSceneImporter
 
             TransformBase boneTransform = boneNode.Transform;
             Matrix4x4 bindInvWorldMatrix;
-            if (cluster.HasTransformLinkMatrix)
+            if (cluster.HasTransformMatrix)
             {
-                // FBX Transform and TransformLink are the authoritative reference-mesh and
-                // linked-bone bind worlds. GeometryTransform is already baked into vertices.
+                // Serialized Transform already maps this mesh into this bone's bind
+                // space. Applying inverse TransformLink again, or sharing another
+                // cluster's Transform, applies the bone correction twice. The common
+                // import axis/unit conversion belongs to the current bone world only.
+                bindInvWorldMatrix = cluster.InverseBindMatrix;
+            }
+            else if (cluster.HasTransformLinkMatrix)
+            {
                 Matrix4x4 authoredLinkEngine = cluster.TransformLinkMatrix * importRootBindMatrix;
                 if (Matrix4x4.Invert(authoredLinkEngine, out Matrix4x4 inverseAuthoredLink))
-                    bindInvWorldMatrix = referenceBindEngine * inverseAuthoredLink;
+                    bindInvWorldMatrix = meshBindWorldMatrix * inverseAuthoredLink;
                 else
                 {
                     XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Cluster '{cluster.BoneName}' ({cluster.ClusterObjectId}) has a non-invertible authored TransformLink; falling back to the imported bone bind matrix.");
-                    bindInvWorldMatrix = referenceBindEngine * boneTransform.InverseBindMatrix;
+                    bindInvWorldMatrix = meshBindWorldMatrix * boneTransform.InverseBindMatrix;
                 }
             }
             else
             {
                 XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Cluster '{cluster.BoneName}' ({cluster.ClusterObjectId}) has no authored TransformLink; falling back to the imported bone bind matrix.");
-                bindInvWorldMatrix = referenceBindEngine * boneTransform.InverseBindMatrix;
+                bindInvWorldMatrix = meshBindWorldMatrix * boneTransform.InverseBindMatrix;
             }
             foreach ((int controlPointIndex, float weight) in cluster.ControlPointWeights)
             {
@@ -1022,7 +1054,62 @@ internal static class NativeFbxSceneImporter
             ArrayPool<TransformBase>.Shared.Return(bones, clearArray: true);
         }
 
+        PreserveUnweightedControlPointPlacement(
+            skinBinding, meshTransform, importRootBindMatrix, controlPointCount, weightsByControlPoint);
         return weightsByControlPoint;
+    }
+
+    /// <summary>
+    /// Keeps unweighted vertices in a skinned mesh in its authored bind frame,
+    /// while allowing later mesh-node and ancestor transforms to move them.
+    /// </summary>
+    private static void PreserveUnweightedControlPointPlacement(
+        FbxSkinBinding skinBinding,
+        TransformBase meshTransform,
+        Matrix4x4 importRootBindMatrix,
+        int controlPointCount,
+        Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> weightsByControlPoint)
+    {
+        if (weightsByControlPoint.Count == 0)
+            return;
+
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? rigidWeights = null;
+        int unweightedCount = 0;
+        for (int controlPointIndex = 0; controlPointIndex < controlPointCount; controlPointIndex++)
+        {
+            if (weightsByControlPoint.ContainsKey(controlPointIndex))
+                continue;
+
+            if (rigidWeights is null)
+            {
+                Matrix4x4 authoredMeshBind = meshTransform.BindMatrix;
+                foreach (FbxClusterBinding cluster in skinBinding.Clusters)
+                {
+                    if (!cluster.HasTransformMatrix || !cluster.HasTransformLinkMatrix)
+                        continue;
+
+                    authoredMeshBind = cluster.TransformMatrix * cluster.TransformLinkMatrix * importRootBindMatrix;
+                    break;
+                }
+
+                if (!Matrix4x4.Invert(meshTransform.BindMatrix, out Matrix4x4 inverseMeshBind))
+                    throw new InvalidDataException($"Cannot retain unweighted vertices for FBX mesh '{meshTransform.SceneNode?.Name}': its bind transform is singular.");
+
+                // A zero-weight shader branch would output raw source coordinates,
+                // skipping the skin's unit, axis and bind-space placement entirely.
+                rigidWeights = new()
+                {
+                    [meshTransform] = (1.0f, authoredMeshBind * inverseMeshBind),
+                };
+            }
+
+            // CreateVertex copies influences, so this import-only entry can be shared.
+            weightsByControlPoint.Add(controlPointIndex, rigidWeights);
+            unweightedCount++;
+        }
+
+        if (unweightedCount > 0)
+            XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Mesh '{meshTransform.SceneNode?.Name}' has {unweightedCount} source vertices (control points) with no bone weights. Retaining authored bind placement with a rigid mesh-node influence; these vertices will not follow skeletal animation. Assign bone weights in the source model to animate them.");
     }
 
     private static void ApplyDefaultBlendShapeWeights(ModelComponent component, IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)

@@ -11,6 +11,4 @@ internal readonly record struct VulkanOpenXrDiagnosticsSnapshot(
     int ResourcePlannerStateCount,
     int ActiveExternalSwapchainScopeCount,
     int SynchronousUploadBlockCount,
-    int ActivePrewarmScopeCount,
-    long RuntimeSessionDirtyWaitStartTimestamp,
-    long RuntimeSessionPendingFrameWaitStartTimestamp);
+    int ActivePrewarmScopeCount);

@@ -504,6 +504,17 @@ public sealed partial class VulkanRenderer :
         out Exception? failure)
         => _frameLoop.TryExecuteRequiredGpuProducerBatch(
             producer,
+            null,
+            out retentionFence,
+            out failure);
+    internal override bool TryExecuteRequiredGpuProducerBatch(
+        Func<bool> producer,
+        XRFrameBuffer? samplingTarget,
+        out XRGpuFence? retentionFence,
+        out Exception? failure)
+        => _frameLoop.TryExecuteRequiredGpuProducerBatch(
+            producer,
+            samplingTarget,
             out retentionFence,
             out failure);
 

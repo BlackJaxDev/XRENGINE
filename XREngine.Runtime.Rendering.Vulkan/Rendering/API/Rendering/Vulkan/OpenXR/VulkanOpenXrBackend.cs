@@ -20,8 +20,6 @@ internal sealed class VulkanOpenXrBackend
 
     internal readonly Dictionary<RenderResourceRegistry, VulkanOpenXrResourceRegistryWrapperRefreshStamp>
         ResourceRegistryWrapperRefreshStamps = new(ReferenceEqualityComparer.Instance);
-    internal long RuntimeSessionStartDirtyWaitStartTimestamp;
-    internal long RuntimeSessionStartPendingFrameWaitStartTimestamp;
     internal readonly Dictionary<ulong, VulkanOpenXrSwapchainImageViewCacheEntry> SwapchainImageViews = new();
     internal readonly object PrimaryCommandArtifactOwnersLock = new();
     internal readonly VulkanOpenXrFrameDataRefreshRequestStorage[]
@@ -72,8 +70,6 @@ internal sealed class VulkanOpenXrBackend
             plannerStateCount,
             Volatile.Read(ref ExternalSwapchainRenderDepth),
             Volatile.Read(ref SynchronousResourceUploadBlockDepth),
-            Volatile.Read(ref ExternalSwapchainPrewarmDepth),
-            Volatile.Read(ref RuntimeSessionStartDirtyWaitStartTimestamp),
-            Volatile.Read(ref RuntimeSessionStartPendingFrameWaitStartTimestamp));
+            Volatile.Read(ref ExternalSwapchainPrewarmDepth));
     }
 }

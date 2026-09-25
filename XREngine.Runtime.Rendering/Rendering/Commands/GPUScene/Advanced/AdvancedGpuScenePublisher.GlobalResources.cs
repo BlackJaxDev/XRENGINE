@@ -17,6 +17,7 @@ public sealed partial class AdvancedGpuScenePublisher
     private int _publishedLightCount;
     private int _plannedLightCount;
     private int _plannedLightMutationCount;
+    private int _plannedShadowPayloadUpdateCount;
     private uint _publishedLightSeenGeneration;
     private AdvancedShadowRecord[] _plannedShadowRecords = new AdvancedShadowRecord[InitialCapacity];
     private AdvancedGpuResourceBindingSource[] _plannedShadowSources = new AdvancedGpuResourceBindingSource[InitialCapacity];
@@ -28,6 +29,7 @@ public sealed partial class AdvancedGpuScenePublisher
     private int[] _plannedLightShadowStarts = new int[InitialCapacity];
     private int[] _plannedLightShadowCounts = new int[InitialCapacity];
     private bool[] _plannedLightShadowReplacements = new bool[InitialCapacity];
+    private bool[] _plannedLightShadowPayloadUpdates = new bool[InitialCapacity];
     private int[] _publishedLightShadowStarts = new int[InitialCapacity];
     private int[] _publishedLightShadowCounts = new int[InitialCapacity];
     private AdvancedShadowRecord[] _publishedShadowSourceRecords = new AdvancedShadowRecord[InitialCapacity];
@@ -71,6 +73,7 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Fill(_plannedLightShadowStarts, -1, 0, sources.Length);
         Array.Clear(_plannedLightShadowCounts, 0, sources.Length);
         Array.Clear(_plannedLightShadowReplacements, 0, sources.Length);
+        Array.Clear(_plannedLightShadowPayloadUpdates, 0, sources.Length);
         ReadOnlySpan<AdvancedShadowCaptureRow> shadowRows = capture.ShadowRows.Span;
         EnsureShadowPlanCapacity(shadowRows.Length);
         for (int shadowIndex = 0; shadowIndex < shadowRows.Length; ++shadowIndex)
@@ -151,6 +154,7 @@ public sealed partial class AdvancedGpuScenePublisher
         int additions = 0;
         int replacements = 0;
         int shadowAdditions = 0;
+        int shadowUpdates = 0;
         int shadowTombstones = 0;
         int shadowAcquireCount = 0;
         for (int index = 0; index < sources.Length; ++index)
@@ -183,33 +187,41 @@ public sealed partial class AdvancedGpuScenePublisher
             _publishedLightSeenStamps[existingIndex] = _publishedLightSeenGeneration;
             int publishedShadowCount = _publishedLightShadowCounts[existingIndex];
             int publishedShadowStart = _publishedLightShadowStarts[existingIndex];
-            bool shadowChanged = publishedShadowCount != plannedShadowCount;
-            if (!shadowChanged)
+            bool shadowTopologyChanged = publishedShadowCount != plannedShadowCount;
+            bool shadowPayloadChanged = false;
+            if (!shadowTopologyChanged)
                 for (int row = 0; row < plannedShadowCount; ++row)
                 {
                     int plannedRow = plannedShadowStart + row;
                     int publishedRow = publishedShadowStart + row;
-                    if (!ShadowRecordsEqual(in _plannedShadowSourceRecords[plannedRow], in _publishedShadowSourceRecords[publishedRow]) ||
-                        !_resourcePublisher.BindingMatches(in _publishedShadowBindings[publishedRow], in _plannedShadowSources[plannedRow]))
+                    if (!_resourcePublisher.BindingMatches(in _publishedShadowBindings[publishedRow], in _plannedShadowSources[plannedRow]))
                     {
-                        shadowChanged = true;
+                        shadowTopologyChanged = true;
                         break;
                     }
+                    if (!ShadowRecordsEqual(in _plannedShadowSourceRecords[plannedRow], in _publishedShadowSourceRecords[publishedRow]))
+                        shadowPayloadChanged = true;
                 }
-            _plannedLightShadowReplacements[index] = shadowChanged;
-            if (shadowChanged)
+            _plannedLightShadowReplacements[index] = shadowTopologyChanged;
+            _plannedLightShadowPayloadUpdates[index] = !shadowTopologyChanged && shadowPayloadChanged;
+            if (shadowTopologyChanged)
             {
                 shadowAdditions += plannedShadowCount;
                 shadowTombstones += publishedShadowCount;
                 shadowAcquireCount += plannedShadowCount;
             }
-            else if (publishedShadowCount != 0)
-                _plannedLightRecords[index].ShadowRecord = _publishedShadowHandles[publishedShadowStart];
+            else
+            {
+                if (shadowPayloadChanged)
+                    shadowUpdates += plannedShadowCount;
+                if (publishedShadowCount != 0)
+                    _plannedLightRecords[index].ShadowRecord = _publishedShadowHandles[publishedShadowStart];
+            }
             // A replacement group receives its new root only during apply, so
             // force the owning light replacement even when its captured scalar
             // payload happened to compare equal (for example, no-shadow to
             // shadow-enabled transitions).
-            bool changed = shadowChanged || !RecordsEqual(
+            bool changed = shadowTopologyChanged || !RecordsEqual(
                 in _publishedLightRecords[existingIndex],
                 in _plannedLightRecords[index]);
             _plannedLightRequiresReplace[index] = changed;
@@ -227,6 +239,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
         _plannedLightMutationCount = checked(
             additions + replacements + tombstones);
+        _plannedShadowPayloadUpdateCount = shadowUpdates;
 
         // TryAddLight emits both an add and the identity-stamping replacement.
         if (!Database.Resources.Lights.CanApply(
@@ -318,20 +331,32 @@ public sealed partial class AdvancedGpuScenePublisher
         _resourceReleaseCount = releaseCursor;
         if (!_resourcePublisher.TryPreflightTransition(
                 _resourceAcquireSources.AsSpan(0, _resourceAcquireCount),
-                _resourceReleaseBindings.AsSpan(0, _resourceReleaseCount), out reason) ||
-            // Group insertion stamps identity and the publisher then stamps the
-            // shared first-row offset, so each row has two replacements.
-            !Database.Resources.Shadows.CanApply(shadowAdditions, checked(shadowAdditions * 2), shadowTombstones) ||
-            !Database.Resources.Probes.CanApply(
+                _resourceReleaseBindings.AsSpan(0, _resourceReleaseCount), out reason))
+            return false;
+
+        // Group insertion stamps identity and the publisher then stamps the
+        // shared first-row offset, so each row has two replacements.
+        if (!Database.Resources.Shadows.CanApply(
+                shadowAdditions, checked(shadowAdditions * 2 + shadowUpdates), shadowTombstones))
+        {
+            AdvancedGpuRecordTable<AdvancedShadowRecord> shadows = Database.Resources.Shadows;
+            reason = $"The canonical shadow table cannot apply additions={shadowAdditions}, updates={shadowUpdates}, tombstones={shadowTombstones}, count={shadows.Count}, retired={shadows.RetiredCount}, availableAdditions={shadows.AvailableAdditions}, highWater={shadows.PhysicalHighWater}, capacity={shadows.Capacity}, journalAvailable={shadows.AvailablePublicationDeltas}, journalRequired={checked(shadowAdditions * 3 + shadowUpdates + shadowTombstones)}, remapAvailable={shadows.AvailableRemaps}, acknowledgedGeneration={shadows.AcknowledgedPublicationGeneration}, activeGeneration={shadows.ActivePublicationGeneration}.";
+            return false;
+        }
+        if (!Database.Resources.Probes.CanApply(
                 probeAdditions,
                 checked(probeAdditions + probeReplacements + probeTombstones),
-                probeTombstones) ||
-            // Group additions happen before old groups are tombstoned. Reserve
-            // an actual physical suffix so apply cannot discover fragmentation
-            // after texture leases have already been acquired.
-            !Database.Resources.Shadows.CanReserveContiguousAppend(shadowAdditions))
+                probeTombstones))
         {
-            reason = string.IsNullOrEmpty(reason) ? "The canonical shadow table cannot accept the captured rows." : reason;
+            reason = $"The canonical probe table cannot apply additions={probeAdditions}, replacements={probeReplacements}, tombstones={probeTombstones}.";
+            return false;
+        }
+        // Group additions happen before old groups are tombstoned. Reserve a
+        // free physical run for all new rows so ordered first-fit group adds
+        // cannot discover fragmentation after texture leases are acquired.
+        if (!Database.Resources.Shadows.CanReserveContiguousGroups(shadowAdditions))
+        {
+            reason = $"The canonical shadow table has no contiguous free run for additions={shadowAdditions}, tombstones={shadowTombstones}, count={Database.Resources.Shadows.Count}, highWater={Database.Resources.Shadows.PhysicalHighWater}, capacity={Database.Resources.Shadows.Capacity}.";
             return false;
         }
 
@@ -354,8 +379,25 @@ public sealed partial class AdvancedGpuScenePublisher
                     int publishedStart = _publishedLightShadowStarts[existingIndex];
                     _publishedShadowBindings.AsSpan(publishedStart, groupCount).CopyTo(_plannedShadowBindings.AsSpan(groupStart, groupCount));
                     _publishedShadowHandles.AsSpan(publishedStart, groupCount).CopyTo(_plannedShadowHandles.AsSpan(groupStart, groupCount));
-                    for (int row = 0; row < groupCount; ++row)
-                        _plannedShadowRecords[groupStart + row] = _publishedShadowSourceRecords[publishedStart + row];
+                    if (_plannedLightShadowPayloadUpdates[lightIndex])
+                    {
+                        if (!resources.Shadows.TryGetPhysicalIndex(_plannedShadowHandles[groupStart], out uint existingFirstPhysicalRow))
+                            throw new InvalidOperationException("An existing canonical shadow group lost its first physical row.");
+                        for (int row = 0; row < groupCount; ++row)
+                        {
+                            int shadowIndex = groupStart + row;
+                            _plannedShadowRecords[shadowIndex].Texture = _plannedShadowBindings[shadowIndex].Texture;
+                            _plannedShadowRecords[shadowIndex].CascadeOffset = existingFirstPhysicalRow;
+                            _plannedShadowRecords[shadowIndex].CascadeCount = (uint)groupCount;
+                            if (!resources.TryReplaceShadow(_plannedShadowHandles[shadowIndex], _plannedShadowRecords[shadowIndex]))
+                                throw new InvalidOperationException("A preflighted canonical shadow payload update failed.");
+                        }
+                    }
+                    else
+                    {
+                        for (int row = 0; row < groupCount; ++row)
+                            _plannedShadowRecords[groupStart + row] = _publishedShadowSourceRecords[publishedStart + row];
+                    }
                 }
                 continue;
             }
@@ -509,6 +551,7 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Resize(ref _plannedLightShadowStarts, capacity);
         Array.Resize(ref _plannedLightShadowCounts, capacity);
         Array.Resize(ref _plannedLightShadowReplacements, capacity);
+        Array.Resize(ref _plannedLightShadowPayloadUpdates, capacity);
         Array.Resize(ref _publishedLightShadowStarts, capacity);
         Array.Resize(ref _publishedLightShadowCounts, capacity);
         _publishedLightSeenGeneration = 0u;

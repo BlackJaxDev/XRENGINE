@@ -135,6 +135,9 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    private readonly VulkanMeshRenderRequest[] _openXrMeshCaptureScratch =
+        new VulkanMeshRenderRequest[VulkanMeshOperationRequestQueue.Capacity];
+
     /// <summary>
     /// Emits action-backed OpenXR work while redirecting deferred mesh requests
     /// into the frame-loop scratch cohort owned by this capture.
@@ -143,33 +146,63 @@ internal sealed partial class VulkanFrameLoop
     {
         int requestCount = MeshOperationRequests.CaptureTo(
             emitter,
-            _meshOperationRequestScratch,
+            _openXrMeshCaptureScratch,
+            out ulong captureLeaseToken,
             out VulkanMeshRequestLaneCapacityFailure capacityFailure);
         if (requestCount < 0)
             throw CreateOpenXrCaptureCapacityFailure(
                 in capacityFailure,
                 "OpenXR action-backed mesh capture");
-        MaterializeCapturedOpenXrMeshRequests(requestCount);
+        MaterializeCapturedOpenXrMeshRequestsFromCapture(requestCount, captureLeaseToken);
     }
 
     /// <summary>
     /// Emits one eye without allocating a delegate and materializes its deferred
     /// mesh cohort before the external-target scope can end.
     /// </summary>
-    internal void EmitOpenXrEyeFrameOpsWithCapturedMeshRequests(
+    internal bool TryEmitOpenXrEyeFrameOpsWithCapturedMeshRequests(
         IOpenXrEyeFrameOpEmitter emitter,
         in OpenXrEyeFrameOpEmission emission)
     {
         int requestCount = MeshOperationRequests.CaptureTo(
             emitter,
             in emission,
-            _meshOperationRequestScratch,
+            _openXrMeshCaptureScratch,
+            out bool producerComplete,
+            out ulong captureLeaseToken,
             out VulkanMeshRequestLaneCapacityFailure capacityFailure);
         if (requestCount < 0)
             throw CreateOpenXrCaptureCapacityFailure(
                 in capacityFailure,
                 "OpenXR eye mesh capture");
-        MaterializeCapturedOpenXrMeshRequests(requestCount);
+        if (!producerComplete)
+            return false;
+        MaterializeCapturedOpenXrMeshRequestsFromCapture(requestCount, captureLeaseToken);
+        return true;
+    }
+
+    private void MaterializeCapturedOpenXrMeshRequestsFromCapture(
+        int requestCount,
+        ulong captureLeaseToken)
+    {
+        if (requestCount == 0)
+            return;
+
+        try
+        {
+            _openXrMeshCaptureScratch.AsSpan(0, requestCount)
+                .CopyTo(_meshOperationRequestScratch);
+            MaterializeCapturedOpenXrMeshRequests(requestCount);
+        }
+        catch
+        {
+            MeshOperationRequests.ReleaseCapturePublicationLeases(captureLeaseToken);
+            throw;
+        }
+        finally
+        {
+            _openXrMeshCaptureScratch.AsSpan(0, requestCount).Clear();
+        }
     }
 
     private static Exception CreateOpenXrCaptureCapacityFailure(
@@ -267,6 +300,7 @@ internal sealed partial class VulkanFrameLoop
     private void DrainAndReleaseFrameOpsExcludingTextureUploads()
     {
         FrameOp[] operations = DrainFrameOpsExcludingTextureUploads(out _);
+        VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(operations);
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations);
     }
 

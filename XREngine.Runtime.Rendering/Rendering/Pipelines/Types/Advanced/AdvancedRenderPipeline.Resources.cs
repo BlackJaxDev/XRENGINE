@@ -191,7 +191,7 @@ public partial class AdvancedRenderPipeline
 
     private void DeclareBrdfLookupResource(RenderPipelineResourceLayoutBuilder builder)
     {
-        uint size = ResolveBrdfLutSize();
+        uint size = ResolveBrdfLutSize(builder.Profile);
         builder.Texture(BRDFTextureName)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Size(RenderResourceSizePolicy.Absolute(size, size))
@@ -200,7 +200,7 @@ public partial class AdvancedRenderPipeline
             .Format(EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat)
             .SizedFormat(ESizedInternalFormat.Rg16f)
             .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: false, RequireImmutableStorage: false))
-            .Factory(CreateBRDFTexture)
+            .Factory(() => CreateBRDFTexture(size))
             .Add();
     }
 

@@ -522,92 +522,15 @@ internal sealed partial class VulkanFrameLoop
             return true;
         }
 
-        if (ShouldDeferOpenXrVulkanResourceWork(out string resourceWorkReason))
-        {
-            reason = resourceWorkReason;
-            return true;
-        }
-
-        ulong acceptedDesktopFrameAttemptCount = AcceptedAttemptCount;
-        if (acceptedDesktopFrameAttemptCount < MinDesktopFramesBeforeOpenXrRuntimeSessionStart)
-        {
-            reason = $"desktop renderer has accepted too few startup frame attempts ({acceptedDesktopFrameAttemptCount}/{MinDesktopFramesBeforeOpenXrRuntimeSessionStart})";
-            return true;
-        }
-
-        if (!HasObservedDesktopFrameTick)
-        {
-            reason = "desktop renderer has not observed a completed or resize-skipped frame tick yet";
-            return true;
-        }
-
         if (CaptureDesktopFrameActivity().IsActive)
         {
             reason = "desktop renderer is currently recording/submitting a frame";
             return true;
         }
 
-        long lastDirtyTimestamp = Volatile.Read(ref _lastCommandBufferDirtyTimestamp);
-        if (lastDirtyTimestamp != 0)
-        {
-            TimeSpan dirtyAge = Stopwatch.GetElapsedTime(lastDirtyTimestamp);
-            if (dirtyAge < OpenXrRuntimeSessionStartDirtyQuietPeriod)
-            {
-                long now = Stopwatch.GetTimestamp();
-                long dirtyWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp);
-                if (dirtyWaitStart == 0)
-                {
-                    Interlocked.CompareExchange(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp, now, 0);
-                    dirtyWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp);
-                }
-
-                TimeSpan dirtyWait = Stopwatch.GetElapsedTime(dirtyWaitStart, now);
-                if (dirtyWait < OpenXrRuntimeSessionStartDirtyMaxWait)
-                {
-                    reason =
-                        $"desktop command buffers were dirtied {dirtyAge.TotalMilliseconds:F0} ms ago (waiting {dirtyWait.TotalMilliseconds:F0}/{OpenXrRuntimeSessionStartDirtyMaxWait.TotalMilliseconds:F0} ms for a quiet window)";
-                    return true;
-                }
-
-                Debug.VulkanWarningEvery(
-                    $"OpenXR.Vulkan.SessionStartDirtyQuietBypassed.{GetHashCode()}",
-                    TimeSpan.FromSeconds(5),
-                    "[OpenXR] Proceeding with Vulkan session creation despite desktop command buffers dirtied {0:F0} ms ago after waiting {1:F0} ms. The runtime graphics transition will wait for in-flight work and idle the device.",
-                    dirtyAge.TotalMilliseconds,
-                    dirtyWait.TotalMilliseconds);
-            }
-        }
-
-        if (TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue))
-        {
-            long now = Stopwatch.GetTimestamp();
-            long pendingFrameWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp);
-            if (pendingFrameWaitStart == 0)
-            {
-                Interlocked.CompareExchange(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp, now, 0);
-                pendingFrameWaitStart = Volatile.Read(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp);
-            }
-
-            TimeSpan pendingFrameWait = Stopwatch.GetElapsedTime(pendingFrameWaitStart, now);
-            if (pendingFrameWait < OpenXrRuntimeSessionStartPendingFrameMaxWait)
-            {
-                reason =
-                    $"desktop frame slot {pendingSlot} is still pending at timeline value {pendingTimelineValue} (waiting {pendingFrameWait.TotalMilliseconds:F0}/{OpenXrRuntimeSessionStartPendingFrameMaxWait.TotalMilliseconds:F0} ms for submitted desktop work to retire)";
-                return true;
-            }
-
-            Debug.VulkanWarningEvery(
-                $"OpenXR.Vulkan.SessionStartPendingDesktopFrameBypassed.{GetHashCode()}",
-                TimeSpan.FromSeconds(5),
-                "[OpenXR] Proceeding with Vulkan session creation despite desktop frame slot {0} still pending at timeline value {1} after waiting {2:F0} ms. The runtime graphics transition will wait for in-flight work and idle the device.",
-                pendingSlot,
-                pendingTimelineValue,
-                pendingFrameWait.TotalMilliseconds);
-        }
-
-        Volatile.Write(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartDirtyWaitStartTimestamp, 0);
-        Volatile.Write(ref OutputRuntime.OpenXrBackend.RuntimeSessionStartPendingFrameWaitStartTimestamp, 0);
-
+        // Session creation runs on the render owner between desktop frames. The
+        // graphics transition excludes queue admission and proves GPU completion;
+        // unrelated asset queues and command-buffer churn need not become idle.
         return false;
     }
 
@@ -782,40 +705,6 @@ internal sealed partial class VulkanFrameLoop
             : (long)largestHeapBytes;
     }
 
-    private bool TryGetPendingSubmittedFrameSlot(
-        out int pendingSlot,
-        out ulong pendingTimelineValue)
-    {
-        pendingSlot = -1;
-        pendingTimelineValue = 0;
-
-        using VulkanDesktopFrameRetirementScope retirement =
-            new(_commandRuntime, RetirementGate);
-        ReadOnlySpan<ulong> timelineValues = retirement.TimelineValues;
-        Silk.NET.Vulkan.Semaphore timelineSemaphore =
-            retirement.TimelineSemaphore;
-        if (timelineValues.IsEmpty || timelineSemaphore.Handle == 0)
-            return false;
-
-        int frameSlotCount = Math.Min(
-            timelineValues.Length,
-            FrameSlotCount);
-        for (int i = 0; i < frameSlotCount; i++)
-        {
-            ulong value = timelineValues[i];
-            if (value == 0 ||
-                HasTimelineValueCompleted(timelineSemaphore, value))
-            {
-                continue;
-            }
-
-            pendingSlot = i;
-            pendingTimelineValue = value;
-            return true;
-        }
-
-        return false;
-    }
     private void DestroyOpenXrPrimaryCommandBufferCache()
         => _commandRuntime.DestroyOpenXrPrimaryCommandArtifacts();
 
@@ -824,6 +713,7 @@ internal sealed partial class VulkanFrameLoop
         KeyValuePair<VulkanOpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState>[] states;
         lock (OutputRuntime.OpenXrBackend.ResourcePlannerStatesLock)
         {
+            _lastSubmittedOpenXrStereoMirrorContextId = 0UL;
             if (OpenXrResourcePlannerStates.Count == 0)
                 return;
 

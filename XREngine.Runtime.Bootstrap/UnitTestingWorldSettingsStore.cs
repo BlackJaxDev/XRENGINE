@@ -833,11 +833,19 @@ public static class UnitTestingWorldSettingsStore
             : UnitTestingVrLaunchMode.OpenVR;
     }
 
+    /// <summary>Returns the OpenXR runtime selected for this launch.</summary>
+    public static UnitTestingVrLaunchMode GetPreparedOpenXrMode(UnitTestingWorldSettings settings)
+    {
+        // A desktop launch must not configure XR_RUNTIME_JSON, load an XR loader, or start Monado.
+        return settings.VR.Mode;
+    }
+
     private static void ApplyVrModeToFlatFields(UnitTestingWorldSettings settings)
     {
+        UnitTestingVrLaunchMode preparedMode = GetPreparedOpenXrMode(settings);
         settings.VRPawn = settings.VR.Mode != UnitTestingVrLaunchMode.Desktop;
         settings.SceneOnlyVRPawn = settings.VR.Mode == UnitTestingVrLaunchMode.Emulated;
-        settings.UseOpenXR = settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR;
+        settings.UseOpenXR = preparedMode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR;
         settings.PreviewVRStereoViews = settings.VR.PreviewStereoViews;
         settings.AllowEditingInVR = settings.VR.AllowDesktopEditing;
         settings.SinglePassStereoVR = settings.VR.ViewRenderMode == EVrViewRenderMode.SinglePassStereo;
@@ -845,7 +853,8 @@ public static class UnitTestingWorldSettingsStore
 
     private static void ApplyOpenXrRuntimeJson(UnitTestingWorldSettings settings)
     {
-        if (settings.VR.Mode is not (UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR))
+        UnitTestingVrLaunchMode preparedMode = GetPreparedOpenXrMode(settings);
+        if (preparedMode is not (UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR))
             return;
 
         string? configuredRuntimeJson = settings.VR.OpenXrRuntimeJson;
@@ -863,7 +872,7 @@ public static class UnitTestingWorldSettingsStore
 
         if (string.IsNullOrWhiteSpace(configuredRuntimeJson))
         {
-            if (settings.VR.Mode == UnitTestingVrLaunchMode.MonadoOpenXR)
+            if (preparedMode == UnitTestingVrLaunchMode.MonadoOpenXR)
             {
                 configuredRuntimeJson = TryAutoDetectMonadoRuntimeJson();
                 if (!string.IsNullOrWhiteSpace(configuredRuntimeJson))
@@ -889,7 +898,7 @@ public static class UnitTestingWorldSettingsStore
 
     private static void ApplyOpenXrLoaderPath(UnitTestingWorldSettings settings)
     {
-        if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
+        if (GetPreparedOpenXrMode(settings) != UnitTestingVrLaunchMode.MonadoOpenXR)
             return;
 
         string? loaderPath = TryAutoDetectOpenXrLoader();
@@ -952,20 +961,80 @@ public static class UnitTestingWorldSettingsStore
         return TryEnsureMonadoService(settings, reason, eyeResolution);
     }
 
+    /// <summary>Starts or validates Monado for an explicit editor runtime selection without changing this process's environment.</summary>
+    public static bool TryEnsureMonadoServiceForRuntimeSelection(
+        UnitTestingWorldSettings settings,
+        string runtimeManifestPath,
+        string reason)
+        => TryEnsureMonadoService(
+            settings,
+            reason,
+            settings.VR.OpenXrEyeResolution,
+            runtimeManifestPath,
+            applyProcessEnvironment: false);
+
+    /// <summary>Resolves and validates an OpenXR runtime manifest and its library.</summary>
+    public static bool TryResolveOpenXrRuntimeManifest(
+        string manifestPath,
+        out string resolvedManifestPath,
+        out string? runtimeName,
+        out string? runtimeLibraryPath,
+        out string? error)
+        => TryReadOpenXrRuntimeManifest(
+            manifestPath,
+            out resolvedManifestPath,
+            out runtimeName,
+            out runtimeLibraryPath,
+            out error);
+
+    /// <summary>Resolves an installed Monado runtime manifest independently of the saved launch mode.</summary>
+    public static bool TryResolveMonadoOpenXrRuntimeManifest(
+        out string resolvedManifestPath,
+        out string? runtimeName,
+        out string? error)
+    {
+        resolvedManifestPath = string.Empty;
+        runtimeName = null;
+        error = null;
+
+        string? detectedManifest = TryAutoDetectMonadoRuntimeJson();
+        if (string.IsNullOrWhiteSpace(detectedManifest))
+        {
+            error = "No Monado runtime manifest was found.";
+            return false;
+        }
+
+        if (!TryValidateOpenXrRuntimeManifest(detectedManifest, out resolvedManifestPath, out runtimeName, out error))
+            return false;
+
+        if (!LooksLikeMonadoRuntime(resolvedManifestPath, runtimeName))
+        {
+            error = $"The resolved runtime '{runtimeName ?? "<unknown>"}' is not Monado.";
+            return false;
+        }
+
+        return true;
+    }
+
     private static bool TryEnsureMonadoService(
         UnitTestingWorldSettings settings,
         string reason,
-        UnitTestingOpenXrEyeResolutionSettings? eyeResolutionOverride = null)
+        UnitTestingOpenXrEyeResolutionSettings? eyeResolutionOverride = null,
+        string? explicitRuntimeManifestPath = null,
+        bool applyProcessEnvironment = true)
     {
-        if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
+        if (explicitRuntimeManifestPath is null && GetPreparedOpenXrMode(settings) != UnitTestingVrLaunchMode.MonadoOpenXR)
             return false;
 
         UnitTestingOpenXrEyeResolutionSettings eyeResolution = eyeResolutionOverride ?? settings.VR.OpenXrEyeResolution;
         MonadoSimulatedDisplayProfile displayProfile = ResolveMonadoSimulatedDisplayProfile(eyeResolution);
-        ApplyMonadoSimulatedDisplayProfileEnvironment(displayProfile);
+        if (applyProcessEnvironment)
+            ApplyMonadoSimulatedDisplayProfileEnvironment(displayProfile);
         string requestedServiceProfileKey = displayProfile.ServiceEnvironmentKey;
 
-        string? runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? runtimeJson = explicitRuntimeManifestPath;
+        if (runtimeJson is null)
+            runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
         if (string.IsNullOrWhiteSpace(runtimeJson))
             runtimeJson = settings.VR.OpenXrRuntimeJson;
         if (string.IsNullOrWhiteSpace(runtimeJson))
@@ -1023,10 +1092,13 @@ public static class UnitTestingWorldSettingsStore
 
         string? serviceDirectory = Path.GetDirectoryName(servicePath);
         string? runtimeLibraryDirectory = Path.GetDirectoryName(runtimeLibraryPath);
-        if (!string.IsNullOrWhiteSpace(runtimeLibraryDirectory))
-            PrependProcessPath(runtimeLibraryDirectory);
-        if (!string.IsNullOrWhiteSpace(serviceDirectory))
-            PrependProcessPath(serviceDirectory);
+        if (applyProcessEnvironment)
+        {
+            if (!string.IsNullOrWhiteSpace(runtimeLibraryDirectory))
+                PrependProcessPath(runtimeLibraryDirectory);
+            if (!string.IsNullOrWhiteSpace(serviceDirectory))
+                PrependProcessPath(serviceDirectory);
+        }
 
         try
         {

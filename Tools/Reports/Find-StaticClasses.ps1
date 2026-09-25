@@ -39,7 +39,7 @@ $csFiles = Get-ChildItem -Path $RepoRoot -Recurse -Filter "*.cs" -File | Where-O
 $results = New-Object System.Collections.Generic.List[object]
 
 $typeDeclRegex = [regex]"^\s*(?:(?:public|internal|protected|private|abstract|sealed|partial|static|unsafe|new|readonly|file)\s+)*(?:class|struct|interface|record(?:\s+class|\s+struct)?)\s+([A-Za-z0-9_]+)\b"
-$staticClassRegex = [regex]"^\s*(public|internal|protected|private)?\s*static\s+(partial\s+)?class\s+([A-Za-z0-9_]+)\b"
+$staticClassRegex = [regex]"^\s*(?<modifiers>(?:(?:public|internal|protected|private|partial|unsafe|new|file|static)\s+)+)class\s+(?<name>[A-Za-z0-9_]+)\b"
 
 function Get-BraceCounts([string]$line) {
     $clean = $line
@@ -55,7 +55,13 @@ function Get-BraceCounts([string]$line) {
 }
 
 foreach ($file in $csFiles) {
-    $lines = Get-Content -Path $file.FullName
+    try {
+        $lines = Get-Content -LiteralPath $file.FullName
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        # A source file can be removed after the initial directory scan.
+        continue
+    }
     $namespace = $null
     $pendingTypes = New-Object System.Collections.Generic.Queue[object]
     $typeStack = New-Object System.Collections.Generic.Stack[object]
@@ -78,8 +84,8 @@ foreach ($file in $csFiles) {
         }
 
         $staticMatch = $staticClassRegex.Match($line)
-        if ($staticMatch.Success) {
-            $className = $staticMatch.Groups[3].Value
+        if ($staticMatch.Success -and $staticMatch.Groups['modifiers'].Value -match '\bstatic\b') {
+            $className = $staticMatch.Groups['name'].Value
             $repoRootPath = if ($RepoRoot -is [System.Management.Automation.PathInfo]) { $RepoRoot.Path } else { $RepoRoot }
             $relativePath = $file.FullName.Substring($repoRootPath.Length).TrimStart("\", "/") -replace "\\", "/"
             $isNested = $typeStack.Count -gt 0
@@ -125,7 +131,8 @@ $nestedResults = @($results | Where-Object { $_.Scope -eq "Nested" })
 function Group-Partials($items) {
     $grouped = [ordered]@{}
     foreach ($item in $items) {
-        $key = "$($item.Namespace)|$($item.ClassName)|$($item.Scope)|$($item.ParentType)"
+        $project = $item.File.Split('/')[0]
+        $key = "$project|$($item.Namespace)|$($item.ClassName)|$($item.Scope)|$($item.ParentType)"
         if (-not $grouped.Contains($key)) {
             $grouped[$key] = New-Object System.Collections.Generic.List[object]
         }

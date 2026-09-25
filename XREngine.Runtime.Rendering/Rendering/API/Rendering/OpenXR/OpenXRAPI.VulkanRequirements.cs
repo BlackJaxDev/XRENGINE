@@ -49,6 +49,8 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
             return;
 
         _destroyXrInstanceOnDispose = false;
+        OpenXRAPI.MarkRuntimeConfigurationChangeUnsafe(
+            $"Renderer-owned OpenXR instance was abandoned: {reason}");
         Debug.VulkanWarning(
             "[OpenXR] Abandoning renderer-owned XR_KHR_vulkan_enable2 instance during teardown. Reason={0}",
             string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
@@ -59,9 +61,22 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
         if (xrInstance.Handle == 0)
             return Result.ErrorHandleInvalid;
 
-        Result result = api.DestroyInstance(xrInstance);
+        Result result;
+        try
+        {
+            result = api.DestroyInstance(xrInstance);
+        }
+        catch (Exception ex)
+        {
+            OpenXRAPI.MarkRuntimeConfigurationChangeUnsafe(
+                $"Renderer-owned OpenXR instance destruction threw {ex.GetType().Name}: {ex.Message}");
+            throw;
+        }
         if (result == Result.Success || result == Result.ErrorInstanceLost)
             _destroyXrInstanceOnDispose = false;
+        if (result != Result.Success)
+            OpenXRAPI.MarkRuntimeConfigurationChangeUnsafe(
+                $"Renderer-owned OpenXR instance destruction returned {result} after device loss.");
         return result;
     }
 
@@ -262,10 +277,20 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
         {
             try
             {
-                api.DestroyInstance(xrInstance);
+                Result result = api.DestroyInstance(xrInstance);
+                if (result == Result.Success)
+                    Debug.Vulkan("[OpenXR] Destroyed renderer-owned XR_KHR_vulkan_enable2 instance during Vulkan bootstrap teardown.");
+                else
+                {
+                    OpenXRAPI.MarkRuntimeConfigurationChangeUnsafe(
+                        $"Renderer-owned OpenXR instance destruction returned {result} during Vulkan bootstrap teardown.");
+                    Debug.VulkanWarning("[OpenXR] xrDestroyInstance failed during Vulkan bootstrap teardown: {0}", result);
+                }
             }
             catch (Exception ex)
             {
+                OpenXRAPI.MarkRuntimeConfigurationChangeUnsafe(
+                    $"Renderer-owned OpenXR instance destruction threw {ex.GetType().Name}: {ex.Message}");
                 Debug.VulkanWarning("[OpenXR] xrDestroyInstance failed during Vulkan bootstrap teardown: {0}", ex.Message);
             }
         }
@@ -279,6 +304,43 @@ public unsafe partial class OpenXRAPI
     private static readonly object VulkanRuntimeRequirementsLock = new();
     private static string? _cachedVulkanRuntimeRequirementsKey;
     private static OpenXrVulkanRuntimeRequirements? _cachedVulkanRuntimeRequirements;
+    private static string? _runtimeConfigurationChangeFailureReason;
+
+    /// <summary>Whether this process has proved that its prior OpenXR instances were destroyed.</summary>
+    public static bool CanChangeRuntimeConfiguration
+    {
+        get
+        {
+            lock (VulkanRuntimeRequirementsLock)
+                return _runtimeConfigurationChangeFailureReason is null;
+        }
+    }
+
+    /// <summary>Sticky reason that runtime selection cannot safely change in this process.</summary>
+    public static string? RuntimeConfigurationChangeFailureReason
+    {
+        get
+        {
+            lock (VulkanRuntimeRequirementsLock)
+                return _runtimeConfigurationChangeFailureReason;
+        }
+    }
+
+    internal static void MarkRuntimeConfigurationChangeUnsafe(string reason)
+    {
+        lock (VulkanRuntimeRequirementsLock)
+            _runtimeConfigurationChangeFailureReason ??= reason;
+    }
+
+    /// <summary>Clears runtime probes after detached renderers change runtime configuration.</summary>
+    public static void ClearVulkanRuntimeRequirementsCache()
+    {
+        lock (VulkanRuntimeRequirementsLock)
+        {
+            _cachedVulkanRuntimeRequirementsKey = null;
+            _cachedVulkanRuntimeRequirements = null;
+        }
+    }
 
     private delegate Result XrGetVulkanExtensionsKHRDelegate(
         Instance instance,
@@ -465,12 +527,7 @@ public unsafe partial class OpenXRAPI
         }
         finally
         {
-            if (api is not null)
-            {
-                if (instance.Handle != 0)
-                    api.DestroyInstance(instance);
-                api.Dispose();
-            }
+            DestroyTemporaryOpenXrContext(api, instance);
         }
     }
 
@@ -569,8 +626,17 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
-        context = new OpenXrVulkanEnable2BootstrapContext(api!, xrInstance, systemId, vulkan2Extension!, enabledExtensions);
-        return true;
+        try
+        {
+            context = new OpenXrVulkanEnable2BootstrapContext(
+                api!, xrInstance, systemId, vulkan2Extension!, enabledExtensions);
+            return true;
+        }
+        catch
+        {
+            DestroyTemporaryOpenXrContext(api, xrInstance);
+            throw;
+        }
     }
 
     internal static bool TryCreateVulkanDeviceForOpenXr(
@@ -849,10 +915,36 @@ public unsafe partial class OpenXRAPI
         if (api is null)
             return;
 
-        if (instance.Handle != 0)
-            api.DestroyInstance(instance);
-
-        api.Dispose();
+        try
+        {
+            if (instance.Handle != 0)
+            {
+                try
+                {
+                    Result result = api.DestroyInstance(instance);
+                    if (result != Result.Success)
+                    {
+                        MarkRuntimeConfigurationChangeUnsafe(
+                            $"Temporary OpenXR instance destruction returned {result}.");
+                        Debug.VulkanWarning(
+                            "[OpenXR] xrDestroyInstance failed for temporary Vulkan bootstrap context: {0}",
+                            result);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MarkRuntimeConfigurationChangeUnsafe(
+                        $"Temporary OpenXR instance destruction threw {ex.GetType().Name}: {ex.Message}");
+                    Debug.VulkanWarning(
+                        "[OpenXR] xrDestroyInstance threw for temporary Vulkan bootstrap context: {0}",
+                        ex.Message);
+                }
+            }
+        }
+        finally
+        {
+            api.Dispose();
+        }
     }
 
     private static bool ShouldQueryVulkanRuntimeRequirements()
@@ -988,12 +1080,7 @@ public unsafe partial class OpenXRAPI
         }
         finally
         {
-            if (api is not null)
-            {
-                if (instance.Handle != 0)
-                    api.DestroyInstance(instance);
-                api.Dispose();
-            }
+            DestroyTemporaryOpenXrContext(api, instance);
         }
     }
 

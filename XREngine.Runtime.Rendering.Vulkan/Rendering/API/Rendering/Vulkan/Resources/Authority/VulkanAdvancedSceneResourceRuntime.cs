@@ -1425,7 +1425,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.TextureDescriptorNotReady;
-                reason = $"Canonical texture {handle.Index}:{handle.Generation} ('{source.Name ?? source.GetType().Name}', dimension={record.Dimension}, sourceGeneration={record.Generation}, descriptorGeneration={descriptorSource.DescriptorGeneration}, wrapper={descriptorSource.GetType().Name}, ready={descriptorSource.IsDescriptorReady}) is not ready for an exact Vulkan sampled-image descriptor after bounded cold preparation.";
+                reason = $"Canonical texture {handle.Index}:{handle.Generation} ('{source.Name ?? source.GetType().Name}', sourceId={RuntimeHelpers.GetHashCode(source)}, framebufferAttachment={source.FrameBufferAttachment.HasValue}, dimension={record.Dimension}, sourceGeneration={record.Generation}, descriptorGeneration={descriptorSource.DescriptorGeneration}, wrapper={descriptorSource.GetType().Name}, ready={descriptorSource.IsDescriptorReady}, snapshotReady={descriptorReady}, snapshotView=0x{descriptor.View.Handle:X}, snapshotType={descriptor.ViewType}, snapshotSamples={descriptor.Samples}, snapshotLayers={descriptor.ArrayLayers}, compatibleLayers={HasCompatibleLayerCount(record, descriptor.ArrayLayers)}, viewAvailable={_resources.Images.IsAvailableForDescriptor(descriptor.View)}) is not ready for an exact Vulkan sampled-image descriptor after bounded cold preparation.";
                 return false;
             }
 

@@ -689,7 +689,16 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         vulkanRenderer.CommandRuntime.ResourceRuntime.BeginTerminalRetirementMeteringInterval();
         api.ReleaseSmokeRetiredGenerationHoldForTerminalDrain();
         DrainRetiredSwapchains(api, vulkanRenderer);
-        return !HasPendingDeferredSwapchainRetirement;
+        if (HasPendingDeferredSwapchainRetirement)
+            return false;
+
+        if (!vulkanRenderer.OpenXrFrameLoop.MeshOperationRequests
+                .TryReleaseInactiveCapturePublicationLeasesAfterGpuIdle())
+            return false;
+
+        vulkanRenderer.OpenXrFrameLoop.MeshOperationRequests
+            .ReleaseDrainedCanonicalPublicationLeasesAfterGpuIdle();
+        return true;
     }
 
     public void PollDeferredSwapchainRetirement(OpenXRAPI api, AbstractRenderer renderer)

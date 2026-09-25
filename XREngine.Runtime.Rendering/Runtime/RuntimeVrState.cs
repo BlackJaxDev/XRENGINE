@@ -236,6 +236,10 @@ public sealed class RuntimeVrState
     public bool InitializeOpenXR(XRWindow? window)
         => LifecycleServices.InitializeOpenXR(window);
 
+    /// <summary>Stops OpenXR monitoring and retires the current graphics session asynchronously.</summary>
+    public bool StopOpenXR()
+        => LifecycleServices.StopOpenXR();
+
     public Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window)
         => LifecycleServices.InitializeLocal(actionManifest, vrManifest, window);
 

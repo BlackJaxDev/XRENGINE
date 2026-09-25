@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Scene;
 
 namespace XREngine.Components.Animation;
@@ -56,6 +57,7 @@ public partial class HumanoidComponent
         List<HumanoidAvatarAutoMapCandidate> candidates = GatherAutoMapCandidates(bodyUp);
         if (candidates.Count == 0)
             return;
+        HashSet<SceneNode> skinnedBones = GatherSkinnedBones(candidates);
 
         var byNode = new Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate>(
             candidates.Count,
@@ -82,6 +84,7 @@ public partial class HumanoidComponent
                 bodyUp,
                 minimumHeight,
                 skeletonHeight,
+                skinnedBones,
                 assigned);
             hips = hipsSelection.Candidate?.Node;
             AssignInferredRole(
@@ -95,6 +98,8 @@ public partial class HumanoidComponent
 
         if (hips is null || !byNode.TryGetValue(hips, out HumanoidAvatarAutoMapCandidate? hipsCandidate))
             return;
+
+        skeletonHeight = MeasureHumanoidHeight(hips, candidates, bodyUp, skeletonHeight);
 
         List<SceneNode> torsoPath = BuildTorsoPath(
             hips,
@@ -188,6 +193,48 @@ public partial class HumanoidComponent
         return candidates;
     }
 
+    private static HashSet<SceneNode> GatherSkinnedBones(List<HumanoidAvatarAutoMapCandidate> candidates)
+    {
+        var bones = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
+        foreach (HumanoidAvatarAutoMapCandidate candidate in candidates)
+        {
+            foreach (var component in candidate.Node.Components)
+            {
+                if (component is not ModelComponent modelComponent || modelComponent.Model is null)
+                    continue;
+                foreach (var subMesh in modelComponent.Model.Meshes)
+                    foreach (var lod in subMesh.LODs)
+                        if (lod.Mesh is { } mesh)
+                            foreach (var (transform, _) in mesh.UtilizedBones)
+                                if (transform.SceneNode is SceneNode bone)
+                                    bones.Add(bone);
+            }
+        }
+        return bones;
+    }
+
+    private static float MeasureHumanoidHeight(
+        SceneNode hips,
+        List<HumanoidAvatarAutoMapCandidate> candidates,
+        Vector3 bodyUp,
+        float fallback)
+    {
+        float headHeight = float.NegativeInfinity;
+        float footHeight = float.PositiveInfinity;
+        foreach (HumanoidAvatarAutoMapCandidate candidate in candidates)
+        {
+            if (!IsStrictDescendant(hips, candidate.Node))
+                continue;
+            float height = Vector3.Dot(candidate.Position, bodyUp);
+            if (AliasScore(candidate.Node.Name, "head") >= 0.9f)
+                headHeight = MathF.Max(headHeight, height);
+            if (AliasScore(candidate.Node.Name, "foot", "ankle") >= 0.9f)
+                footHeight = MathF.Min(footHeight, height);
+        }
+        float measured = headHeight - footHeight;
+        return float.IsFinite(measured) && measured > 1e-4f ? measured : fallback;
+    }
+
     private HumanoidAvatarAutoMapCandidate GatherAutoMapCandidatesRecursive(
         SceneNode node,
         int depth,
@@ -275,8 +322,44 @@ public partial class HumanoidComponent
         Vector3 bodyUp,
         float minimumHeight,
         float skeletonHeight,
+        HashSet<SceneNode> skinnedBones,
         HashSet<SceneNode> assigned)
     {
+        // A scene may contain several complete rigs and mesh transforms far
+        // outside the body. Prefer the complete humanoid chain used by the
+        // most skinned bones before considering whole-scene geometry.
+        HumanoidAvatarAutoMapCandidate? semanticHips = null;
+        int mostSkinnedBones = -1;
+        int secondMostSkinnedBones = -1;
+        foreach (HumanoidAvatarAutoMapCandidate candidate in candidates)
+        {
+            if (assigned.Contains(candidate.Node)
+                || AliasScore(candidate.Node.Name, "hips", "pelvis") < 0.9f
+                || !HasDistinctHumanoidBranches(candidate.Node))
+                continue;
+
+            int skinnedCount = 0;
+            foreach (SceneNode bone in skinnedBones)
+                if (IsDescendantOrSelf(candidate.Node, bone))
+                    skinnedCount++;
+            if (skinnedCount > mostSkinnedBones
+                || skinnedCount == mostSkinnedBones && candidate.SubtreeNodeCount > semanticHips!.SubtreeNodeCount)
+            {
+                secondMostSkinnedBones = mostSkinnedBones;
+                semanticHips = candidate;
+                mostSkinnedBones = skinnedCount;
+            }
+            else if (skinnedCount > secondMostSkinnedBones)
+                secondMostSkinnedBones = skinnedCount;
+        }
+        if (semanticHips is not null)
+            return new AutoMapSelection(semanticHips, 0.0f,
+                mostSkinnedBones > 0 && secondMostSkinnedBones >= 0
+                    ? Math.Clamp((mostSkinnedBones - secondMostSkinnedBones) / (float)mostSkinnedBones, 0.0f, 1.0f)
+                    : 0.0f,
+                1.0f, 0.9f,
+                semanticHips.JointAxisScore, 1.0f);
+
         HumanoidAvatarAutoMapCandidate? best = null;
         float bestScore = float.NegativeInfinity;
         float secondScore = float.NegativeInfinity;
@@ -545,9 +628,7 @@ public partial class HumanoidComponent
             float geometry = proximalHeight * 0.55f + sideScore * 0.45f;
             float axis = candidate.JointAxisScore;
             float alias = AliasScore(candidate.Node.Name, "upleg", "upperleg", "thigh", "leg");
-            float semanticAlias = isLeft
-                ? AliasScore(candidate.Node.Name, "leftupleg", "leftupperleg", "leftthigh", "leftleg")
-                : AliasScore(candidate.Node.Name, "rightupleg", "rightupperleg", "rightthigh", "rightleg");
+            float semanticAlias = SideAliasScore(candidate.Node.Name, isLeft, "upleg", "upperleg", "thigh", "leg");
             bool isSemanticAnchor = semanticAlias >= 0.9f
                 && HasDescendantAlias(candidate.Node, maximumDepth: 4, "knee", "lowerleg", "calf", "shin")
                 && HasDescendantAlias(candidate.Node, maximumDepth: 5, "foot", "ankle");
@@ -657,9 +738,7 @@ public partial class HumanoidComponent
                 float topology = Math.Clamp(candidate.SubtreeNodeCount / 4.0f, 0.0f, 1.0f);
                 float axis = candidate.JointAxisScore;
                 float alias = AliasScore(child.Name, "shoulder", "clavicle", "upperarm", "arm");
-                float semanticAlias = isLeft
-                    ? AliasScore(child.Name, "leftshoulder", "leftclavicle", "leftupperarm", "leftarm")
-                    : AliasScore(child.Name, "rightshoulder", "rightclavicle", "rightupperarm", "rightarm");
+                float semanticAlias = SideAliasScore(child.Name, isLeft, "shoulder", "clavicle", "upperarm", "arm");
                 bool isSemanticAnchor = semanticAlias >= 0.9f
                     && HasDescendantAlias(child, maximumDepth: 4, "elbow", "lowerarm", "forearm")
                     && HasDescendantAlias(child, maximumDepth: 5, "hand", "wrist", "palm");
@@ -1088,6 +1167,63 @@ public partial class HumanoidComponent
         return false;
     }
 
+    private static bool HasDescendantSideAlias(
+        SceneNode root,
+        int maximumDepth,
+        bool isLeft,
+        params string[] aliases)
+    {
+        var stack = new Stack<(SceneNode Node, int Depth)>();
+        foreach (var childTransform in root.Transform.Children)
+            if (childTransform.SceneNode is SceneNode child)
+                stack.Push((child, 1));
+        while (stack.Count > 0)
+        {
+            (SceneNode node, int depth) = stack.Pop();
+            if (SideAliasScore(node.Name, isLeft, aliases) >= 0.9f)
+                return true;
+            if (depth >= maximumDepth)
+                continue;
+            foreach (var childTransform in node.Transform.Children)
+                if (childTransform.SceneNode is SceneNode child)
+                    stack.Push((child, depth + 1));
+        }
+        return false;
+    }
+
+    private static bool HasDistinctHumanoidBranches(SceneNode hips)
+    {
+        List<SceneNode> torsoBranches = [];
+        List<SceneNode> leftLegBranches = [];
+        List<SceneNode> rightLegBranches = [];
+        foreach (var childTransform in hips.Transform.Children)
+        {
+            if (childTransform.SceneNode is not SceneNode child)
+                continue;
+            if ((AliasScore(child.Name, "spine") >= 0.9f || HasDescendantAlias(child, 4, "spine"))
+                && HasDescendantAlias(child, 7, "head"))
+                torsoBranches.Add(child);
+            if ((SideAliasScore(child.Name, isLeft: true, "leg", "upperleg", "thigh") >= 0.9f
+                    || HasDescendantSideAlias(child, 3, isLeft: true, "leg", "upperleg", "thigh"))
+                && HasDescendantAlias(child, 4, "knee", "lowerleg", "calf", "shin")
+                && HasDescendantAlias(child, 5, "foot", "ankle"))
+                leftLegBranches.Add(child);
+            if ((SideAliasScore(child.Name, isLeft: false, "leg", "upperleg", "thigh") >= 0.9f
+                    || HasDescendantSideAlias(child, 3, isLeft: false, "leg", "upperleg", "thigh"))
+                && HasDescendantAlias(child, 4, "knee", "lowerleg", "calf", "shin")
+                && HasDescendantAlias(child, 5, "foot", "ankle"))
+                rightLegBranches.Add(child);
+        }
+        foreach (SceneNode torso in torsoBranches)
+            foreach (SceneNode left in leftLegBranches)
+                foreach (SceneNode right in rightLegBranches)
+                    if (!ReferenceEquals(torso, left)
+                        && !ReferenceEquals(torso, right)
+                        && !ReferenceEquals(left, right))
+                        return true;
+        return false;
+    }
+
     private static List<SceneNode> BuildExtremeDescendantPath(
         SceneNode root,
         Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
@@ -1509,6 +1645,29 @@ public partial class HumanoidComponent
                 best = MathF.Max(best, 0.72f);
         }
         return best;
+    }
+
+    private static float SideAliasScore(string? name, bool isLeft, params string[] aliases)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return 0.0f;
+        string normalized = NormalizeAlias(name);
+        int namespaceEnd = Math.Max(name.LastIndexOf(':'), name.LastIndexOf('|'));
+        string localName = namespaceEnd >= 0 ? NormalizeAlias(name[(namespaceEnd + 1)..]) : normalized;
+        string side = isLeft ? "left" : "right";
+        string marker = isLeft ? "l" : "r";
+        foreach (string alias in aliases)
+        {
+            string normalizedAlias = NormalizeAlias(alias);
+            if (localName == side + normalizedAlias
+                || localName == normalizedAlias + side
+                || localName == marker + normalizedAlias
+                || localName == normalizedAlias + marker)
+                return 1.0f;
+            if (normalized.EndsWith(side + normalizedAlias, StringComparison.Ordinal))
+                return 0.9f;
+        }
+        return 0.0f;
     }
 
     private static bool IsAliasWithTrailingSideMarker(string normalized, string alias)

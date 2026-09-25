@@ -122,10 +122,9 @@ internal sealed class CollectVisibleGenerationGate
         return previous != requiredGeneration;
     }
 
-    public bool WaitForPublication()
+    public bool WaitForPublication(int millisecondsTimeout = Timeout.Infinite)
     {
-        _publicationChanged.Wait();
-        return !IsTerminated;
+        return _publicationChanged.Wait(millisecondsTimeout) && !IsTerminated;
     }
 
     public void Terminate()

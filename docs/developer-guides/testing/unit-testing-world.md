@@ -160,7 +160,7 @@ If a startup model references textures outside the authored folder layout, use `
 
 For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestData/Gltf/` is the fastest repeatable source of startup assets. It covers external resources, data URIs, embedded GLB BIN chunks, sparse accessors, skins, morph targets, animations, and malformed-container regression cases.
 
-`FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.log` when file logging is enabled. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal asset-import logging path.
+`FbxLogVerbosity` controls optional native FBX importer/exporter trace output while the unit-testing world boots. Engine-hosted import warnings and errors remain visible with tracing off. Model import diagnostics use the Console's `Meshes` tab and `Build/Logs/.../log_meshes.log` when file logging is enabled. Unresolved model textures are added to Missing Assets after processing finishes. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal model-import logging path.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
 
@@ -200,11 +200,34 @@ Use the grouped `VR` object to choose the launch mode explicitly:
 
 | `VR.Mode` | Behavior |
 |---|---|
-| `Desktop` | No VR pawn and no VR runtime startup. |
+| `Desktop` | Desktop pawn and no VR session at launch. The editor OpenXR toggle asks which runtime to use and creates the VR pawn on demand. |
 | `Emulated` | Scene-only VR: builds the VR-shaped pawn and optional stereo preview without OpenVR/OpenXR runtime startup. |
 | `MonadoOpenXR` | Real OpenXR API path against a Monado runtime selected per process. |
 | `OpenVR` | OpenVR runtime path for SteamVR/OpenVR validation. |
 | `OpenXR` | OpenXR runtime path using the active loader/runtime configuration. |
+
+To enter and leave OpenXR from the ImGui editor toolbar while keeping
+`VR.Mode=Desktop`, keep `VR.AllowDesktopEditing=true`. The editor starts with the desktop pawn.
+The **OpenXR** checkbox opens a **Monado (testing)** / **SteamVR (headset)** choice.
+After selection it prepares the runtime, creates a VR rig in the editor scene if needed, and possesses
+its pawn when the session runs. Clearing it stops the session, restores the previous
+desktop pawn, and destroys the rig created by the toggle. If the desktop pawn is
+unavailable, it creates an editor camera pawn. Authored VR rigs are preserved.
+Session startup and teardown are asynchronous; the toolbar shows their state.
+Changing runtime recreates the renderer after retiring the previous OpenXR instance.
+
+```jsonc
+{
+  "VR": {
+    "Mode": "Desktop",
+    "AllowDesktopEditing": true
+  }
+}
+```
+
+Desktop creates only the desktop rig at launch. Runtime selection occurs when
+enabling the checkbox. Cancel preserves desktop control; runtime discovery failures
+remain visible and never silently substitute a different runtime.
 
 There are two no-headset VR lanes:
 

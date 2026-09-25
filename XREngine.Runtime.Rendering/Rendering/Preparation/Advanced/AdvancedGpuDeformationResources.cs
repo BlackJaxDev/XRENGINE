@@ -39,6 +39,9 @@ public sealed partial class AdvancedGpuDeformationResources :
 
     private SkinPaletteMatrix[] _paletteScratch;
     private AdvancedActiveBlendshape[] _activeBlendshapeScratch;
+    private int[] _blendshapeSourceIndices = [];
+    private readonly Dictionary<string, int> _blendshapeFirstNameIndices =
+        new(StringComparer.Ordinal);
 
     private AdvancedGpuDeformationStaticGeneration _staticGeneration;
     private AdvancedGpuDeformationOutputBuffers _outputBuffers;
@@ -419,103 +422,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         XRMesh mesh,
         uint topologyGeneration,
         out AdvancedGpuDeformationMeshSlice slice)
-    {
-        ThrowIfFrameClosed();
-        ArgumentNullException.ThrowIfNull(mesh);
-
-        if (_meshSlices.TryGetValue(mesh, out slice) &&
-            slice.TopologyGeneration == topologyGeneration)
-        {
-            return true;
-        }
-
-        try
-        {
-            mesh.EnsureComputeSkinningBuffers();
-        }
-        catch (InvalidOperationException)
-        {
-            _unsupportedMeshCount++;
-            slice = default;
-            return false;
-        }
-
-        XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
-        uint vertexCount = checked((uint)mesh.VertexCount);
-        if (vertexCount == 0u ||
-            !CanReadCanonicalVertices(mesh))
-        {
-            _unsupportedMeshCount++;
-            slice = default;
-            return false;
-        }
-
-        if (!TryEnsureStaticInputsWritable())
-        {
-            slice = default;
-            return false;
-        }
-
-        uint spillCount = skinningState.HasSpillInfluences
-            ? skinningState.SpillEntries?.ElementCount ?? 0u
-            : 0u;
-        CountBlendshapePayload(
-            mesh,
-            out uint rangeCount,
-            out uint recordCount,
-            out uint deltaCount);
-
-        uint requiredSource = checked(_sourceVertexCount + vertexCount);
-        uint requiredInfluences =
-            checked(_skinInfluenceCount + vertexCount);
-        uint requiredSpill =
-            checked(_spillInfluenceCount + spillCount);
-        uint requiredRanges =
-            checked(_blendshapeRangeCount + rangeCount);
-        uint requiredRecords =
-            checked(_blendshapeRecordCount + recordCount);
-        uint requiredDeltas =
-            checked(_blendshapeDeltaCount + deltaCount);
-        EnsureCpuCapacity(ref _sourceVertices, requiredSource);
-        EnsureCpuCapacity(ref _skinInfluences, requiredInfluences);
-        EnsureCpuCapacity(ref _spillInfluences, requiredSpill);
-        EnsureCpuCapacity(ref _blendshapeRanges, requiredRanges);
-        EnsureCpuCapacity(ref _blendshapeRecords, requiredRecords);
-        EnsureCpuCapacity(ref _blendshapeDeltas, requiredDeltas);
-        if (!TryEnsureStaticBufferCapacity(
-                requiredSource,
-                requiredInfluences,
-                requiredSpill,
-                requiredRanges,
-                requiredRecords,
-                requiredDeltas))
-        {
-            slice = default;
-            return false;
-        }
-
-        uint sourceBase = _sourceVertexCount;
-        uint influenceBase = _skinInfluenceCount;
-        uint spillBase = _spillInfluenceCount;
-        uint rangeBase = _blendshapeRangeCount;
-        PackCanonicalVertices(mesh, sourceBase);
-        PackSpillInfluences(skinningState, spillBase, spillCount);
-        PackSkinInfluences(mesh, skinningState, influenceBase, spillBase);
-        PackBlendshapePayload(mesh, rangeBase);
-
-        _sourceVertexCount = requiredSource;
-        _skinInfluenceCount = requiredInfluences;
-        _spillInfluenceCount = requiredSpill;
-        slice = new AdvancedGpuDeformationMeshSlice(
-            sourceBase,
-            influenceBase,
-            rangeBase,
-            vertexCount,
-            rangeCount,
-            topologyGeneration);
-        _meshSlices[mesh] = slice;
-        return true;
-    }
+        => TryPrepareMesh(mesh, topologyGeneration, out slice) ==
+            AdvancedGpuDeformationMeshPreparationStatus.Ready;
 
     public bool TryGetOrAddPose(
         XRMeshRenderer renderer,
@@ -864,7 +772,8 @@ public sealed partial class AdvancedGpuDeformationResources :
     public void Dispose()
     {
         _aggregateProgram?.Destroy();
-        _aggregateShader?.Destroy();
+        // ShaderHelper owns the cached engine shader. Destroying it here leaves
+        // later renderer generations holding a destroyed cache entry.
         _aggregateProgram = null;
         _aggregateShader = null;
         for (int generation = 0;
@@ -895,6 +804,67 @@ public sealed partial class AdvancedGpuDeformationResources :
         _poseEntries.Clear();
     }
 
+    private void BuildBlendshapeSourceIndices(XRMesh mesh)
+    {
+        Vertex[] vertices = mesh.Vertices;
+        string[] names = mesh.BlendshapeNames;
+        if (vertices.Length != mesh.VertexCount || names.Length == 0)
+            return;
+
+        EnsureCpuCapacity(
+            ref _blendshapeSourceIndices,
+            checked((uint)vertices.Length * (uint)names.Length));
+        for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
+        {
+            List<(string name, VertexData data)>? shapes =
+                vertices[vertexIndex].Blendshapes;
+            _blendshapeFirstNameIndices.Clear();
+            int firstNullNameIndex = -1;
+            if (shapes is not null)
+            {
+                _blendshapeFirstNameIndices.EnsureCapacity(shapes.Count);
+                for (int sourceIndex = 0; sourceIndex < shapes.Count; sourceIndex++)
+                {
+                    string sourceName = shapes[sourceIndex].name;
+                    if (sourceName is null)
+                    {
+                        if (firstNullNameIndex < 0)
+                            firstNullNameIndex = sourceIndex;
+                    }
+                    else
+                    {
+                        _blendshapeFirstNameIndices.TryAdd(sourceName, sourceIndex);
+                    }
+                }
+            }
+
+            for (int shapeIndex = 0; shapeIndex < names.Length; shapeIndex++)
+            {
+                string name = names[shapeIndex];
+                int sourceIndex = -1;
+                if (shapes is not null)
+                {
+                    if ((uint)shapeIndex < (uint)shapes.Count &&
+                        string.Equals(shapes[shapeIndex].name, name, StringComparison.Ordinal))
+                    {
+                        sourceIndex = shapeIndex;
+                    }
+                    else if (name is null)
+                    {
+                        sourceIndex = firstNullNameIndex;
+                    }
+                    else if (_blendshapeFirstNameIndices.TryGetValue(name, out int firstIndex))
+                    {
+                        sourceIndex = firstIndex;
+                    }
+                }
+
+                _blendshapeSourceIndices[
+                    checked(shapeIndex * vertices.Length + vertexIndex)] = sourceIndex;
+            }
+        }
+    }
+
     private void CountBlendshapePayload(
         XRMesh mesh,
         out uint rangeCount,
@@ -915,16 +885,15 @@ public sealed partial class AdvancedGpuDeformationResources :
         rangeCount = checked((uint)names.Length);
         for (int shapeIndex = 0; shapeIndex < names.Length; shapeIndex++)
         {
-            string name = names[shapeIndex];
             for (int vertexIndex = 0;
                  vertexIndex < vertices.Length;
                  vertexIndex++)
             {
                 Vertex source = vertices[vertexIndex];
-                if (!TryGetBlendshapeData(
+                if (!TryGetIndexedBlendshapeData(
                         source,
-                        name,
-                        shapeIndex,
+                        _blendshapeSourceIndices[
+                            checked(shapeIndex * vertices.Length + vertexIndex)],
                         out VertexData data))
                 {
                     continue;
@@ -970,16 +939,15 @@ public sealed partial class AdvancedGpuDeformationResources :
         {
             uint recordStart = _blendshapeRecordCount;
             uint flags = 0u;
-            string name = names[shapeIndex];
             for (int vertexIndex = 0;
                  vertexIndex < vertices.Length;
                  vertexIndex++)
             {
                 Vertex source = vertices[vertexIndex];
-                if (!TryGetBlendshapeData(
+                if (!TryGetIndexedBlendshapeData(
                         source,
-                        name,
-                        shapeIndex,
+                        _blendshapeSourceIndices[
+                            checked(shapeIndex * vertices.Length + vertexIndex)],
                         out VertexData data))
                 {
                     continue;
@@ -1020,7 +988,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         uint attributeFlag,
         ref uint flags)
     {
-        if (delta.LengthSquared() <= DeltaEpsilonSquared)
+        if (!(delta.LengthSquared() > DeltaEpsilonSquared))
             return 0u;
 
         uint index = _blendshapeDeltaCount++;
@@ -1033,64 +1001,44 @@ public sealed partial class AdvancedGpuDeformationResources :
         XRMesh mesh,
         uint destinationBase)
     {
-        Vertex[] vertices = mesh.Vertices;
-        bool hasVertices = vertices.Length == mesh.VertexCount;
         for (uint vertexIndex = 0u;
              vertexIndex < checked((uint)mesh.VertexCount);
              vertexIndex++)
-        {
-            AdvancedDeformedVertex packed;
-            if (hasVertices)
-            {
-                packed = AdvancedPackedVertexCodec.Pack(
-                    vertices[vertexIndex],
-                    destinationBase + vertexIndex);
-            }
-            else
-            {
-                Vector3 position =
-                    mesh.PositionsBuffer!.GetVector3(vertexIndex);
-                Vector3 normal = mesh.NormalsBuffer?.GetVector3(vertexIndex)
-                    ?? Vector3.UnitY;
-                Vector4 tangent4 =
-                    mesh.TangentsBuffer?.GetVector4(vertexIndex)
-                    ?? new Vector4(Vector3.UnitX, 1.0f);
-                Vector2 uv0 =
-                    mesh.TexCoordBuffers is { Length: > 0 } &&
-                    mesh.TexCoordBuffers[0] is XRDataBuffer uv0Buffer
-                        ? uv0Buffer.GetVector2(vertexIndex)
-                        : Vector2.Zero;
-                Vector2 uv1 =
-                    mesh.TexCoordBuffers is { Length: > 1 } &&
-                    mesh.TexCoordBuffers[1] is XRDataBuffer uv1Buffer
-                        ? uv1Buffer.GetVector2(vertexIndex)
-                        : Vector2.Zero;
-                Vector4 color0 =
-                    mesh.ColorBuffers is { Length: > 0 } &&
-                    mesh.ColorBuffers[0] is XRDataBuffer color0Buffer
-                        ? color0Buffer.GetVector4(vertexIndex)
-                        : Vector4.One;
-                Vector4 color1 =
-                    mesh.ColorBuffers is { Length: > 1 } &&
-                    mesh.ColorBuffers[1] is XRDataBuffer color1Buffer
-                        ? color1Buffer.GetVector4(vertexIndex)
-                        : Vector4.One;
-                packed = AdvancedPackedVertexCodec.Pack(
-                    position,
-                    normal,
-                    new Vector3(tangent4.X, tangent4.Y, tangent4.Z),
-                    tangent4.W,
-                    uv0,
-                    uv1,
-                    color0,
-                    color1,
-                    destinationBase + vertexIndex,
-                    mesh.TexCoordBuffers is { Length: > 1 } &&
-                    mesh.TexCoordBuffers[1] is XRDataBuffer);
-            }
+            _sourceVertices[destinationBase + vertexIndex] =
+                PackCanonicalVertex(mesh, vertexIndex, destinationBase + vertexIndex);
+    }
 
-            _sourceVertices[destinationBase + vertexIndex] = packed;
-        }
+    private static AdvancedDeformedVertex PackCanonicalVertex(
+        XRMesh mesh,
+        uint vertexIndex,
+        uint sourceIndex)
+    {
+        Vertex[] vertices = mesh.Vertices;
+        if (vertices.Length == mesh.VertexCount)
+            return AdvancedPackedVertexCodec.Pack(vertices[vertexIndex], sourceIndex);
+
+        Vector3 position = mesh.PositionsBuffer!.GetVector3(vertexIndex);
+        Vector3 normal = mesh.NormalsBuffer?.GetVector3(vertexIndex) ?? Vector3.UnitY;
+        Vector4 tangent4 = mesh.TangentsBuffer?.GetVector4(vertexIndex)
+            ?? new Vector4(Vector3.UnitX, 1.0f);
+        Vector2 uv0 = mesh.TexCoordBuffers is { Length: > 0 } &&
+            mesh.TexCoordBuffers[0] is XRDataBuffer uv0Buffer
+                ? uv0Buffer.GetVector2(vertexIndex) : Vector2.Zero;
+        Vector2 uv1 = mesh.TexCoordBuffers is { Length: > 1 } &&
+            mesh.TexCoordBuffers[1] is XRDataBuffer uv1Buffer
+                ? uv1Buffer.GetVector2(vertexIndex) : Vector2.Zero;
+        Vector4 color0 = mesh.ColorBuffers is { Length: > 0 } &&
+            mesh.ColorBuffers[0] is XRDataBuffer color0Buffer
+                ? color0Buffer.GetVector4(vertexIndex) : Vector4.One;
+        Vector4 color1 = mesh.ColorBuffers is { Length: > 1 } &&
+            mesh.ColorBuffers[1] is XRDataBuffer color1Buffer
+                ? color1Buffer.GetVector4(vertexIndex) : Vector4.One;
+        return AdvancedPackedVertexCodec.Pack(
+            position, normal,
+            new Vector3(tangent4.X, tangent4.Y, tangent4.Z), tangent4.W,
+            uv0, uv1, color0, color1, sourceIndex,
+            mesh.TexCoordBuffers is { Length: > 1 } &&
+            mesh.TexCoordBuffers[1] is XRDataBuffer);
     }
 
     private unsafe void PackSkinInfluences(
@@ -1518,47 +1466,20 @@ AdvancedGpuDeformationStaticBuffers replacement =
                ClientSideSource: not null,
            };
 
-    private static bool TryGetBlendshapeData(
+    private static bool TryGetIndexedBlendshapeData(
         Vertex vertex,
-        string expectedName,
-        int shapeIndex,
+        int sourceIndex,
         out VertexData data)
     {
         List<(string name, VertexData data)>? shapes =
             vertex.Blendshapes;
-        if (shapes is null)
+        if (shapes is null || (uint)sourceIndex >= (uint)shapes.Count)
         {
             data = null!;
             return false;
         }
-        if ((uint)shapeIndex < (uint)shapes.Count)
-        {
-            var direct = shapes[shapeIndex];
-            if (string.Equals(
-                    direct.name,
-                    expectedName,
-                    StringComparison.Ordinal))
-            {
-                data = direct.data;
-                return data is not null;
-            }
-        }
-        for (int i = 0; i < shapes.Count; i++)
-        {
-            if (!string.Equals(
-                    shapes[i].name,
-                    expectedName,
-                    StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            data = shapes[i].data;
-            return data is not null;
-        }
-
-        data = null!;
-        return false;
+        data = shapes[sourceIndex].data;
+        return data is not null;
     }
 
     private static void GetBlendshapeDeltas(

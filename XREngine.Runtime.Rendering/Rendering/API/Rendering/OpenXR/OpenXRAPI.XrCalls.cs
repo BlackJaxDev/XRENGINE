@@ -656,7 +656,10 @@ public unsafe partial class OpenXRAPI
                         _sessionState = stateChanged->State;
                         RecordSmokeSessionState(_sessionState);
                         Debug.Out($"Session state changed to: {_sessionState}");
-                        if (_sessionState == SessionState.Ready)
+                        if (_sessionState == SessionState.Ready &&
+                            _runtimeMonitoringEnabled &&
+                            !IsOpenXrRuntimeLossPending() &&
+                            _runtimeState is (OpenXrRuntimeState.SessionCreated or OpenXrRuntimeState.SessionRunning))
                         {
                             var beginInfo = new SessionBeginInfo
                             {
@@ -670,6 +673,7 @@ public unsafe partial class OpenXRAPI
                             {
                                 InvalidateOpenXrViewHistory();
                                 _sessionBegun = true;
+                                OpenOpenXrEyePublicationAdmission();
                                 Debug.Out("Session began successfully");
                             }
                         }

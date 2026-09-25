@@ -19,16 +19,12 @@ internal sealed partial class VulkanFrameLoop
     private const string OpenXrLeftExternalSwapchainTargetName = "<openxr-left-swapchain>";
     private const string OpenXrRightExternalSwapchainTargetName = "<openxr-right-swapchain>";
     private const string OpenXrExternalSwapchainTargetName = "<openxr-swapchain>";
-    private const ulong MinDesktopFramesBeforeOpenXrRuntimeSessionStart = 4;
     private const double OpenXrVulkanAllocatorPressureDeferRatio = 0.9;
     private const long OpenXrVulkanAllocatorPressureReserveBytes = 512L * 1024L * 1024L;
     internal const double OpenXrVulkanImageAllocationPressurePreflightRatio = 0.84;
     internal const long OpenXrVulkanImageAllocationPressureReserveBytes = 768L * 1024L * 1024L;
     internal const double OpenXrVulkanImageAllocationCountPreflightRatio = 0.80;
     internal const int OpenXrVulkanImageAllocationCountReserve = 768;
-    private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyQuietPeriod = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyMaxWait = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan OpenXrRuntimeSessionStartPendingFrameMaxWait = TimeSpan.FromSeconds(2);
     private static bool TraceOpenXrStereoBlits =>
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;

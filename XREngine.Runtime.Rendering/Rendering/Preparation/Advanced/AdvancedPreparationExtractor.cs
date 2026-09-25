@@ -51,6 +51,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private int _uploadCopyRangeCount;
     private int _animationScheduleCount;
     private bool _hasDeformationUpload;
+    private bool _meshPreparationPending;
     private uint _feedbackLookupGeneration;
     private uint _scheduleLookupGeneration;
     private ulong _publicationGeneration;
@@ -273,12 +274,21 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 "The advanced deformation GPU output slot or static generation is not reusable.");
         }
 
+        try
+        {
+        _drawCount = checked((int)Math.Min(
+            submissionCount,
+            (uint)_options.MaximumDraws));
+        if (!TryPrepareCanonicalDeformationMeshes(publicationSnapshot, _drawCount))
+            return CreateDeferredPublication(
+                world,
+                consumers,
+                visibleFallbackCount: checked((uint)_drawCount),
+                "Canonical GPU deformation mesh preparation is still in progress.");
+
         ResetDeformationOwnersForGeneration(
             world.GpuScene,
             world.GpuScene.AdvancedScenePublication.Publication);
-
-        try
-        {
         _deformationJobs.BeginFrame();
         BeginAnimationScheduling(frameId, completedValue);
         _visibilityPlanner.BeginFrame(frameId);
@@ -292,6 +302,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 : 0u;
 
         long extractionStarted = Stopwatch.GetTimestamp();
+        _meshPreparationPending = false;
         for (int commandIndex = 0;
              commandIndex < _drawCount;
              commandIndex++)
@@ -302,6 +313,12 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 frameId,
                 world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
         }
+        if (_meshPreparationPending)
+            return CreateDeferredPublication(
+                world,
+                consumers,
+                visibleFallbackCount: checked((uint)_drawCount),
+                "Canonical GPU deformation mesh preparation is still in progress.");
         LastExtractionTicks = Stopwatch.GetTimestamp() - extractionStarted;
 
         _admission = _deformationJobs.FinalizeJobs(
@@ -617,6 +634,40 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             completionValue);
     }
 
+    private bool TryPrepareCanonicalDeformationMeshes(
+        AdvancedGpuScenePublicationSnapshot publication,
+        int drawCount)
+    {
+        bool allReady = true;
+        for (int commandIndex = 0; commandIndex < drawCount; commandIndex++)
+        {
+            AdvancedDrawSubmissionRecord submission =
+                publication.Submission.Records[commandIndex];
+            if ((submission.Flags & (uint)GPUIndirectRenderFlags.Skinned) == 0u)
+                continue;
+            AdvancedManagedDeformationSourceRow source =
+                publication.Submission.DeformationSources[commandIndex];
+            if (source.Renderer is null || source.Mesh is not { VertexCount: > 0 } mesh)
+                throw new InvalidOperationException(
+                    $"Advanced draw {submission.Draw} requires a captured primitive mesh and renderer for deformation.");
+            publication.Geometry.TryGet(
+                submission.Geometry,
+                out AdvancedGeometryRecord geometry);
+            GPUScene.GpuMeshletRange meshletRange = new()
+            {
+                MeshletOffset = geometry.MeshletFirst,
+                MeshletCount = geometry.MeshletCount,
+            };
+            AdvancedGpuDeformationMeshPreparationStatus status =
+                _gpuDeformation.TryPrepareMesh(
+                    mesh,
+                    ComputeTopologyGeneration(mesh, meshletRange),
+                    out _);
+            allReady &= status != AdvancedGpuDeformationMeshPreparationStatus.Pending;
+        }
+        return allReady;
+    }
+
     private void ExtractCommand(
         AdvancedGpuScenePublicationSnapshot publication,
         int commandIndex,
@@ -827,10 +878,18 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         uint topologyGeneration = ComputeTopologyGeneration(
             mesh,
             meshletRange);
-        if (!_gpuDeformation.TryGetOrAddMesh(
+        AdvancedGpuDeformationMeshPreparationStatus meshPreparation =
+            _gpuDeformation.TryPrepareMesh(
                 mesh,
                 topologyGeneration,
-                out gpuMeshSlice) ||
+                out gpuMeshSlice);
+        if (meshPreparation == AdvancedGpuDeformationMeshPreparationStatus.Pending)
+        {
+            _meshPreparationPending = true;
+            slice = default;
+            return false;
+        }
+        if (meshPreparation != AdvancedGpuDeformationMeshPreparationStatus.Ready ||
             !_gpuDeformation.TryGetOrAddPose(
                 renderer,
                 mesh,

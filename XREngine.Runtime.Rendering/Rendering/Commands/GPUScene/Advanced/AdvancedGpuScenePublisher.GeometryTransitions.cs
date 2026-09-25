@@ -18,6 +18,25 @@ public sealed partial class AdvancedGpuScenePublisher
     private AdvancedMeshletDescriptor[] _packedMeshletDescriptors = [];
     private uint[] _packedMeshletTriangleWords = [];
 
+    /// <summary>
+    /// Reuses triangle validation for the exact geometry revision already admitted
+    /// to the canonical scene. In-place source edits must call MarkGeometryChanged,
+    /// as required by the mesh's other geometry caches.
+    /// </summary>
+    private static bool HasValidatedCanonicalGeometry(
+        in AdvancedResidentRegistration registration,
+        in AdvancedGpuSceneCommandTransition plan)
+        => registration.Active &&
+           plan.Mesh is { } mesh &&
+           ReferenceEquals(registration.TemporalMesh, mesh) &&
+           registration.TemporalGeometryRevision == plan.MeshGeometryRevision &&
+           registration.TemporalVertexCount == plan.MeshVertexCount &&
+           registration.TemporalIndexCount == plan.MeshIndexCount &&
+           registration.TemporalPrimitiveTopology == plan.MeshPrimitiveTopology &&
+           mesh.Vertices.Length == plan.MeshVertexCount &&
+           mesh.Triangles is { } triangles &&
+           (long)triangles.Count * 3 == plan.MeshIndexCount;
+
     private static bool TryValidateCanonicalGeometry(
         XRMesh? mesh,
         out EAdvancedCanonicalCompatibilityReason reason)

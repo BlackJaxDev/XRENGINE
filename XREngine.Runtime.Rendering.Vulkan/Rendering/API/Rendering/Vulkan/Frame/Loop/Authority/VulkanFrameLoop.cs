@@ -455,7 +455,8 @@ internal sealed partial class VulkanFrameLoop
                 ? attempt.TerminalResult.Outcome
                 : throw new InvalidOperationException(
                     "Desktop frame telemetry cannot publish before its terminal result."));
-        if (totalFrameTime >= TimeSpan.FromMilliseconds(0) &&
+        if (VulkanFrameDiagnosticsTraceEnabled &&
+            totalFrameTime >= TimeSpan.FromMilliseconds(0) &&
             _telemetry.TryGetLatestPublication(
                 out VulkanFrameTelemetryPublication publication) &&
             publication.Identity.EngineFrameNumber == attempt.FrameNumber)

@@ -281,8 +281,6 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         _physicsResetCacheValid = false;
         _initialDynamicBodyPoses.Clear();
         _invalidTransforms.Clear();
-        Volatile.Write(ref _dirtyMinDepth, int.MaxValue);
-        Volatile.Write(ref _dirtyMaxDepth, int.MinValue);
         ClearPendingPhysicsRequests();
         PostEndPlay?.Invoke(this);
         PlayState = RuntimeWorldPlayState.Stopped;

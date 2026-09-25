@@ -346,6 +346,16 @@ namespace XREngine
                 }
             }
 
+            /// <summary>Stops probing and retires the active OpenXR session on its owning thread.</summary>
+            public static bool StopOpenXR()
+            {
+                if (_openXRApi is not IOpenXrApplicationLifecycle lifecycle)
+                    return false;
+
+                lifecycle.DisableRuntimeMonitoring();
+                return true;
+            }
+
             private static void UpdateOpenXRRuntime()
             {
                 using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
@@ -884,6 +894,13 @@ namespace XREngine
                     return;
                 }
 
+                // The callback stays installed after a dynamic OpenXR stop, but
+                // OpenXR does not create the legacy stereo viewport. Its swapchain
+                // teardown may take several frames, so tolerate that interval here.
+                XRViewport? stereoViewport = StereoViewport;
+                if (stereoViewport is null)
+                    return;
+
                 var scene = ViewInformation.World?.VisualScene;
                 var node = ViewInformation.HMDNode;
                 var frustum = _stereoCullingFrustum;
@@ -892,7 +909,7 @@ namespace XREngine
 
                 // Use the viewport collection boundary so this family publishes
                 // its canonical scene package as well as visible membership.
-                StereoViewport!.CollectVisible(
+                stereoViewport.CollectVisible(
                     worldOverride: ViewInformation.World,
                     cameraOverride: ViewInformation.LeftEyeCamera,
                     allowScreenSpaceUICollectVisible: false,

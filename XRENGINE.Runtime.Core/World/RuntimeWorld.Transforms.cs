@@ -8,8 +8,12 @@ namespace XREngine;
 public sealed partial class RuntimeWorld
 {
     private readonly ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _invalidTransforms = [];
-    private int _dirtyMinDepth = int.MaxValue;
-    private int _dirtyMaxDepth = int.MinValue;
+    private readonly List<TransformBase> _dirtyTransformBatch = [];
+    private readonly HashSet<TransformBase> _dirtyTransformBatchSet = [];
+    private readonly List<TransformBase> _dirtyTransformRoots = [];
+    private readonly List<TransformBase> _dirtyTransformDepthRoots = [];
+    private readonly List<Task> _dirtyTransformTasks = [];
+    private int _processingDirtyTransforms;
 
     /// <summary>Runs the ordinary and late Core tick groups for one update.</summary>
     public void Update()
@@ -30,42 +34,76 @@ public sealed partial class RuntimeWorld
             return;
 
         _invalidTransforms.GetOrAdd(transform.Depth, static _ => []).Add(transform);
-        UpdateDirtyDepthRange(transform.Depth);
     }
 
     /// <summary>
-    /// Recalculates dirty transforms after update callbacks. Async producers may
-    /// enqueue while this method runs; the depth range is rebuilt from any work
-    /// that remains so a one-shot invalidation cannot be stranded.
+    /// Recalculates dirty transforms after update callbacks. A dirty ancestor
+    /// recalculates its entire hierarchy, so descendants in the same batch need
+    /// no second traversal. New invalidations remain queued for the next batch.
     /// </summary>
     public void ProcessDirtyTransforms(ELoopType loopType)
     {
         ThrowIfDisposed();
-        int minDepth = Volatile.Read(ref _dirtyMinDepth);
-        int maxDepth = Volatile.Read(ref _dirtyMaxDepth);
-        if (minDepth <= maxDepth)
+        if (Interlocked.Exchange(ref _processingDirtyTransforms, 1) != 0)
+            return;
+
+        try
         {
-            for (int depth = minDepth; depth <= maxDepth; ++depth)
+            foreach ((_, ConcurrentHashSet<TransformBase> transforms) in _invalidTransforms)
             {
-                if (!_invalidTransforms.TryGetValue(depth, out ConcurrentHashSet<TransformBase>? transforms)
-                    || transforms.Count == 0)
+                foreach (TransformBase transform in transforms)
                 {
-                    continue;
+                    if (transforms.TryRemove(transform) && _dirtyTransformBatchSet.Add(transform))
+                        _dirtyTransformBatch.Add(transform);
+                }
+            }
+
+            foreach (TransformBase transform in _dirtyTransformBatch)
+            {
+                TransformBase? ancestor = transform.Parent;
+                while (ancestor is not null && !_dirtyTransformBatchSet.Contains(ancestor))
+                    ancestor = ancestor.Parent;
+
+                if (ancestor is null)
+                    _dirtyTransformRoots.Add(transform);
+            }
+
+            _dirtyTransformRoots.Sort(static (left, right) => left.Depth.CompareTo(right.Depth));
+            int depth = int.MinValue;
+            foreach (TransformBase transform in _dirtyTransformRoots)
+            {
+                if (transform.Depth != depth && _dirtyTransformDepthRoots.Count > 0)
+                {
+                    RecalculateTransformDepth(_dirtyTransformDepthRoots, loopType);
+                    _dirtyTransformDepthRoots.Clear();
                 }
 
-                RecalculateTransformDepth(transforms, loopType);
-                transforms.Clear();
+                depth = transform.Depth;
+                _dirtyTransformDepthRoots.Add(transform);
             }
-        }
 
-        Volatile.Write(ref _dirtyMinDepth, int.MaxValue);
-        Volatile.Write(ref _dirtyMaxDepth, int.MinValue);
-        foreach ((int depth, ConcurrentHashSet<TransformBase> transforms) in _invalidTransforms)
-            if (transforms.Count > 0)
-                UpdateDirtyDepthRange(depth);
+            if (_dirtyTransformDepthRoots.Count > 0)
+                RecalculateTransformDepth(_dirtyTransformDepthRoots, loopType);
+        }
+        catch
+        {
+            // A failed traversal must not lose the other invalidations in this batch.
+            foreach (TransformBase transform in _dirtyTransformBatch)
+                _invalidTransforms.GetOrAdd(transform.Depth, static _ => []).Add(transform);
+            throw;
+        }
+        finally
+        {
+            _dirtyTransformTasks.Clear();
+            _dirtyTransformDepthRoots.Clear();
+            _dirtyTransformRoots.Clear();
+            _dirtyTransformBatchSet.Clear();
+            _dirtyTransformBatch.Clear();
+            Volatile.Write(ref _processingDirtyTransforms, 0);
+        }
     }
 
-    private static void RecalculateTransformDepth(ConcurrentHashSet<TransformBase> transforms, ELoopType loopType)
+    private void RecalculateTransformDepth(List<TransformBase> transforms, ELoopType loopType)
     {
         if (transforms.Count <= 1)
         {
@@ -78,10 +116,30 @@ public sealed partial class RuntimeWorld
         {
             case ELoopType.Asynchronous:
             {
-                List<Task> tasks = new(transforms.Count);
-                foreach (TransformBase transform in transforms)
-                    tasks.Add(transform.RecalculateMatrixHierarchy(true, false, ELoopType.Asynchronous));
-                Task.WhenAll(tasks).GetAwaiter().GetResult();
+                bool joinStarted = false;
+                try
+                {
+                    foreach (TransformBase transform in transforms)
+                        _dirtyTransformTasks.Add(transform.RecalculateMatrixHierarchy(true, false, ELoopType.Asynchronous));
+                    joinStarted = true;
+                    Task.WhenAll(_dirtyTransformTasks).GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    // If launching a later hierarchy failed, earlier tasks still own this batch.
+                    if (!joinStarted)
+                    {
+                        try
+                        {
+                            Task.WhenAll(_dirtyTransformTasks).GetAwaiter().GetResult();
+                        }
+                        catch
+                        {
+                            // Preserve the launch exception.
+                        }
+                    }
+                    _dirtyTransformTasks.Clear();
+                }
                 break;
             }
             case ELoopType.Parallel:
@@ -96,18 +154,4 @@ public sealed partial class RuntimeWorld
         }
     }
 
-    private void UpdateDirtyDepthRange(int depth)
-    {
-        int currentMin;
-        while (depth < (currentMin = Volatile.Read(ref _dirtyMinDepth))
-            && Interlocked.CompareExchange(ref _dirtyMinDepth, depth, currentMin) != currentMin)
-        {
-        }
-
-        int currentMax;
-        while (depth > (currentMax = Volatile.Read(ref _dirtyMaxDepth))
-            && Interlocked.CompareExchange(ref _dirtyMaxDepth, depth, currentMax) != currentMax)
-        {
-        }
-    }
 }

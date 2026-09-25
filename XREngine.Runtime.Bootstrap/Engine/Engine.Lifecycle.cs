@@ -156,7 +156,7 @@ namespace XREngine
 
                 // VR initialization can run asynchronously in the background
                 // Windows must be created first if initializing VR in place
-                if (startupSettings is IVRGameStartupSettings vrSettings)
+                if (startupSettings is IVRGameStartupSettings { StartVrOnLaunch: true } vrSettings)
                     Task.Run(async () => await InitializeVR(vrSettings, startupSettings.RunVRInPlace));
 
                 // Start the engine timer for update/render ticks

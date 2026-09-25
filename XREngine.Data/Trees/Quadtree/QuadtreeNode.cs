@@ -276,8 +276,6 @@ namespace XREngine.Data.Trees
 
                     if (node.RemoveHereOrSmaller(item))
                         _subNodes[i] = null;
-                    else
-                        return false;
                 }
 
             return _items.Count == 0 && HasNoSubNodesExcept(-1);

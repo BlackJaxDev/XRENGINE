@@ -3,8 +3,8 @@
 **Project:** XRENGINE  
 **Created:** September 23, 2026  
 **Review baseline:** `master` at [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work”  
-**Status:** Proposed implementation plan; all work and validation below remain unchecked.  
-**Suggested repository location:** `docs/work/todo/rendering/vr/openxr-full-body-calibration-spectator-todo.md`
+**Status:** Baseline harness implemented and target-loss regression reproduced; production target ownership and remaining integration work are pending.  
+**Baseline evidence:** [Six-device calibration baseline](../../investigations/avatar/vr-calibration-baseline-2026-09-24.md).
 
 > **Required assignment policy:** XREngine determines which physical trackers drive the hips, left foot, and right foot. Do not use SteamVR's tracker body roles by default. Support SteamVR role mapping only as an explicit, opt-in override. A runtime role may be transport metadata without becoming the avatar's body assignment.
 
@@ -114,12 +114,14 @@ W10 and W20 may proceed independently after W00. Camera-follow mechanics may be 
 
 **Primary files:** [player component][player-character], [VRIK solver][vr-solver], [humanoid IK base][ik-base], [calibrator][calibrator], [editor pawn factory][editor-pawns], [runtime pawn factory][bootstrap-pawns].
 
-- [ ] **W00.01** Record the actual implementation commit and compare the affected call sites with the reviewed baseline. Update findings that have already changed; do not patch stale line numbers or duplicate an existing fix.
-- [ ] **W00.02** Build a minimal scene with a valid humanoid, VRIK solver, playspace, HMD, two controllers, and exactly three synthetic body trackers.
-- [ ] **W00.03** Give synthetic devices deterministic identities and configurable pose validity, timestamps, rotations, and connection state. Do not require an OpenXR runtime for unit-level assignment and calibration tests.
-- [ ] **W00.04** Reproduce F01 by calibrating, advancing several solver ticks, and asserting the identity and non-null state of every target. Preserve this as a regression test.
-- [ ] **W00.05** Record target counts, avatar/root scale, tracking origin, and component activation state before and after calibration. Add assertions for leaked or duplicated target nodes.
-- [ ] **W00.06** Audit both pawn-construction paths. Decide which shared runtime factory/service owns the new integration so editor and runtime behavior do not drift.
+- [x] **W00.01** Record the actual implementation commit and compare the affected call sites with the reviewed baseline. Update findings that have already changed; do not patch stale line numbers or duplicate an existing fix.
+- [x] **W00.02** Build a minimal scene with a valid humanoid, VRIK solver, playspace, HMD, two controllers, and exactly three synthetic body trackers.
+- [x] **W00.03** Give synthetic devices deterministic identities and configurable pose validity, timestamps, rotations, and connection state. Do not require an OpenXR runtime for unit-level assignment and calibration tests.
+- [x] **W00.04** Reproduce F01 by calibrating, advancing several solver ticks, and asserting the identity and non-null state of every target. Preserve this as a regression test.
+- [x] **W00.05** Record target counts, avatar/root scale, tracking origin, and component activation state before and after calibration. Add assertions for leaked or duplicated target nodes.
+- [x] **W00.06** Audit both pawn-construction paths. Decide which shared runtime factory/service owns the new integration so editor and runtime behavior do not drift.
+
+Implemented by `SyntheticVrCalibrationRig`, `SyntheticVrDeviceTransform`, and `VRIKCalibrationTests` in `XREngine.UnitTests/Animation/`. The required persistence regression is explicit and currently fails; ordinary characterization/control tests pass. The baseline run also exposed and repaired a settings-type alias collision that prevented the runtime bridge from finding the calibration entry point. W10 remains unchecked: neither target persistence nor duplicate-node cleanup is fixed by this harness.
 
 **Acceptance:** a deterministic test exercises calibration and subsequent pose solving, not just a successful calibrator return or the presence of method names in source text.
 

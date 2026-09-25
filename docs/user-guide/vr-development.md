@@ -28,6 +28,16 @@ stereo, MCP texture captures select the shared viewport with `vr_eye="stereo"`
 and the left/right layer with `layer_index=0/1`. `get_render_state` accepts the
 same viewport selector.
 
+To start the ImGui editor on its desktop camera and enter VR later, leave
+`VR.Mode` set to `Desktop` and keep `VR.AllowDesktopEditing` enabled. Enabling the
+**OpenXR** checkbox asks you to choose **Monado (testing)** for no-headset testing
+or **SteamVR (headset)** for real VR. Cancel keeps desktop control. The local
+player switches to a VR pawn created on demand when the session runs and back to
+the previous desktop pawn when it stops. The temporary VR rig is then destroyed;
+the world does not need prebuilt pawns. Temporary rigs belong to the editor scene.
+Changing runtime recreates the renderer while preserving the world and desktop
+pawn. Missing runtimes produce an error rather than choosing another runtime.
+
 Always test on real hardware before trusting comfort, performance, tracking, or input behavior. Desktop preview can verify scene setup but cannot validate motion-to-photon latency or headset runtime behavior.
 
 ## Deeper Docs

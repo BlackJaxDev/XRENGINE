@@ -176,9 +176,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         int capturedGlobalResourceCount = globalResources.FrameId == frameId
             ? Math.Max(globalResources.Lights.Length, globalResources.Probes.Length)
             : 0;
-        if (!EnsureBoundaryCapacity(
+        bool hasBoundaryCapacity;
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.BoundaryCapacity"))
+            hasBoundaryCapacity = EnsureBoundaryCapacity(
                 scene.TotalCommandCount,
-                checked((uint)capturedGlobalResourceCount)))
+                checked((uint)capturedGlobalResourceCount));
+        if (!hasBoundaryCapacity)
         {
             RejectPublication("The canonical resident tables cannot grow at this frame boundary.");
             return;
@@ -191,14 +194,23 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             _commandDrawHandles,
             0,
             checked((int)scene.TotalCommandCount));
-        RebuildRegistrationLookup();
-        if (!TryBuildAndPreflightWholeScenePlan(scene, frameId, out string planFailure))
+        bool hasScenePlan;
+        string planFailure;
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ScenePlan"))
+        {
+            RebuildRegistrationLookup();
+            hasScenePlan = TryBuildAndPreflightWholeScenePlan(scene, frameId, out planFailure);
+        }
+        if (!hasScenePlan)
         {
             RejectPublication(planFailure);
             return;
         }
-        if (!TryEnsurePlannedGeometryBoundaryCapacity(
-                out AdvancedGeometryCompactionPlan? geometryCompaction))
+        AdvancedGeometryCompactionPlan? geometryCompaction;
+        bool hasGeometryCapacity;
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GeometryCapacity"))
+            hasGeometryCapacity = TryEnsurePlannedGeometryBoundaryCapacity(out geometryCompaction);
+        if (!hasGeometryCapacity)
         {
             RejectPublication("The canonical geometry arenas cannot satisfy the planned append.");
             return;
@@ -213,12 +225,19 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             globalResources.FrameId == frameId
                 ? globalResources
                 : AdvancedGlobalResourceCapture.Empty(frameId);
-        if (!TryPreflightGlobalResources(in acceptedGlobalResources, out string globalResourceFailure))
+        bool hasGlobalResources;
+        string globalResourceFailure;
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GlobalPreflight"))
+            hasGlobalResources = TryPreflightGlobalResources(in acceptedGlobalResources, out globalResourceFailure);
+        if (!hasGlobalResources)
         {
             RejectPublication(globalResourceFailure);
             return;
         }
-        if (TryReuseUnchangedPublication(frameId))
+        bool reusedPublication;
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ReuseCheck"))
+            reusedPublication = TryReuseUnchangedPublication(frameId);
+        if (reusedPublication)
         {
             ClearPublicationFailure();
             return;
@@ -235,154 +254,161 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
         try
         {
-            if (geometryCompaction is not null)
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ApplyTransitions"))
             {
-                if (!Database.TryApplyGeometryCompaction(
-                        in transaction,
-                        geometryCompaction))
+                if (geometryCompaction is not null)
                 {
+                    if (!Database.TryApplyGeometryCompaction(
+                            in transaction,
+                            geometryCompaction))
+                    {
+                        Database.FaultActivePublication(
+                            in transaction,
+                            EAdvancedGpuScenePublicationFault.InvariantFailure);
+                        throw new InvalidOperationException(
+                            "Canonical geometry compaction failed after a successful publication preflight.");
+                    }
+
+                    ++_contentDeltaCount;
+                    AdvanceNonZero(ref _contentGeneration);
+                    _lastGeometryCompactionReplacementCount = geometryCompaction.ReplacementCount;
+                    _lastGeometryCompactionReclaimedBytes = geometryCompaction.ReclaimedBytes;
+                    _geometryCompactionCount++;
+                    _geometryCompactionReclaimedBytes += geometryCompaction.ReclaimedBytes;
+                }
+                ApplyPreflightedMaterialTransitions();
+                ApplyPreflightedGlobalResources();
+
+                for (uint commandIndex = 0u;
+                     commandIndex < scene.TotalCommandCount;
+                     ++commandIndex)
+                {
+                    ref readonly AdvancedGpuSceneCommandTransition plan =
+                        ref _plannedCommands[checked((int)commandIndex)];
+                    if (!plan.Supported || plan.Source is not { })
+                    {
+                        _commandDrawHandles[commandIndex] =
+                            AdvancedGpuHandle.Invalid;
+                        continue;
+                    }
+
+                    AdvancedGpuHandle material =
+                        _plannedMaterialRequests[plan.MaterialPlanIndex].MaterialHandle;
+                    int registrationIndex = plan.RegistrationIndex;
+                    if (registrationIndex < 0)
+                    {
+                        registrationIndex = TryAddRegistration(in plan, material);
+                        if (registrationIndex < 0)
+                        {
+                            throw new InvalidOperationException(
+                                "Canonical resident tables exhausted their preflighted frame-boundary capacity.");
+                        }
+                    }
+                    else
+                    {
+                        UpdateRegistration(registrationIndex, in plan, material);
+                    }
+
+                    ref AdvancedResidentRegistration registration =
+                        ref _registrations[registrationIndex];
+                    registration.LastSeenSequence = _sequence;
+                    registration.LastSeenFrameId = frameId;
+                    registration.LegacyCommandIndex = commandIndex;
+                    _commandDrawHandles[commandIndex] = registration.Draw;
+                    int submissionIndex = _legacyMappingCount;
+                    AppendLegacyMapping(
+                        commandIndex,
+                        plan.PrimitiveIndex,
+                        in plan.Command,
+                        in registration);
+                    _plannedSubmissionRecords[submissionIndex] = new AdvancedDrawSubmissionRecord
+                    {
+                        Draw = registration.Draw,
+                        Geometry = registration.Geometry,
+                        Material = registration.Material,
+                        Deformation = registration.Deformation,
+                        StableQueryKey = plan.Source.StableQueryKey,
+                        LegacyCommandIndex = commandIndex,
+                        PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
+                        PassIndex = plan.Command.RenderPass,
+                        InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
+                        Flags = plan.Command.Flags,
+                        StateClass = plan.Command.StateClassID,
+                        CompatibilityReason = plan.CompatibilityReason,
+                        TemporalEventReason = plan.TemporalEventReason,
+                        SourceOrder = ((ulong)commandIndex << 32) | unchecked((uint)plan.PrimitiveIndex),
+                        DependencySignature = Mix(plan.StructuralSignature, plan.ContentSignature),
+                    };
+                    _plannedDeformationSources[submissionIndex] = new AdvancedManagedDeformationSourceRow(
+                        plan.Source,
+                        plan.Source is RenderCommand renderCommand
+                            ? renderCommand.OwnerRenderInfo
+                            : null,
+                        plan.Renderer,
+                        plan.Mesh,
+                        checked((uint)Math.Max(0, plan.MeshVertexCount)),
+                        plan.ContentSignature, plan.StructuralSignature);
+                }
+
+                TombstoneMissingRegistrations();
+                CompletePreflightedMaterialTransitions();
+                bool lookupDirty = HasDirtyLogicalLookups();
+                if (lookupDirty)
+                    AdvanceNonZero(ref _lookupGeneration);
+            }
+
+            AdvancedGpuScenePublicationReference committed;
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.CaptureAndCommit"))
+            {
+                if (!Database.TryPreparePublication(
+                        in transaction,
+                        frameId,
+                        _topologyGeneration,
+                        _contentGeneration,
+                        _lookupGeneration,
+                        out provisional))
+                {
+                    Database.FaultActivePublication(
+                        in transaction,
+                        EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                    throw new InvalidOperationException(
+                        "Canonical scene snapshot capture failed after a successful whole-frame preflight.");
+                }
+
+                if (!_resourcePublisher.TryCapturePublication(
+                        provisional.Sequence,
+                        provisional.Snapshot!.ResourcePayloads,
+                        _plannedMirrorSnapshots.AsSpan(0, _plannedMirrorSnapshotCount)))
+                {
+                    provisional.Snapshot.ResourcePayloads.AbortSourceCapture();
+                    Database.FaultActivePublication(
+                        in transaction,
+                        EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                    throw new InvalidOperationException(
+                        "Canonical resource source capture failed after sealing the logical resource image.");
+                }
+
+                if (!Database.TryCaptureSubmissionPublication(
+                        in transaction,
+                        _plannedSubmissionRecords.AsSpan(0, _legacyMappingCount),
+                        _plannedDeformationSources.AsSpan(0, _legacyMappingCount)))
+                {
+                    provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
+                    Database.FaultActivePublication(in transaction, EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                    throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
+                }
+
+                if (!Database.TryCommitPreparedPublication(
+                        in transaction,
+                        out committed))
+                {
+                    provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
                     Database.FaultActivePublication(
                         in transaction,
                         EAdvancedGpuScenePublicationFault.InvariantFailure);
                     throw new InvalidOperationException(
-                        "Canonical geometry compaction failed after a successful publication preflight.");
+                        "Canonical scene commit failed after preparing a complete publication.");
                 }
-
-                ++_contentDeltaCount;
-                AdvanceNonZero(ref _contentGeneration);
-                _lastGeometryCompactionReplacementCount = geometryCompaction.ReplacementCount;
-                _lastGeometryCompactionReclaimedBytes = geometryCompaction.ReclaimedBytes;
-                _geometryCompactionCount++;
-                _geometryCompactionReclaimedBytes += geometryCompaction.ReclaimedBytes;
-            }
-            ApplyPreflightedMaterialTransitions();
-            ApplyPreflightedGlobalResources();
-
-            for (uint commandIndex = 0u;
-                 commandIndex < scene.TotalCommandCount;
-                 ++commandIndex)
-            {
-                ref readonly AdvancedGpuSceneCommandTransition plan =
-                    ref _plannedCommands[checked((int)commandIndex)];
-                if (!plan.Supported || plan.Source is not { })
-                {
-                    _commandDrawHandles[commandIndex] =
-                        AdvancedGpuHandle.Invalid;
-                    continue;
-                }
-
-                AdvancedGpuHandle material =
-                    _plannedMaterialRequests[plan.MaterialPlanIndex].MaterialHandle;
-                int registrationIndex = plan.RegistrationIndex;
-                if (registrationIndex < 0)
-                {
-                    registrationIndex = TryAddRegistration(in plan, material);
-                    if (registrationIndex < 0)
-                    {
-                        throw new InvalidOperationException(
-                            "Canonical resident tables exhausted their preflighted frame-boundary capacity.");
-                    }
-                }
-                else
-                {
-                    UpdateRegistration(registrationIndex, in plan, material);
-                }
-
-                ref AdvancedResidentRegistration registration =
-                    ref _registrations[registrationIndex];
-                registration.LastSeenSequence = _sequence;
-                registration.LastSeenFrameId = frameId;
-                registration.LegacyCommandIndex = commandIndex;
-                _commandDrawHandles[commandIndex] = registration.Draw;
-                int submissionIndex = _legacyMappingCount;
-                AppendLegacyMapping(
-                    commandIndex,
-                    plan.PrimitiveIndex,
-                    in plan.Command,
-                    in registration);
-                _plannedSubmissionRecords[submissionIndex] = new AdvancedDrawSubmissionRecord
-                {
-                    Draw = registration.Draw,
-                    Geometry = registration.Geometry,
-                    Material = registration.Material,
-                    Deformation = registration.Deformation,
-                    StableQueryKey = plan.Source.StableQueryKey,
-                    LegacyCommandIndex = commandIndex,
-                    PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
-                    PassIndex = plan.Command.RenderPass,
-                    InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
-                    Flags = plan.Command.Flags,
-                    StateClass = plan.Command.StateClassID,
-                    CompatibilityReason = plan.CompatibilityReason,
-                    TemporalEventReason = plan.TemporalEventReason,
-                    SourceOrder = ((ulong)commandIndex << 32) | unchecked((uint)plan.PrimitiveIndex),
-                    DependencySignature = Mix(plan.StructuralSignature, plan.ContentSignature),
-                };
-                _plannedDeformationSources[submissionIndex] = new AdvancedManagedDeformationSourceRow(
-                    plan.Source,
-                    plan.Source is RenderCommand renderCommand
-                        ? renderCommand.OwnerRenderInfo
-                        : null,
-                    plan.Renderer,
-                    plan.Mesh,
-                    checked((uint)Math.Max(0, plan.MeshVertexCount)),
-                    plan.ContentSignature, plan.StructuralSignature);
-            }
-
-            TombstoneMissingRegistrations();
-            CompletePreflightedMaterialTransitions();
-            bool lookupDirty = HasDirtyLogicalLookups();
-            if (lookupDirty)
-                AdvanceNonZero(ref _lookupGeneration);
-
-            if (!Database.TryPreparePublication(
-                    in transaction,
-                    frameId,
-                    _topologyGeneration,
-                    _contentGeneration,
-                    _lookupGeneration,
-                    out provisional))
-            {
-                Database.FaultActivePublication(
-                    in transaction,
-                    EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
-                throw new InvalidOperationException(
-                    "Canonical scene snapshot capture failed after a successful whole-frame preflight.");
-            }
-
-            if (!_resourcePublisher.TryCapturePublication(
-                    provisional.Sequence,
-                    provisional.Snapshot!.ResourcePayloads,
-                    _plannedMirrorSnapshots.AsSpan(0, _plannedMirrorSnapshotCount)))
-            {
-                provisional.Snapshot.ResourcePayloads.AbortSourceCapture();
-                Database.FaultActivePublication(
-                    in transaction,
-                    EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
-                throw new InvalidOperationException(
-                    "Canonical resource source capture failed after sealing the logical resource image.");
-            }
-
-            if (!Database.TryCaptureSubmissionPublication(
-                    in transaction,
-                    _plannedSubmissionRecords.AsSpan(0, _legacyMappingCount),
-                    _plannedDeformationSources.AsSpan(0, _legacyMappingCount)))
-            {
-                provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
-                Database.FaultActivePublication(in transaction, EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
-                throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
-            }
-
-            if (!Database.TryCommitPreparedPublication(
-                    in transaction,
-                    out AdvancedGpuScenePublicationReference committed))
-            {
-                provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
-                Database.FaultActivePublication(
-                    in transaction,
-                    EAdvancedGpuScenePublicationFault.InvariantFailure);
-                throw new InvalidOperationException(
-                    "Canonical scene commit failed after preparing a complete publication.");
             }
 
             publicationCommitted = true;
@@ -392,12 +418,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             _currentPublication = committed;
             // Command snapshots become consumable only after the exact scene
             // publication has been accepted by the database.
-            CaptureAndClearDirtyOwnerRanges();
-            // Report only accepted database publications, after the commit has
-            // installed the exact tuple consumed by subsequent scene readers.
-            S13aPublicationTelemetry.TracePublicationCommitted(
-                committed.Publication, frameId);
-            PublishSourceDrawIdentities(in committed);
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.IdentityDelivery"))
+            {
+                CaptureAndClearDirtyOwnerRanges();
+                // Report only accepted database publications, after the commit has
+                // installed the exact tuple consumed by subsequent scene readers.
+                S13aPublicationTelemetry.TracePublicationCommitted(
+                    committed.Publication, frameId);
+                PublishSourceDrawIdentities(in committed);
+            }
             _identityDeliveryIncomplete = false;
             ClearPublicationFailure();
         }

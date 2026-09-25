@@ -858,6 +858,20 @@ namespace XREngine.Rendering
         /// <param name="renderObject"></param>
         /// <returns></returns>
         public AbstractRenderAPIObject? GetOrCreateAPIRenderObject(GenericRenderObject? renderObject, bool generateNow = false)
+            => GetOrCreateAPIRenderObjectCore(renderObject, generateNow, skipRetiredBackend: false);
+
+        /// <summary>
+        /// Publishes an optional wrapper for a logical object's construction. A renderer
+        /// already retiring its generation is skipped under the wrapper-cache lock.
+        /// Explicit backend use must call <see cref="GetOrCreateAPIRenderObject"/>.
+        /// </summary>
+        public AbstractRenderAPIObject? TryPublishAPIRenderObject(GenericRenderObject? renderObject)
+            => GetOrCreateAPIRenderObjectCore(renderObject, generateNow: false, skipRetiredBackend: true);
+
+        private AbstractRenderAPIObject? GetOrCreateAPIRenderObjectCore(
+            GenericRenderObject? renderObject,
+            bool generateNow,
+            bool skipRetiredBackend)
         {
             if (renderObject is null)
                 return null;
@@ -874,6 +888,8 @@ namespace XREngine.Rendering
             {
                 if (recordMeshWait)
                     XRMeshCpuPreparationTelemetry.RecordWrapperLockWait(Stopwatch.GetTimestamp() - lockWaitStart);
+                if (skipRetiredBackend && !AcceptsBackendWork)
+                    return null;
                 if (_renderObjectCache.TryGetValue(renderObject, out obj))
                 {
                     if (obj.IsRetired)
@@ -995,8 +1011,11 @@ namespace XREngine.Rendering
 
         internal void BeginBackendRetirement()
         {
-            if (Interlocked.Exchange(ref _acceptsBackendWork, 0) == 0)
-                return;
+            using (_roCacheLock.EnterScope())
+            {
+                if (Interlocked.Exchange(ref _acceptsBackendWork, 0) == 0)
+                    return;
+            }
 
             Active = false;
             OnBackendRetirementBeginning();
@@ -1630,6 +1649,18 @@ namespace XREngine.Rendering
             Func<bool> producer,
             out XRGpuFence? retentionFence,
             out Exception? failure)
+            => TryExecuteRequiredGpuProducerBatch(
+                producer, null, out retentionFence, out failure);
+
+        /// <summary>
+        /// Executes a required producer and publishes its framebuffer for sampling
+        /// after the producer has authored its writes.
+        /// </summary>
+        internal virtual bool TryExecuteRequiredGpuProducerBatch(
+            Func<bool> producer,
+            XRFrameBuffer? samplingTarget,
+            out XRGpuFence? retentionFence,
+            out Exception? failure)
         {
             ArgumentNullException.ThrowIfNull(producer);
 
@@ -1646,6 +1677,8 @@ namespace XREngine.Rendering
 
             try
             {
+                if (producerComplete && samplingTarget is not null)
+                    PublishFrameBufferAttachmentsForSampling(samplingTarget);
                 MemoryBarrier(
                     EMemoryBarrierMask.Framebuffer |
                     EMemoryBarrierMask.TextureFetch |

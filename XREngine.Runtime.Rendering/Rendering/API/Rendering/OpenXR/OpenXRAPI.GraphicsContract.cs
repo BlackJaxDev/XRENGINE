@@ -3,6 +3,13 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 public unsafe partial class OpenXRAPI
 {
     /// <summary>
+    /// The OpenXR-owned layered viewport used for single-pass stereo rendering.
+    /// Diagnostic consumers must not inspect the inactive per-eye viewports for
+    /// resources produced by this pipeline.
+    /// </summary>
+    public XRViewport? StereoViewport => _openXrStereoViewport;
+
+    /// <summary>
     /// Renders a view into a graphics-backend-owned swapchain image.
     /// </summary>
     /// <param name="textureHandle">Backend image handle for the active view.</param>

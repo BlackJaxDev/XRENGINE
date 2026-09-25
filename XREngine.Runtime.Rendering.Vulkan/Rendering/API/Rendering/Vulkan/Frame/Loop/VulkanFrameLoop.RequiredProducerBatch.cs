@@ -9,6 +9,7 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     internal bool TryExecuteRequiredGpuProducerBatch(
         Func<bool> producer,
+        XRFrameBuffer? samplingTarget,
         out XRGpuFence? retentionFence,
         out Exception? failure)
     {
@@ -25,12 +26,14 @@ internal sealed partial class VulkanFrameLoop
 
         bool batchActive = true;
         int capturedRequestCount = 0;
+        ulong captureLeaseToken = 0UL;
         try
         {
             capturedRequestCount = MeshOperationRequests.CaptureTo(
                 producer,
                 _meshOperationRequestScratch,
                 out bool producerComplete,
+                out captureLeaseToken,
                 out VulkanMeshRequestLaneCapacityFailure capacityFailure);
             if (capturedRequestCount < 0)
             {
@@ -56,17 +59,21 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            EnqueueMemoryBarrier(
-                EMemoryBarrierMask.Framebuffer |
-                EMemoryBarrierMask.TextureFetch |
-                EMemoryBarrierMask.TextureUpdate);
+            if (samplingTarget is not null)
+            {
+                if (!_frameOperationQueue.RequiredOrderedBatchHasWriter(
+                        samplingTarget))
+                {
+                    failure = new InvalidOperationException(
+                        "The required Vulkan GPU producer did not materialize a framebuffer writer before sampling publication.");
+                    return false;
+                }
+                PublishFrameBufferAttachmentsForSampling(samplingTarget);
+            }
 
-            int markerPassIndex =
-                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
-            FrameOpContext markerContext = CaptureFrameOpContextOrLastActive();
             if (!_frameOperationQueue.TryGetRequiredOrderedBatchOperationCount(
-                    markerPassIndex,
-                    in markerContext,
+                    out int markerPassIndex,
+                    out FrameOpContext markerContext,
                     out int requiredOperationCount,
                     out string cohortFailure))
             {
@@ -74,7 +81,18 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            if (InsertOrderedComputeFence(requiredOperationCount) is not
+            EnqueueFrameOp(VulkanCommandRuntime.CreateMemoryBarrierOperation(
+                markerPassIndex,
+                EMemoryBarrierMask.Framebuffer |
+                EMemoryBarrierMask.TextureFetch |
+                EMemoryBarrierMask.TextureUpdate,
+                markerContext));
+
+            if (_commandRuntime.TryEnqueueOrderedComputeFence(
+                    _frameOperationQueue,
+                    markerPassIndex,
+                    markerContext,
+                    requiredOperationCount + 1) is not
                 VulkanTimelineGpuFence fence)
             {
                 failure = new InvalidOperationException(
@@ -118,11 +136,11 @@ internal sealed partial class VulkanFrameLoop
                     .Clear();
             }
 
-            if (batchActive)
+            if (batchActive && captureLeaseToken != 0UL)
             {
                 try
                 {
-                    MeshOperationRequests.ReleaseCurrentCapturePublicationLeases();
+                    MeshOperationRequests.ReleaseCapturePublicationLeases(captureLeaseToken);
                 }
                 catch (Exception ex)
                 {

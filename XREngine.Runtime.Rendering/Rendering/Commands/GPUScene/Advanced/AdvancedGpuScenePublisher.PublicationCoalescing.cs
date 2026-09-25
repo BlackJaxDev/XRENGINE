@@ -111,6 +111,7 @@ public sealed partial class AdvancedGpuScenePublisher
         ReadOnlySpan<AdvancedManagedDeformationSourceRow> retainedSources)
     {
         if (_plannedLightMutationCount != 0 ||
+            _plannedShadowPayloadUpdateCount != 0 ||
             _plannedMaterialReleaseCount != 0 ||
             _resourceAcquireCount != 0 ||
             _resourceReleaseCount != 0)

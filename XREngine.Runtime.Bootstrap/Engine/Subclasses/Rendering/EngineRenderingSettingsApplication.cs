@@ -154,26 +154,21 @@ namespace XREngine
             {
                 bool applyAll = string.IsNullOrEmpty(propertyName);
 
-                if (applyAll || propertyName == nameof(EditorDebugOptions.RenderMesh3DBounds))
-                    ApplyRenderMeshBoundsSetting();
-
-                if (applyAll || propertyName == nameof(EditorDebugOptions.VisualizeTransparencyModeOverlay))
-                    ApplyRenderMeshBoundsSetting();
-
-                if (applyAll || propertyName == nameof(EditorDebugOptions.VisualizeTransparencyClassificationOverlay))
+                if (applyAll ||
+                    propertyName == nameof(EditorDebugOptions.RenderMesh3DBounds) ||
+                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyModeOverlay) ||
+                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyClassificationOverlay))
                     ApplyRenderMeshBoundsSetting();
 
                 if (applyAll ||
                     propertyName == nameof(EditorDebugOptions.VisualizeTransparencyAccumulation) ||
                     propertyName == nameof(EditorDebugOptions.VisualizeTransparencyRevealage) ||
-                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyOverdrawHeatmap))
+                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyOverdrawHeatmap) ||
+                    propertyName == nameof(EditorDebugOptions.UseDebugOpaquePipeline))
                     ApplyRenderPipelinePreference();
 
                 if (applyAll || propertyName == nameof(EditorDebugOptions.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
-
-                if (applyAll || propertyName == nameof(EditorDebugOptions.UseDebugOpaquePipeline))
-                    ApplyRenderPipelinePreference();
 
                 if (applyAll || propertyName == nameof(EditorPreferences.GpuMeshBvhClickPickEnabled))
                     ApplyGpuMeshBvhPickingPreference();

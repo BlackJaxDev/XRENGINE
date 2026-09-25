@@ -415,6 +415,17 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         }
     }
 
+    internal bool RequiredOrderedBatchHasWriter(XRFrameBuffer target)
+    {
+        FrameOpCapture capture = CurrentThread.OrderedComputeBatchCapture
+            ?? throw new InvalidOperationException(
+                "No ordered compute batch is active on this thread.");
+        for (int index = capture.Count - 1; index >= 0; index--)
+            if (Targets(capture.Buffer[index], target))
+                return true;
+        return false;
+    }
+
     private FrameOpCapture EndOrderedBatch()
     {
         FrameOpCapture capture = CurrentThread.OrderedComputeBatchCapture
@@ -511,8 +522,10 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         }
         catch
         {
+            FailPendingSubmissionMarkers(capture.Buffer.AsSpan(0, capture.Count));
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
                 capture.Buffer.AsSpan(0, capture.Count));
+            capture.Buffer.AsSpan(0, capture.Count).Clear();
             throw;
         }
         finally
@@ -533,12 +546,21 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         CurrentThread.Capture = capture;
         try
         {
-            emitter.Emit(emission);
+            if (!emitter.TryEmit(in emission))
+            {
+                FailPendingSubmissionMarkers(capture.Buffer.AsSpan(0, capture.Count));
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                    capture.Buffer.AsSpan(0, capture.Count));
+                capture.Buffer.AsSpan(0, capture.Count).Clear();
+                return [];
+            }
         }
         catch
         {
+            FailPendingSubmissionMarkers(capture.Buffer.AsSpan(0, capture.Count));
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
                 capture.Buffer.AsSpan(0, capture.Count));
+            capture.Buffer.AsSpan(0, capture.Count).Clear();
             throw;
         }
         finally
@@ -738,8 +760,8 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     /// the marker ahead of one of the members it certifies.
     /// </summary>
     internal bool TryGetRequiredOrderedBatchOperationCount(
-        int markerPassIndex,
-        in FrameOpContext markerContext,
+        out int markerPassIndex,
+        out FrameOpContext markerContext,
         out int requiredOperationCount,
         out string failureReason)
     {
@@ -747,12 +769,18 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             ?? throw new InvalidOperationException(
                 "No ordered compute batch is active on this thread.");
         requiredOperationCount = capture.Count;
+        markerPassIndex = int.MinValue;
+        markerContext = default;
         if (requiredOperationCount == 0)
         {
             failureReason =
                 "The required Vulkan GPU producer completed without publishing any frame operations.";
             return false;
         }
+
+        FrameOp lastOperation = capture.Buffer[requiredOperationCount - 1];
+        markerPassIndex = lastOperation.PassIndex;
+        markerContext = lastOperation.Context;
 
         for (int index = 0; index < requiredOperationCount; index++)
         {
@@ -777,7 +805,13 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
                     in markerContext))
             {
                 failureReason =
-                    $"Required Vulkan GPU producer operation {index} does not share the terminal marker's frozen pass and recording context.";
+                    $"Required Vulkan GPU producer operation {index} ({operation.GetType().Name}) does not share the terminal marker's frozen pass and recording context. " +
+                    $"operation=(pass={operation.PassIndex}, kind={operationContext.ContextKind}, id={operationContext.ContextId}, fingerprint={operationContext.RecordingFingerprint:X16}, " +
+                    $"pipeline={operationContext.PipelineIdentity}, viewport={operationContext.ViewportIdentity}, target={operationContext.OutputTargetIdentity}, " +
+                    $"resource={operationContext.ResourceGeneration}, descriptor={operationContext.DescriptorGeneration}, registry={operationContext.ResourceRegistrySignatureSnapshot}/{operationContext.ResourceRegistryInstanceRevisionSnapshot}) " +
+                    $"marker=(pass={markerPassIndex}, kind={markerContext.ContextKind}, id={markerContext.ContextId}, fingerprint={markerContext.RecordingFingerprint:X16}, " +
+                    $"pipeline={markerContext.PipelineIdentity}, viewport={markerContext.ViewportIdentity}, target={markerContext.OutputTargetIdentity}, " +
+                    $"resource={markerContext.ResourceGeneration}, descriptor={markerContext.DescriptorGeneration}, registry={markerContext.ResourceRegistrySignatureSnapshot}/{markerContext.ResourceRegistryInstanceRevisionSnapshot}).";
                 return false;
             }
         }

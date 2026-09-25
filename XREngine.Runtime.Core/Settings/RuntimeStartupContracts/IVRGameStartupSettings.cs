@@ -18,6 +18,11 @@ public interface IVRGameStartupSettings
     /// </summary>
     EVRRuntime VRRuntime { get; set; }
     /// <summary>
+    /// Gets or sets whether the selected VR runtime starts during engine initialization.
+    /// The renderer may still be prepared for the selected runtime when this is false.
+    /// </summary>
+    bool StartVrOnLaunch { get; set; }
+    /// <summary>
     /// Gets or sets the view render mode for the VR application.
     /// </summary>
     EVrViewRenderMode VrViewRenderMode { get; set; }

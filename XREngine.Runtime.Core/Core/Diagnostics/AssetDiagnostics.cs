@@ -76,33 +76,60 @@ public static class AssetDiagnostics
     {
         string normalizedPath = NormalizePath(assetPath);
         string normalizedCategory = string.IsNullOrWhiteSpace(category) ? "Unknown" : category.Trim();
-        string key = BuildKey(normalizedCategory, normalizedPath);
         DateTime nowUtc = DateTime.UtcNow;
 
         lock (_missingAssetLock)
-        {
-            if (!_missingAssets.TryGetValue(key, out var aggregate))
-            {
-                aggregate = new MissingAssetAggregate
-                {
-                    AssetPath = normalizedPath,
-                    Category = normalizedCategory,
-                    FirstSeenUtc = nowUtc
-                };
-                _missingAssets[key] = aggregate;
-            }
+            RecordMissingAssetCore(normalizedPath, normalizedCategory, context, nowUtc);
 
-            aggregate.Count++;
-            aggregate.LastSeenUtc = nowUtc;
-            if (!string.IsNullOrWhiteSpace(context))
+        System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 1);
+    }
+
+    /// <summary>
+    /// Publishes a completed load's missing references atomically before requesting
+    /// the editor panel, so its first snapshot includes the entire batch.
+    /// </summary>
+    public static void RecordMissingAssets(IEnumerable<string> assetPaths, string? category, string? context = null)
+    {
+        ArgumentNullException.ThrowIfNull(assetPaths);
+        string normalizedCategory = string.IsNullOrWhiteSpace(category) ? "Unknown" : category.Trim();
+        DateTime nowUtc = DateTime.UtcNow;
+        bool recorded = false;
+        lock (_missingAssetLock)
+        {
+            foreach (string assetPath in assetPaths)
             {
-                aggregate.LastContext = context;
-                aggregate.Contexts ??= new HashSet<string>(StringComparer.Ordinal);
-                aggregate.Contexts.Add(context);
+                RecordMissingAssetCore(NormalizePath(assetPath), normalizedCategory, context, nowUtc);
+                recorded = true;
             }
         }
 
-        System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 1);
+        if (recorded)
+            System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 1);
+    }
+
+    // Caller holds _missingAssetLock for either one entry or a complete import batch.
+    private static void RecordMissingAssetCore(string normalizedPath, string normalizedCategory, string? context, DateTime nowUtc)
+    {
+        string key = BuildKey(normalizedCategory, normalizedPath);
+        if (!_missingAssets.TryGetValue(key, out var aggregate))
+        {
+            aggregate = new MissingAssetAggregate
+            {
+                AssetPath = normalizedPath,
+                Category = normalizedCategory,
+                FirstSeenUtc = nowUtc
+            };
+            _missingAssets[key] = aggregate;
+        }
+
+        aggregate.Count++;
+        aggregate.LastSeenUtc = nowUtc;
+        if (!string.IsNullOrWhiteSpace(context))
+        {
+            aggregate.LastContext = context;
+            aggregate.Contexts ??= new HashSet<string>(StringComparer.Ordinal);
+            aggregate.Contexts.Add(context);
+        }
     }
 
     /// <summary>

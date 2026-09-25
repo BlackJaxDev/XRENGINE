@@ -561,19 +561,20 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | Tool | Description |
 |------|-------------|
 | `add_component_to_node` | Add a component to a scene node by type name. |
+| `arm_ddgi_visibility_interruption` | Arm a development-only DDGI receipt-lifetime diagnostic. It skips the selected pipeline's Visibility border copy for skip_count render frames. |
 | `assign_component_asset_property` | Assign an asset reference to a component property or field (e.g., Material). |
+| `bake_ddgi_volume` | Bake the selected viewport's converged DDGI state to output_path. The volume is not changed or automatically assigned to the new asset. |
 | `bake_shape_components_to_model` | Bake ShapeMeshComponent nodes into one ModelComponent using boolean ops (union/intersect/difference/xor). |
 | `batch_create_nodes` | Create multiple scene nodes in a single call. Each entry: {name, parent_id?, components?: string[], transform?: {x?,y?,z?,pitch?,yaw?,roll?,sx?,sy?,sz?}}. |
 | `batch_set_properties` | Set properties on multiple components/nodes in one call. Each operation: {node_id, component_type?, property_name, value}. |
 | `build_and_reload_renderer` | Build one backend leaf project and activate exactly one validated collectible generation. |
 | `bulk_reparent_nodes` | Reparent multiple scene nodes to a new parent (or root) in one call. |
 | `cancel_viewport_sequence_capture` | Cancel an active viewport sequence capture, drain in-flight readbacks, and finalize its partial manifest/contact sheet. |
-| `get_openxr_runtime_diagnostics` | Read session state, exact submission ownership and XR swapchain retirement without forcing GPU completion. |
-| `request_openxr_session_exit` | Request the runtime's orderly session exit; inspect diagnostics for asynchronous completion. |
 | `capture_openxr_desktop_mirror_texture` | Capture the latest OpenXR desktop mirror texture and report pixel statistics. |
 | `capture_openxr_eye_preview_texture` | Capture the latest OpenXR preview copy for the left or right eye and report pixel statistics. |
 | `capture_render_pipeline_texture` | Capture a named render-pipeline texture or a live texture object ID to PNG, EXR, or Radiance HDR and report pixel statistics. |
 | `capture_viewport_screenshot` | Capture a viewport or camera screenshot. Set include_screen_space_ui to capture the composited desktop window region including overlays. |
+| `clear_render_pipeline_cache` | Clear the selected viewport pipeline's GPU-resource cache on its render thread. The pipeline selection is revalidated immediately before the cache is cleared. |
 | `clear_selection` | Clear the current scene-node selection. |
 | `clone_scene` | Deep-clone a scene for experimentation. The clone is added to the world (hidden by default). |
 | `compile_game_scripts` | Regenerate game project files, compile, and hot-reload the game DLL. Returns compilation result. |
@@ -617,7 +618,10 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_component_property` | Get a component property or field value by name. |
 | `get_component_schema` | Get detailed component type schema including properties and fields. |
 | `get_component_snapshot` | Get a component snapshot including readable properties and fields. |
+| `get_ddgi_allocation_scopes` | Return rolling managed-allocation samples for executed DDGI commands. This excludes whole-editor and diagnostics work. |
+| `get_ddgi_visibility_interruption` | Read the development-only DDGI receipt-lifetime diagnostic for one exact selected pipeline. |
 | `get_derived_types` | Find all types that derive from a given type across all loaded assemblies. |
+| `get_editor_openxr_toggle_status` | Read whether the editor OpenXR toggle is available, its requested and runtime states, and the local player's controlled pawn. |
 | `get_editor_preferences` | Read all editor preferences (effective view: global base + project and process-local session overrides merged). |
 | `get_engine_settings` | Read engine configuration overview (user settings, timing, project info, runtime metrics). |
 | `get_engine_state` | Get engine/editor play mode and high-level state flags. |
@@ -631,12 +635,17 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
+| `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
 | `get_parent_types` | Walk the inheritance chain upward from a type, including interfaces. |
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
 | `get_renderer_reload_status` | Return active backend generation, reload state, counters, timings, and the last actionable error. |
 | `get_render_capabilities` | Get renderer capability flags (GPU, extensions, ray tracing). |
 | `get_render_profiler_stats` | Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state. |
 | `get_render_state` | Get current rendering pipeline and camera state. |
+| `get_s13a_identity_manifest` | Copy the selected viewport pipeline's published canonical resident identities and pass membership on demand. Fixture keys remain null where stable source hierarchy ownership is unavailable. |
+| `get_s13a_publication_telemetry` | Read bounded publication and command-swap counters. Set XRE_S13A_PUBLICATION_TELEMETRY=1 before editor launch to enable observation. |
+| `get_s13a_publication_trace` | Read a page of numeric command/publication events. Set XRE_S13A_PUBLICATION_TRACE=1 before launch; optionally restrict retained command events with XRE_S13A_TRACE_COMMAND_ID. Continue from next_sequence; zero command_id includes all retained commands. |
+| `get_s13b_owner_state` | Inspect mesh owner flags and command ownership for a selected scene node. |
 | `get_scene_node_info` | Get detailed info about a scene node, including transform and components. |
 | `get_scene_statistics` | Get scene statistics including node and component counts. |
 | `get_selection` | Get the currently selected scene nodes. |
@@ -646,6 +655,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |
 | `get_transform_matrices` | Get local/world/render matrices for a scene node. |
 | `get_transform_tool_state` | Inspect the active transform gizmo's target, display matrices, scale and reference camera without changing selection. |
+| `get_typesafe_status` | Reports whether the optional TypeSafe System One (Jev) AI integration is configured and available. |
 | `get_type_hierarchy_tree` | Get a full inheritance tree rooted at a type as nested JSON. Supports up/down/both direction. |
 | `get_type_info` | Get full type metadata (name, namespace, base type, interfaces, flags) for any loaded type. |
 | `get_type_members` | Get properties, fields, methods, events, and constructors from any loaded type. |
@@ -674,9 +684,6 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `list_local_players` | List local player controllers, viewports, and input presence. |
 | `list_prefabs` | List loaded prefab assets. |
 | `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport. |
-| `clear_render_pipeline_cache` | Clear exactly the selected viewport pipeline instance on its owning render thread and report cache metadata; invalid or conflicting selectors fail. |
-| `arm_ddgi_visibility_interruption` | Development-only DDGI recovery diagnostic: interrupt 1–120 visibility-stage updates on one exact viewport pipeline/resource generation. |
-| `get_ddgi_visibility_interruption` | Read durable skipped-cycle, abort-receipt, unexpected-publication and recovery evidence for the selected pipeline's diagnostic request. |
 | `list_scenes` | List scenes in the active world. |
 | `list_scene_nodes` | List scene nodes in the active world/scene. |
 | `list_tags` | List tags on a node or across the active world. |
@@ -707,7 +714,10 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `rename_game_script` | Rename or move a .cs script file within the game project's assets directory. |
 | `rename_scene_node` | Rename a scene node by ID. |
 | `reparent_node` | Reparent a scene node to a new parent. |
+| `request_openxr_session_exit` | Request orderly exit of the active OpenXR session through the runtime. Inspect runtime diagnostics to observe completion. |
+| `request_openxr_session_start` | Request OpenXR session startup on the configured window after an orderly exit. Inspect runtime diagnostics to observe asynchronous creation or an explicit recovery failure. |
 | `reset_shader_command_coverage` | Reset shader command counters without invalidating linked-program metadata tokens. |
+| `resolve_natural_language_scene_command` | Resolves a natural language instruction (e.g. 'focus on main light', 'select player node') into a suggested MCP command and target parameters using TypeSafe Jev if configured, or deterministic pattern matching. |
 | `restart_renderer` | Transactionally restart the selected active backend generation. Active OpenXR requires restart_openxr_session=true; active OpenVR remains blocked. |
 | `restore_world_state` | Restore the active world from a previously captured snapshot. |
 | `rotate_transform` | Apply a local rotation to a scene node's transform (degrees). |
@@ -729,6 +739,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
 | `set_editor_camera_render_pipeline_asset` | Assign a loaded render-pipeline asset to the active editor camera by ID, path, or name. |
 | `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
+| `set_editor_openxr_enabled` | Set the editor OpenXR toggle to enabled or disabled. Runtime startup and teardown are asynchronous; inspect toggle status afterward. |
 | `set_editor_preference` | Set an editor preference by property name or dotted path, either persistently or for this editor session only. |
 | `set_game_setting` | Set a game startup setting by property name or dotted path, persistently or for the active process only. |
 | `set_layer` | Set the layer for a scene node. |

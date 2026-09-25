@@ -11,6 +11,9 @@ internal sealed class EngineRuntimeVrLifecycleServices : IRuntimeVrLifecycleServ
     public bool InitializeOpenXR(XRWindow? window)
         => EngineVrLifecycle.InitializeOpenXR(window);
 
+    public bool StopOpenXR()
+        => EngineVrLifecycle.StopOpenXR();
+
     public Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window)
         => actionManifest is IActionManifest typedActionManifest && vrManifest is VrManifest typedVrManifest
             ? EngineVrLifecycle.InitializeLocal(typedActionManifest, typedVrManifest, window)

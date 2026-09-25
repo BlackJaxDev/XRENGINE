@@ -63,6 +63,7 @@ public static partial class EditorImGuiUI
                 DrawConsoleTab("Rendering", ELogCategory.Rendering);
                 DrawConsoleTab("Lighting", ELogCategory.Lighting);
                 DrawConsoleTab("OpenGL", ELogCategory.OpenGL);
+                DrawConsoleTab("Vulkan", ELogCategory.Vulkan);
                 DrawConsoleTab("Physics", ELogCategory.Physics);
                 DrawConsoleTab("Animation", ELogCategory.Animation);
                 DrawConsoleTab("UI", ELogCategory.UI);
@@ -155,6 +156,8 @@ public static partial class EditorImGuiUI
         {
             Vector4 color = GetCategoryColor(entry.Category);
             string prefix = GetCategoryPrefix(entry.Category);
+            if (entry.Category == ELogCategory.Vulkan && entry.Message.StartsWith(prefix, StringComparison.Ordinal))
+                prefix = string.Empty;
             string timestamp = entry.Timestamp.ToString("HH:mm:ss.fff");
 
             ImGui.PushStyleColor(ImGuiCol.Text, color);
@@ -163,7 +166,10 @@ public static partial class EditorImGuiUI
             string repeatSuffix = entry.RepeatCount > 1 ? $" (x{entry.RepeatCount})" : "";
             
             // Wrap long messages
-            ImGui.TextWrapped($"[{timestamp}] {prefix} {entry.Message}{repeatSuffix}");
+            string formattedMessage = prefix.Length == 0
+                ? $"[{timestamp}] {entry.Message}{repeatSuffix}"
+                : $"[{timestamp}] {prefix} {entry.Message}{repeatSuffix}";
+            ImGui.TextWrapped(formattedMessage);
             
             ImGui.PopStyleColor();
 
@@ -173,7 +179,9 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("Copy Message"))
                     ImGui.SetClipboardText(entry.Message);
                 if (ImGui.MenuItem("Copy Full Entry"))
-                    ImGui.SetClipboardText($"[{timestamp}] {prefix} {entry.Message}");
+                    ImGui.SetClipboardText(prefix.Length == 0
+                        ? $"[{timestamp}] {entry.Message}"
+                        : $"[{timestamp}] {prefix} {entry.Message}");
                 ImGui.EndPopup();
             }
         }
@@ -196,6 +204,7 @@ public static partial class EditorImGuiUI
                 ELogCategory.Rendering => theme.ConsoleRenderingColor,
                 ELogCategory.Lighting => theme.ConsoleLightingColor,
                 ELogCategory.OpenGL => theme.ConsoleOpenGLColor,
+                ELogCategory.Vulkan => Debug.GetDefaultCategoryColor(category),
                 ELogCategory.Physics => theme.ConsolePhysicsColor,
                 ELogCategory.Animation => theme.ConsoleAnimationColor,
                 ELogCategory.UI => theme.ConsoleUIColor,
@@ -216,6 +225,7 @@ public static partial class EditorImGuiUI
                 ELogCategory.Rendering => "[Render]",
                 ELogCategory.Lighting => "[Light]",
                 ELogCategory.OpenGL => "[OpenGL]",
+                ELogCategory.Vulkan => "[Vulkan]",
                 ELogCategory.Physics => "[Physics]",
                 ELogCategory.Animation => "[Anim]",
                 ELogCategory.UI => "[UI]",
