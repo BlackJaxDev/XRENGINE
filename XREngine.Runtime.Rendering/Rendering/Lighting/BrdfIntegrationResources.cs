@@ -113,7 +113,7 @@ internal sealed class BrdfIntegrationResources
         }
 
         _producerComplete = renderer.TryExecuteRequiredGpuProducerBatch(
-            _renderProducer, out _receipt, out Exception? failure);
+            _renderProducer, _quad, out _receipt, out Exception? failure);
         _authoredFrame = RuntimeEngine.Rendering.State.RenderFrameId;
         if (_producerComplete)
             CaptureTargetResourceState(renderer, target);
@@ -311,7 +311,6 @@ internal sealed class BrdfIntegrationResources
             using var target = _quad!.BindForWritingState();
             if (!_quad.Render(null, forceNoStereo: true))
                 return false;
-            renderer.PublishFrameBufferAttachmentsForSampling(_quad);
             return true;
         }
         finally

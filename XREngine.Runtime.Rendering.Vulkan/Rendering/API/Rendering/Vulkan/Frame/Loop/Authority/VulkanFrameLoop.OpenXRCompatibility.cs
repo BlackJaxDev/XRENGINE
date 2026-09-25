@@ -27,13 +27,8 @@ internal sealed partial class VulkanFrameLoop
     private bool DescriptorTraceEnabled
         => VulkanMeshRenderingConventions.DescriptorTraceEnabled;
 
-    private bool HasObservedDesktopFrameTick => HasObservedTick;
-
     private DesktopFrameActivitySnapshot CaptureDesktopFrameActivity()
         => CaptureActivity();
-
-    private ref long _lastCommandBufferDirtyTimestamp
-        => ref _commandRuntime.CommandBuffers.LastDirtyTimestamp;
 
     private void DeviceWaitIdle()
     {

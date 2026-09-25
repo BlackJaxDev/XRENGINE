@@ -154,12 +154,10 @@ public static class FbxDeformerParser
         Matrix4x4? authoredTransformLink = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "TransformLink");
         Matrix4x4 transformLinkMatrix = authoredTransformLink ?? Matrix4x4.Identity;
 
-        // The structural reader has already converted FBX matrices to System.Numerics'
-        // row-vector convention.  Do not transpose them again: the FBX skin bind is the
-        // mesh bind transform followed by the inverse linked-bone bind transform.
-        Matrix4x4 inverseBindMatrix = Matrix4x4.Invert(transformLinkMatrix, out Matrix4x4 inverseLink)
-            ? transformMatrix * inverseLink
-            : Matrix4x4.Identity;
+        // Unlike the SDK's global-space GetTransformMatrix result, the serialized
+        // Transform is already mesh-to-bone bind space. The reader converts it to
+        // row-vector convention; TransformLink must not be inverted a second time.
+        Matrix4x4 inverseBindMatrix = transformMatrix;
 
         Dictionary<int, float> controlPointWeights = new(indices.Length);
         int pairCount = Math.Min(indices.Length, weights.Length);

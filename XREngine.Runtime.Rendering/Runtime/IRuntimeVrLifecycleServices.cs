@@ -8,6 +8,7 @@ namespace XREngine;
 public interface IRuntimeVrLifecycleServices
 {
     bool InitializeOpenXR(XRWindow? window);
+    bool StopOpenXR();
     Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window);
     void InitRenderEmulated(XRWindow window);
     Task<bool> InitializeClient(object actionManifest, object vrManifest);

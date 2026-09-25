@@ -894,6 +894,9 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             platformWindow.UpdateViewportFlags(flags);
             IWindow window = platformWindow.Window;
+            if (window.IsVisible)
+                return;
+
             if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window, flags))
                 window.IsVisible = true;
         }

@@ -86,23 +86,25 @@ public static partial class EditorUnitTests
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.TickGroupedItemsInParallel)))
             s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
         bool groupedVrSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR));
-        bool vrPawnRequested = groupedVrSpecified
-            ? runtimeSettings.VR.Mode != XREngine.Runtime.Bootstrap.UnitTestingVrLaunchMode.Desktop
-            : Toggles.VRPawn;
+        bool vrPawnRequested = groupedVrSpecified ? runtimeSettings.VRPawn : Toggles.VRPawn;
+        bool vrRenderingPrepared = vrPawnRequested ||
+            UnitTestingWorldSettingsStore.GetPreparedOpenXrMode(runtimeSettings) is
+                XREngine.Runtime.Bootstrap.UnitTestingVrLaunchMode.OpenXR or
+                XREngine.Runtime.Bootstrap.UnitTestingVrLaunchMode.MonadoOpenXR;
         bool allowDesktopEditingInVr = groupedVrSpecified
             ? runtimeSettings.VR.AllowDesktopEditing
             : Toggles.AllowEditingInVR;
         bool previewVrStereoViews = groupedVrSpecified
             ? runtimeSettings.VR.PreviewStereoViews
             : Toggles.PreviewVRStereoViews;
-        bool requiresIndependentDesktopWindow = vrPawnRequested && (allowDesktopEditingInVr || previewVrStereoViews);
+        bool requiresIndependentDesktopWindow = vrRenderingPrepared && (allowDesktopEditingInVr || previewVrStereoViews);
         bool usesRuntimeDesktopCamera = vrPawnRequested && !allowDesktopEditingInVr;
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) ||
             requiresIndependentDesktopWindow ||
             usesRuntimeDesktopCamera)
             s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
         s.VrMirrorComposeFromEyeTextures = false;
-        if (vrPawnRequested && s.RenderWindowsWhileInVR)
+        if (vrRenderingPrepared && s.RenderWindowsWhileInVR)
             s.VrMirrorMode = EVrMirrorMode.FullIndependentRender;
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
 

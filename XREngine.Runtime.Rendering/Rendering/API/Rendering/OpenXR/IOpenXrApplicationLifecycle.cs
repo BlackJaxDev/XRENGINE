@@ -6,6 +6,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 public interface IOpenXrApplicationLifecycle
 {
     void EnableRuntimeMonitoring();
+    void DisableRuntimeMonitoring();
     void UpdateRuntimeState();
     void CollectVisible();
     void SwapBuffers();

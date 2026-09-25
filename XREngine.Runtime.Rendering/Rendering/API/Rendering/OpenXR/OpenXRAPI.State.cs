@@ -296,6 +296,9 @@ public unsafe partial class OpenXRAPI
     private int _pendingXrFrame;
     private int _pendingXrFrameCollected;
     private int _pendingXrFrameUsesTrueSinglePassStereo;
+    private readonly object _openXrEyePublicationAdmissionLock = new();
+    private bool _openXrEyePublicationAdmissionOpen;
+    private int _openXrEyePublicationCallbacksActive;
     private readonly int _openXrOcclusionPovId = OcclusionViewOwnership.AllocatePovId();
 
     private int _openXrPendingFrameNumber;

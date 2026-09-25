@@ -699,7 +699,9 @@ namespace XREngine.Editor.Mcp
 
             if (string.Equals(vrEye, "stereo", StringComparison.OrdinalIgnoreCase))
             {
-                XRViewport? stereo = RuntimeEngine.VRState.StereoViewport;
+                XRViewport? stereo = RuntimeEngine.VRState.IsOpenXRActive
+                    ? RuntimeEngine.VRState.OpenXRApi?.StereoViewport
+                    : RuntimeEngine.VRState.StereoViewport;
                 if (stereo is null)
                     error = "The runtime shared stereo viewport is not available.";
                 return stereo;

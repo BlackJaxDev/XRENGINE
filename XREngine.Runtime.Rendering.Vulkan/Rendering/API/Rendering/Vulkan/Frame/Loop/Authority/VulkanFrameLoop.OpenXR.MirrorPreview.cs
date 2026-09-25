@@ -473,6 +473,11 @@ internal sealed partial class VulkanFrameLoop
             commandBuffersCompleted = submission.CommandBuffersCompleted;
             submissionDisposition = submission.SubmissionDisposition;
             injectedFailureStage = submission.InjectedFailureStage;
+            if (submitted && !renderRequest.RendersExternalSwapchainTarget)
+            {
+                lock (OutputRuntime.OpenXrBackend.ResourcePlannerStatesLock)
+                    _lastSubmittedOpenXrStereoMirrorContextId = recorded.FrameOpContextId;
+            }
             if (submission.SubmissionReceipt.SubmissionAccepted)
             {
                 UpdateStereoLayerBlitTrackedLayouts(in plan);
@@ -950,7 +955,11 @@ internal sealed partial class VulkanFrameLoop
         finally
         {
             if (capturedOps is not null)
+            {
+                if (!recordingPublished)
+                    VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(capturedOps);
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+            }
             if (ownsFrameDataSlot && !recordingPublished && !IsDeviceLost)
             {
                 if (recorded.CommandBuffer.Handle != 0)

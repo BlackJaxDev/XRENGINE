@@ -158,12 +158,13 @@ internal sealed class VulkanStagingManager
             return false;
 
         StagingBufferEntry? entry;
+        StagingBufferEntry? undersizedIdleEntry = null;
         bool reservedBackgroundCreation = false;
         using (VulkanFrameLockScope.Enter(_sync, EVulkanFrameWaitReason.UploadLock))
         {
-            entry = TryTakeReusable(requestedSize, usage, properties, foregroundRequired);
-            if (entry is not null && requireForegroundReserve && !entry.ForegroundReserved)
-                entry = null;
+            entry = TryTakeReusable(
+                requestedSize, usage, properties, foregroundRequired,
+                requireForegroundReserve);
             if (entry is not null)
             {
                 ulong publishedGeneration = context.Resources.GetPublishedGeneration(ObjectType.Buffer, entry.Buffer.Handle);
@@ -179,7 +180,25 @@ internal sealed class VulkanStagingManager
                 if (CountImportedBackgroundEntriesNoLock() + _importedBackgroundLeaseReservations >=
                     ImportedBackgroundBufferCapacity)
                 {
-                    return false;
+                    // The bounded pool can fill with idle buffers that are all
+                    // too small for a later upload chunk. Replace one idle
+                    // entry so size changes cannot permanently stall uploads.
+                    for (int index = 0; index < _entries.Count; index++)
+                    {
+                        StagingBufferEntry candidate = _entries[index];
+                        if (candidate.State != EVulkanStagingBufferState.Idle ||
+                            candidate.ForegroundReserved ||
+                            candidate.Usage != usage ||
+                            candidate.Properties != properties ||
+                            candidate.Size >= requestedSize ||
+                            (undersizedIdleEntry is not null &&
+                             candidate.Size <= undersizedIdleEntry.Size))
+                            continue;
+                        undersizedIdleEntry = candidate;
+                    }
+                    if (undersizedIdleEntry is null)
+                        return false;
+                    _entries.Remove(undersizedIdleEntry);
                 }
 
                 _importedBackgroundLeaseReservations++;
@@ -194,6 +213,12 @@ internal sealed class VulkanStagingManager
 
             try
             {
+                if (undersizedIdleEntry is not null)
+                    context.Resources.Buffers.Destroy(
+                        context,
+                        undersizedIdleEntry.Buffer,
+                        undersizedIdleEntry.Memory,
+                        "Staging.ResizeImportedPoolEntry");
                 entry = CreateEntry(context, requestedSize, usage, properties, EVulkanStagingBufferState.InUse, foregroundReserved: false);
                 AddCreatedEntry(context, entry);
             }
@@ -479,7 +504,8 @@ internal sealed class VulkanStagingManager
         ulong requestedSize,
         BufferUsageFlags usage,
         MemoryPropertyFlags properties,
-        bool foregroundRequired)
+        bool foregroundRequired,
+        bool requireForegroundReserve = false)
     {
         StagingBufferEntry? best = null;
         ulong bestWaste = ulong.MaxValue;
@@ -492,6 +518,8 @@ internal sealed class VulkanStagingManager
                 entry.Size < requestedSize)
                 continue;
             if (entry.ForegroundReserved && !foregroundRequired)
+                continue;
+            if (requireForegroundReserve && !entry.ForegroundReserved)
                 continue;
 
             ulong waste = entry.Size - requestedSize;

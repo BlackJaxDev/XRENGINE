@@ -271,9 +271,87 @@ internal sealed partial class VulkanFrameLoop
             return true;
         }
 
+        if (ReferenceEquals(viewport, RuntimeEngine.VRState.OpenXRApi?.StereoViewport))
+            LogOpenXrPipelineReadbackMismatch(in context);
         scope = null;
         return false;
     }
+
+    private void LogOpenXrPipelineReadbackMismatch(in FrameOpContext requested)
+    {
+        StringBuilder message = new(768);
+        message.Append("[OpenXR] Planner readback mismatch. submittedMirrorContextId=")
+            .Append(_lastSubmittedOpenXrStereoMirrorContextId)
+            .Append(" requested=");
+        AppendOpenXrReadbackContext(message, in requested);
+
+        VulkanOpenXrBackend backend = OutputRuntime.OpenXrBackend;
+        lock (backend.ResourcePlannerStatesLock)
+        {
+            int reported = 0;
+            foreach ((VulkanOpenXrViewResourcePlannerContextKey key, ResourcePlannerRuntimeState state) in
+                     OpenXrResourcePlannerStates)
+            {
+                if (key.Purpose != EVulkanOpenXrResourcePlannerPurpose.Mirror || reported++ >= 2)
+                    continue;
+                message.Append(" mirror[").Append(key.ResourcePlannerStateIndex)
+                    .Append(",view=").Append(key.OpenXrViewIndex)
+                    .Append("] allocator=")
+                    .Append(state.ResourceAllocator is null ? "null" :
+                        state.ResourceAllocator.IsRetired ? "retired" : "active")
+                    .Append(" context=");
+                if (state.LastActiveFrameOpContext is FrameOpContext active)
+                    AppendOpenXrReadbackContext(message, in active);
+                else
+                    message.Append("none");
+                if (state.FrameOpResourcePlannerSwitchingState is { } switching)
+                {
+                    message.Append(" nestedCount=").Append(switching.States.Count);
+                    int nestedReported = 0;
+                    foreach (ResourcePlannerRuntimeState nested in switching.States.Values)
+                    {
+                        if (nested.LastActiveFrameOpContext is not FrameOpContext nestedContext ||
+                            (nestedContext.ContextId != _lastSubmittedOpenXrStereoMirrorContextId &&
+                             nestedReported++ >= 2))
+                            continue;
+                        message.Append(" nestedAllocator=")
+                            .Append(nested.ResourceAllocator is null ? "null" :
+                                nested.ResourceAllocator.IsRetired ? "retired" : "active")
+                            .Append(" nestedContext=");
+                        AppendOpenXrReadbackContext(message, in nestedContext);
+                    }
+                }
+            }
+            if (reported == 0)
+                message.Append(" mirrorStates=none");
+        }
+
+        Debug.VulkanWarningEvery(
+            $"OpenXR.Vulkan.PlannerReadbackMismatch.{GetHashCode()}",
+            TimeSpan.FromSeconds(2),
+            "{0}",
+            message.ToString());
+    }
+
+    private static void AppendOpenXrReadbackContext(StringBuilder message, in FrameOpContext context)
+    {
+        message.Append("{id=").Append(context.ContextId)
+            .Append(",kind=").Append(context.ContextKind)
+            .Append(",pipeline=").Append(context.PipelineIdentity)
+            .Append(",viewport=").Append(context.ViewportIdentity)
+            .Append(",registry=").Append(context.ResourceRegistry is null
+                ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry))
+            .Append(",display=").Append(context.DisplayWidth).Append('x').Append(context.DisplayHeight)
+            .Append(",internal=").Append(context.InternalWidth).Append('x').Append(context.InternalHeight)
+            .Append(",resourceGen=").Append(context.ResourceGeneration)
+            .Append(",descriptorGen=").Append(context.DescriptorGeneration)
+            .Append(",registrySignature=").Append(context.ResourceRegistrySignatureSnapshot)
+            .Append('}');
+    }
+
+    // The strict stereo render-to-array planner can be prepared before its publish batch
+    // is submitted. Only the last successfully submitted context may be read back.
+    private ulong _lastSubmittedOpenXrStereoMirrorContextId;
 
     /// <summary>
     /// Installs the exact per-eye planner generation when an external consumer reads an OpenXR
@@ -296,6 +374,39 @@ internal sealed partial class VulkanFrameLoop
             foreach ((VulkanOpenXrViewResourcePlannerContextKey key, ResourcePlannerRuntimeState state) in
                      OpenXrResourcePlannerStates)
             {
+                if (key.Purpose == EVulkanOpenXrResourcePlannerPurpose.Mirror &&
+                    _lastSubmittedOpenXrStereoMirrorContextId != 0UL &&
+                    state.FrameOpResourcePlannerSwitchingState is { } switching)
+                {
+                    // The outer mirror state retains its first context while the active
+                    // per-pipeline allocator lives in the switching table. Its context ID
+                    // must be the render-and-publish batch that actually submitted.
+                    foreach (ResourcePlannerRuntimeState nested in switching.States.Values)
+                    {
+                        if (nested.ResourceAllocator is null ||
+                            nested.ResourceAllocator.IsRetired ||
+                            nested.LastActiveFrameOpContext is not FrameOpContext submittedContext ||
+                            submittedContext.ContextId != _lastSubmittedOpenXrStereoMirrorContextId ||
+                            submittedContext.ContextKind != EVulkanFrameOpContextKind.OpenXrEye ||
+                            submittedContext.PipelineIdentity != requestedContext.PipelineIdentity ||
+                            submittedContext.ViewportIdentity != requestedContext.ViewportIdentity ||
+                            !ReferenceEquals(submittedContext.ResourceRegistry, requestedContext.ResourceRegistry) ||
+                            submittedContext.DisplayWidth != requestedContext.DisplayWidth ||
+                            submittedContext.DisplayHeight != requestedContext.DisplayHeight ||
+                            submittedContext.InternalWidth != requestedContext.InternalWidth ||
+                            submittedContext.InternalHeight != requestedContext.InternalHeight ||
+                            submittedContext.ResourceGeneration != requestedContext.ResourceGeneration ||
+                            submittedContext.DescriptorGeneration != requestedContext.DescriptorGeneration ||
+                            submittedContext.ResourceRegistrySignatureSnapshot != requestedContext.ResourceRegistrySignatureSnapshot)
+                            continue;
+
+                        matchedState = nested;
+                        newestContextId = submittedContext.ContextId;
+                        found = true;
+                        break;
+                    }
+                }
+
                 if (key.Purpose != EVulkanOpenXrResourcePlannerPurpose.Eye ||
                     state.ResourceAllocator is null ||
                     state.ResourceAllocator.IsRetired ||

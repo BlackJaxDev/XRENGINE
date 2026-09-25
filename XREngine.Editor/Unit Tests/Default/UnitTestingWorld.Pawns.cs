@@ -392,8 +392,7 @@ public static partial class EditorUnitTests
             hmdTfm = vrHeadsetNode.SetTransform<VRHeadsetTransform>()!;
             hmdComp = vrHeadsetNode.AddComponent<VRHeadsetComponent>()!;
 
-            if (!Toggles.AllowEditingInVR)
-                AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode);
+            AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode);
             
             return vrHeadsetNode;
         }
@@ -411,7 +410,15 @@ public static partial class EditorUnitTests
             firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
             firstPersonCam.CullWithFrustum = true;
             if (pawn is null)
-                pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;
+            {
+                if (Toggles.AllowEditingInVR)
+                {
+                    pawn = firstPersonViewNode.AddComponent<PawnComponent>()!;
+                    pawn.CameraComponent = firstPersonCam;
+                }
+                else
+                    pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;
+            }
             else
                 pawn.CameraComponent = firstPersonCam;
 

@@ -38,7 +38,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
-- [Model Import](developer-guides/assets/model-import.md)
+- [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
 - [Component API](developer-guides/components/component-api.md)
@@ -82,6 +82,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
+- [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
+- [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
 - [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)

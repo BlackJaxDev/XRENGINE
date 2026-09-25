@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 using System.Threading;
@@ -15,6 +16,9 @@ internal sealed partial class VulkanFrameLoop
     // materialization is not charged to this budget and retains normal throughput.
     private static readonly long ColdMeshPreparationSliceTicks =
         Math.Max(1L, Stopwatch.Frequency / 250L);
+    private long _presentNowMeshLastProgressTimestamp;
+    private readonly HashSet<ulong> _presentNowMeshCompletedSignatures =
+        new(MaxWarmMeshPreparationSignatures);
 
     private VulkanPrimaryCommandRecordingResult RecordPreparedDesktopPrimary(
         ref VulkanFrameAttempt attempt,
@@ -969,11 +973,13 @@ internal sealed partial class VulkanFrameLoop
             requestCount,
             allowPreparedCohort,
             out deferredReason,
+            out _,
             foregroundRequired,
             readinessDeadlineTimestamp,
             sourceFrameId,
             requireCompleteCohort,
             trackPresentNowProgress: false,
+            sliceColdPreparation: false,
             ref inactiveWatchdog);
     }
 
@@ -981,33 +987,50 @@ internal sealed partial class VulkanFrameLoop
         int requestCount,
         bool allowPreparedCohort,
         out string deferredReason,
+        out bool coldSliceDeferred,
         ref VulkanPresentNowReadinessWatchdog watchdog,
-        ulong sourceFrameId)
+        ulong sourceFrameId,
+        bool sliceColdPreparation = true)
         => MaterializeQueuedMeshRenderRequestsCore(
             requestCount,
             allowPreparedCohort,
             out deferredReason,
+            out coldSliceDeferred,
             foregroundRequired: true,
             readinessDeadlineTimestamp: long.MaxValue,
             sourceFrameId,
             requireCompleteCohort: false,
             trackPresentNowProgress: true,
+            sliceColdPreparation: sliceColdPreparation,
             ref watchdog);
 
     private bool MaterializeQueuedMeshRenderRequestsCore(
         int requestCount,
         bool allowPreparedCohort,
         out string deferredReason,
+        out bool coldSliceDeferred,
         bool foregroundRequired,
         long readinessDeadlineTimestamp,
         ulong sourceFrameId,
         bool requireCompleteCohort,
         bool trackPresentNowProgress,
+        bool sliceColdPreparation,
         ref VulkanPresentNowReadinessWatchdog watchdog)
     {
         deferredReason = string.Empty;
+        coldSliceDeferred = false;
         if (requestCount == 0)
+        {
+            if (sliceColdPreparation)
+            {
+                _presentNowMeshLastProgressTimestamp = 0;
+                _presentNowMeshCompletedSignatures.Clear();
+            }
             return true;
+        }
+
+        if (sliceColdPreparation && _presentNowMeshLastProgressTimestamp == 0)
+            _presentNowMeshLastProgressTimestamp = Stopwatch.GetTimestamp();
 
         NormalizeQueuedMeshRenderRequests(requestCount);
         ApplyResidentTemplateProjectionDeltas(requestCount);
@@ -1026,11 +1049,15 @@ internal sealed partial class VulkanFrameLoop
         int startRequestIndex = requireCompleteCohort
             ? 0
             : _meshOperationPreparationCursor % requestCount;
-        // One queue cohort must use one immutable planner publication. A later
-        // resource commit may be valid for the next frame, but mixing it into
-        // this cohort can resolve a stereo request through a mono allocator.
+        // One queue cohort must use one immutable planner publication. OpenXR
+        // eye authoring publishes exact pipeline states inside its thread-local
+        // planner scope; the global desktop generation cannot resolve them.
+        VulkanCommandThreadContext threadContext = _commandRuntime.ThreadWorkspace.Current;
         ResourcePlannerRuntimeGeneration plannerGeneration =
-            _framePlanner.GetPublishedResourcePlannerGeneration();
+            ReferenceEquals(threadContext.ResourcePlannerRuntimeStateOwner, _commandRuntime) &&
+            threadContext.ResourcePlannerRuntimeGeneration is { } scopedGeneration
+                ? scopedGeneration
+                : _framePlanner.GetPublishedResourcePlannerGeneration();
         ResourcePlannerRuntimeState plannerState = plannerGeneration.State;
         FrameOpContext? activeFrameOpContext =
             plannerState.LastActiveFrameOpContext;
@@ -1063,7 +1090,14 @@ internal sealed partial class VulkanFrameLoop
             {
                 _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
                 if (trackPresentNowProgress)
+                {
                     watchdog.RecordProgress();
+                    if (sliceColdPreparation)
+                    {
+                        _presentNowMeshLastProgressTimestamp = 0;
+                        _presentNowMeshCompletedSignatures.Clear();
+                    }
+                }
                 return true;
             }
             stagedPreparedCohort = TryStagePreparedMeshOperationCohort(
@@ -1076,7 +1110,14 @@ internal sealed partial class VulkanFrameLoop
         {
             _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
             if (trackPresentNowProgress)
+            {
                 watchdog.RecordProgress();
+                if (sliceColdPreparation)
+                {
+                    _presentNowMeshLastProgressTimestamp = 0;
+                    _presentNowMeshCompletedSignatures.Clear();
+                }
+            }
             return true;
         }
 
@@ -1156,12 +1197,11 @@ internal sealed partial class VulkanFrameLoop
                 else
                     coldRequestCount++;
                 bool resourcesReady = previouslyMaterialized;
-                // Required batches are atomic: a new output generation changes
-                // preparation signatures, so time-slicing and discarding its
-                // tail would prevent the cohort from ever becoming complete.
-                // Attempt each bounded member once; asynchronous readiness still
-                // rejects the batch instead of spinning here.
-                if (!foregroundRequired && !requireCompleteCohort &&
+                // PresentNow retries an incomplete cohort without publishing its
+                // partial operations. Successfully prepared signatures remain warm
+                // across frames, and the cursor resumes at the deferred tail.
+                if ((!foregroundRequired || sliceColdPreparation) &&
+                    !requireCompleteCohort &&
                     !dynamicUiOverlay &&
                     !resourcesReady &&
                     coldPreparationTicks >= ColdMeshPreparationSliceTicks)
@@ -1173,9 +1213,7 @@ internal sealed partial class VulkanFrameLoop
                     continue;
                 }
 
-                long preparationStart = resourcesReady
-                    ? 0L
-                    : Stopwatch.GetTimestamp();
+                long preparationStart = Stopwatch.GetTimestamp();
                 bool materialized;
                 VulkanMeshOperationRequest operationRequest;
                 string plannerGenerationDetail;
@@ -1190,6 +1228,14 @@ internal sealed partial class VulkanFrameLoop
                         out plannerGenerationDetail);
                     if (materialized || !foregroundRequired)
                         break;
+
+                    if (sliceColdPreparation &&
+                        coldPreparationTicks +
+                            Stopwatch.GetTimestamp() - preparationStart >=
+                        ColdMeshPreparationSliceTicks)
+                    {
+                        break;
+                    }
 
                     if (HasMeshReadinessExpired(
                             trackPresentNowProgress,
@@ -1208,7 +1254,7 @@ internal sealed partial class VulkanFrameLoop
                     Thread.Yield();
                 }
                 while (true);
-                if (!resourcesReady)
+                if (!resourcesReady || !materialized)
                 {
                     coldPreparationTicks +=
                         Stopwatch.GetTimestamp() - preparationStart;
@@ -1263,6 +1309,14 @@ internal sealed partial class VulkanFrameLoop
                 if (trackPresentNowProgress)
                     watchdog.RecordProgress();
 
+                if (sliceColdPreparation && preparationSignature != 0 &&
+                    _presentNowMeshCompletedSignatures.Count <
+                        MaxWarmMeshPreparationSignatures &&
+                    _presentNowMeshCompletedSignatures.Add(preparationSignature))
+                {
+                    _presentNowMeshLastProgressTimestamp = Stopwatch.GetTimestamp();
+                }
+
                 bool reusable = IsPreparedMeshOperationCohortEligible(
                         in request,
                         in operationRequest);
@@ -1310,6 +1364,15 @@ internal sealed partial class VulkanFrameLoop
         _meshOperationPreparationCursor = resumeRequestIndex >= 0
             ? resumeRequestIndex
             : 0;
+        bool presentNowProgressExpired = sliceColdPreparation &&
+            Stopwatch.GetTimestamp() - _presentNowMeshLastProgressTimestamp >=
+                VulkanPresentNowReadinessWatchdog.StallTimeoutTicks;
+        coldSliceDeferred = sliceColdPreparation &&
+            (deferredRequestCount > 0 || unavailableRequestCount > 0) &&
+            quarantinedRequestCount == 0 &&
+            !presentNowProgressExpired;
+        if (presentNowProgressExpired)
+            deferredReason = "PresentNow mesh preparation made no progress before its readiness watchdog expired.";
 
         if (allowPreparedCohort &&
             cohortMaterializationComplete &&
@@ -1356,7 +1419,14 @@ internal sealed partial class VulkanFrameLoop
             unavailableRequestCount == 0 &&
             (!requireCompleteCohort ||
              (cohortMaterializationComplete && quarantinedRequestCount == 0)))
+        {
+            if (sliceColdPreparation)
+            {
+                _presentNowMeshLastProgressTimestamp = 0;
+                _presentNowMeshCompletedSignatures.Clear();
+            }
             return true;
+        }
 
         if (string.IsNullOrEmpty(deferredReason))
         {

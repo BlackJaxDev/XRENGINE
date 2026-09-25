@@ -75,6 +75,50 @@ public unsafe partial class OpenXRAPI
             RendersToExternalSwapchainTarget = true
         };
 
+    /// <summary>
+    /// Releases scene publication pins held by inactive eye frame packages after
+    /// the session's GPU work and swapchains have completed retirement.
+    /// </summary>
+    private void CancelOpenXrEyeFramePackages()
+    {
+        _openXrLeftViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
+        _openXrRightViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
+        _openXrStereoViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
+    }
+
+    private bool TryEnterOpenXrEyePublicationCallback()
+    {
+        lock (_openXrEyePublicationAdmissionLock)
+        {
+            if (!_openXrEyePublicationAdmissionOpen)
+                return false;
+
+            ++_openXrEyePublicationCallbacksActive;
+            return true;
+        }
+    }
+
+    private void LeaveOpenXrEyePublicationCallback()
+    {
+        lock (_openXrEyePublicationAdmissionLock)
+            --_openXrEyePublicationCallbacksActive;
+    }
+
+    private bool CloseOpenXrEyePublicationAdmission()
+    {
+        lock (_openXrEyePublicationAdmissionLock)
+        {
+            _openXrEyePublicationAdmissionOpen = false;
+            return _openXrEyePublicationCallbacksActive == 0;
+        }
+    }
+
+    private void OpenOpenXrEyePublicationAdmission()
+    {
+        lock (_openXrEyePublicationAdmissionLock)
+            _openXrEyePublicationAdmissionOpen = true;
+    }
+
     private static void EnsureOpenXrViewportExtent(XRViewport viewport, uint width, uint height)
     {
         if (width > int.MaxValue || height > int.MaxValue)

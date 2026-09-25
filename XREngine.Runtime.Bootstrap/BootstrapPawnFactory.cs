@@ -39,13 +39,13 @@ public static class BootstrapPawnFactory
         {
             if (settings.Locomotion)
             {
-                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, out _, out _, out _, out _);
+                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, out _, out _, out _, out _, out _);
                 CreateVrDesktopEditorCamera(rootNode, setUI, isServer);
                 CreateCameraVRPickup(rootNode, setUI);
             }
             else
             {
-                CreateFlyingVRPawn(rootNode);
+                _ = CreateFlyingVRPawn(rootNode, out _);
                 CreateVrDesktopEditorCamera(rootNode, setUI, isServer);
                 CreateCameraVRPickup(rootNode, setUI);
             }
@@ -61,6 +61,36 @@ public static class BootstrapPawnFactory
         }
 
         return characterPawnModelParentNode;
+    }
+
+    /// <summary>
+    /// Creates a VR pawn and its complete scene hierarchy for runtime possession.
+    /// The caller owns the returned root and chooses when to possess the pawn.
+    /// </summary>
+    public static (SceneNode Root, PawnComponent Pawn) CreateVrPawn(SceneNode parentNode)
+    {
+        if (RuntimeBootstrapState.Settings.Locomotion)
+        {
+            _ = CreateCharacterVRPawn(parentNode, out CharacterPawnComponent pawn, out _, out _, out _, out SceneNode root, possessOnCreate: false);
+            return (root, pawn);
+        }
+
+        SceneNode flyingRoot = CreateFlyingVRPawn(parentNode, out PawnComponent flyingPawn, possessOnCreate: false);
+        return (flyingRoot, flyingPawn);
+    }
+
+    /// <summary>Creates a desktop editor camera pawn for runtime possession when the original pawn is unavailable.</summary>
+    public static (SceneNode Root, PawnComponent Pawn) CreateDesktopEditorPawn(SceneNode parentNode)
+    {
+        SceneNode cameraNode = CreateCamera(parentNode, out _, null);
+        PawnComponent pawn = CreateDesktopCamera(
+            cameraNode,
+            isServer: false,
+            flyable: true,
+            addListener: true,
+            possessOnCreate: false,
+            configureEditorView: false);
+        return (cameraNode, pawn);
     }
 
     private static void CreateVrDesktopEditorCamera(SceneNode rootNode, bool setUI, bool isServer)
@@ -97,11 +127,14 @@ public static class BootstrapPawnFactory
         out CharacterPawnComponent pawn,
         out VRHeadsetTransform hmdTfm,
         out VRControllerTransform leftTfm,
-        out VRControllerTransform rightTfm)
+        out VRControllerTransform rightTfm,
+        out SceneNode pawnRoot,
+        bool possessOnCreate = true)
     {
         var settings = RuntimeBootstrapState.Settings;
 
         SceneNode vrPlayspaceNode = rootNode.NewChild("VRPlayspaceNode");
+        pawnRoot = vrPlayspaceNode;
         var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
         characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
 
@@ -117,7 +150,7 @@ public static class BootstrapPawnFactory
         float spawnY = settings.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
         characterTfm.SetPositionAndRotation(new Vector3(0.0f, spawnY, 0.0f), Quaternion.Identity);
 
-        if (!settings.AllowEditingInVR)
+        if (possessOnCreate && !settings.AllowEditingInVR)
             characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
 
         SceneNode localRotationNode = vrPlayspaceNode.NewChild("LocalRotationNode");
@@ -199,16 +232,18 @@ public static class BootstrapPawnFactory
         }
     }
 
-    private static void CreateFlyingVRPawn(SceneNode rootNode)
+    private static SceneNode CreateFlyingVRPawn(SceneNode rootNode, out PawnComponent createdPawn, bool possessOnCreate = true)
     {
         SceneNode vrPlayspaceNode = new(rootNode) { Name = "VRPlayspaceNode" };
         _ = vrPlayspaceNode.SetTransform<Transform>();
         PawnComponent? pawn = null;
-        AddHeadsetNode(out _, out _, vrPlayspaceNode, ref pawn);
+        AddHeadsetNode(out _, out _, vrPlayspaceNode, ref pawn, possessOnCreate);
         AddHandControllerNode(out _, vrPlayspaceNode, true);
         AddHandControllerNode(out _, vrPlayspaceNode, false);
         _ = AddTrackerCollectionNode(vrPlayspaceNode);
         _ = pawn?.SceneNode?.AddComponent<VRPlayerInputSet>();
+        createdPawn = pawn ?? throw new InvalidOperationException("VR headset hierarchy did not create a pawn.");
+        return vrPlayspaceNode;
     }
 
     private static VRTrackerCollectionComponent AddTrackerCollectionNode(SceneNode vrPlayspaceNode)
@@ -221,10 +256,9 @@ public static class BootstrapPawnFactory
         out VRHeadsetTransform hmdTfm,
         out VRHeadsetComponent hmdComp,
         SceneNode parentNode,
-        ref PawnComponent? pawn)
+        ref PawnComponent? pawn,
+        bool possessOnCreate = true)
     {
-        var settings = RuntimeBootstrapState.Settings;
-
         SceneNode vrHeadsetNode = parentNode.NewChild("VRHeadsetNode");
         var listener = vrHeadsetNode.AddComponent<AudioListenerComponent>("VR HMD Listener")!;
         listener.Gain = 1.0f;
@@ -235,13 +269,12 @@ public static class BootstrapPawnFactory
         hmdTfm = vrHeadsetNode.SetTransform<VRHeadsetTransform>()!;
         hmdComp = vrHeadsetNode.AddComponent<VRHeadsetComponent>()!;
 
-        if (!settings.AllowEditingInVR)
-            AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode);
+        AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode, possessOnCreate);
 
         return vrHeadsetNode;
     }
 
-    private static void AddVRFirstPersonDesktopView(ref PawnComponent? pawn, SceneNode parentNode)
+    private static void AddVRFirstPersonDesktopView(ref PawnComponent? pawn, SceneNode parentNode, bool possessOnCreate)
     {
         SceneNode firstPersonViewNode = new(parentNode) { Name = "FirstPersonViewNode" };
         var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();
@@ -257,7 +290,15 @@ public static class BootstrapPawnFactory
         firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
         firstPersonCam.CullWithFrustum = true;
         if (pawn is null)
-            pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;
+        {
+            if (!possessOnCreate || RuntimeBootstrapState.Settings.AllowEditingInVR)
+            {
+                pawn = firstPersonViewNode.AddComponent<PawnComponent>()!;
+                pawn.CameraComponent = firstPersonCam;
+            }
+            else
+                pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;
+        }
         else
             pawn.CameraComponent = firstPersonCam;
     }
@@ -329,7 +370,13 @@ public static class BootstrapPawnFactory
         return cameraPickup;
     }
 
-    private static PawnComponent? CreateDesktopCamera(SceneNode cameraNode, bool isServer, bool flyable, bool addListener)
+    private static PawnComponent CreateDesktopCamera(
+        SceneNode cameraNode,
+        bool isServer,
+        bool flyable,
+        bool addListener,
+        bool possessOnCreate = true,
+        bool configureEditorView = true)
     {
         var settings = RuntimeBootstrapState.Settings;
 
@@ -365,11 +412,14 @@ public static class BootstrapPawnFactory
                 pawnComp.CameraComponent = cameraComponent;
         }
 
-        if (cameraNode.Parent is { } parent)
+        if (configureEditorView && cameraNode.Parent is { } parent)
             BootstrapEditorBridge.Current?.ConfigureEditorViewCamera(parent, cameraNode);
 
-        pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
-        RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
+        if (possessOnCreate)
+        {
+            pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
+            RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
+        }
         return pawnComp;
     }
 

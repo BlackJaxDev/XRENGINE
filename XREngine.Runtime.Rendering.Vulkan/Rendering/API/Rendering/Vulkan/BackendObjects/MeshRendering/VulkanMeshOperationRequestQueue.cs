@@ -37,7 +37,7 @@ internal sealed class VulkanMeshOperationRequestQueue
     private readonly EVulkanMeshRequestLane[] _lanes = new EVulkanMeshRequestLane[Capacity];
     private readonly object _gate = new();
     private readonly ThreadLocal<ThreadCaptureState> _threadCapture =
-        new(static () => new ThreadCaptureState(), trackAllValues: true);
+        new(static () => new ThreadCaptureState(createNested: true), trackAllValues: true);
     private readonly VulkanCanonicalPublicationPinSet _publishedPublicationPins =
         new(Capacity);
     private readonly VulkanCanonicalPublicationPinSet _drainedPublicationPins =
@@ -52,9 +52,12 @@ internal sealed class VulkanMeshOperationRequestQueue
     private VulkanMeshRequestLaneCapacityFailure _lastCapacityFailure;
     internal EMeshRequestScheduleResult TryEnqueue(in VulkanMeshRenderRequest request)
     {
-        ThreadCaptureState capture = _threadCapture.Value
+        ThreadCaptureState rootCapture = _threadCapture.Value
             ?? throw new InvalidOperationException(
                 "The Vulkan mesh-operation request queue capture state is unavailable.");
+        ThreadCaptureState capture = rootCapture.Nested?.Destination is not null
+            ? rootCapture.Nested
+            : rootCapture;
         if (capture.Destination is { } destination)
         {
             if (capture.Failed)
@@ -130,13 +133,15 @@ internal sealed class VulkanMeshOperationRequestQueue
     internal int CaptureTo(
         Action emitRequests,
         VulkanMeshRenderRequest[] destination,
+        out ulong captureLeaseToken,
         out VulkanMeshRequestLaneCapacityFailure capacityFailure)
     {
         ArgumentNullException.ThrowIfNull(emitRequests);
         ArgumentNullException.ThrowIfNull(destination);
+        captureLeaseToken = 0UL;
         capacityFailure = default;
 
-        ThreadCaptureState capture = BeginThreadCapture(destination);
+        ThreadCaptureState capture = BeginThreadCapture(destination, out captureLeaseToken);
         bool completed = false;
         try
         {
@@ -159,14 +164,16 @@ internal sealed class VulkanMeshOperationRequestQueue
         Func<bool> emitRequests,
         VulkanMeshRenderRequest[] destination,
         out bool producerComplete,
+        out ulong captureLeaseToken,
         out VulkanMeshRequestLaneCapacityFailure capacityFailure)
     {
         ArgumentNullException.ThrowIfNull(emitRequests);
         ArgumentNullException.ThrowIfNull(destination);
         producerComplete = false;
+        captureLeaseToken = 0UL;
         capacityFailure = default;
 
-        ThreadCaptureState capture = BeginThreadCapture(destination);
+        ThreadCaptureState capture = BeginThreadCapture(destination, out captureLeaseToken);
         bool completed = false;
         try
         {
@@ -188,20 +195,24 @@ internal sealed class VulkanMeshOperationRequestQueue
         IOpenXrEyeFrameOpEmitter emitter,
         in OpenXrEyeFrameOpEmission emission,
         VulkanMeshRenderRequest[] destination,
+        out bool producerComplete,
+        out ulong captureLeaseToken,
         out VulkanMeshRequestLaneCapacityFailure capacityFailure)
     {
         ArgumentNullException.ThrowIfNull(emitter);
         ArgumentNullException.ThrowIfNull(destination);
+        producerComplete = false;
+        captureLeaseToken = 0UL;
         capacityFailure = default;
 
-        ThreadCaptureState capture = BeginThreadCapture(destination);
+        ThreadCaptureState capture = BeginThreadCapture(destination, out captureLeaseToken);
         bool completed = false;
         try
         {
-            emitter.Emit(in emission);
+            producerComplete = emitter.TryEmit(in emission);
             capacityFailure = capture.CapacityFailure;
-            completed = !capture.Failed;
-            return completed ? capture.Count : -1;
+            completed = !capture.Failed && producerComplete;
+            return capture.Failed ? -1 : producerComplete ? capture.Count : 0;
         }
         finally
         {
@@ -210,22 +221,19 @@ internal sealed class VulkanMeshOperationRequestQueue
     }
 
     private ThreadCaptureState BeginThreadCapture(
-        VulkanMeshRenderRequest[] destination)
+        VulkanMeshRenderRequest[] destination,
+        out ulong captureLeaseToken)
     {
-        ThreadCaptureState capture = _threadCapture.Value
+        ThreadCaptureState rootCapture = _threadCapture.Value
             ?? throw new InvalidOperationException(
                 "The Vulkan mesh-operation request queue capture state is unavailable.");
-        if (capture.Destination is not null)
-        {
-            throw new InvalidOperationException(
-                "Nested Vulkan mesh-operation request captures are not supported on the same thread.");
-        }
-
-        capture.Destination = destination;
-        capture.Count = 0;
-        capture.Failed = false;
-        capture.CapacityFailure = default;
-        capture.AdvancePublicationLeaseBatch();
+        ThreadCaptureState capture = rootCapture.Destination is null
+            ? rootCapture
+            : rootCapture.Nested ?? throw new InvalidOperationException(
+                "The Vulkan nested mesh-operation request capture state is unavailable.");
+        capture.Begin(destination);
+        captureLeaseToken = (capture.LeaseBatchGeneration << 1) |
+            (ReferenceEquals(capture, rootCapture) ? 0UL : 1UL);
         return capture;
     }
 
@@ -233,17 +241,7 @@ internal sealed class VulkanMeshOperationRequestQueue
         ThreadCaptureState capture,
         bool clearCapturedRequests)
     {
-        VulkanMeshRenderRequest[]? destination = capture.Destination;
-        int count = capture.Count;
-        capture.Destination = null;
-        capture.Count = 0;
-        capture.Failed = false;
-        capture.CapacityFailure = default;
-        if (clearCapturedRequests && destination is not null && count > 0)
-        {
-            destination.AsSpan(0, count).Clear();
-            capture.ReleaseCurrentPublicationLeases();
-        }
+        capture.End(clearCapturedRequests);
     }
 
     internal bool TryDequeue(out VulkanMeshRenderRequest request)
@@ -495,18 +493,58 @@ internal sealed class VulkanMeshOperationRequestQueue
         }
 
         foreach (ThreadCaptureState capture in _threadCapture.Values)
+        {
             capture.ReleasePublicationLeases();
+            capture.Nested?.ReleasePublicationLeases();
+        }
     }
 
     /// <summary>
-    /// Releases canonical-publication pins retained by the calling thread's most
-    /// recent direct capture when that captured cohort is rolled back.
+    /// Releases bridge pins for an already-drained request cohort after the
+    /// external target's GPU submissions have settled. Published requests and
+    /// accepted frame-slot ownership remain untouched.
     /// </summary>
-    internal void ReleaseCurrentCapturePublicationLeases()
+    internal void ReleaseDrainedCanonicalPublicationLeasesAfterGpuIdle()
     {
-        ThreadCaptureState capture = _threadCapture.Value
+        lock (_gate)
+            _drainedPublicationPins.ReleaseAll();
+    }
+
+    /// <summary>
+    /// Releases thread-local capture bridges after OpenXR GPU completion. The
+    /// caller must be the render owner after eye materialization and native
+    /// workers have joined; Destination becoming null alone does not prove a
+    /// captured request has finished materialization. A capture still producing
+    /// requests keeps its pins and defers teardown.
+    /// </summary>
+    internal bool TryReleaseInactiveCapturePublicationLeasesAfterGpuIdle()
+    {
+        bool allInactive = true;
+        foreach (ThreadCaptureState capture in _threadCapture.Values)
+        {
+            allInactive &= capture.TryReleaseInactivePublicationLeases();
+            if (capture.Nested is { } nested)
+                allInactive &= nested.TryReleaseInactivePublicationLeases();
+        }
+        return allInactive;
+    }
+
+    /// <summary>
+    /// Releases pins only for the capture that produced the supplied token.
+    /// </summary>
+    internal void ReleaseCapturePublicationLeases(ulong captureLeaseToken)
+    {
+        ThreadCaptureState rootCapture = _threadCapture.Value
             ?? throw new InvalidOperationException(
                 "The Vulkan mesh-operation request queue capture state is unavailable.");
+        ThreadCaptureState capture = (captureLeaseToken & 1UL) == 0UL
+            ? rootCapture
+            : rootCapture.Nested ?? throw new InvalidOperationException(
+                "The Vulkan nested mesh-operation request capture state is unavailable.");
+        if (captureLeaseToken == 0UL ||
+            capture.LeaseBatchGeneration != (captureLeaseToken >> 1))
+            throw new InvalidOperationException(
+                "The Vulkan mesh-operation publication lease token is stale.");
         capture.ReleaseCurrentPublicationLeases();
     }
 
@@ -525,6 +563,14 @@ internal sealed class VulkanMeshOperationRequestQueue
 
     private sealed class ThreadCaptureState
     {
+        internal ThreadCaptureState(bool createNested)
+        {
+            if (createNested)
+                Nested = new ThreadCaptureState(createNested: false);
+        }
+
+        internal ThreadCaptureState? Nested { get; }
+        internal ulong LeaseBatchGeneration { get; private set; }
         private readonly object _leaseGate = new();
         internal VulkanMeshRenderRequest[]? Destination;
         internal int Count;
@@ -558,12 +604,54 @@ internal sealed class VulkanMeshOperationRequestQueue
             Failed = true;
         }
 
-        internal void AdvancePublicationLeaseBatch()
+        internal void Begin(VulkanMeshRenderRequest[] destination)
         {
             lock (_leaseGate)
             {
+                if (Destination is not null)
+                {
+                    throw new InvalidOperationException(
+                        "Nested Vulkan mesh-operation request captures are not supported on the same thread.");
+                }
+
+                Destination = destination;
+                Count = 0;
+                Failed = false;
+                CapacityFailure = default;
+                LeaseBatchGeneration++;
                 PreviousPublicationPins.ReleaseAll();
                 PublicationPins.MoveTo(PreviousPublicationPins);
+            }
+        }
+
+        internal void End(bool clearCapturedRequests)
+        {
+            lock (_leaseGate)
+            {
+                VulkanMeshRenderRequest[]? destination = Destination;
+                int count = Count;
+                Destination = null;
+                Count = 0;
+                Failed = false;
+                CapacityFailure = default;
+                if (clearCapturedRequests && destination is not null && count > 0)
+                {
+                    destination.AsSpan(0, count).Clear();
+                    PublicationPins.ReleaseAll();
+                }
+            }
+        }
+
+        internal bool TryReleaseInactivePublicationLeases()
+        {
+            lock (_leaseGate)
+            {
+                if (Destination is not null)
+                    return false;
+
+                PublicationPins.ReleaseAll();
+                PreviousPublicationPins.ReleaseAll();
+                return true;
             }
         }
 

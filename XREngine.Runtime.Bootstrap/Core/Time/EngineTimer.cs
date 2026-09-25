@@ -558,7 +558,11 @@ namespace XREngine.Timers
         /// Render-thread maintenance work is intentionally not drained here so the
         /// next frame's draw work always wins over background GPU uploads.
         /// </summary>
-        public void WaitToRender()
+        /// <param name="publicationWaitMilliseconds">
+        /// Maximum publication wait before returning to the host event pump. A timeout
+        /// leaves visibility ownership and the producer's render-completion credit unchanged.
+        /// </param>
+        public void WaitToRender(int publicationWaitMilliseconds = Timeout.Infinite)
         {
             bool reusedPreviousVisibility = false;
             while (IsRunning)
@@ -589,9 +593,10 @@ namespace XREngine.Timers
                 }
 
                 long waitStartTicks = TimeTicks();
-                if (!_visibilityGenerationGate.WaitForPublication())
-                    return;
+                bool publicationAvailable = _visibilityGenerationGate.WaitForPublication(publicationWaitMilliseconds);
                 RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
+                if (!publicationAvailable)
+                    return;
             }
 
             if (!IsRunning)

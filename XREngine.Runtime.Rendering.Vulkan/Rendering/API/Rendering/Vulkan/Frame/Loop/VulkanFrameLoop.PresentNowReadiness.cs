@@ -104,16 +104,19 @@ internal sealed partial class VulkanFrameLoop
                 return EDesktopFrameFlow.Stop;
             }
             attempt.PresentNowReadinessCompleted = true;
-            Debug.VulkanEvery(
-                $"Vulkan.PresentNow.Ready.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan][PresentNow] readiness=ready frame={0} sceneEpoch={1} " +
-                "meshRequests={2} policy={3} workClass={4} acquireHeld=false",
-                attempt.FrameNumber,
-                attempt.AcceptedSceneEpoch,
-                attempt.PresentNowMeshRequestCount,
-                attempt.ReadinessPolicy,
-                attempt.WorkClass);
+            if (VulkanFrameDiagnosticsTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.PresentNow.Ready.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan][PresentNow] readiness=ready frame={0} sceneEpoch={1} " +
+                    "meshRequests={2} policy={3} workClass={4} acquireHeld=false",
+                    attempt.FrameNumber,
+                    attempt.AcceptedSceneEpoch,
+                    attempt.PresentNowMeshRequestCount,
+                    attempt.ReadinessPolicy,
+                    attempt.WorkClass);
+            }
             return EDesktopFrameFlow.Continue;
         }
         catch (VulkanPresentNowReadinessException failure)
@@ -248,9 +251,24 @@ internal sealed partial class VulkanFrameLoop
                 requestCount,
                 allowPreparedCohort: true,
                 out string meshFailure,
+                out bool coldSliceDeferred,
                 ref watchdog,
                 sourceFrameId: attempt.FrameNumber))
         {
+            if (coldSliceDeferred)
+            {
+                CapturePresentNowAuthoredOperations(
+                    acceptedPlan,
+                    in openXrPublication);
+                acceptedPlan.ResetAuthoredOperations();
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.MeshMaterialization,
+                    "visible-mesh-cold-admission",
+                    "DesktopScene -> visible meshes -> program/buffer/descriptor",
+                    meshFailure);
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.MeshMaterialization,
                 "visible-mesh-generation",

@@ -32,4 +32,23 @@ internal sealed class VulkanResourcePublicationPort(
         string resourceName,
         out VulkanPhysicalImageGroup? group)
         => _publications.TryGetPhysicalImageGroup(generation, resourceName, out group);
+
+    /// <summary>
+    /// A texture wrapper may adopt planner storage only when the active
+    /// generation binds that exact source under the logical resource name.
+    /// Names alone are shared by desktop and stereo pipeline resources.
+    /// </summary>
+    internal bool TryGetOwnedTexturePhysicalImageGroup(
+        ResourcePlannerRuntimeGeneration generation,
+        string resourceName,
+        XRTexture source,
+        out VulkanPhysicalImageGroup? group)
+    {
+        group = null;
+        return generation.HasActiveFrameOpContext &&
+            generation.ActiveFrameOpContext.ResourceRegistry is { } registry &&
+            registry.TryGetTexture(resourceName, out XRTexture? boundSource) &&
+            ReferenceEquals(boundSource, source) &&
+            _publications.TryGetPhysicalImageGroup(generation, resourceName, out group);
+    }
 }

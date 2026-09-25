@@ -72,15 +72,21 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _framePrepared, 0);
         Volatile.Write(ref _frameSkipRender, 0);
 
-        bool destroyInstance = binding.DestroysRuntimeInstanceOnRendererTeardown || _instanceOwnedByRenderer;
+        // The enable2 owner must retain its instance until its Vulkan device and
+        // instance have been destroyed. Retire only our borrowed association here.
+        bool rendererOwnsInstance = _instanceOwnedByRenderer;
+        bool destroyInstance = binding.DestroysRuntimeInstanceOnRendererTeardown && !rendererOwnsInstance;
         if (!TearDownSessionResourcesOnOwningThread(
                 destroyInstance,
-                allowRendererOwnedInstanceInvalidation: true))
+                allowRendererOwnedInstanceInvalidation: false))
         {
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
             SetRuntimeState(OpenXrRuntimeState.SessionStopping);
             return false;
         }
+
+        if (rendererOwnsInstance)
+            DetachRendererOwnedInstanceAssociation();
 
         _rendererRecreationRequiredOwner = null;
         ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
@@ -117,13 +123,17 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
-        if (!_runtimeMonitoringEnabled)
+        // A stop request still needs a state-machine pass to retire the session.
+        if (!_runtimeMonitoringEnabled &&
+            Volatile.Read(ref _runtimeLossPending) == 0 &&
+            _runtimeState is not (OpenXrRuntimeState.SessionLost or OpenXrRuntimeState.SessionStopping))
             return;
 
         if (Window is null || Window.Renderer is null)
             return;
 
-        if (_runtimeState == OpenXrRuntimeState.Unavailable)
+        if (_runtimeState == OpenXrRuntimeState.Unavailable &&
+            (_runtimeMonitoringEnabled || Volatile.Read(ref _runtimeLossPending) == 0))
         {
             if (_rendererRecreationRequiredOwner is not null &&
                 Window.Renderer is AbstractRenderer replacementRenderer &&
@@ -698,7 +708,9 @@ public unsafe partial class OpenXRAPI
             || lossReason == OpenXrRuntimeLossReason.ShutdownRequested;
         bool sessionScopedLoss = IsSessionScopedLoss(lossReason) ||
             lossReason == OpenXrRuntimeLossReason.SessionExiting;
-        bool destroyInstance = stopMonitoring
+        // A user-requested stop keeps the instance paired with its renderer so
+        // the same Vulkan device can start another session without recreation.
+        bool destroyInstance = lossReason == OpenXrRuntimeLossReason.SessionExiting
             || lossReason == OpenXrRuntimeLossReason.InstanceLostError
             || lossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
 
@@ -716,8 +728,7 @@ public unsafe partial class OpenXRAPI
 
         if (!teardownCompleted)
         {
-            _pendingStopRuntimeMonitoringAfterSessionTeardown |=
-                stopMonitoring && sessionScopedLoss;
+            _pendingStopRuntimeMonitoringAfterSessionTeardown |= stopMonitoring;
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
             _runtimeLossReason = OpenXrRuntimeLossReason.None;
             SetRuntimeState(OpenXrRuntimeState.SessionStopping);
@@ -970,6 +981,12 @@ public unsafe partial class OpenXRAPI
 
         destroyInstance |= _pendingDestroyInstance;
         allowRendererOwnedInstanceInvalidation |= _pendingRendererOwnedInstanceInvalidation;
+        // An in-flight CollectVisible or SwapBuffers can publish another pinned
+        // eye package after teardown starts. Close admission and retry without
+        // blocking the render thread until those callbacks have returned.
+        if (!CloseOpenXrEyePublicationAdmission())
+            return false;
+
         if (_deferredOpenGlInit is not null && Window is not null)
         {
             Window.RenderViewportsCallback -= _deferredOpenGlInit;
@@ -1008,6 +1025,8 @@ public unsafe partial class OpenXRAPI
             Debug.LogWarning("[OpenXR] Deferred runtime teardown because Vulkan swapchain retirement is still pending.");
             return false;
         }
+
+        CancelOpenXrEyeFramePackages();
 
         DestroyInput();
 

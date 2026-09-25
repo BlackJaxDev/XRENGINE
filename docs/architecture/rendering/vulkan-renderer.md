@@ -226,6 +226,14 @@ From `Validation.cs`:
 - Registers a `DebugUtilsMessengerEXT` with a callback that routes Vulkan validation messages through the engine's debug logging system
 - Filters by severity (verbose, info, warning, error)
 
+Vulkan messages appear in the Console's **Vulkan** tab and `log_vulkan.log`.
+Routine `[Vulkan][FrameTree]` and `[Vulkan][PresentNow] readiness=ready` messages
+require `XRE_VULKAN_RECORDING_DIAG`, `XRE_VK_TRACE_DRAW`, or
+`XRE_VK_TRACE_SWAPDRAW`. Without those diagnostic flags, frame telemetry still
+publishes and warnings/errors remain visible. Detached ImGui windows are shown
+only on their first reveal; rendering an already visible Console does not
+reissue a native show request or reactivate it over another application.
+
 ### Surface Creation
 
 Surface creation is a target-driver operation. Desktop WSI uses the surface
@@ -830,6 +838,15 @@ Metadata:      Build/Cache/Vulkan/ShaderArtifacts/{artifactIdentity}.spv.json
 - Metadata carries a schema version and runtime/compiler fingerprint so stale, corrupt, or incompatible entries are deleted instead of reused. The fingerprint includes the Vulkan 1.4 / SPIR-V 1.6 target, shader ABI, managed Shaderc assembly, and exact native Shaderc binary identity.
 - Cold compile misses write `.spv` payloads asynchronously, similar to the OpenGL binary shader cache pattern.
 - For `XRMeshRenderer.GenerateAsync` renderers, CPU shader preparation and shaderc compilation run on a worker task. Command-buffer recording sees the renderer as pending until the worker artifact is ready and the device-thread module/layout work completes.
+
+Desktop PresentNow mesh admission limits cold preparation to approximately 4 ms
+per attempt, plus any single noninterruptible preparation call. Completed
+preparations remain cached and a resume cursor advances the unfinished cohort on
+later frames. Pending asynchronous work returns a retry before swapchain acquire;
+partial scene operations are never submitted. Warm requests do not consume the
+cold-work allowance. A persistent no-progress watchdog reports stalled requests
+instead of retrying indefinitely. This budget does not bound every other stage
+of scene publication or command recording.
 
 Set `XRE_VULKAN_VALIDATE_SPIRV=1` to validate generated and cached modules with
 `spirv-val --target-env vulkan1.4`; a missing validator fails the compile or cache

@@ -13,6 +13,8 @@ public static partial class EditorImGuiUI
     private static float _snapTranslationValue = 1.0f;
     private static float _snapRotationValue = 15.0f;
     private static float _snapScaleValue = 0.1f;
+    private static bool _openXrRuntimePromptRequested;
+    private const string OpenXrRuntimePopupName = "Choose OpenXR runtime##EditorOpenXrRuntime";
     
     private const float ToolbarButtonSize = 26f;
     private const float ToolbarHeight = 34f;
@@ -71,10 +73,13 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(0f, 0f);
             ImGui.SetCursorPosX(targetX);
             DrawPlayModeButtons();
+            ImGui.SameLine(0f, ToolbarSectionSpacing);
+            DrawOpenXrToggle();
         }
         ImGui.End();
         
         ImGui.PopStyleVar(3);
+        DrawOpenXrRuntimePrompt();
     }
 
     /// <summary>
@@ -298,6 +303,58 @@ public static partial class EditorImGuiUI
             ImGui.TextColored(stateColor, stateText);
         
         ImGui.EndGroup();
+    }
+
+    private static void DrawOpenXrToggle()
+    {
+        bool requested = EditorOpenXrPawnSwitcher.IsRequested;
+        ImGui.BeginDisabled(!EditorOpenXrPawnSwitcher.CanToggle);
+        if (ImGui.Checkbox("OpenXR", ref requested))
+        {
+            if (requested)
+                _openXrRuntimePromptRequested = true;
+            else
+                EditorOpenXrPawnSwitcher.TrySetEnabled(false);
+        }
+        ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(EditorOpenXrPawnSwitcher.LastError ?? EditorOpenXrPawnSwitcher.Status);
+
+        ImGui.SameLine(0f, ToolbarSpacing);
+        ImGui.TextDisabled(EditorOpenXrPawnSwitcher.Status);
+    }
+
+    private static void DrawOpenXrRuntimePrompt()
+    {
+        if (_openXrRuntimePromptRequested)
+        {
+            ImGui.OpenPopup(OpenXrRuntimePopupName);
+            _openXrRuntimePromptRequested = false;
+        }
+
+        ImGui.SetNextWindowSize(new Vector2(300f, 0f), ImGuiCond.Appearing);
+        bool open = true;
+        if (!ImGui.BeginPopupModal(OpenXrRuntimePopupName, ref open, ImGuiWindowFlags.AlwaysAutoResize))
+            return;
+
+        ImGui.TextWrapped("Choose the OpenXR runtime for this VR session.");
+        if (ImGui.Button("Monado (testing)"))
+        {
+            EditorOpenXrPawnSwitcher.TrySetEnabled(true, EditorOpenXrRuntimeChoice.Monado);
+            ImGui.CloseCurrentPopup();
+        }
+
+        if (ImGui.Button("SteamVR (headset)"))
+        {
+            EditorOpenXrPawnSwitcher.TrySetEnabled(true, EditorOpenXrRuntimeChoice.SteamVR);
+            ImGui.CloseCurrentPopup();
+        }
+
+        if (ImGui.Button("Cancel"))
+            ImGui.CloseCurrentPopup();
+
+        ImGui.EndPopup();
     }
 
     private static float GetPlayControlsEstimatedWidth()

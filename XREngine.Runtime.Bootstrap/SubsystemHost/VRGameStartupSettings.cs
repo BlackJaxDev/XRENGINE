@@ -11,6 +11,7 @@ namespace XREngine
         private (Environment.SpecialFolder folder, string relativePath)[] _gameSearchPaths = [];
         private string _gameName = "XREngine Game";
         private EVRRuntime _vrRuntime = EVRRuntime.Auto;
+        private bool _startVrOnLaunch = true;
         private EVrViewRenderMode _vrViewRenderMode = EVrViewRenderMode.SequentialViews;
         private bool _enableOpenXrVulkanParallelRendering = true;
 
@@ -57,6 +58,12 @@ namespace XREngine
         {
             get => _vrRuntime;
             set => SetField(ref _vrRuntime, value);
+        }
+
+        public bool StartVrOnLaunch
+        {
+            get => _startVrOnLaunch;
+            set => SetField(ref _startVrOnLaunch, value);
         }
 
         public EVrViewRenderMode VrViewRenderMode

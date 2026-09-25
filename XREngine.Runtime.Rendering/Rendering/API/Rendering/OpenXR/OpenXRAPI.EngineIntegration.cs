@@ -11,6 +11,9 @@ public unsafe partial class OpenXRAPI
     void IOpenXrApplicationLifecycle.EnableRuntimeMonitoring()
         => EnableRuntimeMonitoring();
 
+    void IOpenXrApplicationLifecycle.DisableRuntimeMonitoring()
+        => DisableRuntimeMonitoring();
+
     void IOpenXrApplicationLifecycle.UpdateRuntimeState()
         => UpdateRuntimeState();
 

@@ -15,6 +15,7 @@ using XREngine.Core.Attributes;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Diagnostics;
 using XREngine.Fbx;
 using XREngine.Gltf;
 using XREngine.Rendering;
@@ -350,7 +351,7 @@ namespace XREngine
                     registerStreamingPlaceholder: false));
         }
 
-        private readonly ConcurrentDictionary<string, bool> _missingTexturePathWarnings = new();
+        private readonly ConcurrentDictionary<string, bool> _missingTexturePathWarnings = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, bool> _invalidTextureSearchPathWarnings = new(StringComparer.OrdinalIgnoreCase);
 
         private string? TryResolveTextureFromConfiguredSearchPaths(string modelFilePath, string fileName)
@@ -1899,6 +1900,7 @@ namespace XREngine
 
             try
             {
+                _missingTexturePathWarnings.Clear();
                 LastBackendResolution = null;
                 LastBackendSelection = null;
                 LastProducerReport = null;
@@ -2161,7 +2163,24 @@ namespace XREngine
                     ClearPublishedSceneImportMetadata();
                 }
                 importedTextureStreamingScope?.Dispose();
+                PublishMissingTextureDiagnostics();
             }
+        }
+
+        /// <summary>
+        /// Publishes unresolved texture references after model processing has finished,
+        /// so the editor opens its missing-assets panel with the complete import result.
+        /// </summary>
+        private void PublishMissingTextureDiagnostics()
+        {
+            if (_missingTexturePathWarnings.IsEmpty)
+                return;
+
+            string context = $"Model import: {SourceFilePath}";
+            AssetDiagnostics.RecordMissingAssets(_missingTexturePathWarnings.Keys, nameof(XRTexture2D), context);
+
+            LogImportExpectedWarning(SourceFilePath,
+                $"[ModelAssetImporter] Import of '{SourceFilePath}' reported {_missingTexturePathWarnings.Count} unresolved texture reference(s). See Missing Assets for the complete list.");
         }
 
         private void PublishSceneImportMetadata(SceneNode rootNode, ModelImportProducerReport report)

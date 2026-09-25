@@ -16,6 +16,12 @@ public static class FbxTrace
 {
     public static Action<string>? LogSink { get; set; }
 
+    /// <summary>
+    /// Receives warnings and errors independently of optional trace verbosity.
+    /// Hosts use this to keep import problems visible when progress tracing is off.
+    /// </summary>
+    public static Action<FbxLogVerbosity, string>? DiagnosticSink { get; set; }
+
     public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
 
     public static FbxLogVerbosity Verbosity { get; set; } = ReadVerbosityFromEnvironment();
@@ -55,7 +61,7 @@ public static class FbxTrace
         ArgumentNullException.ThrowIfNull(action);
 
         bool logProgress = IsEnabled(verbosity);
-        bool logErrors = IsEnabled(FbxLogVerbosity.Errors);
+        bool logErrors = IsEnabled(FbxLogVerbosity.Errors) || DiagnosticSink is not null;
         Stopwatch? stopwatch = logProgress || logErrors ? Stopwatch.StartNew() : null;
 
         if (logProgress)
@@ -86,7 +92,7 @@ public static class FbxTrace
         ArgumentNullException.ThrowIfNull(action);
 
         bool logProgress = IsEnabled(verbosity);
-        bool logErrors = IsEnabled(FbxLogVerbosity.Errors);
+        bool logErrors = IsEnabled(FbxLogVerbosity.Errors) || DiagnosticSink is not null;
         Stopwatch? stopwatch = logProgress || logErrors ? Stopwatch.StartNew() : null;
 
         if (logProgress)
@@ -111,12 +117,20 @@ public static class FbxTrace
 
     private static void Write(FbxLogVerbosity verbosity, string component, string message)
     {
-        if (!IsEnabled(verbosity))
+        bool isDiagnostic = verbosity is FbxLogVerbosity.Errors or FbxLogVerbosity.Warnings
+            && DiagnosticSink is not null;
+        if (!isDiagnostic && !IsEnabled(verbosity))
             return;
 
         string line = $"[FBX][{verbosity}][{component}] {message}";
         try
         {
+            if (isDiagnostic)
+            {
+                DiagnosticSink!(verbosity, line);
+                return;
+            }
+
             if (LogSink is not null)
             {
                 LogSink(line);

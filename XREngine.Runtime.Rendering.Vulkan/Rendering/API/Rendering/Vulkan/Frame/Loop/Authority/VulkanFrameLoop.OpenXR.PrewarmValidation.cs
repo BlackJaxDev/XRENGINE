@@ -128,7 +128,10 @@ internal sealed partial class VulkanFrameLoop
         finally
         {
             if (capturedOps is not null)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(capturedOps);
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+            }
             OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
     }
@@ -245,7 +248,10 @@ internal sealed partial class VulkanFrameLoop
         finally
         {
             if (capturedOps is not null)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(capturedOps);
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+            }
             OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
     }

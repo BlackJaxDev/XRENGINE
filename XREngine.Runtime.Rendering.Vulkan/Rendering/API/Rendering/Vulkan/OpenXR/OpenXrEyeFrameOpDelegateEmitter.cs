@@ -6,5 +6,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class OpenXrEyeFrameOpDelegateEmitter(Action emit) : IOpenXrEyeFrameOpEmitter
 {
-    public void Emit(in OpenXrEyeFrameOpEmission emission) => emit();
+    public bool TryEmit(in OpenXrEyeFrameOpEmission emission)
+    {
+        emit();
+        return true;
+    }
 }

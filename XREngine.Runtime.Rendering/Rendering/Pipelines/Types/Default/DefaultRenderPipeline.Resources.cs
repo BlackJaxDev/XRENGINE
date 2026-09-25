@@ -443,7 +443,7 @@ public partial class DefaultRenderPipeline
         uint brdfLutSize = ResolveBrdfLutSize(builder.Profile);
         Texture(builder, BRDFTextureName, RenderResourceSizePolicy.Absolute(brdfLutSize, brdfLutSize), PrecomputedColorTexture,
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
-            CreateBRDFTexture)
+            () => CreateBRDFTexture(brdfLutSize))
             .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: false, RequireImmutableStorage: false))
             .Add();
     }

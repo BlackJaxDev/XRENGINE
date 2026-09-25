@@ -13,7 +13,7 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
 
         AbstractRenderAPIObject?[] wrappers = new AbstractRenderAPIObject?[windows.Length];
         for (int index = 0; index < windows.Length; index++)
-            wrappers[index] = windows[index].Renderer.GetOrCreateAPIRenderObject(renderObject);
+            wrappers[index] = windows[index].Renderer.TryPublishAPIRenderObject(renderObject);
         return wrappers;
     }
 
@@ -35,7 +35,7 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
         for (int index = 0; index < renderObjects.Count; index++)
         {
             GenericRenderObject renderObject = renderObjects[index];
-            AbstractRenderAPIObject? wrapper = renderer.GetOrCreateAPIRenderObject(renderObject);
+            AbstractRenderAPIObject? wrapper = renderer.TryPublishAPIRenderObject(renderObject);
             if (wrapper is null)
                 continue;
 

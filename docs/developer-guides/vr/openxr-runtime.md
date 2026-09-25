@@ -27,6 +27,50 @@ Use these modes deliberately; they are not interchangeable.
 
 Do not use `VR.Mode=OpenXR` as a silent OpenVR fallback. If the active runtime is wrong, the loader is missing, SteamVR is unavailable, or the graphics extension is absent, the launch should fail with actionable diagnostics.
 
+In the ImGui Unit Testing editor, `VR.Mode=Desktop` with
+`VR.AllowDesktopEditing=true` starts on the desktop pawn. Enabling the toolbar
+**OpenXR** checkbox asks for **Monado (testing)** or **SteamVR (headset)**;
+Cancel leaves desktop control unchanged. The choice resolves an explicit runtime
+manifest for this process without changing the Windows active-runtime registry.
+Pawn
+possession follows the session state; startup and teardown can take several
+frames. The toggle creates a VR rig on demand and destroys that owned rig after
+the session stops. It preserves and restores the previously controlled desktop
+pawn, including a character pawn; if that pawn is unavailable it creates an editor
+camera pawn. A world does not need prebuilt VR or desktop pawns. Existing authored
+VR rigs may be reused and are not destroyed by the toggle.
+Temporary rigs belong to the hidden editor scene. For a new runtime choice, the
+editor retires the old renderer and its OpenXR instance, applies the selected
+manifest, then recreates the renderer before starting the session. This preserves
+the world and desktop pawn. Failed renderer initialization restores the previous
+configuration. Missing runtimes report an error; there is no silent runtime fallback.
+
+Vulkan session creation waits for a valid device, completion of the editor startup
+presentation, and a boundary outside desktop frame recording/submission. It does
+not wait for scene texture imports, decode queues, upload queues, command-buffer
+quiet periods, or a minimum desktop frame count. The graphics transition takes
+exclusive device queue admission and waits for submitted GPU work before and after
+session/swapchain creation. Actual runtime or allocation failures remain visible.
+Eye resource preparation retains its separate readiness checks.
+An eye whose resource generation or captured frame package is not ready defers
+that eye preparation and discards partial captured work. This ordinary readiness
+result must not trigger whole-window render-error backoff; genuine invariant and
+capacity failures remain errors.
+
+Eye-specific pipeline restrictions apply only to the current external-swapchain
+viewport. Keeping an OpenXR runtime prepared must not change desktop passes.
+BRDF lookup texture factories use the size captured from their resource-generation
+profile, so changing runtime state between declaration and creation cannot change
+the texture extent.
+
+To investigate texture progress, sample `get_texture_streaming_summary` more than
+once. `active_gpu_upload_count` includes outstanding requests awaiting preparation;
+it does not mean that many GPU transfers are executing. Compare backend completed
+chunks/bytes, final publications, failures, and pending preparation/transfer counts.
+A temporarily idle worker between bounded batches is expected. A persistent queue
+with unchanged completion counters needs investigation; queue depth alone cannot
+establish a stall or scene complexity.
+
 ## SteamVR OpenXR Hardware Lane
 
 The SteamVR lane is separate from the Monado no-HMD lane. It exercises the real OpenXR API path against SteamVR hardware and writes diagnostics under `Build/_AgentValidation/<run>/`.

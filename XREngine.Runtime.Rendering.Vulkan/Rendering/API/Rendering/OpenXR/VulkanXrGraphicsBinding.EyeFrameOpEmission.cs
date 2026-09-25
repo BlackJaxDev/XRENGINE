@@ -42,20 +42,16 @@ internal sealed partial class VulkanXrGraphicsBinding : IOpenXrEyeFrameOpEmitter
 
     // The emitter runs only during owner-thread preparation. Immutable parallel
     // command inputs contain the resulting operation stream, never this binding.
-    void IOpenXrEyeFrameOpEmitter.Emit(in OpenXrEyeFrameOpEmission emission)
+    bool IOpenXrEyeFrameOpEmitter.TryEmit(in OpenXrEyeFrameOpEmission emission)
     {
         XRViewport viewport = GetOpenXrEyeViewport(emission.ViewIndex)
             ?? throw new InvalidOperationException("OpenXR direct eye preparation requires a viewport.");
         XRCamera camera = GetOpenXrEyeCamera(emission.ViewIndex)
             ?? throw new InvalidOperationException("OpenXR direct eye preparation requires a camera.");
         ApplyOpenXrEyePoseForRenderThread(emission.ViewIndex);
-        if (!viewport.TryRenderOpenXrFramePackage(
-                _openXrFrameWorld,
-                camera,
-                emission.PackageAuthority))
-        {
-            throw new InvalidOperationException(
-                "OpenXR direct eye preparation rejected its captured backend-ready frame-package authority.");
-        }
+        return viewport.TryRenderOpenXrFramePackage(
+            _openXrFrameWorld,
+            camera,
+            emission.PackageAuthority);
     }
 }

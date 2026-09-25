@@ -225,7 +225,10 @@ public sealed partial class AdvancedGpuScenePublisher
                 return false;
             }
 
-            if (!TryValidateCanonicalGeometry(
+            int registrationIndex = FindRegistration(source, primitiveIndex);
+            bool geometryAlreadyValidated = registrationIndex >= 0 &&
+                HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan);
+            if (!geometryAlreadyValidated && !TryValidateCanonicalGeometry(
                     mesh,
                     out EAdvancedCanonicalCompatibilityReason geometryReason))
             {
@@ -247,7 +250,6 @@ public sealed partial class AdvancedGpuScenePublisher
                 continue;
             }
 
-            int registrationIndex = FindRegistration(source, primitiveIndex);
             plan.Supported = true;
             plan.CompatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             plan.RegistrationIndex = registrationIndex;

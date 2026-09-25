@@ -652,6 +652,21 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private void OpenXrCollectVisible()
     {
+        if (!TryEnterOpenXrEyePublicationCallback())
+            return;
+
+        try
+        {
+            OpenXrCollectVisibleCore();
+        }
+        finally
+        {
+            LeaveOpenXrEyePublicationCallback();
+        }
+    }
+
+    private void OpenXrCollectVisibleCore()
+    {
         // Runs on the engine's CollectVisible thread.
         // Consumes the located views and builds per-eye visibility buffers.
         if (!_sessionBegun || IsOpenXrRuntimeLossPending())
@@ -1532,6 +1547,21 @@ public unsafe partial class OpenXRAPI
     /// Publishes the per-eye buffers to the render thread (sync point between CollectVisible and rendering).
     /// </summary>
     private void OpenXrSwapBuffers()
+    {
+        if (!TryEnterOpenXrEyePublicationCallback())
+            return;
+
+        try
+        {
+            OpenXrSwapBuffersCore();
+        }
+        finally
+        {
+            LeaveOpenXrEyePublicationCallback();
+        }
+    }
+
+    private void OpenXrSwapBuffersCore()
     {
         // Runs on the engine's CollectVisible thread, after the previous render completes.
         // Acts as the sync point between CollectVisible (buffer generation) and the render thread.

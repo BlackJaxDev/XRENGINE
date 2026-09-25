@@ -15,6 +15,7 @@ The implementation lives in two layers:
 - Assimp remains the default path for non-FBX model formats that do not have their own native importer.
 - `FbxPivotPolicy` and `CollapseGeneratedFbxHelperNodes` are the FBX-specific transform controls. They replace the older Assimp-shaped pivot/helper-node settings, while hidden YAML aliases keep old import settings readable.
 - `NativeFbxMeshBuildMaxDegreeOfParallelism` caps native FBX mesh-build workers. `0` uses the importer's editor-friendly automatic cap.
+- Native mesh-build workers also pack managed deformation inputs before scene attachment. A weak mesh-keyed cache reuses those immutable payloads across renderer recreation; source revision/reference changes invalidate reuse. This trades retained CPU memory for shorter render-thread preparation. Skinning-buffer reads and GPU publication still run on the render owner. Other import and binary-cache paths retain bounded incremental preparation.
 - `ProcessMeshesAsynchronously`, `GenerateMeshRenderersAsync`, `SplitSubmeshesIntoSeparateModelComponents`, `GenerateSceneNodesPerSubmesh`, `SeparateMeshIslands`, and `BatchSubmeshAddsDuringAsyncImport` continue to apply through the normal model import settings.
 
 For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor, tests, or tools:
@@ -23,7 +24,18 @@ For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor
 - `XRE_FBX_LOG=verbose` or `XRE_FBX_LOG=1` logs detailed per-stage and per-asset traces.
 - `XRE_FBX_LOG=warn` or `XRE_FBX_LOG=error` limits output to problems.
 
-Enabled trace lines use the engine `Assets` log category, so they appear in the editor console's `Assets` tab and in `Build/Logs/.../log_assets.log` when file logging is enabled.
+Engine-hosted FBX imports always send warnings and errors to the Console's
+`Meshes` tab and `log_meshes.log`, including source vertices without bone weights.
+`XRE_FBX_LOG` and `FbxLogVerbosity` control optional trace detail; disabling traces
+does not hide import problems. Standalone FBX tools can install
+`FbxTrace.DiagnosticSink` for the same behavior.
+
+Unresolved model texture references are collected during import and added to
+Missing Assets when processing finishes, with the source model in their context.
+The editor opens the panel then; a summary warning in `Meshes` links the import
+to the list. Missing textures continue using the existing placeholder behavior.
+
+Enabled trace lines also use the engine `Meshes` category and `log_meshes.log`.
 
 ## Supported V1 Scope
 
@@ -119,9 +131,28 @@ The semantic layer sits above raw nodes and properties. It builds typed views fo
 
 Transform import is native FBX behavior rather than inherited Assimp behavior. The importer handles axis system, unit scale, geometric transforms, pivots, pre/post rotations, bind-pose-related transforms, and helper-node policy through explicit options.
 
+Scene construction follows the parent/child graph rather than FBX object order.
+Parents and their world bind matrices are initialized before children, including
+files that declare a mesh or bone before its parent.
+
 The engine-neutral intermediate representation includes nodes, meshes, materials, textures, skins, clusters, blendshapes, animation stacks, layers, curve nodes, and animation curves. `ModelAssetImporter` then maps that representation into the normal engine scene assembly path so async publication, submesh splitting, material remaps, texture remaps, and asset externalization continue to use the existing workflow.
 
 Skin clusters attach directly to imported `SceneNode` transforms. Per-control-point weights are normalized before `XRMesh` skinning buffers are rebuilt. Blendshape channel deltas are converted into absolute per-vertex targets in engine space, and default deform percentages become normalized `ModelComponent` blendshape weights.
+
+The serialized cluster `Transform` is the mesh-to-bone inverse bind matrix;
+`TransformLink` is the bone's bind world matrix. This differs from the FBX SDK's
+global-space `GetTransformMatrix` interface. Each cluster retains its own inverse
+bind, without another inverse `TransformLink` multiplication. Axis and unit
+conversion are applied through the imported content hierarchy once. Missing
+cluster transforms use the imported mesh bind world and the authored linked-bone
+bind world, or the imported bone bind world when no usable authored link exists.
+Unweighted control points inside a skinned mesh receive a rigid mesh-node
+influence in the authored mesh bind frame. This preserves their scale and
+orientation instead of letting the shader emit unconverted FBX coordinates.
+Native FBX producer version 5 invalidates cached output from the earlier hierarchy
+and skin-bind interpretation. See the
+[avatar transform investigation](../../work/investigations/asset-import/native-fbx-avatar-transforms-2026-09-24.md)
+for runtime evidence.
 
 Animation stacks import as generic `AnimationClip`s attached to the imported root node. Translation and scale stay as scalar property curves. Blendshape `DeformPercent` curves normalize to `0..1`. Euler rotation curves are baked into quaternion component tracks at the union of source key timestamps.
 

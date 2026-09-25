@@ -45,9 +45,21 @@ public unsafe partial class OpenXRAPI
         {
             if (Api is null)
                 return false;
-            Result result = Api.DestroyInstance(_instance);
+            Result result;
+            try
+            {
+                result = Api.DestroyInstance(_instance);
+            }
+            catch (Exception ex)
+            {
+                MarkRuntimeConfigurationChangeUnsafe(
+                    $"OpenXR instance destruction threw {ex.GetType().Name}: {ex.Message}");
+                throw;
+            }
             if (result != Result.Success)
             {
+                MarkRuntimeConfigurationChangeUnsafe(
+                    $"OpenXR instance destruction returned {result}.");
                 Debug.VulkanWarning("[OpenXR] xrDestroyInstance deferred after failure: {0}", result);
                 return false;
             }
@@ -227,6 +239,8 @@ public unsafe partial class OpenXRAPI
             $"Renderer={renderer}; Extensions=[{string.Join(", ", droppedOptional)}]");
     }
 
+    private static int _steamVrLaunchPending;
+
     private static void EnsureSteamVrRunningIfActiveRuntime()
     {
         if (!OperatingSystem.IsWindows())
@@ -247,11 +261,23 @@ public unsafe partial class OpenXRAPI
         if (IsSteamVrRunning())
             return;
 
-        if (TryLaunchSteamVrFromRuntimeJson(activeRuntime))
+        if (Interlocked.CompareExchange(ref _steamVrLaunchPending, 1, 0) != 0)
+            return;
+
+        // Runtime probes already retry. Service startup must never sleep on the
+        // render thread while those probes wait for SteamVR to become available.
+        _ = System.Threading.Tasks.Task.Run(() =>
         {
-            // Give SteamVR a moment to spin up before instance creation.
-            WaitForSteamVrRunning(TimeSpan.FromSeconds(10));
-        }
+            try
+            {
+                if (TryLaunchSteamVrFromRuntimeJson(activeRuntime))
+                    WaitForSteamVrRunning(TimeSpan.FromSeconds(10));
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _steamVrLaunchPending, 0);
+            }
+        });
     }
 
     private static bool IsSteamVrRuntimePath(string runtimePath)

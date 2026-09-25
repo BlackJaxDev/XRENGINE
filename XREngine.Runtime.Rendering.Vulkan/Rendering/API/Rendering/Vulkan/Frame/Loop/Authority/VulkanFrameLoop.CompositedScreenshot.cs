@@ -33,7 +33,9 @@ internal sealed partial class VulkanFrameLoop
         CompletePendingCompositedScreenshotCopy();
         if (_compositedScreenshots is not { Count: > 0 })
             return;
-        if (!attempt.Submitted || attempt.GraphicsSignalValue == 0 ||
+        // A recovery submission can present retained desktop content. Its accepted
+        // timeline signal provides the same readback boundary as a normal frame.
+        if ((!attempt.Submitted && !attempt.RecoverySubmissionAccepted) || attempt.GraphicsSignalValue == 0 ||
             OutputRuntime.Desktop.Images is not { } images || attempt.ImageIndex >= images.Length)
         {
             FailPendingCompositedScreenshots("No accepted desktop submission is available for window capture.");

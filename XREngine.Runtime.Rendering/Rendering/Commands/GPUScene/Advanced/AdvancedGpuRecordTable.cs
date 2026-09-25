@@ -63,6 +63,14 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
     public uint PhysicalHighWater => _physicalHighWater;
 
+    internal uint RetiredCount => _retiredSlotCount;
+
+    internal int AvailableAdditions => checked((int)Capacity) - checked((int)_count) - checked((int)_retiredSlotCount);
+
+    internal int AvailablePublicationDeltas => _publicationDeltas.Length - _publicationDeltaCount;
+
+    internal int AvailableRemaps => _publishedRemaps.Length - _publishedRemapCount;
+
     public bool IsPacked => _isPacked;
 
     public ulong PublishedRemapVersion => _publishedRemapVersion;
@@ -324,12 +332,14 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
            FindContiguousFreeDenseRange(addCount) != AdvancedGpuHandleRemap.InvalidDenseIndex;
 
     /// <summary>
-    /// Preflights several future contiguous groups by reserving a contiguous
-    /// suffix. It intentionally does not depend on holes which may be pinned
-    /// by an in-flight publication when the transaction is applied.
+    /// Preflights several future contiguous groups against the same physical
+    /// occupancy used by <see cref="TryAddContiguous"/>. One free run for all
+    /// added rows guarantees ordered first-fit group insertion can complete;
+    /// retired rows stay occupied until reclamation makes them reusable.
     /// </summary>
-    internal bool CanReserveContiguousAppend(int rowCount)
-        => rowCount >= 0 && (uint)rowCount <= Capacity - _physicalHighWater;
+    internal bool CanReserveContiguousGroups(int rowCount)
+        => rowCount >= 0 &&
+           (rowCount == 0 || FindContiguousFreeDenseRange(rowCount) != AdvancedGpuHandleRemap.InvalidDenseIndex);
 
     private uint FindContiguousFreeDenseRange(int count)
     {

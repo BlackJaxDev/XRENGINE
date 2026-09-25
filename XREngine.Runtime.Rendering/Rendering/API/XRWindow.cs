@@ -1905,21 +1905,26 @@ namespace XREngine.Rendering
         }
 
         internal bool TryAttachReplacementRenderer(string reason, out string? failureReason)
+            => TryAttachReplacementRenderer(reason, out failureReason, out _);
+
+        /// <summary>
+        /// Reports whether a failed candidate was completely retired. Configuration rollback
+        /// must not change native loader settings while an attempted candidate remains alive.
+        /// </summary>
+        internal bool TryAttachReplacementRenderer(
+            string reason,
+            out string? failureReason,
+            out bool failedCandidateCleanedUp)
         {
             failureReason = null;
+            failedCandidateCleanedUp = true;
             bool attached = false;
+            AbstractRenderer? replacement = null;
+            AbstractRenderer previous = _renderer;
             try
             {
-                AbstractRenderer replacement = CreateRendererForCurrentWindow(reason);
-                try
-                {
-                    replacement.Initialize();
-                }
-                catch
-                {
-                    DestroyRenderer(replacement, $"failed initialization: {reason}", waitForGpu: false);
-                    throw;
-                }
+                replacement = CreateRendererForCurrentWindow(reason);
+                replacement.Initialize();
 
                 _renderer = replacement;
                 _rendererInitialized = true;
@@ -1934,6 +1939,27 @@ namespace XREngine.Rendering
             {
                 _lastRenderException = ex;
                 failureReason = ex.ToString();
+                if (replacement is not null)
+                {
+                    try
+                    {
+                        failedCandidateCleanedUp = DestroyRenderer(
+                            replacement, $"failed replacement attachment: {reason}", waitForGpu: true);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        failedCandidateCleanedUp = false;
+                        failureReason += $"{Environment.NewLine}Candidate cleanup: {cleanupException}";
+                    }
+
+                    if (failedCandidateCleanedUp)
+                        _renderer = previous;
+                    else
+                    {
+                        _renderer = replacement;
+                        failureReason += $"{Environment.NewLine}Candidate renderer cleanup did not complete.";
+                    }
+                }
                 return false;
             }
             finally

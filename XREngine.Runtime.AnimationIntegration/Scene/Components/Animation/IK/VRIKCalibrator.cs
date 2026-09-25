@@ -3,7 +3,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using Settings = XREngine.Components.Animation.VRIKCalibrationSettings;
+using CalibrationSettings = XREngine.Components.Animation.VRIKCalibrationSettings;
 using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Components.Animation
@@ -73,7 +73,7 @@ namespace XREngine.Components.Animation
         //}
 
         /// <summary>
-        /// Calibrates VRIK to the specified trackers using the VRIKTrackerCalibrator.Settings.
+        /// Calibrates VRIK to the specified trackers using shared runtime calibration settings.
         /// </summary>
         /// <param name="ik">Reference to the VRIK component.</param>
         /// <param name="settings">Calibration settings.</param>
@@ -85,7 +85,7 @@ namespace XREngine.Components.Animation
 		/// <param name="rightFootTracker">(Optional) A tracker placed anywhere on the ankle or toes of the player's right leg.</param>
         public static CalibrationData? Calibrate(
             VRIKSolverComponent ik,
-            Settings settings,
+            CalibrationSettings settings,
             TransformBase? headTracker,
             TransformBase? bodyTracker = null,
             TransformBase? leftHandTracker = null,
@@ -273,7 +273,7 @@ namespace XREngine.Components.Animation
             return headTarget;
         }
 
-        private static void CalibrateScale(Settings settings, Transform root, Transform head, Transform? headTarget)
+        private static void CalibrateScale(CalibrationSettings settings, Transform root, Transform head, Transform? headTarget)
         {
             if (headTarget is null)
             {
@@ -287,7 +287,7 @@ namespace XREngine.Components.Animation
 
         private static void CalibrateHips(
             VRIKSolverComponent ik,
-            Settings settings,
+            CalibrationSettings settings,
             TransformBase? hipTracker,
             TransformBase? leftFootTracker,
             TransformBase? rightFootTracker,
@@ -329,7 +329,7 @@ namespace XREngine.Components.Animation
         }
 
         private static void CalibrateLeg(
-            Settings settings,
+            CalibrationSettings settings,
             TransformBase? tracker,
             IKSolverVR.LegSolver leg,
             Transform? lastBone,
@@ -357,7 +357,7 @@ namespace XREngine.Components.Animation
         }
 
         private static void CalibrateLeg(
-            Settings settings,
+            CalibrationSettings settings,
             TransformBase tracker,
             IKSolverVR.LegSolver leg,
             Transform lastBone,
@@ -505,11 +505,11 @@ namespace XREngine.Components.Animation
         //    rightArm.RotationWeight = weightVal;
         //}
 
-        private static void CalibrateLeftHand(VRIKSolverComponent ik, Settings settings, TransformBase? leftControllerTfm)
+        private static void CalibrateLeftHand(VRIKSolverComponent ik, CalibrationSettings settings, TransformBase? leftControllerTfm)
             => CalibrateHand(settings, leftControllerTfm, 1.0f, LeftHandTargetNodeName, ik.Solver.LeftArm);
-        private static void CalibrateRightHand(VRIKSolverComponent ik, Settings settings, TransformBase? rightControllerTfm)
+        private static void CalibrateRightHand(VRIKSolverComponent ik, CalibrationSettings settings, TransformBase? rightControllerTfm)
             => CalibrateHand(settings, rightControllerTfm, -1.0f, RightHandTargetNodeName, ik.Solver.RightArm);
-        private static void CalibrateHand(Settings settings, TransformBase? controllerTfm, float palmCrossNegate, string targetNodeName, IKSolverVR.ArmSolver arm)
+        private static void CalibrateHand(CalibrationSettings settings, TransformBase? controllerTfm, float palmCrossNegate, string targetNodeName, IKSolverVR.ArmSolver arm)
         {
             if (controllerTfm is null)
             {

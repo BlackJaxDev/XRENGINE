@@ -11,8 +11,13 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
     /// can run only after the frame returns.
     /// </summary>
     internal void ProcessPendingUploads()
-        => _resourceRuntime.Uploads.ProcessPendingUploads(
+    {
+        // Upload fences can complete while desktop frames are rejected. Recycle a
+        // bounded number of already-ready staging leases before prep admission.
+        _ = _resourceRuntime.DrainCompletedStagingBuffers(maxItems: 4);
+        _resourceRuntime.Uploads.ProcessPendingUploads(
             CreateTextureUploadSchedulingContext());
+    }
 
     /// <summary>
     /// Freezes the exact renderer and backend generation that own texture work.

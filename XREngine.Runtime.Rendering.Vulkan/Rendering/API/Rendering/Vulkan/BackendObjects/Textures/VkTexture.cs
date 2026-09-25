@@ -351,9 +351,10 @@ internal abstract class VkTexture<T>(
         if (string.IsNullOrWhiteSpace(resourceName))
             return true;
 
-        if (!ResourcePublications.TryGetPhysicalImageGroup(
+        if (!ResourcePublications.TryGetOwnedTexturePhysicalImageGroup(
                 ResourcePublications.GetCurrentGeneration(),
                 resourceName,
+                Data,
                 out group) || group is null || group.IsBorrowedExternal)
         {
             // External graph imports are represented by a borrowed planner

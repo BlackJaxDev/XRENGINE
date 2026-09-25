@@ -2,6 +2,7 @@ using System.IO;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
 
@@ -10,14 +11,14 @@ public partial class AdvancedRenderPipeline
     private const uint DefaultBrdfLutSize = 512u;
     private const uint OpenXrVulkanSafePathBrdfLutSize = 256u;
 
-    private static uint ResolveBrdfLutSize()
-        => UseOpenXrVulkanDesktopStartupSafePath
+    private static uint ResolveBrdfLutSize(RenderPipelineResourceProfile profile)
+        => profile.ExternalTargetKind == RenderPipelineExternalTargetKind.ExternalSwapchain &&
+           !profile.Stereo
             ? OpenXrVulkanSafePathBrdfLutSize
             : DefaultBrdfLutSize;
 
-    private XRTexture CreateBRDFTexture()
+    private XRTexture CreateBRDFTexture(uint size)
     {
-        uint size = ResolveBrdfLutSize();
         var tex = CreateBrdfLookupTexture(size, size);
         tex.Name ??= BRDFTextureName;
         tex.SamplerName ??= BRDFTextureName;

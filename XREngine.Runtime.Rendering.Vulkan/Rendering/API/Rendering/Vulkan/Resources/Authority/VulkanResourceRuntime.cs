@@ -2208,11 +2208,21 @@ internal sealed partial class VulkanResourceRuntime
                     for (int index = 0; index < list.Count; index++)
                     {
                         RetiredBuffer current = list[index];
+                        // Several allocator-backed staging buffers can share one VkDeviceMemory.
+                        // The retirement queue deduplicates that memory handle, so recover
+                        // this buffer's allocation before matching its exact staging lease.
+                        DeviceMemory stagingMemory = current.Memory;
+                        if (Allocations.Buffers.Allocations.TryGetValue(
+                                current.Buffer.Handle, out VulkanMemoryAllocation trackedAllocation))
+                            stagingMemory = trackedAllocation.Memory;
+                        else if (Allocations.Buffers.LegacyAllocations.TryGetValue(
+                                     current.Buffer.Handle, out VulkanMemoryAllocation trackedLegacyAllocation))
+                            stagingMemory = trackedLegacyAllocation.Memory;
                         if (!Lifetime.Tracker.IsRetirementReady(current.Ticket) ||
                             HasUndestroyedBufferView(current.Buffer) ||
                             !Allocations.Staging.IsRetiredStagingLease(
                                 current.Buffer,
-                                current.Memory,
+                                stagingMemory,
                                 current.Ticket.ResourceGeneration))
                         {
                             continue;

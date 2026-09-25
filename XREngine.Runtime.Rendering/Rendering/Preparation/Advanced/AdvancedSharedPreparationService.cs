@@ -15,7 +15,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             AdvancedPreparationOptions.Default));
 
     private readonly object _sync = new();
-    private readonly AdvancedPreparationExtractor _extractor;
+    private AdvancedPreparationExtractor _extractor;
     private GPUScene? _publishedScene;
     private AdvancedPreparationPublication _publication;
     private long _acquireCount;
@@ -44,6 +44,28 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     public static AdvancedSharedPreparationService Instance => Shared.Value;
 
     public AdvancedPreparationExtractor Extractor => _extractor;
+
+    /// <summary>
+    /// Discards device-owned preparation state after every renderer using the
+    /// retired device has detached. The next world frame rebuilds its logical
+    /// preparation from the canonical scene publication.
+    /// </summary>
+    public static void ResetAfterRendererRetirement()
+    {
+        if (!Shared.IsValueCreated)
+            return;
+
+        AdvancedSharedPreparationService service = Shared.Value;
+        lock (service._sync)
+        {
+            AdvancedPreparationExtractor retired = service._extractor;
+            AdvancedPreparationExtractor replacement = new(retired.Options);
+            retired.Dispose();
+            service._extractor = replacement;
+            service._publishedScene = null;
+            service._publication = default;
+        }
+    }
 
     /// <summary>Reads existing preparation diagnostics without initializing an unused renderer.</summary>
     public static AdvancedPreparationDiagnosticSnapshot? GetCurrentDiagnostics()
@@ -91,6 +113,16 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                     world.GpuScene.AdvancedScenePublication.Publication)
             {
                 _cacheHitCount++;
+                if (!_publication.GpuResourcesPublished)
+                {
+                    // A deferred build has not begun the current visibility planner.
+                    // Repeated consumers must not advance history for unpublished work.
+                    _publication = _publication with
+                    {
+                        Consumers = _publication.Consumers | consumers,
+                    };
+                    return _publication;
+                }
                 EAdvancedPreparationConsumer addedConsumers =
                     consumers & ~_publication.Consumers;
                 long viewPlanningStarted = Stopwatch.GetTimestamp();

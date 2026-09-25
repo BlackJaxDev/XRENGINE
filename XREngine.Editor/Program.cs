@@ -180,6 +180,7 @@ internal partial class Program
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
         UnitTestingWorldSettingsStore.PublishVrLaunchModeForBootstrap(settings);
+        EditorOpenXrPawnSwitcher.Configure(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
         ConfigureOpenXrRuntimeServiceRecovery(settings);
         WarnForMixedOpenXrSceneOnlyVr(settings);
@@ -268,9 +269,9 @@ internal partial class Program
     private static void ConfigureOpenXrRuntimeServiceRecovery(UnitTestingWorldSettings settings)
     {
         RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart =
-            settings.VR.Mode == UnitTestingVrLaunchMode.MonadoOpenXR;
+            UnitTestingWorldSettingsStore.GetPreparedOpenXrMode(settings) == UnitTestingVrLaunchMode.MonadoOpenXR;
         RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer =
-            settings.VR.Mode == UnitTestingVrLaunchMode.MonadoOpenXR
+            UnitTestingWorldSettingsStore.GetPreparedOpenXrMode(settings) == UnitTestingVrLaunchMode.MonadoOpenXR
                 ? UnitTestingWorldSettingsStore.TryEnsureMonadoServiceForCurrentProcess
                 : null;
     }
@@ -1168,7 +1169,7 @@ internal partial class Program
                 or UnitTestingVrLaunchMode.OpenVR
                 or UnitTestingVrLaunchMode.OpenXR
             : unitTestSettings.VRPawn && (!unitTestSettings.SceneOnlyVRPawn || unitTestSettings.PreviewVRStereoViews);
-        if (unitTestSettings.VRPawn && runtimeVrRequested)
+        if (runtimeVrRequested)
         {
             settings.RunVRInPlace = true;
             EditorVR.ApplyOpenVRSettings(settings);

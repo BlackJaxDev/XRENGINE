@@ -160,9 +160,26 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         => RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
     internal static bool UseOpenXrVulkanDesktopStartupSafePath
+        => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
+
+    internal static bool UseOpenXrVulkanDesktopStartupSafePathForViewport(XRViewport? viewport)
         => IsVulkanRuntimeActiveOrExpected() &&
            IsOpenXrRuntimeRequestedOrExpected() &&
-           !RuntimeEngine.Rendering.State.IsStereoPass;
+           !RuntimeEngine.Rendering.State.IsStereoPass &&
+           IsOpenXrExternalSwapchainTargetPass(viewport);
+
+    private static bool IsOpenXrExternalSwapchainTargetPass(XRViewport? explicitViewport)
+    {
+        XRViewport? viewport = explicitViewport ??
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport ??
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport;
+
+        // Resource and command generation have no active viewport. Keep their
+        // full graph so pass conditions can select the eye path at render time.
+        return viewport?.RendersToExternalSwapchainTarget == true &&
+            !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
+            !RuntimeEngine.Rendering.State.IsLightProbePass;
+    }
 
     private static bool IsVulkanRuntimeActiveOrExpected()
     {

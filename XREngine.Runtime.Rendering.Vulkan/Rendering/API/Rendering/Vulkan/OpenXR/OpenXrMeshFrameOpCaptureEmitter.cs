@@ -38,12 +38,12 @@ internal sealed class OpenXrMeshFrameOpCaptureEmitter : IOpenXrEyeFrameOpEmitter
         _eyeEmitter = null;
     }
 
-    public void Emit(in OpenXrEyeFrameOpEmission emission)
+    public bool TryEmit(in OpenXrEyeFrameOpEmission emission)
     {
         IOpenXrEyeFrameOpEmitter emitter = _eyeEmitter
             ?? throw new InvalidOperationException(
                 "The OpenXR eye mesh-capture emitter has no bound source emitter.");
-        _owner.EmitOpenXrEyeFrameOpsWithCapturedMeshRequests(
+        return _owner.TryEmitOpenXrEyeFrameOpsWithCapturedMeshRequests(
             emitter,
             in emission);
     }

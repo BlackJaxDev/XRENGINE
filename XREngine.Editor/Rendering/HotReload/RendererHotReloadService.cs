@@ -164,6 +164,28 @@ public sealed class RendererHotReloadService : IDisposable
         }
     }
 
+    /// <summary>Restarts the current renderer with a configuration transaction after device teardown.</summary>
+    public async Task<RendererReplacementResult> RestartCurrentGenerationWithConfigurationAsync(
+        RendererBackendId backendId,
+        IRendererReplacementConfiguration configuration,
+        TimeSpan? firstFrameTimeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await RendererReplacementCoordinator.Current.RestartCurrentGenerationWithConfigurationAsync(
+                backendId,
+                configuration,
+                firstFrameTimeout ?? TimeSpan.FromSeconds(15),
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public async Task<RendererReplacementResult> RestartCurrentGenerationWithOpenXrSessionAsync(
         RendererBackendId backendId,
         TimeSpan? firstFrameTimeout = null,
