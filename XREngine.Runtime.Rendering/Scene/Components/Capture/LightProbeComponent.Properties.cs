@@ -28,6 +28,11 @@ namespace XREngine.Components.Capture.Lights
             set => SetField(ref _renderInfluenceOnSelection, value);
         }
 
+        /// <summary>
+        /// Captures once when the probe activates. The declared default matches the field
+        /// initializer so default-omitting YAML keeps an explicit <see langword="false"/>.
+        /// </summary>
+        [DefaultValue(true)]
         public bool AutoCaptureOnActivate
         {
             get => _autoCaptureOnActivate;

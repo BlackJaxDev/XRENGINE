@@ -877,22 +877,40 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
     }
 
+    /// <summary>
+    /// Device-teardown destruction of every graphics pipeline owned by the shared cache,
+    /// including superseded handles that were removed from the cache but not yet retired.
+    /// </summary>
+    /// <remarks>
+    /// Program destruction during teardown invalidates its cache entries into the superseded
+    /// queue, which is otherwise drained only by later compile-queue activity. The caller has
+    /// already established GPU idle, so both sets are destroyed immediately rather than routed
+    /// through frame retirement; skipping the queue left every such pipeline alive at
+    /// <c>vkDestroyDevice</c>.
+    /// </remarks>
     internal int DestroySharedGraphicsPipelines()
     {
         Pipeline[] pipelines = DrainSharedGraphicsPipelines();
         VulkanProgramCreationPort services = RequireProgramServices();
-        int destroyed = 0;
+        HashSet<ulong> destroyedHandles = [];
         for (int index = 0; index < pipelines.Length; index++)
         {
             Pipeline pipeline = pipelines[index];
-            if (pipeline.Handle == 0)
+            if (pipeline.Handle == 0 || !destroyedHandles.Add(pipeline.Handle))
                 continue;
 
             services.DestroyPipelineImmediate(pipeline);
-            destroyed++;
         }
 
-        return destroyed;
+        while (_supersededSharedGraphicsPipelines.TryDequeue(out Pipeline superseded))
+        {
+            if (superseded.Handle == 0 || !destroyedHandles.Add(superseded.Handle))
+                continue;
+
+            services.DestroyPipelineImmediate(superseded);
+        }
+
+        return destroyedHandles.Count;
     }
 
     internal bool TryGetOrReserveSharedGraphicsPipelineLibrary(

@@ -561,7 +561,9 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | Tool | Description |
 |------|-------------|
 | `add_component_to_node` | Add a component to a scene node by type name. |
+| `arm_advanced_publication_rejection` | Arm a development-only diagnostic that rejects the next count canonical scene publications that would open a new publication (after the unchanged-reuse check). Zero disarms; the response reports remaining and total injected rejections. |
 | `arm_ddgi_visibility_interruption` | Arm a development-only DDGI receipt-lifetime diagnostic. It skips the selected pipeline's Visibility border copy for skip_count render frames. |
+| `arm_vulkan_texture_upload_faults` | Arm a development-only diagnostic that fails admission of, or cancels, the next Vulkan imported-texture upload schedules (streaming and restart rehydration). Zeros disarm; the response reports remaining and total injected outcomes. |
 | `assign_component_asset_property` | Assign an asset reference to a component property or field (e.g., Material). |
 | `bake_ddgi_volume` | Bake the selected viewport's converged DDGI state to output_path. The volume is not changed or automatically assigned to the new asset. |
 | `bake_shape_components_to_model` | Bake ShapeMeshComponent nodes into one ModelComponent using boolean ops (union/intersect/difference/xor). |

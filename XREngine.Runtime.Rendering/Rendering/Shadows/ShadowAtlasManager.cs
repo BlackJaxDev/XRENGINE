@@ -1783,6 +1783,7 @@ public sealed partial class ShadowAtlasManager
             return new ShadowAtlasReadinessResult(manifest, 0, 0, manifest.Selection);
 
         AssertRenderThread();
+        ObserveAtlasWriterRenderer();
         if (!BeginSubmissionTracking())
         {
             return new ShadowAtlasReadinessResult(
@@ -2104,6 +2105,7 @@ public sealed partial class ShadowAtlasManager
     public int RenderScheduledTiles(bool collectVisibleNow = false)
     {
         AssertRenderThread();
+        ObserveAtlasWriterRenderer();
         if (!BeginSubmissionTracking())
             return 0;
 

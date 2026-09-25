@@ -70,3 +70,7 @@ deltas after warmup and mutations rather than comparing absolute counts across
 device replacement. Release builds may omit textual debug logs; cumulative
 validation messages in the raw profiler replies remain the primary evidence.
 No automatic pass closes the Vulkan remediation TODO.
+
+## Session teardown
+
+Stop named sessions with `-StopTimeoutSeconds 90` when teardown evidence matters. The editor vetoes the first close request and closes about 20 s later; the default 15 s timeout force-stops the process before Vulkan teardown is logged.

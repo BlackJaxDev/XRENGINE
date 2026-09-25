@@ -19,6 +19,14 @@ public sealed record MaterialSurfaceTextureBinding
     public Vector4 UvScaleOffset { get; init; }
     public float UvRotation { get; init; }
 
+    /// <summary>
+    /// Parameterless constructor for YAML round-trip deserialization only. Every member keeps its
+    /// type default so values omitted by <c>OmitDefaults</c> during serialization read back exactly;
+    /// the deserializer then assigns each serialized member, including <see cref="Texture"/>.
+    /// </summary>
+    private MaterialSurfaceTextureBinding()
+        => Texture = null!;
+
     public MaterialSurfaceTextureBinding(
         EMaterialTextureSemantic Semantic,
         XRTexture Texture,

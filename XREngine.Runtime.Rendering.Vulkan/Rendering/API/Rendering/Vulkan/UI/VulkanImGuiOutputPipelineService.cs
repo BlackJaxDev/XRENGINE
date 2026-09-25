@@ -244,10 +244,12 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
     {
         if (pipeline.Handle != 0)
             resources.RetirePipeline(pipeline, "ImGui.Pipeline");
-        if (layout.Handle != 0)
-            _ = resources.TryBeginDestroyPipelineLayout(
+        // A true result means retirement is already complete and the caller owns the native
+        // destroy; a queued layout (false) is destroyed later by the retirement drain.
+        if (layout.Handle != 0 && resources.TryBeginDestroyPipelineLayout(
                 layout,
-                "ImGui.PipelineLayout");
+                "ImGui.PipelineLayout"))
+            device.Api.DestroyPipelineLayout(device.Device, layout, null);
     }
 
     private void DestroyShader(ref ShaderModule shader)

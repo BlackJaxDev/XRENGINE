@@ -630,8 +630,15 @@ namespace XREngine.Rendering
             ShaderInterfaceChanged?.Invoke(this);
         }
 
-        public XREvent<XRRenderProgram>? LinkRequested = null;
-        public XREvent<XRRenderProgram>? UseRequested = null;
+        /// <summary>
+        /// Backend hook raised by <see cref="Link"/>. Backend wrappers subscribe for their
+        /// renderer generation's lifetime; a plain event applies unsubscription immediately,
+        /// so a retired wrapper is never retained by a program that is not linked again.
+        /// </summary>
+        public event Action<XRRenderProgram>? LinkRequested;
+
+        /// <summary>Backend hook raised by <see cref="Use"/>; same subscription contract as <see cref="LinkRequested"/>.</summary>
+        public event Action<XRRenderProgram>? UseRequested;
 
         [Browsable(false)]
         public bool LinkReady { get; private set; } = false;

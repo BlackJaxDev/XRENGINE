@@ -86,8 +86,13 @@ namespace XREngine.Data.Core
         private List<TListener>? _actions;
         protected List<TListener> Actions => _actions ??= [];
 
-        private ConcurrentQueue<TListener>? _pendingAdds;
-        private ConcurrentQueue<TListener> PendingAdds => _pendingAdds ??= [];
+        // Additions are applied on the next invocation. A removal that arrives
+        // while its addition is still pending cancels it instead of queueing a
+        // second entry: an event that is rarely or never invoked would otherwise
+        // retain every add/remove pair (and the listener targets) indefinitely.
+        private readonly Lock _pendingAddsLock = new();
+        private List<TListener>? _pendingAdds;
+        private List<TListener>? _pendingAddsSpare;
 
         private int _pendingAddsCount;
 
@@ -109,12 +114,28 @@ namespace XREngine.Data.Core
 
         public void AddListener(TListener action)
         {
-            PendingAdds.Enqueue(action);
-            Interlocked.Increment(ref _pendingAddsCount);
+            using (_pendingAddsLock.EnterScope())
+            {
+                (_pendingAdds ??= []).Add(action);
+                Interlocked.Increment(ref _pendingAddsCount);
+            }
         }
 
         public void RemoveListener(TListener action)
         {
+            using (_pendingAddsLock.EnterScope())
+            {
+                // Net listener counts match applying the pending add and then this
+                // removal; the unapplied add simply never reaches the action list.
+                int pendingIndex = _pendingAdds?.LastIndexOf(action) ?? -1;
+                if (pendingIndex >= 0)
+                {
+                    _pendingAdds!.RemoveAt(pendingIndex);
+                    Interlocked.Decrement(ref _pendingAddsCount);
+                    return;
+                }
+            }
+
             PendingRemoves.Enqueue(action);
             Interlocked.Increment(ref _pendingRemovesCount);
         }
@@ -133,10 +154,29 @@ namespace XREngine.Data.Core
                 return;
 
             _listenerProfilingNames?.Clear();
-            while (PendingAdds.TryDequeue(out TListener? add))
+            if (HasPendingAdds)
             {
-                Interlocked.Decrement(ref _pendingAddsCount);
-                Actions.Add(add);
+                // Swap the pending list for the empty spare under the lock so
+                // listener mutation on other threads never waits on the action list.
+                List<TListener>? adds;
+                using (_pendingAddsLock.EnterScope())
+                {
+                    adds = _pendingAdds is { Count: > 0 } pending ? pending : null;
+                    if (adds is not null)
+                    {
+                        _pendingAdds = _pendingAddsSpare;
+                        _pendingAddsSpare = null;
+                    }
+                    Volatile.Write(ref _pendingAddsCount, 0);
+                }
+
+                if (adds is not null)
+                {
+                    Actions.AddRange(adds);
+                    adds.Clear();
+                    using (_pendingAddsLock.EnterScope())
+                        _pendingAddsSpare ??= adds;
+                }
             }
 
             if (!HasPendingRemoves)

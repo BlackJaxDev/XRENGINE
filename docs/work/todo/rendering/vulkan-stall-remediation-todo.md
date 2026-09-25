@@ -2,7 +2,7 @@
 
 Last Updated: 2026-09-24
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Active for merged lifetime gates; S13a/S13b Blocked with validation gates open; S13c-S13i Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Validated for reachable scope (distinct-world gate dispositioned Not Applicable); S13a/S13b Blocked on the gates listed in the September 25 closeout status; S13c-S13i Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -323,6 +323,68 @@ and [harness instructions](../../testing/rendering/vulkan-lifecycle-evidence-har
 | S13a final-binary observer/retention matrix | Freeze the final source, binary hashes, settings, workload and observation budgets. Run the predeclared three observer pairs, keeping stationary and moving intervals separate. Capture usable GPU timing coverage and the attached-debugger condition when available. Concurrent pipeline changes and historical binaries prevent isolated performance claims from the current mixed evidence. | All paired overhead/retention budgets pass on the same final binary; debugger availability and any unavailable evidence are explicitly recorded. |
 | Callback attribution and historical backend divergence | Correlate callback spans with CPU execution, GC pauses, scheduler-ready and blocked time. Complete callback-to-publication/view ownership joins on Vulkan and OpenGL. Reproduce the first differing historical event under controlled conditions, or obtain an explicit scope disposition if it cannot be reproduced. Historical missing binary manifests remain unknown; do not reconstruct them by assumption. | Residual wall time and the first differing event have evidence-backed causal dispositions that satisfy S13a. No scope waiver is currently authorized. |
 | Regression-test clearance and coverage | Complete relevant live feature validation first, then obtain the user's explicit clearance for test work under `AGENTS.md`. Add/run focused deterministic coverage for descriptor identity/invalidation, exact-lifetime retirement, and rehydration generation/admission/cancellation behavior. Keep live-only rendering cases in the runtime matrix. | Recorded clearance and passing applicable checks, with any remaining hardware/runtime cases explicitly tracked. The Python evidence collector does not grant this clearance or replace regression tests. |
+
+### September 25 closeout status
+
+The September 24 table above is superseded by this status. S13a and S13b stay
+**Blocked**; details and evidence are in the
+[S13b record](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#september-25-closeout-continuation).
+
+| Handoff row | Result |
+| --- | --- |
+| Screenshot/log packet | Reviewed; per-case dispositions recorded. |
+| World snapshot | Fixed (exception diagnostics, surface-binding constructor, probe `AutoCaptureOnActivate` default). Snapshot/restore calls issued after long settles still time out: open, separate. |
+| S12 distinct world | Dispositioned Not Applicable with a reopening condition (S12 record). |
+| Startup validation errors | Resolved with the approved 1.4.357.0 layer; two teardown leaks fixed; standard + synchronization validation 0 errors through teardown. |
+| S13b mutation/temporal matrix | Passed: stationary, add/remove/re-add, visibility, repeated edits, rejection retry, camera/object velocity, material value, shared material. |
+| Multi-view and upload failure/retry | Passed: emulated stereo; admission failure and cancellation during restart rehydration and streaming (bounded, recover). Fixed a preview-upload retry that re-read a dead ticket. Fixed a renderer-restart leak (~1.3 GB per restart, four roots). |
+| S13a final-binary observer matrix | **Not run.** |
+| Callback attribution / historical divergence | **Not run**: needs the elevated WPR capture and attached-debugger window (user-run). |
+| Regression tests | Cleared by the user after live gates. Focused tests written but **not executed**: the unit-test project does not compile because of pre-existing breaks in five test files after the GI/pipeline API rewrite. |
+
+Remaining before S13a/S13b can close:
+
+1. Rerun the S13b matrix smoke on the final binary. Four leak fixes touched
+   engine-wide event handling after the matrix passed; the rerun was blocked by
+   the agent permission classifier in this session.
+2. Run the S13a final-binary observer matrix
+   (`Run-S13aFinalObserverMatrix.ps1`: three off/on pairs, stationary and motion
+   intervals, identical binary hashes).
+3. Capture elevated WPR and attached-debugger evidence, then attribute callback
+   residual wall time and dispose of the historical backend divergence.
+4. Repair the five broken test files (`DDGIScaffoldingContractTests`,
+   `ProbeGridLookupTests`, `RenderPipelineResourceLifecycleTests`,
+   `BackendReadyFramePackageTests`, `BlendshapeGpuEfficiencyTests`), then run the
+   new focused tests.
+5. Run the OpenGL representative stationary/mutation/motion comparison.
+
+Prepared scripts are disposable agent scratch under
+`Build/_AgentValidation/20260924-102959-s13-closeout/scratch/` (ignored; promote
+into `Tools/` before relying on them long term):
+
+- `s13b_matrix.py <label>`: the S13b mutation/temporal matrix against a running
+  isolated session.
+- `Run-S13aFinalObserverMatrix.ps1 -EditorExecutablePath <path>`: the S13a
+  observer pairs.
+- `Run-S13aElevatedCapture.ps1`: elevated WPR CPU plus CLR GC capture bracketed
+  by S13a telemetry markers. Not yet exercised, not even with `-DryRun`.
+- `s13a_debugger_window.py --label attached|detached`: attached-debugger
+  comparison sampler.
+
+Separate open issues found during closeout (not S13a/S13b gates):
+
+- World snapshot/restore MCP calls issued after long settles never return.
+- YAML `OmitDefaults` drops `false` on true-initialized booleans engine-wide
+  unless the member has `[DefaultValue(true)]`.
+- `duplicate_scene_node` clones share material GUIDs.
+- The editor hover highlight toggles about every 7.5 s and adds dirty traffic to
+  S13a stationary measurements; suppress it for automation runs.
+- `VPRC_RenderToWindow`'s 1,024-entry deferred presentation ring can keep the
+  previous renderer generation alive until it is overwritten (bounded).
+- The replacement GI contracts have no unit coverage.
+- `Tools/Reports/generate_mcp_docs.ps1` needs network access for its first NuGet
+  restore; when its build fails, the source-parser fallback deletes existing tool
+  rows. Do not keep that fallback output.
 
 **Resume order:** review the existing packet first; recover the missing snapshot
 exception and repair that path; complete world/lifetime, validation-layer, and

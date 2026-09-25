@@ -40,6 +40,13 @@ internal sealed class VulkanOpenXrBackend
         _threadExecutionState.Value
             ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
 
+    /// <summary>
+    /// Drops every thread's execution state after generation teardown so a
+    /// long-lived thread cannot keep this generation's OpenXR state reachable.
+    /// </summary>
+    internal void ReleaseThreadExecutionStates()
+        => _threadExecutionState.Dispose();
+
     /// <summary>Number of reserved eye-planner frame-data slots.</summary>
     internal int EyeFrameDataSlotCount => EyeResourcePlannerStateCount;
 

@@ -23,7 +23,10 @@ internal unsafe partial class VkRenderProgram(
     XRRenderProgram data) : VkObject<XRRenderProgram>(backendContext, data)
 {
     protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
-        => binding.AttachPlannerOperationHandlers(this);
+        => _plannerDispatchHandler = binding.AttachPlannerOperationHandlers(this);
+
+    /// <summary>Planner dispatch subscription on <see cref="VkObject{T}.Data"/>, removed on unlink.</summary>
+    private Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)>?>? _plannerDispatchHandler;
     private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
     private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
     private readonly Lock _linkLock = new();
@@ -310,6 +313,11 @@ internal unsafe partial class VkRenderProgram(
         Data.TransformFeedbackLayoutChanged -= OnTransformFeedbackLayoutChanged;
         Data.Shaders.PostAnythingAdded -= ShaderAdded;
         Data.Shaders.PostAnythingRemoved -= ShaderRemoved;
+        if (_plannerDispatchHandler is not null)
+        {
+            Data.DispatchComputeRequested -= _plannerDispatchHandler;
+            _plannerDispatchHandler = null;
+        }
 
         foreach (XRShader shader in Data.Shaders)
             ShaderRemoved(shader);

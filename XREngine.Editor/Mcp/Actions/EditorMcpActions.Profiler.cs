@@ -175,6 +175,61 @@ namespace XREngine.Editor.Mcp
                 "Retrieved S13a publication trace.",
                 S13aPublicationTelemetry.CaptureTrace(afterSequence, maxEvents, commandId)));
 
+        [XRMcp(
+            Name = "arm_advanced_publication_rejection",
+            Permission = McpPermissionLevel.Mutate,
+            PermissionReason = "Intentionally rejects upcoming canonical scene publications to validate retry of pending scene changes.")]
+        [Description("Arm a development-only diagnostic that rejects the next count canonical scene publications that would open a new publication (after the unchanged-reuse check). Zero disarms; the response reports remaining and total injected rejections.")]
+        public static Task<McpToolResponse> ArmAdvancedPublicationRejectionAsync(
+            McpToolContext context,
+            [McpName("count"), Description("Rejections to inject (0 through 600). Replaces any remaining armed count.")]
+            int count)
+        {
+            if (count is < 0 or > AdvancedPublicationFaultInjection.MaximumArmedRejections)
+            {
+                return Task.FromResult(new McpToolResponse(
+                    $"count must be between 0 and {AdvancedPublicationFaultInjection.MaximumArmedRejections}.",
+                    isError: true));
+            }
+
+            AdvancedPublicationFaultInjection.ArmPreflightRejections(count);
+            return Task.FromResult(new McpToolResponse(
+                count == 0 ? "Disarmed canonical publication rejection." : $"Armed {count} canonical publication rejection(s).",
+                new
+                {
+                    armedRemaining = AdvancedPublicationFaultInjection.ArmedPreflightRejections,
+                    injectedTotal = AdvancedPublicationFaultInjection.InjectedPreflightRejections,
+                }));
+        }
+
+        [XRMcp(
+            Name = "arm_vulkan_texture_upload_faults",
+            Permission = McpPermissionLevel.Mutate,
+            PermissionReason = "Intentionally fails or cancels upcoming Vulkan texture upload schedules to validate retry and terminal-failure handling.")]
+        [Description("Arm a development-only diagnostic that fails admission of, or cancels, the next Vulkan imported-texture upload schedules (streaming and restart rehydration). Zeros disarm; the response reports remaining and total injected outcomes.")]
+        public static Task<McpToolResponse> ArmVulkanTextureUploadFaultsAsync(
+            McpToolContext context,
+            [McpName("admission_failures"), Description("Upcoming schedules to fail at admission (0 through 256).")]
+            int admissionFailures = 0,
+            [McpName("cancellations"), Description("Upcoming schedules to cancel before preparation (0 through 256).")]
+            int cancellations = 0)
+        {
+            int maximum = VulkanTextureUploadFaultInjection.MaximumArmedOutcomes;
+            if (admissionFailures < 0 || admissionFailures > maximum || cancellations < 0 || cancellations > maximum)
+                return Task.FromResult(new McpToolResponse($"Counts must be between 0 and {maximum}.", isError: true));
+
+            VulkanTextureUploadFaultInjection.Arm(admissionFailures, cancellations);
+            return Task.FromResult(new McpToolResponse(
+                $"Armed {admissionFailures} admission failure(s) and {cancellations} cancellation(s).",
+                new
+                {
+                    armedAdmissionFailures = VulkanTextureUploadFaultInjection.ArmedAdmissionFailures,
+                    armedCancellations = VulkanTextureUploadFaultInjection.ArmedCancellations,
+                    injectedAdmissionFailures = VulkanTextureUploadFaultInjection.InjectedAdmissionFailures,
+                    injectedCancellations = VulkanTextureUploadFaultInjection.InjectedCancellations,
+                }));
+        }
+
         [XRMcp(Name = "dump_cpu_frame_profile", Permission = McpPermissionLevel.ReadOnly)]
         [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump the latest CPU profiler frame snapshot to an LLM-readable log file in the current Build/Logs run directory.")]
