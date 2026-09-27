@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Data.Vectors;
@@ -11,13 +13,13 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class ProbeGridLookupTests
 {
-    // ─── ComputeProbeGridFallbackIndices logic tests ───
+    // ─── ForwardLightProbeGridBuilder fallback-index logic tests ───
 
     [Test]
     public void FallbackIndices_NoProbes_ReturnsAllNegativeOne()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>();
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, null);
+        var positions = new List<ProbePositionData>();
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, null);
 
         result.X.ShouldBe(-1);
         result.Y.ShouldBe(-1);
@@ -28,11 +30,11 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void FallbackIndices_SingleProbe_ReturnsItInSlotZero()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(5, 0, 0, 1) },
         };
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, null);
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, null);
 
         result.X.ShouldBe(0);
         result.Y.ShouldBe(-1);
@@ -43,14 +45,14 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void FallbackIndices_FourProbes_ReturnsSortedByDistance()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(10, 0, 0, 1) }, // index 0, dist=10
             new() { Position = new Vector4(1, 0, 0, 1) },  // index 1, dist=1  (closest)
             new() { Position = new Vector4(5, 0, 0, 1) },  // index 2, dist=5
             new() { Position = new Vector4(3, 0, 0, 1) },  // index 3, dist=3
         };
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, null);
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, null);
 
         result.X.ShouldBe(1); // dist 1
         result.Y.ShouldBe(3); // dist 3
@@ -61,7 +63,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void FallbackIndices_MoreThanFourProbes_PicksFourNearest()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(100, 0, 0, 1) }, // far
             new() { Position = new Vector4(2, 0, 0, 1) },   // near
@@ -70,7 +72,7 @@ public sealed class ProbeGridLookupTests
             new() { Position = new Vector4(1, 0, 0, 1) },   // nearest
             new() { Position = new Vector4(4, 0, 0, 1) },   // near
         };
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, null);
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, null);
 
         result.X.ShouldBe(4); // dist 1
         result.Y.ShouldBe(1); // dist 2
@@ -81,7 +83,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void FallbackIndices_PreferredIndices_PrioritizesCellProbes()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(1, 0, 0, 1) },  // global nearest but not preferred
             new() { Position = new Vector4(50, 0, 0, 1) }, // far, preferred
@@ -89,7 +91,7 @@ public sealed class ProbeGridLookupTests
         };
         // Only consider preferred indices (1 and 2)
         var preferred = new List<int> { 1, 2 };
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, preferred);
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, preferred);
 
         // Preferred probes should remain cell-local when they are available.
         result.X.ShouldBe(2); // preferred, dist 30
@@ -101,13 +103,13 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void FallbackIndices_EmptyPreferredList_FallsBackToGlobalScan()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(5, 0, 0, 1) },
             new() { Position = new Vector4(2, 0, 0, 1) },
         };
         // null preferred list means empty cell → global scan
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, null);
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, null);
 
         result.X.ShouldBe(1); // dist 2
         result.Y.ShouldBe(0); // dist 5
@@ -116,14 +118,14 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void FallbackIndices_CellCenterOffset_DistancesComputedCorrectly()
     {
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(0, 0, 0, 1) },  // dist to (10,0,0) = 10
             new() { Position = new Vector4(9, 0, 0, 1) },  // dist to (10,0,0) = 1
             new() { Position = new Vector4(12, 0, 0, 1) }, // dist to (10,0,0) = 2
         };
         var cellCenter = new Vector3(10, 0, 0);
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(cellCenter, positions, null);
+        var result = ComputeFallbackIndices(cellCenter, positions, null);
 
         result.X.ShouldBe(1); // dist 1
         result.Y.ShouldBe(2); // dist 2
@@ -134,13 +136,13 @@ public sealed class ProbeGridLookupTests
     public void FallbackIndices_NoDuplicateIndices()
     {
         // Test that a probe can't appear twice even with preferred list
-        var positions = new List<DefaultRenderPipeline.ProbePositionData>
+        var positions = new List<ProbePositionData>
         {
             new() { Position = new Vector4(1, 0, 0, 1) },
             new() { Position = new Vector4(2, 0, 0, 1) },
         };
         var preferred = new List<int> { 0, 0, 0, 1 }; // index 0 repeated
-        var result = DefaultRenderPipeline.ComputeProbeGridFallbackIndices(Vector3.Zero, positions, preferred);
+        var result = ComputeFallbackIndices(Vector3.Zero, positions, preferred);
 
         result.X.ShouldBe(0);
         result.Y.ShouldBe(1);
@@ -343,11 +345,14 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void Pipeline_GridBuildUpgradesFromFallbackOnlyToCellTetraCandidates()
     {
-        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        string pipeline = CollapseWhitespace(ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs"));
+        string builder = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Lighting/ForwardLightProbeGridBuilder.cs");
 
-        source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);");
-        source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, tetraList);");
-        source.ShouldContain("cellLists[flat].Add(tetraIndex);");
+        // Probe uploads publish a fallback-only grid first; topology publication rebuilds it with per-cell tetrahedron candidates.
+        pipeline.ShouldContain("ForwardLightProbeGridBuilder.Build( positions, parameters, null,");
+        pipeline.ShouldContain("ForwardLightProbeGridBuilder.Build( state.CachedProbePositionData, state.CachedProbeParamData, result.Tetrahedra,");
+        builder.ShouldContain("if (tetrahedra is { Count: > 0 })");
+        builder.ShouldContain("cellLists[x + y * dimensions.X + z * dimensions.X * dimensions.Y].Add(tetrahedronIndex);");
     }
 
     [Test]
@@ -359,6 +364,23 @@ public sealed class ProbeGridLookupTests
     }
 
     // ─── Helpers ───
+
+    private static readonly MethodInfo ComputeFallbackIndicesMethod =
+        typeof(ForwardLightProbeGridBuilder).GetMethod("ComputeFallbackIndices", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("ForwardLightProbeGridBuilder.ComputeFallbackIndices was not found.");
+
+    /// <summary>
+    /// Invokes the grid builder's private nearest-probe selection so these tests exercise the production
+    /// fallback logic without the GPU buffers created by the public build entry point.
+    /// </summary>
+    private static IVector4 ComputeFallbackIndices(
+        Vector3 cellCenter,
+        IReadOnlyList<ProbePositionData> positions,
+        IReadOnlyList<int>? preferred)
+        => (IVector4)ComputeFallbackIndicesMethod.Invoke(null, [cellCenter, positions, preferred])!;
+
+    private static string CollapseWhitespace(string source)
+        => Regex.Replace(source, @"\s+", " ");
 
     private static string ReadShaderFile(string relativePath)
     {

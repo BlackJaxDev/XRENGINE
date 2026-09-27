@@ -69,10 +69,13 @@ namespace XREngine.Rendering.Commands
                     _boundsDirtyRange.HasValue ||
                     _classificationDirtyRange.HasValue ||
                     _visibilityDirtyRange.HasValue ||
+                    _transparencyDirtyRange.HasValue ||
                     _transformDirtyRange.HasValue ||
                     _materialStateDirtyRange.HasValue ||
                     _skinningPaletteDirtyRange.HasValue ||
                     _commandAabbDirtyRange.HasValue;
+                if (S13aPublicationTelemetry.Enabled)
+                    RecordSceneSwapTelemetry(commandSnapshotDirty, stageStreamsDirty);
                 if (commandSnapshotDirty || stageStreamsDirty)
                     RecordStreamPublication();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.CopyStreams"))
@@ -90,34 +93,14 @@ namespace XREngine.Rendering.Commands
                     PublishMeshletBufferGenerationAtFrameBoundary();
                 }
 
-                if (commandSnapshotDirty && _updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
+                // The transparency stream publishes its own dirty range like the other
+                // draw-indexed streams; every updating-row write marks it, so a content
+                // version advance no longer copies the whole span.
+                if (_transparencyDirtyRange.HasValue)
                 {
                     using var transparencyScope = RuntimeEngine.Profiler.Start(
                         "GpuIndirect.GPUScene.SwapCommandBuffers.TransparencyPublication");
-                    if (_allLoadedTransparencyMetadataBuffer.ElementCount < _updatingTransparencyMetadataBuffer.ElementCount)
-                        _allLoadedTransparencyMetadataBuffer.Resize(_updatingTransparencyMetadataBuffer.ElementCount);
-
-                    if (_updatingCommandCount > 0)
-                    {
-                        uint elementCount = _updatingCommandCount.ClampMax(_updatingTransparencyMetadataBuffer.ElementCount);
-                        uint elementSize = _updatingTransparencyMetadataBuffer.ElementSize;
-                        if (elementSize == 0)
-                            elementSize = TransparencyMetadataUIntCount * sizeof(uint);
-
-                        uint byteCount = elementCount * elementSize;
-
-                        if (_updatingTransparencyMetadataBuffer.TryGetAddress(out var srcMeta) &&
-                            _allLoadedTransparencyMetadataBuffer.TryGetAddress(out var dstMeta))
-                        {
-                            Memory.Move(dstMeta, srcMeta, byteCount);
-                            _allLoadedTransparencyMetadataBuffer.CommitDirtyBytes(0u, byteCount);
-                        }
-                        else
-                        {
-                            // Both buffers should always have client-side sources; if not, the copy cannot proceed.
-                            Debug.MeshesWarning("GPUScene: Transparency metadata buffer TryGetAddress failed during swap â€” client-side source missing.");
-                        }
-                    }
+                    CopyDirtyRange(UpdatingTransparencyMetadataBuffer, AllLoadedTransparencyMetadataBuffer, ref _transparencyDirtyRange);
                 }
                 
                 // Update the render count to match the updating count
@@ -751,6 +734,7 @@ namespace XREngine.Rendering.Commands
         private DirtyRange _boundsDirtyRange;
         private DirtyRange _classificationDirtyRange;
         private DirtyRange _visibilityDirtyRange;
+        private DirtyRange _transparencyDirtyRange;
         private DirtyRange _materialStateDirtyRange;
         private DirtyRange _skinningPaletteDirtyRange;
         private readonly List<uint> _newTransformIdsAwaitingPublication = [];
@@ -795,6 +779,38 @@ namespace XREngine.Rendering.Commands
             RecordDirtyTraffic(ref _streamTelemetry.Visibility, _visibilityDirtyRange, _updatingVisibilityBuffer);
             RecordDirtyTraffic(ref _streamTelemetry.OptionalAabb, _commandAabbDirtyRange, _commandAabbBuffer);
         }
+
+        /// <summary>
+        /// Observation only: reports the stream ranges this swap is about to publish,
+        /// including the transparency range. Runs before the copies clear the ranges.
+        /// </summary>
+        private void RecordSceneSwapTelemetry(bool commandSnapshotDirty, bool stageStreamsDirty)
+        {
+            uint transparencyBytes = 0u;
+            if (_transparencyDirtyRange.HasValue && _updatingTransparencyMetadataBuffer is not null)
+            {
+                uint elementSize = _updatingTransparencyMetadataBuffer.ElementSize;
+                if (elementSize == 0)
+                    elementSize = TransparencyMetadataUIntCount * sizeof(uint);
+                transparencyBytes = DirtyElementCount(_transparencyDirtyRange) * elementSize;
+            }
+
+            S13aPublicationTelemetry.SceneSwap(
+                commandSnapshotDirty,
+                stageStreamsDirty,
+                DirtyElementCount(_drawMetadataDirtyRange),
+                DirtyElementCount(_boundsDirtyRange),
+                DirtyElementCount(_classificationDirtyRange),
+                DirtyElementCount(_visibilityDirtyRange),
+                DirtyElementCount(_transformDirtyRange),
+                DirtyElementCount(_previousPublishedTransformDirtyRange),
+                DirtyElementCount(_materialStateDirtyRange),
+                DirtyElementCount(_commandAabbDirtyRange),
+                transparencyBytes);
+        }
+
+        private static uint DirtyElementCount(in DirtyRange range)
+            => range.HasValue ? range.MaxExclusive - range.Min : 0u;
 
         private static void RecordDirtyTraffic(ref GPUSceneStreamTraffic traffic, in DirtyRange range, XRDataBuffer? buffer)
         {

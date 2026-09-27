@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace XREngine.Rendering.Vulkan;
 
 public sealed partial class VulkanRenderer
@@ -7,6 +9,13 @@ public sealed partial class VulkanRenderer
     /// only on request and never polls Vulkan or changes completion proof.
     /// Frame-local values may advance while an asynchronous client reads them.
     /// </summary>
+    /// <summary>
+    /// Groups live tracked native resources by object type and registering owner.
+    /// Cold diagnostic path that allocates on request; see the lifetime tracker.
+    /// </summary>
+    public IReadOnlyList<VulkanLiveResourceOwnerCount> CaptureLiveResourceOwners(int top, bool collapseOwnerSuffix)
+        => _resourceRuntime.Lifetime.Tracker.CaptureLiveResourceOwnerSummary(top, collapseOwnerSuffix);
+
     public VulkanRetirementDiagnostic CaptureRetirementDiagnostics()
     {
         VulkanRetirementMeterSnapshot snapshot = _resourceRuntime.GetRetirementMeterSnapshot();

@@ -121,8 +121,11 @@ namespace XREngine.Components.Scene.Mesh
             
             RenderedObjects = [.. RenderedObjects.Where((_, x) => x != i)];
 
-            if (ReferenceEquals(ri.WorldInstance, World))
-                ri.WorldInstance = null;
+            // The render info is registered with the world's render registration target
+            // (see RegisterRenderInfoWithWorldIfActive), never with the world instance
+            // itself, so a comparison against World never matched and a mesh removed by a
+            // shape rebuild kept drawing. A mesh leaving this component leaves the scene.
+            ri.WorldInstance = null;
         }
 
         protected virtual void Meshes_PostAnythingAdded(RenderableMesh item)

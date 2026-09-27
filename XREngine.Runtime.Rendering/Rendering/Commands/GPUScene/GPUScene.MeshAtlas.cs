@@ -128,6 +128,16 @@ namespace XREngine.Rendering.Commands
             public readonly float[] MinProjectedRadiusPixels = new float[MaxLogicalMeshLodCount];
             public uint LODCount;
 
+            // Retained registration: the dependency set the current level layout was
+            // built from. Valid only while RegistrationRetained is true; any rebuild,
+            // successful or failed, clears it first so partial state is never reused.
+            public bool RegistrationRetained;
+            public int RegistrationLodVersion;
+            public bool RegistrationDeferNonEssentialLods;
+            public XRMesh? RegistrationRequiredResidentMesh;
+            public uint RegistrationMeshId;
+            public readonly long[] RegistrationGeometryRevisions = new long[MaxLogicalMeshLodCount];
+
             public LODTableEntry ToEntry()
                 => new()
                 {
@@ -197,6 +207,18 @@ namespace XREngine.Rendering.Commands
 
         private readonly Dictionary<XRMesh, EAtlasTier> _activeAtlasTiers = [];
         private readonly Dictionary<XRMesh, (int maxVertexCount, int maxIndexCount)> _streamingReservations = [];
+
+        // Bounded, lock-protected scratch for logical mesh registration: the LOD levels
+        // of one submesh are collected here without allocating, compared against the
+        // retained registration, and cleared after use so no mesh is kept alive by it.
+        private readonly XRMesh?[] _registrationScratchMeshes = new XRMesh?[MaxLogicalMeshLodCount];
+        private readonly float[] _registrationScratchRadii = new float[MaxLogicalMeshLodCount];
+
+        // Observation counters for registration work; sampled as deltas around one
+        // registration so the S13a telemetry can attribute atlas-ensure calls and
+        // logical-table writes to hits versus rebuilds.
+        private long _atlasEnsureCalls;
+        private long _logicalTableWrites;
         private int _streamingWriteSlot;
         private int _streamingRenderSlot;
 

@@ -701,18 +701,33 @@ namespace XREngine
                     RightEyeViewport!.WorldInstanceOverride = ViewInformation.World;
                 }
 
-                // Keep an explicitly selected bootstrap scene family consistent across
-                // desktop and two-pass OpenVR eyes. Automatic selection can otherwise
-                // admit Advanced for the eyes while the controlled desktop camera uses Default.
-                var pipeline = BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false);
-                _twoPassLeftPipeline = new XRRenderPipelineInstance(pipeline);
-                _twoPassRightPipeline = new XRRenderPipelineInstance(BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false));
-                _sharedMeshRenderCommands = new RenderCommandCollection();
-                _sharedMeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
-
                 ConfigureDesktopViewportForVrWindow(window);
 
                 RecalculateStereoCullingFrustum();
+            }
+
+            /// <summary>
+            /// Creates one two-pass eye viewport that owns its pipeline instance and command
+            /// collection. The eyes collect, swap and render through the viewport boundary so
+            /// the selected scene pipeline family publishes its canonical frame package for the
+            /// eye view exactly as desktop and OpenXR eye viewports do: a canonical package is
+            /// only projected for a collection owned by a pipeline instance, so an unowned
+            /// shared collection leaves package-driven (Advanced) eyes without scene draws.
+            /// Camera synchronization stays off so the eye camera's own pipeline cannot
+            /// replace the selected family.
+            /// </summary>
+            private static XRViewport CreateTwoPassEyeViewport(XRWindow window, int index, RenderPipeline pipeline)
+            {
+                XRViewport viewport = new(window)
+                {
+                    Index = index,
+                    SetRenderPipelineFromCamera = false,
+                    PipelineRequest = RenderPipelineRequest.DesktopScene(stereo: false),
+                    AutomaticallyCollectVisible = false,
+                    AutomaticallySwapBuffers = false,
+                };
+                viewport.RenderPipeline = pipeline;
+                return viewport;
             }
 
             private static void ConfigureDesktopViewportForVrWindow(XRWindow window)
@@ -757,18 +772,26 @@ namespace XREngine
                 VRLeftEyeViewTexture?.Destroy();
                 VRRightEyeViewTexture?.Destroy();
 
-                VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window)
-                {
-                    Index = 0,
-                    AutomaticallyCollectVisible = false,
-                    AutomaticallySwapBuffers = false
-                });
-                VRRightEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRRightEyeViewTexture = right, RightEyeViewport = new XRViewport(window)
-                {
-                    Index = 1,
-                    AutomaticallyCollectVisible = false,
-                    AutomaticallySwapBuffers = false
-                });
+                // A resize replaces the eye viewports; tear the previous ones down so their
+                // pipeline instances, caches and backend generations do not linger.
+                LeftEyeViewport?.Destroy();
+                RightEyeViewport?.Destroy();
+
+                // Keep an explicitly selected bootstrap scene family consistent across
+                // desktop and two-pass eyes. Automatic selection can otherwise admit
+                // Advanced for the eyes while the controlled desktop camera uses Default.
+                XRViewport leftViewport = CreateTwoPassEyeViewport(
+                    window, 0, BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false));
+                XRViewport rightViewport = CreateTwoPassEyeViewport(
+                    window, 1, BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false));
+                VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, leftViewport);
+                VRRightEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRRightEyeViewTexture = right, rightViewport);
+                LeftEyeViewport = leftViewport;
+                RightEyeViewport = rightViewport;
+                _twoPassLeftPipeline = leftViewport.RenderPipelineInstance;
+                _twoPassRightPipeline = rightViewport.RenderPipelineInstance;
+                // The left eye's collection also feeds the eye-texture desktop mirror.
+                _sharedMeshRenderCommands = leftViewport.RenderPipelineInstance.MeshRenderCommands;
                 SyncRuntimeVrState();
             }
 
@@ -859,27 +882,33 @@ namespace XREngine
                     return;
                 }
 
-                if (_sharedMeshRenderCommands is null)
+                XRViewport? leftViewport = LeftEyeViewport;
+                XRViewport? rightViewport = RightEyeViewport;
+                if (leftViewport is null || rightViewport is null)
                     return;
 
-                //GetStereoCullingFrustum();
-
-                var scene = ViewInformation.World?.VisualScene;
-                var node = ViewInformation.HMDNode;
-                var frustum = _stereoCullingFrustum;
-                if (scene is null || node is null || frustum is null)
+                IRuntimeRenderWorld? world = ViewInformation.World;
+                SceneNode? node = ViewInformation.HMDNode;
+                Frustum? frustum = _stereoCullingFrustum;
+                if (world?.VisualScene is null || node is null || frustum is null)
                     return;
 
-                ViewInformation.World?.VisualScene?.CollectRenderedItems(
-                    _sharedMeshRenderCommands,
-                    ViewInformation.LeftEyeCamera,
-                    true,
-                    null,
-                    frustum.Value.TransformedBy(node.Transform.RenderMatrix),
-                    true);
-
-                //LeftEyeViewport?.CollectVisible();
-                //RightEyeViewport?.CollectVisible();
+                // Each eye collects into its own pipeline-owned collection so the pipeline
+                // family publishes a canonical frame package per eye. Both use the combined
+                // stereo frustum, so the eyes still share one conservative visible set.
+                IVolume collectionVolume = frustum.Value.TransformedBy(node.Transform.RenderMatrix);
+                leftViewport.CollectVisible(
+                    collectMirrors: true,
+                    worldOverride: world,
+                    cameraOverride: ViewInformation.LeftEyeCamera,
+                    allowScreenSpaceUICollectVisible: false,
+                    collectionVolumeOverride: collectionVolume);
+                rightViewport.CollectVisible(
+                    collectMirrors: true,
+                    worldOverride: world,
+                    cameraOverride: ViewInformation.RightEyeCamera,
+                    allowScreenSpaceUICollectVisible: false,
+                    collectionVolumeOverride: collectionVolume);
             }
             private static void CollectVisibleStereo()
             {
@@ -930,9 +959,10 @@ namespace XREngine
                     return;
                 }
 
-                _sharedMeshRenderCommands?.SwapBuffers();
-                //LeftEyeViewport?.SwapBuffers();
-                //RightEyeViewport?.SwapBuffers();
+                // Swap through each eye viewport so its prepared canonical frame package is
+                // finalized with the command buffers it describes.
+                LeftEyeViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
+                RightEyeViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
             }
             private static void SwapBuffersStereo()
             {
@@ -990,8 +1020,6 @@ namespace XREngine
                         var left = MakeFBOTexture(rW, rH);
                         var right = MakeFBOTexture(rW, rH);
                         RemakeTwoPass(Renderer!.XRWindow, rW, rH, left, right);
-                        _twoPassLeftPipeline?.DestroyCache();
-                        _twoPassRightPipeline?.DestroyCache();
                     }
                 }
 
@@ -1035,7 +1063,9 @@ namespace XREngine
 
             private static void RenderTwoPass()
             {
-                if (_twoPassLeftPipeline is null || _twoPassRightPipeline is null || _sharedMeshRenderCommands is null)
+                XRViewport? leftViewport = LeftEyeViewport;
+                XRViewport? rightViewport = RightEyeViewport;
+                if (leftViewport is null || rightViewport is null)
                     return;
 
                 var lcam = ViewInformation.LeftEyeCamera;
@@ -1043,16 +1073,14 @@ namespace XREngine
                 if (lcam is null || rcam is null)
                     return;
 
-                var scene = ViewInformation.World?.VisualScene;
-                if (scene is null)
+                IRuntimeRenderWorld? world = ViewInformation.World;
+                if (world?.VisualScene is null)
                     return;
 
-                //Render the scene to left and right eyes separately, each with its own FBOs but sharing the same culled mesh commands
-                _twoPassLeftPipeline.Render(scene, lcam, null, LeftEyeViewport, VRLeftEyeRenderTarget, meshRenderCommandsOverride: _sharedMeshRenderCommands);
-                _twoPassRightPipeline.Render(scene, rcam, null, RightEyeViewport, VRRightEyeRenderTarget, meshRenderCommandsOverride: _sharedMeshRenderCommands);
-
-                //LeftEyeViewport?.Render(VRLeftEyeRenderTarget);
-                //RightEyeViewport?.Render(VRRightEyeRenderTarget);
+                // Render each eye through its viewport: its own pipeline instance, collection
+                // and eye framebuffer.
+                leftViewport.Render(VRLeftEyeRenderTarget, world, lcam);
+                rightViewport.Render(VRRightEyeRenderTarget, world, rcam);
 
                 if (_openVrRuntimeActiveForRender)
                 {

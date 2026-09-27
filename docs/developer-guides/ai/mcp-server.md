@@ -663,9 +663,11 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_type_members` | Get properties, fields, methods, events, and constructors from any loaded type. |
 | `get_undo_history` | Get undo/redo history entries. |
 | `get_viewport_sequence_capture` | Get viewport sequence capture progress, terminal state, artifact paths, and optionally per-frame metadata. |
+| `get_vr_view_state` | Read the runtime VR view state: published eye cameras, render world, headset node, eye/stereo viewports, culling frustum, per-eye pipelines, the shared eye command collection and the last VR render-pass counters. Use it to explain unrendered or black eye views in emulated, OpenVR and OpenXR modes. |
 | `get_vulkan_final_presentation_ledger` | Return the bounded Vulkan final-presentation ledger, including final source, native descriptor payload, command artifact, swapchain generation, and present outcome. |
 | `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
 | `get_vulkan_gpu_counter_diagnostics` | Return the latest opt-in raw Vulkan GPU counter evidence captured by the zero-readback diagnostics gate. |
+| `get_vulkan_live_resource_owners` | Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame. |
 | `get_zero_readback_material_table_diagnostics` | Return the fixed per-pass zero-readback material-table gate reached by the latest render frame. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
 | `import_third_party_asset` | Import a third-party file into game assets. External Unity prefabs are converted directly to native .asset output without copying or modifying their source project. |
@@ -836,7 +838,11 @@ All tool responses follow this structure:
 
 ### Tool-Level Errors
 
-When a tool executes but encounters an error, `isError` is set to `true`:
+When a tool executes but encounters an error, `isError` is set to `true`.
+When the error is an unhandled exception inside the tool, the response also
+carries `exceptionType` and `stackTrace` in `structuredContent`/`data`, because
+exception logging is compiled out of non-editor builds and the stack would
+otherwise be lost:
 
 ```json
 {

@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
@@ -15,7 +16,7 @@ namespace XREngine.Rendering.Commands
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct DrawMetadata
+    public struct DrawMetadata : IEquatable<DrawMetadata>
     {
         public uint DrawID;
         public uint MeshID;
@@ -33,6 +34,55 @@ namespace XREngine.Rendering.Commands
         public uint RenderIdentityID;
         public uint LogicalMeshID;
         public uint BoundsID;
+
+        // Typed equality keeps per-submesh update comparisons off the boxing
+        // ValueType.Equals path; every field is a plain integer, so bitwise
+        // field comparison is exact.
+        public readonly bool Equals(DrawMetadata other)
+            => DrawID == other.DrawID
+            && MeshID == other.MeshID
+            && SubmeshID == other.SubmeshID
+            && MaterialID == other.MaterialID
+            && TransformID == other.TransformID
+            && SkinID == other.SkinID
+            && RenderPassMask == other.RenderPassMask
+            && LayerMask == other.LayerMask
+            && Flags == other.Flags
+            && LodPolicy == other.LodPolicy
+            && StateClassID == other.StateClassID
+            && InstanceCount == other.InstanceCount
+            && RenderPass == other.RenderPass
+            && RenderIdentityID == other.RenderIdentityID
+            && LogicalMeshID == other.LogicalMeshID
+            && BoundsID == other.BoundsID;
+
+        public override readonly bool Equals(object? obj)
+            => obj is DrawMetadata other && Equals(other);
+
+        public override readonly int GetHashCode()
+        {
+            HashCode hash = new();
+            hash.Add(DrawID);
+            hash.Add(MeshID);
+            hash.Add(SubmeshID);
+            hash.Add(MaterialID);
+            hash.Add(TransformID);
+            hash.Add(SkinID);
+            hash.Add(RenderPassMask);
+            hash.Add(LayerMask);
+            hash.Add(Flags);
+            hash.Add(LodPolicy);
+            hash.Add(StateClassID);
+            hash.Add(InstanceCount);
+            hash.Add(RenderPass);
+            hash.Add(RenderIdentityID);
+            hash.Add(LogicalMeshID);
+            hash.Add(BoundsID);
+            return hash.ToHashCode();
+        }
+
+        public static bool operator ==(DrawMetadata left, DrawMetadata right) => left.Equals(right);
+        public static bool operator !=(DrawMetadata left, DrawMetadata right) => !left.Equals(right);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -45,7 +95,7 @@ namespace XREngine.Rendering.Commands
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct BoundsGpu
+    public struct BoundsGpu : IEquatable<BoundsGpu>
     {
         public Vector4 BoundingSphere;
         public Vector4 AabbMin;
@@ -54,10 +104,31 @@ namespace XREngine.Rendering.Commands
         public uint Padding0;
         public uint Padding1;
         public uint Padding2;
+
+        // Typed equality: the Vector4 fields make ValueType.Equals take its
+        // reflection path, which boxed every field per submesh update. Vector4
+        // equality is exact component comparison, matching the previous result.
+        public readonly bool Equals(BoundsGpu other)
+            => BoundingSphere.Equals(other.BoundingSphere)
+            && AabbMin.Equals(other.AabbMin)
+            && AabbMax.Equals(other.AabbMax)
+            && BoundsVersion == other.BoundsVersion
+            && Padding0 == other.Padding0
+            && Padding1 == other.Padding1
+            && Padding2 == other.Padding2;
+
+        public override readonly bool Equals(object? obj)
+            => obj is BoundsGpu other && Equals(other);
+
+        public override readonly int GetHashCode()
+            => HashCode.Combine(BoundingSphere, AabbMin, AabbMax, BoundsVersion, Padding0, Padding1, Padding2);
+
+        public static bool operator ==(BoundsGpu left, BoundsGpu right) => left.Equals(right);
+        public static bool operator !=(BoundsGpu left, BoundsGpu right) => !left.Equals(right);
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct MaterialStateGpu
+    public struct MaterialStateGpu : IEquatable<MaterialStateGpu>
     {
         public uint StateClassID;
         public uint MaterialID;
@@ -67,6 +138,27 @@ namespace XREngine.Rendering.Commands
         public uint DescriptorStart;
         public uint DescriptorCount;
         public uint Flags;
+
+        // Typed equality lets the state-class resolver skip rewriting a row whose
+        // content did not change without boxing through ValueType.Equals.
+        public readonly bool Equals(MaterialStateGpu other)
+            => StateClassID == other.StateClassID
+            && MaterialID == other.MaterialID
+            && PipelineKey == other.PipelineKey
+            && OptionsBits == other.OptionsBits
+            && TransparencyMode == other.TransparencyMode
+            && DescriptorStart == other.DescriptorStart
+            && DescriptorCount == other.DescriptorCount
+            && Flags == other.Flags;
+
+        public override readonly bool Equals(object? obj)
+            => obj is MaterialStateGpu other && Equals(other);
+
+        public override readonly int GetHashCode()
+            => HashCode.Combine(StateClassID, MaterialID, PipelineKey, OptionsBits, TransparencyMode, DescriptorStart, DescriptorCount, Flags);
+
+        public static bool operator ==(MaterialStateGpu left, MaterialStateGpu right) => left.Equals(right);
+        public static bool operator !=(MaterialStateGpu left, MaterialStateGpu right) => !left.Equals(right);
     }
 
     [Flags]

@@ -112,6 +112,7 @@ namespace XREngine.Rendering.Commands
             _previousPublishedTransformDirtyRange.Clear();
             _classificationDirtyRange.Clear();
             _visibilityDirtyRange.Clear();
+            _transparencyDirtyRange.Clear();
             _streamTelemetry = default;
             _newTransformIdsAwaitingPublication.Clear();
             _totalCommandCount = 0;
@@ -264,6 +265,7 @@ namespace XREngine.Rendering.Commands
             _previousPublishedTransformDirtyRange.Clear();
             _newTransformIdsAwaitingPublication.Clear();
             _boundsDirtyRange.Clear();
+            _transparencyDirtyRange.Clear();
             _materialStateDirtyRange.Clear();
             _skinningPaletteDirtyRange.Clear();
             _commandAabbDirtyRange.Clear();

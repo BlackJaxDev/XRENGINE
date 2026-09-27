@@ -1,9 +1,17 @@
 # S13b: publication identity without scene-content dirtiness
 
-Status: Blocked. The user explicitly requested execution after the S13a
-evidence handoff. That scope decision permitted the isolated S13b candidate,
-but the retention and correctness gates below have not passed. S13a and S12
-open checks remain in their own gate records.
+Status: Validated on the September 26 final binary (see the final-binary
+closeout section at the end): the mutation/temporal matrix, material-edit
+retention, OpenGL subset, upload failure/retry and renderer-restart cases pass,
+and the September 25 regression tests were executed and pass. The
+emulated-stereo row, which first rendered black eye layers on this binary, was
+root-caused and fixed later on September 26 (three defects in the two-pass VR
+path and the Vulkan eye readback; see "Emulated stereo: black eye layers
+root-caused and fixed"), and the device-creation validation error is fixed and
+verified under the validation layers. One limit stays recorded rather than
+waived: continuously animated per-frame object velocity is still sampled only
+at MCP cadence. The historical September 24 text below is preserved as the
+investigation record.
 
 ## Entry evidence and mechanism
 
@@ -1212,3 +1220,261 @@ contracts have no unit coverage yet.
   attribution and the historical backend divergence disposition.
 - Repair the five broken test files and run the new tests.
 - OpenGL representative comparison.
+
+## September 25 final-binary closeout (evening session)
+
+Source: `7ab827983` plus the working-tree changes named below. Every isolated
+session in this section was built by `Tools/Manage-McpEditorSession.ps1` under
+Windows PowerShell 5.1 (no PowerShell 7 on this machine) with zero warnings and
+errors, on the frozen 393-draw Sponza fixture
+(`unit-world-s13a.jsonc`, SHA256 `4C0588F00A2C6063F177B97857863719FFE2FFF45E17CB9F24E5045BDDDBE518`),
+Vulkan, Advanced/CpuDirect/TSR, 1920x1080 / 1286x723, validation layers off
+unless stated. Evidence lives under
+`Build/_AgentValidation/20260925-195625-s13-final-closeout/` (`reports/`,
+`mcp-captures/`, `mcp-output/`, `logs/`, `scratch/`); durable conclusions are
+recorded here. The September 25 closeout scratch scripts were not present on
+this machine, so the matrix, observer, debugger and capture scripts were
+rewritten under that run's `scratch/` (`s13b_matrix.py`,
+`Run-S13aFinalObserverMatrix.ps1`, `Run-OpenGLComparison.ps1`,
+`s13a_debugger_window.py`, `Attach-VsDebugger.ps1`, `Run-S13aElevatedCapture.ps1`,
+`owner_growth_probe.py`).
+
+### Regression tests executed
+
+The five test files broken by the GI/pipeline rewrite were repaired without
+touching engine code; `XREngine.UnitTests` builds with zero errors and zero
+warnings. The five September 25 test classes ran for the first time and pass:
+`XREventPendingListenerTests` (6), `XRRenderProgramBackendHookTests` (3),
+`ValidationFaultInjectionTests` (5), `MaterialSurfaceTextureBindingSerializationTests` (1),
+`LightProbeComponentYamlDeserializationTests` (5). The repaired classes pass
+(`BackendReadyFramePackageTests` 13/13, `BlendshapeGpuEfficiencyTests` 18/18,
+`ProbeGridLookupTests` 27/27, `DDGIScaffoldingContractTests` 55/55) except
+`RenderPipelineResourceLifecycleTests`, where 15 pre-existing failures remain
+(GBuffer/AO/generation-key/feature-mask/UI-pipeline/Vulkan-format drift and one
+GI-profile test whose declarations moved to the provider registry). Those
+failures predate this work and are not S13 regressions; they need their own
+owner. Only `DefaultPipelineResourceFeature_DdgiResourcesEnabled_IsExpectedMask`
+was deleted, replaced by a provider-resource declaration test.
+
+### First rerun of the S13b matrix on `7ab827983`
+
+The 12-row matrix rerun (`reports/s13b-matrix-final-vulkan/`) passed
+stationary (60 s: zero identity-only, zero other dirty notifications, zero swap
+callbacks, 393 draws, presents advancing, resources flat), add/remove/re-add,
+visibility, repeated edits, injected publication rejection (three rejections,
+change accepted afterwards), cube material value, view transition and camera
+velocity. Two script defects were corrected for later runs (the probe cube was
+occluded by the front curtain, and the shared-material candidate was not in
+view). Its material rows exposed a real retained-owner defect described next.
+
+### Material edits retained descriptor variants without bound (fixed)
+
+Repeatedly editing `column_b` (132 submeshes) `BaseColor` and restoring it, with
+one view change after each edit, grew mesh descriptor allocation variants by
+about 131 per edit, local sets by 655 and native live resources by 915, and the
+growth repeated when the value returned to an already-seen state. The material
+edit republishes the material-table closure generation, which changes the
+published descriptor resource fingerprint in every affected renderer's
+allocation key; the per-renderer full-key cache never evicted the superseded
+variants (the September 24 record already noted that no eviction consumer
+existed).
+
+Fix (`VkMeshRenderer.DescriptorVariantRetirement.cs`, activation timestamp in
+`VkMeshRenderer.Descriptors.cs`): every descriptor activation stamps the
+allocation; when a renderer publishes a new variant it retires its own
+allocations that have not been activated for five seconds through the existing
+ticketed lifetime release. Every bind and every validated recorded-command reuse
+activates the allocation, so an idle variant is not referenced by any frame in
+flight. The scan runs only on publication events, never per frame. The counter
+`mesh_descriptor_superseded_variant_retirements` is exported by
+`get_render_profiler_stats`.
+
+Result on the fixed binary: eight alternating tint/restore edits with a view
+change after each kept variants flat at 819 and sets at 7,786, retired 1,069
+stale variants, and left zero pending retirement.
+
+### Material edits retained generated programs, pipeline layouts and pipelines (fixed)
+
+With descriptor sets flat, native live resources still grew by about 264 per
+edit. The new cold-path MCP diagnostic `get_vulkan_live_resource_owners` (live
+tracked resources grouped by object type and registering owner, optionally
+collapsing a per-instance `#` suffix) attributed the growth exactly: +132
+`VkPipeline` (`VkMeshRenderer.Graphics`) and +132 `VkPipelineLayout`
+(`VkRenderProgram.PipelineLayout`) per edit, one new program wrapper per
+`column_b` renderer per edit, none ever destroyed. Cause: the uber shader bakes
+static material properties as literals, so a `BaseColor` edit rebuilds the uber
+variant; `ShadersChanged` bumps the material's shader-state revision and
+destroys and recreates the derived shadow-caster and depth-normal variant
+materials; each renderer then generates a new combined program (new
+`VkRenderProgram`, pipeline layout and graphics pipelines) while its
+`_programCache` kept every superseded entry, including entries keyed on the
+destroyed variant material objects, for the renderer's lifetime. This is the
+runtime form of the 411 depth-only pipelines found leaked at teardown on
+September 25.
+
+Fix (`VkMeshRenderer.Pipeline.cs`, `VkMeshRenderer.GeneratedProgramCacheEntry.cs`):
+each cache entry records its owner group (material, axes, stages, generated
+vertex identity) and its material; on the first successful activation of a
+newly created entry the renderer destroys entries in the same owner group and
+entries whose material is destroyed, removes their program-state, link
+generation and pipeline-lookup records (the local pipeline lookup is keyed by
+pipeline-layout handle, which the driver may reuse), and lets the deferred
+render-object destroy retire the wrapper's layout and pipelines through the
+existing ticketed paths. Eviction waits for a successful link so a
+still-compiling replacement never removes the program that is rendering. The
+counter `mesh_generated_programs_superseded` is exported alongside the
+descriptor counters, and the pipeline-layout and mesh-graphics-pipeline owner
+labels now carry the owning program's binding id for the owner diagnostic.
+
+Result (`reports/owner-growth-i/`): eight edits changed native live resources
+from 12,446 to 12,450 (three additional descriptor pools and one sampler,
+bounded cache fill), 1,056 programs superseded, 1,056 stale variants retired,
+zero pending retirement. Before the fix the same probe grew 792 pipelines and
+792 layouts per six edits.
+
+### Final S13b matrix on the fixed binary
+
+Final isolated session `s13-final-0925i`; DLL SHA256: Editor
+`FFB22642866867A62E6B3846E238C40347C556B94A27E7AAD965C1C74870DA57`, Rendering
+`62F2861AC1040824D04DD8E1BCB80D4B569B1B60B44A8FE8E126C51D4568B34A`, Vulkan
+`3D346658C5F547FA1EC4FC1824697CEE37EAE1C96EA48CA673727AB8D1F5B272`, OpenGL
+`737937AB9A6DCE6762B49B38A89B6C83FEFB23D7CA5E1F8EA83D9D54286292BD` (executable
+`F7F8FA596D3941B4E502F1EB9A5115EC27FDA36CEEE69FF28EFC104D6A148196`). The
+15-row run (`reports/s13b-matrix-final-vulkan-i/`, screenshots under
+`mcp-captures/s13b-matrix-final-vulkan-i/`) passed every row with S13a
+telemetry enabled, zero cumulative validation errors and zero pending
+retirement at every case end:
+
+| Row | Result on the final binary |
+| --- | --- |
+| Stationary 60 s after 90 s warmup | 393 draws; zero identity-only, zero other dirty notifications, zero swap callbacks, zero mesh updates; native 12,450 / sets 7,756 / variants 813 flat. |
+| Add, remove, re-add probe cube | 394/393/394 draws, topology generation advanced per change, cube visible (2.6% pixel change, image viewed), removal returned 241 native / 162 sets. |
+| Visibility off/on | 393/394 draws; one swap callback on reactivation. |
+| Six transform edits in 1.8 s, then 20 s | Content generation advanced during the burst; zero identity-only dirty, zero swap callbacks afterwards. |
+| Three injected publication rejections | Change accepted afterwards; `injectedTotal` 3, none armed. |
+| Cube `BaseColor` red to green | 2.7% pixel change, image viewed. |
+| Shared `fabric_e` tint and restore (3 submeshes) | 1.1% pixel change, restored within 0.01%, images viewed (background flag curtains darken). |
+| Eight `column_b` edits (132 submeshes) | Native 12,392 to 12,394, variants 819 flat, 2,257 stale variants retired, zero pending. |
+| Velocity | Stationary zero; camera interpolation signed nonzero (-0.0096/+0.0004); object wiggle sampled at ±0.36; settled zero. |
+| View B, return A | Zero identity-only dirty, flat resources. |
+| Cleanup | 393 draws; the cube's 82 pending sets drained to zero. |
+
+Object velocity is sampled at MCP cadence, so continuously animated per-frame
+velocity is still not captured; the sampled values are signed and return to
+zero.
+
+### OpenGL representative subset on the same binary
+
+The same session binary restarted under OpenGL with telemetry
+(`reports/s13b-matrix-final-opengl-i2/`): stationary 60 s had zero identity-only
+and zero other dirty notifications and zero swap callbacks; add/remove/re-add,
+visibility, cube material (2.2%), shared `fabric_e` tint (1.3%, restored to
+0.14%) and the view transition all passed with frames advancing. Both backends
+therefore show the same absence of identity feedback and the same mutation
+propagation on this binary.
+
+### Validation-layer rerun after the lifetime fixes
+
+A Debug isolated session built from the same source ran with standard and
+synchronization validation (`XRE_VULKAN_VALIDATION=1`,
+`XRE_VULKAN_SYNC_VALIDATION=1`, installed 1.4.357.0 layer; session
+`s13-final-0925-validation`, Vulkan DLL SHA256 prefix `01BBB5118F6B`;
+`reports/s13b-validation-debug/`, `reports/s13b-validation-debug-restart/`,
+`reports/validation-debug/log-scan.txt`). Stationary, add/remove/re-add, the
+eight-edit `column_b` retention case (variants 817 flat, native 12,513 flat, 992
+stale variants retired, zero pending) and a transactional `restart_renderer`
+(succeeded, authority 1 to 2, replacement device rehydrated and presented,
+return-A image within 1.05% of the pre-restart image, zero pending retirement)
+all completed at 20-21 frames per second with zero synchronization hazards. The
+first session was stopped with the long teardown timeout after the editor's
+close veto, and the second session's restart plus final stop covered two more
+device destructions; none of the three Vulkan logs contain a leaked-object
+report or a `VUID-vkDestroyDevice` line, so the descriptor-variant and
+generated-program retirement paths added here leave nothing behind at
+teardown.
+
+One validation error was reported once per created device (two per session, at
+device creation, before any scene work): `VUID-VkDeviceCreateInfo-ppEnabledExtensionNames-10858`,
+because `VK_KHR_push_descriptor` is enabled while the chained
+`VkPhysicalDeviceVulkan14Features::pushDescriptor` is false. It predates and is
+independent of the S13 lifetime changes and did not occur with the layer used
+on September 25. It is now fixed at the source: logical-device bootstrap
+queries the 1.4 `pushDescriptor` feature through the same aggregate and
+enables it whenever the Streamline-required extension is enabled, and throws
+`NotSupportedException` instead of creating a device that cannot honour the
+request. Two later Debug sessions with `VK_LAYER_KHRONOS_validation` and
+synchronization validation enabled (02:52 and 03:10 local, one desktop, one
+emulated-stereo with the stereo row) log zero `VUID` lines, zero
+`SYNC-HAZARD` lines and zero leaked-object reports
+(`reports/validation-debug/log-scan.txt`,
+`reports/s13b-validation-debug-emulated-session/log-scan.txt`). At Debug frame
+rates the shared-material restore comparison was inconclusive (tint visible at
+0.93% pixel change, restore still 0.60% after six seconds), so that row's pass
+rests on the Release runs above.
+
+### Emulated stereo: black eye layers root-caused and fixed
+
+`XRE_UNIT_TEST_VR_MODE=Emulated` alone leaves the eye viewports unavailable.
+With `XRE_UNIT_TEST_VR_PAWN=1`, `XRE_UNIT_TEST_SCENE_ONLY_VR_PAWN=1` and
+`XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1` the left/right eye viewports exist and
+capture, but on the `s13-final-0925i` binary both eye captures were uniformly
+black in edit mode and in play mode (`reports/s13b-stereo-emulated-i2/`,
+`mcp-captures/stereo-playmode-probe/`). The earlier "no eye camera bound"
+reading was wrong: a live probe with the new read-only MCP diagnostic
+`get_vr_view_state` (session `s13-stereo-probe`, `reports/stereo-probe*/`)
+showed both eye cameras bound (`Left Eye`/`Right Eye` nodes under
+`VRHeadsetNode`), the render world, visual scene, headset node, stereo culling
+frustum and both two-pass pipelines all present, and the VR render pass
+executing with two draw calls per frame (the skybox). Three defects stacked:
+
+1. `EngineVrLifecycle` two-pass collection, swap and render called
+   `VisualScene.CollectRenderedItems`, `RenderCommandCollection.SwapBuffers` and
+   `XRRenderPipelineInstance.Render` directly, bypassing the `XRViewport`
+   boundary that prepares and publishes the backend-ready frame package. The
+   Advanced native stage refused each eye with "The advanced native stage has
+   no published canonical backend view package" (`get_advanced_profile_diagnostics`
+   with `vr_eye=left`), so only immediate commands drew.
+2. The shared eye collection was a bare `new RenderCommandCollection()` with no
+   owner pipeline, and package preparation only projects the canonical scene
+   publication for a pipeline-owned collection. Routing through the viewport
+   alone therefore still produced an empty `HDRSceneTex` (all-zero statistics
+   in `reports/stereo-probe-fixed2/replies/`). Each eye viewport now owns its
+   pipeline instance and collects into that instance's own collection with the
+   combined stereo frustum, as the OpenXR sequential-view path does;
+   `RuntimeVrState.TwoPassLeft/RightPipeline` are the viewport instances and
+   `SharedMeshRenderCommands` is the left eye's collection (still fed to the
+   eye-texture desktop mirror). Eye viewports are destroyed before a resize
+   replaces them.
+3. The Vulkan eye screenshot was refused ("no matching rendered Vulkan
+   resource-planner generation") because `VulkanFrameLoop.CreateFrameOpContext`
+   resolved pass metadata from `ActiveMeshRenderCommands`, which outside a
+   render is the pipeline's own unused collection for any viewport rendering
+   through `MeshRenderCommandsOverride`, so the readback context never matched
+   the submitted receipt. The context now resolves through the viewport's
+   override, and the refusal message appends which planner-key fields differ
+   from the newest receipts of the same pipeline.
+
+Evidence on the fixed Release build (session `s13-stereo-probe`;
+`XREngine.Editor.dll` `672A89B5BF9F1BBD551E2397E1E6B89B1499A53E2108167BFC12522189FDDCF6`,
+`XREngine.Runtime.Rendering.dll` `325B81BD44104859B38E2AB2E2F8E1B9D1E66BB7E684402CC461D41FC102A2B7`,
+`XREngine.Runtime.Rendering.Vulkan.dll` `5659FAD17321D6292A92ADE61D58ADB5489430250CEB573B823A45C153F809B2`):
+Vulkan frame ops show three unique contexts against one on the desktop-only
+session; each eye's package is `Published` with one canonical view and 393
+CPU-visible draws; both eye captures are full 8-bit images of Sponza from view
+A with the expected horizontal parallax (`mcp-captures/stereo-probe-fixed3/`).
+The matrix stereo row passes (`reports/s13b-stereo-emulated-fixed/`): the
+driver first moves `VRPlayspaceNode` to view A because the emulated playspace
+defaults to the origin; both eyes show scene content before the probe cube
+(mean RGB about 54/68/77 with 184 to 193 sampled colour buckets), the cube
+changes 2.6% and 2.5% of the sampled eye pixels, identity-only dirty
+notifications stay zero, presents advance, and the publication reaches 394
+draws. The desktop rows add/remove/re-add, visibility, shared material and view
+transition pass on the same build (`reports/s13b-matrix-fixed-desktop-subset/`).
+Under Debug with standard and synchronization validation in emulated mode the
+same rows pass with zero `VUID`, `SYNC-HAZARD` or leak lines
+(`reports/s13b-validation-debug-emulated/`,
+`reports/s13b-validation-debug-emulated-session/log-scan.txt`). Each eye keeps
+its own package from the same resident scene publication, so a desktop package
+still reports one view. Eye auto-exposure converges for a few seconds after the
+playspace moves (the first capture after the move is over-exposed), and the
+eye images remain sampled at MCP cadence.

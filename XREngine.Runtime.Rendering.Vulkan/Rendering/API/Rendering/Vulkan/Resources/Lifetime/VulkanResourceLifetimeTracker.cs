@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Vulkan;
 /// All scratch collections are retained for the tracker lifetime so steady-state
 /// recording and submission do not allocate.
 /// </remarks>
-internal sealed class VulkanResourceLifetimeTracker
+internal sealed partial class VulkanResourceLifetimeTracker
 {
     private const int InitialResourceSlotCapacity = 4096;
 

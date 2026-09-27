@@ -40,7 +40,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		GeneratedProgramState programState = CaptureGeneratedProgramState(material);
 		if (_programStateCache.TryGetValue(programState, out GeneratedProgramCacheEntry? cachedEntry))
-			return ActivateGeneratedProgram(cachedEntry);
+			return ActivateGeneratedProgramAndEvictSuperseded(cachedEntry);
 
 		var sourceShaders = new List<XRShader>(material.Shaders.Count);
 		string? generatedVertexIdentity = null;
@@ -131,6 +131,8 @@ internal unsafe partial class VkMeshRenderer
 			entry = new GeneratedProgramCacheEntry
 			{
 				Identity = programIdentity,
+				OwnerGroup = BuildGeneratedProgramOwnerGroup(programState, generatedProgramAxes, shaderStageList, generatedVertexIdentity),
+				Material = material,
 				Data = generatedProgram,
 				Program = vkProgram,
 			};
@@ -138,7 +140,96 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		_programStateCache[programState] = entry;
-		return ActivateGeneratedProgram(entry);
+		return ActivateGeneratedProgramAndEvictSuperseded(entry);
+	}
+
+	/// <summary>
+	/// Activates the entry and, on its first successful activation, destroys the
+	/// superseded programs in its owner group. Eviction waits for a successful
+	/// link so a still-compiling replacement never removes the program that is
+	/// currently rendering.
+	/// </summary>
+	private bool ActivateGeneratedProgramAndEvictSuperseded(GeneratedProgramCacheEntry entry)
+	{
+		bool activated = ActivateGeneratedProgram(entry);
+		if (activated && !entry.SupersededEntriesEvicted)
+		{
+			entry.SupersededEntriesEvicted = true;
+			EvictSupersededGeneratedPrograms(entry);
+		}
+
+		return activated;
+	}
+
+	/// <summary>
+	/// Destroys generated programs that can no longer be drawn: older entries that
+	/// share the active entry's owner group, and entries whose material has been
+	/// destroyed. A material's uber variant embeds its static property literals, so
+	/// every edit of such a property produces a new shader source and, for its
+	/// derived pass variants, replacement material objects; each replacement meant
+	/// a new generated program, pipeline layout and graphics pipelines per renderer,
+	/// and without eviction every superseded program lived as long as the renderer.
+	/// Destruction is deferred through the render-object destroy queue, and the
+	/// wrapper retires its layout and pipelines through ticketed lifetime tracking.
+	/// </summary>
+	private void EvictSupersededGeneratedPrograms(GeneratedProgramCacheEntry active)
+	{
+		List<GeneratedProgramCacheEntry>? superseded = null;
+		foreach (GeneratedProgramCacheEntry candidate in _programCache.Values)
+		{
+			if (ReferenceEquals(candidate, active))
+				continue;
+			if (!candidate.Material.IsDestroyed &&
+				!string.Equals(candidate.OwnerGroup, active.OwnerGroup, StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			(superseded ??= []).Add(candidate);
+		}
+
+		if (superseded is null)
+			return;
+
+		List<GeneratedProgramState>? staleStates = null;
+		List<VulkanGraphicsPipelineKey>? stalePipelineKeys = null;
+		for (int index = 0; index < superseded.Count; index++)
+		{
+			GeneratedProgramCacheEntry stale = superseded[index];
+			_programCache.Remove(stale.Identity);
+			_observedProgramLinkGenerations.Remove(stale.Program);
+
+			staleStates?.Clear();
+			foreach (KeyValuePair<GeneratedProgramState, GeneratedProgramCacheEntry> pair in _programStateCache)
+			{
+				if (ReferenceEquals(pair.Value, stale))
+					(staleStates ??= []).Add(pair.Key);
+			}
+			if (staleStates is not null)
+			{
+				for (int stateIndex = 0; stateIndex < staleStates.Count; stateIndex++)
+					_programStateCache.Remove(staleStates[stateIndex]);
+			}
+
+			// The local pipeline lookup is keyed by the pipeline layout handle; the
+			// driver may reuse that handle value once the layout is destroyed, so the
+			// stale keys must leave the lookup with the program that owns them.
+			ulong layoutHandle = stale.Program.PipelineLayout.Handle;
+			stalePipelineKeys?.Clear();
+			foreach (KeyValuePair<VulkanGraphicsPipelineKey, Pipeline> pair in _pipelines)
+			{
+				if (pair.Key.PipelineLayoutHandle == layoutHandle)
+					(stalePipelineKeys ??= []).Add(pair.Key);
+			}
+			if (stalePipelineKeys is not null)
+			{
+				for (int keyIndex = 0; keyIndex < stalePipelineKeys.Count; keyIndex++)
+					_pipelines.Remove(stalePipelineKeys[keyIndex]);
+			}
+
+			stale.Data.Destroy();
+			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGeneratedProgramSuperseded();
+		}
 	}
 
 	private bool ActivateGeneratedProgram(GeneratedProgramCacheEntry entry)
@@ -299,6 +390,13 @@ internal unsafe partial class VkMeshRenderer
 		string shaderStageList,
 		string? generatedVertexIdentity)
 		=> $"material={RuntimeHelpers.GetHashCode(state.Material):X8};shaderRevision={state.ShaderStateRevision};shaderSignature={state.ShaderSourceSignature:X16};uberVariant={state.MaterialVariantHash:X16};axes={generatedProgramAxes};stages={shaderStageList};generatedVertex={generatedVertexIdentity ?? string.Empty}";
+
+	private static string BuildGeneratedProgramOwnerGroup(
+		GeneratedProgramState state,
+		string generatedProgramAxes,
+		string shaderStageList,
+		string? generatedVertexIdentity)
+		=> $"material={RuntimeHelpers.GetHashCode(state.Material):X8};axes={generatedProgramAxes};stages={shaderStageList};generatedVertex={generatedVertexIdentity ?? string.Empty}";
 
 	private static string BuildGeneratedProgramName(
 		GeneratedProgramState state,

@@ -287,7 +287,7 @@ public sealed class BlendshapeGpuEfficiencyTests
         renderer.EnsurePrecombinedBlendshapeBuffers(mesh).ShouldBeTrue();
         renderer.PrecombinedBlendshapePositionsBuffer.ShouldBeSameAs(firstPositions);
 
-        renderer.MarkPrecombinedBlendshapeDeltasValid(mesh);
+        renderer.MarkPrecombinedBlendshapeDeltasValid(mesh, renderer.CaptureBlendshapeResources().GenerationId);
         renderer.HasValidPrecombinedBlendshapeDeltas.ShouldBeTrue();
 
         renderer.MarkSkinnedOutputDirty();
@@ -379,7 +379,7 @@ public sealed class BlendshapeGpuEfficiencyTests
     public void SkinningPrepassOutputCache_DoesNotReuseBeforeSkinInputsSettle()
     {
         XRMeshRenderer renderer = new();
-        renderer.MarkSkinnedOutputClean();
+        renderer.MarkSkinnedOutputClean(renderer.SkinnedOutputVersion);
 
         Type resourcesType = typeof(SkinningPrepassDispatcher).GetNestedType("RendererResources", BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("RendererResources type was not found.");

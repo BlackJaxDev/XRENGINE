@@ -199,9 +199,47 @@ public static class S13aPublicationTelemetry
     private static long _meshUpdateAllocationBytes;
     private static long _meshUpdateSubmeshes;
     private static long _meshUpdateRegistrationAttempts;
+    private static long _meshUpdateRegistrationHits;
+    private static long _meshUpdateRegistrationRebuilds;
+    private static long _meshUpdateAtlasEnsureCalls;
+    private static long _meshUpdateLogicalTableWrites;
+    private static long _meshUpdateMembershipAllocatedBytes;
+    private static long _meshUpdateLookupAllocatedBytes;
+    private static long _meshUpdateMaterialAllocatedBytes;
+    private static long _meshUpdateRegistrationAllocatedBytes;
+    private static long _meshUpdateMetadataAllocatedBytes;
+    private static long _meshUpdateStateClassAllocatedBytes;
+    private static long _meshUpdateFlagsAllocatedBytes;
+    private static long _meshUpdateTransparencyAllocatedBytes;
+    private static long _meshUpdateBoundsCompareAllocatedBytes;
+    private static long _meshUpdateWriteAllocatedBytes;
+    private static long _meshUpdateCommitAllocatedBytes;
     private static long _meshUpdateMetadataWrites;
     private static long _meshUpdateStateClassWrites;
     private static long _meshUpdateTransparencyWrites;
+    private static long _meshUpdateBoundsWrites;
+    private static long _meshUpdateTransformWrites;
+    private static long _sceneSwaps;
+    private static long _sceneSwapsContentDirty;
+    private static long _sceneSwapsStreamsDirty;
+    private static long _sceneSwapCullControlElements;
+    private static long _sceneSwapBoundsElements;
+    private static long _sceneSwapClassificationElements;
+    private static long _sceneSwapVisibilityElements;
+    private static long _sceneSwapTransformElements;
+    private static long _sceneSwapPreviousTransformElements;
+    private static long _sceneSwapMaterialStateElements;
+    private static long _sceneSwapAabbElements;
+    private static long _sceneSwapTransparencyBytes;
+    private static long _advancedFamilyPreparations;
+    private static long _advancedFamilyStages;
+    private static long _advancedScenePublicationPrepareCalls;
+    private static long _advancedScenePublicationAttempts;
+    private static long _advancedSceneSlotHits;
+    private static long _advancedSceneSlotRealizations;
+    private static long _advancedScenePublicationReuses;
+    private static long _advancedScenePublicationPrepareTicks;
+    private static long _advancedScenePublicationFailures;
     private static long _publicationReused;
     private static long _publicationMissing;
     private static long _publicationExpired;
@@ -243,9 +281,32 @@ public static class S13aPublicationTelemetry
     internal static void MeshUpdate(bool changed, bool completed, long waitTicks, long bodyTicks,
         long allocatedBytes, int submeshes, int registrationAttempts, int metadataWrites,
         int stateClassWrites, int transparencyWrites,
-        long materialTicks, long registrationTicks, long writeTicks)
+        long materialTicks, long registrationTicks, long writeTicks,
+        int registrationHits, int registrationRebuilds, int atlasEnsureCalls, int logicalTableWrites,
+        long membershipAllocatedBytes, long lookupAllocatedBytes, long materialAllocatedBytes,
+        long registrationAllocatedBytes, long metadataAllocatedBytes, long stateClassAllocatedBytes,
+        long flagsAllocatedBytes, long transparencyAllocatedBytes, long boundsCompareAllocatedBytes,
+        long writeAllocatedBytes, long commitAllocatedBytes,
+        int boundsWrites, int transformWrites)
     {
         if (!Enabled) return;
+        Interlocked.Add(ref _meshUpdateBoundsWrites, boundsWrites);
+        Interlocked.Add(ref _meshUpdateTransformWrites, transformWrites);
+        Interlocked.Add(ref _meshUpdateRegistrationHits, registrationHits);
+        Interlocked.Add(ref _meshUpdateRegistrationRebuilds, registrationRebuilds);
+        Interlocked.Add(ref _meshUpdateAtlasEnsureCalls, atlasEnsureCalls);
+        Interlocked.Add(ref _meshUpdateLogicalTableWrites, logicalTableWrites);
+        Interlocked.Add(ref _meshUpdateMembershipAllocatedBytes, membershipAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateLookupAllocatedBytes, lookupAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateMaterialAllocatedBytes, materialAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateRegistrationAllocatedBytes, registrationAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateMetadataAllocatedBytes, metadataAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateStateClassAllocatedBytes, stateClassAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateFlagsAllocatedBytes, flagsAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateTransparencyAllocatedBytes, transparencyAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateBoundsCompareAllocatedBytes, boundsCompareAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateWriteAllocatedBytes, writeAllocatedBytes);
+        Interlocked.Add(ref _meshUpdateCommitAllocatedBytes, commitAllocatedBytes);
         Interlocked.Increment(ref _meshUpdateCalls);
         if (!completed) Interlocked.Increment(ref _meshUpdateFailed);
         else Interlocked.Increment(ref changed ? ref _meshUpdateChanged : ref _meshUpdateUnchanged);
@@ -260,6 +321,60 @@ public static class S13aPublicationTelemetry
         Interlocked.Add(ref _meshUpdateMetadataWrites, metadataWrites);
         Interlocked.Add(ref _meshUpdateStateClassWrites, stateClassWrites);
         Interlocked.Add(ref _meshUpdateTransparencyWrites, transparencyWrites);
+    }
+
+    /// <summary>
+    /// Records one GPU scene command-buffer swap: the element counts of the stream
+    /// dirty ranges it publishes to the render snapshot and the bytes of the full
+    /// transparency copy a content-dirty swap performs.
+    /// </summary>
+    internal static void SceneSwap(bool contentDirty, bool streamsDirty,
+        uint cullControlElements, uint boundsElements, uint classificationElements,
+        uint visibilityElements, uint transformElements, uint previousTransformElements,
+        uint materialStateElements, uint aabbElements, uint transparencyBytes)
+    {
+        if (!Enabled) return;
+        Interlocked.Increment(ref _sceneSwaps);
+        if (contentDirty) Interlocked.Increment(ref _sceneSwapsContentDirty);
+        if (streamsDirty) Interlocked.Increment(ref _sceneSwapsStreamsDirty);
+        Interlocked.Add(ref _sceneSwapCullControlElements, cullControlElements);
+        Interlocked.Add(ref _sceneSwapBoundsElements, boundsElements);
+        Interlocked.Add(ref _sceneSwapClassificationElements, classificationElements);
+        Interlocked.Add(ref _sceneSwapVisibilityElements, visibilityElements);
+        Interlocked.Add(ref _sceneSwapTransformElements, transformElements);
+        Interlocked.Add(ref _sceneSwapPreviousTransformElements, previousTransformElements);
+        Interlocked.Add(ref _sceneSwapMaterialStateElements, materialStateElements);
+        Interlocked.Add(ref _sceneSwapAabbElements, aabbElements);
+        Interlocked.Add(ref _sceneSwapTransparencyBytes, transparencyBytes);
+    }
+
+    /// <summary>
+    /// Records one Vulkan Advanced visibility family preparation: the stages it
+    /// iterated, how many scene publication preparations it ran, how many of those
+    /// newly realized a native publication, how many stages reused the family
+    /// result, and the ticks spent in scene publication preparation.
+    /// </summary>
+    internal static void AdvancedFamilyPreparation(int stages, int prepareCalls,
+        int attempts, int reuses, long prepareTicks, int failures)
+    {
+        if (!Enabled) return;
+        Interlocked.Add(ref _advancedScenePublicationFailures, failures);
+        Interlocked.Increment(ref _advancedFamilyPreparations);
+        Interlocked.Add(ref _advancedFamilyStages, stages);
+        Interlocked.Add(ref _advancedScenePublicationPrepareCalls, prepareCalls);
+        Interlocked.Add(ref _advancedScenePublicationAttempts, attempts);
+        Interlocked.Add(ref _advancedScenePublicationReuses, reuses);
+        Interlocked.Add(ref _advancedScenePublicationPrepareTicks, prepareTicks);
+    }
+
+    /// <summary>
+    /// Records whether a scene-resource frame slot armed an existing native
+    /// realization of a canonical publication or realized a new one.
+    /// </summary>
+    internal static void AdvancedSceneSlotPreparation(bool existing)
+    {
+        if (!Enabled) return;
+        Interlocked.Increment(ref existing ? ref _advancedSceneSlotHits : ref _advancedSceneSlotRealizations);
     }
 
     internal static LockBodyScope BeginLockBody() => new(Enabled ? Stopwatch.GetTimestamp() : 0L);
@@ -298,10 +413,32 @@ public static class S13aPublicationTelemetry
         Interlocked.Read(ref _meshUpdateMaterialTicks), Interlocked.Read(ref _meshUpdateRegistrationTicks),
         Interlocked.Read(ref _meshUpdateWriteTicks), Interlocked.Read(ref _meshUpdateAllocationBytes),
         Interlocked.Read(ref _meshUpdateSubmeshes), Interlocked.Read(ref _meshUpdateRegistrationAttempts),
+        Interlocked.Read(ref _meshUpdateRegistrationHits), Interlocked.Read(ref _meshUpdateRegistrationRebuilds),
+        Interlocked.Read(ref _meshUpdateAtlasEnsureCalls), Interlocked.Read(ref _meshUpdateLogicalTableWrites),
+        Interlocked.Read(ref _meshUpdateMembershipAllocatedBytes), Interlocked.Read(ref _meshUpdateLookupAllocatedBytes),
+        Interlocked.Read(ref _meshUpdateMaterialAllocatedBytes), Interlocked.Read(ref _meshUpdateRegistrationAllocatedBytes),
+        Interlocked.Read(ref _meshUpdateMetadataAllocatedBytes), Interlocked.Read(ref _meshUpdateStateClassAllocatedBytes),
+        Interlocked.Read(ref _meshUpdateFlagsAllocatedBytes), Interlocked.Read(ref _meshUpdateTransparencyAllocatedBytes),
+        Interlocked.Read(ref _meshUpdateBoundsCompareAllocatedBytes), Interlocked.Read(ref _meshUpdateWriteAllocatedBytes),
+        Interlocked.Read(ref _meshUpdateCommitAllocatedBytes),
         Interlocked.Read(ref _meshUpdateMetadataWrites), Interlocked.Read(ref _meshUpdateStateClassWrites),
         Interlocked.Read(ref _meshUpdateTransparencyWrites), Interlocked.Read(ref _publicationReused),
         Interlocked.Read(ref _publicationMissing), Interlocked.Read(ref _publicationExpired),
         Interlocked.Read(ref _publicationResourceMutation),
         Interlocked.Read(ref _publicationMaterialMutation), Interlocked.Read(ref _publicationCommandMutation),
-        Interlocked.Read(ref _publicationTemporalMutation), Interlocked.Read(ref _publicationRegistrationRemoval));
+        Interlocked.Read(ref _publicationTemporalMutation), Interlocked.Read(ref _publicationRegistrationRemoval),
+        Interlocked.Read(ref _meshUpdateBoundsWrites), Interlocked.Read(ref _meshUpdateTransformWrites),
+        Interlocked.Read(ref _sceneSwaps), Interlocked.Read(ref _sceneSwapsContentDirty),
+        Interlocked.Read(ref _sceneSwapsStreamsDirty), Interlocked.Read(ref _sceneSwapCullControlElements),
+        Interlocked.Read(ref _sceneSwapBoundsElements), Interlocked.Read(ref _sceneSwapClassificationElements),
+        Interlocked.Read(ref _sceneSwapVisibilityElements), Interlocked.Read(ref _sceneSwapTransformElements),
+        Interlocked.Read(ref _sceneSwapPreviousTransformElements), Interlocked.Read(ref _sceneSwapMaterialStateElements),
+        Interlocked.Read(ref _sceneSwapAabbElements), Interlocked.Read(ref _sceneSwapTransparencyBytes),
+        Interlocked.Read(ref _advancedFamilyPreparations), Interlocked.Read(ref _advancedFamilyStages),
+        Interlocked.Read(ref _advancedScenePublicationPrepareCalls),
+        Interlocked.Read(ref _advancedScenePublicationAttempts),
+        Interlocked.Read(ref _advancedScenePublicationReuses),
+        Interlocked.Read(ref _advancedScenePublicationPrepareTicks),
+        Interlocked.Read(ref _advancedScenePublicationFailures),
+        Interlocked.Read(ref _advancedSceneSlotHits), Interlocked.Read(ref _advancedSceneSlotRealizations));
 }

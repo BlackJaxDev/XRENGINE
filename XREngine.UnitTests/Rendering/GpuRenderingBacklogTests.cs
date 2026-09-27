@@ -648,7 +648,9 @@ public class GpuRenderingBacklogTests
         passSource.ShouldContain("_lodSelectComputeShader.Uniform(\"ViewportSize\", ResolveLodViewportSize());");
         passSource.ShouldContain("RuntimeEngine.Rendering.State.RenderArea");
         lodSource.ShouldContain("public float MinProjectedScreenRadiusPixels");
-        gpuSceneSource.ShouldContain("ResolveMinProjectedRadiusPixels(lod, lodMeshes.Count)");
+        // Registration collects LOD levels into a bounded scratch without allocating and
+        // resolves each configured threshold to its effective value by level index.
+        gpuSceneSource.ShouldContain("ResolveLevelMinProjectedRadiusPixels(_registrationScratchRadii[i], i)");
         gpuSceneSource.ShouldContain("DefaultLod0MinProjectedRadiusPixels");
         gpuSceneSource.ShouldNotContain("lodMeshes.Add((lodMesh, lod.MaxVisibleDistance))");
     }

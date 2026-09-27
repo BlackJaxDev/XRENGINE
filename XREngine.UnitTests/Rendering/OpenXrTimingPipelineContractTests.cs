@@ -695,7 +695,9 @@ public sealed class OpenXrTimingPipelineContractTests
         textureView.ShouldContain("BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, \"VkTextureView.DepthOnlyDescriptor\", out _depthOnlyView)");
         textureView.ShouldContain("BackendContext.Resources.Images.ReleaseInternedView(_view)");
         textureView.ShouldContain("private readonly object _viewLifetimeLock = new();");
-        renderProgram.ShouldContain("ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, \"VkRenderProgram.PipelineLayout\");");
+        // The owner label carries the program binding id so live-resource owner
+        // summaries can attribute retained pipeline layouts to one generated program.
+        renderProgram.ShouldContain("ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, $\"VkRenderProgram.PipelineLayout#{BindingId}\");");
         renderProgram.ShouldContain("ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, owner)");
         renderProgramPipeline.ShouldContain("ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, \"VkRenderProgramPipeline.PipelineLayout\");");
         renderProgramPipeline.ShouldContain("ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, owner)");

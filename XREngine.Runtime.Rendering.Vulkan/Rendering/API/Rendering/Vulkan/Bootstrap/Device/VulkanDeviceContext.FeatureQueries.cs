@@ -198,6 +198,27 @@ internal sealed partial class VulkanDeviceContext
         featureSupported = featuresKhr.Maintenance5;
     }
 
+    /// <summary>
+    /// Queries the Vulkan 1.4 push-descriptor feature. Enabling
+    /// VK_KHR_push_descriptor while chaining the 1.4 aggregate requires the
+    /// aggregate's pushDescriptor member to be true, so the feature is queried
+    /// through the same aggregate rather than the extension alias.
+    /// </summary>
+    internal unsafe void QueryPushDescriptorCapabilities(out bool featureSupported)
+    {
+        PhysicalDeviceVulkan14Features features = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan14Features,
+        };
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+        Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
+        featureSupported = features.PushDescriptor;
+    }
+
     internal unsafe void QueryMaintenance6Capabilities(out bool featureSupported)
     {
         PhysicalDeviceVulkan14Features features = new()

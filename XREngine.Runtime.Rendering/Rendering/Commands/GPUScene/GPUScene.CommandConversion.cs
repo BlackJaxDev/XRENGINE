@@ -184,7 +184,15 @@ namespace XREngine.Rendering.Commands
                     GC.GetAllocatedBytesForCurrentThread() - allocatedBefore,
                     observation.Submeshes, observation.RegistrationAttempts, observation.MetadataWrites,
                     observation.StateClassWrites, observation.TransparencyWrites,
-                    observation.MaterialTicks, observation.RegistrationTicks, observation.WriteTicks);
+                    observation.MaterialTicks, observation.RegistrationTicks, observation.WriteTicks,
+                    observation.RegistrationHits, observation.RegistrationRebuilds,
+                    observation.AtlasEnsureCalls, observation.LogicalTableWrites,
+                    observation.MembershipAllocatedBytes, observation.LookupAllocatedBytes,
+                    observation.MaterialAllocatedBytes, observation.RegistrationAllocatedBytes,
+                    observation.MetadataAllocatedBytes, observation.StateClassAllocatedBytes,
+                    observation.FlagsAllocatedBytes, observation.TransparencyAllocatedBytes,
+                    observation.BoundsCompareAllocatedBytes, observation.WriteAllocatedBytes,
+                    observation.CommitAllocatedBytes, observation.BoundsWrites, observation.TransformWrites);
             }
         }
 
@@ -193,12 +201,46 @@ namespace XREngine.Rendering.Commands
             public long LockWaitTicks;
             public int Submeshes;
             public int RegistrationAttempts;
+            public int RegistrationHits;
+            public int RegistrationRebuilds;
+            public int AtlasEnsureCalls;
+            public int LogicalTableWrites;
             public int MetadataWrites;
+            public int BoundsWrites;
+            public int TransformWrites;
             public int StateClassWrites;
             public int TransparencyWrites;
             public long MaterialTicks;
             public long RegistrationTicks;
             public long WriteTicks;
+            // Per-phase managed allocation on the callback thread, sampled only while the
+            // S13a telemetry is enabled; attributes the update body's remaining allocation
+            // to its owner instead of one total.
+            public long MembershipAllocatedBytes;
+            public long LookupAllocatedBytes;
+            public long MaterialAllocatedBytes;
+            public long RegistrationAllocatedBytes;
+            public long MetadataAllocatedBytes;
+            public long StateClassAllocatedBytes;
+            public long FlagsAllocatedBytes;
+            public long TransparencyAllocatedBytes;
+            public long BoundsCompareAllocatedBytes;
+            public long WriteAllocatedBytes;
+            public long CommitAllocatedBytes;
+        }
+
+        /// <summary>
+        /// Adds the bytes allocated on this thread since <paramref name="allocationMark"/>
+        /// to <paramref name="bucket"/> and advances the mark. No-op while telemetry is off.
+        /// </summary>
+        private static void RecordAllocationPhase(ref long allocationMark, ref long bucket)
+        {
+            if (!S13aPublicationTelemetry.Enabled)
+                return;
+
+            long now = GC.GetAllocatedBytesForCurrentThread();
+            bucket += now - allocationMark;
+            allocationMark = now;
         }
 
         private bool TryUpdateMeshCommandCore(RenderInfo renderInfo, IRenderCommandMesh meshCmd,
@@ -218,7 +260,7 @@ namespace XREngine.Rendering.Commands
                 using var heldBody = S13aPublicationTelemetry.BeginLockBody();
                 if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
                 {
-                    Add(renderInfo, meshCmd, snapshot);
+                    Add(renderInfo, meshCmd, snapshot, ref observation);
                     return true;
                 }
 
@@ -237,7 +279,9 @@ namespace XREngine.Rendering.Commands
                 uint minIndex = uint.MaxValue;
                 uint maxIndex = 0;
 
+                long allocationMark = S13aPublicationTelemetry.Enabled ? GC.GetAllocatedBytesForCurrentThread() : 0L;
                 rebuildRenderable = HasPrimitiveMembershipMismatch(renderInfo, meshCmd, snapshot, meshRenderer, indices);
+                RecordAllocationPhase(ref allocationMark, ref observation.MembershipAllocatedBytes);
 
                 for (int i = 0; !rebuildRenderable && i < indices.Count; i++)
                 {
@@ -279,18 +323,21 @@ namespace XREngine.Rendering.Commands
                         return true;
                     }
 
+                    RecordAllocationPhase(ref allocationMark, ref observation.LookupAllocatedBytes);
                     long phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
                     GetOrCreateMaterialID(material, out uint newMaterialID);
                     if (S13aPublicationTelemetry.Enabled)
                         observation.MaterialTicks += Stopwatch.GetTimestamp() - phaseStarted;
+                    RecordAllocationPhase(ref allocationMark, ref observation.MaterialAllocatedBytes);
 
                     string resolvedMeshLabel = EnsureMeshDebugLabel(mesh, snapshot.Renderer, renderInfo, subMeshIndex);
                     if (S13aPublicationTelemetry.Enabled)
                         observation.RegistrationAttempts++;
                     phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
-                    bool registered = ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, resolvedMeshLabel, out uint newMeshID, out uint newLogicalMeshID, out uint lodCount, out var atlasFailure);
+                    bool registered = ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, resolvedMeshLabel, ref observation, out uint newMeshID, out uint newLogicalMeshID, out uint lodCount, out var atlasFailure);
                     if (S13aPublicationTelemetry.Enabled)
                         observation.RegistrationTicks += Stopwatch.GetTimestamp() - phaseStarted;
+                    RecordAllocationPhase(ref allocationMark, ref observation.RegistrationAllocatedBytes);
                     if (!registered)
                     {
                         atlasFailure ??= "atlas registration failed";
@@ -303,6 +350,8 @@ namespace XREngine.Rendering.Commands
                     var updated = existing;
 
                     bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix);
+                    if (transformChanged && S13aPublicationTelemetry.Enabled)
+                        observation.TransformWrites++;
                     BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(snapshot.Owner, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);
                     updated.MeshID = newMeshID;
                     updated.SubmeshID = (newMeshID << 16) | ((uint)subMeshIndex & 0xFFFF);
@@ -312,6 +361,7 @@ namespace XREngine.Rendering.Commands
                     updated.LogicalMeshID = newLogicalMeshID;
                     updated.DrawID = index;
                     updated.BoundsID = index;
+                    RecordAllocationPhase(ref allocationMark, ref observation.MetadataAllocatedBytes);
                     phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
                     updated.StateClassID = ResolveStateClassId(material, snapshot.RenderPass, newMaterialID);
                     if (S13aPublicationTelemetry.Enabled)
@@ -319,10 +369,12 @@ namespace XREngine.Rendering.Commands
                         observation.StateClassWrites++;
                         observation.MaterialTicks += Stopwatch.GetTimestamp() - phaseStarted;
                     }
+                    RecordAllocationPhase(ref allocationMark, ref observation.StateClassAllocatedBytes);
 
                     if (snapshot.Owner.Is3D)
                         updated.LayerMask = snapshot.Owner.LayerMask;
                     updated.Flags = ComposeDrawFlags(renderInfo, snapshot, mesh, material, modelMatrix, lodCount);
+                    RecordAllocationPhase(ref allocationMark, ref observation.FlagsAllocatedBytes);
                     GPUTransparencyMetadata transparency = GPUTransparencyMetadata.FromMaterial(material);
                     GPUTransparencyMetadata priorTransparency =
                         UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(index);
@@ -333,9 +385,11 @@ namespace XREngine.Rendering.Commands
                     if (transparencyChanged)
                     {
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, transparency);
+                        _transparencyDirtyRange.Mark(index);
                         if (S13aPublicationTelemetry.Enabled)
                             observation.TransparencyWrites++;
                     }
+                    RecordAllocationPhase(ref allocationMark, ref observation.TransparencyAllocatedBytes);
 
                     if (existing.LogicalMeshID != newLogicalMeshID)
                     {
@@ -345,14 +399,30 @@ namespace XREngine.Rendering.Commands
 
                     BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
                     bool boundsChanged = !existingBounds.Equals(updatedBounds);
+                    RecordAllocationPhase(ref allocationMark, ref observation.BoundsCompareAllocatedBytes);
 
-                    if (!existing.Equals(updated) || transformChanged || boundsChanged)
+                    bool metadataChanged = !existing.Equals(updated);
+                    if (metadataChanged || transformChanged || boundsChanged)
                     {
                         phaseStarted = S13aPublicationTelemetry.Enabled ? Stopwatch.GetTimestamp() : 0L;
-                        if (S13aPublicationTelemetry.Enabled)
-                            observation.MetadataWrites++;
-                        WriteDrawMetadata(index, updated);
-                        WriteBounds(index, updatedBounds);
+                        // A row whose updating copy is byte-identical to its last marked write is
+                        // not rewritten: the render-side stream already holds it, and a rewrite
+                        // would only widen the published dirty range with unchanged rows. The
+                        // transform row is written by UpdateTransform on its own change test.
+                        if (metadataChanged)
+                        {
+                            if (S13aPublicationTelemetry.Enabled)
+                                observation.MetadataWrites++;
+                            WriteDrawMetadata(index, updated);
+                            minIndex = Math.Min(minIndex, index);
+                            maxIndex = Math.Max(maxIndex, index);
+                        }
+                        if (boundsChanged)
+                        {
+                            WriteBounds(index, updatedBounds);
+                            if (S13aPublicationTelemetry.Enabled)
+                                observation.BoundsWrites++;
+                        }
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
                         {
                             LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
@@ -361,10 +431,9 @@ namespace XREngine.Rendering.Commands
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
                         anyChanged = true;
-                        minIndex = Math.Min(minIndex, index);
-                        maxIndex = Math.Max(maxIndex, index);
                         if (S13aPublicationTelemetry.Enabled)
                             observation.WriteTicks += Stopwatch.GetTimestamp() - phaseStarted;
+                        RecordAllocationPhase(ref allocationMark, ref observation.WriteAllocatedBytes);
                     }
                     else if (transparencyChanged)
                     {
@@ -381,11 +450,15 @@ namespace XREngine.Rendering.Commands
                     if (!anyChanged)
                         return false;
 
-                    uint elementSize = UpdatingDrawMetadataBuffer.ElementSize;
-
-                    uint byteOffset = minIndex * elementSize;
-                    uint byteCount = (maxIndex - minIndex + 1) * elementSize;
-                    UpdatingDrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
+                    // Only rows whose draw-metadata row was rewritten widen the metadata commit;
+                    // a transform- or bounds-only change publishes through its own stream range.
+                    if (minIndex <= maxIndex)
+                    {
+                        uint elementSize = UpdatingDrawMetadataBuffer.ElementSize;
+                        uint byteOffset = minIndex * elementSize;
+                        uint byteCount = (maxIndex - minIndex + 1) * elementSize;
+                        UpdatingDrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
+                    }
                     FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
@@ -393,6 +466,7 @@ namespace XREngine.Rendering.Commands
 
                     _meshletsDirty = true;
                     RebuildAtlasIfDirty();
+                    RecordAllocationPhase(ref allocationMark, ref observation.CommitAllocatedBytes);
                 }
             }
 
@@ -406,7 +480,7 @@ namespace XREngine.Rendering.Commands
                     if (_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var staleIndices))
                         RemoveMeshCommandIndices(meshCmd, staleIndices);
                 }
-                Add(renderInfo, meshCmd, snapshot);
+                Add(renderInfo, meshCmd, snapshot, ref observation);
                 return true;
             }
 

@@ -7,6 +7,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.GI.RadianceCascades;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
@@ -954,7 +955,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         RenderPipelineResourceLayout surfelLayout = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u, surfelGi));
 
         baseline.ResourcesByName.Keys.ShouldNotContain(VPRC_ReSTIRPass.InitialReservoirBufferName);
-        baseline.ResourcesByName.Keys.ShouldNotContain(VPRC_RadianceCascadesPass.HistoryTextureAName);
+        baseline.ResourcesByName.Keys.ShouldNotContain(RadianceCascadeResourceNames.HistoryA);
         baseline.ResourcesByName.Keys.ShouldNotContain(VPRC_SurfelGIPass.SurfelBufferName);
 
         foreach (string name in new[]
@@ -971,8 +972,8 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         foreach (string name in new[]
         {
-            VPRC_RadianceCascadesPass.HistoryTextureAName,
-            VPRC_RadianceCascadesPass.HistoryTextureBName,
+            RadianceCascadeResourceNames.HistoryA,
+            RadianceCascadeResourceNames.HistoryB,
         })
         {
             TextureSpec history = radianceLayout.ResourcesByName[name].ShouldBeOfType<TextureSpec>();

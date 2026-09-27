@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
@@ -160,6 +161,28 @@ namespace XREngine.Editor.Mcp
             => Task.FromResult(new McpToolResponse(
                 "Retrieved S13a publication telemetry.",
                 S13aPublicationTelemetry.CaptureSnapshot()));
+
+        [XRMcp(Name = "get_vulkan_live_resource_owners", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame.")]
+        public static Task<McpToolResponse> GetVulkanLiveResourceOwnersAsync(
+            McpToolContext context,
+            [McpName("top"), Description("Maximum groups to return (1 through 10000).")] int top = 40,
+            [McpName("collapse_owner_suffix"), Description("Aggregate owner labels that carry a per-instance '#' suffix by their code-path prefix.")] bool collapseOwnerSuffix = false)
+        {
+            if (top is < 1 or > 10000)
+                return Task.FromResult(new McpToolResponse("top must be between 1 and 10000.", isError: true));
+            VulkanRenderer? renderer =
+                (AbstractRenderer.Current ?? RuntimeEngine.Windows.FirstOrDefault()?.Renderer) as VulkanRenderer;
+            if (renderer is null)
+                return Task.FromResult(new McpToolResponse("No active Vulkan renderer.", isError: true));
+            IReadOnlyList<VulkanLiveResourceOwnerCount> groups = renderer.CaptureLiveResourceOwners(top, collapseOwnerSuffix);
+            int live = 0;
+            for (int index = 0; index < groups.Count; index++)
+                live += groups[index].Live;
+            return Task.FromResult(new McpToolResponse(
+                $"Captured {groups.Count} live Vulkan resource owner groups.",
+                new { returned_live = live, groups }));
+        }
 
         [XRMcp(Name = "get_s13a_publication_trace", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Read a page of numeric command/publication events. Set XRE_S13A_PUBLICATION_TRACE=1 before launch; optionally restrict retained command events with XRE_S13A_TRACE_COMMAND_ID. Continue from next_sequence; zero command_id includes all retained commands.")]
@@ -1446,6 +1469,8 @@ namespace XREngine.Editor.Mcp
                             mesh_descriptor_pools = VulkanStats.VulkanMeshDescriptorPools,
                             mesh_descriptor_allocated_sets = VulkanStats.VulkanMeshDescriptorAllocatedSets,
                             mesh_descriptor_reserved_sets = VulkanStats.VulkanMeshDescriptorReservedSets,
+                            mesh_descriptor_superseded_variant_retirements = VulkanStats.VulkanMeshDescriptorSupersededVariantRetirements,
+                            mesh_generated_programs_superseded = VulkanStats.VulkanGeneratedProgramsSuperseded,
                             mesh_frame_data_arena_chunk_high_water = VulkanStats.VulkanMeshFrameDataArenaChunkHighWater,
                             mesh_frame_data_mapped_bytes_high_water = VulkanStats.VulkanMeshFrameDataMappedBytesHighWater,
                             mesh_frame_data_reserved_bytes_high_water = VulkanStats.VulkanMeshFrameDataReservedBytesHighWater,

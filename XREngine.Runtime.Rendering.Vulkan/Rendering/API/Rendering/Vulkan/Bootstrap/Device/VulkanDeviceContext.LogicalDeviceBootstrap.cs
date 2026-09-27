@@ -709,6 +709,19 @@ internal sealed unsafe partial class VulkanDeviceContext
         bool enableMaintenance5Feature = maintenance5FeatureSupported;
         _deviceContext.QueryMaintenance6Capabilities(out bool maintenance6FeatureSupported);
         bool enableMaintenance6Feature = vulkan14PromotedToCore && maintenance6FeatureSupported;
+        // VK_KHR_push_descriptor is requested by Streamline. When the 1.4 aggregate
+        // is chained, the extension may only be enabled with the aggregate's
+        // pushDescriptor member set; leaving it false is a device-creation
+        // validation error even though the driver accepts it.
+        bool pushDescriptorExtensionEnabled = extensionsArray.Contains("VK_KHR_push_descriptor");
+        _deviceContext.QueryPushDescriptorCapabilities(out bool pushDescriptorFeatureSupported);
+        bool enablePushDescriptorFeature =
+            vulkan14PromotedToCore && pushDescriptorExtensionEnabled && pushDescriptorFeatureSupported;
+        if (pushDescriptorExtensionEnabled && vulkan14PromotedToCore && !pushDescriptorFeatureSupported)
+        {
+            throw new NotSupportedException(
+                "VK_KHR_push_descriptor was requested, but the selected Vulkan 1.4 device does not support the pushDescriptor feature.");
+        }
         _deviceContext.QueryShaderInvocationControlCapabilities(
             out bool shaderDemoteToHelperInvocationFeatureSupported,
             out bool shaderTerminateInvocationFeatureSupported);
@@ -1054,6 +1067,7 @@ internal sealed unsafe partial class VulkanDeviceContext
             Maintenance5 = enableMaintenance5Feature,
             Maintenance6 = enableMaintenance6Feature,
             IndexTypeUint8 = enableIndexTypeUint8Feature,
+            PushDescriptor = enablePushDescriptorFeature,
         };
 
         PhysicalDeviceUnifiedImageLayoutsFeaturesKHRNative unifiedImageLayoutsFeatureEnable = new()
