@@ -313,6 +313,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             // Scene tables may be shared by several outputs, but their set-0
             // view/frame/pass ranges are immutable and must not alias another view.
             int existingIndex = slot.Find(database, publication, views, in frame, passes, globalPassCoverage, diagnosticCount);
+            S13aPublicationTelemetry.AdvancedSceneSlotPreparation(existing: existingIndex >= 0);
             if (existingIndex >= 0)
                 return TryArmUse(
                     slot,

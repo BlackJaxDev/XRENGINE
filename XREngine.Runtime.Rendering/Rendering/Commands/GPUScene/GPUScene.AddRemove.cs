@@ -43,6 +43,18 @@ namespace XREngine.Rendering.Commands
         private void Add(RenderInfo renderInfo, IRenderCommandMesh? capturedCommand,
             in GpuSceneMeshCommandSnapshot capturedSnapshot)
         {
+            MeshUpdateObservation observation = default;
+            Add(renderInfo, capturedCommand, in capturedSnapshot, ref observation);
+        }
+
+        /// <summary>
+        /// Adds a render info's mesh commands. Registration work performed here is
+        /// attributed to the caller's observation so an update that re-adds a command
+        /// reports its registration attempts and rebuilds like an in-place update.
+        /// </summary>
+        private void Add(RenderInfo renderInfo, IRenderCommandMesh? capturedCommand,
+            in GpuSceneMeshCommandSnapshot capturedSnapshot, ref MeshUpdateObservation observation)
+        {
             if (renderInfo is null || renderInfo.RenderCommands.Count == 0)
                 return;
 
@@ -122,7 +134,8 @@ namespace XREngine.Rendering.Commands
                             continue;
                         }
 
-                        if (!ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, meshLabel, out uint meshID, out uint logicalMeshID, out uint lodCount, out var atlasFailure))
+                        observation.RegistrationAttempts++;
+                        if (!ResolveLogicalMeshRegistration(renderInfo, mesh, (uint)subMeshIndex, meshLabel, ref observation, out uint meshID, out uint logicalMeshID, out uint lodCount, out var atlasFailure))
                         {
                             RecordUnsupportedMesh(mesh, meshLabel, atlasFailure ?? "atlas registration failed");
                             continue;
@@ -169,6 +182,7 @@ namespace XREngine.Rendering.Commands
                         WriteDrawMetadata(index, commandValue);
                         WriteBounds(boundsId, stageNativeRecords.Value.Bounds);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
+                        _transparencyDirtyRange.Mark(index);
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, snapshot.Owner, mesh.Bounds, modelMatrix);
                                                 LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
@@ -946,6 +960,7 @@ namespace XREngine.Rendering.Commands
                 WriteBounds(targetIndex, lastBounds);
                 MoveCommandAabb(lastIndex, targetIndex);
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
+                _transparencyDirtyRange.Mark(targetIndex);
                 LodTransitionBuffer.SetDataRawAtIndex(targetIndex, default(GPULodTransitionState));
                 QueueCpuLodTransitionWrite(targetIndex);
 
@@ -1060,6 +1075,7 @@ namespace XREngine.Rendering.Commands
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(i, blank);
+            _transparencyDirtyRange.Mark(startIndex, count);
 
             uint elementSize = UpdatingTransparencyMetadataBuffer.ElementSize;
             if (elementSize == 0)

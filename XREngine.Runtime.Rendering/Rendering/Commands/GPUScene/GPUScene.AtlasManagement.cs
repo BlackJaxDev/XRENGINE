@@ -152,6 +152,7 @@ namespace XREngine.Rendering.Commands
             // holding it are unaffected.
             using (_lock.EnterScope())
             {
+                _atlasEnsureCalls++;
                 if (tier == EAtlasTier.Streaming)
                 {
                     foreach (AtlasTierState streamingState in _streamingAtlases)
@@ -232,6 +233,7 @@ namespace XREngine.Rendering.Commands
 
         private void UpdateLogicalMeshTableEntry(LogicalMeshState state)
         {
+            _logicalTableWrites++;
             EnsureLodTableCapacity(state.LogicalMeshId + 1);
             EnsureLodRequestCapacity(state.LogicalMeshId + 1);
             LODTableBuffer.SetDataRawAtIndex(state.LogicalMeshId, state.ToEntry());
@@ -297,39 +299,55 @@ namespace XREngine.Rendering.Commands
         private const float DefaultLod0MinProjectedRadiusPixels = 128.0f;
         private const float MinimumDefaultLodMinProjectedRadiusPixels = 16.0f;
 
-        private static List<(XRMesh mesh, float minProjectedRadiusPixels)> BuildFallbackLodSet(XRMesh mesh)
-            => [(mesh, 0.0f)];
-
-        private static List<(XRMesh mesh, float minProjectedRadiusPixels)> CollectRenderableLodSet(RenderableMesh renderable, uint submeshIndex, XRMesh fallbackMesh)
+        /// <summary>
+        /// Fills the registration scratch with one submesh's LOD levels in list order:
+        /// the renderable's levels when the owner is a <see cref="RenderableMesh"/>,
+        /// otherwise the command mesh alone. Thresholds resolve to their effective
+        /// values and the last level always carries a zero threshold so LOD selection
+        /// never culls it. Returns the level count. Caller holds the scene lock and
+        /// clears the scratch afterwards.
+        /// </summary>
+        private int CollectRegistrationLevels(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, out RenderableMesh? renderable)
         {
-            List<(XRMesh mesh, float minProjectedRadiusPixels)> lodMeshes = [];
-            foreach (RenderableMesh.RenderableLOD lod in renderable.GetLodSnapshot())
+            renderable = renderInfo.Owner as RenderableMesh;
+            int count = renderable?.CollectLodMeshes(submeshIndex, _registrationScratchMeshes, _registrationScratchRadii) ?? 0;
+            if (count == 0)
             {
-                var submeshes = lod.Renderer.GetMeshes();
-                if (submeshIndex >= (uint)submeshes.Length)
-                    continue;
-
-                XRMesh? lodMesh = submeshes[submeshIndex].mesh;
-                if (lodMesh is null)
-                    continue;
-
-                lodMeshes.Add((lodMesh, ResolveMinProjectedRadiusPixels(lod, lodMeshes.Count)));
-                if (lodMeshes.Count >= MaxLogicalMeshLodCount)
-                    break;
+                _registrationScratchMeshes[0] = mesh;
+                _registrationScratchRadii[0] = 0.0f;
+                count = 1;
             }
 
-            if (lodMeshes.Count == 0)
-                lodMeshes.Add((fallbackMesh, 0.0f));
+            int lastIndex = count - 1;
+            for (int i = 0; i < count; i++)
+            {
+                _registrationScratchRadii[i] = i == lastIndex
+                    ? 0.0f
+                    : ResolveLevelMinProjectedRadiusPixels(_registrationScratchRadii[i], i);
+            }
 
-            int lastIndex = lodMeshes.Count - 1;
-            lodMeshes[lastIndex] = (lodMeshes[lastIndex].mesh, 0.0f);
-            return lodMeshes;
+            return count;
         }
 
-        private static float ResolveMinProjectedRadiusPixels(RenderableMesh.RenderableLOD lod, int lodLevel)
-            => float.IsFinite(lod.MinProjectedScreenRadiusPixels)
-                ? MathF.Max(0.0f, lod.MinProjectedScreenRadiusPixels)
+        private static float ResolveLevelMinProjectedRadiusPixels(float configuredMinProjectedRadiusPixels, int lodLevel)
+            => float.IsFinite(configuredMinProjectedRadiusPixels)
+                ? MathF.Max(0.0f, configuredMinProjectedRadiusPixels)
                 : GetDefaultMinProjectedRadiusPixels(lodLevel);
+
+        private static bool ContainsMeshId(ReadOnlySpan<uint> meshIds, uint meshId)
+        {
+            for (int i = 0; i < meshIds.Length; i++)
+            {
+                if (meshIds[i] == meshId)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>True when the id at <paramref name="index"/> already occurs at an earlier index.</summary>
+        private static bool IsDuplicateMeshId(ReadOnlySpan<uint> meshIds, int index)
+            => ContainsMeshId(meshIds[..index], meshIds[index]);
 
         private static float GetDefaultMinProjectedRadiusPixels(int lodLevel)
         {
@@ -340,56 +358,93 @@ namespace XREngine.Rendering.Commands
             return MathF.Max(MinimumDefaultLodMinProjectedRadiusPixels, threshold);
         }
 
+        /// <summary>
+        /// Registers an explicitly supplied LOD set (public LOD API). Levels are copied
+        /// into the bounded registration scratch; the caller holds the scene lock.
+        /// </summary>
         private bool TryPopulateLogicalMeshState(LogicalMeshState state, IEnumerable<(XRMesh mesh, float minProjectedRadiusPixels)> lodMeshes, string meshLabel, out string? failureReason)
-            => TryPopulateLogicalMeshState(state, lodMeshes, meshLabel, null, out failureReason);
-
-        private bool TryPopulateLogicalMeshState(LogicalMeshState state, IEnumerable<(XRMesh mesh, float minProjectedRadiusPixels)> lodMeshes, string meshLabel, XRMesh? requiredResidentMesh, out string? failureReason)
         {
-            failureReason = null;
-            state.DebugLabel = meshLabel;
-            List<(XRMesh mesh, float minProjectedRadiusPixels)> levels = [];
+            int count = 0;
             foreach ((XRMesh mesh, float minProjectedRadiusPixels) in lodMeshes)
             {
                 if (mesh is null)
                     continue;
 
-                levels.Add((mesh, minProjectedRadiusPixels));
-                if (levels.Count >= MaxLogicalMeshLodCount)
+                _registrationScratchMeshes[count] = mesh;
+                _registrationScratchRadii[count] = minProjectedRadiusPixels;
+                if (++count >= MaxLogicalMeshLodCount)
                     break;
             }
 
-            if (levels.Count == 0)
+            try
+            {
+                if (count == 0)
+                {
+                    failureReason = "no valid LOD meshes were provided";
+                    return false;
+                }
+
+                return TryPopulateLogicalMeshStateCore(
+                    state,
+                    _registrationScratchMeshes.AsSpan(0, count),
+                    _registrationScratchRadii.AsSpan(0, count),
+                    meshLabel,
+                    requiredResidentMesh: null,
+                    out failureReason);
+            }
+            finally
+            {
+                Array.Clear(_registrationScratchMeshes);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds a logical mesh's level layout from the given non-null level meshes:
+        /// ensures every mandatory level is resident in the atlas, reconciles atlas
+        /// reference counts for a referenced state, and writes the LOD table entry.
+        /// Scratch is stack-bounded to <see cref="MaxLogicalMeshLodCount"/> levels.
+        /// Any rebuild clears the retained registration first, so a failure leaves no
+        /// reusable signature behind.
+        /// </summary>
+        private bool TryPopulateLogicalMeshStateCore(
+            LogicalMeshState state,
+            ReadOnlySpan<XRMesh?> levelMeshes,
+            ReadOnlySpan<float> levelMinProjectedRadiusPixels,
+            string meshLabel,
+            XRMesh? requiredResidentMesh,
+            out string? failureReason)
+        {
+            failureReason = null;
+            state.RegistrationRetained = false;
+            state.DebugLabel = meshLabel;
+
+            int levelCount = levelMeshes.Length;
+            if (levelCount == 0)
             {
                 failureReason = "no valid LOD meshes were provided";
                 return false;
             }
 
-            int lastIndex = levels.Count - 1;
-            levels[lastIndex] = (levels[lastIndex].mesh, 0.0f);
-
-            uint[] previousMeshIds = new uint[MaxLogicalMeshLodCount];
-            Array.Copy(state.MeshIds, previousMeshIds, state.MeshIds.Length);
+            int lastIndex = levelCount - 1;
+            Span<uint> previousMeshIds = stackalloc uint[MaxLogicalMeshLodCount];
+            state.MeshIds.AsSpan().CopyTo(previousMeshIds);
             int previousRefCount = state.ReferenceCount;
 
-            uint[] newMeshIds = new uint[MaxLogicalMeshLodCount];
-            XRMesh?[] newMeshes = new XRMesh?[MaxLogicalMeshLodCount];
-            float[] newMinProjectedRadiusPixels = new float[MaxLogicalMeshLodCount];
+            Span<uint> newMeshIds = stackalloc uint[MaxLogicalMeshLodCount];
+            Span<float> newMinProjectedRadiusPixels = stackalloc float[MaxLogicalMeshLodCount];
 
-            bool deferNonEssentialLods = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand && levels.Count > 1;
+            bool deferNonEssentialLods = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand && levelCount > 1;
 
-            for (int i = 0; i < levels.Count; i++)
+            for (int i = 0; i < levelCount; i++)
             {
-                XRMesh mesh = levels[i].mesh;
-                newMeshes[i] = mesh;
-                newMinProjectedRadiusPixels[i] = i == lastIndex ? 0.0f : MathF.Max(0.0f, levels[i].minProjectedRadiusPixels);
+                XRMesh mesh = levelMeshes[i] ?? throw new ArgumentException("Level meshes must be non-null.", nameof(levelMeshes));
+                newMinProjectedRadiusPixels[i] = i == lastIndex ? 0.0f : MathF.Max(0.0f, levelMinProjectedRadiusPixels[i]);
 
                 // LOD0 is the mandatory-resident fallback level; the command's own mesh must
                 // also stay resident because indirect draws reference it before (or without)
                 // the GPU LOD-select rewrite. Levels already resident stay resident so
                 // re-registration does not thrash atlas contents.
-                bool alreadyResident = i < state.MeshIds.Length
-                    && state.MeshIds[i] != 0
-                    && ReferenceEquals(state.Meshes[i], mesh);
+                bool alreadyResident = state.MeshIds[i] != 0 && ReferenceEquals(state.Meshes[i], mesh);
                 bool mustBeResident = i == 0
                     || !deferNonEssentialLods
                     || alreadyResident
@@ -404,7 +459,7 @@ namespace XREngine.Rendering.Commands
                 }
 
                 GetOrCreateMeshID(mesh, out uint meshId);
-                string lodLabel = levels.Count == 1 ? meshLabel : $"{meshLabel} LOD{i}";
+                string lodLabel = levelCount == 1 ? meshLabel : $"{meshLabel} LOD{i}";
                 if (!EnsureSubmeshInAtlas(mesh, meshId, lodLabel, out failureReason))
                     return false;
 
@@ -413,71 +468,152 @@ namespace XREngine.Rendering.Commands
 
             if (previousRefCount > 0)
             {
-                HashSet<uint> previous = [];
-                HashSet<uint> current = [];
-
-                foreach (uint meshId in previousMeshIds)
-                    if (meshId != 0)
-                        previous.Add(meshId);
-
-                foreach (uint meshId in newMeshIds)
-                    if (meshId != 0)
-                        current.Add(meshId);
-
-                foreach (uint meshId in current)
+                // Reference counts follow the distinct mesh ids that enter or leave the
+                // level layout; duplicates within one layout count once.
+                for (int i = 0; i < newMeshIds.Length; i++)
                 {
-                    if (!previous.Contains(meshId))
+                    uint meshId = newMeshIds[i];
+                    if (meshId != 0 && !IsDuplicateMeshId(newMeshIds, i) && !ContainsMeshId(previousMeshIds, meshId))
                         IncrementAtlasMeshRefCount(meshId, previousRefCount, "TryPopulateLogicalMeshState");
                 }
 
-                foreach (uint meshId in previous)
+                for (int i = 0; i < previousMeshIds.Length; i++)
                 {
-                    if (!current.Contains(meshId))
+                    uint meshId = previousMeshIds[i];
+                    if (meshId != 0 && !IsDuplicateMeshId(previousMeshIds, i) && !ContainsMeshId(newMeshIds, meshId))
                         DecrementAtlasMeshRefCount(meshId, "TryPopulateLogicalMeshState", previousRefCount);
                 }
             }
 
-            Array.Clear(state.MeshIds, 0, state.MeshIds.Length);
-            Array.Clear(state.Meshes, 0, state.Meshes.Length);
-            Array.Clear(state.MinProjectedRadiusPixels, 0, state.MinProjectedRadiusPixels.Length);
-            Array.Copy(newMeshIds, state.MeshIds, newMeshIds.Length);
-            Array.Copy(newMeshes, state.Meshes, newMeshes.Length);
-            Array.Copy(newMinProjectedRadiusPixels, state.MinProjectedRadiusPixels, newMinProjectedRadiusPixels.Length);
-            state.LODCount = (uint)levels.Count;
+            Array.Clear(state.MeshIds);
+            Array.Clear(state.Meshes);
+            Array.Clear(state.MinProjectedRadiusPixels);
+            for (int i = 0; i < levelCount; i++)
+            {
+                state.MeshIds[i] = newMeshIds[i];
+                state.Meshes[i] = levelMeshes[i];
+                state.MinProjectedRadiusPixels[i] = newMinProjectedRadiusPixels[i];
+            }
+            state.LODCount = (uint)levelCount;
 
             UpdateLogicalMeshTableEntry(state);
             return true;
         }
 
-        private bool ResolveLogicalMeshRegistration(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, string meshLabel, out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failureReason)
+        /// <summary>
+        /// Returns true when the state's retained registration still describes the
+        /// collected levels in the scratch: same LOD version, level count, meshes,
+        /// geometry revisions, thresholds, required resident mesh and streaming policy,
+        /// and every resident level (including the required mesh's level) still holds
+        /// atlas geometry. Constant-time and allocation-free; the retained command mesh
+        /// id is returned on a hit.
+        /// </summary>
+        private bool TryReuseRetainedRegistration(LogicalMeshState state, int lodVersion, int levelCount, XRMesh requiredResidentMesh, bool deferNonEssentialLods, out uint meshId)
+        {
+            meshId = 0;
+            if (!state.RegistrationRetained
+                || state.RegistrationLodVersion != lodVersion
+                || state.LODCount != (uint)levelCount
+                || state.RegistrationDeferNonEssentialLods != deferNonEssentialLods
+                || !ReferenceEquals(state.RegistrationRequiredResidentMesh, requiredResidentMesh))
+                return false;
+
+            bool requiredMeshResident = false;
+            for (int i = 0; i < levelCount; i++)
+            {
+                XRMesh? levelMesh = _registrationScratchMeshes[i];
+                if (levelMesh is null
+                    || !ReferenceEquals(state.Meshes[i], levelMesh)
+                    || state.RegistrationGeometryRevisions[i] != levelMesh.GeometryRevision
+                    || state.MinProjectedRadiusPixels[i] != _registrationScratchRadii[i])
+                    return false;
+
+                if (state.MeshIds[i] == 0)
+                    continue;
+
+                if (!_activeAtlasTiers.TryGetValue(levelMesh, out EAtlasTier tier)
+                    || !GetTierState(tier).MeshOffsets.ContainsKey(levelMesh))
+                    return false;
+
+                if (ReferenceEquals(levelMesh, requiredResidentMesh))
+                    requiredMeshResident = true;
+            }
+
+            if (!requiredMeshResident)
+                return false;
+
+            meshId = state.RegistrationMeshId;
+            return meshId != 0;
+        }
+
+        private void RetainRegistration(LogicalMeshState state, int lodVersion, int levelCount, XRMesh requiredResidentMesh, bool deferNonEssentialLods, uint meshId)
+        {
+            state.RegistrationLodVersion = lodVersion;
+            state.RegistrationDeferNonEssentialLods = deferNonEssentialLods;
+            state.RegistrationRequiredResidentMesh = requiredResidentMesh;
+            state.RegistrationMeshId = meshId;
+            for (int i = 0; i < MaxLogicalMeshLodCount; i++)
+                state.RegistrationGeometryRevisions[i] = i < levelCount ? state.Meshes[i]?.GeometryRevision ?? 0L : 0L;
+            state.RegistrationRetained = true;
+        }
+
+        /// <summary>
+        /// Resolves the logical mesh, command mesh id and LOD count for one submesh of
+        /// a render command. A registration whose complete dependency set is unchanged
+        /// (see <see cref="TryReuseRetainedRegistration"/>) is reused without allocating,
+        /// ensuring atlas buffers or writing the LOD table; anything else rebuilds the
+        /// level layout and retains the new signature.
+        /// </summary>
+        private bool ResolveLogicalMeshRegistration(RenderInfo renderInfo, XRMesh mesh, uint submeshIndex, string meshLabel, ref MeshUpdateObservation observation, out uint meshId, out uint logicalMeshId, out uint lodCount, out string? failureReason)
         {
             meshId = 0;
             logicalMeshId = 0;
             lodCount = 0;
             failureReason = null;
 
-            List<(XRMesh mesh, float minProjectedRadiusPixels)> lodMeshes;
-            LogicalMeshState state;
-
-            if (renderInfo.Owner is RenderableMesh renderable)
+            using (_lock.EnterScope())
             {
-                lodMeshes = CollectRenderableLodSet(renderable, submeshIndex, mesh);
-                logicalMeshId = GetOrCreateRenderableLogicalMeshId(renderable, submeshIndex);
-                state = _logicalMeshStates[logicalMeshId];
-            }
-            else
-            {
-                lodMeshes = BuildFallbackLodSet(mesh);
-                logicalMeshId = GetOrCreateStandaloneLogicalMeshId(mesh);
-                state = _logicalMeshStates[logicalMeshId];
-            }
+                long ensureCallsBefore = _atlasEnsureCalls;
+                long tableWritesBefore = _logicalTableWrites;
+                try
+                {
+                    int levelCount = CollectRegistrationLevels(renderInfo, mesh, submeshIndex, out RenderableMesh? renderable);
+                    int lodVersion = renderable?.LodRegistrationVersion ?? 0;
+                    logicalMeshId = renderable is not null
+                        ? GetOrCreateRenderableLogicalMeshId(renderable, submeshIndex)
+                        : GetOrCreateStandaloneLogicalMeshId(mesh);
+                    LogicalMeshState state = _logicalMeshStates[logicalMeshId];
+                    bool deferNonEssentialLods = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand && levelCount > 1;
 
-            if (!TryPopulateLogicalMeshState(state, lodMeshes, meshLabel, mesh, out failureReason))
-                return false;
+                    if (TryReuseRetainedRegistration(state, lodVersion, levelCount, mesh, deferNonEssentialLods, out meshId))
+                    {
+                        lodCount = state.LODCount;
+                        observation.RegistrationHits++;
+                        return true;
+                    }
 
-            GetOrCreateMeshID(mesh, out meshId);
-            lodCount = state.LODCount;
-            return true;
+                    observation.RegistrationRebuilds++;
+                    if (!TryPopulateLogicalMeshStateCore(
+                            state,
+                            _registrationScratchMeshes.AsSpan(0, levelCount),
+                            _registrationScratchRadii.AsSpan(0, levelCount),
+                            meshLabel,
+                            mesh,
+                            out failureReason))
+                        return false;
+
+                    GetOrCreateMeshID(mesh, out meshId);
+                    lodCount = state.LODCount;
+                    RetainRegistration(state, lodVersion, levelCount, mesh, deferNonEssentialLods, meshId);
+                    return true;
+                }
+                finally
+                {
+                    Array.Clear(_registrationScratchMeshes);
+                    observation.AtlasEnsureCalls += (int)(_atlasEnsureCalls - ensureCallsBefore);
+                    observation.LogicalTableWrites += (int)(_logicalTableWrites - tableWritesBefore);
+                }
+            }
         }
 
         private void AcquireLogicalMeshResidency(uint logicalMeshId)
@@ -489,15 +625,12 @@ namespace XREngine.Rendering.Commands
             if (state.ReferenceCount != 1)
                 return;
 
-            HashSet<uint> uniqueMeshIds = [];
-            foreach (uint meshId in state.MeshIds)
+            for (int i = 0; i < state.MeshIds.Length; i++)
             {
-                if (meshId != 0)
-                    uniqueMeshIds.Add(meshId);
+                uint meshId = state.MeshIds[i];
+                if (meshId != 0 && !IsDuplicateMeshId(state.MeshIds, i))
+                    IncrementAtlasMeshRefCount(meshId, 1, "AcquireLogicalMeshResidency");
             }
-
-            foreach (uint meshId in uniqueMeshIds)
-                IncrementAtlasMeshRefCount(meshId, 1, "AcquireLogicalMeshResidency");
         }
 
         private void ReleaseLogicalMeshResidency(uint logicalMeshId, string context)
@@ -509,15 +642,12 @@ namespace XREngine.Rendering.Commands
             if (state.ReferenceCount != 0)
                 return;
 
-            HashSet<uint> uniqueMeshIds = [];
-            foreach (uint meshId in state.MeshIds)
+            for (int i = 0; i < state.MeshIds.Length; i++)
             {
-                if (meshId != 0)
-                    uniqueMeshIds.Add(meshId);
+                uint meshId = state.MeshIds[i];
+                if (meshId != 0 && !IsDuplicateMeshId(state.MeshIds, i))
+                    DecrementAtlasMeshRefCount(meshId, context, 1);
             }
-
-            foreach (uint meshId in uniqueMeshIds)
-                DecrementAtlasMeshRefCount(meshId, context, 1);
         }
 
         /// <summary>
@@ -538,6 +668,12 @@ namespace XREngine.Rendering.Commands
         {
             failureReason = null;
             AtlasTierState state = GetTierState(tier);
+
+            // An already packed mesh whose tier buffers exist needs nothing: ensuring
+            // the buffers again would resynchronize the legacy dynamic-atlas mirror
+            // (full triangle list and offset table copies) for a no-op.
+            if (state.Positions is not null && state.MeshOffsets.ContainsKey(mesh))
+                return true;
 
             //Make sure the buffers exist - positions, normals, etc
             EnsureAtlasBuffers(tier);

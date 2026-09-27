@@ -239,7 +239,7 @@ internal unsafe partial class VkRenderProgram
             };
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, $"VkRenderProgram.PipelineLayout#{BindingId}");
             return;
         }
 
@@ -258,7 +258,7 @@ internal unsafe partial class VkRenderProgram
 
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, $"VkRenderProgram.PipelineLayout#{BindingId}");
         }
     }
 

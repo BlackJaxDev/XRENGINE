@@ -9,6 +9,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -361,6 +362,7 @@ internal unsafe partial class VkMeshRenderer
 
 		_descriptorAllocations[allocationKey] = allocation;
 		ActivateDescriptorAllocation(allocation, drawUniformSlot, bindingSnapshot);
+		RetireSupersededDescriptorAllocationVariants(allocation);
 		_descriptorDirty = false;
 		return true;
 	}
@@ -1506,6 +1508,7 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? bindingSnapshot = null)
     {
         allocation.LastUsedSerial = ++_descriptorAllocationUsageSerial;
+        allocation.LastUsedTimestamp = Stopwatch.GetTimestamp();
         _descriptorAllocationsByDrawSlot[drawUniformSlot] = allocation;
 		if (allocation.Material is { } material)
 		{

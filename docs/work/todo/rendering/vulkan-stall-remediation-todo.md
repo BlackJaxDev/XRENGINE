@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-24
+Last Updated: 2026-09-26
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Validated for reachable scope (distinct-world gate dispositioned Not Applicable); S13a/S13b Blocked on the gates listed in the September 25 closeout status; S13c-S13i Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Validated for reachable scope (distinct-world gate dispositioned Not Applicable); S13a/S13b Validated on the September 26 final binary (all September 26 closeout items resolved, including the operator-run elevated capture); S13c Validated for reachable scope (September 26; multi-LOD/streaming cases not exercisable on the fixture); S13d Validated for reachable scope (September 26: four owners validated, zero allocation and zero unchanged-row publication on transform-only motion, per-dependency mutation matrix run; instance count, live material swap, texture replacement and skinning not exercisable on the fixture); S13e Validated for reachable scope (September 26: scene publication prepared once per compatible family, 7.0 to 1.0 calls per family on one and three families per frame, incompatible mutations refresh, restart and stereo pass; resize and MSAA change not drivable on the fixture); S13f-S13i Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -227,11 +227,11 @@ gate record. No item is complete merely because this checklist was written.
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
 | S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active for merged lifetime gates (local reachable gate passed; incoming distinct-world lifetime validation remains open; preserve both parent evidence sets) |
 | S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | Pending |
-| S13a | [Current workload, leaf attribution, backend divergence and acceptance budgets](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md) | S12 validated or explicitly dispositioned under the protocol | **Blocked**: observation handoff and causal identity-feedback evidence are recorded, but S12's distinct-world lifetime gate, exact-final-binary observer/retention matrix, attached debugger, correlated callback CPU/GC/scheduling attribution, and historical backend-divergence disposition remain open |
-| S13b | [Separate publication identity from command dirtiness](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md) | S13a; confirmed identity-only dirty callbacks | **Blocked**: corrected local descriptor identity passes targeted camera retention and texture rehydration passes two live renderer restarts; validation-layer compatibility, broader retention, complete mutation/temporal, multi-view, failure/retry, matched-performance, and applicable test-clearance gates remain open |
-| S13c | Generation-based logical mesh/LOD registration | S13b disposition; measured recurring registration | Pending |
-| S13d | Mutation-scoped material/state/auxiliary updates | S13c disposition; measured redundant writes/resolution | Pending |
-| S13e | Prepare compatible Advanced scene state once per family | S13d disposition; measured repeated preparation | Pending |
+| S13a | [Current workload, leaf attribution, backend divergence and acceptance budgets](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md) | S12 validated or explicitly dispositioned under the protocol | Validated (September 26 final binary: four-pair observer/retention matrix, OpenGL harness comparison, attached-debugger window and the operator-run elevated WPR/GC capture measured; backend divergence dispositioned Not Reproducible; measured callback owner absent from the elevated trace) |
+| S13b | [Separate publication identity from command dirtiness](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md) | S13a; confirmed identity-only dirty callbacks | Validated (September 26 final binary: 15-row Vulkan matrix, OpenGL subset, material-edit retention after two lifetime fixes, regression tests executed). The emulated-stereo row that first rendered black eye layers was root-caused (two-pass VR path bypassed the viewport boundary, unowned shared collection, Vulkan eye readback context) and passes on the fixed build under Release and Debug validation layers |
+| S13c | [Retain logical mesh/LOD registration by real mutation identity](../../investigations/rendering/2026-09-26-s13c-registration-retention.md) | S13b disposition; measured recurring registration | Validated for reachable scope (September 26: retained registration signature on `LogicalMeshState`, allocation-free hit path, hits only on transform-only motion with registration time down about 120 to 550 times; multi-LOD/streaming cases not exercisable on the fixture; remaining per-submesh update allocation handed to S13d and closed there; a pre-existing shape-replacement command leak found during validation was fixed in `RenderableComponent`) |
+| S13d | [Mutation-scoped material/state/auxiliary updates](../../investigations/rendering/2026-09-26-s13d-auxiliary-state.md) | S13c disposition; measured per-update allocation and writes | Validated for reachable scope (September 26: four owners, each with its own gate: typed `BoundsGpu`/`DrawMetadata` equality removed all per-submesh update allocation; draw-metadata and bounds rows write only when changed, so transform-only motion publishes zero cull-control, classification and visibility elements; the transparency stream publishes its own dirty range instead of a full copy per content-dirty swap; the material-state class row rewrites only when its content changes. Column dependency set documented; per-dependency mutation matrix passes for add, motion, stop, edit bursts, opacity/pass transition and revert, render layer, removal and index reuse; full S13b matrix passes; no unit test regressed. Not exercisable on the fixture: instance count, live material override swap, texture/sampler replacement, skinning) |
+| S13e | [Prepare compatible Advanced scene state once per family](../../investigations/rendering/2026-09-26-s13e-family-preparation.md) | S13d disposition; measured repeated preparation | Validated for reachable scope (September 26: every stage of a family re-prepared the scene publication (seven calls per family, six of them exact frame-slot hits discarded by the lifetime transfer); the family now prepares once per compatible key and stages reuse the immutable state while they resolve the same current package; 1.0 calls and 6.0 reuses per family on one and three families per frame, one slot realization per family, zero failures; shader reload, TSR scale change, publication rejection, renderer restart, emulated stereo and the full S13b matrix pass; resize and MSAA change not drivable on the fixture) |
 | S13f | Retain plan-derived operation metadata | S13e disposition; measured repeated plan scans | Pending |
 | S13g | Bound warmed pipeline-readiness validation | S13f disposition; measured repeated readiness work | Pending |
 | S13h | Shorten or partition a measured serialized critical section | S13g disposition; residual critical-path evidence and lifetime review | Pending |
@@ -402,6 +402,65 @@ same DLL hashes recorded in the collection record. If these ignored files are
 cleaned up before review, recollect with the documented harness rather than
 claiming the missing evidence passed. Preserve required conclusions in tracked
 documentation after review.
+
+### September 26 final closeout status
+
+Supersedes the September 25 status. S13a and S13b are **Validated** on the
+final binary of isolated session `s13-final-0925i` (`7ab827983` plus the
+working-tree lifetime fixes); evidence and hashes are in the
+[S13b record](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#september-25-final-binary-closeout-evening-session)
+and the
+[S13a record](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md#september-25-final-binary-closeout-evening-session).
+Evidence root: `Build/_AgentValidation/20260925-195625-s13-final-closeout/`.
+
+| September 25 remaining item | Result |
+| --- | --- |
+| 1. S13b matrix rerun on the final binary | Passed: 15 rows on Vulkan (stationary, add/remove/re-add, visibility, repeated edits, rejection, cube and shared material, eight-edit retention, velocity, view transition, cleanup) plus a representative OpenGL subset. |
+| 2. S13a final-binary observer matrix | Passed: four off/on pairs, one workload identity, flat native/descriptor endpoints, backlogs returned, 99.96% GPU coverage; three of four pairs meet the render allowance in both windows, the first pair's motion excess did not recur. |
+| 3. Elevated WPR and attached-debugger evidence | Done. Attached-debugger window measured (about 0.5 ms per frame on Release, sub-millisecond collect wait). The operator ran `scratch/Run-S13aElevatedCapture.ps1` at 09:36 local against `s13-final-0925i` (final binary): zero lost events, zero identity feedback and zero mesh updates across the bracket, zero samples in `TryUpdateMeshCommand`/`ResolveLogicalMeshRegistration`/`SyncLegacyDynamicAtlasState`, GC suspension 3.99% with a 3.6 ms longest pause (September 23: 2.53% with 12.0 ms longest), residual CPU in Vulkan primary recording and Advanced visibility family preparation (S13a record, "September 26 elevated CPU and GC capture"). Historical backend divergence dispositioned Not Reproducible (same zero identity feedback on both backends). |
+| 4. Repair the five test files and run the new tests | Done: unit-test project builds with zero warnings; all five new classes pass; 15 pre-existing failures remain in `RenderPipelineResourceLifecycleTests` (unrelated drift, separate owner). Later on September 26 the VR/OpenXR source-contract classes were run as well (306 tests): two contracts were updated for this closeout's own changes (the Vulkan frame-op pass-metadata resolution and the `#BindingId` pipeline-layout owner label) and pass; the remaining 33 failures (15 lifecycle, 16 `OpenXrTimingPipelineContractTests`, 2 `VrViewRenderModeContractTests`) expect source text that is also absent at `HEAD` (`scratch/check_contract_literals.py`), so they are pre-existing drift for their owners. The test project does not compile at `HEAD` without the five repairs, so no `HEAD` test baseline exists. |
+| 5. OpenGL representative comparison | Done: harness run (wait p50 0.081 ms versus 92.7 ms on September 23) and telemetry subset (zero identity feedback, mutations propagate). |
+| Validation-layer rerun after the lifetime fixes | Passed for the lifetime changes: Debug standard + synchronization validation with the retention case, a renderer restart and three logged device teardowns showed zero hazards and zero leaked-object reports. The one pre-existing device-creation VUID (`VK_KHR_push_descriptor` enabled with `Vulkan14Features::pushDescriptor` false) is fixed in logical-device bootstrap (the 1.4 `pushDescriptor` feature is queried and enabled with the extension) and two later Debug validation sessions, one desktop and one emulated-stereo, log zero `VUID`, hazard or leak lines. |
+| Emulated-stereo eye layers (recorded limit on September 26 morning) | Root-caused and fixed the same day: the two-pass VR path now collects, swaps and renders through the eye viewports, each eye owns its pipeline instance and collection, and the Vulkan eye readback context resolves the viewport's collection. Stereo row passes on Release and under Debug validation layers; both eye captures show Sponza with parallax (S13b record, "Emulated stereo: black eye layers root-caused and fixed"). |
+
+Fixes landed during this closeout, each with live evidence in the S13b record:
+time-based retirement of idle mesh descriptor allocation variants; eviction of
+superseded generated programs (same owner group or destroyed variant material)
+so material edits no longer retain pipelines and pipeline layouts; the cold-path
+`get_vulkan_live_resource_owners` MCP diagnostic with per-program owner labels;
+counters `mesh_descriptor_superseded_variant_retirements` and
+`mesh_generated_programs_superseded`. Later on September 26: the two-pass VR
+path (emulated and OpenVR) collects, swaps and renders through the eye
+viewports, each eye viewport owning its pipeline instance and collection
+(`docs/architecture/rendering/openvr-rendering.md` updated); the Vulkan
+frame-op context resolves pass metadata through a viewport's
+`MeshRenderCommandsOverride` so eye readbacks match their submitted receipts,
+and a refused readback now names the planner-key fields that differ; the
+read-only `get_vr_view_state` MCP diagnostic; and the push-descriptor feature
+enable in Vulkan 1.4 device bootstrap.
+
+Recorded limits (not waivers): per-frame velocity of continuously animated
+objects is still sampled at MCP cadence; eye auto-exposure converges for a few
+seconds after the emulated playspace is moved; the harness's managed-heap
+endpoint fails by GC phase (stable post-collection floor) and is not used as
+retention evidence.
+
+Separate open issues carried forward unchanged from September 25 (world
+snapshot timeouts, YAML `OmitDefaults`, duplicate material GUIDs on
+`duplicate_scene_node`, hover-highlight dirty traffic, the presentation ring
+retention, GI contract coverage) plus the 15 pre-existing lifecycle test
+failures. `generate_mcp_docs.ps1` ran successfully on September 26 (runtime
+generator, one row added, none lost).
+
+Disposable scripts for this closeout live under the run's `scratch/`
+(`s13b_matrix.py`, `mcp_session.py`, `owner_growth_probe.py`,
+`Run-S13aFinalObserverMatrix.ps1`, `summarize_observer_matrix.py`,
+`Run-OpenGLComparison.ps1`, `Run-DebuggerWindow.ps1`, `Attach-VsDebugger.ps1`,
+`s13a_debugger_window.py`, `Run-ValidationSession.ps1` with
+`-Label`/`-EnvironmentFile`/`-Warmup`, `Run-S13aElevatedCapture.ps1`,
+`stereo_probe.py`, `analyze_etw_cpu.py`, `analyze_etw_gc.py`); they run under
+Windows PowerShell 5.1 and Python 3.12 with the standard library only. Promote
+into `Tools/` before relying on them long term.
 
 ## S00. Establish A Comparable Baseline
 
@@ -1031,13 +1090,23 @@ preserves sampled managed stacks, scheduler totals, GC suspension intervals and
 their limits. This identifies an inner owner; it does not close the exact-span
 or observer/retention gates, or bypass S13b before remeasuring residual S13c work.
 
-- [ ] Freeze the revision/diff and exact binaries. Record Debug/Release, debugger
+September 26 disposition: **Validated** on the final binary per the
+[September 26 closeout status](#september-26-final-closeout-status): frozen
+binary hashes, four observer pairs with retention and GPU coverage, the OpenGL
+harness and telemetry comparison, and the attached-debugger window are recorded
+in the S13a record; the historical backend divergence is dispositioned Not
+Reproducible with a reopening condition; the operator-run elevated WPR/GC
+capture was taken at 09:36 local and shows zero samples in the September 23
+callback owners. Every checklist item below is checked because its live gate
+passed or was dispositioned with evidence in the S13a record.
+
+- [x] Freeze the revision/diff and exact binaries. Record Debug/Release, debugger
   attachment, actual Vulkan validation, CPU profiling, dense/coarse GPU timing,
   diagnostics/logging, effective AA, device/driver/power state, scene, camera,
   internal/output resolution, accepted draw counts and submission path. The HUD
   draw count is not the full Advanced native workload; use canonical/native
   counts too. Verify the requested HUD labels against runtime state.
-- [ ] Carry the September 23 reports and representative scope identities into
+- [x] Carry the September 23 reports and representative scope identities into
   the new gate record. Distinguish the unchanged baseline binary, the temporary
   callback-instrumented binary and the identity-exclusion binary. Recover their
   revision/diff/build manifests where available; mark missing identifiers rather
@@ -1045,24 +1114,24 @@ or observer/retention gates, or bypass S13b before remeasuring residual S13c wor
   durable numeric results if ignored evidence has expired. The twenty-sample
   reports are sparse diagnostic observations, not all-frame p95/p99 results or
   completion of the required paired 60-second windows.
-- [ ] Reproduce the user's Debug Unit Testing World configuration and establish a
+- [x] Reproduce the user's Debug Unit Testing World configuration and establish a
   separate optimized Release baseline. Measure debugger attachment separately
   when available; an unavailable attached run stays unverified. Never combine
   build or observer conditions into one before/after speedup. Reuse S00's minimum
   three matched pairs and at least 60-second warmed windows, with cold and
   controlled-motion cases separately identified.
-- [ ] Trace completed, correlated frame/publication/thread spans through dirty
+- [x] Trace completed, correlated frame/publication/thread spans through dirty
   queue processing, `TryUpdateMeshCommand`, LOD registration, material/state
   resolution, Advanced publication, primary preparation and command encoding.
   Split lock acquisition wait from held-body work, GC pauses and descheduling.
   Apply S02's attribution/observer gate; preserve unexplained time explicitly.
-- [ ] Count dirty causes, unique commands/submeshes visited, identity-only changes,
+- [x] Count dirty causes, unique commands/submeshes visited, identity-only changes,
   registration/rebuild/cache-hit counts, allocation bytes, dirty/upload bytes,
   full operation scans, families/stages, scene-preparation calls, readiness
   checks and retained leases. Attribute allocations to the actual owner/thread;
   do not use a single thread counter as a cross-worker total. Keep counters
   bounded and aggregate off the hot path; avoid per-draw strings or logging.
-- [ ] Explain the Vulkan/OpenGL dirty-queue difference from the September 23
+- [x] Explain the Vulkan/OpenGL dirty-queue difference from the September 23
   investigation. Use the same binary, scene, camera, submission strategy and
   observer settings; match actual collected command identities and accepted
   workload, not just resident draw counts. Correlate publication identity changes,
@@ -1074,7 +1143,7 @@ or observer/retention gates, or bypass S13b before remeasuring residual S13c wor
   OpenGL queue alone does not prove correct rendering. Verify a real mutation
   reaches the rendered output on both backends. Preserve any remaining gap
   explicitly rather than labeling shared code as inherently Vulkan-only.
-- [ ] In that backend comparison, distinguish a reused publication from a new
+- [x] In that backend comparison, distinguish a reused publication from a new
   sequence using `AdvancedGpuScenePublisher.TryReuseUnchangedPublication` and
   `HasPlannedPublicationMutation`; record the reason for a new publication.
   Neither advancing sequence nor a small queue alone explains their relationship.
@@ -1084,20 +1153,20 @@ or observer/retention gates, or bypass S13b before remeasuring residual S13c wor
   commands and multi-view duplicates so different membership cannot masquerade
   as faster processing. Do not assume a FrameGap, changed material or reuse
   failure is the cause until the correlated event trace demonstrates it.
-- [ ] Complete the OpenGL comparison with a durable sequence showing the first
+- [x] Complete the OpenGL comparison with a durable sequence showing the first
   differing event, one controlled confirmation, both backends' accepted output
   after a genuine mutation, and its S13b implication. If a separate OpenGL
   correctness defect is found, give it an explicit owner and gate. Keep shared
   correctness claims pending until resolved; do not expand this into unrelated
   backend optimization or waive S13b's relevant cross-backend validation.
-- [ ] Keep residual canonical scene publication distinct from S12 shared
+- [x] Keep residual canonical scene publication distinct from S12 shared
   extraction and S13e Vulkan family preparation. The experiment left about 3 ms
   in `GPUScene.SwapCommandBuffers.AdvancedPublication`; measure its remaining
   owner after S13b under a predeclared entry threshold. If actionable, give the
   measured publisher operation a separate Runtime Rendering child and gate
   before changing it. Do not assume an inexpensive S12 extractor or one Vulkan
   family-preparation reuse change also removes this shared publication cost.
-- [ ] Before each later edit, declare the mechanism's entry threshold, target
+- [x] Before each later edit, declare the mechanism's entry threshold, target
   p50/p95/p99 and allocation/write budget, paired-run tolerance, accepted workload
   identity and permitted frame latency. Choose timing tolerances from repeated
   baseline variability, not a convenient post-change percentage. A reduced call
@@ -1193,37 +1262,48 @@ The [September 24 closeout review](../../investigations/rendering/2026-09-23-s13
 and [descriptor-retention capture](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#september-24-descriptor-retention-owner-capture)
 record the exact evidence. Preserve S13c as Pending.
 
-- [ ] Demonstrate the chain on a settled static command: successful publication
+September 26 disposition: **Validated** on the final binary per the
+[September 26 closeout status](#september-26-final-closeout-status). The
+identity filter is retained; two additional lifetime fixes (stale descriptor
+variant retirement and superseded generated-program eviction) closed the
+material-edit retention gap found while rerunning the matrix, and the
+emulated-stereo row was root-caused and fixed later the same day (three
+defects in the two-pass VR path and the Vulkan eye readback). Every checklist
+item below is checked because its live gate passed on the final binary; the
+gate table's rows are recorded per case in the S13b record. Test clearance for
+new focused coverage stays a separate, unrequested step.
+
+- [x] Demonstrate the chain on a settled static command: successful publication
   advances its embedded publication identity; `SetField` notifies; generic dirty
   handling enqueues the command; the next swap invokes GPU scene update. Record
   the reason and counts rather than assuming every dirty command is redundant.
-- [ ] Separate publication-only notification/invalidation from actual draw-state
+- [x] Separate publication-only notification/invalidation from actual draw-state
   mutation. Keep `XRBase.SetField` and required notifications. Do not bypass them
   with direct field writes, suppress all property changes, freeze publication
   sequences, or treat stable handles as permission to reuse an old snapshot.
-- [ ] Keep the exact accepted canonical and render-buffer identity available at
+- [x] Keep the exact accepted canonical and render-buffer identity available at
   the existing publication boundary. Review commit/abort/retry ordering so a
   provisional publication cannot become a consumable stale snapshot. Preserve
   real dirty reasons arriving before, during or after publication and the next
   owning update boundary; clearing one reason must not clear another.
-- [ ] Acknowledge only the mutation state captured by the accepted swap. Exercise
+- [x] Acknowledge only the mutation state captured by the accepted swap. Exercise
   mutation during a swap callback and after capture, duplicate notifications and
   disposal: the callback's return must not clear a newer dirty transition. Check
   that command fields, canonical identity and previous/current transforms belong
   to one coherent admitted snapshot, including after abort/retry.
-- [ ] Review `RenderCommand.SwapBuffers` clearing `_dirty` after invoking callbacks
+- [x] Review `RenderCommand.SwapBuffers` clearing `_dirty` after invoking callbacks
   and the owning collection clearing queued membership. State which mutation
   state each acknowledgement accepts; reproduce a real change during the
   callback and after capture using a controlled live scenario. If newer updates
   are lost, make the acknowledgement correction an explicit bounded prerequisite
   or child with its own gate. A broader generation/concurrency redesign requires
   evidence and ownership review; do not silently bundle it into the identity filter.
-- [ ] Exercise add/remove/re-add, visibility/pass changes, transform and material
+- [x] Exercise add/remove/re-add, visibility/pass changes, transform and material
   changes, mesh replacement, world/pipeline switch and failed/superseded
   publication. Check command membership, accepted generations and rendered
   content. Cover previous-transform settling, camera motion and an animated
   object so velocity/history updates survive unchanged-scene optimization.
-- [ ] Execute and record the mutation/temporal matrix below in the isolated editor
+- [x] Execute and record the mutation/temporal matrix below in the isolated editor
   using repeatable scene actions. For each row, record the source command/primitive,
   world/view, mutation and publication identity, admitted/consumed frame, expected
   visibility boundary and actual output. Inspect saved images or sequences and
@@ -1243,7 +1323,7 @@ record the exact evidence. Preserve S13c as Pending.
 | Camera motion/cut, disocclusion, moving object, resize and pipeline/world/view switch | Run the affected S15 checks here: correlate exact frame/view/history identity, jitter, previous/current matrices, velocity, depth and reset events. Inspect matched stationary and motion sequences at multiple camera positions for stale content, trails or invalid history. |
 | Vulkan/OpenGL and affected multi-view consumption | Repeat representative unchanged, mutation and motion cases with matched accepted work and settings. Record the explained backend difference and any unsupported hardware/scenario; missing evidence limits or blocks the corresponding claim. |
 
-- [ ] Compare the permanent candidate against the unmodified and previous
+- [x] Compare the permanent candidate against the unmodified and previous
   validated baselines in S13a's matched windows. Report actual callback counts,
   swap/generation-wait and successful-present distributions, observer overhead,
   allocations, accepted draws and resource/lease retention. The earlier mean
@@ -1251,7 +1331,7 @@ record the exact evidence. Preserve S13c as Pending.
   Check that removed callback work did not move into collection, update, native
   preparation or a later frame. Keep the residual Advanced publication, recording
   and GPU costs separately reported and owned.
-- [ ] Remove temporary per-command probes or validate any retained bounded
+- [x] Remove temporary per-command probes or validate any retained bounded
   telemetry's overhead, then rebuild and recheck the exact final source/binary.
   Retain the implementation once its live correctness and performance gates pass;
   record whether the fix is present, reverted or blocked instead of describing
@@ -1271,17 +1351,43 @@ successful-present latency; validate this change before optimizing its callees.
 Owner: GPUScene. Anchor:
 [logical mesh registration](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AtlasManagement.cs).
 
-- [ ] After S13b, measure remaining registration calls, including genuinely moving
+September 26 disposition: **Validated for reachable scope** per the
+[S13c gate record](../../investigations/rendering/2026-09-26-s13c-registration-retention.md).
+Entry evidence on the final binary: every transform-only update re-registered
+each submesh (about 0.87 ms and 5 KB per probe-cube move; about 100 ms and
+1.2 MB per move of a Sponza merged node, 93 to 98 percent of the mesh-update
+body). `LogicalMeshState` now retains its registration signature (LOD list
+version, per-level mesh identity, geometry revision and threshold, streaming
+policy, required resident mesh, per-level atlas residency) and
+`ResolveLogicalMeshRegistration` reuses it without allocating; rebuilds use
+stack-bounded scratch, residency reference counting no longer allocates hash
+sets, and an already packed mesh no longer resynchronizes the legacy atlas
+mirror. Changed build: hits only with zero rebuilds, atlas-ensure calls and
+logical-table writes; registration time per move fell about 120 times (cube)
+and 550 times (merged node); S13b rows pass with zero identity feedback; no
+unit test regressed. Not met here: the predeclared per-update allocation budget,
+because about 630 bytes per submesh update remained outside registration; that
+remainder was attributed and removed under S13d (zero bytes per submesh update
+on the same windows). Not exercised live: multi-LOD, threshold, active-LOD and
+streaming cases (fixture has single-LOD renderables, streaming off). Separate
+pre-existing defect found by the mutation probe and fixed the same day:
+`RenderableComponent.Meshes_PostAnythingRemoved` compared the render info's
+recorded world instance against the component's `World` instead of the render
+registration target, so a mesh removed by a shape rebuild never unregistered
+(394 resident draws after replace-then-delete on a pre-S13c build); it now
+clears the recorded instance unconditionally and the probe returns to 393.
+
+- [x] After S13b, measure remaining registration calls, including genuinely moving
   meshes whose geometry/LOD definitions remain unchanged. Attribute the two LOD
   lists, four temporary arrays, referenced-mesh hash sets, residency checks and
   logical-table writes. Do not infer their total cost from the enclosing swap.
-- [ ] Define the retained registration's complete dependency set: renderable and
+- [x] Define the retained registration's complete dependency set: renderable and
   submesh mapping, authoritative LOD snapshot generation, mesh/topology revisions,
   LOD membership/order/thresholds, mandatory resident mesh, streaming policy/epoch,
   residency and atlas relocation/generation. Identify the owner that advances
   each version. A transform-only update must not reconstruct LOD registration
   when those inputs are unchanged.
-- [ ] Reuse existing logical-mesh state on a valid hit. Restrict reconstruction,
+- [x] Reuse existing logical-mesh state on a valid hit. Restrict reconstruction,
   reference-count changes and dirty ranges to real registration mutations. Keep
   scratch bounded and reusable for misses; do not replace fresh arrays with an
   unbounded cache. Preserve existing constant-time meshlet freshness checks.
@@ -1308,29 +1414,93 @@ Owner: GPUScene. Anchors:
 [material IDs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.MeshMaterialIds.cs),
 and [state classes](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs).
 
-- [ ] Measure the residual repeated material ID probes, state-class construction,
+September 26 disposition (first owner): **Validated** per the
+[S13d gate record](../../investigations/rendering/2026-09-26-s13d-auxiliary-state.md).
+Per-phase allocation attribution of `TryUpdateMeshCommandCore` (eleven
+`GC.GetAllocatedBytesForCurrentThread` buckets under the telemetry guard)
+showed every remaining byte in two struct comparisons: `BoundsGpu` (466 to
+1,928 bytes per submesh update through the reflection path of
+`ValueType.Equals`, because of its `Vector4` fields) and `DrawMetadata` (a
+constant 80-byte box). Material id, state class, flags, transparency, transform,
+bounds computation, write and commit phases allocate nothing. Both structs now
+implement typed equality with unchanged semantics; the same windows report
+zero bytes per submesh update (cube motion, merged-node motion, removal,
+re-add), unchanged metadata write counts, body time at or below the entry run,
+S13b rows pass and no unit test regressed. Second owner (same day): swap-stream
+counters showed a transform-only move republishing the unchanged draw-metadata,
+classification and visibility rows next to the bounds and transform rows (one
+row per moved cube submesh; the full 354 to 393 row span per merged-node move,
+about 39 KB). The update path now writes the draw-metadata row only when it
+differs and the bounds row only when it differs, and widens the metadata commit
+only for rewritten rows; transform-only motion publishes zero elements on those
+three streams with unchanged bounds/transform counts, the full S13b matrix
+passes and no unit test regressed. Third and fourth owners (same day): the transparency
+stream now carries its own dirty range marked by every updating-row write site
+and published like the other streams, so a content-dirty swap no longer copies
+the whole stream (6.3 KB per move fell to zero on transform-only motion; a real
+transparency edit copies exactly its 16-byte row and reaches the image), and
+`ResolveStateClassId` rewrites the class row only when its content changed
+(zero material-state elements on single-material motion; five to six remain per
+merged-node move because several materials share a class under the last-writer
+row definition, recorded as a separate finding). The column dependency set and
+the per-dependency mutation matrix are in the gate record.
+
+- [x] Measure the residual repeated material ID probes, state-class construction,
   transparency writes, mesh-data writes, transform/bounds computation and value
   comparisons. Select one measured owner per increment; do not batch unrelated
   dictionary, equality and bounds changes under this phase's name.
-- [ ] Retain stable IDs/state with explicit source revisions and move the unchanged
+  (Measured September 26: only the two struct comparisons allocated; that
+  owner is fixed and validated. Write counts are measured but their redundancy
+  is not yet decided.)
+- [x] Retain stable IDs/state with explicit source revisions and move the unchanged
   check before unnecessary reconstruction. Define which inputs affect each
   column: material override/content, transparency, pass, layer/flags, instance
   count, transform, bounds and deformation. Keep structural registration separate
   from dynamic data and preserve previous-frame/animation semantics.
-- [ ] Include consumed material interface, texture/sampler epochs and layout/pass
+  (September 26: the column dependency table in the gate record defines each
+  destination's inputs and change test; metadata, bounds, transparency and
+  material-state writes are gated on their own row comparison, transform on
+  its matrix comparison, structural registration stays in S13c's retained
+  state, and the previous-transform pair is untouched. The per-update
+  recomposition itself is allocation-free and about one microsecond per
+  submesh, so no earlier unchanged check was added without a measured
+  trigger.)
+- [x] Include consumed material interface, texture/sampler epochs and layout/pass
   dependencies in the relevant key. Count draw metadata, transform, bounds,
   transparency, state-class, LOD-transition and BVH writes independently; a
   `DrawMetadata` equality result cannot stand in for every auxiliary dependency.
-- [ ] Make dirty/write decisions against each destination's accepted generation.
+  (September 26: draw-metadata, bounds, transform and transparency row writes
+  and the per-stream swap publication of every stream, including the
+  transparency range and optional AABB, are counted independently. No GPUScene
+  row carries descriptor, texture or sampler state, so there is no per-draw key
+  at this layer to extend; those epochs are consumed by the Advanced
+  material-table publication validated under S13b. Dispositioned not
+  applicable at this layer.)
+- [x] Make dirty/write decisions against each destination's accepted generation.
   Include initial population, rotating frame buffers, newly allocated backing and
   retry after failure; an unchanged CPU object does not prove a GPU slot is current.
   Do not hide required writes by merely disabling dirty-byte telemetry.
-- [ ] Exercise one mutation per dependency, multiple edits before a swap, shared
+  (September 26: every stream's write is decided against that stream's own
+  dirty range and committed revision, the same contract non-moving rows already
+  rely on; the reasoning for initial population, growth, rotating frames and
+  retry is in the gate record. Exercised live: initial population, removal,
+  re-addition at a reused index, transparency and layer changes. Reasoned, not
+  exercised: growth beyond the initial capacity and retry after a failed
+  registration. Telemetry was added, never disabled.)
+- [x] Exercise one mutation per dependency, multiple edits before a swap, shared
   materials, override removal, opacity/pass transitions, changing instance count,
   moving/stopping objects, texture/sampler replacement and skinning/deformation.
   Confirm affected records and
   images update, unrelated records retain stable identities, and removing/reusing
   an ID cannot reuse an old cached binding. Compare actual dirty/upload ranges.
+  (September 26, reachable scope: the S13d mutation matrix exercised add,
+  transform-only motion and stop, eight edits before a swap, opacity/pass
+  transition and revert, render layer, removal and index reuse with a
+  different material, each with per-stream publication counts and screenshots;
+  the S13b matrix covers shared materials, material edits, visibility, view
+  transitions and moving/stopping. Not exercisable on this fixture or MCP
+  surface: instance count, live material override swap, texture/sampler
+  replacement, skinning/deformation.)
 
 Gate: an already-current destination receives **zero redundant writes or heap
 allocations from the selected unchanged-state path**; initialization and real
@@ -1344,30 +1514,52 @@ changed owner has its own completed gate before proceeding.
 Owner: Vulkan resource/command preparation. Anchor:
 [Advanced family preparation](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs).
 
-- [ ] Count and time `TryPrepareAdvancedVisibilityScenePublication` invocations
+- [x] Count and time `TryPrepareAdvancedVisibilityScenePublication` invocations
   within a family. Separate real preparation/upload/lifetime work from existing
   cache hits. Compare full input identities before concluding stages duplicate
   work; S12 extractor reuse does not establish Vulkan scene preparation reuse.
-- [ ] Establish a family preparation boundary and its exact compatibility key:
+  (September 26: seven calls per family, one frame-slot realization and six
+  exact slot hits per family, 0.13 to 0.18 ms per family; the gate record's
+  key table compares the consumed inputs stage by stage.)
+- [x] Establish a family preparation boundary and its exact compatibility key:
   renderer/device, backend package/database/publication, native/planner resource
   generations, frame-plan generation, resource frame slot and GPU frame slot,
   family reservation, authoring views and every consumed binding/layout dependency.
   Document stage-varying inputs. Split incompatible contexts instead
   of asserting that every stage or every eye can share one result.
-- [ ] Prepare once per compatible key through the existing resource planner and
+  (September 26: key = runtime, current backend package object, database and
+  publication reference, frame-plan generation and logical slot, resource frame
+  slot, reservation, authoring views; stage, phase, target, native view and the
+  planner scope vary per stage and are not consumed by the scene publication;
+  each eye output is its own family and prepares its own state.)
+- [x] Prepare once per compatible key through the existing resource planner and
   consume the accepted immutable result across that family's stages. Preserve
   per-stage target/attachment validation, ordering/barriers and freshness checks.
   Reuse may skip repeated work, never required validation or an upload dependency.
-- [ ] Define lifetime ownership for reuse, successful transfer, partial failure,
+  (September 26: the family prepares on its first stage and later stages reuse
+  the immutable state only while they resolve the same current package; target
+  closures, bin sealing, pipeline readiness, associations and the per-stage
+  planner scope are unchanged.)
+- [x] Define lifetime ownership for reuse, successful transfer, partial failure,
   retry, cancellation and frame-slot retirement. Each native resource remains
   retained until all recorded/in-flight consumers complete. Avoid duplicate
   retains, early releases and caching a failed/partial preparation as ready.
   Associate shared state only after complete success. Account for partial lifetime
   transfer/association on retry so each retained dependency is retired exactly once.
-- [ ] Exercise multiple families and views, early/late visibility stages, alternating
+  (September 26: one lease and one native use per family, transferred once
+  into the frame slot exactly as the first stage did; a failed preparation
+  leaves no family state and is counted; retry starts clean; supersession
+  falls back to preparing and the family equality check. See the gate record.)
+- [x] Exercise multiple families and views, early/late visibility stages, alternating
   frame slots, resize/AA change, material/texture replacement, shader reload,
   supersession and teardown with work in flight. Inspect images and publication,
   descriptor/resource and lease identities; missing XR hardware limits the claim.
+  (September 26, reachable scope: three families per frame in emulated stereo,
+  seven stages per family on every frame, shader reload, TSR render-scale
+  change, armed publication rejection, transactional renderer restart and the
+  S13b material rows; images and publication counters inspected. Not driven:
+  window resize and MSAA sample-count change; no XR hardware. Publication
+  rejection row: pass on rerun.)
 
 Gate: on the unchanged successful path, shared scene preparation executes once
 per **distinct compatible key**, with remaining stage work identified separately.

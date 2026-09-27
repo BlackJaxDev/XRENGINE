@@ -117,7 +117,7 @@ Per-Eye FBO (×2):
 └──────────────────────────────────────┘
 ```
 
-Each eye gets its own `XRMaterialFrameBuffer` wrapping a `XRTexture2D` color attachment and viewport. The `XRRenderPipelineInstance` is shared between both eyes, using a stereo culling frustum for visibility.
+Each eye gets its own `XRMaterialFrameBuffer` wrapping a `XRTexture2D` color attachment and viewport. Each eye viewport owns its `XRRenderPipelineInstance` (camera synchronization off, so the eye camera's pipeline cannot replace the selected scene family) and that instance's own `RenderCommandCollection`; both eyes collect with the combined stereo culling frustum, so they share one conservative visible set. `RuntimeVrState.TwoPassLeftPipeline`/`TwoPassRightPipeline` expose the viewport-owned instances, and `RuntimeVrState.SharedMeshRenderCommands` is the left eye's collection (it also feeds the eye-texture desktop mirror).
 
 #### Single-Pass Stereo Targets
 
@@ -184,25 +184,34 @@ The callbacks can be hot-swapped at runtime if the stereo mode changes — old h
 
 ### Two-Pass Rendering
 
-Renders each eye separately using a shared render pipeline:
+Renders each eye separately through its own viewport, pipeline instance and command collection:
 
 ```
 Visibility Collection:
   CollectVisibleTwoPass()
-    └─ scene.CollectRenderedItems(
-         _twoPassRenderPipeline.MeshRenderCommands,
-         leftEyeCamera,
-         stereoCullingFrustum × HMDNode.RenderMatrix)
-       Uses a combined left+right frustum to cull once for both eyes
+    ├─ LeftEyeViewport.CollectVisible(
+    │    worldOverride: world,
+    │    cameraOverride: leftEyeCamera,
+    │    allowScreenSpaceUICollectVisible: false,
+    │    collectionVolumeOverride: stereoCullingFrustum × HMDNode.RenderMatrix)
+    └─ RightEyeViewport.CollectVisible(... rightEyeCamera, same collection volume)
+       Both eyes use the combined left+right frustum, so they share one conservative visible set
+
+Swap:
+  SwapBuffersTwoPass()
+    ├─ LeftEyeViewport.SwapBuffers(allowScreenSpaceUISwap: false)
+    └─ RightEyeViewport.SwapBuffers(allowScreenSpaceUISwap: false)
 
 Rendering:
   RenderTwoPass()
-    ├─ _twoPassRenderPipeline.Render(scene, leftCamera,  ..., LeftEyeViewport,  VRLeftEyeRenderTarget)
-    ├─ _twoPassRenderPipeline.Render(scene, rightCamera, ..., RightEyeViewport, VRRightEyeRenderTarget)
+    ├─ LeftEyeViewport.Render(VRLeftEyeRenderTarget,  world, leftCamera)
+    ├─ RightEyeViewport.Render(VRRightEyeRenderTarget, world, rightCamera)
     └─ SubmitRenders(leftTextureHandle, rightTextureHandle)
 ```
 
-Two-pass mode uses a **shared stereo culling frustum** (`_stereoCullingFrustum`) that encompasses both eyes' view frustums. Visibility is collected once, then the same render commands are drawn twice with different view/projection matrices.
+Two-pass mode uses a **shared stereo culling frustum** (`_stereoCullingFrustum`) that encompasses both eyes' view frustums, so each eye's collection holds the same conservative visible set drawn with that eye's view/projection matrices.
+
+Collection, swap and render all go through the `XRViewport` boundary rather than calling the scene and command collection directly, and each eye collects into the collection owned by its own pipeline instance. Package-driven pipelines (Advanced) only project a canonical frame package for a pipeline-owned collection, and only the viewport boundary prepares and publishes it: collecting straight into a shared, unowned `RenderCommandCollection` leaves those eyes with no scene draws, which shows as black eye views with only the skybox drawn.
 
 ### Single-Pass Stereo Rendering
 
@@ -296,12 +305,19 @@ private static void CollectVisibleTwoPass()
 {
     if (IsOpenXRActive) { OpenXRApi?.EngineCollectVisibleTick(); return; }
 
-    ViewInformation.World?.VisualScene?.CollectRenderedItems(
-        _twoPassRenderPipeline.MeshRenderCommands,
-        ViewInformation.LeftEyeCamera,
-        cullWithFrustum: true,
-        customFrustum: _stereoCullingFrustum.Value.TransformedBy(hmdNode.Transform.RenderMatrix),
-        sortResults: true);
+    IVolume collectionVolume = _stereoCullingFrustum.Value.TransformedBy(hmdNode.Transform.RenderMatrix);
+    LeftEyeViewport.CollectVisible(
+        collectMirrors: true,
+        worldOverride: ViewInformation.World,
+        cameraOverride: ViewInformation.LeftEyeCamera,
+        allowScreenSpaceUICollectVisible: false,
+        collectionVolumeOverride: collectionVolume);
+    RightEyeViewport.CollectVisible(
+        collectMirrors: true,
+        worldOverride: ViewInformation.World,
+        cameraOverride: ViewInformation.RightEyeCamera,
+        allowScreenSpaceUICollectVisible: false,
+        collectionVolumeOverride: collectionVolume);
 }
 ```
 
@@ -329,7 +345,8 @@ Swaps the double-buffered render command lists:
 private static void SwapBuffersTwoPass()
 {
     if (IsOpenXRActive) { OpenXRApi?.EngineSwapBuffersTick(); return; }
-    _twoPassRenderPipeline?.MeshRenderCommands?.SwapBuffers();
+    LeftEyeViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
+    RightEyeViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
 }
 
 private static void SwapBuffersStereo()
@@ -382,7 +399,8 @@ if (rW != _lastRenderWidth || rH != _lastRenderHeight)
         var left = MakeFBOTexture(rW, rH);
         var right = MakeFBOTexture(rW, rH);
         RemakeTwoPass(Renderer.XRWindow, rW, rH, left, right);
-        _twoPassRenderPipeline?.DestroyCache();
+        // RemakeTwoPass destroys the previous eye viewports (and their
+        // pipeline instances) before creating the replacements.
     }
 }
 ```

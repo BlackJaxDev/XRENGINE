@@ -1,10 +1,14 @@
 # S13a publication and collect-wait attribution
 
-Status: Blocked. The evidence handoff completed at the user's September 23
-direction, but the S13a validation gate remains open. This is the S13a
-observation record. S12's merged distinct-world lifetime gate is still active
-and has not been dispositioned. At the handoff, S13a had not changed production
-dirty-state behavior; the separately tracked S13b candidate followed it.
+Status: Validated on the September 26 final binary (see the final-binary
+closeout section at the end): the four-pair observer/retention matrix, the
+OpenGL harness comparison and the attached-debugger window are measured, the
+historical backend divergence is dispositioned Not Reproducible with a reopening
+condition, and the measured callback owner no longer executes. The elevated
+WPR/GC capture was taken by the operator on September 26 at 09:36 local and
+confirms zero samples in the September 23 callback owners (see "September 26
+elevated CPU and GC capture"). The historical text below is preserved as the
+observation record.
 
 ## Frozen workload and historical evidence
 
@@ -219,6 +223,203 @@ passed two live Vulkan restarts and A/B/A view sequences, reaching 7,891 and
 retained two startup descriptor-heap compatibility errors on each device, with
 no additional rendering/recovery errors. These scoped results do not complete
 the observer matrix or other open gates. S13a remains Blocked.
+
+## September 25 final-binary closeout (evening session)
+
+Evidence root: `Build/_AgentValidation/20260925-195625-s13-final-closeout/`.
+The final binary is the isolated session `s13-final-0925i` (DLL hashes in the
+[S13b record](2026-09-23-s13b-identity-feedback.md#final-s13b-matrix-on-the-fixed-binary)),
+built from `7ab827983` plus the working-tree lifetime fixes described there.
+
+### Historical backend divergence: dispositioned Not Reproducible
+
+The September 23 near-empty OpenGL dirty queue was never reproduced on any
+binary whose identity is known (the September 23 instrumented OpenGL run already
+showed identity feedback on both backends), and the historical binaries and
+manifests are unrecoverable. On the final binary the controlled comparison ran
+the same session executable, fixture, camera, strategy and telemetry under both
+backends: the 60-second stationary windows produced zero identity-only dirty
+notifications, zero other dirty notifications and zero swap callbacks on Vulkan
+and on OpenGL, and the add/remove/re-add, visibility, cube material, shared
+material and view-transition mutations propagated on both with matched
+publication behavior (S13b record, "OpenGL representative subset"). The
+entry condition for the divergence candidate, a backend-specific dirty queue,
+therefore no longer exists: the shared identity-feedback path was the cause on
+both backends and S13b removed it. Reopen only if a future capture shows a
+first differing dirty/publication event between backends on one binary.
+
+### Final-binary observer and retention matrix: passed
+
+Eight sequential Release Vulkan runs (`reports/observer-matrix/`, driver
+`scratch/Run-S13aFinalObserverMatrix.ps1`) used the session `s13-final-0925i`
+executable, the frozen fixture, the fixed camera `(-20, 2, 4)` looking at
+`(-20, 2, -8)`, CpuDirect, TSR, `DevelopmentProfile`, one-frame sampling,
+120-second warmup, a 60-second stationary window and a 60-second controlled
+motion window, in the order off/on, on/off, off/on, off/on. The fourth pair was
+added after the first pair's motion window exceeded the allowance, following
+the protocol's rule to repeat an ambiguous result. Every run kept workload
+identity `10991459253885323059`, verified both camera poses, admitted the
+screenshot, lost no diagnostics, returned every required backlog to baseline,
+reported 99.958-99.960% coarse GPU coverage, and ended within one native live
+resource and zero descriptor sets of its start (12,071-12,090 native; 7,756 or
+7,761 sets). The stationary windows had 4,771-4,997 samples each; the motion
+windows 2,021-2,216.
+
+| Pair | Order | Stationary render mean off → on (ms) | Stationary p95 / p99 off → on (ms) | Motion render mean off → on (ms) | Motion p95 / p99 off → on (ms) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | off/on | 12.094 → 12.157 | 14.838 / 16.202 → 15.026 / 16.490 | 28.038 → 29.419 | 53.257 / 63.192 → 58.219 / 68.147 |
+| 2 | on/off | 12.072 → 12.066 | 15.034 / 16.787 → 15.157 / 17.680 | 28.284 → 28.005 | 55.220 / 60.014 → 53.661 / 57.774 |
+| 3 | off/on | 11.723 → 11.908 | 14.685 / 15.582 → 14.836 / 15.902 | 26.950 → 27.259 | 51.951 / 57.447 → 51.746 / 56.516 |
+| 4 | off/on | 11.988 → 11.760 | 14.938 / 16.249 → 14.756 / 16.011 | 27.529 → 27.419 | 52.984 / 58.789 → 52.286 / 56.040 |
+
+Against the predeclared allowance (observer-on render mean at most 0.5 ms above
+the paired off run; p95/p99 within the larger of 5% or the off-run spread over
+median), all four stationary pairs pass (mean deltas +0.063, -0.006, +0.185,
+-0.228 ms; p95 at most +1.27%; p99 at most +5.32% against a 7.4% allowance) and
+motion pairs two, three and four pass (mean -0.279, +0.309, -0.110 ms; p95 and
+p99 negative). Only pair one's motion window failed (+1.381 ms mean, +9.32% p95),
+with pair one's off run being the first process of the matrix; three later pairs
+with negative or sub-allowance deltas show the excess was run-order variability,
+not a repeatable observer cost. Render-collect waits were 0.520-0.592 ms p50 and
+0.702-0.818 ms p95 stationary, 0.684-0.775 / 0.930-1.055 ms in motion, in every
+run; their paired differences are at most 0.115 ms, which exceeds a percentage
+allowance only because the base is sub-millisecond. The harness's managed-heap
+endpoint fails in every run (-216 MB to +536 MB deltas), but the retained
+per-frame streams show a Gen2 sawtooth whose post-collection floor is 2.30-2.34
+GB in every cycle of each run, so it is sampling phase, not retention; native
+resources, descriptor sets and required backlogs are the retention evidence.
+
+Compared with the September 23 frozen-binary matrix on the same fixture, the
+stationary render mean fell from 16.3-26.5 ms to 11.7-12.2 ms and the
+render-collect wait p50 from about 80 ms to 0.55 ms; the motion window mean
+fell from 32-39 ms to 27-29 ms. The 18-25 ms GPU workload owner is unchanged
+and remains the frame-time floor in motion.
+
+### OpenGL harness comparison on the same executable
+
+`scratch/Run-OpenGLComparison.ps1` ran the identical harness configuration
+under OpenGL with telemetry off (`reports/opengl-comparison/s13a-opengl-off/`):
+workload identity `8881944379212414834` (the backend is part of the hash), both
+camera poses verified, admission image captured, zero diagnostic loss, 664
+stationary and 477 motion samples. Render-collect wait was 0.081 ms p50 /
+0.227 ms p95 stationary and 0.137 / 0.332 ms in motion, against 92.7 ms p50 on
+September 23. OpenGL render time stayed at the fixture's known low rate
+(91.8 ms stationary mean, 121 ms motion mean); the harness reports no coarse GPU
+timing for OpenGL, and the only backlog that did not return was the profiler's
+pending-completed count (3 to 7), the same profiler-internal endpoint that
+failed run six on September 23. The OpenGL wait is therefore no longer a
+divergence: both backends share the sub-millisecond wait once identity feedback
+is gone.
+
+### Attached-debugger window: measured
+
+`scratch/Run-DebuggerWindow.ps1` restarted `s13-final-0925i` without rebuilding,
+sampled 60 seconds detached, attached the Visual Studio 2022 managed debugger
+through automation (`Attach-VsDebugger.ps1`, debugger mode 3 = run mode reported
+against the editor PID), sampled 60 seconds attached, detached, and sampled 60
+seconds again (`reports/debugger-window/`). Samples are MCP profiler snapshots
+at two per second (115-116 distinct frames per window).
+
+| Window | Presents in 60 s | Render-collect wait p50 / p95 / p99 (ms) | Whole frame p50 / p95 (ms) | Present interval p50 / p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Detached | 5,185 | 0.530 / 0.710 / 0.754 | 10.70 / 13.52 | 11.27 / 14.03 |
+| Attached | 4,919 | 0.574 / 0.857 / 1.075 | 11.16 / 14.09 | 11.84 / 14.63 |
+| Detached again | 5,240 | 0.531 / 0.787 / 0.914 | 10.67 / 13.73 | 11.26 / 14.26 |
+
+The attached managed debugger costs about 0.5 ms per frame (5% fewer presents)
+on this Release binary and leaves the collect wait sub-millisecond. This is the
+Release attached condition; the historical Debug attached configuration that
+produced the 153-165 ms report is still unreproduced, and its non-reproduction
+now rests on the removal of the identity-feedback owner rather than on a
+matching historical binary.
+
+### Callback attribution and elevated capture
+
+The 393 identity-driven `TryUpdateMeshCommand` callbacks that the September 23
+elevated CPU/GC capture attributed to `SyncLegacyDynamicAtlasState` no longer
+occur: every stationary window on the final binary records zero swap callbacks
+and zero mesh updates, so there is no residual callback wall time to split into
+on-CPU, GC and scheduling shares. A new elevated WPR capture cannot be taken from
+this agent session (not elevated; no interactive UAC prompt), so
+`scratch/Run-S13aElevatedCapture.ps1` is prepared for the operator to run from an
+elevated Windows PowerShell against a Ready named session; it validates tools,
+session and the 393-draw fixture, brackets a 15-second `CPU.verbose` plus CLR GC
+recording with S13a telemetry and profiler snapshots, and writes under
+`reports/etw/`. Until that runs, the attribution gate is satisfied by the
+removal of the measured owner, not by a new elevated trace, and this is recorded
+as such rather than as a pass of the original capture. The September 23
+analysis scripts are re-prepared in this run's `scratch/` as
+`analyze_etw_cpu.py` and `analyze_etw_gc.py` (both take `--pid`, export the GC
+CSV with xperf when missing, and report the process share of machine samples);
+they are ready for the `s13-final-0925i` process once `reports/etw/` exists.
+The session stayed Ready on the unchanged final binary while the later
+September 26 emulated-stereo and push-descriptor work was built and validated
+in separate isolated sessions (`logs/probe-build-window.log` records those
+build windows; no capture had started during any of them).
+
+### September 26 elevated CPU and GC capture (operator-run)
+
+The operator ran `scratch/Run-S13aElevatedCapture.ps1 -SessionName s13-final-0925i`
+from an elevated Windows PowerShell at 09:36 local against the still-running
+final-binary session (PID 29204; `XREngine.Editor.dll`
+`FFB22642866867A62E6B3846E238C40347C556B94A27E7AAD965C1C74870DA57`,
+`XREngine.Runtime.Rendering.dll` `62F2861AC1040824D04DD8E1BCB80D4B569B1B60B44A8FE8E126C51D4568B34A`,
+`XREngine.Runtime.Rendering.Vulkan.dll` `3D346658C5F547FA1EC4FC1824697CEE37EAE1C96EA48CA673727AB8D1F5B272`,
+recorded in `reports/etw/20260926-093600/binary-hashes.json`). Two script
+defects surfaced first and were fixed in place: `$PSScriptRoot` is empty inside
+`param()` defaults under Windows PowerShell 5.1 (run root now resolved in the
+body), and the fixture check sampled the package state at one instant although
+it cycles `Published`/`Prepared`/`Empty` every frame (now ten samples, either
+settled state accepted). The camera stayed at view A with the 393-draw
+fixture; the script warmed for 25 seconds and recorded 15 seconds of WPR
+`CPU.verbose` plus a CLR GC provider session.
+
+Both traces report zero lost events and buffers (`cpu-tracestats.txt`,
+`gc-summary.json` metadata). The CPU trace starts at `2026-09-26T16:36:26.8040120Z`
+and lasts 39.73 seconds including rundown; the GC trace starts 71.142 ms
+earlier and lasts 59.5 seconds. Analysis again uses the conservative
+CPU-relative window `[1.000, 15.000]` seconds, or GC-relative
+`[1.071142, 15.071142]`.
+
+**Telemetry bracket** (`telemetry-before/after.json`, about 70 seconds and
+4,929 frames including warm-up): zero identity-only dirty notifications, zero
+other dirty notifications, zero queue adds, zero swap callbacks, zero mesh
+updates; 4,930 publications reused; native resources flat at 12,467 and
+descriptor sets flat at 7,751 with zero pending retirement. The profiler
+snapshots show whole-frame p50 12.27 ms and p99 16.79 ms with
+render-wait-for-collect 0.72 ms (`profiler-stats-after.json`).
+
+**GC** (`gc-steady-summary.json`, 14-second window): 230 suspension
+intervals (143 Gen0 and 87 Gen1 starts, no Gen2) totalling 558.732 ms from
+`GCSuspendEEBegin` to `GCRestartEEEnd` (3.991%), fully suspended 548.169 ms,
+longest 3.635 ms; all events pair across the whole trace. Compared with
+September 23 (48 intervals, 353.9 ms, 2.528%, longest 11.997 ms) the process
+now collects more often but pauses much shorter, consistent with the removal of
+the per-frame registration churn and its large temporary arrays; the remaining
+Gen0/Gen1 cadence is a separate allocation owner, not a callback cost.
+
+**CPU** (`cpu-managed-samples.json`, `scratch/analyze_etw_cpu.py --pid 29204`):
+19,267 editor samples in the window (43.25% of all machine samples), 19,068
+with adjacent decoded stacks (98.97%), 116,873 managed address ranges. The
+render thread (OS thread 11744) holds 12,891 samples, entirely under
+`VulkanFrameLoop.Render` (11,347 inclusive): `RecordPrimary` 8,207 and
+`TryPrepareAdvancedVisibilityFamily` 4,577 dominate, with
+`VulkanFrameLoop.DriveDesktopPresentNowReadiness` 2,266. The collect-visible
+thread (14144) holds 3,698 samples, of which `XRViewport.CollectVisible` 2,552,
+`VisualScene3D.CollectRenderedItems` 1,928 and `Lights3DCollection.CollectVisibleItems`
+2,219 (overlapping inclusive counts). The September 23 owners
+`TryUpdateMeshCommand`, `ResolveLogicalMeshRegistration` and
+`SyncLegacyDynamicAtlasState` have **zero** samples in the window (the
+analysis still lists them as targets); `SwapBuffers` carries 679 inclusive
+samples and `RenderCommandCollection` methods 493. The largest managed leaves
+are `VkMeshRenderer.ComputePassMetadataHash` (457), `FrameOperationStream.TryPrepareReadOnlyStorage`
+(322), `RenderableMesh.BeforeAdd` (316) and `FrameOperationStream.TryPrepareMaterialTables`
+(253); 5,402 leaves are unresolved `coreclr` frames and 3,215 samples include
+`System.Buffer.BulkMoveWithWriteBarrier`, which locate the remaining CPU cost in
+Vulkan primary recording and Advanced visibility family preparation rather than
+in publication callbacks. This closes the elevated-capture item: the measured
+callback owner is absent from a fresh elevated trace of the final binary, and
+the residual profile is recorded for S13c-S13g rather than attributed here.
 
 The September 24 [remaining closeout work](../../todo/rendering/vulkan-stall-remediation-todo.md#september-24-handoff-remaining-closeout-work)
 is the consolidated resumption checklist. Later automated screenshot/log

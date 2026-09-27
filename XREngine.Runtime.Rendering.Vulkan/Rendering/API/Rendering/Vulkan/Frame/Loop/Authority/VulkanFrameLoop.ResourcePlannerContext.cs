@@ -230,16 +230,18 @@ internal sealed partial class VulkanFrameLoop
                 out IDisposable? scope))
             return scope!;
 
+        string mismatch = DescribeDesktopReadbackMismatch(CreateFrameOpContext(pipeline, viewport));
         if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
             ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
         {
             throw new InvalidOperationException(
-                "The XR eye viewport has no matching rendered Vulkan resource-planner generation.");
+                "The XR eye viewport has no matching rendered Vulkan resource-planner generation." + mismatch);
         }
 
         throw new InvalidOperationException(
             "The requested viewport has no matching submitted Vulkan resource-planner generation. " +
-            "Capture again after its current resource generation has rendered; readback cannot create unwritten images.");
+            "Capture again after its current resource generation has rendered; readback cannot create unwritten images." +
+            mismatch);
     }
 
     internal bool TryEnterPipelineResourcePlannerReadbackScope(
@@ -945,9 +947,7 @@ internal sealed partial class VulkanFrameLoop
                 : RuntimeHelpers.GetHashCode(viewport),
             pipeline,
             pipeline.Resources,
-            pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
-                ?? pipeline.ActiveGeneration?.PassMetadata
-                ?? pipeline.Pipeline?.PassMetadata,
+            ResolveFrameOpPassMetadata(pipeline, viewport),
             displayWidth, displayHeight, internalWidth, internalHeight, outputFrameBuffer?.Name,
             ShouldPreserveSubmissionOrderBlock(), outputTargetIdentity, outputTargetName);
         return ApplyInteractiveResizePlannerFreeze(CompleteFrameOpContext(context with
@@ -961,6 +961,25 @@ internal sealed partial class VulkanFrameLoop
                     ? pipeline.RenderState.ViewHistoryOutputRequest
                     : viewport?.CurrentFrameOutputRequest ?? default,
         }));
+    }
+
+    /// <summary>
+    /// Resolves the pass metadata that identifies a pipeline's frame-op context. Outside a
+    /// render the pipeline's render state binds no collection, so a viewport that renders
+    /// from a shared collection (two-pass VR eyes, eye-texture desktop mirrors) resolves
+    /// through its override; the pipeline's own, unused collection would describe a context
+    /// that never matches the submitted receipt and every readback of it would be refused.
+    /// </summary>
+    private static IReadOnlyCollection<RenderPassMetadata>? ResolveFrameOpPassMetadata(
+        XRRenderPipelineInstance pipeline,
+        XRViewport? viewport)
+    {
+        var commands = pipeline.RenderState.MeshRenderCommands
+            ?? viewport?.MeshRenderCommandsOverride
+            ?? pipeline.MeshRenderCommands;
+        return commands.RenderingBackendReadyPackage.PassMetadata
+            ?? pipeline.ActiveGeneration?.PassMetadata
+            ?? pipeline.Pipeline?.PassMetadata;
     }
 
     private FrameOpContext CompleteFrameOpContext(in FrameOpContext context)

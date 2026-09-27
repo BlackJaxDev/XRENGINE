@@ -634,6 +634,7 @@ namespace XREngine.Rendering.Vulkan
             VulkanAdvancedVisibilityStageRequest familyRequest = default;
             VulkanAdvancedVisibilityInputStorage? familyInput = null;
             VulkanAdvancedScenePublicationState familySceneState = default;
+            BackendReadyFramePackage? familyScenePackage = null;
             VulkanAdvancedVisibilityResourceState familyState = default;
             VulkanAdvancedVisibilityTargetClosure rasterTargetClosure = default;
             VulkanAdvancedVisibilityTargetClosure lateRasterTargetClosure = default;
@@ -645,6 +646,12 @@ namespace XREngine.Rendering.Vulkan
             int ambientOcclusionStageCount = 0;
             int classificationStageCount = 0;
             int nativeOpaqueStageCount = 0;
+            bool observe = S13aPublicationTelemetry.Enabled;
+            int observedStages = 0;
+            int observedPrepareCalls = 0;
+            int observedAttempts = 0;
+            int observedReuses = 0;
+            long observedPrepareTicks = 0L;
 
             for (int operationIndex = 0;
                  operationIndex < recordingState.Ops.Length;
@@ -871,14 +878,68 @@ namespace XREngine.Rendering.Vulkan
                 else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
                     lateRasterTargetClosure = targetClosure;
                 }
-                if (!TryPrepareAdvancedVisibilityScenePublication(
-                        framePlan,
-                        recordingState.FrameDataSlot,
-                        in request,
-                        out VulkanAdvancedScenePublicationState sceneState,
-                        out EVulkanAdvancedSceneResourceFailure sceneFailure,
-                        out string sceneReason))
+                // The scene publication depends only on the family key (runtime,
+                // current package, database/publication, frame plan and slot,
+                // reservation, views), never on the stage. Prepare it once per family
+                // and reuse the immutable state while the stage still resolves the
+                // same current package; any other package re-prepares and the
+                // family equality check below decides.
+                if (!request.BackendPackage.TryGetCurrent(out BackendReadyFramePackage stagePackage))
                 {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: set-2/set-3 scene publication failed: the captured canonical backend package changed after visibility authoring";
+                    recordingState.FailureKind =
+                        EVulkanCommandRecordingFailureKind.RetryFrame;
+                    return false;
+                }
+                VulkanAdvancedScenePublicationState sceneState;
+                EVulkanAdvancedSceneResourceFailure sceneFailure;
+                string sceneReason;
+                bool scenePrepared;
+                if (familySceneState.IsValid && ReferenceEquals(familyScenePackage, stagePackage))
+                {
+                    sceneState = familySceneState;
+                    sceneFailure = EVulkanAdvancedSceneResourceFailure.None;
+                    sceneReason = "Ready";
+                    scenePrepared = true;
+                    if (observe)
+                    {
+                        observedStages++;
+                        observedReuses++;
+                    }
+                }
+                else
+                {
+                    long prepareStarted = observe ? Stopwatch.GetTimestamp() : 0L;
+                    scenePrepared = TryPrepareAdvancedVisibilityScenePublication(
+                            framePlan,
+                            recordingState.FrameDataSlot,
+                            in request,
+                            out sceneState,
+                            out sceneFailure,
+                            out sceneReason,
+                            out bool sceneNewlyRealized);
+                    if (observe)
+                    {
+                        observedStages++;
+                        observedPrepareCalls++;
+                        if (sceneNewlyRealized)
+                            observedAttempts++;
+                        observedPrepareTicks += Stopwatch.GetTimestamp() - prepareStarted;
+                    }
+                }
+                if (!scenePrepared)
+                {
+                    if (observe)
+                    {
+                        S13aPublicationTelemetry.AdvancedFamilyPreparation(
+                            observedStages,
+                            observedPrepareCalls,
+                            observedAttempts,
+                            observedReuses,
+                            observedPrepareTicks,
+                            failures: 1);
+                    }
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: set-2/set-3 scene publication failed: {sceneReason}";
                     recordingState.FailureKind =
@@ -896,6 +957,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!familySceneState.IsValid)
                 {
                     familySceneState = sceneState;
+                    familyScenePackage = stagePackage;
                 }
                 else if (familySceneState != sceneState)
                 {
@@ -1424,6 +1486,16 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            if (observe)
+            {
+                S13aPublicationTelemetry.AdvancedFamilyPreparation(
+                    observedStages,
+                    observedPrepareCalls,
+                    observedAttempts,
+                    observedReuses,
+                    observedPrepareTicks,
+                    failures: 0);
+            }
             return true;
         }
 
@@ -1439,9 +1511,11 @@ namespace XREngine.Rendering.Vulkan
             in VulkanAdvancedVisibilityStageRequest request,
             out VulkanAdvancedScenePublicationState state,
             out EVulkanAdvancedSceneResourceFailure failure,
-            out string reason)
+            out string reason,
+            out bool newlyRealized)
         {
             state = default;
+            newlyRealized = false;
             failure =
                 EVulkanAdvancedSceneResourceFailure.PublicationSnapshotUnavailable;
             reason = "the canonical scene publication is unavailable";
@@ -1478,7 +1552,7 @@ namespace XREngine.Rendering.Vulkan
                         out state,
                         out failure,
                         out reason,
-                        out _))
+                        out newlyRealized))
                 {
                     if (string.IsNullOrWhiteSpace(reason))
                         reason = failure.ToString();

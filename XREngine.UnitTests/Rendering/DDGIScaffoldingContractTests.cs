@@ -4,9 +4,15 @@ using System.Numerics;
 using XREngine;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.DDGI;
+using XREngine.Rendering.GI.Integration;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
@@ -15,69 +21,105 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class DDGIScaffoldingContractTests
 {
     [Test]
-    public void DefaultRenderPipeline_UsesDDGI_ReflectsGlobalIlluminationMode()
+    public void DefaultRenderPipeline_GlobalIlluminationPlan_ReflectsGlobalIlluminationMode()
     {
         var pipeline = new DefaultRenderPipeline();
-        IGlobalIlluminationPipelineProvider provider = pipeline;
+        IGlobalIlluminationPlanHost host = pipeline;
 
         pipeline.GlobalIlluminationMode = EGlobalIlluminationMode.DDGI;
-        provider.UsesDDGI.ShouldBeTrue();
-        provider.UsesLightProbeGI.ShouldBeFalse();
-        provider.UsesSurfelGI.ShouldBeFalse();
-        provider.UsesRestirGI.ShouldBeFalse();
-        provider.UsesRadianceCascades.ShouldBeFalse();
-        provider.UsesLightVolumes.ShouldBeFalse();
-        provider.UsesVoxelConeTracing.ShouldBeFalse();
+        GlobalIlluminationPlan plan = host.GlobalIlluminationPlan;
+        plan.Host.HostId.ShouldBe("default");
+        plan.RequestedMode.ShouldBe(EGlobalIlluminationMode.DDGI);
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.DDGI).ShouldBeTrue();
+        plan.Provider.ShouldNotBeNull().Id.ShouldBe("ddgi");
+        plan.ReplacesProbeDiffuse.ShouldBeTrue();
+        plan.RequiresNativeProbeIblBindings.ShouldBeTrue();
+        foreach (EGlobalIlluminationMode other in new[]
+        {
+            EGlobalIlluminationMode.LightProbesAndIbl,
+            EGlobalIlluminationMode.PathTracing,
+            EGlobalIlluminationMode.VoxelConeTracing,
+            EGlobalIlluminationMode.LightVolumes,
+            EGlobalIlluminationMode.RadianceCascades,
+            EGlobalIlluminationMode.SurfelGI,
+        })
+        {
+            plan.Selects(other).ShouldBeFalse(other.ToString());
+        }
 
         pipeline.GlobalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
-        provider.UsesDDGI.ShouldBeFalse();
-        provider.UsesLightProbeGI.ShouldBeTrue();
+        plan = host.GlobalIlluminationPlan;
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.DDGI).ShouldBeFalse();
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.LightProbesAndIbl).ShouldBeTrue();
+        plan.ReplacesProbeDiffuse.ShouldBeFalse();
 
         pipeline.GlobalIlluminationMode = EGlobalIlluminationMode.SurfelGI;
-        provider.UsesDDGI.ShouldBeFalse();
-        provider.UsesSurfelGI.ShouldBeTrue();
+        plan = host.GlobalIlluminationPlan;
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.DDGI).ShouldBeFalse();
+        plan.Selects(EGlobalIlluminationMode.SurfelGI).ShouldBeTrue();
     }
 
     [Test]
-    public void AdvancedRenderPipeline_UsesDDGI_ReflectsGlobalIlluminationMode()
+    public void AdvancedRenderPipeline_GlobalIlluminationPlan_ReflectsGlobalIlluminationMode()
     {
         var pipeline = new AdvancedRenderPipeline();
-        IGlobalIlluminationPipelineProvider provider = pipeline;
+        IGlobalIlluminationPlanHost host = pipeline;
 
         pipeline.GlobalIlluminationMode = EGlobalIlluminationMode.DDGI;
-        provider.UsesDDGI.ShouldBeTrue();
-        provider.UsesLightProbeGI.ShouldBeFalse();
+        GlobalIlluminationPlan plan = host.GlobalIlluminationPlan;
+        plan.Host.HostId.ShouldBe("advanced");
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.DDGI).ShouldBeTrue();
+        plan.Provider.ShouldNotBeNull().Id.ShouldBe("ddgi");
+        plan.RequiresNativeMaterialSurfaceExports.ShouldBeTrue();
+        plan.Selects(EGlobalIlluminationMode.LightProbesAndIbl).ShouldBeFalse();
 
         pipeline.GlobalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
-        provider.UsesDDGI.ShouldBeFalse();
-        provider.UsesLightProbeGI.ShouldBeTrue();
+        plan = host.GlobalIlluminationPlan;
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.DDGI).ShouldBeFalse();
+        plan.IsSelectedAndSupported(EGlobalIlluminationMode.LightProbesAndIbl).ShouldBeTrue();
+        plan.RequiresNativeMaterialSurfaceExports.ShouldBeFalse();
     }
 
     [Test]
-    public void DefaultPipelineResourceFeature_DdgiResourcesEnabled_IsExpectedMask()
+    public void DefaultRenderPipeline_DeclaresDdgiProviderResources_OnlyWhenDdgiIsSelected()
     {
-        DefaultRenderPipeline.DefaultPipelineResourceFeature.DdgiResourcesEnabled.ShouldBe(
-            (DefaultRenderPipeline.DefaultPipelineResourceFeature)(1UL << 31));
+        RenderPipelineResourceLayout probes = BuildDefaultLayout(EGlobalIlluminationMode.LightProbesAndIbl);
+        RenderPipelineResourceLayout ddgi = BuildDefaultLayout(EGlobalIlluminationMode.DDGI);
+
+        string[] providerResources =
+        [
+            DDGIResourceNames.ScreenDiffuse,
+            DDGIResourceNames.CompositeMaterial,
+            DDGIResourceNames.IrradianceAtlas,
+            DDGIResourceNames.VisibilityAtlas,
+            DDGIResourceNames.ProbeStateBuffer,
+            DDGIResourceNames.RayBuffer,
+            DDGIResourceNames.HitBuffer,
+            DDGIResourceNames.RayRadianceBuffer,
+        ];
+        foreach (string name in providerResources)
+        {
+            probes.ResourcesByName.Keys.ShouldNotContain(name);
+            ddgi.ResourcesByName.Keys.ShouldContain(name);
+        }
+
+        ddgi.ResourcesByName[DDGIResourceNames.ScreenDiffuse].ShouldBeOfType<TextureSpec>();
+        ddgi.ResourcesByName[DDGIResourceNames.CompositeMaterial].ShouldBeOfType<QuadMaterialSpec>();
+        BufferSpec probeState = ddgi.ResourcesByName[DDGIResourceNames.ProbeStateBuffer].ShouldBeOfType<BufferSpec>();
+        probeState.ElementStride.ShouldBe((uint)System.Runtime.InteropServices.Marshal.SizeOf<DDGIProbeGPU>());
+        probeState.ElementCount.ShouldBe(DDGIResourceDescriptor.Default.ProbeElements);
     }
 
     [Test]
-    public void DDGIResourceNames_AreConsistentAcrossPipelines()
+    public void DDGIResourceNames_AreStableProviderOwnedIdentities()
     {
-        DefaultRenderPipeline.DDGITextureName.ShouldBe("DDGITexture");
-        DefaultRenderPipeline.DDGICompositeFBOName.ShouldBe("DDGICompositeFBO");
-        DefaultRenderPipeline.DDGIIrradianceAtlasTextureName.ShouldBe("DDGIIrradianceAtlas");
-        DefaultRenderPipeline.DDGIVisibilityAtlasTextureName.ShouldBe("DDGIVisibilityAtlas");
-        DefaultRenderPipeline.DDGIProbeStateBufferName.ShouldBe("DDGIProbeStateBuffer");
-        DefaultRenderPipeline.DDGIRayBufferName.ShouldBe("DDGIRayBuffer");
-        DefaultRenderPipeline.DDGIHitBufferName.ShouldBe("DDGIHitBuffer");
-
-        AdvancedRenderPipeline.DDGITextureName.ShouldBe(DefaultRenderPipeline.DDGITextureName);
-        AdvancedRenderPipeline.DDGICompositeFBOName.ShouldBe(DefaultRenderPipeline.DDGICompositeFBOName);
-        AdvancedRenderPipeline.DDGIIrradianceAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
-        AdvancedRenderPipeline.DDGIVisibilityAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
-        AdvancedRenderPipeline.DDGIProbeStateBufferName.ShouldBe(DefaultRenderPipeline.DDGIProbeStateBufferName);
-        AdvancedRenderPipeline.DDGIRayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        AdvancedRenderPipeline.DDGIHitBufferName.ShouldBe(DefaultRenderPipeline.DDGIHitBufferName);
+        DDGIResourceNames.ScreenDiffuse.ShouldBe("DDGITexture");
+        DDGIResourceNames.CompositeMaterial.ShouldBe("DDGICompositeFBO");
+        DDGIResourceNames.IrradianceAtlas.ShouldBe("DDGIIrradianceAtlas");
+        DDGIResourceNames.VisibilityAtlas.ShouldBe("DDGIVisibilityAtlas");
+        DDGIResourceNames.ProbeStateBuffer.ShouldBe("DDGIProbeStateBuffer");
+        DDGIResourceNames.RayBuffer.ShouldBe("DDGIRayBuffer");
+        DDGIResourceNames.HitBuffer.ShouldBe("DDGIHitBuffer");
     }
 
     [Test]
@@ -285,17 +327,17 @@ public sealed class DDGIScaffoldingContractTests
     public void VPRC_DDGIPasses_Defaults_AreConfiguredCorrectly()
     {
         var raygen = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIRaygenPass();
-        raygen.ProbeStateBufferName.ShouldBe(DefaultRenderPipeline.DDGIProbeStateBufferName);
-        raygen.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
+        raygen.ProbeStateBufferName.ShouldBe(DDGIResourceNames.ProbeStateBuffer);
+        raygen.RayBufferName.ShouldBe(DDGIResourceNames.RayBuffer);
 
         var trace = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGITracePass();
-        trace.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        trace.HitBufferName.ShouldBe(DefaultRenderPipeline.DDGIHitBufferName);
-        trace.TriangleBufferVariableName.ShouldBe("AccelerationStructureTriangles");
+        trace.RayBufferName.ShouldBe(DDGIResourceNames.RayBuffer);
+        trace.HitBufferName.ShouldBe(DDGIResourceNames.HitBuffer);
+        trace.TriangleBufferVariableName.ShouldBe(DDGIResourceImports.Triangles);
 
         var debugViz = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIDebugVisualization();
-        debugViz.ReadyVariableName.ShouldBe("AccelerationStructureReady");
-        debugViz.NodeCountVariableName.ShouldBe("AccelerationStructureNodeCount");
+        debugViz.ReadyVariableName.ShouldBe("DDGIGeometryReady");
+        debugViz.NodeCountVariableName.ShouldBe("DDGIGeometryNodeCount");
         debugViz.Enabled.ShouldBeFalse();
     }
 
@@ -324,10 +366,9 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void DDGIRayRadianceBufferName_IsConsistentAcrossPipelines()
+    public void DDGIRayRadianceBufferName_IsStableProviderOwnedIdentity()
     {
-        DefaultRenderPipeline.DDGIRayRadianceBufferName.ShouldBe("DDGIRayRadianceBuffer");
-        AdvancedRenderPipeline.DDGIRayRadianceBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayRadianceBufferName);
+        DDGIResourceNames.RayRadianceBuffer.ShouldBe("DDGIRayRadianceBuffer");
     }
 
     [Test]
@@ -399,14 +440,19 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void DDGIPhase3_Shaders_ExistAndContainExpectedContracts()
+    public void DDGIUpdateShaders_ExistAndContainExpectedContracts()
     {
         string hitShade = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_hit_shade.comp");
         hitShade.ShouldContain("#version 450");
+        hitShade.ShouldContain("#pragma snippet \"DDGIBindings\"");
         hitShade.ShouldContain("#pragma snippet \"DDGISampling\"");
-        hitShade.ShouldContain("uDirLightCount");
-        hitShade.ShouldContain("sampleDDGI(hitPos, normal)");
+        hitShade.ShouldContain("#pragma snippet \"DDGILights\"");
+        hitShade.ShouldContain("DDGIEvaluateDirectLighting(position, normal)");
+        hitShade.ShouldContain("sampleDDGIUntinted(position, normal, -rayDirection)");
         hitShade.ShouldContain("gRayRadiance[rayIndex] =");
+
+        string lightsSnippet = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Snippets/DDGILights.glsl");
+        lightsSnippet.ShouldContain("uniform DDGILightBlock");
 
         string updateIrr = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_update_irradiance.comp");
         updateIrr.ShouldContain("#version 450");
@@ -418,7 +464,8 @@ public sealed class DDGIScaffoldingContractTests
         string updateVis = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_update_visibility.comp");
         updateVis.ShouldContain("#version 450");
         updateVis.ShouldContain("uVisibilityAtlas");
-        updateVis.ShouldContain("uChebyshevPower");
+        updateVis.ShouldContain("uHysteresis");
+        updateVis.ShouldContain("uMaxProbeDistance");
         updateVis.ShouldContain("local_size_x = 16");
         updateVis.ShouldContain("local_size_y = 16");
 
@@ -438,32 +485,34 @@ public sealed class DDGIScaffoldingContractTests
         samplingSnippet.ShouldContain("sampleDDGI");
         samplingSnippet.ShouldContain("uDDGIIrradianceAtlas");
         samplingSnippet.ShouldContain("uDDGIVisibilityAtlas");
+        // Chebyshev sharpening is applied when sampling stored visibility moments, not when accumulating them.
+        samplingSnippet.ShouldContain("uniform float uChebyshevPower;");
     }
 
     [Test]
-    public void VPRC_Phase3Passes_Defaults_AreConfiguredCorrectly()
+    public void VPRC_DDGIUpdatePasses_Defaults_AreConfiguredCorrectly()
     {
         var hitShade = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIHitShadePass();
-        hitShade.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        hitShade.HitBufferName.ShouldBe(DefaultRenderPipeline.DDGIHitBufferName);
-        hitShade.RayRadianceBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayRadianceBufferName);
-        hitShade.ProbeBufferName.ShouldBe(DefaultRenderPipeline.DDGIProbeStateBufferName);
-        hitShade.IrradianceAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
-        hitShade.VisibilityAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
+        hitShade.RayBufferName.ShouldBe(DDGIResourceNames.RayBuffer);
+        hitShade.HitBufferName.ShouldBe(DDGIResourceNames.HitBuffer);
+        hitShade.RayRadianceBufferName.ShouldBe(DDGIResourceNames.RayRadianceBuffer);
+        hitShade.ProbeBufferName.ShouldBe(DDGIResourceNames.ProbeStateBuffer);
+        hitShade.IrradianceAtlasTextureName.ShouldBe(DDGIResourceNames.IrradianceAtlas);
+        hitShade.VisibilityAtlasTextureName.ShouldBe(DDGIResourceNames.VisibilityAtlas);
 
         var updateIrr = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIUpdateIrradiancePass();
-        updateIrr.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        updateIrr.RayRadianceBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayRadianceBufferName);
-        updateIrr.IrradianceAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
+        updateIrr.RayBufferName.ShouldBe(DDGIResourceNames.RayBuffer);
+        updateIrr.RayRadianceBufferName.ShouldBe(DDGIResourceNames.RayRadianceBuffer);
+        updateIrr.IrradianceAtlasTextureName.ShouldBe(DDGIResourceNames.IrradianceAtlas);
 
         var updateVis = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIUpdateVisibilityPass();
-        updateVis.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        updateVis.RayRadianceBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayRadianceBufferName);
-        updateVis.VisibilityAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
+        updateVis.RayBufferName.ShouldBe(DDGIResourceNames.RayBuffer);
+        updateVis.RayRadianceBufferName.ShouldBe(DDGIResourceNames.RayRadianceBuffer);
+        updateVis.VisibilityAtlasTextureName.ShouldBe(DDGIResourceNames.VisibilityAtlas);
 
         var borderCopy = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIBorderCopyPass();
-        borderCopy.IrradianceAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
-        borderCopy.VisibilityAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
+        borderCopy.IrradianceAtlasTextureName.ShouldBe(DDGIResourceNames.IrradianceAtlas);
+        borderCopy.VisibilityAtlasTextureName.ShouldBe(DDGIResourceNames.VisibilityAtlas);
     }
 
     [Test]
@@ -477,19 +526,23 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void DeferredLightCombine_SpecularIblDecoupling_SuppressesClassicalDiffuseWhenDDGIActive()
+    public void DeferredLightCombine_SpecularIblDecoupling_SuppressesProbeDiffuseWhenProviderReplacesIt()
     {
         string monoShader = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
-        monoShader.ShouldContain("uniform bool UsesDDGI = false;");
-        monoShader.ShouldContain("if (UsesDDGI)");
+        monoShader.ShouldContain("uniform bool SuppressProbeDiffuse = false;");
+        monoShader.ShouldContain("if (SuppressProbeDiffuse)");
         monoShader.ShouldContain("probeAmbient = vec3(0.0f);");
         monoShader.ShouldContain("vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);");
 
         string stereoShader = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombineStereo.fs");
-        stereoShader.ShouldContain("uniform bool UsesDDGI = false;");
-        stereoShader.ShouldContain("if (UsesDDGI)");
+        stereoShader.ShouldContain("uniform bool SuppressProbeDiffuse = false;");
+        stereoShader.ShouldContain("if (SuppressProbeDiffuse)");
         stereoShader.ShouldContain("probeAmbient = vec3(0.0f);");
         stereoShader.ShouldContain("vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);");
+
+        // The host drives the shader switch from the neutral composition state rather than an algorithm flag.
+        string pipeline = SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        pipeline.ShouldContain("program.Uniform(\"SuppressProbeDiffuse\", GlobalIlluminationCompositionState.ShouldSuppressBaselineDiffuse(");
     }
 
     [Test]
@@ -539,21 +592,65 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void VPRC_DDGICompositePass_Phase4_ConfiguredCorrectly()
+    public void VPRC_DDGICompositePass_Defaults_AreProviderOwned()
     {
         var composite = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGICompositePass();
+        composite.OutputTextureName.ShouldBe(DDGIResourceNames.ScreenDiffuse);
+        composite.IrradianceAtlasTextureName.ShouldBe(DDGIResourceNames.IrradianceAtlas);
+        composite.VisibilityAtlasTextureName.ShouldBe(DDGIResourceNames.VisibilityAtlas);
+        composite.ProbeStateBufferName.ShouldBe(DDGIResourceNames.ProbeStateBuffer);
+        composite.DebugMode.ShouldBe(XREngine.Rendering.GI.DDGI.EDDGIDebugMode.None);
+
+        // Host surfaces are supplied by the provider module from the host's neutral resources, never defaulted here.
+        composite.DepthTextureName.ShouldBeEmpty();
+        composite.NormalTextureName.ShouldBeEmpty();
+        composite.AlbedoTextureName.ShouldBeEmpty();
+        composite.RMSETextureName.ShouldBeEmpty();
+        composite.AmbientOcclusionTextureName.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void DDGIGlobalIlluminationModule_ContributePasses_WiresHostSurfacesAndNeutralPresentation()
+    {
+        ViewportRenderCommandContainer commands = ContributeDefaultHostDdgiPasses(EGlobalIlluminationExecutionAnchor.SurfaceResolve);
+
+        commands.Select(static command => command.GetType()).ShouldBe(
+        [
+            typeof(VPRC_BuildAccelerationStructure),
+            typeof(VPRC_DDGIEnvironmentPass),
+            typeof(VPRC_DDGIPrepareGeometryPass),
+            typeof(VPRC_DDGIRaygenPass),
+            typeof(VPRC_DDGITracePass),
+            typeof(VPRC_DDGIHitShadePass),
+            typeof(VPRC_DDGIRelocatePass),
+            typeof(VPRC_DDGIUpdateIrradiancePass),
+            typeof(VPRC_DDGIUpdateVisibilityPass),
+            typeof(VPRC_DDGIBorderCopyPass),
+            typeof(VPRC_DDGICompositePass),
+            typeof(VPRC_GlobalIlluminationCompositePass),
+            typeof(VPRC_DDGICompositeCompletionPass),
+            typeof(VPRC_DDGIDebugVisualization),
+        ]);
+
+        VPRC_DDGICompositePass composite = commands.OfType<VPRC_DDGICompositePass>().Single();
         composite.DepthTextureName.ShouldBe(DefaultRenderPipeline.DepthViewTextureName);
         composite.NormalTextureName.ShouldBe(DefaultRenderPipeline.NormalTextureName);
         composite.AlbedoTextureName.ShouldBe(DefaultRenderPipeline.AlbedoOpacityTextureName);
-        composite.OutputTextureName.ShouldBe(DefaultRenderPipeline.DDGITextureName);
-        composite.CompositeQuadFBOName.ShouldBe(DefaultRenderPipeline.DDGICompositeFBOName);
-        composite.ForwardFBOName.ShouldBe(DefaultRenderPipeline.ForwardPassFBOName);
-        composite.IrradianceAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName);
-        composite.VisibilityAtlasTextureName.ShouldBe(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName);
-        composite.ProbeStateBufferName.ShouldBe(DefaultRenderPipeline.DDGIProbeStateBufferName);
-        composite.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        composite.HitBufferName.ShouldBe(DefaultRenderPipeline.DDGIHitBufferName);
-        composite.DebugMode.ShouldBe(XREngine.Rendering.GI.DDGI.EDDGIDebugMode.None);
+        composite.RMSETextureName.ShouldBe(DefaultRenderPipeline.RMSETextureName);
+        composite.AmbientOcclusionTextureName.ShouldBe(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName);
+        composite.OutputTextureName.ShouldBe(DDGIResourceNames.ScreenDiffuse);
+
+        VPRC_GlobalIlluminationCompositePass presentation = commands.OfType<VPRC_GlobalIlluminationCompositePass>().Single();
+        presentation.SourceQuadFBOName.ShouldBe(DDGIResourceNames.CompositeMaterial);
+        presentation.DestinationFBOName.ShouldBe(DefaultRenderPipeline.ForwardPassFBOName);
+        presentation.OutputTextureName.ShouldBe(DDGIResourceNames.ScreenDiffuse);
+        presentation.ProducerPassName.ShouldBe(nameof(VPRC_DDGICompositePass));
+
+        VPRC_DDGIDebugVisualization debug = commands.OfType<VPRC_DDGIDebugVisualization>().Single();
+        debug.ProbeStateBufferName.ShouldBe(DDGIResourceNames.ProbeStateBuffer);
+        debug.ForwardFBOName.ShouldBe(DefaultRenderPipeline.ForwardPassFBOName);
+
+        ContributeDefaultHostDdgiPasses(EGlobalIlluminationExecutionAnchor.ScenePreparation).Count.ShouldBe(0);
     }
 
     [Test]
@@ -577,25 +674,26 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void VPRC_DDGIRelocatePass_Phase5_ConfiguredCorrectly()
+    public void VPRC_DDGIRelocatePass_Defaults_AreConfiguredCorrectly()
     {
         var pass = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGIRelocatePass();
-        pass.ProbeBufferName.ShouldBe(DefaultRenderPipeline.DDGIProbeStateBufferName);
-        pass.RayBufferName.ShouldBe(DefaultRenderPipeline.DDGIRayBufferName);
-        pass.HitBufferName.ShouldBe(DefaultRenderPipeline.DDGIHitBufferName);
-        pass.TriangleBufferVariableName.ShouldBe("AccelerationStructureTriangles");
+        pass.ProbeBufferName.ShouldBe(DDGIResourceNames.ProbeStateBuffer);
+        pass.RayBufferName.ShouldBe(DDGIResourceNames.RayBuffer);
+        pass.HitBufferName.ShouldBe(DDGIResourceNames.HitBuffer);
+        pass.TriangleBufferVariableName.ShouldBe(DDGIResourceImports.Triangles);
     }
 
     [Test]
-    public void DDGIRelocateShader_Phase5_ExistsAndDeclaresCorrectLayout()
+    public void DDGIRelocateShader_ExistsAndDeclaresCorrectLayout()
     {
         string shader = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_relocate.comp");
         shader.ShouldContain("#version 450");
+        shader.ShouldContain("#pragma snippet \"DDGIBindings\"");
         shader.ShouldContain("local_size_x = 32");
-        shader.ShouldContain("layout(std430, binding = 0) buffer ProbeBuffer");
-        shader.ShouldContain("layout(std430, binding = 1) readonly buffer Rays");
-        shader.ShouldContain("layout(std430, binding = 2) readonly buffer Hits");
-        shader.ShouldContain("layout(std430, binding = 3) readonly buffer Triangles");
+        shader.ShouldContain("layout(std430, XR_DDGI_STORAGE_BINDING(0)) buffer ProbeBuffer");
+        shader.ShouldContain("layout(std430, XR_DDGI_STORAGE_BINDING(1)) readonly buffer Rays");
+        shader.ShouldContain("layout(std430, XR_DDGI_STORAGE_BINDING(2)) readonly buffer Hits");
+        shader.ShouldContain("layout(std430, XR_DDGI_STORAGE_BINDING(3)) readonly buffer Triangles");
         shader.ShouldContain("uniform uint uProbeOffset;");
         shader.ShouldContain("uniform uint uScheduledProbeCount;");
         shader.ShouldContain("uniform uint uProbeCount;");
@@ -606,7 +704,7 @@ public sealed class DDGIScaffoldingContractTests
         shader.ShouldContain("uniform float uBackfaceThreshold;");
         shader.ShouldContain("uniform uint uRelocationEnabled;");
         shader.ShouldContain("uniform uint uClassificationEnabled;");
-        shader.ShouldContain("clamp(finalOffset, -maxAllowedOffset, maxAllowedOffset)");
+        shader.ShouldContain("clamp(finalOffset, -halfSpacing, halfSpacing)");
     }
 
     [Test]
@@ -706,34 +804,37 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void DDGI_Scheduler_FixedTimeMode_AdaptsToBudget()
+    public void DDGI_Scheduler_FixedTimeMode_AdaptsToBudgetWithinAuthoredCap()
     {
         var volume = new DDGIVolumeComponent();
         volume.ProbeCounts = new IVector3(16, 8, 16); // 2048 probes
-        volume.MaxProbesUpdatedPerFrame = 256;
+        volume.MaxProbesUpdatedPerFrame = 1024;
         volume.FixedTimeBudgetMs = 2.0f;
         volume.RaysPerProbe = 64;
 
         var state = volume.RuntimeState;
         state.Synchronize(volume);
 
-        // Initial estimate from MaxProbesUpdatedPerFrame
-        state.ScheduledProbeCount.ShouldBe(256);
+        // Without a measurement the authored per-frame cap is the initial estimate.
+        state.ScheduledProbeCount.ShouldBe(1024);
 
-        // Simulate 256 probes took 1.0 ms (0.00390625 ms per probe)
+        // 1024 probes took 8.0 ms (0.0078125 ms per probe): a 2.0 ms budget affords 256 probes.
+        state.MeasuredFrameTimeMs = 8.0f;
+        state.ResolveScheduledProbeCount().ShouldBe(256);
+
+        // 1024 probes took 1.0 ms: the budget would afford 2048, but the authored cap bounds the schedule.
         state.MeasuredFrameTimeMs = 1.0f;
-        // With 2.0 ms target, target probes = 2.0 / (1.0 / 256) = 512 probes
-        int target = state.ResolveScheduledProbeCount();
-        target.ShouldBe(512);
+        state.ResolveScheduledProbeCount().ShouldBe(1024);
     }
 
     [Test]
-    public void DefaultRenderPipeline_CommandChain_IncludesRelocatePass()
+    public void DefaultRenderPipeline_CommandChain_ContributesProviderPassesAtSurfaceResolve()
     {
         string commandChain = SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
-        commandChain.ShouldContain("c.Add<VPRC_DDGIHitShadePass>();");
-        commandChain.ShouldContain("c.Add<VPRC_DDGIRelocatePass>();");
-        commandChain.ShouldContain("c.Add<VPRC_DDGIUpdateIrradiancePass>();");
+        commandChain.ShouldContain("GlobalIlluminationProviderRegistry.ContributePasses(c,");
+        commandChain.ShouldContain("EGlobalIlluminationExecutionAnchor.SurfaceResolve,");
+        // The host never schedules provider passes by concrete type; the module owns the DDGI sequence.
+        commandChain.ShouldNotContain("c.Add<VPRC_DDGI");
     }
 
     [Test]
@@ -909,7 +1010,7 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void DDGIPhase6_ShadersAndPipelines_ContainCascadeContracts()
+    public void DDGIShadersAndProviderLayout_ContainCascadeContracts()
     {
         string sampling = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Snippets/DDGISampling.glsl");
         sampling.ShouldContain("uniform sampler2DArray uDDGIIrradianceAtlas;");
@@ -929,56 +1030,47 @@ public sealed class DDGIScaffoldingContractTests
         screenSampleStereo.ShouldContain("uDebugMode == 3");
 
         string updateIrr = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_update_irradiance.comp");
-        updateIrr.ShouldContain("layout(r11f_g11f_b10f, binding = 0) uniform image2DArray uIrradianceAtlas;");
+        updateIrr.ShouldContain("layout(r11f_g11f_b10f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uIrradianceAtlas;");
         updateIrr.ShouldContain("uniform int uCascadeIndex;");
 
         string updateVis = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_update_visibility.comp");
-        updateVis.ShouldContain("layout(rg16f, binding = 0) uniform image2DArray uVisibilityAtlas;");
+        updateVis.ShouldContain("layout(rg16f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uVisibilityAtlas;");
         updateVis.ShouldContain("uniform int uCascadeIndex;");
 
         string borderIrr = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_border_copy.comp");
-        borderIrr.ShouldContain("layout(r11f_g11f_b10f, binding = 0) uniform image2DArray uIrradianceAtlas;");
+        borderIrr.ShouldContain("layout(r11f_g11f_b10f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uIrradianceAtlas;");
         borderIrr.ShouldContain("uniform int uCascadeIndex;");
 
         string borderVis = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_border_copy_visibility.comp");
-        borderVis.ShouldContain("layout(rg16f, binding = 0) uniform image2DArray uVisibilityAtlas;");
+        borderVis.ShouldContain("layout(rg16f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uVisibilityAtlas;");
         borderVis.ShouldContain("uniform int uCascadeIndex;");
 
-        string resources = SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Resources.cs");
-        resources.ShouldContain(".Layers(DDGIVolumeRuntimeState.DefaultMaxCascades)");
+        // The provider declares both atlases as layered textures sized by the frozen resource descriptor's cascade count.
+        RenderPipelineResourceVariant threeCascades = new DDGIResourceDescriptor(new IVector3(8, 4, 8), 64, 3, 0).ToVariant();
+        RenderPipelineResourceLayout layout = BuildDefaultLayout(EGlobalIlluminationMode.DDGI, threeCascades);
+        layout.ResourcesByName[DDGIResourceNames.IrradianceAtlas].ShouldBeOfType<TextureSpec>().Layers.ShouldBe(3u);
+        layout.ResourcesByName[DDGIResourceNames.VisibilityAtlas].ShouldBeOfType<TextureSpec>().Layers.ShouldBe(3u);
     }
 
     [Test]
     public void DDGIBakedAsset_Serialization_RoundTripsHeaderAndPayloadAccurately()
     {
-        var asset = new XREngine.Rendering.GI.DDGI.DDGIBakedAsset
-        {
-            VolumeName = "TestCourtyardVolume",
-            ProbeCounts = new IVector3(8, 4, 8),
-            HalfExtents = new Vector3(12.0f, 6.0f, 12.0f),
-            Origin = new Vector3(1.5f, 2.0f, -3.5f),
-            CascadeCount = 2,
-            CascadeSpacingMultiplier = 2.0f,
-            IrradianceAtlasWidth = 48,
-            IrradianceAtlasHeight = 192,
-            VisibilityAtlasWidth = 128,
-            VisibilityAtlasHeight = 512,
-            NormalBias = 0.12f,
-            ViewBias = 0.22f,
-            ChebyshevPower = 5.0f,
-            Intensity = 1.25f,
-            Probes = new XREngine.Rendering.GI.DDGI.DDGIProbeGPU[8 * 4 * 8],
-            IrradianceAtlasLayers = new byte[][]
-            {
-                new byte[48 * 192 * 4],
-                new byte[48 * 192 * 4],
-            },
-            VisibilityAtlasLayers = new byte[][]
-            {
-                new byte[128 * 512 * 4],
-                Array.Empty<byte>(), // coarse cascade visibility omitted
-            }
-        };
+        DDGIBakedAsset asset = CreateStructurallyValidBakedAsset(new IVector3(8, 4, 8), cascadeCount: 2);
+        asset.VolumeName = "TestCourtyardVolume";
+        asset.HalfExtents = new Vector3(12.0f, 6.0f, 12.0f);
+        asset.Origin = new Vector3(1.5f, 2.0f, -3.5f);
+        asset.CascadeSpacingMultiplier = 2.0f;
+        asset.NormalBias = 0.12f;
+        asset.ViewBias = 0.22f;
+        asset.ChebyshevPower = 5.0f;
+        asset.Intensity = 1.25f;
+
+        // The format stores one probe set and one atlas layer per cascade, sized by the probe grid.
+        asset.IrradianceAtlasWidth.ShouldBe(48);
+        asset.IrradianceAtlasHeight.ShouldBe(192);
+        asset.VisibilityAtlasWidth.ShouldBe(128);
+        asset.VisibilityAtlasHeight.ShouldBe(512);
+        asset.Probes.Length.ShouldBe(8 * 4 * 8 * 2);
 
         // Populate sample probe positions and layer bytes with recognizable test patterns
         for (int i = 0; i < asset.Probes.Length; i++)
@@ -989,13 +1081,15 @@ public sealed class DDGIScaffoldingContractTests
                 RelocationOffset = new Vector4(0.1f, -0.05f, 0.08f, 0.95f),
             };
         }
-        for (int i = 0; i < asset.IrradianceAtlasLayers[0].Length; i++)
+        for (int layer = 0; layer < asset.CascadeCount; layer++)
         {
-            asset.IrradianceAtlasLayers[0][i] = (byte)(i % 251);
-        }
-        for (int i = 0; i < asset.VisibilityAtlasLayers[0].Length; i++)
-        {
-            asset.VisibilityAtlasLayers[0][i] = (byte)(i % 241);
+            byte[] irradiance = asset.IrradianceAtlasLayers[layer];
+            for (int i = 0; i < irradiance.Length; i++)
+                irradiance[i] = (byte)((i + layer) % 251);
+
+            byte[] visibility = asset.VisibilityAtlasLayers[layer];
+            for (int i = 0; i < visibility.Length; i++)
+                visibility[i] = (byte)((i + layer) % 241);
         }
 
         using var ms = new System.IO.MemoryStream();
@@ -1027,29 +1121,29 @@ public sealed class DDGIScaffoldingContractTests
         }
 
         loaded.IrradianceAtlasLayers.Length.ShouldBe(2);
-        loaded.IrradianceAtlasLayers[0].SequenceEqual(asset.IrradianceAtlasLayers[0]).ShouldBeTrue();
         loaded.VisibilityAtlasLayers.Length.ShouldBe(2);
-        loaded.VisibilityAtlasLayers[0].SequenceEqual(asset.VisibilityAtlasLayers[0]).ShouldBeTrue();
-        loaded.VisibilityAtlasLayers[1].Length.ShouldBe(0);
+        for (int layer = 0; layer < asset.CascadeCount; layer++)
+        {
+            loaded.IrradianceAtlasLayers[layer].SequenceEqual(asset.IrradianceAtlasLayers[layer]).ShouldBeTrue();
+            loaded.VisibilityAtlasLayers[layer].SequenceEqual(asset.VisibilityAtlasLayers[layer]).ShouldBeTrue();
+        }
     }
 
     [Test]
     public void DDGIBakedAsset_ApplyToVolume_ConfiguresVolumeAndState()
     {
-        var asset = new XREngine.Rendering.GI.DDGI.DDGIBakedAsset
-        {
-            VolumeName = "Courtyard",
-            ProbeCounts = new IVector3(12, 6, 12),
-            HalfExtents = new Vector3(18.0f, 9.0f, 18.0f),
-            CascadeCount = 2,
-            CascadeSpacingMultiplier = 2.0f,
-            NormalBias = 0.15f,
-            ViewBias = 0.25f,
-            ChebyshevPower = 6.0f,
-            Intensity = 1.4f,
-        };
+        DDGIBakedAsset asset = CreateStructurallyValidBakedAsset(new IVector3(12, 6, 12), cascadeCount: 2);
+        asset.VolumeName = "Courtyard";
+        asset.HalfExtents = new Vector3(18.0f, 9.0f, 18.0f);
+        asset.CascadeSpacingMultiplier = 2.0f;
+        asset.NormalBias = 0.15f;
+        asset.ViewBias = 0.25f;
+        asset.ChebyshevPower = 6.0f;
+        asset.Intensity = 1.4f;
 
-        var volume = new DDGIVolumeComponent();
+        // Applying a baked layout writes the authored origin through the component's standard transform.
+        SceneNode node = new("DDGIVolume", new XREngine.Scene.Transforms.Transform());
+        DDGIVolumeComponent volume = node.AddComponent<DDGIVolumeComponent>().ShouldNotBeNull();
         asset.ApplyTo(volume);
 
         volume.ProbeCounts.ShouldBe(new IVector3(12, 6, 12));
@@ -1168,23 +1262,25 @@ public sealed class DDGIScaffoldingContractTests
     }
 
     [Test]
-    public void DDGIScreenSampleShaders_Phase8_DeclareAmbientOcclusionContracts()
+    public void DDGIScreenSampleShaders_DeclareAmbientOcclusionContracts()
     {
         string monoSource = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_screen_sample.comp");
         monoSource.ShouldContain("uAOTexture");
         monoSource.ShouldContain("uniform bool uUseAO");
-        monoSource.ShouldContain("diffuseGI = irradiance * albedo.rgb * ao;");
+        monoSource.ShouldContain("diffuseGI = irradiance * albedo.rgb * kD * ao;");
 
         string stereoSource = SourceContractWorkspace.ReadFile("Build/CommonAssets/Shaders/Compute/DDGI/ddgi_screen_sample_stereo.comp");
         stereoSource.ShouldContain("uAOTexture");
         stereoSource.ShouldContain("uniform bool uUseAO");
-        stereoSource.ShouldContain("diffuseGI = irradiance * albedo.rgb * ao;");
+        stereoSource.ShouldContain("diffuseGI = irradiance * albedo.rgb * kD * ao;");
     }
 
     [Test]
-    public void VPRC_DDGICompositePass_Phase8_DeclaresAmbientOcclusionInRenderGraph()
+    public void VPRC_DDGICompositePass_DeclaresAmbientOcclusionInRenderGraph()
     {
-        var pass = new XREngine.Rendering.Pipelines.Commands.VPRC_DDGICompositePass();
+        VPRC_DDGICompositePass pass = ContributeDefaultHostDdgiPasses(EGlobalIlluminationExecutionAnchor.SurfaceResolve)
+            .OfType<VPRC_DDGICompositePass>()
+            .Single();
         RenderPassMetadataCollection metadata = new();
         RenderGraphDescribeContext context = new(metadata);
 
@@ -1212,6 +1308,79 @@ public sealed class DDGIScaffoldingContractTests
         volume.ProbeCounts.X.ShouldBe(settings.DDGIVolumeProbeCounts.X);
         volume.ProbeCounts.Y.ShouldBe(settings.DDGIVolumeProbeCounts.Y);
         volume.ProbeCounts.Z.ShouldBe(settings.DDGIVolumeProbeCounts.Z);
+    }
+
+    /// <summary>
+    /// Runs the DDGI module against the Default host's neutral surface bindings, exactly as the
+    /// Default command chain does, without requiring a live renderer.
+    /// </summary>
+    private static ViewportRenderCommandContainer ContributeDefaultHostDdgiPasses(EGlobalIlluminationExecutionAnchor anchor)
+    {
+        var pipeline = new DefaultRenderPipeline { GlobalIlluminationMode = EGlobalIlluminationMode.DDGI };
+        var commands = new ViewportRenderCommandContainer();
+        new DDGIGlobalIlluminationModule().ContributePasses(commands, new(
+            DefaultGlobalIlluminationHostAdapter.Instance,
+            pipeline.GlobalIlluminationPlan,
+            anchor,
+            CreateDefaultHostResources()));
+        return commands;
+    }
+
+    /// <summary>
+    /// Builds a baked asset whose probe and atlas payloads satisfy the format's structural
+    /// validation for the given grid, so tests can focus on the behavior under test.
+    /// </summary>
+    private static DDGIBakedAsset CreateStructurallyValidBakedAsset(IVector3 probeCounts, int cascadeCount)
+    {
+        const int irradianceBytesPerPixel = 3 * sizeof(float);
+        const int visibilityBytesPerPixel = 2 * sizeof(ushort);
+        var dimensions = new DDGIResourceDescriptor(probeCounts, 1, cascadeCount, 1);
+        return new DDGIBakedAsset
+        {
+            ProbeCounts = probeCounts,
+            CascadeCount = cascadeCount,
+            IrradianceAtlasWidth = (int)dimensions.IrradianceWidth,
+            IrradianceAtlasHeight = (int)dimensions.IrradianceHeight,
+            VisibilityAtlasWidth = (int)dimensions.VisibilityWidth,
+            VisibilityAtlasHeight = (int)dimensions.VisibilityHeight,
+            Probes = new DDGIProbeGPU[dimensions.ProbeElements],
+            IrradianceAtlasLayers = CreateAtlasLayers(cascadeCount, dimensions.IrradianceWidth, dimensions.IrradianceHeight, irradianceBytesPerPixel),
+            VisibilityAtlasLayers = CreateAtlasLayers(cascadeCount, dimensions.VisibilityWidth, dimensions.VisibilityHeight, visibilityBytesPerPixel),
+        };
+    }
+
+    private static byte[][] CreateAtlasLayers(int cascadeCount, uint width, uint height, int bytesPerPixel)
+    {
+        var layers = new byte[cascadeCount][];
+        for (int layer = 0; layer < cascadeCount; layer++)
+            layers[layer] = new byte[checked((int)(width * height) * bytesPerPixel)];
+        return layers;
+    }
+
+    private static GlobalIlluminationHostResources CreateDefaultHostResources()
+        => new(
+            DefaultRenderPipeline.DepthViewTextureName,
+            DefaultRenderPipeline.NormalTextureName,
+            DefaultRenderPipeline.AlbedoOpacityTextureName,
+            DefaultRenderPipeline.RMSETextureName,
+            DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
+            DefaultRenderPipeline.ForwardPassFBOName);
+
+    private static RenderPipelineResourceLayout BuildDefaultLayout(
+        EGlobalIlluminationMode mode,
+        RenderPipelineResourceVariant variant = default)
+    {
+        var pipeline = new DefaultRenderPipeline { GlobalIlluminationMode = mode };
+        return pipeline.BuildResourceLayout(new RenderPipelineResourceProfile(
+            DisplayWidth: 1280u,
+            DisplayHeight: 720u,
+            InternalWidth: 1280u,
+            InternalHeight: 720u,
+            OutputHDR: false,
+            AntiAliasingMode: EAntiAliasingMode.Fxaa,
+            MsaaSampleCount: 1u,
+            Stereo: false,
+            ResourceVariant: variant));
     }
 }
 

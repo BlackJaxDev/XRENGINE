@@ -435,8 +435,16 @@ namespace XREngine.Editor.Mcp
                 }
 
                 Debug.LogException(cause, $"MCP tool '{method.Name}' failed.");
+                // Exception logging is compiled out of non-editor builds, so the failure
+                // response carries the exception type and stack for diagnosis.
+                Exception baseCause = cause.GetBaseException();
                 return new McpToolResponse(
-                    $"Tool '{method.Name}' failed: {cause.GetBaseException().Message}",
+                    $"Tool '{method.Name}' failed: {baseCause.Message}",
+                    new
+                    {
+                        exceptionType = baseCause.GetType().FullName,
+                        stackTrace = cause.ToString(),
+                    },
                     isError: true);
             }
         }

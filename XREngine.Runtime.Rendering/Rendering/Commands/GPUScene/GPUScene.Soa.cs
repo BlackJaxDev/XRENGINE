@@ -142,6 +142,11 @@ namespace XREngine.Rendering.Commands
                 Flags = material.IsTransparentLike() ? 1u : 0u,
             };
 
+            // The class row follows the material that most recently resolved into the
+            // class. Rewrite and republish it only when that content actually changed.
+            if (_materialStateByClass.TryGetValue(stateClassId, out MaterialStateGpu current) && current.Equals(state))
+                return stateClassId;
+
             _materialStateByClass[stateClassId] = state;
             UpdatingMaterialStateBuffer.SetDataRawAtIndex(stateClassId, state);
             _materialStateDirtyRange.Mark(stateClassId);

@@ -51,7 +51,45 @@ namespace XREngine.Components.Scene.Mesh
 
         private readonly object _lodsLock = new();
         private int _lodCount;
+        private int _lodRegistrationVersion;
         private XRMeshRenderer? _currentLODRenderer;
+
+        /// <summary>
+        /// Advances whenever the LOD list membership/order or a LOD renderer's mesh
+        /// changes. GPU-scene logical mesh registration retains its result until this
+        /// version, the per-level mesh identities or the atlas residency change, so a
+        /// transform-only update does not rebuild an unchanged registration.
+        /// </summary>
+        internal int LodRegistrationVersion => Volatile.Read(ref _lodRegistrationVersion);
+
+        private void AdvanceLodRegistrationVersion()
+            => Interlocked.Increment(ref _lodRegistrationVersion);
+
+        /// <summary>
+        /// Fills the per-level mesh and minimum projected radius for one submesh index
+        /// without allocating, in LOD list order, up to the span length. Levels whose
+        /// renderer has no mesh at that submesh index are skipped. Returns the level
+        /// count written.
+        /// </summary>
+        internal int CollectLodMeshes(uint submeshIndex, Span<XRMesh?> meshes, Span<float> minProjectedRadiusPixels)
+        {
+            int count = 0;
+            lock (_lodsLock)
+            {
+                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null && count < meshes.Length; node = node.Next)
+                {
+                    RenderableLOD lod = node.Value;
+                    if (!lod.Renderer.TryGetMesh((int)submeshIndex, out XRMesh? lodMesh, out _) || lodMesh is null)
+                        continue;
+
+                    meshes[count] = lodMesh;
+                    minProjectedRadiusPixels[count] = lod.MinProjectedScreenRadiusPixels;
+                    count++;
+                }
+            }
+
+            return count;
+        }
 
         public XRMeshRenderer? CurrentLODRenderer
             => Volatile.Read(ref _currentLODRenderer);
@@ -135,6 +173,7 @@ namespace XREngine.Components.Scene.Mesh
                             TrackBones(previousMesh, false);
                             ReleaseOwnedRuntimeMesh(previousMesh);
                             renderer.Mesh = CreateRuntimeMesh(lod.Mesh, GetTransformReferenceSearchRoot());
+                            AdvanceLodRegistrationVersion();
                             TrackBones(renderer.Mesh, true);
                             MarkSkinnedDataDirty();
                             MarkSkinnedBoneCullingVolumesDirty();
@@ -154,6 +193,7 @@ namespace XREngine.Components.Scene.Mesh
                     TrackBones(renderer.Mesh, true);
                 }
                 Volatile.Write(ref _lodCount, LODs.Count);
+                AdvanceLodRegistrationVersion();
             }
 
             RootBone = ResolveSkinnedRootBoneTransform(
@@ -484,6 +524,7 @@ namespace XREngine.Components.Scene.Mesh
                 lods = [.. LODs];
                 CurrentLOD = null;
                 LODs.Clear();
+                AdvanceLodRegistrationVersion();
             }
 
             foreach (RenderableLOD lod in lods)

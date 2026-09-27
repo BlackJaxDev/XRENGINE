@@ -253,6 +253,8 @@ namespace XREngine
                     private static int _vulkanMeshDescriptorPools;
                     private static int _vulkanMeshDescriptorAllocatedSets;
                     private static int _vulkanMeshDescriptorReservedSets;
+                    private static long _vulkanMeshDescriptorSupersededVariantRetirements;
+                    private static long _vulkanGeneratedProgramsSuperseded;
                     private static int _vulkanMeshFrameDataArenaChunkHighWater;
                     private static long _vulkanMeshFrameDataMappedBytesHighWater;
                     private static long _vulkanMeshFrameDataReservedBytesHighWater;
@@ -774,6 +776,10 @@ namespace XREngine
                     public static int VulkanMeshDescriptorPools => Volatile.Read(ref _vulkanMeshDescriptorPools);
                     public static int VulkanMeshDescriptorAllocatedSets => Volatile.Read(ref _vulkanMeshDescriptorAllocatedSets);
                     public static int VulkanMeshDescriptorReservedSets => Volatile.Read(ref _vulkanMeshDescriptorReservedSets);
+                    /// <summary>Mesh descriptor allocation variants retired after staying idle past the renderer's staleness bound while newer variants were published.</summary>
+                    public static long VulkanMeshDescriptorSupersededVariantRetirements => Volatile.Read(ref _vulkanMeshDescriptorSupersededVariantRetirements);
+                    /// <summary>Generated mesh programs destroyed because a newer program for the same material, axes and stages became active.</summary>
+                    public static long VulkanGeneratedProgramsSuperseded => Volatile.Read(ref _vulkanGeneratedProgramsSuperseded);
                     public static int VulkanMeshFrameDataArenaChunkHighWater => Volatile.Read(ref _vulkanMeshFrameDataArenaChunkHighWater);
                     public static long VulkanMeshFrameDataMappedBytesHighWater => Volatile.Read(ref _vulkanMeshFrameDataMappedBytesHighWater);
                     public static long VulkanMeshFrameDataReservedBytesHighWater => Volatile.Read(ref _vulkanMeshFrameDataReservedBytesHighWater);
@@ -1108,6 +1114,20 @@ namespace XREngine
                         Volatile.Write(ref _vulkanMeshFrameDataManifestRendererCount, Math.Max(rendererCount, 0));
                         Volatile.Write(ref _vulkanMeshFrameDataManifestFamilyCount, Math.Max(familyCount, 0));
                         Volatile.Write(ref _vulkanMeshFrameDataManifestIsSealed, isSealed ? 1 : 0);
+                    }
+
+                    public static void RecordVulkanGeneratedProgramSuperseded()
+                    {
+                        if (!EnableTracking)
+                            return;
+                        Interlocked.Increment(ref _vulkanGeneratedProgramsSuperseded);
+                    }
+
+                    public static void RecordVulkanMeshDescriptorSupersededVariantRetirement()
+                    {
+                        if (!EnableTracking)
+                            return;
+                        Interlocked.Increment(ref _vulkanMeshDescriptorSupersededVariantRetirements);
                     }
 
                     public static void AdjustVulkanMeshDescriptorOwnership(

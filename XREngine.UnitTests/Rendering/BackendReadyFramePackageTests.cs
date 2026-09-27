@@ -86,8 +86,15 @@ public sealed class BackendReadyFramePackageTests
         string source = SourceContractWorkspace.ReadExactFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.ResourcePlannerContext.cs");
 
-        source.ShouldContain(
-            "pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata");
+        // The frame-op context identifies a pipeline by the pass metadata of the
+        // published package it renders. Outside a render the render state binds no
+        // collection, so a viewport rendering from an override collection (two-pass
+        // VR eyes, eye-texture mirrors) must resolve through that override or its
+        // readback context never matches the submitted receipt.
+        source.ShouldContain("ResolveFrameOpPassMetadata(pipeline, viewport)");
+        source.ShouldContain("pipeline.RenderState.MeshRenderCommands");
+        source.ShouldContain("?? viewport?.MeshRenderCommandsOverride");
+        source.ShouldContain("commands.RenderingBackendReadyPackage.PassMetadata");
     }
 
     [Test]
@@ -124,6 +131,7 @@ public sealed class BackendReadyFramePackageTests
         20UL,
         30,
         40,
+        45,
         50,
         1920,
         EBackendReadyFramePackageValidationFailure.CollectGenerationMismatch)]
@@ -132,6 +140,7 @@ public sealed class BackendReadyFramePackageTests
         21UL,
         30,
         40,
+        45,
         50,
         1920,
         EBackendReadyFramePackageValidationFailure.CommandGenerationMismatch)]
@@ -140,6 +149,7 @@ public sealed class BackendReadyFramePackageTests
         20UL,
         31,
         40,
+        45,
         50,
         1920,
         EBackendReadyFramePackageValidationFailure.ResourceGenerationMismatch)]
@@ -148,6 +158,7 @@ public sealed class BackendReadyFramePackageTests
         20UL,
         30,
         41,
+        45,
         50,
         1920,
         EBackendReadyFramePackageValidationFailure.DescriptorGenerationMismatch)]
@@ -156,6 +167,16 @@ public sealed class BackendReadyFramePackageTests
         20UL,
         30,
         40,
+        46,
+        50,
+        1920,
+        EBackendReadyFramePackageValidationFailure.ResourceInstanceRevisionMismatch)]
+    [TestCase(
+        7L,
+        20UL,
+        30,
+        40,
+        45,
         51,
         1920,
         EBackendReadyFramePackageValidationFailure.RenderGraphGenerationMismatch)]
@@ -164,6 +185,7 @@ public sealed class BackendReadyFramePackageTests
         20UL,
         30,
         40,
+        45,
         50,
         1280,
         EBackendReadyFramePackageValidationFailure.ViewportMismatch)]
@@ -172,6 +194,7 @@ public sealed class BackendReadyFramePackageTests
         ulong commandGeneration,
         int resourceGeneration,
         int descriptorGeneration,
+        int resourceInstanceRevision,
         int renderGraphGeneration,
         int viewportWidth,
         EBackendReadyFramePackageValidationFailure expectedFailure)
@@ -186,6 +209,7 @@ public sealed class BackendReadyFramePackageTests
             commandGeneration,
             resourceGeneration,
             descriptorGeneration,
+            resourceInstanceRevision,
             renderGraphGeneration,
             viewportWidth,
             1080,
@@ -231,6 +255,7 @@ public sealed class BackendReadyFramePackageTests
             CommandGeneration: 20UL,
             ResourceGeneration: 30,
             DescriptorGeneration: 40,
+            ResourceInstanceRevision: 45,
             RenderGraphGeneration: 50,
             ViewportWidth: 1920,
             ViewportHeight: 1080,

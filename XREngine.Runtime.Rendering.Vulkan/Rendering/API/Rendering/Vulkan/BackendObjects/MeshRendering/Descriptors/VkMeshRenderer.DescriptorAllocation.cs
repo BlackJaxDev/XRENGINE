@@ -47,6 +47,8 @@ internal unsafe partial class VkMeshRenderer
         public bool HasFrameSourceDescriptors;
         public bool FrameSourceDescriptorClassificationInitialized;
         public ulong LastUsedSerial;
+        /// <summary>Stopwatch timestamp of the latest activation; stale variants are retired against it.</summary>
+        public long LastUsedTimestamp;
         public int SharedReferenceCount;
         public readonly Dictionary<DescriptorWriteKey, ulong> DescriptorWriteSignatures = new();
 

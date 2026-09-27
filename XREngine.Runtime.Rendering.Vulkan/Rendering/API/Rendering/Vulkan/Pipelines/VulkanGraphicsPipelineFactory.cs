@@ -179,7 +179,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			if (result != Result.Success)
 				throw new InvalidOperationException($"failed to create graphics pipeline ({result}).");
 
-			request.ProgramServices.RegisterPipeline(pipeline, "VkMeshRenderer.Graphics");
+			request.ProgramServices.RegisterPipeline(pipeline, $"VkMeshRenderer.Graphics#{request.Program.BindingId}");
 			request.ProgramServices.NotifyPipelineCreated("graphics");
 			return pipeline;
 		}
