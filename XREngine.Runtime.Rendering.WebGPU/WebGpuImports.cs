@@ -5,6 +5,9 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Generated synchronous imports into the module-owned JavaScript executor.</summary>
 internal static partial class WebGpuImports
 {
+    [JSImport("getCapabilities", "xrengine.webgpu")]
+    internal static partial string GetCapabilities(int session);
+
     [JSImport("createMesh", "xrengine.webgpu")]
     internal static partial int CreateMesh(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> vertices,
         [JSMarshalAs<JSType.MemoryView>] Span<byte> indices);
@@ -29,10 +32,6 @@ internal static partial class WebGpuImports
     [JSImport("copyTexture", "xrengine.webgpu")]
     internal static partial void CopyTexture(int session, int source, int destination,
         int sourceX, int sourceY, int destinationX, int destinationY, int width, int height);
-
-    [JSImport("completeSubmittedWork", "xrengine.webgpu")]
-    [return: JSMarshalAs<JSType.Promise<JSType.Void>>]
-    internal static partial Task CompleteSubmittedWorkAsync(int session);
 
     [JSImport("disposeRenderer", "xrengine.webgpu")]
     internal static partial void DisposeRenderer(int session);

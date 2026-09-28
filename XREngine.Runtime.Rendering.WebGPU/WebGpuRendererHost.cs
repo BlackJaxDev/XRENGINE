@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Owns the managed half of one WebGPU session and its resource identities.</summary>
-public sealed class WebGpuRendererHost : IBrowserRendererHost
+public sealed partial class WebGpuRendererHost : IBrowserRendererHost
 {
     private readonly BrowserCanvasRenderTarget _target;
     private readonly Action<WebGpuRendererHost> _onDisposed;
@@ -35,6 +35,7 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
     {
         if (State != BrowserRendererState.Pending || sessionId <= 0)
             throw new InvalidOperationException("Only a pending renderer can bind one positive browser session.");
+        DeviceCapabilities = ReadCapabilities(sessionId);
         _session = sessionId;
         State = BrowserRendererState.Ready;
     }
@@ -46,6 +47,7 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
         _deviceLost |= deviceLost;
         State = _deviceLost ? BrowserRendererState.Lost : BrowserRendererState.Failed;
         _submittedFrame = false;
+        DeviceCapabilities = null;
     }
 
     private void RequireReady()
@@ -156,21 +158,15 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
             copy.SourceX, copy.SourceY, copy.DestinationX, copy.DestinationY, copy.Width, copy.Height);
     }
 
-    public async Task CompleteSubmittedWorkAsync(CancellationToken cancellationToken = default)
-    {
-        RequireReady();
-        cancellationToken.ThrowIfCancellationRequested();
-        int session = _session;
-        await WebGpuImports.CompleteSubmittedWorkAsync(session).WaitAsync(cancellationToken);
-        if (State != BrowserRendererState.Ready || _session != session)
-            throw new InvalidOperationException("The WebGPU renderer session changed before GPU work completed.");
-    }
+    public Task CompleteSubmittedWorkAsync(CancellationToken cancellationToken = default) =>
+        CompleteSubmittedWorkTicketAsync(cancellationToken);
 
     public void Dispose()
     {
         if (State == BrowserRendererState.Disposed)
             return;
         State = BrowserRendererState.Disposed;
+        DeviceCapabilities = null;
         _submittedFrame = false;
         try
         {
