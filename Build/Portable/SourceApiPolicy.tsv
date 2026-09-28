@@ -1,0 +1,35 @@
+# Shared lexical policy for the MSBuild source guard and optional dependency reports.
+# Columns: deny/category/regex; reflection/regex; allow/repository path/symbol/review reason.
+deny	native interop	\b(?:DllImport|LibraryImport|NativeLibrary|Marshal\.GetDelegateForFunctionPointer)\b
+deny	desktop UI or graphics	\b(?:System\.Windows|System\.Drawing|Microsoft\.Win32|Silk\.NET\.(?:GLFW|SDL|OpenGL|Direct3D|OpenXR|Windowing)|ImGuiNET|UltralightNet|SkiaSharp)\b
+deny	native dependency	\b(?:FFmpeg|NAudio|OpenAL|DirectStorage|MagicPhysX|JoltPhysics|CUDA|CoACD|RiveSharp)\b
+deny	runtime code or assembly loading	\b(?:Assembly\.(?:Load|LoadFrom|LoadFile|LoadWithPartialName)|AssemblyLoadContext|Reflection\.Emit|DynamicMethod|Expression\.Compile|Activator\.CreateInstanceFrom)\b
+deny	process or desktop services	\b(?:Process\.Start|Environment\.GetFolderPath|Registry(?:Key)?\.|System\.Management)\b
+reflection	\b(?:Type\.GetType|GetTypes|GetExportedTypes|GetMethods|GetMethod|GetConstructor|GetCustomAttributes|GetCustomAttribute|GetProperties|GetProperty|GetAssemblies|GetUninitializedObject|Activator\.CreateInstance|MakeGenericType|MakeGenericMethod)\b
+allow	XREngine.Browser/BrowserSceneEnvelope.cs	GetProperty	JsonElement wire-field access, not System.Type reflection
+allow	XREngine.Data/Core/Events/XRPersistentCall.cs	Type.GetType	Serialized event parameter identity resolution
+allow	XREngine.Data/Core/Events/XRPersistentCall.cs	GetMethods	Serialized event target overload resolution
+allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetTypes	Cached loaded-assembly type inspection
+allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetExportedTypes	Cached public type inspection
+allow	XREngine.Data/Core/Objects/XRBase.cs	GetMethod	MemoryPack clone helper lookup
+allow	XREngine.Data/Core/Objects/XRBase.cs	MakeGenericMethod	Closed clone helper specialization in interpreter
+allow	XREngine.Data/Serialization/AotRuntimeMetadataStore.cs	Type.GetType	Persisted type identity resolver in interpreter
+allow	XREngine.Data/Serialization/AotRuntimeMetadataStore.cs	GetAssemblies	Loaded-assembly fallback in untrimmed interpreter
+allow	XREngine.Extensions/Enum.cs	GetCustomAttributes	Enum display metadata lookup
+allow	XREngine.Extensions/Object.cs	GetMethod	Managed private method helper; browser composition does not call it
+allow	XREngine.Extensions/Reflection/Type.cs	Activator.CreateInstance	Explicit managed instance helper; not used by browser composition
+allow	XREngine.Extensions/Reflection/Type.cs	GetConstructor	Managed type constraint check
+allow	XREngine.Extensions/Reflection/Type.cs	GetCustomAttribute	Attribute helper; untrimmed metadata only
+allow	XREngine.Extensions/Reflection/Type.cs	GetCustomAttributes	Attribute helper; untrimmed metadata only
+allow	XREngine.Runtime.Core/Attributes/RequiresTransformAttribute.cs	GetCustomAttribute	Component transform requirement attribute
+allow	XREngine.Runtime.Core/Attributes/RequiresTransformAttribute.cs	Activator.CreateInstance	Fallback transform construction if explicit registry lacks type
+allow	XREngine.Runtime.Core/Scene/Components/XRComponent.cs	GetConstructor	Legacy component constructor invocation in interpreter
+allow	XREngine.Runtime.Core/Scene/Components/XRComponent.cs	GetUninitializedObject	Legacy component factory; requires browser lifecycle exercise
+allow	XREngine.Runtime.Core/Scene/SceneNode.Components.cs	GetCustomAttributes	Component requirement attributes
+allow	XREngine.Runtime.Core/Scene/Transforms/TransformBase.cs	GetCustomAttribute	Transform display metadata
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetAssemblies	Untrimmed replication metadata scan from static initializer
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetTypes	Loaded-assembly replication candidate inspection
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperties	Replicable property discovery
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperty	Registered replication property resolution
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetCustomAttribute	Replication attribute inspection
+allow	XREngine.Runtime.Rendering/Runtime/RendererModules/RendererBackendModuleIdentity.cs	GetCustomAttribute	Target framework identity of registered module assembly

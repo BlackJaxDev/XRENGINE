@@ -33,9 +33,9 @@ are inventoried explicitly rather than advertised as absent. Registration and
 serialization preserve the existing desktop assembly/type identities and flat
 snapshot compatibility. Browser profile IDs are separately namespaced.
 
-Python 3.10 or later is now required for the portable source guard. Set
-`XREnginePortablePythonExecutable` if the executable is not `python`; on systems
-where only `python3` is installed, pass `-p:XREnginePortablePythonExecutable=python3`.
+The portable source guard runs as a C# MSBuild task compiled by the existing SDK's
+`RoslynCodeTaskFactory`. It receives Compile items directly and reads the shared
+`SourceApiPolicy.tsv` rules. Building and publishing need no Python installation.
 The ordinary desktop build does not run this guard. The evaluated report defaults
 to Release and consumes an existing portable restore; use `--configuration Debug`
 only with the corresponding restored build. No report was generated in this delivery.

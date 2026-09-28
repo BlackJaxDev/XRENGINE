@@ -47,7 +47,7 @@ are outside this selected profile.
 - [x] **MW01.01–MW01.04 code:** Same-identity portable scene/data/rendering profiles, isolated native leaves, neutral-project auditing and focused resource/frame/presentation descriptions.
 - [x] **MW01.05 code:** Resource, pass/packet submission, texture-copy, presentation and asynchronous completion capabilities implemented by the WebGPU leaf without the legacy desktop renderer surface.
 - [x] **MW01.06–MW01.07 code:** Explicit browser composition, deterministic generated registrations for admitted component/transform/resource/serializer/module identities, and generated scene-JSON metadata.
-- [x] **MW01.08–MW01.10 code:** Selected-profile API/reflection inventory and source guard, explicit reviewed exceptions, trim/AOT rejection, isolated cook/generator tooling and project/package/native-asset guards.
+- [x] **MW01.08–MW01.10 code:** Selected-profile API/reflection inventory and SDK-hosted C# source guard (no Python build prerequisite), explicit reviewed exceptions, trim/AOT rejection, isolated cook/generator tooling and project/package/native-asset guards.
 - [ ] **MW01.11 remaining evidence:** Earlier scene-only browser evidence exists; the expanded graph and affected desktop paths still need build/runtime qualification.
 - [x] **MW02.01–MW02.04 code:** Supplied-canvas executable/bootstrap, portable surface/input/presentation contracts and asynchronous pending/ready/failure/loss transitions.
 - [x] **MW02.05–MW02.07 code:** Single-frame fixed-step simulation, explicit engine transform-buffer publication, frozen renderable collection, per-view visibility and packet production, caller-thread scheduling, bounded catch-up and history invalidation on suspension/large time gaps.
@@ -585,4 +585,3 @@ References below are pinned to the reviewed commit. The relative navigation link
 [tunnel]: https://github.com/BlackJaxDev/XRENGINE/blob/4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63/XRENGINE.Runtime.Core/Networking/RealtimeTlsClientTunnel.cs
 [websocket-component]: https://github.com/BlackJaxDev/XRENGINE/blob/4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63/XREngine.Runtime.Core/Scene/Components/Networking/WebSocketClientComponent.cs
 [windows-ci]: https://github.com/BlackJaxDev/XRENGINE/blob/4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63/.github/workflows/windows-ci.yml
-

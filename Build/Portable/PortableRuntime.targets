@@ -1,4 +1,12 @@
 <Project>
+  <UsingTask TaskName="XREngine.Build.PortableSourceApiGuard"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll"
+             Condition="'$(XREnginePortableRuntime)' == 'true'">
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)PortableSourceApiGuard.cs" />
+    </Task>
+  </UsingTask>
   <!-- The portable source profile is intentionally a small, reviewed project
        closure. These checks inspect evaluated items, not published artifacts. -->
   <Target Name="ValidateXREnginePortableDeclarations"
@@ -37,17 +45,11 @@
   <Target Name="ValidateXREnginePortableSourceApis"
           BeforeTargets="CoreCompile"
           Condition="'$(XREnginePortableRuntime)' == 'true'">
-    <PropertyGroup>
-      <_PortableSourceList>$(IntermediateOutputPath)portable-sources.txt</_PortableSourceList>
-      <XREnginePortablePythonExecutable Condition="'$(XREnginePortablePythonExecutable)' == ''">python</XREnginePortablePythonExecutable>
-    </PropertyGroup>
     <Error Condition="'@(Compile)' == ''"
            Text="Portable source closure for $(MSBuildProjectName) is empty." />
-    <WriteLinesToFile File="$(_PortableSourceList)"
-                      Lines="@(Compile->'%(FullPath)')"
-                      Overwrite="true" />
-    <Exec Command="&quot;$(XREnginePortablePythonExecutable)&quot; &quot;$(MSBuildThisFileDirectory)../../Tools/Reports/audit_browser_dependencies.py&quot; --mode guard --repo &quot;$(MSBuildThisFileDirectory)../..&quot; --sources-file &quot;$(_PortableSourceList)&quot;"
-          StandardErrorImportance="High" />
+    <XREngine.Build.PortableSourceApiGuard Sources="@(Compile)"
+        RepositoryRoot="$(MSBuildThisFileDirectory)../.."
+        PolicyFile="$(MSBuildThisFileDirectory)SourceApiPolicy.tsv" />
   </Target>
 
   <Target Name="ValidateXREnginePortableResolvedAssets"
