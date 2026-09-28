@@ -22,6 +22,14 @@ internal static partial class WebGpuImports
     [JSImport("submitPacket", "xrengine.webgpu")]
     internal static partial void SubmitPacket(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> packet);
 
+    [JSImport("copyTexture", "xrengine.webgpu")]
+    internal static partial void CopyTexture(int session, int source, int destination,
+        int sourceX, int sourceY, int destinationX, int destinationY, int width, int height);
+
+    [JSImport("completeSubmittedWork", "xrengine.webgpu")]
+    [return: JSMarshalAs<JSType.Promise<JSType.Void>>]
+    internal static partial Task CompleteSubmittedWorkAsync(int session);
+
     [JSImport("disposeRenderer", "xrengine.webgpu")]
     internal static partial void DisposeRenderer(int session);
 }

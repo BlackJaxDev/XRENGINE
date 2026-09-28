@@ -9,11 +9,11 @@ namespace XREngine.Rendering;
 public sealed class BrowserSceneSnapshot
 {
     private const int CurrentVersion = 1;
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly BrowserSceneJsonContext JsonContext = new(new JsonSerializerOptions
     {
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
-    };
+    });
 
     public BrowserSceneSnapshot(IEnumerable<BrowserMeshData> meshes, IEnumerable<BrowserMaterialData> materials,
         IEnumerable<BrowserSceneInstance> instances, BrowserCameraSnapshot camera)
@@ -77,7 +77,7 @@ public sealed class BrowserSceneSnapshot
                 ModelMatrix = MatrixToArray(instance.ModelMatrix)
             }).ToArray()
         };
-        string json = JsonSerializer.Serialize(dto, JsonOptions);
+        string json = JsonSerializer.Serialize(dto, JsonContext.BrowserSceneDto);
         if (Encoding.UTF8.GetByteCount(json) > 16 * 1024 * 1024)
             throw new NotSupportedException("Browser scene JSON exceeds 16 MiB.");
         return json;
@@ -91,7 +91,7 @@ public sealed class BrowserSceneSnapshot
         BrowserSceneDto dto;
         try
         {
-            dto = JsonSerializer.Deserialize<BrowserSceneDto>(json, JsonOptions)
+            dto = JsonSerializer.Deserialize(json, JsonContext.BrowserSceneDto)
                 ?? throw new ArgumentException("Browser scene JSON is empty.", nameof(json));
         }
         catch (JsonException exception)

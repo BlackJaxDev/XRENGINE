@@ -128,6 +128,26 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
         }
     }
 
+    public void CopyTexture(BrowserTextureCopyDescription copy)
+    {
+        RequireReady();
+        copy.Validate();
+        if (!_resources.Contains(copy.SourceHandle) || !_resources.Contains(copy.DestinationHandle))
+            throw new InvalidOperationException("Both copy textures must belong to this WebGPU renderer.");
+        WebGpuImports.CopyTexture(_session, copy.SourceHandle, copy.DestinationHandle,
+            copy.SourceX, copy.SourceY, copy.DestinationX, copy.DestinationY, copy.Width, copy.Height);
+    }
+
+    public async Task CompleteSubmittedWorkAsync(CancellationToken cancellationToken = default)
+    {
+        RequireReady();
+        cancellationToken.ThrowIfCancellationRequested();
+        int session = _session;
+        await WebGpuImports.CompleteSubmittedWorkAsync(session).WaitAsync(cancellationToken);
+        if (State != BrowserRendererState.Ready || _session != session)
+            throw new InvalidOperationException("The WebGPU renderer session changed before GPU work completed.");
+    }
+
     public void Dispose()
     {
         if (State == BrowserRendererState.Disposed)

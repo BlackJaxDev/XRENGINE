@@ -2,7 +2,7 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Readiness audit and minimum portable scene boot implemented, with earlier scene-only browser evidence. Canvas hosting, indexed unlit mesh rendering, a batched bridge and explicit-WGSL artifact cooking/loading, a registered WebGPU leaf and static engine snapshot adapters are implemented in source; rendering remains unvalidated. Renderer-module integration, cooked content and broader browser/device acceptance remain pending.
+**Status:** Code deliverables through the selected portable kernel and browser host are implemented, including generated registration, API guards and explicit frame publication. The WebGPU leaf supports indexed unlit meshes, versioned packets, static scene imports and focused copy/completion capabilities. Builds, restored-graph evidence and browser/device qualification for the expanded implementation remain pending; broader engine rendering and cooked-world integration follow.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -32,6 +32,29 @@ The first local rendering milestone does not require multiplayer, voice chat, th
 - Preserve desktop OpenGL/Vulkan behavior while extracting shared code. Do not force desktop renderers through browser-specific abstractions.
 - Validate a live feature slice before adding its regression coverage, following the repository's applicable contribution/test policy.
 
+### Code completion through the browser host
+
+The selected profile is the minimum engine scene plus indexed unlit WebGPU canvas,
+using the untrimmed interpreter on one caller thread. These source rows cover all
+implementation requirements through MW02; the main task checkboxes below retain
+acceptance meaning. Physical-device selection/evidence, evaluated restored-graph
+results, runtime and desktop regression evidence are not code deliverables and
+remain open. Trimming/AOT, arbitrary cooked worlds and later rendering features
+are outside this selected profile.
+
+- [x] **MW00.01–MW00.05/MW00.07–MW00.08 source and planning deliverables:** Scope reconciliation, source dependency classifications/owners, sample specification, budgets and service requirements; evaluated graph/restore-asset reporting and initializer/API inventory tooling. The evaluated report has not been run for this delivery.
+- [ ] **MW00.06 qualification evidence:** Proposed reference devices are recorded; hardware availability and exact tested OS/browser versions are unconfirmed.
+- [x] **MW01.01–MW01.04 code:** Same-identity portable scene/data/rendering profiles, isolated native leaves, neutral-project auditing and focused resource/frame/presentation descriptions.
+- [x] **MW01.05 code:** Resource, pass/packet submission, texture-copy, presentation and asynchronous completion capabilities implemented by the WebGPU leaf without the legacy desktop renderer surface.
+- [x] **MW01.06–MW01.07 code:** Explicit browser composition, deterministic generated registrations for admitted component/transform/resource/serializer/module identities, and generated scene-JSON metadata.
+- [x] **MW01.08–MW01.10 code:** Selected-profile API/reflection inventory and source guard, explicit reviewed exceptions, trim/AOT rejection, isolated cook/generator tooling and project/package/native-asset guards.
+- [ ] **MW01.11 remaining evidence:** Earlier scene-only browser evidence exists; the expanded graph and affected desktop paths still need build/runtime qualification.
+- [x] **MW02.01–MW02.04 code:** Supplied-canvas executable/bootstrap, portable surface/input/presentation contracts and asynchronous pending/ready/failure/loss transitions.
+- [x] **MW02.05–MW02.07 code:** Single-frame fixed-step simulation, explicit engine transform-buffer publication, frozen renderable collection, per-view visibility and packet production, caller-thread scheduling, bounded catch-up and history invalidation on suspension/large time gaps.
+- [x] **MW02.08–MW02.10 code:** CSS/backing/DPR/orientation/attachment handling, budget caps, generations, per-canvas ownership, viewports, freeze/resume, cancellation and repeatable teardown.
+
+Source details: [portable host implementation](../../progress/rendering/browser-portable-host-completion.md).
+
 ### Code completion on the implementation branch
 
 These rows answer what has actually been coded without changing the acceptance
@@ -60,13 +83,13 @@ still applies only to its recorded scope.
 - [x] **MW03.03/MW05.14 canvas pass code:** Packet v2 carries an explicit opaque clear pass and output extent; managed and JS consumers reject stale owner/generation/extent. Color is stored and transient depth discarded.
 - [x] **MW02.05 bounded visibility code:** Conservative per-view AABB frustum collection over real scene components, cached live camera snapshots, a culling toggle and last-frame counters.
 - [x] **MW05.04/MW05.14 live descriptor code:** Scene-owned mesh/material replacement and removal with shared resource reference counts, acquisition before replacement, and asynchronous backend retirement; an explicit page action updates a material.
-- [ ] **MW02.05, MW05.04/MW05.14 full integration:** Generic engine resource/pass wrappers, automatic live-world camera/material binding, engine visibility/render-buffer publication and runtime acceptance remain open. The bounded browser scene collector does not establish arbitrary live-world portability.
+- [ ] **MW05.04/MW05.14 broader engine integration:** Arbitrary engine resource/pass lowering and automatic live-world camera/material binding remain open. The selected browser host now publishes real engine transform buffers and frozen renderable data; this does not establish arbitrary live-world portability or runtime acceptance.
 - [ ] **MW03.04/MW03.10–MW03.11 acceptance:** Streaming upload arenas, malformed/stale/growth cases and measured memory/crossing evidence.
 - [ ] **MW04.05/MW04.07 production compiler:** Approved WGSL-producing toolchain and target-aware engine material generation.
 - [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
 
-Latest source delivery: [Canvas output, visibility and live resource updates](../../progress/rendering/browser-webgpu-frame-output.md).
-The next integration section is generic engine resource/pass lowering and automatic live-world/render-buffer binding. Full shader cooking expands beyond the explicit unlit WGSL profile implemented here.
+Latest source delivery: [Portable browser host implementation](../../progress/rendering/browser-portable-host-completion.md).
+The next integration section is broader engine resource/pass lowering and automatic live-world binding, followed by batched streaming uploads. Full shader cooking expands beyond the explicit unlit WGSL profile implemented here.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -179,11 +202,11 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 **Implementation record (2026-09-28):** [Portable browser scene boot](../../progress/rendering/portable-browser-scene-boot.md).
 
 - MW01.01–MW01.02, MW01.06, MW01.09: Completed for the explicitly selected scene kernel using same-assembly source profiles and a standalone browser composition root. This does not include cooked resources or a renderer.
-- MW01.03–MW01.04: Data/Extensions evaluated and stripped to a managed closure; Audio is excluded. Seven rendering contracts are included; resource/pass/command contracts remain open.
-- MW01.07–MW01.08: Explicit component factory and untrimmed/interpreted browser path work. Generated registrations, cooked IDs/serialization round trips, full API audit, trimming and AOT remain open.
-- MW01.10: Project/package/native-asset guards implemented with a narrow official SDK runtime exception; forbidden-API coverage remains open.
+- MW01.03–MW01.05: Data/Extensions use reviewed managed source profiles; Audio is excluded. Portable contracts now include the real catalog/output types and focused resource, pass/packet, texture-copy, presentation and asynchronous-completion capabilities. Expanded evaluated-graph results remain pending.
+- MW01.07–MW01.08: The selected interpreter has generated browser registrations, scoped stable IDs and source-generated scene JSON metadata. API/reflection inventory and reviewed exception policy are implemented. Serializer round trips and expanded runtime evidence remain pending; trim/AOT publish modes are rejected until separately qualified.
+- MW01.10: Project/package/native-asset guards retain a narrow official SDK runtime exception. Evaluated-source forbidden-API/reflection scanning is implemented with documented lexical limits; it does not prove semantic reachability.
 - MW01.11: Published scene passed three browser runs and desktop Data rebuild passed. Full desktop scene/Core/Rendering coverage remains open. Minimal G0 scene behavior is demonstrated; broader phase qualification is not complete.
-- Initial MW02 work: browser executable and ES-module bootstrap, bounded fixed-step simulation, single-thread transform path, visibility pause/resume policy and repeatable scene teardown exist. Canvas binding, surface contract, renderer startup, render packets, input/resize and physical-device lifecycle validation remain open; MW02 checklist items are not completed by this scene-only host.
+- MW02 code is now implemented for the selected canvas host, including binding, startup, packets, input, resize and explicit frame publication. The earlier scene-only evidence does not validate these additions.
 
 ## MW02 — Browser application host, canvas target, and frame scheduling
 
@@ -207,10 +230,10 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 **Code implementation record (2026-09-28):** [Browser WebGPU canvas host](../../progress/rendering/browser-webgpu-canvas-host.md), extended by the [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md). Code rows above track completed source; main acceptance checkboxes remain open where qualification is required.
 
 - MW02.01–MW02.04: Canvas binding, portable target/surface/input contracts and asynchronous adapter/device/pipeline startup are implemented. The browser composition owns the pending startup; it does not block or pretend the existing synchronous desktop factory created a ready renderer.
-- MW02.05: Single-frame managed simulation, conservative per-view AABB collection, cached camera updates and a versioned frame-packet producer are implemented. Full engine visibility collection and render-buffer publication remain open.
-- MW02.06–MW02.07: Single-thread caller scheduling, bounded 60 Hz fixed updates, variable-cadence rendering and visibility clock reset are implemented. No temporal history exists in this diagnostic renderer.
+- MW02.05: Single-frame simulation publishes the real engine transform buffers once, freezes resource handles/transforms in reusable storage, and performs per-view visibility and packet production from that snapshot. Structural/resource mutations during a frame are rejected. Arbitrary world renderer adapters belong to later integration work.
+- MW02.06–MW02.07: Single-thread caller scheduling, bounded 60 Hz fixed updates and variable-cadence rendering are implemented. Suspension, resize, view changes and excessive time gaps reset timing and invalidate a monotonic history generation. The unlit renderer has no temporal image history yet.
 - MW02.08–MW02.10: Resize/DPR/device limits, surface generations, zero-size/detach/reattach, independent canvas sessions, split view, cancellation, observer/listener cleanup and explicit stop/restart are implemented but unvalidated.
-- The WebGPU executor now consumes one batched draw packet with focused mesh/material descriptors. Streaming uploads, existing engine asset adapters, renderer-module integration and device qualification remain open; this does not satisfy G1.
+- The WebGPU executor consumes one batched draw packet with focused resource descriptors and supports explicit texture copies and asynchronous completion. Static asset adapters and module registration are implemented. Streaming uploads, broader live-world integration and device qualification remain open; G1 acceptance is not asserted.
 
 
 ## MW03 — Batched .NET/JavaScript command and upload bridge

@@ -16,13 +16,28 @@ public static partial class BrowserSceneExports
     /// <summary>Creates a session from a bounded, versioned portable scene payload.</summary>
     [JSExport]
     public static int CreateFromSnapshot(string canvasId, string json)
-        => CreateCore(canvasId, BrowserSceneSnapshot.FromJson(json));
+        => CreateCore(canvasId, BrowserStaticRegistrations.DeserializeScene(
+            BrowserStaticRegistrations.SceneJsonId, json));
 
     [JSExport]
-    public static void ValidateSnapshot(string json) => _ = BrowserSceneSnapshot.FromJson(json);
+    public static void ValidateSnapshot(string json)
+        => BrowserSceneSession.ValidateImportSnapshot(BrowserStaticRegistrations.DeserializeScene(
+            BrowserStaticRegistrations.SceneJsonId, json));
+
+    /// <summary>Converts a supported scene payload to the stable-ID envelope without replacing a running scene.</summary>
+    [JSExport]
+    public static string EncodeSceneEnvelope(string json)
+    {
+        BrowserSceneSnapshot snapshot = BrowserStaticRegistrations.DeserializeScene(
+            BrowserStaticRegistrations.SceneJsonId, json);
+        BrowserSceneSession.ValidateImportSnapshot(snapshot);
+        return BrowserStaticRegistrations.SerializeScene(BrowserStaticRegistrations.SceneJsonId, snapshot);
+    }
 
     private static int CreateCore(string canvasId, BrowserSceneSnapshot? snapshot)
     {
+        if (snapshot is not null)
+            BrowserSceneSession.ValidateImportSnapshot(snapshot);
         // Do not reuse an ID: late callbacks from an old canvas must never reach a new scene.
         if (_nextId == int.MaxValue)
             throw new InvalidOperationException("Browser scene session identifiers are exhausted.");
@@ -84,6 +99,7 @@ public static partial class BrowserSceneExports
         return System.Text.Json.JsonSerializer.Serialize(new BrowserSceneStatistics(
             session.CullingEnabled, session.VisibilityCandidates, session.VisibilityCulled, session.VisibilityDrawn,
             session.RetainedMeshCount, session.RetainedMaterialCount, session.RetainedTextureCount,
+            session.VariableDeltaSeconds, session.HistoryGeneration,
             session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null));
     }
 

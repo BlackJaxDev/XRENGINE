@@ -1,0 +1,23 @@
+{
+  "schema": "xre.browser.registrations.v1",
+  "components": {
+    "xre.browser.v1.component.scene-boot": "XREngine.Browser.SceneBootComponent",
+    "xre.browser.v1.component.mesh": "XREngine.Browser.BrowserMeshComponent",
+    "xre.browser.v1.component.spin": "XREngine.Browser.BrowserSpinComponent"
+  },
+  "transforms": {
+    "xre.browser.v1.transform.trs": "XREngine.Scene.Transforms.Transform"
+  },
+  "resources": {
+    "xre.browser.v1.resource.mesh": "XREngine.Rendering.BrowserMeshData",
+    "xre.browser.v1.resource.texture-rgba8": "XREngine.Rendering.BrowserTextureData",
+    "xre.browser.v1.resource.material-unlit": "XREngine.Rendering.BrowserMaterialData",
+    "xre.browser.v1.resource.scene-snapshot": "XREngine.Rendering.BrowserSceneSnapshot"
+  },
+  "serializers": {
+    "xre.browser.v1.serializer.scene-json": "XREngine.Rendering.BrowserSceneSnapshot"
+  },
+  "modules": {
+    "xre.browser.v1.module.webgpu": "XREngine.Rendering.WebGPU.WebGpuRendererBackendModule"
+  }
+}

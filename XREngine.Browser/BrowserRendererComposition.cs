@@ -1,5 +1,4 @@
 using XREngine.Rendering;
-using XREngine.Rendering.WebGPU;
 
 namespace XREngine.Browser;
 
@@ -7,9 +6,14 @@ namespace XREngine.Browser;
 internal static class BrowserRendererComposition
 {
     private static readonly RendererBackendCatalog Catalog = new();
-    private static readonly IDisposable Registration = Catalog.Register(new WebGpuRendererBackendModule());
+    private static readonly IDisposable Registration = Catalog.Register(
+        BrowserStaticRegistrations.CreateRendererModule(BrowserStaticRegistrations.WebGpuModuleId));
 
-    internal static void Initialize() => _ = Registration;
+    internal static void Initialize()
+    {
+        BrowserStaticRegistrations.Initialize();
+        _ = Registration;
+    }
 
     /// <summary>Creates a canvas renderer through the shared backend catalog.</summary>
     internal static IBrowserRendererHost CreateRequired(BrowserCanvasRenderTarget target)
