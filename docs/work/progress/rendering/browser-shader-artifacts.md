@@ -1,5 +1,10 @@
 # Cooked browser shader artifacts
 
+**Current workflow:** [Browser shader cooking and material generation](browser-shader-cooking.md)
+supersedes the Python cooking instructions below with an isolated C# tool, typed
+material generation and optional pinned Slang output. This page records the
+earlier delivery and its original generation command; it is not the current setup guide.
+
 **Date:** 2026-09-28. **Base:** `f5012ca7c9ca1b4f42d9905a46944ac41d2ec943`.
 **Status:** Source implemented and the sample package generated. No .NET build,
 WGSL compilation, browser/GPU execution, regression tests, profiling or physical

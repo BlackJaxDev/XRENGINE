@@ -75,6 +75,11 @@ still applies only to its recorded scope.
 - [x] **MW04.06 explicit-WGSL code:** Offline packager and browser loading of cooked WGSL/metadata without a native runtime compiler.
 - [x] **MW04.10–MW04.11 explicit-WGSL code:** Named recipe errors, content-addressed assets, integrity/schema/layout checks and source-location shader diagnostics.
 - [x] **MW04.12 readiness code:** Await shader diagnostics and asynchronous pipeline creation before allowing frames; warm-up measurements remain open.
+- [x] **MW04.04/MW04.06/MW04.10 cooking code:** Standalone C# cooker supports explicit WGSL and schema 2 material/Slang recipes, source/include/recipe hashes, pinned compiler identities, bounded inputs, contextual rejection and atomic manifest publication. The new cooker has not been executed; checked-in schema 1 assets remain usable.
+- [x] **MW04.05 toolchain adapter code:** Optional externally provisioned Slang 2026.8 WGSL process route reuses the existing pin without a dependency upgrade, with version/library identity, dependency snapshots, bounded diagnostics/deadlines and cancellation. WGSL toolchain qualification remains open.
+- [x] **MW04.07 selected-profile generation code:** Target-aware typed opaque unlit tint/texture generator, connected to `BrowserMaterialRecipe`; unsupported targets and material features fail explicitly without translating desktop GLSL.
+- [x] **MW04.08–MW04.09 selected-profile ABI code:** Shared matrix/tint writers, scalar/offset/alignment/stride constants, fixed binding and vertex schema, coordinate identity and explicit winding. A bounded emitted-WGSL lexer checks the actual four resources, uniform types/extents/offsets and matrix stride before cooking. Storage, reversed-Z and render-to-texture variants remain outside this profile.
+- [x] **MW04.11–MW04.12 runtime code:** Strict schema/compiler/source-origin compatibility, selectable named cooked artifacts, exact authored-WGSL locations and honest generated-source diagnostics, scoped GPU errors, bounded cancellable shader/pipeline warm-up and timing counters.
 - [x] **MW05.02 initial-profile code:** Check declared adapter limits and request the exact supported shader requirements before creating the device.
 - [x] **MW05.05–MW05.06 minimum-raster code:** Vertex/index/uniform buffers, aligned matrix upload, single-mip RGBA8 textures and material bind groups.
 - [x] **MW05.09, MW05.12–MW05.13 minimum-raster code:** Indexed packet submission, depth attachment, asynchronous retirement and terminal failure/loss handling.
@@ -87,11 +92,11 @@ still applies only to its recorded scope.
 - [x] **MW05.04/MW05.14 live descriptor code:** Scene-owned mesh/material replacement and removal with shared resource reference counts, acquisition before replacement, and asynchronous backend retirement; an explicit page action updates a material.
 - [ ] **MW05.04/MW05.14 broader engine integration:** Arbitrary engine resource/pass lowering and automatic live-world camera/material binding remain open. The selected browser host now publishes real engine transform buffers and frozen renderable data; this does not establish arbitrary live-world portability or runtime acceptance.
 - [ ] **MW03.02/MW03.10–MW03.11 acceptance:** Exact-runtime memory-view/copy/disposal proof, increasing-draw crossing/allocation measurements, and malformed/stale/growth/cancellation/disposal/memory-pressure evidence. Code additions are not a substitute for this deliberately deferred validation.
-- [ ] **MW04.05/MW04.07 production compiler:** Approved WGSL-producing toolchain and target-aware engine material generation.
+- [ ] **MW04.05/MW04.08/MW04.11 remaining qualification and coverage:** Qualify the pinned compiler and selected-profile WGSL layout checks; implement full original-source mappings for generated Slang. The adapter's reflection JSON is not treated as host-ABI proof; emitted WGSL has a separate bounded checker whose unsupported layouts fail closed. Arbitrary desktop shader/material translation is not claimed.
 - [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
 
-Latest source delivery: [Batched browser upload bridge](../../progress/rendering/browser-upload-bridge.md).
-Remaining implementation expands shader cooking beyond the explicit unlit WGSL profile and adds broader engine resource/pass lowering and automatic live-world binding. The batched streaming upload lane is implemented; its acceptance evidence remains open.
+Latest source delivery: [Browser shader cooking and material generation](../../progress/rendering/browser-shader-cooking.md).
+Remaining implementation adds broader engine resource/pass lowering, automatic live-world binding and production material features. The batched streaming upload lane and selected-profile shader cooking source are implemented; acceptance evidence remains open.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -269,11 +274,13 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW04.01** Add a small explicit WGSL set for unlit color/texturing and the first depth-tested engine mesh. Keep bindings and layouts explicit so this validates backend integration, not a separate rendering system.
 - [ ] **MW04.02** Define the initial portable vertex, frame, object, and material data layouts with matching C# packing and shader declarations. Add known-value visual/readback checks for offsets and transforms.
 
-**Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) supplies explicit position/UV, matrix and tint layouts plus depth-tested unlit color/texturing WGSL. MW04.01–MW04.02 remain open for engine-module integration and known-value visual/readback acceptance; this does not implement shader cooking.
+**Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) supplies explicit position/UV, matrix and tint layouts plus depth-tested unlit color/texturing WGSL. The shader now lives in the registered WebGPU module; shared ABI writers and typed material generation are implemented below. MW04.01–MW04.02 retain open acceptance for known-value visual/readback evidence.
 
 ### Production artifact path
 
 **Implementation record (2026-09-28):** [Cooked browser shader artifacts](../../progress/rendering/browser-shader-artifacts.md) adds target-tagged C# shader results, an explicit-WGSL offline packager, a versioned content-addressed descriptor/manifest, an abortable bounded browser loader, exact initial-profile requirement checks and source-location diagnostics. The sample package was generated. No .NET build, WGSL compilation, browser run, regression test or physical-device validation was performed. Main checkboxes retain their acceptance meaning; the checked code rows above show the delivered subset.
+
+**Expanded source implementation (2026-09-28):** [Browser shader cooking and material generation](../../progress/rendering/browser-shader-cooking.md) adds a Python-free C# cooker, a typed target-aware unlit generator connected to engine material recipes, an optional pinned Slang 2026.8 WGSL route, shared ABI writers, schema 2 provenance/coordinate contracts and cancellable bounded pipeline warm-up. Source examples include both generated material variants and a Slang counterpart. No cook/build/test/browser execution was performed. Full original-source Slang mapping and emitted-layout reflection qualification remain open, along with runtime acceptance; MW04 is not declared fully accepted.
 
 - [ ] **MW04.03** Extend the existing compile-target contract with WGSL. Generalize the result's SPIR-V-specific payload into a target-tagged artifact representation while preserving existing Vulkan behavior and provenance.
 - [ ] **MW04.04** Define source language, entry point, stage, includes, defines, specialization, required capabilities, compiler identity, and reflection/schema identity in artifact/cache keys.

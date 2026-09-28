@@ -24,7 +24,8 @@ async function createBrowserRuntime() {
     });
     const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
-    return (canvas, onState) => new BrowserCanvasHost(exports.XREngine.Browser.BrowserSceneExports, renderers, canvas, onState);
+    return (canvas, onState, shaderName) => new BrowserCanvasHost(
+        exports.XREngine.Browser.BrowserSceneExports, renderers, canvas, onState, shaderName);
 }
 
 const canvas = document.querySelector('#scene');
@@ -100,7 +101,7 @@ try {
         throw new Error(`${requested} is not packaged. This application contains WebGPU only.`);
     const createHost = await createBrowserRuntime();
     if (!pageEvents.signal.aborted) {
-        host = createHost(canvas, setState);
+        host = createHost(canvas, setState, new URLSearchParams(location.search).get('shader') ?? 'browser-unlit');
         host.setSplitView(split.checked);
         host.setInstanceCount(Number(instances.value));
         host.setCullingEnabled(culling.checked);
