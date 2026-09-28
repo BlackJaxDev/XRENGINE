@@ -128,6 +128,24 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
         }
     }
 
+    public void SubmitUploads(BrowserUploadBatch batch)
+    {
+        RequireReady();
+        ArgumentNullException.ThrowIfNull(batch);
+        batch.BeginConsume(out Span<byte> commands, out Span<byte> payload);
+        try
+        {
+            if (BinaryPrimitives.ReadInt32LittleEndian(commands.Slice(24)) != _session ||
+                BinaryPrimitives.ReadInt32LittleEndian(commands.Slice(28)) != _session)
+                throw new InvalidOperationException("Upload owner and device generation must match this renderer.");
+            WebGpuImports.SubmitUploads(_session, commands, payload);
+        }
+        finally
+        {
+            batch.EndConsume();
+        }
+    }
+
     public void CopyTexture(BrowserTextureCopyDescription copy)
     {
         RequireReady();

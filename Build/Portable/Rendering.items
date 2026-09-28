@@ -41,9 +41,13 @@
     <Compile Include="Runtime/Browser/BrowserResourceHandle.cs" />
     <Compile Include="Runtime/Browser/BrowserFramePacket.cs" />
     <Compile Include="Runtime/Browser/BrowserFramePacketState.cs" />
+    <Compile Include="Runtime/Browser/BrowserUploadBatch.cs" />
+    <Compile Include="Runtime/Browser/BrowserUploadBatchState.cs" />
+    <Compile Include="Runtime/Browser/BrowserArenaCapacityException.cs" />
     <Compile Include="Runtime/Browser/IBrowserRendererHost.cs" />
     <Compile Include="Runtime/Browser/IBrowserResourceCapability.cs" />
     <Compile Include="Runtime/Browser/IBrowserFrameSubmissionCapability.cs" />
+    <Compile Include="Runtime/Browser/IBrowserUploadCapability.cs" />
     <Compile Include="Runtime/Browser/IBrowserTextureCopyCapability.cs" />
     <Compile Include="Runtime/Browser/IBrowserPresentationCapability.cs" />
     <Compile Include="Runtime/Browser/IBrowserCompletionCapability.cs" />

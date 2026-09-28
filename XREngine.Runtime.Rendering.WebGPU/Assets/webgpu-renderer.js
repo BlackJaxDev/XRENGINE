@@ -1,5 +1,6 @@
 import { GpuResourceTable } from './gpu-resource-table.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
+import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
 import { loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
 
 const maximumUploadBytes = 64 * 1024 * 1024;
@@ -39,18 +40,32 @@ export class WebGpuCanvasRenderer {
         this._owner = 0;
         this._arenaGeneration = 0;
         this._frameSequence = 0;
+        this._uploadCommandGeneration = 0;
+        this._uploadPayloadGeneration = 0;
+        this._uploadSequence = 0;
         this._executing = false;
         this._resources = new GpuResourceTable();
         this._retired = new Set();
         this._packetBytes = new Uint8Array(packetHeaderBytes);
         this._packetView = new DataView(this._packetBytes.buffer);
+        this._uploadCommands = new Uint8Array(uploadHeaderBytes);
+        this._uploadCommandView = new DataView(this._uploadCommands.buffer);
+        this._uploadPayload = new Uint8Array(0);
+        this._uploadPayloadView = new DataView(this._uploadPayload.buffer);
+        this._uploadOrigin = { x: 0, y: 0, z: 0 };
+        this._uploadTextureDestination = { texture: undefined, origin: this._uploadOrigin };
+        this._uploadTextureLayout = { offset: 0, bytesPerRow: 0, rowsPerImage: 0 };
+        this._uploadExtent = { width: 0, height: 0, depthOrArrayLayers: 1 };
         this._uniformCapacity = 16;
         this._dynamicOffsets = [0];
         this._submission = [null];
         this._colorAttachment = { view: undefined, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } };
         this._depthAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' };
         this._renderPassDescriptor = { colorAttachments: [this._colorAttachment], depthStencilAttachment: this._depthAttachment };
-        this._stats = { packets: 0, draws: 0, copiedBytes: 0, gpuCopiedBytes: 0, uploadedBytes: 0, arenaGrowth: 0, rejectedPackets: 0, controlCalls: 0 };
+        this._stats = { packets: 0, draws: 0, copiedBytes: 0, gpuCopiedBytes: 0, uploadedBytes: 0, arenaGrowth: 0, rejectedPackets: 0, controlCalls: 0,
+            uploadPackets: 0, uploadCommands: 0, uploadBytes: 0, uploadCopiedBytes: 0, uploadArenaGrowth: 0, rejectedUploads: 0,
+            frameSubmitCalls: 0, uploadSubmitCalls: 0 };
+        this._lastPacketFailure = null;
         this._shaderArtifact = undefined;
         this._onUncapturedError = event => this._fail(event.error);
     }
@@ -85,7 +100,11 @@ export class WebGpuCanvasRenderer {
         this._failed = true;
         const error = asError(reason);
         this.dispose();
-        try { this.onFailure(error); } catch (callbackError) { console.error(callbackError); }
+        // A synchronous import may still own managed spans. Notify the host only
+        // after that stack unwinds; its captured epoch rejects a stopped/replaced host.
+        queueMicrotask(() => {
+            try { this.onFailure(error); } catch (callbackError) { console.error(callbackError); }
+        });
     }
 
     _requireOwner() {
@@ -143,10 +162,10 @@ export class WebGpuCanvasRenderer {
             this.device = device;
             device.addEventListener('uncapturederror', this._onUncapturedError);
             device.lost.then(info => {
-                if (this._disposed) return;
+                if (this._disposed || this.device !== device) return;
                 this._deviceLost = true;
                 this._fail(new Error(`WebGPU device lost (${info.reason}): ${info.message}`));
-            }, error => this._fail(error));
+            }, error => { if (!this._disposed && this.device === device) this._fail(error); });
 
             this.context = this.canvas.getContext('webgpu');
             if (!this.context) throw new Error('WebGPU canvas context is unavailable.');
@@ -183,7 +202,7 @@ export class WebGpuCanvasRenderer {
             }
             if (errors.length)
                 throw new Error(`WGSL compilation failed: ${errors.map(message => `${shaderLabel}:${message.lineNum}:${message.linePos} ${message.message}`).join('; ')}`);
-            this.pipeline = await device.createRenderPipelineAsync({
+            const pipeline = await device.createRenderPipelineAsync({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [this._viewLayout, this._materialLayout] }),
                 vertex: { module: shader, entryPoint: artifact.descriptor.entryPoints.vertex, buffers: [{ arrayStride: 20, attributes: [
                     { shaderLocation: 0, offset: 0, format: 'float32x3' },
@@ -194,6 +213,8 @@ export class WebGpuCanvasRenderer {
                 depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
             });
             this._assertActive(signal);
+            if (this.device !== device) throw new Error('The device changed before pipeline creation completed.');
+            this.pipeline = pipeline;
             this.onState('ready');
         } catch (error) {
             if (error?.name === 'AbortError' && (signal?.aborted || this._disposed)) this.dispose();
@@ -207,11 +228,14 @@ export class WebGpuCanvasRenderer {
     _retire(resource) {
         if (!resource) return;
         const device = this.device;
+        const owner = this._owner;
         this._retired.add(resource);
         device.queue.onSubmittedWorkDone().then(() => {
+            if (this.device !== device || this._owner !== owner) return;
             this._retired.delete(resource);
             resource.destroy();
         }, () => {
+            if (this.device !== device || this._owner !== owner) return;
             this._retired.delete(resource);
             resource.destroy();
         });
@@ -283,7 +307,7 @@ export class WebGpuCanvasRenderer {
             indexBuffer = this.device.createBuffer({ size: indexBytes, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
             this.device.queue.writeBuffer(vertexBuffer, 0, vertices);
             this.device.queue.writeBuffer(indexBuffer, 0, indices);
-            const handle = this._resources.add('mesh', { vertexBuffer, indexBuffer, indexCount: indexBytes / 4 }, this._owner);
+            const handle = this._resources.add('mesh', { vertexBuffer, indexBuffer, vertexBytes, indexBytes, vertexCount, indexCount: indexBytes / 4 }, this._owner);
             this._stats.uploadedBytes += vertexBytes + indexBytes;
             return handle;
         } catch (error) {
@@ -421,6 +445,114 @@ export class WebGpuCanvasRenderer {
         this._stats.arenaGrowth++;
     }
 
+    _growUploadStorage(commandLength, payloadLength) {
+        if (commandLength > this._uploadCommands.length) {
+            let capacity = this._uploadCommands.length;
+            const limit = uploadHeaderBytes + maximumUploadCommands * uploadRecordBytes;
+            while (capacity < commandLength) capacity = Math.min(capacity * 2, limit);
+            this._uploadCommands = new Uint8Array(capacity);
+            this._uploadCommandView = new DataView(this._uploadCommands.buffer);
+            this._stats.uploadArenaGrowth++;
+        }
+        if (payloadLength > this._uploadPayload.length) {
+            let capacity = Math.max(this._uploadPayload.length, 256);
+            while (capacity < payloadLength) capacity = Math.min(capacity * 2, maximumUploadPayloadBytes);
+            this._uploadPayload = new Uint8Array(capacity);
+            this._uploadPayloadView = new DataView(this._uploadPayload.buffer);
+            this._stats.uploadArenaGrowth++;
+        }
+    }
+
+    submitUploads(commandMemory, payloadMemory) {
+        this._stats.controlCalls++;
+        this._stats.uploadSubmitCalls++;
+        this._requireOwner();
+        let count, commandLength, payloadLength;
+        try {
+            commandLength = byteLengthOf(commandMemory);
+            payloadLength = byteLengthOf(payloadMemory);
+            if (commandLength < uploadHeaderBytes || commandLength > uploadHeaderBytes + maximumUploadCommands * uploadRecordBytes
+                || payloadLength > maximumUploadPayloadBytes)
+                throw new RangeError('Invalid upload packet length.');
+            this._growUploadStorage(commandLength, payloadLength);
+            commandMemory.copyTo(this._uploadCommands);
+            payloadMemory.copyTo(this._uploadPayload);
+            this._stats.uploadCopiedBytes += commandLength + payloadLength;
+            count = validateUploadPacket(this._uploadCommandView, commandLength, this._uploadPayloadView, payloadLength,
+                this._owner, this._uploadCommandGeneration, this._uploadPayloadGeneration, this._uploadSequence, this._resources);
+        } catch (error) {
+            this._stats.rejectedUploads++;
+            this._recordPacketFailure('upload', error);
+            throw error;
+        }
+
+        const data = this._uploadCommandView;
+        this._executing = true;
+        let commandIndex = -1, commandOffset = 0, commandOpcode = null;
+        try {
+            for (let i = 0, base = uploadHeaderBytes; i < count; i++, base += uploadRecordBytes) {
+                const opcode = data.getUint32(base, true);
+                commandIndex = i;
+                commandOffset = base;
+                commandOpcode = opcode;
+                const slot = data.getUint32(base + 8, true);
+                const generation = data.getUint32(base + 12, true);
+                const destination = data.getUint32(base + 16, true);
+                const y = data.getUint32(base + 20, true);
+                const width = data.getUint32(base + 24, true);
+                const height = data.getUint32(base + 28, true);
+                const offset = data.getUint32(base + 32, true);
+                const length = data.getUint32(base + 36, true);
+                if (opcode === 1 || opcode === 2) {
+                    const mesh = this._resources.get(slot, generation, 'mesh', this._owner);
+                    this.device.queue.writeBuffer(opcode === 1 ? mesh.vertexBuffer : mesh.indexBuffer,
+                        destination, this._uploadPayload, offset, length);
+                } else if (opcode === 3) {
+                    const texture = this._resources.get(slot, generation, 'texture', this._owner);
+                    this._uploadTextureDestination.texture = texture.texture;
+                    this._uploadOrigin.x = destination;
+                    this._uploadOrigin.y = y;
+                    this._uploadTextureLayout.offset = offset;
+                    this._uploadTextureLayout.bytesPerRow = width * 4;
+                    this._uploadTextureLayout.rowsPerImage = height;
+                    this._uploadExtent.width = width;
+                    this._uploadExtent.height = height;
+                    this.device.queue.writeTexture(this._uploadTextureDestination, this._uploadPayload,
+                        this._uploadTextureLayout, this._uploadExtent);
+                } else {
+                    const material = this._resources.get(slot, generation, 'material', this._owner);
+                    this.device.queue.writeBuffer(material.colorBuffer, 0, this._uploadPayload, offset, length);
+                }
+            }
+            this._uploadCommandGeneration = data.getUint32(32, true);
+            this._uploadPayloadGeneration = data.getUint32(36, true);
+            this._uploadSequence = data.getUint32(40, true);
+            this._stats.uploadPackets++;
+            this._stats.uploadCommands += count;
+            this._stats.uploadBytes += payloadLength;
+        } catch (error) {
+            this._stats.rejectedUploads++;
+            this._recordPacketFailure('upload', error, commandIndex, commandOffset, commandOpcode);
+            // Queue writes already issued cannot be rolled back; end this session.
+            this._fail(error);
+            throw error;
+        } finally {
+            this._executing = false;
+            this._uploadTextureDestination.texture = undefined;
+        }
+    }
+
+    getCapabilities() {
+        const limits = this.device?.limits;
+        return {
+            framePacketVersion: 2, uploadPacketVersion: 1,
+            maximumDraws, maximumUploadCommands, maximumUploadPayloadBytes,
+            maximumMeshBytes: maximumUploadBytes, maximumTextureBytes,
+            maxTextureDimension2D: limits?.maxTextureDimension2D ?? 0,
+            maxBufferSize: limits?.maxBufferSize ?? 0,
+        };
+    }
+
     _growUniformStorage(required) {
         if (required <= this._uniformCapacity) return;
         let capacity = this._uniformCapacity;
@@ -442,6 +574,7 @@ export class WebGpuCanvasRenderer {
 
     submitPacket(memoryView) {
         this._stats.controlCalls++;
+        this._stats.frameSubmitCalls++;
         this._requireOwner();
         try {
             const length = byteLengthOf(memoryView);
@@ -500,6 +633,7 @@ export class WebGpuCanvasRenderer {
             this._stats.draws += count;
         } catch (error) {
             this._stats.rejectedPackets++;
+            this._recordPacketFailure('frame', error);
             throw error;
         } finally {
             this._executing = false;
@@ -509,8 +643,15 @@ export class WebGpuCanvasRenderer {
         }
     }
 
+    _recordPacketFailure(lane, error, commandIndex = -1, byteOffset = 0, opcode = null) {
+        this._lastPacketFailure = { lane, message: error?.message ?? String(error),
+            commandIndex: error?.commandIndex ?? commandIndex,
+            byteOffset: error?.byteOffset ?? byteOffset, opcode: error?.opcode ?? opcode };
+    }
+
     getStatistics() {
-        return { ...this._stats, shaderArtifact: this._shaderArtifact && {
+        return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
+            shaderArtifact: this._shaderArtifact && {
             identity: this._shaderArtifact.identity,
             requiredFeatures: [...this._shaderArtifact.requiredFeatures],
             requiredLimits: { ...this._shaderArtifact.requiredLimits },
@@ -533,8 +674,24 @@ export class WebGpuCanvasRenderer {
         try { this.device?.removeEventListener('uncapturederror', this._onUncapturedError); } catch (error) { console.error(error); }
         try { this.device?.destroy(); } catch (error) { console.error(error); }
         this.bindGroup = undefined;
+        this._packetBytes = undefined;
+        this._packetView = undefined;
+        this._uniformBytes = undefined;
+        this._uniformView = undefined;
+        this._uploadCommands = undefined;
+        this._uploadCommandView = undefined;
+        this._uploadPayload = undefined;
+        this._uploadPayloadView = undefined;
+        this._uploadTextureDestination.texture = undefined;
+        this._colorAttachment.view = undefined;
+        this._depthAttachment.view = undefined;
+        this._submission[0] = null;
         this.pipeline = undefined;
         this.uniformBuffer = undefined;
+        this.depthTexture = undefined;
+        this.depthView = undefined;
+        this._whiteTexture = undefined;
+        this._whiteView = undefined;
         this.device = undefined;
         this.context = undefined;
     }

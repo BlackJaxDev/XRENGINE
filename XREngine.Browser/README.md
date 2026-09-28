@@ -6,7 +6,7 @@ moves a mesh group, and the canvas can render two camera views of the same scene
 Indexed geometry, opaque unlit materials and RGBA8 textures use a versioned binary
 packet bridge with one managed-to-JavaScript submission per rendered frame.
 
-**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, packet and cooked-shader loading code are implemented but has not been built or run.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, packet and cooked-shader loading code are implemented but have not been built or run.
 Validation was explicitly deferred for this change. Earlier scene-only results
 in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
 do not qualify this renderer.
@@ -42,9 +42,10 @@ requirements; adapter limits are checked before requesting the device.
 - **Import scene** loads flat v1 static scene JSON exported with `BrowserSceneSnapshot.ToJson()` or a stable-ID `xre.browser.scene.v1` envelope (16 MiB maximum). The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
 - Toggle **Cull offscreen meshes** to control conservative per-view AABB rejection. **Recolor first mesh** replaces one material while retaining its texture. Empty imported scenes reject that action explicitly. Counter snapshots include last-frame candidates/culled/drawn counts, live resource counts and output metadata.
 - Toggle **Split view** to switch between one view and two camera projections.
+- **Update checker texture** streams retained demo pixels through one upload batch. This updates GPU contents; restart restores the immutable descriptor. Imported scenes disable this fixture control.
 - Select **16**, **64**, or **256** mesh instances. These are separate indexed draws,
   not GPU instancing. **Capture counters** snapshots packet/draw counts, copied and
-  uploaded bytes, storage growth, rejected packets and executor call counts.
+  uploaded bytes, storage growth, rejected packets and executor call counts. Snapshots also include upload command counts, submission calls, packet failure context, capability limits and managed current-thread frame allocation counters; these are instrumentation, not measured performance evidence.
 - **Stop** cancels frames and startup, removes session listeners/observers, and
   releases the scene and GPU resources. **Restart** constructs a fresh session.
 - Startup, shader, device-loss and render errors appear in the status area and
@@ -107,6 +108,10 @@ to check project/package/native-asset boundaries; it is not a forbidden-API proo
 
 See [mesh and packet implementation notes](../docs/work/progress/rendering/browser-mesh-packet-bridge.md)
 for remaining work and the explicit validation deferral.
+
+See [batched upload bridge](../docs/work/progress/rendering/browser-upload-bridge.md)
+for `BrowserUploadBatch`, texture-region integration, vertex/index/tint commands,
+bounded arenas, ownership, copy accounting and deferred acceptance evidence.
 
 See [cooked shader artifact notes](../docs/work/progress/rendering/browser-shader-artifacts.md)
 for recipe limits, identities, compiler-contract compatibility and deferred validation.

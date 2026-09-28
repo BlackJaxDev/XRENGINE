@@ -5,7 +5,7 @@ public readonly record struct BrowserResourceHandle
 {
     public BrowserResourceHandle(int packed)
     {
-        if ((packed & 0xFFFF) == 0 || packed <= 0)
+        if ((packed & 0xFFFF) == 0 || (packed >>> 16) is < 1 or > 32767)
             throw new ArgumentOutOfRangeException(nameof(packed), "A resource handle needs a nonzero slot and a generation from 1 through 32767.");
 
         Packed = packed;

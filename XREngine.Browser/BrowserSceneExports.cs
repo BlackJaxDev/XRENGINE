@@ -87,6 +87,9 @@ public static partial class BrowserSceneExports
     public static void SetCullingEnabled(int id, bool enabled) => Get(id).SetCullingEnabled(enabled);
 
     [JSExport]
+    public static void StreamDemoTexture(int id) => Get(id).StreamDemoTexture();
+
+    [JSExport]
     public static void SetRenderableTint(int id, int index, double red, double green, double blue)
         => Get(id).SetRenderableTint(index,
             new System.Numerics.Vector4((float)red, (float)green, (float)blue, 1));
@@ -99,7 +102,7 @@ public static partial class BrowserSceneExports
         return System.Text.Json.JsonSerializer.Serialize(new BrowserSceneStatistics(
             session.CullingEnabled, session.VisibilityCandidates, session.VisibilityCulled, session.VisibilityDrawn,
             session.RetainedMeshCount, session.RetainedMaterialCount, session.RetainedTextureCount,
-            session.VariableDeltaSeconds, session.HistoryGeneration,
+            session.VariableDeltaSeconds, session.HistoryGeneration, session.CaptureBridgeStatistics(),
             session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null));
     }
 
