@@ -111,3 +111,7 @@ dotnet docfx docs/docfx/docfx.json --serve --port 8080
 ```
 
 Generated output stays in `docs/docfx/_site`, which is ignored by Git.
+
+## Browser runtime planning
+
+[Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU runtime TODO](work/todo/rendering/mobile-webgpu-runtime-todo.md).

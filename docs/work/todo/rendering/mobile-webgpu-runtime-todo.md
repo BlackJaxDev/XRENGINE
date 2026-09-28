@@ -2,7 +2,7 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Proposed implementation checklist; browser/device validation has not been performed for this document.  
+**Status:** Readiness audit and delivery contract implemented; portable runtime extraction and browser/device validation remain pending.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -99,16 +99,26 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Priority:** P0. **Depends on:** None. **Gate:** G0 planning inputs.
 
-- [ ] **MW00.01** Compare the implementation branch with the review baseline. Record new browser, shader, platform, or asset work and link its evidence before removing or completing tasks here.
+- [x] **MW00.01** Compare the implementation branch with the review baseline. Record new browser, shader, platform, or asset work and link its evidence before removing or completing tasks here.
 - [ ] **MW00.02** Inventory the transitive project/package graph required to construct, update, load, and render one minimal world. Include build targets, native assets, static initializers, module initializers, and implicit service registration.
 - [ ] **MW00.03** Classify every reachable dependency as portable, browser-replaceable, offline-cook-only, desktop-only, or excluded from the selected milestone. Assign an extraction or substitution owner.
-- [ ] **MW00.04** Confirm the first delivery is browser canvas/WebGPU. Record the WebGPU-only packaging policy and which broader WebGL2/`Auto` behavior remains pending.
-- [ ] **MW00.05** Choose a deterministic sample world: one camera, static and skinned geometry, textured opaque/masked/transparent materials, a light/shadow receiver, environment, and basic UI. Keep a smaller static subset for G1.
+- [x] **MW00.04** Confirm the first delivery is browser canvas/WebGPU. Record the WebGPU-only packaging policy and which broader WebGL2/`Auto` behavior remains pending.
+- [x] **MW00.05** Choose a deterministic sample world: one camera, static and skinned geometry, textured opaque/masked/transparent materials, a light/shadow receiver, environment, and basic UI. Keep a smaller static subset for G1.
 - [ ] **MW00.06** Select physical iOS and Android reference devices and record exact OS/browser versions during testing. Define expected behavior for unsupported devices without asserting support from a user-agent string.
-- [ ] **MW00.07** Set numeric startup, first-interaction, frame-time, resolution, memory, texture, upload, and content budgets before performance sign-off. Use the budget worksheet below; do not substitute unmeasured performance promises.
-- [ ] **MW00.08** Record required versus optional gameplay services for G3 and G4. An explicitly required service must work or produce a blocking diagnostic, not silently become a no-op.
+- [x] **MW00.07** Set numeric startup, first-interaction, frame-time, resolution, memory, texture, upload, and content budgets before performance sign-off. Use the budget worksheet below; do not substitute unmeasured performance promises.
+- [x] **MW00.08** Record required versus optional gameplay services for G3 and G4. An explicitly required service must work or produce a blocking diagnostic, not silently become a no-op.
 
 **Acceptance:** A reviewed dependency inventory, sample-world manifest, device matrix, and measurable gate definitions exist. A package's presence is not used as proof that its implementation works in WASM.
+
+**Implementation record (2026-09-28):** [Readiness audit and delivery contract](../../progress/rendering/mobile-browser-readiness.md), [declared dependency inventory](../../progress/rendering/mobile-browser-dependencies.json), and [planned sample manifest](../../progress/rendering/mobile-browser-sample.json). Reproduce the source audit with `python3 Tools/Reports/audit_browser_dependencies.py`.
+
+- MW00.01: Reconciled against `9fee4b983efda6f3f79ac107eba2137a5ab8c5fa`; current runtime source changes and unchanged project/backend boundaries recorded.
+- MW00.02–MW00.03: Declared project/package inventory, initializer/build hazards, disposition and subsystem owners recorded. Remain open for evaluated MSBuild/source reachability, restored transitive NuGet/runtime assets and missing submodule contents. This is not a complete browser dependency closure.
+- MW00.04–MW00.05: WebGPU-only canvas scope and deterministic sample contract selected. The manifest is a specification, not an implemented engine fixture.
+- MW00.06: Proposed iPhone 15/Safari and Pixel 8/Chrome qualification rows; hardware availability and actual OS/browser versions remain pending. No device support is claimed.
+- MW00.07–MW00.08: Numeric engineering targets, run conditions, and required/optional services recorded; no measured performance results claimed.
+
+**Next:** MW01 portable runtime extraction, then MW02 browser host and G0 live scene boot. Do not mark G0 complete from this audit.
 
 ## MW01 — Extract and validate the portable runtime/rendering kernel
 
@@ -357,7 +367,7 @@ The companion's `BrowserWebGPUBaseline` includes storage buffers, compute, suppo
 - [ ] **MW12.09** Exercise all applicable failure/recovery cases in the matrix below. Keep expected unsupported-device errors distinct from regressions and unexpected validation errors.
 - [ ] **MW12.10** Record exact build command/configuration, commit, device/OS/browser, capabilities/profile, scene, measurements, diagnostics, and pass/fail evidence for each gate. Preserve failed-run evidence and outstanding limitations.
 - [ ] **MW12.11** Retain relevant desktop OpenGL/Vulkan regression checks for extracted code and changed shader contracts. Confirm WebGPU-only publishes omit excluded renderer modules and native assets.
-- [ ] **MW12.12** Add this file to `docs/work/todo/rendering/`. Link it from the companion design using `../../todo/rendering/mobile-webgpu-runtime-todo.md` and from `docs/work/README.md` using `todo/rendering/mobile-webgpu-runtime-todo.md`.
+- [x] **MW12.12** Add this file to `docs/work/todo/rendering/`. Link it from the companion design using `../../todo/rendering/mobile-webgpu-runtime-todo.md` and from `docs/work/README.md` using `todo/rendering/mobile-webgpu-runtime-todo.md`.
 - [ ] **MW12.13** Update the companion's landed-work notes for the existing shader request/result contracts and each newly validated browser slice. Preserve the distinction between WebGPU-first delivery and complete dual-backend v1.
 - [ ] **MW12.14** Publish user-facing build, cook, host, support, and troubleshooting instructions after validation. Include explicit known limitations, required services, fallback rules, and how to export browser diagnostics.
 
@@ -398,23 +408,23 @@ Run the relevant subset at each gate, then the complete selected product matrix 
 
 ## 7. Budget worksheet
 
-Set target values under MW00.07; collect results under MW10/MW12. No performance result is asserted by this initial checklist.
+Initial engineering targets are recorded below and in the [readiness contract](../../progress/rendering/mobile-browser-readiness.md#devices-and-measurable-budgets), which defines device proposals, workloads and run conditions. Collect results under MW10/MW12; no performance result is asserted.
 
 | Metric | Target/limit to define | Measured result | Run conditions |
 | --- | --- | --- | --- |
-| Initial compressed application payload | Define before G3 sign-off. | Not measured. | Runtime mode, content split, compression. |
-| Cold time to useful frame and first interaction | Define on a named connection/device. | Not measured. | Cache/network/device conditions. |
-| Warm time to useful frame | Define separately from cold startup. | Not measured. | Cache state and manifest version. |
-| Sustained frame-time p50/p95/p99 | Define per device/profile and chosen refresh target. | Not measured. | Scene, resolution, session duration. |
-| Managed simulation/collection/packet CPU time | Set per-frame limits. | Not measured. | Workload and runtime configuration. |
-| JavaScript executor CPU time | Set per-frame limit. | Not measured. | Draw/pass/command counts. |
-| Managed/JS interop crossings per frame | Bounded independently of ordinary draw count. | Not measured. | Low/high draw-count comparison. |
+| Initial compressed application payload | 20 MiB including initial sample. | Not measured. | Runtime mode, content split, compression. |
+| Cold time to useful frame and first interaction | 12 s useful frame; 15 s first interaction; 20 Mbit/s and 80 ms RTT. | Not measured. | Cache/network/device conditions. |
+| Warm time to useful frame | 3 s useful frame; 4 s first interaction. | Not measured. | Cache state and manifest version. |
+| Sustained frame-time p50/p95/p99 | 16.7 / 20 / 33.3 ms; 60-Hz target; 1280-pixel maximum backing edge. | Not measured. | Scene, resolution, session duration. |
+| Managed simulation/collection/packet CPU time | 4 ms p95. | Not measured. | Workload and runtime configuration. |
+| JavaScript executor CPU time | 2 ms p95. | Not measured. | Draw/pass/command counts. |
+| Managed/JS interop crossings per frame | At most 4 ordinary-frame crossings at both 1 and 128 draws. | Not measured. | Low/high draw-count comparison. |
 | Steady-state managed render allocations | Target no recurring per-draw allocations; document remaining sources. | Not measured. | Warm-up state and sampling method. |
-| Upload bytes/resource creations per frame | Set steady and burst limits. | Not measured. | Scene streaming/startup/recovery. |
-| Packet/upload arena capacity and growth | Set resident/peak limits and overflow policy. | Not measured. | Normal and stress workloads. |
-| Managed/decoded/staging/GPU residency | Set separate steady/peak budgets; GPU bytes may be estimated. | Not measured. | Startup, scene change, recovery. |
-| Recovery time and retained resource count | Define successful-resume and leak thresholds. | Not measured. | Loss/shutdown/resize scenario. |
-| G4 transport queue and latency bounds | Define by message class and delivery semantics. | Not measured. | Server/network/session conditions. |
+| Upload bytes/resource creations per frame | 256 KiB steady / 4 MiB burst; 0 steady / at most 8 streaming creations. | Not measured. | Scene streaming/startup/recovery. |
+| Packet/upload arena capacity and growth | Packets 4/8 MiB; upload arena 16/32 MiB; reject overflow and report required capacity. | Not measured. | Normal and stress workloads. |
+| Managed/decoded/staging/GPU residency | 128/64/32/128 MiB steady; aggregate peak 512 MiB; label estimates. | Not measured. | Startup, scene change, recovery. |
+| Recovery time and retained resource count | 5 s after replacement device availability; no resource-count growth across 10 recoveries. | Not measured. | Loss/shutdown/resize scenario. |
+| G4 transport queue and latency bounds | 256 KiB coalesced state / 1 MiB control queues; state age p95 200 ms; resync 5 s. | Not measured. | Server/network/session conditions. |
 
 ## 8. Completion evidence and release checklist
 

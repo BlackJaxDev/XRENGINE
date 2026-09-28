@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "planned-fixture-contract",
+  "id": "mobile-browser-reference-world",
+  "seed": 1729,
+  "coordinates": { "forward": "-Z", "right": "+X", "up": "+Y", "units": "meters" },
+  "simulation": { "fixedStepSeconds": 0.016666666666666666, "acceptanceSteps": 120, "maxCatchUpSteps": 4 },
+  "camera": { "position": [0, 1.6, 4], "lookAt": [0, 1, 0], "verticalFovDegrees": 60, "near": 0.1, "far": 100 },
+  "sceneBoot": {
+    "root": "World",
+    "parent": { "name": "MovingParent", "initialTranslation": [1, 0, 0], "velocity": [0.5, 0, 0] },
+    "child": { "name": "LifecycleProbe", "localTranslation": [0, 1, 0] },
+    "expectedChildWorldTranslationAfterSteps": [2, 1, 0],
+    "positionToleranceMeters": 0.0001,
+    "requiredLifecycle": ["begin-play-once", "120-fixed-updates", "end-play-once", "no-updates-after-stop"]
+  },
+  "firstFrame": {
+    "submission": "CpuDirect",
+    "meshes": [
+      { "name": "Floor", "primitive": "plane", "size": [8, 8], "position": [0, 0, 0] },
+      { "name": "OpaqueBox", "primitive": "cube", "size": [1, 1, 1], "position": [0, 0.5, 0] }
+    ],
+    "material": "unlit-rgba8-checker",
+    "texture": { "size": [64, 64], "cellPixels": 8, "colorsRgba8": [[255, 255, 255, 255], [32, 64, 192, 255]] },
+    "depthTest": true
+  },
+  "representativeWorld": {
+    "additions": [
+      "procedural-two-bone-skinned-strip",
+      "masked-checker-card-alpha-cutoff-0.5",
+      "transparent-quad-alpha-0.5",
+      "one-directional-light-and-floor-shadow-receiver",
+      "cooked-constant-environment",
+      "touch-navigation-and-reset-ui",
+      "user-gesture-audio-cue",
+      "floor-and-wall-collision"
+    ],
+    "animation": { "durationSeconds": 2, "loop": true, "sampleTimesSeconds": [0, 0.5, 1, 1.5], "tipBoneZRotationDegrees": [0, 30, 0, -30] },
+    "assetPolicy": "Engine-owned procedural sources cooked offline; no native importer in browser."
+  },
+  "status": "Specification only; engine fixture construction, cooking and browser validation pending."
+}
