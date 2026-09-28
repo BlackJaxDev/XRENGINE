@@ -15,76 +15,30 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-# These identifiers are checked against the evaluated Compile items. The guard
-# masks comments and string/character literals before matching; it is deliberately
-# conservative about aliases and simple names, but is not a semantic analyzer.
-FORBIDDEN = {
-    "native interop": r"\b(?:DllImport|LibraryImport|NativeLibrary|Marshal\.GetDelegateForFunctionPointer)\b",
-    "desktop UI or graphics": r"\b(?:System\.Windows|System\.Drawing|Microsoft\.Win32|Silk\.NET\.(?:GLFW|SDL|OpenGL|Direct3D|OpenXR|Windowing)|ImGuiNET|UltralightNet|SkiaSharp)\b",
-    "native dependency": r"\b(?:FFmpeg|NAudio|OpenAL|DirectStorage|MagicPhysX|JoltPhysics|CUDA|CoACD|RiveSharp)\b",
-    "runtime code or assembly loading": r"\b(?:Assembly\.(?:Load|LoadFrom|LoadFile|LoadWithPartialName)|AssemblyLoadContext|Reflection\.Emit|DynamicMethod|Expression\.Compile|Activator\.CreateInstanceFrom)\b",
-    "process or desktop services": r"\b(?:Process\.Start|Environment\.GetFolderPath|Registry(?:Key)?\.|System\.Management)\b",
-}
-REVIEWED_REFLECTION = {
-    "XREngine.Browser/BrowserSceneEnvelope.cs": {
-        "GetProperty": "JsonElement wire-field access, not System.Type reflection",
-    },
-    # The selected interpreter retains these managed lookup helpers. Their
-    # metadata preservation and serializer behavior need separate trim/AOT proof.
-    "XREngine.Data/Core/Events/XRPersistentCall.cs": {
-        "Type.GetType": "serialized event parameter identity resolution",
-        "GetMethods": "serialized event target overload resolution",
-    },
-    "XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs": {
-        "GetTypes": "cached loaded-assembly type inspection",
-        "GetExportedTypes": "cached public type inspection",
-    },
-    "XREngine.Data/Core/Objects/XRBase.cs": {
-        "GetMethod": "MemoryPack clone helper lookup",
-        "MakeGenericMethod": "closed clone helper specialization in interpreter",
-    },
-    "XREngine.Data/Serialization/AotRuntimeMetadataStore.cs": {
-        "Type.GetType": "persisted type identity resolver in interpreter",
-        "GetAssemblies": "loaded-assembly fallback in untrimmed interpreter",
-    },
-    "XREngine.Extensions/Enum.cs": {
-        "GetCustomAttributes": "enum display metadata lookup",
-    },
-    "XREngine.Extensions/Object.cs": {
-        "GetMethod": "managed private method helper; browser composition does not call it",
-    },
-    "XREngine.Extensions/Reflection/Type.cs": {
-        "Activator.CreateInstance": "explicit managed instance helper; not used by browser composition",
-        "GetConstructor": "managed type constraint check",
-        "GetCustomAttribute": "attribute helper; untrimmed metadata only",
-        "GetCustomAttributes": "attribute helper; untrimmed metadata only",
-    },
-    "XREngine.Runtime.Core/Attributes/RequiresTransformAttribute.cs": {
-        "GetCustomAttribute": "component transform requirement attribute",
-        "Activator.CreateInstance": "fallback transform construction if explicit registry lacks type",
-    },
-    "XREngine.Runtime.Core/Scene/Components/XRComponent.cs": {
-        "GetConstructor": "legacy component constructor invocation in interpreter",
-        "GetUninitializedObject": "legacy component factory; requires browser lifecycle exercise",
-    },
-    "XREngine.Runtime.Core/Scene/SceneNode.Components.cs": {
-        "GetCustomAttributes": "component requirement attributes",
-    },
-    "XREngine.Runtime.Core/Scene/Transforms/TransformBase.cs": {
-        "GetCustomAttribute": "transform display metadata",
-    },
-    "XREngine.Runtime.Core/World/XRWorldObjectBase.cs": {
-        "GetAssemblies": "untrimmed replication metadata scan from static initializer",
-        "GetTypes": "loaded-assembly replication candidate inspection",
-        "GetProperties": "replicable property discovery",
-        "GetProperty": "registered replication property resolution",
-        "GetCustomAttribute": "replication attribute inspection",
-    },
-    "XREngine.Runtime.Rendering/Runtime/RendererModules/RendererBackendModuleIdentity.cs": {
-        "GetCustomAttribute": "target framework identity of registered module assembly",
-    },
-}
-REFLECTION = re.compile(r"\b(?:Type\.GetType|GetTypes|GetExportedTypes|GetMethods|GetMethod|GetConstructor|GetCustomAttributes|GetCustomAttribute|GetProperties|GetProperty|GetAssemblies|GetUninitializedObject|Activator\.CreateInstance|MakeGenericType|MakeGenericMethod)\b")
+def load_api_policy(repo):
+    """Read the same lexical policy consumed by the SDK-hosted C# build task."""
+    forbidden = {}
+    reviewed = {}
+    reflection = None
+    policy_path = repo / "Build/Portable/SourceApiPolicy.tsv"
+    for line in policy_path.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if fields[0] == "deny" and len(fields) == 3 and fields[1] not in forbidden:
+            forbidden[fields[1]] = fields[2]
+        elif fields[0] == "reflection" and len(fields) == 2 and reflection is None:
+            reflection = re.compile(fields[1])
+        elif fields[0] == "allow" and len(fields) == 4 and fields[3].strip():
+            entries = reviewed.setdefault(fields[1], {})
+            if fields[2] in entries:
+                raise ValueError("duplicate portable API policy exception")
+            entries[fields[2]] = fields[3]
+        else:
+            raise ValueError("invalid portable API policy entry")
+    if not forbidden or reflection is None:
+        raise ValueError("portable API policy is incomplete")
+    return forbidden, reviewed, reflection
 
 
 def code_without_literals(source):
@@ -96,6 +50,7 @@ def code_without_literals(source):
 
 
 def inspect_sources(repo, sources):
+    forbidden, reviewed, reflection = load_api_policy(repo)
     findings = []
     for source in sorted(set(sources)):
         path = Path(source).resolve()
@@ -103,12 +58,12 @@ def inspect_sources(repo, sources):
         if name is None or not path.is_file():
             raise ValueError(f"evaluated Compile item is absent or outside repository: {source}")
         code = code_without_literals(path.read_text(encoding="utf-8-sig"))
-        for kind, expression in FORBIDDEN.items():
+        for kind, expression in forbidden.items():
             for match in re.finditer(expression, code):
                 findings.append({"file": name, "line": code.count("\n", 0, match.start()) + 1,
                                  "kind": kind, "symbol": match.group(), "decision": "reject"})
-        for match in REFLECTION.finditer(code):
-            reason = REVIEWED_REFLECTION.get(name, {}).get(match.group())
+        for match in reflection.finditer(code):
+            reason = reviewed.get(name, {}).get(match.group())
             findings.append({"file": name, "line": code.count("\n", 0, match.start()) + 1,
                              "kind": "reflection", "symbol": match.group(),
                              "decision": "reviewed" if reason else "review required",

@@ -13,14 +13,13 @@ do not qualify this renderer.
 
 ## Build and run
 
-Install the .NET 10 SDK, its `wasm-tools` workload and Python 3.10 or later for the portable source guard, then run from the repository
-root. The checked-in shader package is ready for publishing. After editing WGSL
-or its recipe, regenerate it first using Python 3.10 or later:
+Install the .NET 10 SDK and its `wasm-tools` workload, then run from the repository
+root. Checked-in shaders and registrations are ready for publishing. The portable
+source guard runs as a C# MSBuild task using the SDK; no Python process is invoked.
 
 ```sh
-python3 Tools/Shaders/cook_browser_shaders.py
 dotnet workload install wasm-tools
-dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -p:XREnginePortableRuntime=true -p:XREnginePortablePythonExecutable=python3 -m:1
+dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -p:XREnginePortableRuntime=true -m:1
 ```
 
 Use the portable property on restore and build commands as well. It selects the

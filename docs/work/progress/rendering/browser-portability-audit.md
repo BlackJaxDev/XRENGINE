@@ -4,7 +4,7 @@ The selected browser profile is the untrimmed .NET 10 WebAssembly interpreter wi
 
 The source-declaration report and the evaluated report serve different purposes. Run the existing declared union with `python Tools/Reports/audit_browser_dependencies.py --output <report-path>`. After restoring the browser graph, use `python Tools/Reports/audit_browser_dependencies.py --mode evaluated --configuration Release --output <report-path>`. The latter asks MSBuild for each project's evaluated project/package/compile/content/reference items, follows project references, records imported build files, and reads every reachable `project.assets.json` target for transitive package versions, dependencies, build imports, native/runtime assets and source initializer/reflection candidates. It fails if a referenced project, Compile item, or restore target is absent. The report is generated evidence, not a checked-in snapshot or a claim that restore and evaluation were run here.
 
-Python 3 is a prerequisite for the compile-source guard. Set `XREnginePortablePythonExecutable` to a specific interpreter path when `python` is not available on PATH. A missing interpreter fails the portable build; it does not skip the guard.
+The compile-source guard is `Build/Portable/PortableSourceApiGuard.cs`, compiled and hosted by the SDK's `RoslynCodeTaskFactory`. MSBuild passes evaluated Compile items directly; no external interpreter, source-list file or extra package is required. `Build/Portable/SourceApiPolicy.tsv` is the common policy for this task and the optional dependency report tool. The Python report tool is not invoked by builds.
 
 | Dependency | Disposition | Owner and boundary |
 |---|---|---|
