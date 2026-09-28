@@ -73,6 +73,10 @@ export function validateUploadPacket(view, commandBytes, payloadView, payloadByt
                 }
             } else if (opcode === 3) {
                 const texture = resources.get(slot, generation, 'texture', session);
+                // COPY_DST is the API-neutral numeric texture usage bit 2.
+                if (!(texture.usage & 2) || texture.sampleCount !== 1
+                    || (texture.format !== 'rgba8unorm' && texture.format !== 'rgba8unorm-srgb'))
+                    throw new RangeError('Texture upload requires single-sample RGBA8 and COPY_DST usage.');
                 if (!width || !height || destination >= texture.width || y >= texture.height
                     || width > texture.width - destination || height > texture.height - y
                     || length !== width * height * 4)

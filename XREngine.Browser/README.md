@@ -96,7 +96,7 @@ immediate, while GPU retirement waits asynchronously for submitted work.
 The executor and shaders belong to `XREngine.Runtime.Rendering.WebGPU`. Static
 `XRMesh` and standard `XRCamera` export adapters plus explicit `XRMaterial` browser
 recipes now feed the same shared resource descriptors. This supports a bounded
-static snapshot and explicit live browser-scene changes. `SetCamera` replaces cached camera matrices; `ReplaceRenderableResources` acquires new shared resources before changing a component; `RemoveRenderable` stops submission and releases references. Mesh/material/texture descriptions remain immutable. Conservative culling uses each mesh AABB and current render transform independently for each viewport. Full engine visibility/render-buffer publication, generic resource/pass wrappers, automatic live desktop-asset binding and production shading remain open.
+static snapshot and explicit live browser-scene changes. `SetCamera` replaces cached camera matrices; `ReplaceRenderableResources` acquires new shared resources before changing a component; `RemoveRenderable` stops submission and releases references. Mesh/material/texture descriptions remain immutable. Conservative culling uses each mesh AABB and current render transform independently for each viewport. Generic resource/pass wrappers are now implemented for the selected core profile; automatic arbitrary desktop-asset binding and production shading remain open.
 The original `SceneBoot` exports remain available as a separate lifecycle fixture.
 The default page runs the continuous mesh scene. The packet is explicitly copied
 from transient .NET memory into reusable JavaScript storage; it is not zero-copy.
@@ -129,6 +129,12 @@ See [module and snapshot integration](../docs/work/progress/rendering/browser-we
 for the export API, supported subset, ownership and remaining integration work.
 
 See [canvas output and live updates](../docs/work/progress/rendering/browser-webgpu-frame-output.md) for the output/pass ABI and remaining integration work.
+
+See [GPU resources and ordered submission](../docs/work/progress/rendering/browser-gpu-resources-submission.md)
+for the buffer/texture/view/sampler API, immutable selected-device capabilities,
+framebuffer attachment lowering, bounded pipeline cache, reusable render/compute/copy
+commands and cancellable asynchronous readback. Builds and browser/GPU acceptance
+remain deferred; this core resource profile is not full baseline qualification.
 
 See [portable host completion](../docs/work/progress/rendering/browser-portable-host-completion.md)
 for generated registrations, source/API guards, frame publication and the remaining

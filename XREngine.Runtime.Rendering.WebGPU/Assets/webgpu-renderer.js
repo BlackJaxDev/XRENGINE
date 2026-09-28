@@ -1,4 +1,9 @@
 import { GpuResourceTable } from './gpu-resource-table.js';
+import { captureDeviceCapabilities } from './gpu-capabilities.js';
+import { GpuResources } from './gpu-resources.js';
+import { GpuPipelineCache } from './gpu-pipeline-cache.js';
+import { GpuReadback } from './gpu-readback.js';
+import { GpuCommands } from './gpu-commands.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
 import { formatShaderDiagnostic, loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
@@ -106,6 +111,9 @@ export class WebGpuCanvasRenderer {
         this._uploadSequence = 0;
         this._executing = false;
         this._resources = new GpuResourceTable();
+        this.resources = new GpuResources(this);
+        this.readback = new GpuReadback(this);
+        this.commands = new GpuCommands(this);
         this._retired = new Set();
         this._packetBytes = new Uint8Array(packetHeaderBytes);
         this._packetView = new DataView(this._packetBytes.buffer);
@@ -128,6 +136,7 @@ export class WebGpuCanvasRenderer {
             frameSubmitCalls: 0, uploadSubmitCalls: 0 };
         this._lastPacketFailure = null;
         this._shaderArtifact = undefined;
+        this._capabilities = undefined;
         this._startupAbort = undefined;
         this._startupToken = undefined;
         this._startup = { stage: 'idle', budgetsMs: { shaderCompilation: shaderCompilationBudgetMs, pipelineCreation: pipelineCreationBudgetMs },
@@ -239,6 +248,8 @@ export class WebGpuCanvasRenderer {
             const device = await adapter.requestDevice(deviceRequirements);
             this._assertActive(signal, device);
             this.device = device;
+            this.pipelineCache = new GpuPipelineCache(device);
+            const capabilities = captureDeviceCapabilities(device, deviceRequirements);
             device.addEventListener('uncapturederror', this._onUncapturedError);
             device.lost.then(info => {
                 if (this._disposed || this.device !== device) return;
@@ -254,12 +265,12 @@ export class WebGpuCanvasRenderer {
             this._uniformBytes = new Uint8Array(this._uniformCapacity * this._uniformStride);
             this._uniformView = new DataView(this._uniformBytes.buffer);
             this.uniformBuffer = this._newUniformBuffer(this._uniformCapacity);
-            this._viewLayout = device.createBindGroupLayout({ entries: [{
+            this._viewLayout = this.pipelineCache.getBindGroupLayout({ entries: [{
                 binding: 0, visibility: GPUShaderStage.VERTEX,
                 buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 64 },
             }] });
             this.bindGroup = this._newViewBindGroup(this.uniformBuffer);
-            this._materialLayout = device.createBindGroupLayout({ entries: [
+            this._materialLayout = this.pipelineCache.getBindGroupLayout({ entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', minBindingSize: 16 } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } },
                 { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
@@ -296,8 +307,8 @@ export class WebGpuCanvasRenderer {
             this.onState('creating-pipeline');
             this._startup.stage = 'pipeline-creation';
             const pipelineStart = performance.now();
-            const pipelineOperation = scopedStartupOperation(device, 'pipeline creation', () => device.createRenderPipelineAsync({
-                layout: device.createPipelineLayout({ bindGroupLayouts: [this._viewLayout, this._materialLayout] }),
+            const pipelineOperation = scopedStartupOperation(device, 'pipeline creation', () => this.pipelineCache.getRenderPipelineAsync({
+                layout: this.pipelineCache.getPipelineLayout({ bindGroupLayouts: [this._viewLayout, this._materialLayout] }),
                 vertex: { module: shader, entryPoint: artifact.descriptor.entryPoints.vertex, buffers: [{ arrayStride: 20, attributes: [
                     { shaderLocation: 0, offset: 0, format: 'float32x3' },
                     { shaderLocation: 1, offset: 12, format: 'float32x2' },
@@ -316,6 +327,7 @@ export class WebGpuCanvasRenderer {
             } finally { this._startup.timingsMs.pipelineCreation = performance.now() - pipelineStart; }
             this._assertStartup(signal, startupToken, device);
             this.pipeline = pipeline;
+            this._capabilities = capabilities;
             this._startup.stage = 'ready';
             this.onState('ready');
         } catch (error) {
@@ -412,7 +424,8 @@ export class WebGpuCanvasRenderer {
             indexBuffer = this.device.createBuffer({ size: indexBytes, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
             this.device.queue.writeBuffer(vertexBuffer, 0, vertices);
             this.device.queue.writeBuffer(indexBuffer, 0, indices);
-            const handle = this._resources.add('mesh', { vertexBuffer, indexBuffer, vertexBytes, indexBytes, vertexCount, indexCount: indexBytes / 4 }, this._owner);
+            const handle = this._resources.add('mesh', { vertexBuffer, indexBuffer, vertexBytes, indexBytes, vertexCount,
+                indexCount: indexBytes / 4, references: 0, state: 'ready', label: 'Engine indexed mesh' }, this._owner);
             this._stats.uploadedBytes += vertexBytes + indexBytes;
             return handle;
         } catch (error) {
@@ -436,7 +449,9 @@ export class WebGpuCanvasRenderer {
         try {
             texture = this.device.createTexture({ size: [width, height], format: 'rgba8unorm-srgb', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC });
             this.device.queue.writeTexture({ texture }, pixels, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]);
-            const handle = this._resources.add('texture', { texture, view: texture.createView(), width, height, references: 0 }, this._owner);
+            const handle = this._resources.add('texture', { texture, view: texture.createView(), width, height, references: 0,
+                format: 'rgba8unorm-srgb', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
+                mipLevelCount: 1, sampleCount: 1, state: 'ready', label: 'Engine sampled color' }, this._owner);
             this._stats.uploadedBytes += bytes;
             return handle;
         } catch (error) {
@@ -451,6 +466,9 @@ export class WebGpuCanvasRenderer {
         if (![r, g, b, a].every(value => Number.isFinite(value) && value >= 0 && value <= 1) || a !== 1)
             throw new RangeError('Opaque material tint must have linear channels in [0, 1] and alpha 1.');
         const texture = textureHandle === 0 ? null : this._resources.getHandle(textureHandle, 'texture', this._owner);
+        if (texture && (!(texture.usage & GPUTextureUsage.TEXTURE_BINDING) || texture.sampleCount !== 1
+            || !['rgba8unorm', 'rgba8unorm-srgb'].includes(texture.format)))
+            throw new Error('Opaque materials require a single-sample, sampleable RGBA8 color texture.');
         let colorBuffer;
         try {
             colorBuffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -460,7 +478,8 @@ export class WebGpuCanvasRenderer {
                 { binding: 1, resource: texture?.view ?? this._whiteView },
                 { binding: 2, resource: this._sampler },
             ] });
-            const handle = this._resources.add('material', { colorBuffer, bindGroup, texture }, this._owner);
+            const handle = this._resources.add('material', { colorBuffer, bindGroup, texture,
+                references: 0, state: 'ready', label: 'Engine opaque material' }, this._owner);
             if (texture) texture.references++;
             this._stats.uploadedBytes += 16;
             return handle;
@@ -479,8 +498,8 @@ export class WebGpuCanvasRenderer {
         const entry = this._resources.slots[slot];
         if (!entry || entry.generation !== generation || entry.owner !== this._owner)
             throw new Error('Invalid or obsolete resource handle.');
-        if (entry.kind === 'texture' && entry.value.references)
-            throw new Error('A texture referenced by a material cannot be destroyed.');
+        if (entry.value.references)
+            throw new Error('A resource referenced by a live view, binding, pipeline or command plan cannot be destroyed.');
         this._resources.remove(handle, this._owner);
         this._destroyEntry(entry, false);
     }
@@ -492,12 +511,16 @@ export class WebGpuCanvasRenderer {
             throw new RangeError('Texture copies require distinct source and destination resources.');
         const source = this._resources.getHandle(sourceHandle, 'texture', this._owner);
         const destination = this._resources.getHandle(destinationHandle, 'texture', this._owner);
+        if (!(source.usage & GPUTextureUsage.COPY_SRC) || !(destination.usage & GPUTextureUsage.COPY_DST)
+            || source.sampleCount !== 1 || destination.sampleCount !== 1
+            || !['rgba8unorm', 'rgba8unorm-srgb'].includes(source.format) || source.format !== destination.format)
+            throw new Error('Texture copies require matching single-sample RGBA8 formats and copy usages.');
         if (![sourceX, sourceY, destinationX, destinationY, width, height].every(Number.isSafeInteger)
             || sourceX < 0 || sourceY < 0 || destinationX < 0 || destinationY < 0
             || width <= 0 || height <= 0 || width > source.width - sourceX || height > source.height - sourceY
             || width > destination.width - destinationX || height > destination.height - destinationY)
             throw new RangeError('Texture copy rectangle exceeds a texture extent.');
-        // Both resources have the same fixed single-mip rgba8unorm-srgb encoding.
+        // The legacy copy route addresses mip zero; explicit mip uploads use the resource API.
         const encoder = this.device.createCommandEncoder();
         encoder.copyTextureToTexture(
             { texture: source.texture, origin: [sourceX, sourceY, 0] },
@@ -512,17 +535,9 @@ export class WebGpuCanvasRenderer {
         }
     }
 
-    async completeSubmittedWork() {
-        this._stats.controlCalls++;
-        this._requireOwner();
-        const device = this.device;
-        const owner = this._owner;
-        await device.queue.onSubmittedWorkDone();
-        if (this._disposed || this._failed || this._deviceLost || this.device !== device || this._owner !== owner)
-            throw new Error('WebGPU session ended before submitted work completed.');
-    }
-
     _destroyEntry(entry, immediate) {
+        if (entry.value.release) { entry.value.release(); return; }
+        if (this.resources.destroy(entry, immediate)) return;
         if (entry.kind === 'material') {
             if (entry.value.texture) entry.value.texture.references--;
             if (immediate) entry.value.colorBuffer.destroy();
@@ -530,7 +545,7 @@ export class WebGpuCanvasRenderer {
         } else if (entry.kind === 'texture') {
             if (immediate) entry.value.texture.destroy();
             else this._retire(entry.value.texture);
-        } else {
+        } else if (entry.kind === 'mesh') {
             if (immediate) {
                 entry.value.vertexBuffer.destroy();
                 entry.value.indexBuffer.destroy();
@@ -648,8 +663,19 @@ export class WebGpuCanvasRenderer {
     }
 
     getCapabilities() {
-        const limits = this.device?.limits;
+        if (!this._capabilities || this._disposed || this._failed)
+            throw new Error('Device capabilities are unavailable until validated startup completes.');
+        const limits = this._capabilities.limits;
         return {
+            ...this._capabilities,
+            submissionStrategy: 'CpuDirect', baselineQualified: false,
+            textureDimensions: ['2d'], textureFormats: ['rgba8unorm', 'rgba8unorm-srgb',
+                'depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'],
+            textureSampleCounts: [1, 4], optionalTextureFormats: [],
+            maximumResourceBufferBytes: 256 * 1024 * 1024,
+            maximumResourceTextureBytes: 256 * 1024 * 1024,
+            maximumReadbackTickets: 16, maximumReadbackBytes: 16 * 1024 * 1024,
+            maximumReadbackResidentBytes: 32 * 1024 * 1024,
             framePacketVersion: 2, uploadPacketVersion: 1,
             maximumDraws, maximumUploadCommands, maximumUploadPayloadBytes,
             maximumMeshBytes: maximumUploadBytes, maximumTextureBytes,
@@ -756,6 +782,9 @@ export class WebGpuCanvasRenderer {
 
     getStatistics() {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
+            resources: { live: this._resources.slots.reduce((count, entry) => count + (entry ? 1 : 0), 0),
+                retiring: this._retired.size, pipelineCacheEntries: this.pipelineCache?.entries.size ?? 0,
+                readbackTickets: this.readback.activeCount, readbackResidentBytes: this.readback.residentBytes },
             startup: { stage: this._startup.stage, budgetsMs: { ...this._startup.budgetsMs },
                 timingsMs: { ...this._startup.timingsMs } },
             shaderArtifact: this._shaderArtifact && {
@@ -768,13 +797,18 @@ export class WebGpuCanvasRenderer {
     dispose() {
         if (this._disposed) return;
         this._disposed = true;
+        this._capabilities = undefined;
         this._startupToken = undefined;
         this._startupAbort?.abort();
         if (this._configured) {
             try { this.context.unconfigure(); } catch (error) { console.error(error); }
         }
         this._configured = false;
+        this.commands.dispose();
+        this.readback.dispose();
         this._resources.clear(entry => this._destroyEntry(entry, true));
+        this.resources.dispose();
+        this.pipelineCache?.dispose();
         for (const resource of this._retired) resource.destroy();
         this._retired.clear();
         try { this.depthTexture?.destroy(); } catch (error) { console.error(error); }
@@ -783,6 +817,9 @@ export class WebGpuCanvasRenderer {
         try { this.device?.removeEventListener('uncapturederror', this._onUncapturedError); } catch (error) { console.error(error); }
         try { this.device?.destroy(); } catch (error) { console.error(error); }
         this.bindGroup = undefined;
+        this._viewLayout = undefined;
+        this._materialLayout = undefined;
+        this._sampler = undefined;
         this._packetBytes = undefined;
         this._packetView = undefined;
         this._uniformBytes = undefined;

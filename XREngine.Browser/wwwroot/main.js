@@ -11,6 +11,19 @@ async function createBrowserRuntime() {
         return value;
     };
     runtime.setModuleImports('xrengine.webgpu', {
+        getCapabilities: id => JSON.stringify(renderer(id).getCapabilities()),
+        createBuffer: (id, size, usage, label) => renderer(id).resources.createBuffer(size, usage, label),
+        writeBuffer: (id, handle, offset, bytes) => renderer(id).resources.writeBuffer(handle, offset, bytes),
+        copyBuffer: (id, source, sourceOffset, destination, destinationOffset, size) =>
+            renderer(id).resources.copyBuffer(source, sourceOffset, destination, destinationOffset, size),
+        createTextureResource: (id, width, height, mips, samples, format, usage, label) =>
+            renderer(id).resources.createTexture(width, height, mips, samples, format, usage, label),
+        uploadTextureMip: (id, handle, mip, x, y, width, height, bytes) =>
+            renderer(id).resources.uploadTextureMip(handle, mip, x, y, width, height, bytes),
+        createTextureView: (id, texture, baseMip, mipCount, aspect, label) =>
+            renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label),
+        createSampler: (id, addressU, addressV, minFilter, magFilter, mipmapFilter, label) =>
+            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label),
         createMesh: (id, vertices, indices) => renderer(id).createMesh(vertices, indices),
         createTexture: (id, width, height, bytes) => renderer(id).createTexture(width, height, bytes),
         createMaterial: (id, texture, r, g, b, a) => renderer(id).createMaterial(texture, r, g, b, a),
@@ -19,7 +32,19 @@ async function createBrowserRuntime() {
         submitUploads: (id, commands, payload) => renderer(id).submitUploads(commands, payload),
         copyTexture: (id, source, destination, sourceX, sourceY, destinationX, destinationY, width, height) =>
             renderer(id).copyTexture(source, destination, sourceX, sourceY, destinationX, destinationY, width, height),
-        completeSubmittedWork: id => renderer(id).completeSubmittedWork(),
+        beginBufferReadback: (id, handle, offset, size) => renderer(id).readback.beginBuffer(handle, offset, size),
+        beginTextureReadback: (id, handle, mip, x, y, width, height) => renderer(id).readback.beginTexture(handle, mip, x, y, width, height),
+        beginCompletion: id => renderer(id).readback.beginCompletion(),
+        waitReadback: (id, ticket) => renderer(id).readback.wait(ticket),
+        copyReadback: (id, ticket, destination) => renderer(id).readback.copy(ticket, destination),
+        releaseReadback: (id, ticket) => renderers.get(id)?.readback.release(ticket),
+        createShaderModule: (id, source, label) => renderer(id).commands.createShaderModule(source, label),
+        createBindingLayout: (id, json) => renderer(id).commands.createBindingLayout(json),
+        createBindingGroup: (id, json) => renderer(id).commands.createBindingGroup(json),
+        createRenderPipeline: (id, json) => renderer(id).commands.createRenderPipeline(json),
+        createComputePipeline: (id, json) => renderer(id).commands.createComputePipeline(json),
+        prepareCommands: (id, json) => renderer(id).commands.prepareCommands(json),
+        submitPreparedCommands: (id, handle) => renderer(id).commands.submitPreparedCommands(handle),
         disposeRenderer: id => renderers.get(id)?.dispose()
     });
     const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
