@@ -13,20 +13,20 @@ do not qualify this renderer.
 
 ## Build and run
 
-Install the .NET 10 SDK and its `wasm-tools` workload, then run from the repository
+Install the .NET 10 SDK, its `wasm-tools` workload and Python 3.10 or later for the portable source guard, then run from the repository
 root. The checked-in shader package is ready for publishing. After editing WGSL
 or its recipe, regenerate it first using Python 3.10 or later:
 
 ```sh
 python3 Tools/Shaders/cook_browser_shaders.py
 dotnet workload install wasm-tools
-dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -p:XREnginePortableRuntime=true -m:1
+dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -p:XREnginePortableRuntime=true -p:XREnginePortablePythonExecutable=python3 -m:1
 ```
 
 Use the portable property on restore and build commands as well. It selects the
 same source profile throughout the graph. The browser project remains outside
 the default desktop solution, so desktop builds do not require the WASM workload.
-Trimming and AOT remain disabled and unqualified.
+Trimming and AOT remain unqualified and are rejected by the portable build guard.
 
 Serve `XREngine.Browser/bin/portable/Release/net10.0/publish/wwwroot` through HTTPS
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
@@ -40,7 +40,7 @@ renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
 
 - Drag on the canvas or focus it and use arrow keys to move the scene.
-- **Import scene** loads a versioned static scene JSON exported with `BrowserSceneSnapshot.ToJson()` (16 MiB maximum). The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
+- **Import scene** loads flat v1 static scene JSON exported with `BrowserSceneSnapshot.ToJson()` or a stable-ID `xre.browser.scene.v1` envelope (16 MiB maximum). The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
 - Toggle **Cull offscreen meshes** to control conservative per-view AABB rejection. **Recolor first mesh** replaces one material while retaining its texture. Empty imported scenes reject that action explicitly. Counter snapshots include last-frame candidates/culled/drawn counts, live resource counts and output metadata.
 - Toggle **Split view** to switch between one view and two camera projections.
 - Select **16**, **64**, or **256** mesh instances. These are separate indexed draws,
@@ -66,16 +66,13 @@ additional hosts without replacing an existing device.
 `BrowserCanvasRenderTarget` implements the portable presentation and surface
 contracts. It requests `BrowserCanvasPresentation`, never native WSI. Resize
 publishes physical dimensions and a generation; each submitted frame must match
-that generation and extent. `TryDescribeFrameOutput` publishes the existing output contract only while the configured surface is drawable; it does not acquire a GPU texture. The logical RGBA8/depth formats include exact backend encoding metadata, one layer/sample and logical slot zero. The executor alone acquires the canvas texture at submission. Packet v2 supplies an opaque clear color and standard depth clear; color is stored and depth discarded. DPR is capped at 2 and backing dimensions are bounded by the
-device limit. Zero-sized/detached canvases are unconfigured and suspended;
+that generation and extent. `TryDescribeFrameOutput` publishes the existing output contract only while the configured surface is drawable; it does not acquire a GPU texture. The logical RGBA8/depth formats include exact backend encoding metadata, one layer/sample and logical slot zero. The executor alone acquires the canvas texture at submission. Packet v2 supplies an opaque clear color and standard depth clear; color is stored and depth discarded. DPR is capped at 1.5 and the longest backing edge at 1280 pixels, bounded further by the device limit. Zero-sized/detached canvases are unconfigured and suspended;
 reattachment resumes with a new generation. Hidden pages pause scheduling and
 reset simulation time. Focus loss releases held input. Page restoration from the
 back/forward cache starts a fresh device and scene.
 
 The JavaScript frame callback enters managed code once per animation frame.
-Managed code performs up to four 1/60-second simulation steps, drains deferred
-scene destruction, and renders the latest transform at the display cadence.
-Excess elapsed time is dropped. There are no task waits, native event loops,
+Managed code performs up to four 1/60-second simulation steps, drains deferred scene destruction, publishes the engine transform buffers once, freezes a reusable renderable snapshot and renders it at display cadence. Long time gaps reset timing and increment history generation; ordinary variable render delta is available in diagnostics. Structural/resource changes during a frame are rejected. The existing one-argument `RuntimeSceneHost.Advance` still publishes transforms for other callers. There are no task waits, native event loops,
 worker dispatches, or per-frame GPU completion waits.
 
 The renderer loads and hashes cooked shader metadata/source during startup,
@@ -119,3 +116,11 @@ See [module and snapshot integration](../docs/work/progress/rendering/browser-we
 for the export API, supported subset, ownership and remaining integration work.
 
 See [canvas output and live updates](../docs/work/progress/rendering/browser-webgpu-frame-output.md) for the output/pass ABI and remaining integration work.
+
+See [portable host completion](../docs/work/progress/rendering/browser-portable-host-completion.md)
+for generated registrations, source/API guards, frame publication and the remaining
+acceptance work. Regenerate the checked-in browser registry after changing its
+manifest with `python3 Tools/Generate-BrowserRegistrations.py`; neither the registry
+nor scene JSON serialization performs runtime assembly scanning. The portable source
+guard documents its lexical limits and reviewed exceptions; an evaluated inventory
+still needs to be captured from the restored build graph.

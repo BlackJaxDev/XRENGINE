@@ -24,8 +24,8 @@ public static partial class SceneBoot
             var parent = new SceneNode("MovingParent", new Transform(new Vector3(1, 0, 0)));
             _host.RootNodes.Add(parent);
             _child = new SceneNode(parent, "LifecycleProbe", new Transform(new Vector3(0, 1, 0)));
-            _component = parent.AddComponent(static () => new SceneBootComponent())
-                ?? throw new InvalidOperationException("Scene component creation failed.");
+            _component = (SceneBootComponent)BrowserStaticRegistrations.AddRequiredComponent(
+                BrowserStaticRegistrations.SceneBootComponentId, parent);
             _host.Start();
         }
         catch
@@ -76,4 +76,3 @@ public static partial class SceneBoot
         _component = null;
     }
 }
-

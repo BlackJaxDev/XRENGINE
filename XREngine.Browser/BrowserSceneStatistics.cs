@@ -11,4 +11,6 @@ public sealed record BrowserSceneStatistics(
     int RetainedMeshCount,
     int RetainedMaterialCount,
     int RetainedTextureCount,
+    double VariableDeltaSeconds,
+    uint HistoryGeneration,
     RenderFrameOutputDescription? Output);

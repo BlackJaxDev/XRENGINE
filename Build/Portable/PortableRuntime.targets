@@ -8,6 +8,8 @@
            Text="Portable runtime is not supported by $(MSBuildProjectName). Add an explicit reviewed portable source profile first." />
     <Error Condition="'$(TargetPlatformIdentifier)' == 'Windows' or $([System.String]::Copy('$(TargetFramework)').Contains('-windows'))"
            Text="Portable runtime project $(MSBuildProjectName) must not target Windows: $(TargetFramework)." />
+    <Error Condition="'$(PublishTrimmed)' == 'true' or '$(PublishAot)' == 'true' or '$(RunAOTCompilation)' == 'true'"
+           Text="Portable runtime currently supports only the untrimmed interpreted browser profile; trim and AOT require separate metadata and serializer qualification." />
 
     <ItemGroup>
       <_PortableRejectedProject Include="@(ProjectReference)"
@@ -30,6 +32,22 @@
            Text="Portable runtime $(MSBuildProjectName) has unreviewed PackageReference(s): @(_PortableRejectedPackage, ', ')." />
     <Error Condition="'@(_PortableNativeFile)' != ''"
            Text="Portable runtime $(MSBuildProjectName) includes native/runtime copy item(s): @(_PortableNativeFile, ', ')." />
+  </Target>
+
+  <Target Name="ValidateXREnginePortableSourceApis"
+          BeforeTargets="CoreCompile"
+          Condition="'$(XREnginePortableRuntime)' == 'true'">
+    <PropertyGroup>
+      <_PortableSourceList>$(IntermediateOutputPath)portable-sources.txt</_PortableSourceList>
+      <XREnginePortablePythonExecutable Condition="'$(XREnginePortablePythonExecutable)' == ''">python</XREnginePortablePythonExecutable>
+    </PropertyGroup>
+    <Error Condition="'@(Compile)' == ''"
+           Text="Portable source closure for $(MSBuildProjectName) is empty." />
+    <WriteLinesToFile File="$(_PortableSourceList)"
+                      Lines="@(Compile->'%(FullPath)')"
+                      Overwrite="true" />
+    <Exec Command="&quot;$(XREnginePortablePythonExecutable)&quot; &quot;$(MSBuildThisFileDirectory)../../Tools/Reports/audit_browser_dependencies.py&quot; --mode guard --repo &quot;$(MSBuildThisFileDirectory)../..&quot; --sources-file &quot;$(_PortableSourceList)&quot;"
+          StandardErrorImportance="High" />
   </Target>
 
   <Target Name="ValidateXREnginePortableResolvedAssets"
@@ -55,4 +73,3 @@
            Text="Portable runtime $(MSBuildProjectName) resolved native runtime asset(s): @(_PortableResolvedNative, ', ')." />
   </Target>
 </Project>
-

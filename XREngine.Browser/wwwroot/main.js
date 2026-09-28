@@ -16,6 +16,9 @@ async function createBrowserRuntime() {
         createMaterial: (id, texture, r, g, b, a) => renderer(id).createMaterial(texture, r, g, b, a),
         destroyResource: (id, handle) => renderer(id).destroyResource(handle),
         submitPacket: (id, packet) => renderer(id).submitPacket(packet),
+        copyTexture: (id, source, destination, sourceX, sourceY, destinationX, destinationY, width, height) =>
+            renderer(id).copyTexture(source, destination, sourceX, sourceY, destinationX, destinationY, width, height),
+        completeSubmittedWork: id => renderer(id).completeSubmittedWork(),
         disposeRenderer: id => renderers.get(id)?.dispose()
     });
     const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);

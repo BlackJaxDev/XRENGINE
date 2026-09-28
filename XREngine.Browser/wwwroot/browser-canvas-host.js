@@ -1,5 +1,8 @@
 import { WebGpuCanvasRenderer } from './webgpu/webgpu-renderer.js';
 
+// Ownership is keyed by the supplied element, never by a process-wide current canvas.
+const canvasOwners = new WeakMap();
+
 /** Owns one canvas session. The shared runtime only routes interop by session ID. */
 export class BrowserCanvasHost {
     constructor(scene, renderers, canvas, onState) {
@@ -22,7 +25,9 @@ export class BrowserCanvasHost {
         this.pointerX = 0.5;
         this.pointerY = 0.5;
         this.keys = new Set();
-        this.maxPixelRatio = 2;
+        this.maxPixelRatio = 1.5;
+        this.maxBackingDimension = 1280;
+        this.frozen = false;
         this.frame = this.frame.bind(this);
     }
 
@@ -35,7 +40,11 @@ export class BrowserCanvasHost {
 
     async start() {
         if (this.disposed) throw new Error('The canvas host is disposed.');
+        const owner = canvasOwners.get(this.canvas);
+        if (owner && owner !== this) throw new Error('This canvas already has an active host.');
         this.stop();
+        canvasOwners.set(this.canvas, this);
+        this.frozen = false;
         const epoch = this.epoch;
         const controller = new AbortController();
         this.controller = controller;
@@ -68,7 +77,9 @@ export class BrowserCanvasHost {
     }
 
     installEvents(signal) {
+        const epoch = this.epoch;
         const refresh = () => {
+            if (signal.aborted || epoch !== this.epoch) return;
             try { this.syncSurface(); } catch (error) { this.fail(error); }
         };
         this.resizeObserver = new ResizeObserver(refresh);
@@ -81,6 +92,16 @@ export class BrowserCanvasHost {
         window.addEventListener('orientationchange', refresh, { signal });
         document.addEventListener('visibilitychange', () => {
             this.clearInput();
+            refresh();
+        }, { signal });
+        document.addEventListener('freeze', () => {
+            this.frozen = true;
+            this.clearInput();
+            refresh();
+        }, { signal });
+        document.addEventListener('resume', () => {
+            this.frozen = false;
+            if (this.session) this.scene.ResetClock(this.session);
             refresh();
         }, { signal });
         window.addEventListener('blur', () => {
@@ -167,13 +188,14 @@ export class BrowserCanvasHost {
         const logicalWidth = Math.max(0, bounds.width);
         const logicalHeight = Math.max(0, bounds.height);
         const largest = Math.max(logicalWidth, logicalHeight);
-        if (largest > 0) ratio = Math.min(ratio, this.renderer.maxDimension / largest);
+        const maximum = Math.min(this.maxBackingDimension, this.renderer.maxDimension);
+        if (largest > 0) ratio = Math.min(ratio, maximum / largest);
         const width = this.attached && logicalWidth > 0 && logicalHeight > 0
-            ? Math.max(1, Math.min(this.renderer.maxDimension, Math.round(logicalWidth * ratio))) : 0;
+            ? Math.max(1, Math.min(maximum, Math.round(logicalWidth * ratio))) : 0;
         const height = width > 0
-            ? Math.max(1, Math.min(this.renderer.maxDimension, Math.round(logicalHeight * ratio))) : 0;
+            ? Math.max(1, Math.min(maximum, Math.round(logicalHeight * ratio))) : 0;
         this.renderer.resize(width, height);
-        const visible = !document.hidden;
+        const visible = !document.hidden && !this.frozen;
         const focused = document.hasFocus() && document.activeElement === this.canvas;
         this.scene.Resize(this.session, logicalWidth, logicalHeight, width, height,
             ratio, this.renderer.generation, visible, focused, this.attached);
@@ -284,6 +306,7 @@ export class BrowserCanvasHost {
             this.renderer?.dispose();
             this.renderer = null;
             this.drawable = false;
+            if (canvasOwners.get(this.canvas) === this) canvasOwners.delete(this.canvas);
         }
         this.setState('stopped', 'Stopped. Restart to create a new scene and WebGPU device.');
     }

@@ -50,7 +50,7 @@ export class WebGpuCanvasRenderer {
         this._colorAttachment = { view: undefined, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } };
         this._depthAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' };
         this._renderPassDescriptor = { colorAttachments: [this._colorAttachment], depthStencilAttachment: this._depthAttachment };
-        this._stats = { packets: 0, draws: 0, copiedBytes: 0, uploadedBytes: 0, arenaGrowth: 0, rejectedPackets: 0, controlCalls: 0 };
+        this._stats = { packets: 0, draws: 0, copiedBytes: 0, gpuCopiedBytes: 0, uploadedBytes: 0, arenaGrowth: 0, rejectedPackets: 0, controlCalls: 0 };
         this._shaderArtifact = undefined;
         this._onUncapturedError = event => this._fail(event.error);
     }
@@ -305,9 +305,9 @@ export class WebGpuCanvasRenderer {
         this._stats.copiedBytes += bytes;
         let texture;
         try {
-            texture = this.device.createTexture({ size: [width, height], format: 'rgba8unorm-srgb', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+            texture = this.device.createTexture({ size: [width, height], format: 'rgba8unorm-srgb', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC });
             this.device.queue.writeTexture({ texture }, pixels, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]);
-            const handle = this._resources.add('texture', { texture, view: texture.createView(), references: 0 }, this._owner);
+            const handle = this._resources.add('texture', { texture, view: texture.createView(), width, height, references: 0 }, this._owner);
             this._stats.uploadedBytes += bytes;
             return handle;
         } catch (error) {
@@ -354,6 +354,43 @@ export class WebGpuCanvasRenderer {
             throw new Error('A texture referenced by a material cannot be destroyed.');
         this._resources.remove(handle, this._owner);
         this._destroyEntry(entry, false);
+    }
+
+    copyTexture(sourceHandle, destinationHandle, sourceX, sourceY, destinationX, destinationY, width, height) {
+        this._stats.controlCalls++;
+        this._requireOwner();
+        if (sourceHandle === destinationHandle)
+            throw new RangeError('Texture copies require distinct source and destination resources.');
+        const source = this._resources.getHandle(sourceHandle, 'texture', this._owner);
+        const destination = this._resources.getHandle(destinationHandle, 'texture', this._owner);
+        if (![sourceX, sourceY, destinationX, destinationY, width, height].every(Number.isSafeInteger)
+            || sourceX < 0 || sourceY < 0 || destinationX < 0 || destinationY < 0
+            || width <= 0 || height <= 0 || width > source.width - sourceX || height > source.height - sourceY
+            || width > destination.width - destinationX || height > destination.height - destinationY)
+            throw new RangeError('Texture copy rectangle exceeds a texture extent.');
+        // Both resources have the same fixed single-mip rgba8unorm-srgb encoding.
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyTextureToTexture(
+            { texture: source.texture, origin: [sourceX, sourceY, 0] },
+            { texture: destination.texture, origin: [destinationX, destinationY, 0] },
+            [width, height, 1]);
+        this._submission[0] = encoder.finish();
+        try {
+            this.device.queue.submit(this._submission);
+            this._stats.gpuCopiedBytes += width * height * 4;
+        } finally {
+            this._submission[0] = null;
+        }
+    }
+
+    async completeSubmittedWork() {
+        this._stats.controlCalls++;
+        this._requireOwner();
+        const device = this.device;
+        const owner = this._owner;
+        await device.queue.onSubmittedWorkDone();
+        if (this._disposed || this._failed || this._deviceLost || this.device !== device || this._owner !== owner)
+            throw new Error('WebGPU session ended before submitted work completed.');
     }
 
     _destroyEntry(entry, immediate) {

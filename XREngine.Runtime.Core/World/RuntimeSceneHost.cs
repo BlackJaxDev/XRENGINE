@@ -66,6 +66,7 @@ public sealed class RuntimeSceneHost : IRuntimeWorldContext, IDisposable
                 return;
             _lifecycle.PlayState = RuntimeWorldPlayState.Playing;
             RefreshTransforms();
+            SwapBuffers();
         }
         catch
         {
@@ -75,7 +76,10 @@ public sealed class RuntimeSceneHost : IRuntimeWorldContext, IDisposable
     }
 
     /// <summary>Runs one bounded caller-scheduled simulation step; stopped hosts do no work.</summary>
-    public void Advance(float deltaSeconds)
+    public void Advance(float deltaSeconds) => Advance(deltaSeconds, publishRenderBuffers: true);
+
+    /// <summary>Advances simulation, optionally leaving render-buffer publication to the frame owner.</summary>
+    public void Advance(float deltaSeconds, bool publishRenderBuffers)
     {
         ObjectDisposedException.ThrowIf(_disposed || _disposing, this);
         if (!float.IsFinite(deltaSeconds) || deltaSeconds < 0)
@@ -107,7 +111,11 @@ public sealed class RuntimeSceneHost : IRuntimeWorldContext, IDisposable
                 return;
             RefreshTransforms();
             if (CanContinueAdvance(version))
+            {
+                if (publishRenderBuffers)
+                    PublishRenderBuffers();
                 StepCount++;
+            }
         }
         finally
         {
@@ -164,14 +172,39 @@ public sealed class RuntimeSceneHost : IRuntimeWorldContext, IDisposable
 
     public void EnqueueRuntimeWorldMatrixChange(XRWorldObjectBase worldObject, Matrix4x4 worldMatrix)
     {
-        if (worldObject is TransformBase transform)
-            transform.SetRenderMatrixImmediate(worldMatrix);
+        // World matrices remain simulation-owned until the caller publishes a frame.
+        ArgumentNullException.ThrowIfNull(worldObject);
     }
 
     private void RefreshTransforms()
     {
         for (int index = 0; index < RootNodes.Count; index++)
-            RootNodes[index].Transform.RecalculateMatrixHierarchyImmediate();
+            RootNodes[index].Transform.RecalculateMatrixHierarchyImmediate(setRenderMatrixNow: false);
+    }
+
+    /// <summary>Publishes the completed simulation hierarchy to the engine's render matrices.</summary>
+    public void SwapBuffers()
+    {
+        ObjectDisposedException.ThrowIf(_disposed || _disposing, this);
+        if (_advancing)
+            throw new InvalidOperationException("Render buffers cannot be published during a simulation step.");
+        RefreshTransforms();
+        PublishRenderBuffers();
+    }
+
+    private void PublishRenderBuffers()
+    {
+        for (int index = 0; index < RootNodes.Count; index++)
+            PublishTransform(RootNodes[index].Transform);
+    }
+
+    private static void PublishTransform(TransformBase transform)
+    {
+        Matrix4x4 matrix = transform.WorldMatrix;
+        if (transform.ShouldEnqueueRenderMatrix(matrix))
+            transform.SetRenderMatrixImmediate(matrix);
+        for (int index = 0; index < transform.Count; index++)
+            PublishTransform(transform[index]);
     }
 
     private void OnRootDestroying(SceneNode node)
