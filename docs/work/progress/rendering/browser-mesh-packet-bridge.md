@@ -5,6 +5,10 @@
 mobile validation explicitly deferred at the user's request. Earlier scene-only
 browser results do not qualify this rendering path.
 
+The subsequent [cooked shader artifact implementation](browser-shader-artifacts.md)
+replaces the raw WGSL fetch with a versioned package loader. Its source-only status
+does not change the validation limitations recorded here.
+
 ## Implemented behavior
 
 The canvas host now composes a real engine scene with indexed cube and quad

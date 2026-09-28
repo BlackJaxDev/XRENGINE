@@ -114,6 +114,8 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Cooked browser shader artifacts](work/progress/rendering/browser-shader-artifacts.md) records target-tagged shader results, deterministic WGSL packaging, integrity/layout checks and requirement-aware startup. The TODO now separately checks off completed code and pending acceptance.
+
 [Browser mesh and packet bridge](work/progress/rendering/browser-mesh-packet-bridge.md) records indexed geometry, textured unlit materials, depth testing, generation-stamped resources and batched submissions. Build and runtime validation remain deferred.
 
 [Browser WebGPU canvas host](work/progress/rendering/browser-webgpu-canvas-host.md) records the new canvas, startup, scheduling and diagnostic draw implementation. Validation was explicitly deferred for this change.

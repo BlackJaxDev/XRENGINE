@@ -6,7 +6,7 @@ moves a mesh group, and the canvas can render two camera views of the same scene
 Indexed geometry, opaque unlit materials and RGBA8 textures use a versioned binary
 packet bridge with one managed-to-JavaScript submission per rendered frame.
 
-**Status:** Canvas, mesh/material and packet code is implemented but has not been built or run.
+**Status:** Canvas, mesh/material, packet and cooked-shader loading code is implemented but has not been built or run.
 Validation was explicitly deferred for this change. Earlier scene-only results
 in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
 do not qualify this renderer.
@@ -14,9 +14,11 @@ do not qualify this renderer.
 ## Build and run
 
 Install the .NET 10 SDK and its `wasm-tools` workload, then run from the repository
-root:
+root. The checked-in shader package is ready for publishing. After editing WGSL
+or its recipe, regenerate it first using Python 3.10 or later:
 
 ```sh
+python3 Tools/Shaders/cook_browser_shaders.py
 dotnet workload install wasm-tools
 dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -p:XREnginePortableRuntime=true -m:1
 ```
@@ -28,10 +30,14 @@ Trimming and AOT remain disabled and unqualified.
 
 Serve `XREngine.Browser/bin/portable/Release/net10.0/publish/wwwroot` through HTTPS
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
-Open the server URL, not a `file://` URL. The host requires `navigator.gpu` and a
+Publish the entire `wwwroot/shaders` directory with the application. Revalidate
+`shaders/manifest.json`; hash-named `.shader.json` and `.wgsl` files may be cached
+immutably. The loader rejects missing, stale, oversized or incompatible artifacts
+before device creation. Open the server URL, not a `file://` URL. The host requires `navigator.gpu` and a
 usable adapter. `?renderer=WebGPU` and `?renderer=Auto` select the packaged WebGPU
 path; `WebGL2` and unknown renderer names produce a diagnostic. No fallback
-renderer is packaged.
+renderer is packaged. The shader package declares the initial profile
+requirements; adapter limits are checked before requesting the device.
 
 - Drag on the canvas or focus it and use arrow keys to move the scene.
 - Toggle **Split view** to switch between one view and two camera projections.
@@ -66,7 +72,8 @@ scene destruction, and renders the latest transform at the display cadence.
 Excess elapsed time is dropped. There are no task waits, native event loops,
 worker dispatches, or per-frame GPU completion waits.
 
-The diagnostic renderer creates its shader and pipeline asynchronously, caches
+The renderer loads and hashes cooked shader metadata/source during startup,
+checks the binding contract, creates its shader and pipeline asynchronously, caches
 bind groups, descriptors and typed upload storage, and uses aligned per-draw
 uniform slices with a single matrix upload per frame. WebGPU necessarily creates a fresh canvas view, command encoder,
 render pass encoder and command buffer for each submitted frame. No .NET memory
@@ -97,3 +104,6 @@ to check project/package/native-asset boundaries; it is not a forbidden-API proo
 
 See [mesh and packet implementation notes](../docs/work/progress/rendering/browser-mesh-packet-bridge.md)
 for remaining work and the explicit validation deferral.
+
+See [cooked shader artifact notes](../docs/work/progress/rendering/browser-shader-artifacts.md)
+for recipe limits, identities, compiler-contract compatibility and deferred validation.
