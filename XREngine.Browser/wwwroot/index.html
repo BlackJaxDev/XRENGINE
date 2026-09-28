@@ -3,20 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>XRENGINE portable scene boot</title>
+  <meta name="color-scheme" content="dark">
+  <title>XRENGINE WebGPU canvas</title>
   <script type="module" src="./main.js"></script>
   <style>
-    body { margin: 3rem auto; padding: 0 1.5rem; max-width: 52rem; font: 17px/1.6 system-ui, sans-serif; background: #10151d; color: #e4edf4; }
-    h1 { font-size: 1.6rem; } p { color: #b3c2d2; }
-    #status { padding: 1.25rem; border: 1px solid #526478; border-radius: .5rem; white-space: pre-wrap; }
-    [data-state="passed"] { color: #a8ebc0; } [data-state="failed"] { color: #ffb5b5; }
-    button { margin-top: 1rem; padding: .7rem 1rem; font: inherit; cursor: pointer; }
+    body { margin: 2rem auto; padding: 0 1rem; max-width: 72rem; font: 16px/1.6 system-ui, sans-serif; background: #10151d; color: #e4edf4; }
+    h1 { font-size: 1.6rem; margin-bottom: .25rem; } p { color: #b3c2d2; }
+    canvas { display: block; width: 100%; height: clamp(240px, 60vh, 640px); background: #080d14; outline: 1px solid #526478; touch-action: none; }
+    canvas:focus-visible { outline: 2px solid #90c9ef; }
+    #status { min-height: 3.2em; margin-top: 1rem; }
+    [data-state="running"] { color: #a8ebc0; } [data-state="failed"] { color: #ffb5b5; }
+    .controls { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    button { padding: .6rem 1rem; font: inherit; cursor: pointer; } label { cursor: pointer; }
   </style>
 </head>
 <body>
-  <h1>XRENGINE portable scene boot</h1>
-  <p>This application validates engine scene lifecycle and transforms in WebAssembly. WebGPU rendering is not included in this build.</p>
-  <div id="status" role="status" data-state="loading">Loading the .NET runtime…</div>
-  <button id="restart" disabled>Run again</button>
+  <h1>XRENGINE WebGPU canvas</h1>
+  <p>A shared engine scene drives the triangle transform. Split view renders the same scene through two cameras.</p>
+  <canvas id="scene" tabindex="0" aria-label="Interactive engine scene. Drag or use arrow keys to move the triangle.">
+    This scene requires a browser with WebGPU support.
+  </canvas>
+  <div id="status" role="status" data-state="loading-runtime">Loading the .NET runtime…</div>
+  <div class="controls">
+    <button id="restart" disabled>Restart</button>
+    <button id="stop" disabled>Stop</button>
+    <label><input id="split" type="checkbox" checked> Split view</label>
+  </div>
 </body>
 </html>

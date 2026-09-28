@@ -1,87 +1,72 @@
 import { dotnet } from './_framework/dotnet.js';
+import { BrowserCanvasHost } from './browser-canvas-host.js';
 
+/** One runtime may create several independently owned canvas hosts. */
+async function createBrowserRuntime() {
+    const runtime = await dotnet.withDiagnosticTracing(false).create();
+    const renderers = new Map();
+    const renderer = id => {
+        const value = renderers.get(id);
+        if (!value) throw new Error('The frame belongs to an inactive canvas session.');
+        return value;
+    };
+    runtime.setModuleImports('xrengine.canvas', {
+        beginFrame: (id, generation) => renderer(id).beginFrame(generation),
+        draw: (id, view, x, y, width, height,
+            m11, m12, m13, m14, m21, m22, m23, m24,
+            m31, m32, m33, m34, m41, m42, m43, m44) => renderer(id).draw(view, x, y, width, height,
+                m11, m12, m13, m14, m21, m22, m23, m24,
+                m31, m32, m33, m34, m41, m42, m43, m44),
+        endFrame: id => renderer(id).endFrame(),
+        abortFrame: id => renderers.get(id)?.abortFrame()
+    });
+    const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
+    await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
+    return (canvas, onState) => new BrowserCanvasHost(exports.XREngine.Browser.BrowserSceneExports, renderers, canvas, onState);
+}
+
+const canvas = document.querySelector('#scene');
 const status = document.querySelector('#status');
 const restart = document.querySelector('#restart');
-let scene;
-let frameId = 0;
-let running = false;
-let previousTime;
-let accumulator = 0;
-let steps = 0;
-const fixedStep = 1000 / 60;
-
-function cancelFrame() {
-    cancelAnimationFrame(frameId);
-    frameId = 0;
-    previousTime = undefined;
-    accumulator = 0;
-}
-
-function fail(error) {
-    running = false;
-    cancelFrame();
-    try { scene?.Shutdown(); } catch (cleanupError) { console.error(cleanupError); }
-    status.dataset.state = 'failed';
-    status.textContent = `Scene boot failed: ${error.message ?? error}`;
-    console.error(error);
-    restart.disabled = !scene;
-}
-
-function frame(time) {
-    frameId = 0;
-    if (!running || document.hidden) return;
-    try {
-        if (previousTime !== undefined)
-            accumulator += Math.min(Math.max(time - previousTime, 0), fixedStep * 4);
-        previousTime = time;
-        let catchUp = 0;
-        while (accumulator >= fixedStep && catchUp < 4 && steps < 120) {
-            steps = scene.Step();
-            accumulator -= fixedStep;
-            catchUp++;
-        }
-        if (steps === 120) {
-            running = false;
-            status.textContent = scene.Complete();
-            status.dataset.state = 'passed';
-            restart.disabled = false;
-            return;
-        }
-        frameId = requestAnimationFrame(frame);
-    } catch (error) { fail(error); }
-}
-
-function start() {
-    try {
-        cancelFrame();
-        scene.Start();
-        steps = 0;
-        running = true;
-        status.dataset.state = 'running';
-        status.textContent = 'Advancing the engine scene for 120 fixed updates…';
-        restart.disabled = true;
-        if (!document.hidden) frameId = requestAnimationFrame(frame);
-    } catch (error) { fail(error); }
-}
-
-restart.addEventListener('click', start);
-document.addEventListener('visibilitychange', () => {
-    cancelFrame();
-    if (running && !document.hidden) frameId = requestAnimationFrame(frame);
-});
-window.addEventListener('pagehide', () => {
-    running = false;
-    cancelFrame();
-    scene?.Shutdown();
-});
+const stop = document.querySelector('#stop');
+const split = document.querySelector('#split');
+let host;
+let parked = false;
+const pageEvents = new AbortController();
+const setState = (state, message) => {
+    status.dataset.state = state;
+    status.textContent = message;
+    restart.disabled = !host;
+    stop.disabled = !host || state === 'stopped' || state === 'failed';
+};
+restart.addEventListener('click', () => { void host?.start(); }, { signal: pageEvents.signal });
+stop.addEventListener('click', () => host?.stop(), { signal: pageEvents.signal });
+split.addEventListener('change', () => host?.setSplitView(split.checked), { signal: pageEvents.signal });
+window.addEventListener('pagehide', event => {
+    parked = true;
+    host?.stop();
+    if (!event.persisted) {
+        host?.dispose();
+        pageEvents.abort();
+    }
+}, { signal: pageEvents.signal });
 window.addEventListener('pageshow', event => {
-    if (event.persisted && scene) start();
-});
+    if (!event.persisted) return;
+    parked = false;
+    if (host) void host.start();
+}, { signal: pageEvents.signal });
 
 try {
-    const runtime = await dotnet.withDiagnosticTracing(false).create();
-    const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
-    scene = exports.XREngine.Browser.SceneBoot;
-    await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
-    start();
-} catch (error) { fail(error); }
+    const requested = new URLSearchParams(location.search).get('renderer') ?? 'WebGPU';
+    if (requested !== 'WebGPU' && requested !== 'Auto')
+        throw new Error(`${requested} is not packaged. This application contains WebGPU only.`);
+    const createHost = await createBrowserRuntime();
+    if (!pageEvents.signal.aborted) {
+        host = createHost(canvas, setState);
+        host.setSplitView(split.checked);
+        if (!parked) await host.start();
+    }
+} catch (error) {
+    console.error(error);
+    setState('failed', `Startup failed: ${error.message ?? error}`);
+}

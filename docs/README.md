@@ -114,6 +114,9 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Browser WebGPU canvas host](work/progress/rendering/browser-webgpu-canvas-host.md) records the new canvas, startup, scheduling and diagnostic draw implementation. Validation was explicitly deferred for this change.
+
 [Portable browser scene boot](work/progress/rendering/portable-browser-scene-boot.md) records the implemented shared runtime, browser validation, build instructions and remaining rendering work.
 
 [Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU runtime TODO](work/todo/rendering/mobile-webgpu-runtime-todo.md).
+
