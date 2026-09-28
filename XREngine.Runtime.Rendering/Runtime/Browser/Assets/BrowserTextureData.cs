@@ -1,4 +1,4 @@
-namespace XREngine.Browser;
+namespace XREngine.Rendering;
 
 /// <summary>Immutable single-mip, sRGB RGBA8 browser texture pixels.</summary>
 public sealed class BrowserTextureData
@@ -16,5 +16,7 @@ public sealed class BrowserTextureData
 
     public int Width { get; }
     public int Height { get; }
+    /// <summary>Copies the decoded RGBA8 pixels for an external renderer or serializer.</summary>
+    public byte[] CopyRgbaBytes() => (byte[])_rgba.Clone();
     internal Span<byte> RgbaBytes => _rgba.AsSpan();
 }

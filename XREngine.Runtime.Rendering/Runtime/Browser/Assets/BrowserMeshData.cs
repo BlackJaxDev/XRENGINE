@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-namespace XREngine.Browser;
+namespace XREngine.Rendering;
 
 /// <summary>Immutable browser geometry: tightly packed position.xyz and UV.xy floats, with uint32 triangle indices.</summary>
 public sealed class BrowserMeshData
@@ -40,8 +40,16 @@ public sealed class BrowserMeshData
     }
 
     public int IndexCount => _indices.Length;
+    public int VertexCount => _vertices.Length / 5;
     public Vector3 BoundsMinimum { get; }
     public Vector3 BoundsMaximum { get; }
+
+    /// <summary>Copies the packed position/UV payload for an external renderer or serializer.</summary>
+    public byte[] CopyVertexBytes() => MemoryMarshal.AsBytes(_vertices.AsSpan()).ToArray();
+    /// <summary>Copies the triangle indices for an external renderer or serializer.</summary>
+    public byte[] CopyIndexBytes() => MemoryMarshal.AsBytes(_indices.AsSpan()).ToArray();
+    public float[] CopyVertices() => (float[])_vertices.Clone();
+    public uint[] CopyIndices() => (uint[])_indices.Clone();
 
     // Only the synchronous upload bridge receives these spans. The renderer copies both immediately.
     internal Span<byte> VertexBytes => MemoryMarshal.AsBytes(_vertices.AsSpan());

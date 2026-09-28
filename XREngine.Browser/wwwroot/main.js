@@ -10,12 +10,13 @@ async function createBrowserRuntime() {
         if (!value) throw new Error('The frame belongs to an inactive canvas session.');
         return value;
     };
-    runtime.setModuleImports('xrengine.canvas', {
+    runtime.setModuleImports('xrengine.webgpu', {
         createMesh: (id, vertices, indices) => renderer(id).createMesh(vertices, indices),
         createTexture: (id, width, height, bytes) => renderer(id).createTexture(width, height, bytes),
         createMaterial: (id, texture, r, g, b, a) => renderer(id).createMaterial(texture, r, g, b, a),
         destroyResource: (id, handle) => renderer(id).destroyResource(handle),
-        submitPacket: (id, packet) => renderer(id).submitPacket(packet)
+        submitPacket: (id, packet) => renderer(id).submitPacket(packet),
+        disposeRenderer: id => renderers.get(id)?.dispose()
     });
     const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
@@ -30,10 +31,13 @@ const split = document.querySelector('#split');
 const instances = document.querySelector('#instances');
 const counters = document.querySelector('#counters');
 const capture = document.querySelector('#capture');
+const importScene = document.querySelector('#import-scene');
+const demo = document.querySelector('#demo');
 let host;
 let parked = false;
 const pageEvents = new AbortController();
 const setState = (state, message) => {
+    split.disabled = instances.disabled = Boolean(host?.snapshotJson);
     status.dataset.state = state;
     status.textContent = message;
     restart.disabled = !host;
@@ -46,6 +50,18 @@ instances.addEventListener('change', () => host?.setInstanceCount(Number(instanc
 capture.addEventListener('click', () => {
     const snapshot = host?.getStatistics();
     counters.textContent = snapshot ? JSON.stringify(snapshot, null, 2) : 'No active renderer.';
+}, { signal: pageEvents.signal });
+importScene.addEventListener('change', async () => {
+    const file = importScene.files?.[0];
+    importScene.value = '';
+    if (!file || !host) return;
+    try { await host.loadSnapshot(file); }
+    catch (error) { console.error(error); status.textContent = `Scene import rejected: ${error.message ?? error}`; }
+}, { signal: pageEvents.signal });
+demo.addEventListener('click', () => {
+    if (!host) return;
+    host.snapshotJson = null;
+    void host.start();
 }, { signal: pageEvents.signal });
 window.addEventListener('pagehide', event => {
     parked = true;

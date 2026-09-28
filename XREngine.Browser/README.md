@@ -6,7 +6,7 @@ moves a mesh group, and the canvas can render two camera views of the same scene
 Indexed geometry, opaque unlit materials and RGBA8 textures use a versioned binary
 packet bridge with one managed-to-JavaScript submission per rendered frame.
 
-**Status:** Canvas, mesh/material, packet and cooked-shader loading code is implemented but has not been built or run.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, packet and cooked-shader loading code is implemented but has not been built or run.
 Validation was explicitly deferred for this change. Earlier scene-only results
 in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
 do not qualify this renderer.
@@ -30,8 +30,8 @@ Trimming and AOT remain disabled and unqualified.
 
 Serve `XREngine.Browser/bin/portable/Release/net10.0/publish/wwwroot` through HTTPS
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
-Publish the entire `wwwroot/shaders` directory with the application. Revalidate
-`shaders/manifest.json`; hash-named `.shader.json` and `.wgsl` files may be cached
+Publish the entire `wwwroot/webgpu` directory with the application. Revalidate
+`webgpu/shaders/manifest.json`; hash-named `.shader.json` and `.wgsl` files may be cached
 immutably. The loader rejects missing, stale, oversized or incompatible artifacts
 before device creation. Open the server URL, not a `file://` URL. The host requires `navigator.gpu` and a
 usable adapter. `?renderer=WebGPU` and `?renderer=Auto` select the packaged WebGPU
@@ -40,6 +40,7 @@ renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
 
 - Drag on the canvas or focus it and use arrow keys to move the scene.
+- **Import scene** loads a versioned static scene JSON exported with `BrowserSceneSnapshot.ToJson()` (16 MiB maximum). The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
 - Toggle **Split view** to switch between one view and two camera projections.
 - Select **16**, **64**, or **256** mesh instances. These are separate indexed draws,
   not GPU instancing. **Capture counters** snapshots packet/draw counts, copied and
@@ -51,7 +52,11 @@ requirements; adapter limits are checked before requesting the device.
 
 ## Ownership and scheduling
 
-`BrowserCanvasHost` owns one supplied canvas and one WebGPU executor. It passes
+`BrowserRendererComposition` registers `WebGpuRendererBackendModule` in the existing
+`RendererBackendCatalog`. Each canvas creates a pending managed renderer through
+that catalog and uses its `IBrowserRendererHost` capability for resources and
+packets. `BrowserCanvasHost` owns one supplied canvas and one module-owned WebGPU
+executor; it acknowledges managed readiness after asynchronous device startup. It passes
 surface/input snapshots to `BrowserSceneSession` through generated .NET interop.
 The shared runtime routes imports by monotonically increasing session IDs;
 canvas contexts and devices are instance-owned. One runtime factory can create
@@ -90,9 +95,11 @@ views. The default fixture shares geometry and materials across cube and quad
 nodes. Resource handles validate kind, owner and generation; CPU invalidation is
 immediate, while GPU retirement waits asynchronously for submitted work.
 
-The executor remains a focused browser-app leaf. Existing `XRMesh`/`XRMaterial`
-adapters, full engine camera/visibility and render-buffer publication, renderer
-module registration, cooked resources and production shading are still required.
+The executor and shaders belong to `XREngine.Runtime.Rendering.WebGPU`. Static
+`XRMesh` and standard `XRCamera` export adapters plus explicit `XRMaterial` browser
+recipes now feed the same shared resource descriptors. This supports a bounded
+static snapshot, with full engine visibility/render-buffer publication, generic
+resource/pass wrappers, dynamic material updates and production shading still open.
 The original `SceneBoot` exports remain available as a separate lifecycle fixture.
 The default page runs the continuous mesh scene. The packet is explicitly copied
 from transient .NET memory into reusable JavaScript storage; it is not zero-copy.
@@ -107,3 +114,6 @@ for remaining work and the explicit validation deferral.
 
 See [cooked shader artifact notes](../docs/work/progress/rendering/browser-shader-artifacts.md)
 for recipe limits, identities, compiler-contract compatibility and deferred validation.
+
+See [module and snapshot integration](../docs/work/progress/rendering/browser-webgpu-module-assets.md)
+for the export API, supported subset, ownership and remaining integration work.

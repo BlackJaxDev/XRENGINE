@@ -1,4 +1,4 @@
-import { WebGpuCanvasRenderer } from './webgpu-renderer.js';
+import { WebGpuCanvasRenderer } from './webgpu/webgpu-renderer.js';
 
 /** Owns one canvas session. The shared runtime only routes interop by session ID. */
 export class BrowserCanvasHost {
@@ -15,6 +15,7 @@ export class BrowserCanvasHost {
         this.disposed = false;
         this.splitView = true;
         this.instanceCount = 16;
+        this.snapshotJson = null;
         this.pointerId = null;
         this.pointerX = 0.5;
         this.pointerY = 0.5;
@@ -43,17 +44,19 @@ export class BrowserCanvasHost {
             error => { if (epoch === this.epoch) this.fail(error); });
         this.renderer = renderer;
         try {
+            this.session = this.snapshotJson
+                ? this.scene.CreateFromSnapshot(this.canvas.id, this.snapshotJson)
+                : this.scene.Create(this.canvas.id);
             await renderer.initialize(controller.signal);
             if (epoch !== this.epoch || controller.signal.aborted) {
                 renderer.dispose();
                 return;
             }
-            this.session = this.scene.Create(this.canvas.id);
             renderer.setOwner(this.session);
             this.renderers.set(this.session, renderer);
-            this.scene.SetInstanceCount(this.session, this.instanceCount);
+            if (!this.snapshotJson) this.scene.SetInstanceCount(this.session, this.instanceCount);
             this.scene.InitializeGraphics(this.session);
-            this.scene.SetSplitView(this.session, this.splitView);
+            if (!this.snapshotJson) this.scene.SetSplitView(this.session, this.splitView);
             this.installEvents(controller.signal);
             this.syncSurface();
         } catch (error) {
@@ -173,7 +176,9 @@ export class BrowserCanvasHost {
             ratio, this.renderer.generation, visible, focused, this.attached);
         this.drawable = visible && this.attached && width > 0 && height > 0;
         if (this.drawable) {
-            this.setState('running', 'WebGPU ready. Drag the scene or focus the canvas and use arrow keys.');
+            this.setState('running', this.snapshotJson
+                ? 'Imported static scene ready. The captured camera projection fills the canvas.'
+                : 'WebGPU ready. Drag the scene or focus the canvas and use arrow keys.');
             if (!this.frameId) this.frameId = requestAnimationFrame(this.frame);
         } else {
             cancelAnimationFrame(this.frameId);
@@ -197,10 +202,22 @@ export class BrowserCanvasHost {
         } catch (error) { this.fail(error); }
     }
 
+    async loadSnapshot(file) {
+        if (this.disposed) throw new Error('The canvas host is disposed.');
+        if (file.size > 16 * 1024 * 1024) throw new Error('Scene snapshots are limited to 16 MiB.');
+        const epoch = this.epoch;
+        const json = await file.text();
+        if (epoch !== this.epoch || this.disposed) return;
+        // Parse and reject malformed packages before stopping the current scene.
+        this.scene.ValidateSnapshot(json);
+        this.snapshotJson = json;
+        await this.start();
+    }
+
     setSplitView(enabled) {
         this.splitView = enabled;
         try {
-            if (this.session) this.scene.SetSplitView(this.session, enabled);
+            if (this.session && !this.snapshotJson) this.scene.SetSplitView(this.session, enabled);
         } catch (error) { this.fail(error); }
     }
 
@@ -209,7 +226,7 @@ export class BrowserCanvasHost {
             throw new Error('Instance count must be between 1 and 256.');
         this.instanceCount = count;
         try {
-            if (this.session) this.scene.SetInstanceCount(this.session, count);
+            if (this.session && !this.snapshotJson) this.scene.SetInstanceCount(this.session, count);
         } catch (error) { this.fail(error); }
     }
 
@@ -219,6 +236,10 @@ export class BrowserCanvasHost {
     }
 
     fail(error) {
+        if (this.session) {
+            try { this.scene.RendererFailed(this.session, this.renderer?.isDeviceLost ?? false); }
+            catch (stateError) { console.error(stateError); }
+        }
         this.stop();
         console.error(error);
         this.setState('failed', `WebGPU startup/rendering failed: ${error.message ?? error}. Restart to retry; no fallback renderer is packaged.`);

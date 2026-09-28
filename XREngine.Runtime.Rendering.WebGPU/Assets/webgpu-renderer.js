@@ -1,5 +1,5 @@
 import { GpuResourceTable } from './gpu-resource-table.js';
-import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from './frame-packet.js';
+import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
 
 const maximumUploadBytes = 64 * 1024 * 1024;
@@ -57,6 +57,10 @@ export class WebGpuCanvasRenderer {
 
     get maxDimension() {
         return this.device?.limits.maxTextureDimension2D ?? 0;
+    }
+
+    get isDeviceLost() {
+        return this._deviceLost;
     }
 
     get generation() {

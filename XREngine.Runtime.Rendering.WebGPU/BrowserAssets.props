@@ -1,0 +1,10 @@
+<Project>
+  <!-- Browser composition imports the module's own assets into its static web root. -->
+  <ItemGroup>
+    <Content Include="$(MSBuildThisFileDirectory)Assets/**/*">
+      <Link>wwwroot/webgpu/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>
