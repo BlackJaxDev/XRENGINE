@@ -31,7 +31,7 @@ public sealed class BrowserCanvasRenderTarget : IRendererPresentationTarget, IRu
                 Layers: 1,
                 ColorFormat: EPixelInternalFormat.Rgba8,
                 DepthFormat: EPixelInternalFormat.DepthComponent24,
-                ColorSpace: "Linear",
+                ColorSpace: "sRGB",
                 SampleCount: 1,
                 FrameSlotCount: 1)
             {

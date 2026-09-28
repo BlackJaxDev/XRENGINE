@@ -12,6 +12,9 @@ async function createBrowserRuntime() {
     };
     runtime.setModuleImports('xrengine.webgpu', {
         getCapabilities: id => JSON.stringify(renderer(id).getCapabilities()),
+        configurePipeline: (id, json) => renderer(id).focusedPipeline.configure(json),
+        configurePipelineMaterial: (id, material, json) => renderer(id).focusedPipeline.configureMaterial(material, json),
+        submitPipelinePacket: (id, bytes) => renderer(id).focusedPipeline.submit(bytes),
         createBuffer: (id, size, usage, label) => renderer(id).resources.createBuffer(size, usage, label),
         writeBuffer: (id, handle, offset, bytes) => renderer(id).resources.writeBuffer(handle, offset, bytes),
         copyBuffer: (id, source, sourceOffset, destination, destinationOffset, size) =>
@@ -66,6 +69,8 @@ const demo = document.querySelector('#demo');
 const culling = document.querySelector('#culling');
 const recolor = document.querySelector('#recolor');
 const streamTexture = document.querySelector('#stream-texture');
+const quality = document.querySelector('#quality');
+const engineUi = document.querySelector('#engine-ui');
 let host;
 let parked = false;
 const pageEvents = new AbortController();
@@ -82,6 +87,11 @@ stop.addEventListener('click', () => host?.stop(), { signal: pageEvents.signal }
 split.addEventListener('change', () => host?.setSplitView(split.checked), { signal: pageEvents.signal });
 instances.addEventListener('change', () => host?.setInstanceCount(Number(instances.value)), { signal: pageEvents.signal });
 culling.addEventListener('change', () => host?.setCullingEnabled(culling.checked), { signal: pageEvents.signal });
+quality.addEventListener('change', () => {
+    try { host?.setQualityPreset(quality.value); }
+    catch (error) { console.error(error); status.textContent = `Quality change rejected: ${error.message ?? error}`; }
+}, { signal: pageEvents.signal });
+engineUi.addEventListener('change', () => host?.setUiEnabled(engineUi.checked), { signal: pageEvents.signal });
 recolor.addEventListener('click', () => {
     try { host?.recolorFirstMesh(); }
     catch (error) { console.error(error); status.textContent = `Material update rejected: ${error.message ?? error}`; }
@@ -130,6 +140,8 @@ try {
         host.setSplitView(split.checked);
         host.setInstanceCount(Number(instances.value));
         host.setCullingEnabled(culling.checked);
+        host.setQualityPreset(quality.value);
+        host.setUiEnabled(engineUi.checked);
         if (!parked) await host.start();
     }
 } catch (error) {

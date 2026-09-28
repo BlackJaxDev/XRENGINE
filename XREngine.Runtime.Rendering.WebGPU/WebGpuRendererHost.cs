@@ -90,7 +90,17 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
         if ((material.Texture is null) != (textureHandle == 0) || (textureHandle != 0 && !_resources.Contains(textureHandle)))
             throw new InvalidOperationException("Material texture must belong to this renderer and match its descriptor.");
         var tint = material.Tint;
-        return Track(WebGpuImports.CreateMaterial(_session, textureHandle, tint.X, tint.Y, tint.Z, tint.W));
+        int handle = Track(WebGpuImports.CreateMaterial(_session, textureHandle, tint.X, tint.Y, tint.Z, tint.W));
+        try
+        {
+            ConfigureMaterial(BrowserResourceHandle.FromPacked(handle), material);
+            return handle;
+        }
+        catch
+        {
+            DestroyResource(handle);
+            throw;
+        }
     }
 
     public void DestroyResource(int handle)

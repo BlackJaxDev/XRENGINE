@@ -3,10 +3,12 @@
 This standalone application composes the engine's shared scene/component/transform
 runtime with a browser-owned WebGPU canvas. A ticking `XRComponent` rotates and
 moves a mesh group, and the canvas can render two camera views of the same scene.
-Indexed geometry, opaque unlit materials and RGBA8 textures use a versioned binary
-packet bridge with one managed-to-JavaScript submission per rendered frame.
+Indexed geometry, opaque/masked/transparent materials and RGBA8 textures use a
+versioned binary packet bridge with one managed-to-JavaScript submission per frame.
+The focused CPU-direct pipeline adds unlit/flat Lambert shading, directional
+shadows, sky/ambient lighting, HDR tonemapping and GPU-composed UI rectangles.
 
-**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, packet and cooked-shader loading code are implemented but have not been built or run.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented but have not been built or run.
 Validation was explicitly deferred for this change. Earlier scene-only results
 in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
 do not qualify this renderer.
@@ -39,17 +41,20 @@ renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
 
 - Drag on the canvas or focus it and use arrow keys to move the scene.
-- **Import scene** loads flat v1 static scene JSON exported with `BrowserSceneSnapshot.ToJson()` or a stable-ID `xre.browser.scene.v1` envelope (16 MiB maximum). The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
+- **Import scene** loads static scene JSON exported with `BrowserSceneSnapshot.ToJson()` (versions 1 and 2) or a stable-ID `xre.browser.scene.v1` envelope (16 MiB maximum). Version 2 preserves authored alpha, shading, culling and shadow policies. The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
 - Toggle **Cull offscreen meshes** to control conservative per-view AABB rejection. **Recolor first mesh** replaces one material while retaining its texture. Empty imported scenes reject that action explicitly. Counter snapshots include last-frame candidates/culled/drawn counts, live resource counts and output metadata.
 - Toggle **Split view** to switch between one view and two camera projections.
 - **Update checker texture** streams retained demo pixels through one upload batch. This updates GPU contents; restart restores the immutable descriptor. Imported scenes disable this fixture control.
-- Select **16**, **64**, or **256** mesh instances. These are separate indexed draws,
-  not GPU instancing. **Capture counters** snapshots packet/draw counts, copied and
+- Select **16**, **64**, or **256** mesh instances. Consecutive compatible records
+  are batched into indexed instanced draws. **Capture counters** snapshots packet/draw counts, copied and
   uploaded bytes, storage growth, rejected packets and executor call counts. Snapshots also include upload command counts, submission calls, packet failure context, capability limits and managed current-thread frame allocation counters; these are instrumentation, not measured performance evidence.
 - **Stop** cancels frames and startup, removes session listeners/observers, and
   releases the scene and GPU resources. **Restart** constructs a fresh session.
 - Startup, shader, device-loss and render errors appear in the status area and
   browser console. Device loss requires an explicit restart.
+- Select **Low**, **Balanced**, or **High** quality to set backing resolution/DPR,
+  shadow resolution/cadence, texture limits and HDR output. Toggle **Show overlay**
+  for engine-composed UI. DOM controls retain accessible labels and keyboard focus.
 
 ## Ownership and scheduling
 
@@ -135,6 +140,13 @@ for the buffer/texture/view/sampler API, immutable selected-device capabilities,
 framebuffer attachment lowering, bounded pipeline cache, reusable render/compute/copy
 commands and cancellable asynchronous readback. Builds and browser/GPU acceptance
 remain deferred; this core resource profile is not full baseline qualification.
+
+See [focused browser forward pipeline](../docs/work/progress/rendering/browser-focused-pipeline.md)
+for material sorting, directional shadows, linear/HDR composition, binding/packet
+contracts, UI atlas constraints and mobile quality presets. The module-owned forward
+shaders are compiled during bounded startup; `?shader=` still selects the earlier
+cooked compatibility bootstrap. This profile does not include PBR, skinning or
+GPU-driven scene submission.
 
 See [portable host completion](../docs/work/progress/rendering/browser-portable-host-completion.md)
 for generated registrations, source/API guards, frame publication and the remaining

@@ -114,6 +114,8 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Focused browser forward pipeline](work/progress/rendering/browser-focused-pipeline.md) records CPU-direct opaque/masked/transparent rendering, bounded material bindings, directional shadows, HDR/SDR composition, engine UI and mobile quality settings. Runtime acceptance remains deferred.
+
 [WebGPU module and engine snapshot bridge](work/progress/rendering/browser-webgpu-module-assets.md) records real catalog registration, module-owned browser assets and static XRMesh/material/camera export and import. Source implementation remains unvalidated.
 
 [Cooked browser shader artifacts](work/progress/rendering/browser-shader-artifacts.md) records target-tagged shader results, deterministic WGSL packaging, integrity/layout checks and requirement-aware startup. The TODO now separately checks off completed code and pending acceptance.

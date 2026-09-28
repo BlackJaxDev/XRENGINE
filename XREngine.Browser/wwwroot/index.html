@@ -20,7 +20,7 @@
 </head>
 <body>
   <h1>XRENGINE WebGPU canvas</h1>
-  <p>A shared engine scene drives textured meshes with depth testing. Split view renders the scene through two cameras.</p>
+  <p>Explore a lit engine scene with cutout and translucent surfaces, directional shadows and an overlay. Split view shows two cameras.</p>
   <canvas id="scene" tabindex="0" aria-label="Interactive engine scene. Drag or use arrow keys to move the scene.">
     This scene requires a browser with WebGPU support.
   </canvas>
@@ -33,6 +33,8 @@
     <label>Instances <select id="instances"><option selected>16</option><option>64</option><option>256</option></select></label>
     <label><input id="split" type="checkbox" checked> Split view</label>
     <label><input id="culling" type="checkbox" checked> Cull offscreen meshes</label>
+    <label>Quality <select id="quality"><option value="low">Low</option><option value="balanced" selected>Balanced</option><option value="high">High</option></select></label>
+    <label><input id="engine-ui" type="checkbox" checked> Show overlay</label>
     <button id="recolor">Recolor first mesh</button>
     <button id="stream-texture" disabled>Update checker texture</button>
   </div>
