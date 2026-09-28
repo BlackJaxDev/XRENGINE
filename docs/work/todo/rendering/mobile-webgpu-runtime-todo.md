@@ -2,7 +2,7 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Readiness audit and minimum portable scene boot implemented, with earlier scene-only browser evidence. Canvas hosting, indexed unlit mesh rendering, a batched bridge and explicit-WGSL artifact cooking/loading are implemented in source; rendering remains unvalidated. Renderer-module integration, cooked content and broader browser/device acceptance remain pending.
+**Status:** Readiness audit and minimum portable scene boot implemented, with earlier scene-only browser evidence. Canvas hosting, indexed unlit mesh rendering, a batched bridge and explicit-WGSL artifact cooking/loading, a registered WebGPU leaf and static engine snapshot adapters are implemented in source; rendering remains unvalidated. Renderer-module integration, cooked content and broader browser/device acceptance remain pending.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -53,14 +53,16 @@ still applies only to its recorded scope.
 - [x] **MW05.02 initial-profile code:** Check declared adapter limits and request the exact supported shader requirements before creating the device.
 - [x] **MW05.05–MW05.06 minimum-raster code:** Vertex/index/uniform buffers, aligned matrix upload, single-mip RGBA8 textures and material bind groups.
 - [x] **MW05.09, MW05.12–MW05.13 minimum-raster code:** Indexed packet submission, depth attachment, asynchronous retirement and terminal failure/loss handling.
-- [ ] **MW02.05, MW03.09, MW05.01/MW05.04/MW05.10/MW05.14 integration:** Existing engine mesh/material/camera resources, visibility/render-buffer publication, renderer module and frame-output contracts.
+- [x] **MW03.09, MW05.01 code:** WebGPU assembly, metadata/factory/lifecycle, static registration through the existing catalog, module-owned imports/executor/shader assets and browser publish wiring.
+- [x] **MW05.04/MW05.14 static asset bridge code:** Supported `XRMesh` CPU data, explicit `XRMaterial` browser recipes and standard `XRCamera` snapshots export through a shared, versioned resource bundle. Browser imports create real scene nodes and submit through `IBrowserRendererHost`.
+- [x] **MW02.04/MW05.13 module readiness code:** Catalog creation returns a pending renderer; asynchronous browser startup acknowledges readiness, terminal errors/loss reject work, and teardown releases the session executor.
+- [ ] **MW02.05, MW05.04/MW05.10/MW05.14 full integration:** Generic resource/pass wrappers, live engine cameras/material changes, visibility/render-buffer publication, frame-output contracts and runtime acceptance. Static snapshot support is not arbitrary live-world portability.
 - [ ] **MW03.04/MW03.10–MW03.11 acceptance:** Streaming upload arenas, malformed/stale/growth cases and measured memory/crossing evidence.
 - [ ] **MW04.05/MW04.07 production compiler:** Approved WGSL-producing toolchain and target-aware engine material generation.
 - [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
 
-Latest source delivery: [cooked browser shader artifacts](../../progress/rendering/browser-shader-artifacts.md).
-The next integration section remains renderer-module and engine-resource wiring;
-full shader cooking expands beyond the explicit unlit WGSL profile implemented here.
+Latest source delivery: [WebGPU module and engine snapshot bridge](../../progress/rendering/browser-webgpu-module-assets.md).
+The next integration section is generic frame-output/pass and visibility publication, followed by broader live-world/material support. Full shader cooking expands beyond the explicit unlit WGSL profile implemented here.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -279,6 +281,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 **Acceptance:** G1 renders through the real engine path with clean WebGPU diagnostics, stable resource ownership, working resize, and no desktop renderer dependency. Remaining baseline compute/indirect behavior is tracked in MW09 rather than silently claimed complete.
 
 **Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) adds indexed vertex/index buffers, RGBA8 textures, opaque material bind groups, a cached pipeline, depth attachments, packet encoding, ownership checks and asynchronous GPU retirement. Real scene components feed transforms to a CPU-direct collector. It remains a browser-app leaf with focused data descriptions, not existing `XRMesh`/`XRMaterial` wrappers or a registered renderer module. MW05 and G1 remain open, including capabilities, generic wrappers/output contracts and live acceptance.
+
+**Module and static-resource implementation record (2026-09-28):** [WebGPU module and engine snapshot bridge](../../progress/rendering/browser-webgpu-module-assets.md) extracts the existing catalog contracts into the portable graph, registers a real WebGPU leaf, moves API-specific imports/JS/assets to that leaf, and connects supported existing engine resources through explicit export/import adapters. Static snapshots support one captured camera and authored unlit material recipes; live desktop pipelines, generic wrappers/output contracts and acceptance remain open. No builds or runtime validation were run.
 
 ## MW06 — Focused browser pipeline and portable material binding
 

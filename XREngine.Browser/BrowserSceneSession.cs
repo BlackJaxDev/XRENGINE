@@ -13,6 +13,8 @@ public sealed class BrowserSceneSession : IDisposable
     private const int MaxInstances = 256;
 
     private readonly RuntimeSceneHost _host;
+    private readonly IBrowserRendererHost _renderer;
+    private readonly BrowserSceneSnapshot? _snapshot;
     private readonly SceneNode _parent;
     private readonly BrowserFramePacket _packet = new();
     private readonly List<BrowserMeshComponent> _renderables = new();
@@ -20,10 +22,10 @@ public sealed class BrowserSceneSession : IDisposable
     private readonly Dictionary<BrowserMeshData, int> _meshes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<BrowserTextureData, int> _textures = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<BrowserMaterialData, int> _materials = new(ReferenceEqualityComparer.Instance);
-    private readonly BrowserMeshData _cubeMesh;
-    private readonly BrowserMeshData _panelMesh;
-    private readonly BrowserMaterialData _checkerMaterial;
-    private readonly BrowserMaterialData _panelMaterial;
+    private BrowserMeshData? _cubeMesh;
+    private BrowserMeshData? _panelMesh;
+    private BrowserMaterialData? _checkerMaterial;
+    private BrowserMaterialData? _panelMaterial;
     private BrowserViewport _left;
     private BrowserViewport _right;
     private int _instanceCount = 16;
@@ -32,13 +34,30 @@ public sealed class BrowserSceneSession : IDisposable
     private double _accumulator;
     private bool _disposed;
 
-    public BrowserSceneSession(int id, string canvasId)
+    public BrowserSceneSession(int id, string canvasId, BrowserSceneSnapshot? snapshot = null)
     {
         Id = id;
+        _snapshot = snapshot;
         Target = new BrowserCanvasRenderTarget(canvasId);
+        _renderer = BrowserRendererComposition.CreateRequired(Target);
         _host = new RuntimeSceneHost();
         try
         {
+            if (snapshot is not null)
+            {
+                _parent = new SceneNode("ImportedBrowserScene", new Transform());
+                _host.RootNodes.Add(_parent);
+                for (int i = 0; i < snapshot.Instances.Count; i++)
+                {
+                    BrowserSceneInstance instance = snapshot.Instances[i];
+                    AddRenderableCore(snapshot.Meshes[instance.MeshIndex], snapshot.Materials[instance.MaterialIndex],
+                        ImportTransform(instance.ModelMatrix), _renderables);
+                }
+                _host.Start();
+                ReservePacket();
+                return;
+            }
+
             _cubeMesh = CreateCubeMesh();
             _panelMesh = new BrowserMeshData(
                 [-0.43f, -0.43f, 0, 0, 1, 0.43f, -0.43f, 0, 1, 1,
@@ -71,8 +90,15 @@ public sealed class BrowserSceneSession : IDisposable
         }
         catch
         {
-            _host.Dispose();
-            Data.Core.XRObjectBase.ProcessPendingDestructions();
+            try
+            {
+                _host.Dispose();
+                Data.Core.XRObjectBase.ProcessPendingDestructions();
+            }
+            finally
+            {
+                _renderer.Dispose();
+            }
             throw;
         }
     }
@@ -120,6 +146,7 @@ public sealed class BrowserSceneSession : IDisposable
             return;
         try
         {
+            _renderer.MarkReady(Id);
             for (int i = 0; i < _renderables.Count; i++)
             {
                 BrowserMeshComponent component = _renderables[i];
@@ -146,6 +173,8 @@ public sealed class BrowserSceneSession : IDisposable
     public void SetInstanceCount(int count)
     {
         ThrowIfDisposed();
+        if (_snapshot is not null)
+            throw new NotSupportedException("Imported scenes have a fixed set of instances.");
         if (count is < 1 or > MaxInstances)
             throw new ArgumentOutOfRangeException(nameof(count), "Instance count must be from 1 to 256.");
         for (int i = _renderables.Count; i < count; i++)
@@ -175,6 +204,8 @@ public sealed class BrowserSceneSession : IDisposable
     public void SetSplitView(bool split)
     {
         ThrowIfDisposed();
+        if (_snapshot is not null && split)
+            throw new NotSupportedException("Imported camera projections require a single viewport.");
         if (_splitView == split)
             return;
         _splitView = split;
@@ -218,15 +249,7 @@ public sealed class BrowserSceneSession : IDisposable
                 if (_splitView)
                     AddViewDraws(_right);
                 _packet.Seal();
-                Span<byte> bytes = _packet.BeginConsume();
-                try
-                {
-                    BrowserSceneExports.SubmitPacket(Id, bytes);
-                }
-                finally
-                {
-                    _packet.EndConsume();
-                }
+                _renderer.SubmitPacket(_packet);
             }
             catch
             {
@@ -244,7 +267,7 @@ public sealed class BrowserSceneSession : IDisposable
     {
         if (viewport.Width <= 0 || viewport.Height <= 0)
             return;
-        for (int i = 0; i < _instanceCount; i++)
+        for (int i = 0; i < (_snapshot is null ? _instanceCount : _renderables.Count); i++)
         {
             AddComponentDraw(_renderables[i], viewport);
         }
@@ -269,6 +292,14 @@ public sealed class BrowserSceneSession : IDisposable
         RuntimeSurfaceState surface = Target.Surface;
         int width = surface.PhysicalWidth;
         int height = surface.PhysicalHeight;
+        if (_snapshot is not null)
+        {
+            // The captured projection is used unchanged across canvas sizes; the viewport
+            // stretches its original aspect ratio when the canvas aspect differs.
+            _left = new BrowserViewport(0, 0, width, height, _snapshot.Camera.ViewProjection);
+            _right = default;
+            return;
+        }
         if (!_splitView)
         {
             _left = BrowserViewport.Create(0, 0, width, height, Matrix4x4.Identity);
@@ -283,12 +314,13 @@ public sealed class BrowserSceneSession : IDisposable
     }
 
     private void ReservePacket()
-        => _packet.EnsureDrawCapacity((_instanceCount + _customRenderables.Count) * (_splitView ? 2 : 1));
+        => _packet.EnsureDrawCapacity(((_snapshot is null ? _instanceCount : _renderables.Count) +
+            _customRenderables.Count) * (_splitView ? 2 : 1));
 
     private void AddDemoInstance(int index)
     {
         bool cube = (index & 1) == 0;
-        AddRenderableCore(cube ? _cubeMesh : _panelMesh, cube ? _checkerMaterial : _panelMaterial,
+        AddRenderableCore(cube ? _cubeMesh! : _panelMesh!, cube ? _checkerMaterial! : _panelMaterial!,
             new Transform(), _renderables);
     }
 
@@ -313,7 +345,7 @@ public sealed class BrowserSceneSession : IDisposable
     {
         if (_meshes.TryGetValue(mesh, out int handle))
             return handle;
-        handle = BrowserSceneExports.CreateMesh(Id, mesh.VertexBytes, mesh.IndexBytes);
+        handle = _renderer.CreateMesh(mesh);
         if (handle <= 0)
             throw new InvalidOperationException("Browser renderer rejected a mesh upload.");
         _meshes.Add(mesh, handle);
@@ -329,14 +361,13 @@ public sealed class BrowserSceneSession : IDisposable
         {
             if (!_textures.TryGetValue(texture, out textureHandle))
             {
-                textureHandle = BrowserSceneExports.CreateTexture(Id, texture.Width, texture.Height, texture.RgbaBytes);
+                textureHandle = _renderer.CreateTexture(texture);
                 if (textureHandle <= 0)
                     throw new InvalidOperationException("Browser renderer rejected a texture upload.");
                 _textures.Add(texture, textureHandle);
             }
         }
-        Vector4 tint = material.Tint;
-        handle = BrowserSceneExports.CreateMaterial(Id, textureHandle, tint.X, tint.Y, tint.Z, tint.W);
+        handle = _renderer.CreateMaterial(material, textureHandle);
         if (handle <= 0)
             throw new InvalidOperationException("Browser renderer rejected a material upload.");
         _materials.Add(material, handle);
@@ -370,12 +401,41 @@ public sealed class BrowserSceneSession : IDisposable
     {
         try
         {
-            BrowserSceneExports.DestroyResource(Id, handle);
+            _renderer.DestroyResource(handle);
         }
         catch (Exception exception)
         {
             firstError ??= exception;
         }
+    }
+
+    private static Transform ImportTransform(Matrix4x4 matrix)
+    {
+        if (!Matrix4x4.Decompose(matrix, out Vector3 scale, out Quaternion rotation, out Vector3 translation))
+            throw new NotSupportedException("Imported model transform cannot be represented as scale, rotation, and translation.");
+        Matrix4x4 reconstructed = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(rotation) *
+            Matrix4x4.CreateTranslation(translation);
+        if (!ApproximatelyEqual(matrix, reconstructed))
+            throw new NotSupportedException("Imported model transform contains shear or perspective.");
+        return new Transform(scale, translation, rotation);
+    }
+
+    private static bool ApproximatelyEqual(Matrix4x4 actual, Matrix4x4 expected)
+    {
+        Span<float> a = stackalloc float[16]
+        {
+            actual.M11, actual.M12, actual.M13, actual.M14, actual.M21, actual.M22, actual.M23, actual.M24,
+            actual.M31, actual.M32, actual.M33, actual.M34, actual.M41, actual.M42, actual.M43, actual.M44
+        };
+        Span<float> b = stackalloc float[16]
+        {
+            expected.M11, expected.M12, expected.M13, expected.M14, expected.M21, expected.M22, expected.M23, expected.M24,
+            expected.M31, expected.M32, expected.M33, expected.M34, expected.M41, expected.M42, expected.M43, expected.M44
+        };
+        for (int i = 0; i < a.Length; i++)
+            if (MathF.Abs(a[i] - b[i]) > 0.0001f * MathF.Max(1.0f, MathF.Abs(a[i])))
+                return false;
+        return true;
     }
 
     private static BrowserMeshData CreateCubeMesh()
@@ -409,6 +469,14 @@ public sealed class BrowserSceneSession : IDisposable
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
+    /// <summary>Marks this scene's renderer unusable after browser initialization or device loss.</summary>
+    public void RendererFailed(bool deviceLost)
+    {
+        ThrowIfDisposed();
+        _renderer.MarkFailed(deviceLost);
+        ResetClock();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -420,8 +488,15 @@ public sealed class BrowserSceneSession : IDisposable
         }
         finally
         {
-            _host.Dispose();
-            Data.Core.XRObjectBase.ProcessPendingDestructions();
+            try
+            {
+                _host.Dispose();
+                Data.Core.XRObjectBase.ProcessPendingDestructions();
+            }
+            finally
+            {
+                _renderer.Dispose();
+            }
         }
     }
 }

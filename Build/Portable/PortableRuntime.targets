@@ -11,7 +11,7 @@
 
     <ItemGroup>
       <_PortableRejectedProject Include="@(ProjectReference)"
-                                Condition="'%(ProjectReference.Filename)' != 'XREngine.Data' and '%(ProjectReference.Filename)' != 'XREngine.Extensions' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Core' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Rendering'" />
+                                Condition="'%(ProjectReference.Filename)' != 'XREngine.Data' and '%(ProjectReference.Filename)' != 'XREngine.Extensions' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Core' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Rendering' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Rendering.WebGPU'" />
       <_PortableUnpropagatedProject Include="@(ProjectReference)"
                                     Condition="$([System.String]::Copy('%(ProjectReference.GlobalPropertiesToRemove)').Contains('XREnginePortableRuntime')) or $([System.String]::Copy('%(ProjectReference.AdditionalProperties)').Contains('XREnginePortableRuntime=false'))" />
       <_PortableRejectedPackage Include="@(PackageReference)"
@@ -55,3 +55,4 @@
            Text="Portable runtime $(MSBuildProjectName) resolved native runtime asset(s): @(_PortableResolvedNative, ', ')." />
   </Target>
 </Project>
+

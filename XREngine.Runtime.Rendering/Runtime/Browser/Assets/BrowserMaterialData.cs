@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace XREngine.Browser;
+namespace XREngine.Rendering;
 
 /// <summary>Opaque unlit material with a linear RGBA tint and optional sRGB texture.</summary>
 public sealed class BrowserMaterialData

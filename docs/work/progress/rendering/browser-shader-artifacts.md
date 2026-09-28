@@ -6,6 +6,10 @@ WGSL compilation, browser/GPU execution, regression tests, profiling or physical
 mobile validation was performed, following the user's explicit validation waiver.
 Generating package files is not evidence that a GPU accepts or renders them.
 
+The subsequent [renderer module and asset bridge](browser-webgpu-module-assets.md)
+moves shader sources, recipes and generated assets into the WebGPU leaf project.
+Commands remain the same; earlier paths below describe this original delivery.
+
 ## Shared shader result contract
 
 `ShaderCompileTarget.WebGPUWgsl` identifies UTF-8 WGSL. `ShaderArtifact` carries the

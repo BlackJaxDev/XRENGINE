@@ -3,16 +3,8 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Stable input passed to all renderer backend factories.
 /// </summary>
-public readonly record struct RendererBackendCreateContext
+public readonly partial record struct RendererBackendCreateContext
 {
-    public RendererBackendCreateContext(
-        IRuntimeRenderWindowHost window,
-        bool linkRendererToWindow = true,
-        long moduleGeneration = 0)
-        : this(new DesktopWindowRenderTarget(window), linkRendererToWindow, moduleGeneration)
-    {
-    }
-
     /// <summary>
     /// Creates a context for a target which deliberately has no window host.
     /// </summary>
@@ -33,10 +25,6 @@ public readonly record struct RendererBackendCreateContext
     public bool LinkRendererToWindow { get; init; }
 
     public long ModuleGeneration { get; init; }
-
-    /// <summary>Gets the desktop host only for a desktop WSI target.</summary>
-    public IRuntimeRenderWindowHost? Window
-        => (Target as DesktopWindowRenderTarget)?.Window;
 
     /// <summary>Compatibility alias for code written during the target-contract transition.</summary>
     public IRendererPresentationTarget EffectiveTarget => Target;

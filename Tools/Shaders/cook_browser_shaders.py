@@ -171,10 +171,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recipe", type=Path, action="append",
                         help="Recipe JSON, repeat for multiple shader artifacts.")
-    parser.add_argument("--source-root", type=Path, default=repository / "XREngine.Browser/wwwroot")
-    parser.add_argument("--output", type=Path, default=repository / "XREngine.Browser/wwwroot/shaders")
+    parser.add_argument("--source-root", type=Path, default=repository / "XREngine.Runtime.Rendering.WebGPU/Assets")
+    parser.add_argument("--output", type=Path, default=repository / "XREngine.Runtime.Rendering.WebGPU/Assets/shaders")
     args = parser.parse_args()
-    recipes = args.recipe or [repository / "XREngine.Browser/Shaders/browser-unlit.recipe.json"]
+    recipes = args.recipe or [repository / "XREngine.Runtime.Rendering.WebGPU/Shaders/browser-unlit.recipe.json"]
     try:
         require(0 < len(recipes) <= MAX_ARTIFACTS, "package requires 1–16 recipes")
         source_root = args.source_root.resolve(strict=True)
