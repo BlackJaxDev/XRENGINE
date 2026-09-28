@@ -14,4 +14,6 @@ public sealed record BrowserSceneStatistics(
     double VariableDeltaSeconds,
     uint HistoryGeneration,
     BrowserBridgeStatistics Bridge,
-    RenderFrameOutputDescription? Output);
+    RenderFrameOutputDescription? Output,
+    string QualityPreset,
+    bool UiEnabled);

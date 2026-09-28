@@ -8,7 +8,7 @@ namespace XREngine.Rendering;
 /// <summary>Independent, bounded static scene resources and transforms for browser upload or offline export.</summary>
 public sealed class BrowserSceneSnapshot
 {
-    private const int CurrentVersion = 1;
+    private const int CurrentVersion = 2;
     private static readonly BrowserSceneJsonContext JsonContext = new(new JsonSerializerOptions
     {
         PropertyNameCaseInsensitive = false,
@@ -66,6 +66,8 @@ public sealed class BrowserSceneSnapshot
             Materials = Materials.Select(static material => new BrowserSceneMaterialDto
             {
                 Tint = [material.Tint.X, material.Tint.Y, material.Tint.Z, material.Tint.W],
+                AlphaMode = material.AlphaMode, Shading = material.Shading, CullMode = material.CullMode,
+                AlphaCutoff = material.AlphaCutoff, CastShadow = material.CastShadow, ReceiveShadow = material.ReceiveShadow,
                 Texture = material.Texture is { } texture
                     ? new BrowserSceneTextureDto { Width = texture.Width, Height = texture.Height, Rgba = texture.CopyRgbaBytes() }
                     : null
@@ -98,7 +100,7 @@ public sealed class BrowserSceneSnapshot
         {
             throw new ArgumentException("Browser scene JSON has invalid or unknown fields.", nameof(json), exception);
         }
-        if (dto.Version != CurrentVersion || dto.Meshes is null || dto.Materials is null || dto.Instances is null ||
+        if (dto.Version is not (1 or CurrentVersion) || dto.Meshes is null || dto.Materials is null || dto.Instances is null ||
             dto.Meshes.Length > 4096 || dto.Materials.Length > 4096 || dto.Instances.Length > 2048)
             throw new NotSupportedException("Browser scene version or resource capacity is unsupported.");
         BrowserMeshData[] meshes = new BrowserMeshData[dto.Meshes.Length];
@@ -117,7 +119,11 @@ public sealed class BrowserSceneSnapshot
             if (material.Texture is { } pixels)
                 texture = new BrowserTextureData(pixels.Width, pixels.Height,
                     pixels.Rgba ?? throw new ArgumentException($"Material {i} texture has no pixels.", nameof(json)));
-            materials[i] = new BrowserMaterialData(VectorFromArray(material.Tint), texture);
+            if (dto.Version == 1 && (material.AlphaMode != "opaque" || material.Shading != "unlit" || material.CullMode != "none" ||
+                material.AlphaCutoff != 0.5f || !material.CastShadow || !material.ReceiveShadow || VectorFromArray(material.Tint).W != 1))
+                throw new NotSupportedException("Legacy scene materials require opaque unlit defaults.");
+            materials[i] = new BrowserMaterialData(VectorFromArray(material.Tint), texture, material.AlphaMode, material.Shading,
+                material.CullMode, material.AlphaCutoff, material.CastShadow, material.ReceiveShadow);
         }
         BrowserSceneInstance[] instances = new BrowserSceneInstance[dto.Instances.Length];
         for (int i = 0; i < instances.Length; i++)

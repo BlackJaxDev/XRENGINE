@@ -4,7 +4,7 @@ namespace XREngine.Rendering;
 public interface IBrowserRendererHost : IRuntimeRendererHost, IBrowserResourceCapability,
     IBrowserFrameSubmissionCapability, IBrowserUploadCapability, IBrowserTextureCopyCapability,
     IBrowserPresentationCapability, IBrowserCompletionCapability, IBrowserGpuResourceCapability,
-    IBrowserReadbackCapability, IBrowserCommandCapability, IDisposable
+    IBrowserReadbackCapability, IBrowserCommandCapability, IBrowserFocusedPipelineCapability, IDisposable
 {
     BrowserRendererState State { get; }
     BrowserDeviceCapabilities? DeviceCapabilities { get; }

@@ -30,6 +30,9 @@ export class BrowserCanvasHost {
         this.keys = new Set();
         this.maxPixelRatio = 1.5;
         this.maxBackingDimension = 1280;
+        this.resolutionScale = 1;
+        this.qualityPreset = 'balanced';
+        this.uiEnabled = true;
         this.frozen = false;
         this.frame = this.frame.bind(this);
     }
@@ -68,6 +71,8 @@ export class BrowserCanvasHost {
             }
             renderer.setOwner(this.session);
             this.renderers.set(this.session, renderer);
+            this.scene.SetQualityPreset(this.session, this.qualityPreset);
+            this.scene.SetUiEnabled(this.session, this.uiEnabled);
             if (!this.snapshotJson) this.scene.SetInstanceCount(this.session, this.instanceCount);
             this.scene.InitializeGraphics(this.session, renderer.colorFormat);
             this.scene.SetCullingEnabled(this.session, this.cullingEnabled);
@@ -187,7 +192,7 @@ export class BrowserCanvasHost {
         const bounds = this.canvas.getBoundingClientRect();
         this.attached = this.canvas.isConnected;
         this.rawPixelRatio = window.devicePixelRatio || 1;
-        let ratio = Math.min(this.rawPixelRatio, this.maxPixelRatio);
+        let ratio = Math.min(this.rawPixelRatio, this.maxPixelRatio) * this.resolutionScale;
         const logicalWidth = Math.max(0, bounds.width);
         const logicalHeight = Math.max(0, bounds.height);
         const largest = Math.max(logicalWidth, logicalHeight);
@@ -247,6 +252,21 @@ export class BrowserCanvasHost {
         try {
             if (this.session && !this.snapshotJson) this.scene.SetSplitView(this.session, enabled);
         } catch (error) { this.fail(error); }
+    }
+
+    setQualityPreset(preset) {
+        if (!['low', 'balanced', 'high'].includes(preset)) throw new Error('Unknown browser quality preset.');
+        if (this.session) this.scene.SetQualityPreset(this.session, preset);
+        this.qualityPreset = preset;
+        this.maxPixelRatio = preset === 'low' ? 1 : preset === 'high' ? 2 : 1.5;
+        this.resolutionScale = preset === 'low' ? 0.75 : 1;
+        this.maxBackingDimension = preset === 'low' ? 1024 : preset === 'high' ? 1920 : 1280;
+        if (this.session && this.renderer) this.syncSurface();
+    }
+
+    setUiEnabled(enabled) {
+        this.uiEnabled = Boolean(enabled);
+        if (this.session) this.scene.SetUiEnabled(this.session, this.uiEnabled);
     }
 
     setInstanceCount(count) {

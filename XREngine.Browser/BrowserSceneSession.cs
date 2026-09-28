@@ -11,13 +11,25 @@ public sealed class BrowserSceneSession : IDisposable
     private const double FixedStep = 1.0 / 60.0;
     private const int MaxStepsPerFrame = 4;
     private const int MaxInstances = 256;
-    private static readonly BrowserRenderPassDescription CanvasPass = new(0.025f, 0.045f, 0.07f, 1f, 1f);
+    private static readonly BrowserPipelineQualitySettings LowQuality = new()
+    {
+        ResolutionScale = 0.75f, MaxDevicePixelRatio = 1, ShadowResolution = 512, ShadowUpdateInterval = 2,
+        MaxTextureDimension = 1024
+    };
+    private static readonly BrowserPipelineQualitySettings BalancedQuality = new()
+    {
+        MaxDevicePixelRatio = 1.5f, Hdr = true, ToneMap = "reinhard", MaxTextureDimension = 2048
+    };
+    private static readonly BrowserPipelineQualitySettings HighQuality = new()
+    {
+        ShadowResolution = 2048, Hdr = true, ToneMap = "reinhard", MaxTextureDimension = 4096
+    };
 
     private readonly RuntimeSceneHost _host;
     private readonly IBrowserRendererHost _renderer;
     private readonly BrowserSceneSnapshot? _snapshot;
     private readonly SceneNode _parent;
-    private readonly BrowserFramePacket _packet = new();
+    private readonly BrowserRenderPipeline _pipeline = new();
     private readonly BrowserUploadBatch _uploads = new();
     private readonly byte[] _streamedCheckerPixels = new byte[8 * 8 * 4];
     private bool _checkerAlternate;
@@ -40,6 +52,16 @@ public sealed class BrowserSceneSession : IDisposable
     private BrowserMeshData? _panelMesh;
     private BrowserMaterialData? _checkerMaterial;
     private BrowserMaterialData? _panelMaterial;
+    private BrowserMaterialData? _transparentMaterial;
+    private bool _uiEnabled = true;
+    private string _qualityPreset = "balanced";
+    private BrowserPipelineQualitySettings _quality = BalancedQuality;
+    private BrowserPipelineEnvironment _environment = BrowserPipelineEnvironment.Default with
+    {
+        ShadowViewProjection = Matrix4x4.CreateLookAt(new Vector3(6, 8, 1),
+            new Vector3(0, 0, -7), Vector3.UnitY) * Matrix4x4.CreateOrthographic(18, 18, 0.1f, 40),
+        LightDirection = Vector3.Normalize(new Vector3(6, 8, 8))
+    };
     private BrowserViewport _left;
     private BrowserViewport _right;
     private int _instanceCount = 16;
@@ -84,21 +106,19 @@ public sealed class BrowserSceneSession : IDisposable
                     0.43f, 0.43f, 0, 1, 0, -0.43f, 0.43f, 0, 0, 0],
                 [0, 1, 2, 0, 2, 3]);
             byte[] pixels = new byte[8 * 8 * 4];
+            FillDemoChecker(pixels, alternate: false);
+            _checkerMaterial = new BrowserMaterialData(
+                new Vector4(0.65f, 0.83f, 1, 1),
+                BrowserStaticRegistrations.CreateTexture(BrowserStaticRegistrations.TextureId, 8, 8, pixels),
+                shading: "lambert");
             for (int y = 0; y < 8; y++)
                 for (int x = 0; x < 8; x++)
-                {
-                    int offset = (y * 8 + x) * 4;
-                    byte shade = ((x ^ y) & 1) == 0 ? (byte)245 : (byte)48;
-                    pixels[offset] = shade;
-                    pixels[offset + 1] = shade;
-                    pixels[offset + 2] = shade;
-                    pixels[offset + 3] = 255;
-                }
-            _checkerMaterial = BrowserStaticRegistrations.CreateMaterial(BrowserStaticRegistrations.MaterialId,
-                new Vector4(0.65f, 0.83f, 1, 1),
-                BrowserStaticRegistrations.CreateTexture(BrowserStaticRegistrations.TextureId, 8, 8, pixels));
-            _panelMaterial = BrowserStaticRegistrations.CreateMaterial(BrowserStaticRegistrations.MaterialId,
-                new Vector4(1, 0.37f, 0.2f, 1));
+                    pixels[(y * 8 + x) * 4 + 3] = ((x ^ y) & 1) == 0 ? (byte)255 : (byte)0;
+            _panelMaterial = new BrowserMaterialData(new Vector4(1, 0.37f, 0.2f, 1),
+                BrowserStaticRegistrations.CreateTexture(BrowserStaticRegistrations.TextureId, 8, 8, pixels),
+                alphaMode: "masked", shading: "lambert");
+            _transparentMaterial = new BrowserMaterialData(new Vector4(0.2f, 1, 0.7f, 0.45f),
+                alphaMode: "transparent", shading: "lambert", castShadow: false);
 
             Transform parentTransform = (Transform)BrowserStaticRegistrations.CreateRequiredTransform(
                 BrowserStaticRegistrations.TransformId);
@@ -110,6 +130,12 @@ public sealed class BrowserSceneSession : IDisposable
             spin.Target = Target;
             for (int i = 0; i < _instanceCount; i++)
                 AddDemoInstance(i);
+            Transform backdrop = (Transform)BrowserStaticRegistrations.CreateRequiredTransform(
+                BrowserStaticRegistrations.TransformId);
+            backdrop.Translation = new Vector3(0, 0, -5.8f);
+            backdrop.Scale = new Vector3(10, 10, 1);
+            AddRenderableCore(_panelMesh, new BrowserMaterialData(new Vector4(0.55f, 0.58f, 0.65f, 1),
+                shading: "lambert", castShadow: false), backdrop, _customRenderables);
             LayoutInstances();
             _host.Start();
         }
@@ -125,7 +151,7 @@ public sealed class BrowserSceneSession : IDisposable
                 try { _renderer.Dispose(); }
                 finally
                 {
-                    _packet.Dispose();
+                    _pipeline.Dispose();
                     _uploads.Dispose();
                 }
             }
@@ -150,11 +176,51 @@ public sealed class BrowserSceneSession : IDisposable
     public double VariableDeltaSeconds => _variableDeltaSeconds;
     /// <summary>Changes whenever any future temporal consumer must discard its previous frame.</summary>
     public uint HistoryGeneration => _historyGeneration;
+    public bool UiEnabled => _uiEnabled;
+    public string QualityPreset => _qualityPreset;
+
+    /// <summary>Applies an explicit mobile profile at a frame boundary, or defers it until graphics startup.</summary>
+    public void SetQualityPreset(string preset)
+    {
+        ThrowIfFrameBusy();
+        BrowserPipelineQualitySettings quality = preset switch
+        {
+            "low" => LowQuality,
+            "balanced" => BalancedQuality,
+            "high" => HighQuality,
+            _ => throw new NotSupportedException("Browser quality preset must be low, balanced, or high.")
+        };
+        quality = quality with { UiEnabled = _uiEnabled };
+        if (_graphicsInitialized)
+            _renderer.ConfigurePipeline(quality);
+        _qualityPreset = preset;
+        _quality = quality;
+        InvalidateHistory();
+    }
+
+    /// <summary>Defines the scene's directional shadow volume and ambient/sky lighting before collection.</summary>
+    public void SetEnvironment(BrowserPipelineEnvironment environment)
+    {
+        ThrowIfFrameBusy();
+        _environment = environment;
+        InvalidateHistory();
+    }
+
+    /// <summary>Controls the portable GPU overlay; DOM text entry remains owned by the browser host.</summary>
+    public void SetUiEnabled(bool enabled)
+    {
+        ThrowIfFrameBusy();
+        BrowserPipelineQualitySettings quality = _quality with { UiEnabled = enabled };
+        if (_graphicsInitialized)
+            _renderer.ConfigurePipeline(quality);
+        _quality = quality;
+        _uiEnabled = enabled;
+    }
 
     /// <summary>Allocates a counter snapshot only when explicitly requested by the host.</summary>
     public BrowserBridgeStatistics CaptureBridgeStatistics() => new(
         _frameAttempts, _submittedFrames, _lastFrameAllocatedBytes, _frameAllocatedBytes, _lastFramePacketBytes,
-        _packet.DrawCapacity, _packet.GrowthCount, _uploads.CommandCapacity, _uploads.PayloadCapacity,
+        _pipeline.Packet.DrawCapacity, _pipeline.Packet.GrowthCount, _uploads.CommandCapacity, _uploads.PayloadCapacity,
         _uploads.CommandGrowthCount, _uploads.PayloadGrowthCount);
 
     /// <summary>Streams pixels into a live texture without replacing its immutable resource descriptor.</summary>
@@ -183,25 +249,39 @@ public sealed class BrowserSceneSession : IDisposable
         }
     }
 
-    /// <summary>Exercises the streaming lane using retained pixels for the shared demo checker texture.</summary>
+    /// <summary>Replaces the shared demo texture through the streaming lane while preserving its orientation markers.</summary>
     public void StreamDemoTexture()
     {
         ThrowIfFrameBusy();
         if (_snapshot is not null || _checkerMaterial?.Texture is not BrowserTextureData texture)
             throw new InvalidOperationException("The checker texture belongs to the built-in demo.");
         bool alternate = !_checkerAlternate;
+        FillDemoChecker(_streamedCheckerPixels, alternate);
+        UploadTextureRegion(texture, 0, 0, 8, 8, _streamedCheckerPixels);
+        _checkerAlternate = alternate;
+    }
+
+    private static void FillDemoChecker(Span<byte> pixels, bool alternate)
+    {
         for (int y = 0; y < 8; y++)
             for (int x = 0; x < 8; x++)
             {
                 int offset = (y * 8 + x) * 4;
                 byte shade = ((x ^ y) & 1) == 0 ? (byte)245 : (byte)48;
-                _streamedCheckerPixels[offset] = alternate ? (byte)(255 - shade) : shade;
-                _streamedCheckerPixels[offset + 1] = shade;
-                _streamedCheckerPixels[offset + 2] = shade;
-                _streamedCheckerPixels[offset + 3] = 255;
+                pixels[offset] = alternate ? (byte)(255 - shade) : shade;
+                pixels[offset + 1] = shade;
+                pixels[offset + 2] = shade;
+                pixels[offset + 3] = 255;
+                // Distinct corners expose X/Y flips through mesh UVs and UI sampling.
+                if ((x < 2 || x >= 6) && (y < 2 || y >= 6))
+                {
+                    bool right = x >= 6;
+                    bool bottom = y >= 6;
+                    pixels[offset] = right == bottom ? (byte)255 : (byte)0;
+                    pixels[offset + 1] = right ? (byte)255 : (byte)0;
+                    pixels[offset + 2] = bottom && !right ? (byte)255 : (byte)0;
+                }
             }
-        UploadTextureRegion(texture, 0, 0, 8, 8, _streamedCheckerPixels);
-        _checkerAlternate = alternate;
     }
 
     public void SetCullingEnabled(bool enabled)
@@ -227,8 +307,9 @@ public sealed class BrowserSceneSession : IDisposable
         if ((uint)index >= (uint)_renderables.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
         BrowserMeshComponent component = _renderables[index];
-        ReplaceRenderableResources(component, component.Mesh!, BrowserStaticRegistrations.CreateMaterial(
-            BrowserStaticRegistrations.MaterialId, tint, component.Material!.Texture));
+        BrowserMaterialData material = component.Material!;
+        tint.W = material.Tint.W;
+        ReplaceRenderableResources(component, component.Mesh!, material.WithTint(tint));
     }
 
     /// <summary>Changes a scene-owned component's descriptors after acquiring any required GPU resources.</summary>
@@ -357,6 +438,7 @@ public sealed class BrowserSceneSession : IDisposable
         try
         {
             _renderer.MarkReady(Id);
+            _renderer.ConfigurePipeline(_quality);
             for (int i = 0; i < _renderables.Count; i++)
             {
                 BrowserMeshComponent component = _renderables[i];
@@ -479,21 +561,27 @@ public sealed class BrowserSceneSession : IDisposable
             VisibilityCandidates = 0;
             VisibilityCulled = 0;
             VisibilityDrawn = 0;
-            _packet.Begin(Id, Target.Surface.Generation, in CanvasPass,
-                checked((int)output.Properties.Width), checked((int)output.Properties.Height));
+            BrowserPipelineEnvironment environment = _environment with
+            {
+                ViewProjection = _left.ViewProjection
+            };
+            _pipeline.Begin(Id, Target.Surface.Generation,
+                checked((int)output.Properties.Width), checked((int)output.Properties.Height), in environment,
+                updateShadow: _submittedFrames % _quality.ShadowUpdateInterval == 0);
             try
             {
                 AddViewDraws(_left);
                 if (_splitView)
-                    AddViewDraws(_right);
-                _packet.Seal();
-                _renderer.SubmitPacket(_packet);
+                    AddViewDraws(_right, includeShadows: false);
+                if (_uiEnabled)
+                    AddUiOverlay();
+                _pipeline.Submit(_renderer);
                 _submittedFrames++;
-                _lastFramePacketBytes = BrowserFramePacket.HeaderBytes + _packet.DrawCount * BrowserFramePacket.DrawBytes;
+                _lastFramePacketBytes = _pipeline.Packet.ByteLength;
             }
             catch
             {
-                _packet.Abort();
+                _pipeline.Abort();
                 throw;
             }
         }
@@ -533,33 +621,74 @@ public sealed class BrowserSceneSession : IDisposable
         if (_collectedCount >= _collected.Length)
             throw new InvalidOperationException("Visible collection capacity must be reserved before the frame.");
         _collected[_collectedCount++] = new BrowserCollectedRenderable(
-            component.Mesh!, BrowserResourceHandle.FromPacked(component.MeshHandle),
+            component.Mesh!, component.Material!, BrowserResourceHandle.FromPacked(component.MeshHandle),
             BrowserResourceHandle.FromPacked(component.MaterialHandle),
             component.SceneNode.Transform.RenderMatrix);
     }
 
-    private void AddViewDraws(BrowserViewport viewport)
+    private void AddViewDraws(BrowserViewport viewport, bool includeShadows = true)
     {
         if (viewport.Width <= 0 || viewport.Height <= 0)
             return;
         for (int i = 0; i < _collectedCount; i++)
-            AddComponentDraw(in _collected[i], viewport);
+            AddComponentDraw(in _collected[i], viewport, includeShadows);
     }
 
-    private void AddComponentDraw(in BrowserCollectedRenderable component, BrowserViewport viewport)
+    private void AddComponentDraw(in BrowserCollectedRenderable component, BrowserViewport viewport, bool includeShadows)
     {
         // System.Numerics row vectors become WGSL column vectors when row-major
         // fields are read as columns by the browser renderer.
         Matrix4x4 matrix = component.ModelMatrix * viewport.ViewProjection;
         VisibilityCandidates++;
-        if (_cullingEnabled && !BrowserFrustumVisibility.Intersects(component.Mesh, in matrix))
+        bool colorVisible = !_cullingEnabled || BrowserFrustumVisibility.Intersects(component.Mesh, in matrix);
+        if (!colorVisible)
         {
             VisibilityCulled++;
-            return;
+            if (!includeShadows || !component.Material.CastShadow)
+                return;
         }
-        _packet.AddDraw(component.MeshHandle, component.MaterialHandle, viewport.X, viewport.Y,
-            viewport.Width, viewport.Height, 0, component.Mesh.IndexCount, in matrix);
-        VisibilityDrawn++;
+        Vector3 center = (component.Mesh.BoundsMinimum + component.Mesh.BoundsMaximum) * 0.5f;
+        Vector3 viewCenter = Vector3.Transform(Vector3.Transform(center, component.ModelMatrix), viewport.View);
+        BrowserPipelineDraw draw = new(component.MeshHandle, component.MaterialHandle, component.Material.AlphaMode,
+            viewport.X, viewport.Y, viewport.Width, viewport.Height, 0, component.Mesh.IndexCount,
+            component.ModelMatrix, matrix, -viewCenter.Z, includeShadows && component.Material.CastShadow, !colorVisible);
+        _pipeline.AddDraw(in draw);
+        if (colorVisible)
+            VisibilityDrawn++;
+    }
+
+    private void AddUiOverlay()
+    {
+        float width = Target.Surface.PhysicalWidth;
+        float height = Target.Surface.PhysicalHeight;
+        float scale = MathF.Min(1, MathF.Min(width / 300, height / 90));
+        Vector4 clip = new(0, 0, width, height);
+        BrowserPipelineUiQuad panel = new(default, new Vector4(12, 12, 260, 56) * scale,
+            new Vector4(0, 0, 1, 1), new Vector4(0.025f, 0.035f, 0.055f, 0.88f), clip);
+        _pipeline.AddUi(in panel);
+        for (int i = 0; i < 3; i++)
+        {
+            Vector4 tint = i switch
+            {
+                0 => new Vector4(0.65f, 0.83f, 1, 1),
+                1 => new Vector4(1, 0.37f, 0.2f, 1),
+                _ => new Vector4(0.2f, 1, 0.7f, 0.6f)
+            };
+            BrowserPipelineUiQuad swatch = new(default, new Vector4(22 + i * 32, 22, 24, 24) * scale,
+                new Vector4(0, 0, 1, 1), tint, clip);
+            _pipeline.AddUi(in swatch);
+        }
+        if (_checkerMaterial?.Texture is BrowserTextureData texture && _textures.TryGetValue(texture, out int handle))
+        {
+            BrowserPipelineUiQuad image = new(BrowserResourceHandle.FromPacked(handle),
+                new Vector4(226, 22, 32, 32) * scale, new Vector4(0, 0, 1, 1), Vector4.One, clip);
+            _pipeline.AddUi(in image);
+        }
+        float visibility = VisibilityCandidates == 0 ? 0 : (float)VisibilityDrawn / VisibilityCandidates;
+        BrowserPipelineUiQuad bar = new(default, new Vector4(22, 54, 192 * visibility, 4) * scale,
+            new Vector4(0, 0, 1, 1), new Vector4(0.4f, 0.8f, 1, 1), clip);
+        if (visibility > 0)
+            _pipeline.AddUi(in bar);
     }
 
     private void RebuildViews()
@@ -572,14 +701,14 @@ public sealed class BrowserSceneSession : IDisposable
             Matrix4x4 viewProjection = camera.ViewProjection;
             if (!_splitView)
             {
-                _left = new BrowserViewport(0, 0, width, height, viewProjection);
+                _left = new BrowserViewport(0, 0, width, height, viewProjection, camera.View);
                 _right = default;
             }
             else
             {
                 int half = width / 2;
-                _left = new BrowserViewport(0, 0, half, height, viewProjection);
-                _right = new BrowserViewport(half, 0, width - half, height, viewProjection);
+                _left = new BrowserViewport(0, 0, half, height, viewProjection, camera.View);
+                _right = new BrowserViewport(half, 0, width - half, height, viewProjection, camera.View);
             }
             return;
         }
@@ -587,7 +716,7 @@ public sealed class BrowserSceneSession : IDisposable
         {
             // The captured projection is used unchanged across canvas sizes; the viewport
             // stretches its original aspect ratio when the canvas aspect differs.
-            _left = new BrowserViewport(0, 0, width, height, _snapshot.Camera.ViewProjection);
+            _left = new BrowserViewport(0, 0, width, height, _snapshot.Camera.ViewProjection, _snapshot.Camera.View);
             _right = default;
             return;
         }
@@ -607,7 +736,7 @@ public sealed class BrowserSceneSession : IDisposable
     private void ReservePacket()
     {
         int count = (_snapshot is null ? _instanceCount : _renderables.Count) + _customRenderables.Count;
-        _packet.EnsureDrawCapacity(count * (_splitView ? 2 : 1));
+        _pipeline.EnsureCapacity(count * (_splitView ? 2 : 1), 8);
         if (count <= _collected.Length)
             return;
         int capacity = _collected.Length;
@@ -618,8 +747,9 @@ public sealed class BrowserSceneSession : IDisposable
 
     private void AddDemoInstance(int index)
     {
-        bool cube = (index & 1) == 0;
-        AddRenderableCore(cube ? _cubeMesh! : _panelMesh!, cube ? _checkerMaterial! : _panelMaterial!,
+        bool cube = index % 3 == 0;
+        AddRenderableCore(cube ? _cubeMesh! : _panelMesh!,
+            cube ? _checkerMaterial! : index % 3 == 1 ? _panelMaterial! : _transparentMaterial!,
             (Transform)BrowserStaticRegistrations.CreateRequiredTransform(BrowserStaticRegistrations.TransformId),
             _renderables);
     }
@@ -889,8 +1019,8 @@ public sealed class BrowserSceneSession : IDisposable
                 try { _renderer.Dispose(); }
                 finally
                 {
-                    _packet.Abort();
-                    _packet.Dispose();
+                    _pipeline.Abort();
+                    _pipeline.Dispose();
                     _uploads.Dispose();
                 }
             }

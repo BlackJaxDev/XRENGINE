@@ -4,6 +4,8 @@ import { GpuResources } from './gpu-resources.js';
 import { GpuPipelineCache } from './gpu-pipeline-cache.js';
 import { GpuReadback } from './gpu-readback.js';
 import { GpuCommands } from './gpu-commands.js';
+import { BrowserRenderPipeline } from './browser-render-pipeline.js';
+import { browserPipelineRequirements } from './browser-pipeline-requirements.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
 import { formatShaderDiagnostic, loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
@@ -114,6 +116,7 @@ export class WebGpuCanvasRenderer {
         this.resources = new GpuResources(this);
         this.readback = new GpuReadback(this);
         this.commands = new GpuCommands(this);
+        this.focusedPipeline = new BrowserRenderPipeline(this);
         this._retired = new Set();
         this._packetBytes = new Uint8Array(packetHeaderBytes);
         this._packetView = new DataView(this._packetBytes.buffer);
@@ -238,7 +241,8 @@ export class WebGpuCanvasRenderer {
             try { artifact = await loadBrowserUnlitArtifact(signal, this._shaderName); }
             finally { this._startup.timingsMs.fetchHash = performance.now() - fetchStart; }
             this._assertActive(signal);
-            const deviceRequirements = shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity);
+            const deviceRequirements = browserPipelineRequirements(adapter,
+                shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity));
             this._shaderArtifact = {
                 identity: artifact.artifactIdentity,
                 requiredFeatures: [...deviceRequirements.requiredFeatures],
@@ -327,6 +331,9 @@ export class WebGpuCanvasRenderer {
             } finally { this._startup.timingsMs.pipelineCreation = performance.now() - pipelineStart; }
             this._assertStartup(signal, startupToken, device);
             this.pipeline = pipeline;
+            this._startup.stage = 'focused-pipeline';
+            await this.focusedPipeline.initialize(signal);
+            this._assertStartup(signal, startupToken, device);
             this._capabilities = capabilities;
             this._startup.stage = 'ready';
             this.onState('ready');
@@ -384,6 +391,7 @@ export class WebGpuCanvasRenderer {
                 this.depthView = this.depthTexture.createView();
                 this._configured = true;
             }
+            this.focusedPipeline.resize(width, height);
             this._generation++;
             return this._generation;
         } catch (error) {
@@ -438,6 +446,8 @@ export class WebGpuCanvasRenderer {
     createTexture(width, height, rgbaMemory) {
         this._stats.controlCalls++;
         this._requireOwner();
+        if (width > this.focusedPipeline.settings.maxTextureDimension || height > this.focusedPipeline.settings.maxTextureDimension)
+            throw new RangeError('Texture dimensions exceed the selected browser pipeline texture tier.');
         const bytes = width * height * 4;
         if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
             || width > this.maxDimension || height > this.maxDimension
@@ -452,6 +462,8 @@ export class WebGpuCanvasRenderer {
             const handle = this._resources.add('texture', { texture, view: texture.createView(), width, height, references: 0,
                 format: 'rgba8unorm-srgb', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
                 mipLevelCount: 1, sampleCount: 1, state: 'ready', label: 'Engine sampled color' }, this._owner);
+            try { this.focusedPipeline.registerTexture(handle); }
+            catch (error) { this._resources.remove(handle, this._owner); throw error; }
             this._stats.uploadedBytes += bytes;
             return handle;
         } catch (error) {
@@ -463,12 +475,12 @@ export class WebGpuCanvasRenderer {
     createMaterial(textureHandle, r, g, b, a) {
         this._stats.controlCalls++;
         this._requireOwner();
-        if (![r, g, b, a].every(value => Number.isFinite(value) && value >= 0 && value <= 1) || a !== 1)
-            throw new RangeError('Opaque material tint must have linear channels in [0, 1] and alpha 1.');
+        if (![r, g, b, a].every(value => Number.isFinite(value) && value >= 0 && value <= 1))
+            throw new RangeError('Material tint must have finite linear channels and alpha in [0, 1].');
         const texture = textureHandle === 0 ? null : this._resources.getHandle(textureHandle, 'texture', this._owner);
         if (texture && (!(texture.usage & GPUTextureUsage.TEXTURE_BINDING) || texture.sampleCount !== 1
             || !['rgba8unorm', 'rgba8unorm-srgb'].includes(texture.format)))
-            throw new Error('Opaque materials require a single-sample, sampleable RGBA8 color texture.');
+            throw new Error('Browser materials require a single-sample, sampleable RGBA8 color texture.');
         let colorBuffer;
         try {
             colorBuffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -479,7 +491,7 @@ export class WebGpuCanvasRenderer {
                 { binding: 2, resource: this._sampler },
             ] });
             const handle = this._resources.add('material', { colorBuffer, bindGroup, texture,
-                references: 0, state: 'ready', label: 'Engine opaque material' }, this._owner);
+                references: 0, state: 'ready', label: 'Engine bound-texture material' }, this._owner);
             if (texture) texture.references++;
             this._stats.uploadedBytes += 16;
             return handle;
@@ -500,6 +512,8 @@ export class WebGpuCanvasRenderer {
             throw new Error('Invalid or obsolete resource handle.');
         if (entry.value.references)
             throw new Error('A resource referenced by a live view, binding, pipeline or command plan cannot be destroyed.');
+        if (entry.kind === 'material') this.focusedPipeline.releaseMaterial(handle);
+        if (entry.kind === 'texture') this.focusedPipeline.releaseTexture(handle);
         this._resources.remove(handle, this._owner);
         this._destroyEntry(entry, false);
     }
@@ -669,6 +683,10 @@ export class WebGpuCanvasRenderer {
         return {
             ...this._capabilities,
             submissionStrategy: 'CpuDirect', baselineQualified: false,
+            focusedPipeline: { packetVersion: 1, maximumDraws: 4096, maximumUiQuads: 4096,
+                alphaModes: ['opaque', 'masked', 'transparent'], shading: ['unlit', 'flat-lambert'],
+                directionalLights: 1, hdrIntermediate: 'rgba16float', presentation: 'sRGB',
+                exclusions: ['transparent shadows', 'PBR', 'normal maps', 'skinning', 'GPU indirect', 'reversed Z'] },
             textureDimensions: ['2d'], textureFormats: ['rgba8unorm', 'rgba8unorm-srgb',
                 'depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'],
             textureSampleCounts: [1, 4], optionalTextureFormats: [],
@@ -782,6 +800,7 @@ export class WebGpuCanvasRenderer {
 
     getStatistics() {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
+            focusedPipeline: this.focusedPipeline.getStatistics(),
             resources: { live: this._resources.slots.reduce((count, entry) => count + (entry ? 1 : 0), 0),
                 retiring: this._retired.size, pipelineCacheEntries: this.pipelineCache?.entries.size ?? 0,
                 readbackTickets: this.readback.activeCount, readbackResidentBytes: this.readback.residentBytes },
@@ -805,6 +824,7 @@ export class WebGpuCanvasRenderer {
         }
         this._configured = false;
         this.commands.dispose();
+        this.focusedPipeline.dispose();
         this.readback.dispose();
         this._resources.clear(entry => this._destroyEntry(entry, true));
         this.resources.dispose();

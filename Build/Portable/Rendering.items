@@ -34,6 +34,13 @@
     <Compile Include="Runtime/RendererModules/RenderFrameOutputCapabilities.cs" />
     <Compile Include="Runtime/RendererModules/RenderFrameOutputDescription.cs" />
     <Compile Include="Runtime/Browser/BrowserRenderPassDescription.cs" />
+    <Compile Include="Runtime/Browser/BrowserPipelineQualitySettings.cs" />
+    <Compile Include="Runtime/Browser/BrowserPipelineEnvironment.cs" />
+    <Compile Include="Runtime/Browser/BrowserPipelineDraw.cs" />
+    <Compile Include="Runtime/Browser/BrowserPipelineUiQuad.cs" />
+    <Compile Include="Runtime/Browser/BrowserPipelineFramePacket.cs" />
+    <Compile Include="Runtime/Browser/BrowserRenderPipeline.cs" />
+    <Compile Include="Runtime/Browser/IBrowserFocusedPipelineCapability.cs" />
     <Compile Include="Runtime/Browser/BrowserDeviceCapabilities.cs" />
     <Compile Include="Runtime/Browser/BrowserBufferUsage.cs" />
     <Compile Include="Runtime/Browser/BrowserTextureUsage.cs" />

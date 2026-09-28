@@ -87,6 +87,12 @@ public static partial class BrowserSceneExports
     public static void SetCullingEnabled(int id, bool enabled) => Get(id).SetCullingEnabled(enabled);
 
     [JSExport]
+    public static void SetQualityPreset(int id, string preset) => Get(id).SetQualityPreset(preset);
+
+    [JSExport]
+    public static void SetUiEnabled(int id, bool enabled) => Get(id).SetUiEnabled(enabled);
+
+    [JSExport]
     public static void StreamDemoTexture(int id) => Get(id).StreamDemoTexture();
 
     [JSExport]
@@ -103,7 +109,8 @@ public static partial class BrowserSceneExports
             session.CullingEnabled, session.VisibilityCandidates, session.VisibilityCulled, session.VisibilityDrawn,
             session.RetainedMeshCount, session.RetainedMaterialCount, session.RetainedTextureCount,
             session.VariableDeltaSeconds, session.HistoryGeneration, session.CaptureBridgeStatistics(),
-            session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null));
+            session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null,
+            session.QualityPreset, session.UiEnabled));
     }
 
     /// <summary>Records a browser renderer failure before the frame loop stops.</summary>

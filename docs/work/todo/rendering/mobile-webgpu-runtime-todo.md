@@ -2,7 +2,7 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Code deliverables through the selected portable kernel and browser host are implemented, including generated registration, API guards and explicit frame publication. The WebGPU leaf supports indexed unlit meshes, versioned packets, static scene imports and focused copy/completion capabilities. Builds, restored-graph evidence and browser/device qualification for the expanded implementation remain pending; broader engine rendering and cooked-world integration follow.
+**Status:** Code deliverables through the selected portable kernel, browser host and focused forward pipeline are implemented. The WebGPU leaf supports opaque/masked/transparent indexed instances, bounded materials, directional shadows, sky/ambient light, HDR/SDR composition, engine UI rectangles and mobile quality settings. Builds, restored-graph evidence and browser/device qualification remain pending; broader engine rendering and cooked-world integration follow.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -96,14 +96,22 @@ still applies only to its recorded scope.
 - [x] **MW05.09 command code:** Prepared ordered render/compute/buffer-copy/texture-copy sequences retain their dependencies and replay without per-draw description allocation; canvas output is acquired each submission and resize rejects obsolete plans. The existing binary engine mesh packet path remains CPU-direct.
 - [x] **MW05.11–MW05.13 lifetime code:** Bounded asynchronous buffer/color-texture readback and completion tickets, cancellation, scoped errors, session checks, explicit dependency release and GPU retirement. Failure/loss/disposal cancel pending requests and stop publication into obsolete sessions.
 - [x] **MW05.14 engine path code:** Existing engine camera/static resource adapters and live browser-scene mesh/material ownership feed the registered renderer, cached pipeline, binary packet pass and described canvas target. Runtime G1 acceptance remains open.
-- [ ] **Broader engine integration beyond the selected resource profile:** Automatic arbitrary desktop-world camera/material binding, optional texture dimensions/formats and the focused production browser pipeline remain later work. The source additions do not establish arbitrary live-world portability.
+- [x] **MW06.01–MW06.03 code:** Explicit CPU-direct `BrowserRenderPipeline`, retained per-view stable sorting, opaque/masked/sorted-transparent material policies, depth/culling, indexed instancing and selected unlit/flat Lambert shading. This initial raster slice does not claim the complete WebGPU baseline.
+- [x] **MW06.04 code:** Directional opaque/masked shadows with retained offscreen casters and update cadence, sky gradient/constant ambient, linear scene targets, optional RGBA16F HDR, exposure/Reinhard tonemapping and final SDR/sRGB presentation.
+- [x] **MW06.05–MW06.07 code:** Bounded material/texture bindings independent of engine identities, explicit UI atlas constraints without automatic packing/arrays, stable frame/material/policy/instance layouts, fixed warmed pipeline variants and capped material residency.
+- [x] **MW06.08 code:** Focused device requirements merged before acquisition, explicit material/quality selection diagnostics, named unsupported requirements and published profile exclusions without silent fallback.
+- [x] **MW06.09 code:** Painter-ordered engine-colored/textured UI rectangles with clips, a sample overlay and continued DOM keyboard/accessibility cooperation; font shaping and a widget framework are outside this primitive.
+- [x] **MW06.10 code:** Low/balanced/high backing-resolution/DPR, shadow size/cadence, light count, texture limits/tier, material complexity/residency and HDR/post-effect settings, including live-content incompatibility rejection.
+- [x] **MW06.11 reference-content code:** Asymmetric texture corners, opaque/cutout/translucent surfaces, a shadow receiver, split cameras and GPU UI for later inspection. Visual validation is still open below.
+- [ ] **MW06 acceptance:** Build/shader/browser/GPU qualification; known-value orientation, offscreen composition, depth, linear/sRGB, alpha, transparency, shadow, tonemap and UI evidence; resize/loss/resource/allocation evidence and G2 representative-world acceptance remain deferred.
+- [ ] **Broader engine integration beyond the selected profile:** Automatic arbitrary desktop-world camera/material binding, optional texture dimensions/formats, richer shading, skinning and GPU-driven scene submission remain later work. The source additions do not establish arbitrary live-world portability.
 - [ ] **MW05 acceptance:** Build/browser/GPU qualification, real indexed scene output, mixed command ordering, mip/resolve/depth/stencil cases, clean diagnostics, resize, cancellation/loss and resource/bridge allocation evidence remain deferred.
 - [ ] **MW03.02/MW03.10–MW03.11 acceptance:** Exact-runtime memory-view/copy/disposal proof, increasing-draw crossing/allocation measurements, and malformed/stale/growth/cancellation/disposal/memory-pressure evidence. Code additions are not a substitute for this deliberately deferred validation.
 - [ ] **MW04.05/MW04.08/MW04.11 remaining qualification and coverage:** Qualify the pinned compiler and selected-profile WGSL layout checks; implement full original-source mappings for generated Slang. The adapter's reflection JSON is not treated as host-ABI proof; emitted WGSL has a separate bounded checker whose unsupported layouts fail closed. Arbitrary desktop shader/material translation is not claimed.
 - [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
 
-Latest source delivery: [Browser GPU resources and ordered submission](../../progress/rendering/browser-gpu-resources-submission.md).
-The selected resource/pass/command implementation is delivered. Remaining implementation includes the focused browser pipeline, broader live-world binding and material features; earlier Slang source mapping and all deferred runtime acceptance remain open.
+Latest source delivery: [Focused browser forward pipeline](../../progress/rendering/browser-focused-pipeline.md).
+The selected resource/pass/command and focused forward implementations are delivered. Remaining implementation includes browser content delivery, broader live-world binding and material features; earlier Slang source mapping and all deferred runtime acceptance remain open.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -346,6 +354,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW06.09** Add engine UI composition using portable assets/shaders. Keep browser DOM cooperation for text entry/accessibility where appropriate without making native ImGui or Ultralight a runtime prerequisite.
 - [ ] **MW06.10** Add mobile quality settings for backing resolution/DPR, shadow size/update rate, light count, texture tier, material complexity, and selected post effects. Avoid allocating resources for disabled desktop effects.
 - [ ] **MW06.11** Validate asymmetric test patterns for orientation, offscreen composition, depth/reversed-Z if enabled, linear/sRGB sampling, alpha conventions, transparency order, shadows, and tonemapping.
+
+**Source implementation (2026-09-28):** [Focused browser forward pipeline](../../progress/rendering/browser-focused-pipeline.md) implements the selected CPU-direct raster/material/UI/quality scope of MW06.01–MW06.10 and reference content for MW06.11. Code-completion rows above are checked; the main acceptance boxes remain open. No builds, tests, shader cook/compiler execution, browser/GPU runs, benchmarks or Python execution were performed, per the user's validation waiver. PBR, skinning, general interactive UI and GPU-driven submission remain outside this selected slice.
 
 **Acceptance:** G2 displays the representative world through engine objects and a declared browser profile. Visual differences from desktop are deliberate, documented profile choices, not missing passes hidden by catch-all fallback.
 
