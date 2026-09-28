@@ -1,5 +1,7 @@
 # Browser WebGL2 And WebGPU Renderer Modules
 
+Mobile delivery: [implementation TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) · [readiness audit and acceptance contract](../../progress/rendering/mobile-browser-readiness.md). Source audit complete; browser runtime and device validation remain pending.
+
 [<- Work docs index](../../README.md)
 
 [Rendering architecture](../../../architecture/rendering/README.md)
