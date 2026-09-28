@@ -50,6 +50,12 @@ public static partial class BrowserSceneExports
     public static void Frame(int id, double timestampMilliseconds) => Get(id).Frame(timestampMilliseconds);
 
     [JSExport]
+    public static void InitializeGraphics(int id) => Get(id).InitializeGraphics();
+
+    [JSExport]
+    public static void SetInstanceCount(int id, int count) => Get(id).SetInstanceCount(count);
+
+    [JSExport]
     public static void SetSplitView(int id, bool split) => Get(id).SetSplitView(split);
 
     [JSExport]
@@ -68,19 +74,20 @@ public static partial class BrowserSceneExports
         ? session
         : throw new InvalidOperationException("Browser scene session does not exist.");
 
-    [JSImport("beginFrame", "xrengine.canvas")]
-    internal static partial bool BeginFrame(int session, int surfaceGeneration);
+    [JSImport("createMesh", "xrengine.canvas")]
+    internal static partial int CreateMesh(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> vertexMemory,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> indexMemory);
 
-    [JSImport("draw", "xrengine.canvas")]
-    internal static partial void Draw(int session, int viewIndex, int x, int y, int width, int height,
-        float m11, float m12, float m13, float m14,
-        float m21, float m22, float m23, float m24,
-        float m31, float m32, float m33, float m34,
-        float m41, float m42, float m43, float m44);
+    [JSImport("createTexture", "xrengine.canvas")]
+    internal static partial int CreateTexture(int session, int width, int height,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> rgbaMemory);
 
-    [JSImport("endFrame", "xrengine.canvas")]
-    internal static partial void EndFrame(int session);
+    [JSImport("createMaterial", "xrengine.canvas")]
+    internal static partial int CreateMaterial(int session, int textureHandle, float r, float g, float b, float a);
 
-    [JSImport("abortFrame", "xrengine.canvas")]
-    internal static partial void AbortFrame(int session);
+    [JSImport("destroyResource", "xrengine.canvas")]
+    internal static partial void DestroyResource(int session, int packedHandle);
+
+    [JSImport("submitPacket", "xrengine.canvas")]
+    internal static partial void SubmitPacket(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> memoryView);
 }

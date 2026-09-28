@@ -5,6 +5,10 @@
 at the user's explicit request. This is not a rendering or mobile acceptance
 result. No tests were added or run.
 
+The subsequent [mesh and packet bridge](browser-mesh-packet-bridge.md) replaces
+the scalar triangle submission described below. This document records the earlier
+canvas implementation; its validation limitations still apply.
+
 ## Code delivered
 
 - Portable `BrowserCanvasRenderTarget`, `IRuntimeSurfaceHost`, and immutable

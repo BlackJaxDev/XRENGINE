@@ -2,7 +2,7 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Readiness audit and delivery contract implemented; portable runtime extraction and browser/device validation remain pending.
+**Status:** Readiness audit and minimum portable scene boot implemented, with earlier scene-only browser evidence. Canvas hosting, indexed unlit mesh rendering and a batched bridge are implemented in source but unvalidated. Renderer-module integration, cooked content and broader browser/device acceptance remain pending.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -195,6 +195,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** G1 uses the real packet path. Many ordinary draws may produce many JavaScript WebGPU API calls, but they do not produce one managed-to-JavaScript transition per draw or state mutation. No stale arena access or implicit per-frame GPU wait is needed for correctness.
 
+**Implementation record (2026-09-28):** [Mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) adds a versioned, bounded little-endian draw packet, synchronous transient memory-view consumption with explicit copying, generation-stamped typed resource handles, monotonic frame identity, whole-packet checks and reusable matrix uploads. One managed submission contains all ordinary draws and views. Upload creation remains a bounded control call per resource; streaming upload commands, readback/completion tickets and measured crossing/allocation evidence remain open. MW03 acceptance is not checked because validation was explicitly deferred.
+
 ## MW04 — WGSL shader artifacts and material/layout contracts
 
 **Priority:** P0. **Depends on:** MW01; progresses alongside MW03–MW05. **Gates:** G1 seed shaders, G2 cooked materials.
@@ -205,6 +207,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 - [ ] **MW04.01** Add a small explicit WGSL set for unlit color/texturing and the first depth-tested engine mesh. Keep bindings and layouts explicit so this validates backend integration, not a separate rendering system.
 - [ ] **MW04.02** Define the initial portable vertex, frame, object, and material data layouts with matching C# packing and shader declarations. Add known-value visual/readback checks for offsets and transforms.
+
+**Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) supplies explicit position/UV, matrix and tint layouts plus depth-tested unlit color/texturing WGSL. MW04.01–MW04.02 remain open for engine-module integration and known-value visual/readback acceptance; this does not implement shader cooking.
 
 ### Production artifact path
 
@@ -241,6 +245,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW05.14** Render an engine-owned indexed mesh through its camera, material, wrappers, pass, packet, and presentation target. Keep a JS-only triangle as a bootstrap diagnostic, not G1 acceptance.
 
 **Acceptance:** G1 renders through the real engine path with clean WebGPU diagnostics, stable resource ownership, working resize, and no desktop renderer dependency. Remaining baseline compute/indirect behavior is tracked in MW09 rather than silently claimed complete.
+
+**Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) adds indexed vertex/index buffers, RGBA8 textures, opaque material bind groups, a cached pipeline, depth attachments, packet encoding, ownership checks and asynchronous GPU retirement. Real scene components feed transforms to a CPU-direct collector. It remains a browser-app leaf with focused data descriptions, not existing `XRMesh`/`XRMaterial` wrappers or a registered renderer module. MW05 and G1 remain open, including capabilities, generic wrappers/output contracts and live acceptance.
 
 ## MW06 — Focused browser pipeline and portable material binding
 
