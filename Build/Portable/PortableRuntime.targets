@@ -1,0 +1,57 @@
+<Project>
+  <!-- The portable source profile is intentionally a small, reviewed project
+       closure. These checks inspect evaluated items, not published artifacts. -->
+  <Target Name="ValidateXREnginePortableDeclarations"
+          BeforeTargets="CoreCompile;ResolveReferences"
+          Condition="'$(XREnginePortableRuntime)' == 'true'">
+    <Error Condition="'$(XREnginePortableRuntimeSupported)' != 'true'"
+           Text="Portable runtime is not supported by $(MSBuildProjectName). Add an explicit reviewed portable source profile first." />
+    <Error Condition="'$(TargetPlatformIdentifier)' == 'Windows' or $([System.String]::Copy('$(TargetFramework)').Contains('-windows'))"
+           Text="Portable runtime project $(MSBuildProjectName) must not target Windows: $(TargetFramework)." />
+
+    <ItemGroup>
+      <_PortableRejectedProject Include="@(ProjectReference)"
+                                Condition="'%(ProjectReference.Filename)' != 'XREngine.Data' and '%(ProjectReference.Filename)' != 'XREngine.Extensions' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Core' and '%(ProjectReference.Filename)' != 'XREngine.Runtime.Rendering'" />
+      <_PortableUnpropagatedProject Include="@(ProjectReference)"
+                                    Condition="$([System.String]::Copy('%(ProjectReference.GlobalPropertiesToRemove)').Contains('XREnginePortableRuntime')) or $([System.String]::Copy('%(ProjectReference.AdditionalProperties)').Contains('XREnginePortableRuntime=false'))" />
+      <_PortableRejectedPackage Include="@(PackageReference)"
+                                Condition="'%(PackageReference.Identity)' != 'MemoryPack' and '%(PackageReference.Identity)' != 'YamlDotNet' and ('%(PackageReference.Identity)' != 'Microsoft.NET.Sdk.WebAssembly.Pack' or '$(MSBuildProjectName)' != 'XREngine.Browser')" />
+      <_PortableNativeFile Include="@(NativeCopyLocalItems)" />
+      <_PortableNativeFile Include="@(Content)"
+                           Condition="('%(Content.CopyToOutputDirectory)' != '' or '%(Content.CopyToPublishDirectory)' != '') and ($([System.String]::Copy('%(Content.Identity)').Replace('\', '/').Contains('/runtimes/')) or $([System.String]::Copy('%(Content.Identity)').Replace('\', '/').StartsWith('runtimes/')))" />
+      <_PortableNativeFile Include="@(None)"
+                           Condition="('%(None.CopyToOutputDirectory)' != '' or '%(None.CopyToPublishDirectory)' != '') and ($([System.String]::Copy('%(None.Identity)').Replace('\', '/').Contains('/runtimes/')) or $([System.String]::Copy('%(None.Identity)').Replace('\', '/').StartsWith('runtimes/')))" />
+    </ItemGroup>
+    <Error Condition="'@(_PortableRejectedProject)' != ''"
+           Text="Portable runtime $(MSBuildProjectName) has unsupported ProjectReference(s): @(_PortableRejectedProject, ', ')." />
+    <Error Condition="'@(_PortableUnpropagatedProject)' != ''"
+           Text="Portable runtime flag is removed or disabled on ProjectReference(s): @(_PortableUnpropagatedProject, ', ')." />
+    <Error Condition="'@(_PortableRejectedPackage)' != ''"
+           Text="Portable runtime $(MSBuildProjectName) has unreviewed PackageReference(s): @(_PortableRejectedPackage, ', ')." />
+    <Error Condition="'@(_PortableNativeFile)' != ''"
+           Text="Portable runtime $(MSBuildProjectName) includes native/runtime copy item(s): @(_PortableNativeFile, ', ')." />
+  </Target>
+
+  <Target Name="ValidateXREnginePortableResolvedAssets"
+          AfterTargets="ResolveReferences"
+          BeforeTargets="CoreCompile"
+          Condition="'$(XREnginePortableRuntime)' == 'true'">
+    <PropertyGroup>
+      <_PortableSdkPacksPath>$([System.String]::Copy('$(NetCoreTargetingPackRoot)').Replace('\', '/').TrimEnd('/'))</_PortableSdkPacksPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PortableResolvedCandidate Include="@(NativeCopyLocalItems)" />
+      <_PortableResolvedCandidate Include="@(ReferenceCopyLocalPaths)"
+                                  Condition="'%(ReferenceCopyLocalPaths.AssetType)' == 'native' or $([System.String]::Copy('%(ReferenceCopyLocalPaths.Identity)').Replace('\', '/').Contains('/native/'))" />
+      <_PortableResolvedCandidate Include="@(RuntimeTargetsCopyLocalItems)"
+                                  Condition="'%(RuntimeTargetsCopyLocalItems.AssetType)' == 'native' or $([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.Identity)').Replace('\', '/').Contains('/native/'))" />
+      <!-- Only the SDK's own browser runtime pack is expected to carry native
+           WebAssembly assets. A NuGet package under runtimes/browser-wasm/native
+           still fails because it is outside the SDK packs directory. -->
+      <_PortableResolvedNative Include="@(_PortableResolvedCandidate)"
+                               Condition="'$(MSBuildProjectName)' != 'XREngine.Browser' or '$(RuntimeIdentifier)' != 'browser-wasm' or '$(_PortableSdkPacksPath)' == '' or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').StartsWith('$(_PortableSdkPacksPath)/Microsoft.NETCore.App.Runtime.Mono.browser-wasm/')) or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').Contains('/runtimes/browser-wasm/native/'))" />
+    </ItemGroup>
+    <Error Condition="'@(_PortableResolvedNative)' != ''"
+           Text="Portable runtime $(MSBuildProjectName) resolved native runtime asset(s): @(_PortableResolvedNative, ', ')." />
+  </Target>
+</Project>

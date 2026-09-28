@@ -118,7 +118,7 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - MW00.06: Proposed iPhone 15/Safari and Pixel 8/Chrome qualification rows; hardware availability and actual OS/browser versions remain pending. No device support is claimed.
 - MW00.07–MW00.08: Numeric engineering targets, run conditions, and required/optional services recorded; no measured performance results claimed.
 
-**Next:** MW01 portable runtime extraction, then MW02 browser host and G0 live scene boot. Do not mark G0 complete from this audit.
+**Follow-up:** The [portable browser scene boot](../../progress/rendering/portable-browser-scene-boot.md) now provides live evidence for the minimum scene path. The original audit alone did not qualify a browser build.
 
 ## MW01 — Extract and validate the portable runtime/rendering kernel
 
@@ -126,19 +126,28 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Starting points:** [Core project][core-project], [Rendering project][rendering-project], [Data project][data-project], [Bootstrap project][bootstrap-project], [AbstractRenderer][abstract-renderer].
 
-- [ ] **MW01.01** Extract the minimum scene, transform, component, world-update, data, and rendering contracts into browser-compatible project boundaries. Preserve public identities/serialization compatibility where needed.
-- [ ] **MW01.02** Remove desktop/native dependencies from the browser's reachable graph. Isolate GLFW/SDL desktop hosting, OpenVR/OpenXR, DirectStorage, native ImageMagick/FFmpeg, Ultralight, native font processing, CUDA, and native physics/audio integrations according to MW00's inventory.
+- [x] **MW01.01** Extract the minimum scene, transform, component, world-update, data, and rendering contracts into browser-compatible project boundaries. Preserve public identities/serialization compatibility where needed.
+- [x] **MW01.02** Remove desktop/native dependencies from the browser's reachable graph. Isolate GLFW/SDL desktop hosting, OpenVR/OpenXR, DirectStorage, native ImageMagick/FFmpeg, Ultralight, native font processing, CUDA, and native physics/audio integrations according to MW00's inventory.
 - [ ] **MW01.03** Audit neutral-target projects such as Data and Audio independently. Move unsupported implementations and runtime assets out of the browser graph rather than assuming `net10.0` makes them portable.
 - [ ] **MW01.04** Separate the useful generic renderer/resource contracts from desktop, ImGui, native-window, image-processing, and native API dependencies in the current rendering assembly.
 - [ ] **MW01.05** Introduce focused resource/pass/command/copy/presentation/completion capabilities. Keep legacy stateful renderer adapters where necessary without requiring WebGPU to emulate the entire GL-shaped API.
-- [ ] **MW01.06** Create a browser composition root with explicit service installation. Do not reference `XREngine.Runtime.Bootstrap` unchanged or transitively register all desktop integrations.
+- [x] **MW01.06** Create a browser composition root with explicit service installation. Do not reference `XREngine.Runtime.Bootstrap` unchanged or transitively register all desktop integrations.
 - [ ] **MW01.07** Reuse the static factory/provider mechanisms, but generate registrations only for browser-included components, resources, serializers, and modules. Preserve stable type IDs needed by cooked assets.
 - [ ] **MW01.08** Audit reflection discovery, dynamic code generation, dynamic expressions, runtime assembly loading, serializers, and generic construction for the selected WASM/trimming/AOT modes. Treat AOT as a separately tested publish option, not a blanket ban on all reflection.
-- [ ] **MW01.09** Split build-time generators/cook tools from runtime dependencies. Ensure the browser build cannot invoke unrelated native submodule preparation, native DLL copy targets, or desktop-only tooling by accident.
+- [x] **MW01.09** Split build-time generators/cook tools from runtime dependencies. Ensure the browser build cannot invoke unrelated native submodule preparation, native DLL copy targets, or desktop-only tooling by accident.
 - [ ] **MW01.10** Add a portability guard for the browser graph and applicable forbidden APIs/dependencies. Record justified exceptions rather than suppressing all analyzer warnings.
 - [ ] **MW01.11** Validate the extracted scene kernel in an actual browser publish, then retain desktop build/runtime coverage for moved code.
 
 **Acceptance:** G0 constructs a real engine scene, advances lifecycle and transforms, and reports startup success without loading desktop services. Portable changes preserve the existing desktop composition.
+
+**Implementation record (2026-09-28):** [Portable browser scene boot](../../progress/rendering/portable-browser-scene-boot.md).
+
+- MW01.01–MW01.02, MW01.06, MW01.09: Completed for the explicitly selected scene kernel using same-assembly source profiles and a standalone browser composition root. This does not include cooked resources or a renderer.
+- MW01.03–MW01.04: Data/Extensions evaluated and stripped to a managed closure; Audio is excluded. Seven rendering contracts are included; resource/pass/command contracts remain open.
+- MW01.07–MW01.08: Explicit component factory and untrimmed/interpreted browser path work. Generated registrations, cooked IDs/serialization round trips, full API audit, trimming and AOT remain open.
+- MW01.10: Project/package/native-asset guards implemented with a narrow official SDK runtime exception; forbidden-API coverage remains open.
+- MW01.11: Published scene passed three browser runs and desktop Data rebuild passed. Full desktop scene/Core/Rendering coverage remains open. Minimal G0 scene behavior is demonstrated; broader phase qualification is not complete.
+- Initial MW02 work: browser executable and ES-module bootstrap, bounded fixed-step simulation, single-thread transform path, visibility pause/resume policy and repeatable scene teardown exist. Canvas binding, surface contract, renderer startup, render packets, input/resize and physical-device lifecycle validation remain open; MW02 checklist items are not completed by this scene-only host.
 
 ## MW02 — Browser application host, canvas target, and frame scheduling
 

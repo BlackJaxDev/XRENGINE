@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <TargetFramework Condition="'$(XREnginePortableRuntime)' != 'true'">net10.0-windows7.0</TargetFramework>
+    <TargetFramework Condition="'$(XREnginePortableRuntime)' == 'true'">net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
@@ -24,7 +25,7 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
     <PackageReference Include="BitsKit" Version="1.2.0" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="JoltPhysicsSharp" Version="2.22.0" />
@@ -41,7 +42,7 @@
   </ItemGroup>
 
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
     <None Update="runtimes\win-x64\native\lib_coacd.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -60,7 +61,7 @@
     <ForceCoACDBuildSwitch Condition="'$(ForceCoACDBuild)' == 'true'">-ForceBuild</ForceCoACDBuildSwitch>
   </PropertyGroup>
 
-  <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
+  <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(XREnginePortableRuntime)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
     <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
   </Target>
@@ -69,4 +70,5 @@
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
   </ItemGroup>
 
+  <Import Project="../Build/Portable/Core.items" Condition="'$(XREnginePortableRuntime)' == 'true'" />
 </Project>

@@ -7,11 +7,11 @@ namespace XREngine;
 
 /// <summary>
 /// Owns backend-neutral root, play-state, and tick lifecycle state for one
-/// <see cref="RuntimeWorld"/>; rendering state is owned separately.
+/// world context; rendering state is owned separately.
 /// </summary>
-public sealed class RuntimeWorldLifecycle
+public sealed partial class RuntimeWorldLifecycle
 {
-    private readonly Dictionary<ETickGroup, SortedDictionary<int, TickQueue>> _ticks = [];
+    private readonly Dictionary<ETickGroup, SortedList<int, TickQueue>> _ticks = [];
 
     public RuntimeWorldLifecycle(
         IRuntimeWorldContext worldContext,
@@ -23,7 +23,6 @@ public sealed class RuntimeWorldLifecycle
             _ticks[group] = [];
     }
 
-    public XRWorld? TargetWorld { get; set; }
     private int _playState;
     public RuntimeWorldPlayState PlayState
     {
@@ -59,15 +58,21 @@ public sealed class RuntimeWorldLifecycle
     /// </summary>
     public void TickGroup(ETickGroup group)
     {
-        if (!_ticks.TryGetValue(group, out SortedDictionary<int, TickQueue>? ordered))
+        if (!_ticks.TryGetValue(group, out SortedList<int, TickQueue>? ordered))
             return;
 
-        TickQueue[] snapshot = ArrayPool<TickQueue>.Shared.Rent(ordered.Count);
-        int count = 0;
+        TickQueue[] snapshot;
+        int count;
         lock (ordered)
         {
-            foreach (TickQueue queue in ordered.Values)
-                snapshot[count++] = queue;
+            count = ordered.Count;
+            if (count == 0)
+                return;
+
+            snapshot = ArrayPool<TickQueue>.Shared.Rent(count);
+            IList<TickQueue> queues = ordered.Values;
+            for (int index = 0; index < count; index++)
+                snapshot[index] = queues[index];
         }
 
         try
@@ -84,7 +89,7 @@ public sealed class RuntimeWorldLifecycle
 
     private TickQueue GetTickQueue(ETickGroup group, int order)
     {
-        if (!_ticks.TryGetValue(group, out SortedDictionary<int, TickQueue>? ordered))
+        if (!_ticks.TryGetValue(group, out SortedList<int, TickQueue>? ordered))
             _ticks[group] = ordered = [];
 
         lock (ordered)

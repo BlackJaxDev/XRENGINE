@@ -6,6 +6,12 @@ namespace XREngine.Core.Files
 
     public static class PublishedCookedAssetRegistry
     {
+        static PublishedCookedAssetRegistry()
+            => AotRuntimeMetadataStore.PublishedAssetTypeResolver = ResolveRegisteredType;
+
+        private static Type? ResolveRegisteredType(string fullTypeName, bool ignoreCase)
+            => TryResolveByFullName(fullTypeName, ignoreCase, out Type? assetType) ? assetType : null;
+
         private sealed record Entry(
             Guid RegistrationId,
             string OwnerName,

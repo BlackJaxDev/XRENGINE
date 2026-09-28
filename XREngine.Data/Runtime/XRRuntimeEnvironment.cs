@@ -12,7 +12,7 @@ public enum EXRRuntimeBuildKind
     PublishedAot,
 }
 
-public static class XRRuntimeEnvironment
+public static partial class XRRuntimeEnvironment
 {
     public const string PublishedDefineConstant = "XRE_PUBLISHED";
     public const string AotRuntimeDefineConstant = "XRE_AOT_RUNTIME";

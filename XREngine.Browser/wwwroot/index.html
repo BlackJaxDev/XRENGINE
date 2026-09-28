@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XRENGINE portable scene boot</title>
+  <script type="module" src="./main.js"></script>
+  <style>
+    body { margin: 3rem auto; padding: 0 1.5rem; max-width: 52rem; font: 17px/1.6 system-ui, sans-serif; background: #10151d; color: #e4edf4; }
+    h1 { font-size: 1.6rem; } p { color: #b3c2d2; }
+    #status { padding: 1.25rem; border: 1px solid #526478; border-radius: .5rem; white-space: pre-wrap; }
+    [data-state="passed"] { color: #a8ebc0; } [data-state="failed"] { color: #ffb5b5; }
+    button { margin-top: 1rem; padding: .7rem 1rem; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>XRENGINE portable scene boot</h1>
+  <p>This application validates engine scene lifecycle and transforms in WebAssembly. WebGPU rendering is not included in this build.</p>
+  <div id="status" role="status" data-state="loading">Loading the .NET runtime…</div>
+  <button id="restart" disabled>Run again</button>
+</body>
+</html>

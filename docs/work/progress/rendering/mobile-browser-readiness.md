@@ -1,7 +1,7 @@
 # Mobile browser readiness
 
 **Reviewed source:** `9fee4b983efda6f3f79ac107eba2137a5ab8c5fa` (2026-09-28 review).
-**State:** Source audit and delivery contract; no browser runtime or device qualification.
+**State:** Historical source audit and delivery contract. A later [portable browser scene boot](portable-browser-scene-boot.md) implements and validates the minimal scene path; device qualification remains open.
 
 ## Scope and reconciliation
 

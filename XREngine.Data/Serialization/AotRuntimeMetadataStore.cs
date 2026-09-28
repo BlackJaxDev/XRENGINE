@@ -11,6 +11,15 @@ public static class AotRuntimeMetadataStore
 {
     public const string MetadataFileName = "AotRuntimeMetadata.bin";
 
+    // Asset registration is an optional feature of the desktop asset pipeline.
+    // The registry installs this resolver when initialized; dynamic runtime type
+    // discovery continues to work without an asset registry.
+    internal static Func<string, bool, Type?>? PublishedAssetTypeResolver { get; set; }
+
+    // Desktop runtime configuration installs its archive reader before the
+    // published path is accessed. Portable scenes have no archive decoder.
+    internal static Func<string, string, byte[]>? MetadataArchiveReader { get; set; }
+
     private static readonly object Sync = new();
     private static volatile bool _loaded;
     private static AotRuntimeMetadata? _metadata;
@@ -163,7 +172,9 @@ public static class AotRuntimeMetadataStore
 
         try
         {
-            byte[] bytes = AssetArchiveReader.GetAsset(configArchivePath, MetadataFileName);
+            Func<string, string, byte[]> reader = MetadataArchiveReader
+                ?? throw new NotSupportedException("No published config archive reader is registered for this runtime.");
+            byte[] bytes = reader(configArchivePath, MetadataFileName);
             return MemoryPackSerializer.Deserialize<AotRuntimeMetadata>(bytes);
         }
         catch (FileNotFoundException)
@@ -200,7 +211,7 @@ public static class AotRuntimeMetadataStore
 
         // Published registrations are explicit AOT roots. They provide a trimmed-safe
         // path for repository assets whose persisted outer assembly qualifier changed.
-        if (PublishedCookedAssetRegistry.TryResolveByFullName(fullTypeName, ignoreCase, out Type? publishedType))
+        if (PublishedAssetTypeResolver?.Invoke(fullTypeName, ignoreCase) is { } publishedType)
             return publishedType;
 
         // Fallback: scan loaded assemblies by FullName.
