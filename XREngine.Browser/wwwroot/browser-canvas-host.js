@@ -14,6 +14,7 @@ export class BrowserCanvasHost {
         this.frameId = 0;
         this.disposed = false;
         this.splitView = true;
+        this.instanceCount = 16;
         this.pointerId = null;
         this.pointerX = 0.5;
         this.pointerY = 0.5;
@@ -48,7 +49,10 @@ export class BrowserCanvasHost {
                 return;
             }
             this.session = this.scene.Create(this.canvas.id);
+            renderer.setOwner(this.session);
             this.renderers.set(this.session, renderer);
+            this.scene.SetInstanceCount(this.session, this.instanceCount);
+            this.scene.InitializeGraphics(this.session);
             this.scene.SetSplitView(this.session, this.splitView);
             this.installEvents(controller.signal);
             this.syncSurface();
@@ -169,7 +173,7 @@ export class BrowserCanvasHost {
             ratio, this.renderer.generation, visible, focused, this.attached);
         this.drawable = visible && this.attached && width > 0 && height > 0;
         if (this.drawable) {
-            this.setState('running', 'WebGPU ready. Drag the triangle or focus the canvas and use arrow keys.');
+            this.setState('running', 'WebGPU ready. Drag the scene or focus the canvas and use arrow keys.');
             if (!this.frameId) this.frameId = requestAnimationFrame(this.frame);
         } else {
             cancelAnimationFrame(this.frameId);
@@ -198,6 +202,20 @@ export class BrowserCanvasHost {
         try {
             if (this.session) this.scene.SetSplitView(this.session, enabled);
         } catch (error) { this.fail(error); }
+    }
+
+    setInstanceCount(count) {
+        if (!Number.isInteger(count) || count < 1 || count > 256)
+            throw new Error('Instance count must be between 1 and 256.');
+        this.instanceCount = count;
+        try {
+            if (this.session) this.scene.SetInstanceCount(this.session, count);
+        } catch (error) { this.fail(error); }
+    }
+
+    getStatistics() {
+        // Diagnostic snapshots are explicit UI actions, never animation-frame work.
+        return this.renderer?.getStatistics() ?? null;
     }
 
     fail(error) {

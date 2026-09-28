@@ -17,5 +17,8 @@
     <Compile Include="Runtime/Browser/RuntimeInputState.cs" />
     <Compile Include="Runtime/Browser/IRuntimeSurfaceHost.cs" />
     <Compile Include="Runtime/Browser/BrowserCanvasRenderTarget.cs" />
+    <Compile Include="Runtime/Browser/BrowserResourceHandle.cs" />
+    <Compile Include="Runtime/Browser/BrowserFramePacket.cs" />
+    <Compile Include="Runtime/Browser/BrowserFramePacketState.cs" />
   </ItemGroup>
 </Project>
