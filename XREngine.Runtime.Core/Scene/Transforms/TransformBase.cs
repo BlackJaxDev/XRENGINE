@@ -1102,7 +1102,7 @@ namespace XREngine.Scene.Transforms
             // synchronously because it has no world queue to defer through.
             bool syncNow = ResolveRenderMatrixSync(setRenderMatrixNow);
             if (syncNow || World is null)
-                SetRenderMatrix(WorldMatrix, false).Wait();
+                SetRenderMatrixImmediate(WorldMatrix);
 
             return recalcWorld;
         }
@@ -1129,6 +1129,25 @@ namespace XREngine.Scene.Transforms
                     _ => ChildrenRecalcSequential(setRenderMatrixNow),
                 }
                 : Task.CompletedTask;
+
+        /// <summary>
+        /// Updates a hierarchy on its owning thread without task waits or worker
+        /// dispatch. Child-local changes are visited even when the parent is clean.
+        /// </summary>
+        public void RecalculateMatrixHierarchyImmediate(bool forceWorldRecalc = false, bool setRenderMatrixNow = true)
+        {
+            bool parentChanged = RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow);
+            var children = RentChildrenCopy(out int count);
+            try
+            {
+                for (int index = 0; index < count; index++)
+                    children[index].RecalculateMatrixHierarchyImmediate(parentChanged, setRenderMatrixNow);
+            }
+            finally
+            {
+                ReturnChildrenCopy(children);
+            }
+        }
 
         public void RecalcLocal()
         {
@@ -1174,13 +1193,19 @@ namespace XREngine.Scene.Transforms
 
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
-            PublishRenderState(matrix);
-            OnRenderMatrixChanged();
+            SetRenderMatrixImmediate(matrix);
 
             if (recalcAllChildRenderMatrices)
                 return RecalculateRenderMatrixHierarchy(RuntimeTransformServices.Current?.ChildRecalculationLoopType ?? ELoopType.Sequential);
             else
                 return Task.CompletedTask;
+        }
+
+        /// <summary>Publishes this transform's render matrix without scheduling child work.</summary>
+        public void SetRenderMatrixImmediate(Matrix4x4 matrix)
+        {
+            PublishRenderState(matrix);
+            OnRenderMatrixChanged();
         }
 
         private void PublishRenderState(Matrix4x4 matrix)
@@ -1601,6 +1626,8 @@ namespace XREngine.Scene.Transforms
                         child.Parent = null;
                 _children.Clear();
             }
+            // Detaching children does not release their registered list owner.
+            _children.Destroy(true);
 
             //Detach from parent
             Parent = null;

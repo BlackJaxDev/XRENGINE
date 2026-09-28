@@ -600,7 +600,12 @@ namespace XREngine.Scene
                 case nameof(World):
                     Transform.World = World;
                     if (World is not null)
-                        Transform.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential).GetAwaiter().GetResult();
+                    {
+                        if (OperatingSystem.IsBrowser())
+                            Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true);
+                        else
+                            Transform.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential).GetAwaiter().GetResult();
+                    }
                     foreach (var component in Components)
                         component.World = World;
                     if (World is not null &&

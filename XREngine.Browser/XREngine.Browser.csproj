@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
+    <IsPackable>false</IsPackable>
+    <!-- Qualify the interpreter first. Trimming and AOT require their own
+         registration/serialization validation rather than inheriting desktop assumptions. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
+    <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
+  </ItemGroup>
+</Project>

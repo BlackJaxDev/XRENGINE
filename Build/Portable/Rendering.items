@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
+  </PropertyGroup>
+  <!-- Compile the existing backend-neutral contracts under the rendering assembly
+       identity; desktop builds continue to compile the full source tree. -->
+  <ItemGroup>
+    <Compile Remove="**/*.cs" />
+    <Compile Include="Runtime/RuntimeGraphicsApiKind.cs" />
+    <Compile Include="Runtime/RendererModules/RendererBackendId.cs" />
+    <Compile Include="Runtime/RendererModules/RenderExecutionMode.cs" />
+    <Compile Include="Runtime/RendererModules/RendererBackendCapabilities.cs" />
+    <Compile Include="Runtime/RendererModules/IRendererPresentationTarget.cs" />
+    <Compile Include="Runtime/RendererModules/RenderTargetOutputProperties.cs" />
+    <Compile Include="Runtime/RendererModules/RenderFrameOutputCapabilities.cs" />
+  </ItemGroup>
+</Project>

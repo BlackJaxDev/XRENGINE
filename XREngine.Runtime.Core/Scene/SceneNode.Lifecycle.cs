@@ -193,6 +193,8 @@ namespace XREngine.Scene
                     component.Destroy();
                 ComponentsInternal.Clear();
             }
+            // The list itself is a registered engine object owned by this node.
+            ComponentsInternal.Destroy(true);
 
             Parent = null;
             _transform?.Destroy();

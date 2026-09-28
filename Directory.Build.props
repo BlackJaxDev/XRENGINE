@@ -1,4 +1,15 @@
 <Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser'">
+    <XREnginePortableRuntime>true</XREnginePortableRuntime>
+  </PropertyGroup>
+  <!-- Portable and desktop assemblies keep their public identities but must
+       never reuse generated files, restored assets, or build outputs. -->
+  <PropertyGroup Condition="'$(XREnginePortableRuntime)' == 'true'">
+    <BaseOutputPath>bin/portable/</BaseOutputPath>
+    <BaseIntermediateOutputPath>obj/portable/</BaseIntermediateOutputPath>
+    <ArtifactsProjectName>$(MSBuildProjectName).portable</ArtifactsProjectName>
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+  </PropertyGroup>
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -7,7 +18,7 @@
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <Nullable>disable</Nullable>
-    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**;**/obj/**;**/bin/**</DefaultItemExcludes>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-dev</PackageVersion>
     <Authors Condition="'$(Authors)' == ''">BlackJax</Authors>
     <Company Condition="'$(Company)' == ''">BlackJax LLC</Company>

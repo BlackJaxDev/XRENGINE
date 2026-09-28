@@ -1,15 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <TargetFramework Condition="'$(XREnginePortableRuntime)' == 'true'">net10.0</TargetFramework>
+    <TargetFramework Condition="'$(XREnginePortableRuntime)' != 'true'">net10.0-windows7.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
-    <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
-    <DefineConstants Condition="Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
-    <Freetype64Source Condition="'$(Freetype64Source)' == ''">$(NuGetPackageRoot)sharpfont.dependencies\2.6.0\bin\msvc12\x64\freetype6.dll</Freetype64Source>
-    <NvidiaRtxgiWinX64Dir Condition="'$(NvidiaRtxgiWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\RTXGI\win-x64\</NvidiaRtxgiWinX64Dir>
+    <RiveSharpManagedDll Condition="'$(XREnginePortableRuntime)' != 'true'">$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
+    <DefineConstants Condition="'$(XREnginePortableRuntime)' != 'true' and Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
+    <Freetype64Source Condition="'$(XREnginePortableRuntime)' != 'true' and '$(Freetype64Source)' == ''">$(NuGetPackageRoot)sharpfont.dependencies\2.6.0\bin\msvc12\x64\freetype6.dll</Freetype64Source>
+    <NvidiaRtxgiWinX64Dir Condition="'$(XREnginePortableRuntime)' != 'true' and '$(NvidiaRtxgiWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\RTXGI\win-x64\</NvidiaRtxgiWinX64Dir>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -28,7 +29,7 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
     <PackageReference Include="BitsKit" Version="1.2.0" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
@@ -79,20 +80,26 @@
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
     <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
     <Reference Include="RiveSharp" Condition="Exists('$(RiveSharpManagedDll)')">
       <HintPath>$(RiveSharpManagedDll)</HintPath>
     </Reference>
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' == 'true'">
+    <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
+  </ItemGroup>
+
+  <Import Project="..\Build\Portable\Rendering.items" Condition="'$(XREnginePortableRuntime)' == 'true'" />
+
+  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
     <None Include="$(RiveSharpManagedDll)" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('$(RiveSharpManagedDll)')" />
     <None Update="runtimes\win-x64\native\rive.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -120,7 +127,7 @@
     </None>
   </ItemGroup>
 
-  <Target Name="CopyRestirNative" AfterTargets="Build">
+  <Target Name="CopyRestirNative" AfterTargets="Build" Condition="'$(XREnginePortableRuntime)' != 'true'">
     <PropertyGroup>
       <RestirNativeSource>$(MSBuildProjectDirectory)\..\Build\RestirGI\bin\$(Configuration)\RestirGINative.dll</RestirNativeSource>
       <RestirNativeDest>$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll</RestirNativeDest>
@@ -129,15 +136,15 @@
     <Copy SourceFiles="$(RestirNativeSource)" DestinationFiles="$(RestirNativeDest)" SkipUnchangedFiles="true" Condition="Exists('$(RestirNativeSource)')" />
   </Target>
 
-  <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">
+  <Target Name="ForceFreetype64" AfterTargets="Build" Condition="'$(XREnginePortableRuntime)' != 'true' and Exists('$(Freetype64Source)')">
     <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(OutDir)freetype6.dll" SkipUnchangedFiles="false" />
   </Target>
 
-  <Target Name="ForceFreetype64Publish" AfterTargets="Publish" Condition="Exists('$(Freetype64Source)') and '$(PublishDir)' != ''">
+  <Target Name="ForceFreetype64Publish" AfterTargets="Publish" Condition="'$(XREnginePortableRuntime)' != 'true' and Exists('$(Freetype64Source)') and '$(PublishDir)' != ''">
     <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(PublishDir)freetype6.dll" SkipUnchangedFiles="false" />
   </Target>
 
-  <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
+  <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(XREnginePortableRuntime)' != 'true' and '$(OS)' == 'Windows_NT'">
     <PropertyGroup>
       <HlsReferenceFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\HlsReference\win-x64</HlsReferenceFfmpegDir>
       <FfmpegSeedDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\Seed\win-x64</FfmpegSeedDir>

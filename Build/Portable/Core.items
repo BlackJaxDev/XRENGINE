@@ -1,0 +1,43 @@
+<Project>
+  <!-- Shared source, unchanged assembly identity. Native implementations stay
+       in the desktop profile; additions to this closure require explicit review. -->
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MemoryPack" Version="1.21.4" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <Compile Include="Attributes/OneComponentAllowedAttribute.cs" />
+    <Compile Include="Attributes/RequireComponentsAttribute.cs" />
+    <Compile Include="Attributes/RequiresTransformAttribute.cs" />
+    <Compile Include="Attributes/XRComponentAttribute.cs" />
+    <Compile Include="Components/Ticking.cs" />
+    <Compile Include="GlobalWorldTypeAliases.cs" />
+    <Compile Include="Scene/Components/XRComponent.cs" />
+    <Compile Include="Scene/Prefabs/SceneNodePrefabLink.cs" />
+    <Compile Include="Scene/RuntimeSceneNodeServices.cs" />
+    <Compile Include="Scene/SceneNode.Components.cs" />
+    <Compile Include="Scene/SceneNode.Factory.cs" />
+    <Compile Include="Scene/SceneNode.Hierarchy.cs" />
+    <Compile Include="Scene/SceneNode.Lifecycle.cs" />
+    <Compile Include="Scene/SceneNode.Transform.cs" />
+    <Compile Include="Scene/SceneNode.cs" />
+    <Compile Include="Scene/Transforms/DefaultLayers.cs" />
+    <Compile Include="Scene/Transforms/EParentAssignmentMode.cs" />
+    <Compile Include="Scene/Transforms/ITransformChildPlacementInfo.cs" />
+    <Compile Include="Scene/Transforms/RuntimeTransformServices.cs" />
+    <Compile Include="Scene/Transforms/Transform.cs" />
+    <Compile Include="Scene/Transforms/TransformBase.MatrixInfo.cs" />
+    <Compile Include="Scene/Transforms/TransformBase.cs" />
+    <Compile Include="Scene/Transforms/TransformDiagnosticEvaluationScope.cs" />
+    <Compile Include="Scene/Transforms/TransformDiagnosticInvalidationState.cs" />
+    <Compile Include="Scene/Transforms/TransformHierarchyMutationBatch.cs" />
+    <Compile Include="Scene/Transforms/TransformFactoryRegistry.cs" />
+    <Compile Include="Scene/Transforms/XRTransformEditorAttribute.cs" />
+    <Compile Include="World/RootNodeCollection.cs" />
+    <Compile Include="World/RuntimeSceneHost.cs" />
+    <Compile Include="World/RuntimeWorldLifecycle.cs" />
+    <Compile Include="World/XRWorldObjectBase.cs" />
+  </ItemGroup>
+</Project>
