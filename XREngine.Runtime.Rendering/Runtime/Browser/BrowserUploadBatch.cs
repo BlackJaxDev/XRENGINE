@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Numerics;
+using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Rendering;
 
@@ -176,11 +177,8 @@ public sealed class BrowserUploadBatch : IDisposable
             tint.Z is < 0 or > 1 || tint.W != 1.0f)
             FailArgument(nameof(tint), "A material tint requires a valid handle and finite normalized RGB with opaque alpha.");
 
-        Span<byte> payload = Append(4, handle, 0, 0, 0, 0, 16);
-        BinaryPrimitives.WriteSingleLittleEndian(payload, tint.X);
-        BinaryPrimitives.WriteSingleLittleEndian(payload.Slice(4), tint.Y);
-        BinaryPrimitives.WriteSingleLittleEndian(payload.Slice(8), tint.Z);
-        BinaryPrimitives.WriteSingleLittleEndian(payload.Slice(12), tint.W);
+        Span<byte> payload = Append(4, handle, 0, 0, 0, 0, BrowserShaderAbi.MaterialBytes);
+        BrowserShaderAbi.WriteTint(payload, in tint);
     }
 
     public void Seal()

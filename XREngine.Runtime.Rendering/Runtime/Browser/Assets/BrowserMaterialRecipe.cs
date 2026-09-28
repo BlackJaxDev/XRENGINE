@@ -1,4 +1,6 @@
 using System.Numerics;
+using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Rendering;
 
@@ -16,4 +18,10 @@ public sealed class BrowserMaterialRecipe
 
     public XRMaterial Source { get; }
     public BrowserMaterialData Data { get; }
+
+    /// <summary>Generates the explicitly authored unlit opaque shader for this recipe.</summary>
+    public ShaderArtifact GenerateShader(ShaderCompileTarget target) =>
+        BrowserMaterialShaderGenerator.Generate(
+            new BrowserMaterialShaderDefinition("browser-unlit", "unlit", "opaque",
+                Data.Texture is null ? "tint" : "texture"), target);
 }

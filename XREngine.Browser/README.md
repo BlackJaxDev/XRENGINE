@@ -116,6 +116,15 @@ bounded arenas, ownership, copy accounting and deferred acceptance evidence.
 See [cooked shader artifact notes](../docs/work/progress/rendering/browser-shader-artifacts.md)
 for recipe limits, identities, compiler-contract compatibility and deferred validation.
 
+Use the [C# shader cooker](../Tools/ShaderCooker/README.md) for new shader packages;
+no Python is required. [Shader cooking and material generation](../docs/work/progress/rendering/browser-shader-cooking.md)
+documents the typed unlit generator, optional Slang 2026.8 route and schema 2
+contracts. After cooking and publishing a named variant, `?shader=<artifact-name>`
+selects it; only that pipeline is compiled. The existing checked-in default remains
+schema 1. Shader compilation and pipeline creation have separate cancellable
+45-second deadlines, with startup timings included in counter snapshots. The new
+cooker and shader routes have not been executed or qualified for this delivery.
+
 See [module and snapshot integration](../docs/work/progress/rendering/browser-webgpu-module-assets.md)
 for the export API, supported subset, ownership and remaining integration work.
 

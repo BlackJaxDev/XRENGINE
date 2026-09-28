@@ -1,11 +1,13 @@
 import { GpuResourceTable } from './gpu-resource-table.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
-import { loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
+import { formatShaderDiagnostic, loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
 
 const maximumUploadBytes = 64 * 1024 * 1024;
 const maximumTextureBytes = 64 * 1024 * 1024;
 const whitePixel = new Uint8Array([255, 255, 255, 255]);
+const shaderCompilationBudgetMs = 45_000;
+const pipelineCreationBudgetMs = 45_000;
 
 function asError(value) {
     return value instanceof Error ? value : new Error(value?.message ?? String(value));
@@ -24,10 +26,69 @@ function copyMemory(memory, length) {
     return bytes;
 }
 
+function startupAbortError() {
+    return new DOMException('WebGPU initialization was canceled.', 'AbortError');
+}
+
+// The WebGPU promise is not cancellable; the deadline stops waiting and its late
+// result remains private to the abandoned promise rather than reaching the renderer.
+async function awaitStartupStage(operation, budgetMs, stage, signal, stopSignal, startedAt) {
+    const deadline = startedAt + budgetMs;
+    // Observe even an operation abandoned before Promise.race is installed.
+    operation.catch(() => {});
+    let timer;
+    let rejectWait;
+    const interrupted = new Promise((_, reject) => { rejectWait = reject; });
+    const abort = () => rejectWait(startupAbortError());
+    signal?.addEventListener('abort', abort, { once: true });
+    stopSignal.addEventListener('abort', abort, { once: true });
+    try {
+        if (signal?.aborted || stopSignal.aborted) throw startupAbortError();
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) throw new Error(`WebGPU ${stage} exceeded its ${budgetMs} ms startup budget.`);
+        timer = setTimeout(() => rejectWait(new Error(`WebGPU ${stage} exceeded its ${budgetMs} ms startup budget.`)), remaining);
+        const result = await Promise.race([operation, interrupted]);
+        if (performance.now() > deadline)
+            throw new Error(`WebGPU ${stage} exceeded its ${budgetMs} ms startup budget.`);
+        return result;
+    } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        stopSignal.removeEventListener('abort', abort);
+    }
+}
+
+// Pop both scopes immediately after submitting the GPU operation. Their promises
+// are observed even when the outer startup deadline expires before they settle.
+async function scopedStartupOperation(device, stage, operation) {
+    device.pushErrorScope('out-of-memory');
+    device.pushErrorScope('validation');
+    let pending;
+    let validation;
+    let outOfMemory;
+    try {
+        try { pending = Promise.resolve(operation()); }
+        catch (error) { pending = Promise.reject(error); }
+    } finally {
+        try { validation = device.popErrorScope(); }
+        finally { outOfMemory = device.popErrorScope(); }
+    }
+    const [result, validationResult, memoryResult] = await Promise.allSettled([pending, validation, outOfMemory]);
+    for (const scoped of [validationResult, memoryResult]) {
+        if (scoped.status === 'rejected') throw asError(scoped.reason);
+        if (scoped.value) throw new Error(`WebGPU ${stage}: ${scoped.value.message}`);
+    }
+    if (result.status === 'rejected') throw asError(result.reason);
+    return result.value;
+}
+
 /** One device, one canvas surface, and one generation-stamped resource namespace. */
 export class WebGpuCanvasRenderer {
-    constructor(canvas, onState, onFailure) {
+    constructor(canvas, onState, onFailure, shaderName = 'browser-unlit') {
+        if (typeof shaderName !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(shaderName))
+            throw new TypeError('Shader artifact name must be a lowercase manifest name.');
         this.canvas = canvas;
+        this._shaderName = shaderName;
         this.onState = onState;
         this.onFailure = onFailure;
         this._generation = 0;
@@ -67,6 +128,10 @@ export class WebGpuCanvasRenderer {
             frameSubmitCalls: 0, uploadSubmitCalls: 0 };
         this._lastPacketFailure = null;
         this._shaderArtifact = undefined;
+        this._startupAbort = undefined;
+        this._startupToken = undefined;
+        this._startup = { stage: 'idle', budgetsMs: { shaderCompilation: shaderCompilationBudgetMs, pipelineCreation: pipelineCreationBudgetMs },
+            timingsMs: { fetchHash: null, shaderCompilation: null, pipelineCreation: null, total: null } };
         this._onUncapturedError = event => this._fail(event.error);
     }
 
@@ -93,6 +158,12 @@ export class WebGpuCanvasRenderer {
                 throw new DOMException('WebGPU initialization was canceled.', 'AbortError');
             throw new Error('WebGPU device is unavailable.');
         }
+    }
+
+    _assertStartup(signal, token, device) {
+        this._assertActive(signal);
+        if (this._startupToken !== token || this.device !== device)
+            throw startupAbortError();
     }
 
     _fail(reason) {
@@ -138,6 +209,10 @@ export class WebGpuCanvasRenderer {
         if (this._disposed || this._failed || this.device || this._initializing)
             throw new Error('WebGPU renderer cannot be initialized again.');
         this._initializing = true;
+        const startupToken = {};
+        const startupStart = performance.now();
+        this._startupToken = startupToken;
+        this._startupAbort = new AbortController();
         try {
             this._assertActive(signal);
             if (!globalThis.isSecureContext || !navigator.gpu)
@@ -148,7 +223,11 @@ export class WebGpuCanvasRenderer {
             if (!adapter) throw new Error('No WebGPU adapter is available.');
 
             this.onState('loading-shader');
-            const artifact = await loadBrowserUnlitArtifact(signal);
+            this._startup.stage = 'fetch-hash';
+            const fetchStart = performance.now();
+            let artifact;
+            try { artifact = await loadBrowserUnlitArtifact(signal, this._shaderName); }
+            finally { this._startup.timingsMs.fetchHash = performance.now() - fetchStart; }
             this._assertActive(signal);
             const deviceRequirements = shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity);
             this._shaderArtifact = {
@@ -190,38 +269,64 @@ export class WebGpuCanvasRenderer {
             this._whiteView = this._whiteTexture.createView();
             device.queue.writeTexture({ texture: this._whiteTexture }, whitePixel, { bytesPerRow: 4 }, [1, 1]);
 
-            this.onState('creating-pipeline');
-            const shader = device.createShaderModule({ code: artifact.source });
-            const diagnostics = await shader.getCompilationInfo();
-            this._assertActive(signal);
+            this.onState('warming-pipeline');
+            this._startup.stage = 'shader-compilation';
+            const compilationStart = performance.now();
+            const compilation = scopedStartupOperation(device, 'shader compilation', async () => {
+                const shader = device.createShaderModule({ code: artifact.source });
+                return { shader, diagnostics: await shader.getCompilationInfo() };
+            });
+            let compiled;
+            try {
+                compiled = await awaitStartupStage(compilation, shaderCompilationBudgetMs,
+                    'shader compilation', signal, this._startupAbort.signal, compilationStart);
+            } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                throw new Error(`Shader ${artifact.artifactIdentity} ${artifact.descriptor.source.path}: ${error.message ?? error}`, { cause: error });
+            } finally { this._startup.timingsMs.shaderCompilation = performance.now() - compilationStart; }
+            const { shader, diagnostics } = compiled;
+            this._assertStartup(signal, startupToken, device);
             const errors = diagnostics.messages.filter(message => message.type === 'error');
-            const shaderLabel = `${artifact.descriptor.source.path} (${artifact.artifactIdentity})`;
             for (const message of diagnostics.messages) {
                 if (message.type === 'warning')
-                    console.warn(`${shaderLabel}:${message.lineNum}:${message.linePos}: ${message.message}`);
+                    console.warn(formatShaderDiagnostic(artifact.descriptor, artifact.artifactIdentity, message));
             }
             if (errors.length)
-                throw new Error(`WGSL compilation failed: ${errors.map(message => `${shaderLabel}:${message.lineNum}:${message.linePos} ${message.message}`).join('; ')}`);
-            const pipeline = await device.createRenderPipelineAsync({
+                throw new Error(`WGSL compilation failed: ${errors.map(message => formatShaderDiagnostic(artifact.descriptor, artifact.artifactIdentity, message)).join('; ')}`);
+            this.onState('creating-pipeline');
+            this._startup.stage = 'pipeline-creation';
+            const pipelineStart = performance.now();
+            const pipelineOperation = scopedStartupOperation(device, 'pipeline creation', () => device.createRenderPipelineAsync({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [this._viewLayout, this._materialLayout] }),
                 vertex: { module: shader, entryPoint: artifact.descriptor.entryPoints.vertex, buffers: [{ arrayStride: 20, attributes: [
                     { shaderLocation: 0, offset: 0, format: 'float32x3' },
                     { shaderLocation: 1, offset: 12, format: 'float32x2' },
                 ] }] },
                 fragment: { module: shader, entryPoint: artifact.descriptor.entryPoints.fragment, targets: [{ format: this.format }] },
-                primitive: { topology: 'triangle-list', cullMode: 'none' },
+                primitive: { topology: 'triangle-list', frontFace: 'ccw', cullMode: 'none' },
                 depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
-            });
-            this._assertActive(signal);
-            if (this.device !== device) throw new Error('The device changed before pipeline creation completed.');
+            }));
+            let pipeline;
+            try {
+                pipeline = await awaitStartupStage(pipelineOperation, pipelineCreationBudgetMs,
+                    'pipeline creation', signal, this._startupAbort.signal, pipelineStart);
+            } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                throw new Error(`Shader ${artifact.artifactIdentity} opaque vertexMain/fragmentMain pipeline: ${error.message ?? error}`, { cause: error });
+            } finally { this._startup.timingsMs.pipelineCreation = performance.now() - pipelineStart; }
+            this._assertStartup(signal, startupToken, device);
             this.pipeline = pipeline;
+            this._startup.stage = 'ready';
             this.onState('ready');
         } catch (error) {
+            if (this._startup.stage !== 'ready') this._startup.stage = error?.name === 'AbortError' ? 'canceled' : 'failed';
             if (error?.name === 'AbortError' && (signal?.aborted || this._disposed)) this.dispose();
             else this._fail(error);
             throw error;
         } finally {
+            this._startup.timingsMs.total = performance.now() - startupStart;
             this._initializing = false;
+            if (this._startupToken === startupToken) this._startupToken = undefined;
         }
     }
 
@@ -651,6 +756,8 @@ export class WebGpuCanvasRenderer {
 
     getStatistics() {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
+            startup: { stage: this._startup.stage, budgetsMs: { ...this._startup.budgetsMs },
+                timingsMs: { ...this._startup.timingsMs } },
             shaderArtifact: this._shaderArtifact && {
             identity: this._shaderArtifact.identity,
             requiredFeatures: [...this._shaderArtifact.requiredFeatures],
@@ -661,6 +768,8 @@ export class WebGpuCanvasRenderer {
     dispose() {
         if (this._disposed) return;
         this._disposed = true;
+        this._startupToken = undefined;
+        this._startupAbort?.abort();
         if (this._configured) {
             try { this.context.unconfigure(); } catch (error) { console.error(error); }
         }

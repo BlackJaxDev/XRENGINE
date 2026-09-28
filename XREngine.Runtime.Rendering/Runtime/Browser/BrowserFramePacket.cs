@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Numerics;
+using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Rendering;
 
@@ -161,22 +162,7 @@ public sealed class BrowserFramePacket : IDisposable
         Write32(draw, 36, height);
         Write32(draw, 40, firstIndex);
         Write32(draw, 44, indexCount);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(48), matrix.M11);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(52), matrix.M12);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(56), matrix.M13);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(60), matrix.M14);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(64), matrix.M21);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(68), matrix.M22);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(72), matrix.M23);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(76), matrix.M24);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(80), matrix.M31);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(84), matrix.M32);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(88), matrix.M33);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(92), matrix.M34);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(96), matrix.M41);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(100), matrix.M42);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(104), matrix.M43);
-        BinaryPrimitives.WriteSingleLittleEndian(draw.Slice(108), matrix.M44);
+        BrowserShaderAbi.WriteTransform(draw.Slice(48, BrowserShaderAbi.TransformBytes), in matrix);
         _drawCount++;
     }
 

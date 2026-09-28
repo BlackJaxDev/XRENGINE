@@ -5,7 +5,10 @@ const canvasOwners = new WeakMap();
 
 /** Owns one canvas session. The shared runtime only routes interop by session ID. */
 export class BrowserCanvasHost {
-    constructor(scene, renderers, canvas, onState) {
+    constructor(scene, renderers, canvas, onState, shaderName = 'browser-unlit') {
+        if (typeof shaderName !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(shaderName))
+            throw new Error('The shader name must identify a cooked manifest artifact.');
+        this.shaderName = shaderName;
         if (!(canvas instanceof HTMLCanvasElement) || !canvas.id)
             throw new Error('A canvas with a stable ID must be supplied.');
         this.scene = scene;
@@ -52,7 +55,7 @@ export class BrowserCanvasHost {
             state => {
                 if (epoch === this.epoch) this.setState(state, state.replaceAll('-', ' '));
             },
-            error => { if (epoch === this.epoch) this.fail(error); });
+            error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName);
         this.renderer = renderer;
         try {
             this.session = this.snapshotJson

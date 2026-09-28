@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "browser-unlit-texture",
+  "shadingModel": "unlit",
+  "surface": "opaque",
+  "baseColor": "texture"
+}

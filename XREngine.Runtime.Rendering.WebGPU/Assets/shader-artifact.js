@@ -109,17 +109,54 @@ async function verifyDigest(bytes, expected, where) {
     if (actual !== expected) fail(where, `SHA-256 mismatch (expected ${expected}, found ${actual}).`);
 }
 
-function validateDescriptor(descriptor, identity) {
-    fields(descriptor, ['schemaVersion', 'name', 'target', 'sourceLanguage', 'compilerIdentity',
+function relativePath(value, where, directory = false) {
+    if (directory && value === '.') return;
+    if (typeof value !== 'string' || !value.length || value.length > 240
+        || !/^[A-Za-z0-9_.\/-]+$/.test(value)
+        || value.startsWith('/') || value.split('/').some(part => !part || part === '.' || part === '..'))
+        fail(where, `invalid relative ${directory ? 'directory' : 'source'} path.`);
+}
+
+function validateDescriptor(descriptor, identity, name) {
+    const version = descriptor?.schemaVersion;
+    if (version !== 1 && version !== 2) fail(identity, 'unsupported descriptor schema.');
+    const keys = ['schemaVersion', 'name', 'target', 'sourceLanguage', 'compilerIdentity',
         'semanticSchemaIdentity', 'matrixLayout', 'entryPoints', 'defines', 'specialization',
-        'requiredFeatures', 'requiredLimits', 'source', 'dependencies', 'layout', 'pipeline'], identity);
+        'requiredFeatures', 'requiredLimits', 'source', 'dependencies', 'layout', 'pipeline'];
+    if (version === 2) keys.push('includes', 'coordinates', 'sourceMap');
+    fields(descriptor, keys, identity);
     for (const [key, value] of Object.entries({
-        schemaVersion: 1, name: 'browser-unlit', target: 'WebGPUWgsl', sourceLanguage: 'WGSL',
-        compilerIdentity: 'xrengine-wgsl-packager/1', semanticSchemaIdentity: 'xrengine.browser.mesh.v1',
+        name, target: 'WebGPUWgsl', semanticSchemaIdentity: 'xrengine.browser.mesh.v1',
         matrixLayout: 'column-major', entryPoints: { vertex: 'vertexMain', fragment: 'fragmentMain' },
-        defines: [], specialization: {}, layout: expectedLayout, pipeline: expectedPipeline,
+        specialization: {}, layout: expectedLayout, pipeline: expectedPipeline,
     })) {
         if (!exact(descriptor[key], value)) fail(identity, `unsupported ${key}.`);
+    }
+    if (version === 1) {
+        if (descriptor.sourceLanguage !== 'WGSL' || descriptor.compilerIdentity !== 'xrengine-wgsl-packager/1'
+            || !exact(descriptor.defines, [])) fail(identity, 'unsupported legacy compiler or source language.');
+    } else {
+        const language = descriptor.sourceLanguage;
+        const compiler = descriptor.compilerIdentity;
+        if (!((language === 'WGSL' && compiler === 'xrengine-wgsl-packager/2')
+            || (language === 'MaterialRecipe' && compiler === 'xrengine-material-wgsl/1')
+            || (language === 'Slang' && typeof compiler === 'string' && /^slang\/2026\.8\/[0-9a-f]{64}$/.test(compiler))))
+            fail(identity, 'unsupported compiler/source-language pair.');
+        if (descriptor.coordinates !== 'xrengine.webgpu.coordinates.v1')
+            fail(identity, 'unsupported coordinate contract.');
+        if (!Array.isArray(descriptor.defines) || descriptor.defines.length > 64
+            || descriptor.defines.some(value => typeof value !== 'string' || value.length > 1024
+                || !/^[A-Za-z_][A-Za-z0-9_]*(?:=[^\r\n\0]*)?$/.test(value)))
+            fail(identity, 'invalid preprocessor definitions.');
+        if (!Array.isArray(descriptor.includes) || descriptor.includes.length > 16)
+            fail(identity, 'invalid include roots.');
+        for (const include of descriptor.includes) relativePath(include, identity, true);
+        if (language !== 'Slang' && (descriptor.defines.length || descriptor.includes.length))
+            fail(identity, 'only the Slang frontend accepts includes or definitions.');
+        fields(descriptor.sourceMap, ['kind', 'path'], `${identity} source map`);
+        const expectedKind = language === 'WGSL' ? 'identity' : language === 'MaterialRecipe' ? 'generated' : 'unmapped';
+        if (descriptor.sourceMap.kind !== expectedKind) fail(identity, 'source-map kind does not match the frontend.');
+        relativePath(descriptor.sourceMap.path, `${identity} source map`);
     }
     if (!Array.isArray(descriptor.requiredFeatures) || descriptor.requiredFeatures.length)
         fail(identity, 'unsupported requiredFeatures; browser-unlit requires none.');
@@ -138,23 +175,41 @@ function validateDescriptor(descriptor, identity) {
     }
     fields(descriptor.source, ['path', 'sha256', 'byteLength', 'url'], `${identity} source`);
     const source = descriptor.source;
-    if (typeof source.path !== 'string' || source.path.length > 240
-        || !/^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.wgsl$/.test(source.path)
-        || source.path.split('/').some(part => part === '.' || part === '..'))
+    relativePath(source.path, `${identity} source`);
+    if (!source.path.endsWith('.wgsl'))
         fail(identity, 'unsupported source path.');
     hash(source.sha256, `${identity} source`);
     if (!Number.isSafeInteger(source.byteLength) || source.byteLength < 1 || source.byteLength > 1024 * 1024
         || source.url !== `${source.sha256}.wgsl`)
         fail(identity, 'invalid source length or digest filename.');
-    if (!exact(descriptor.dependencies, [{ path: source.path, sha256: source.sha256 }]))
-        fail(identity, 'unsupported dependencies.');
+    if (version === 1) {
+        if (!exact(descriptor.dependencies, [{ path: source.path, sha256: source.sha256 }]))
+            fail(identity, 'unsupported dependencies.');
+    } else {
+        if (!Array.isArray(descriptor.dependencies) || !descriptor.dependencies.length || descriptor.dependencies.length > 512)
+            fail(identity, 'invalid dependency count.');
+        const dependencies = new Set();
+        for (const dependency of descriptor.dependencies) {
+            fields(dependency, ['path', 'sha256'], `${identity} dependency`);
+            relativePath(dependency.path, `${identity} dependency`);
+            hash(dependency.sha256, `${identity} dependency`);
+            if (dependencies.has(dependency.path)) fail(identity, 'duplicate dependency path.');
+            dependencies.add(dependency.path);
+        }
+        if (!dependencies.has(descriptor.sourceMap.path)) fail(identity, 'source origin is missing from dependencies.');
+        if (descriptor.sourceMap.kind === 'identity'
+            && descriptor.sourceMap.path !== source.path)
+            fail(identity, 'identity source mapping must name the emitted source path.');
+    }
 }
 
-/** Load and verify the one WebGPU browser shader before requesting a device. */
-export async function loadBrowserUnlitArtifact(signal) {
+/** Load only the selected cooked mesh shader before requesting a device. */
+export async function loadBrowserUnlitArtifact(signal, artifactName = 'browser-unlit') {
+    if (typeof artifactName !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(artifactName))
+        fail('selection', 'invalid artifact name.');
     const manifest = parse(await readBounded(manifestUrl, 64 * 1024, signal, 'no-cache', 'manifest'), 'manifest');
     fields(manifest, ['schemaVersion', 'backend', 'packetVersion', 'artifacts'], 'manifest');
-    if (manifest.schemaVersion !== 1 || manifest.backend !== 'WebGPU' || manifest.packetVersion !== 2
+    if ((manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2) || manifest.backend !== 'WebGPU' || manifest.packetVersion !== 2
         || !Array.isArray(manifest.artifacts) || manifest.artifacts.length < 1 || manifest.artifacts.length > 16)
         fail('manifest', 'unsupported schema, backend, packet version, or artifact count.');
     const names = new Set();
@@ -167,20 +222,33 @@ export async function loadBrowserUnlitArtifact(signal) {
         if (artifact.descriptor !== `${artifact.sha256}.shader.json`)
             fail('manifest entry', 'descriptor filename does not match its digest.');
     }
-    const entry = manifest.artifacts.find(item => item.name === 'browser-unlit');
-    if (!entry) fail('manifest', 'required browser-unlit artifact is missing.');
+    const entry = manifest.artifacts.find(item => item.name === artifactName);
+    if (!entry) fail('manifest', `required ${artifactName} artifact is missing.`);
     const identity = `${entry.name}@${entry.sha256}`;
     const descriptorBytes = await readBounded(artifactUrl(entry.descriptor, identity), 64 * 1024,
         signal, 'force-cache', identity);
     await verifyDigest(descriptorBytes, entry.sha256, identity);
     const descriptor = parse(descriptorBytes, identity);
-    validateDescriptor(descriptor, identity);
+    if (descriptor?.schemaVersion !== manifest.schemaVersion) fail(identity, 'manifest and descriptor schemas differ.');
+    validateDescriptor(descriptor, identity, artifactName);
     const sourceBytes = await readBounded(artifactUrl(descriptor.source.url, identity), 1024 * 1024,
         signal, 'force-cache', `${identity} ${descriptor.source.path}`);
     if (sourceBytes.byteLength !== descriptor.source.byteLength)
         fail(identity, `${descriptor.source.path} byte length mismatch.`);
     await verifyDigest(sourceBytes, descriptor.source.sha256, `${identity} ${descriptor.source.path}`);
-    return { source: decode(sourceBytes, `${identity} ${descriptor.source.path}`), descriptor, artifactIdentity: identity };
+    if (signal?.aborted) throw new DOMException('Shader artifact loading was canceled.', 'AbortError');
+    const source = decode(sourceBytes, `${identity} ${descriptor.source.path}`);
+    if (!source.trim() || source.includes('\0')) fail(identity, 'WGSL source is empty or contains NUL.');
+    return { source, descriptor, artifactIdentity: identity };
+}
+
+/** Preserve exact authored locations only for identity WGSL; generated locations remain explicit. */
+export function formatShaderDiagnostic(descriptor, identity, message) {
+    const location = `${descriptor.source.path}:${message.lineNum ?? 0}:${message.linePos ?? 0}`;
+    const mapping = descriptor.sourceMap;
+    const origin = mapping && mapping.kind !== 'identity'
+        ? `; generated WGSL from ${mapping.path}, original line mapping unavailable` : '';
+    return `${location} (${identity}${origin}): ${message.message}`;
 }
 
 /** Reject unavailable requirements before passing the exact list to requestDevice. */

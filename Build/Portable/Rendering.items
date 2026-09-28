@@ -70,5 +70,8 @@
     <Compile Include="Rendering/Shaders/Compilation/ShaderCompileResult.cs" />
     <Compile Include="Rendering/Shaders/Compilation/ShaderCompileDependency.cs" />
     <Compile Include="Rendering/Shaders/Compilation/ShaderCompileDiagnostic.cs" />
+    <Compile Include="Rendering/Shaders/Generation/BrowserMaterialShaderDefinition.cs" />
+    <Compile Include="Rendering/Shaders/Generation/BrowserMaterialShaderGenerator.cs" />
+    <Compile Include="Rendering/Shaders/Generation/BrowserShaderAbi.cs" />
   </ItemGroup>
 </Project>
