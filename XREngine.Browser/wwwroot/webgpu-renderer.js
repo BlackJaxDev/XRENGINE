@@ -1,5 +1,6 @@
 import { GpuResourceTable } from './gpu-resource-table.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from './frame-packet.js';
+import { loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
 
 const maximumUploadBytes = 64 * 1024 * 1024;
 const maximumTextureBytes = 64 * 1024 * 1024;
@@ -50,6 +51,7 @@ export class WebGpuCanvasRenderer {
         this._depthAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' };
         this._renderPassDescriptor = { colorAttachments: [this._colorAttachment], depthStencilAttachment: this._depthAttachment };
         this._stats = { packets: 0, draws: 0, copiedBytes: 0, uploadedBytes: 0, arenaGrowth: 0, rejectedPackets: 0, controlCalls: 0 };
+        this._shaderArtifact = undefined;
         this._onUncapturedError = event => this._fail(event.error);
     }
 
@@ -118,8 +120,17 @@ export class WebGpuCanvasRenderer {
             this._assertActive(signal);
             if (!adapter) throw new Error('No WebGPU adapter is available.');
 
+            this.onState('loading-shader');
+            const artifact = await loadBrowserUnlitArtifact(signal);
+            this._assertActive(signal);
+            const deviceRequirements = shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity);
+            this._shaderArtifact = {
+                identity: artifact.artifactIdentity,
+                requiredFeatures: [...deviceRequirements.requiredFeatures],
+                requiredLimits: { ...deviceRequirements.requiredLimits },
+            };
             this.onState('requesting-device');
-            const device = await adapter.requestDevice();
+            const device = await adapter.requestDevice(deviceRequirements);
             this._assertActive(signal, device);
             this.device = device;
             device.addEventListener('uncapturederror', this._onUncapturedError);
@@ -153,28 +164,24 @@ export class WebGpuCanvasRenderer {
             device.queue.writeTexture({ texture: this._whiteTexture }, whitePixel, { bytesPerRow: 4 }, [1, 1]);
 
             this.onState('creating-pipeline');
-            const response = await fetch(new URL('./mesh.wgsl', import.meta.url), { signal });
-            this._assertActive(signal);
-            if (!response.ok) throw new Error(`WGSL request failed: HTTP ${response.status}.`);
-            const source = await response.text();
-            this._assertActive(signal);
-            const shader = device.createShaderModule({ code: source });
+            const shader = device.createShaderModule({ code: artifact.source });
             const diagnostics = await shader.getCompilationInfo();
             this._assertActive(signal);
             const errors = diagnostics.messages.filter(message => message.type === 'error');
+            const shaderLabel = `${artifact.descriptor.source.path} (${artifact.artifactIdentity})`;
             for (const message of diagnostics.messages) {
                 if (message.type === 'warning')
-                    console.warn(`WGSL ${message.lineNum}:${message.linePos}: ${message.message}`);
+                    console.warn(`${shaderLabel}:${message.lineNum}:${message.linePos}: ${message.message}`);
             }
             if (errors.length)
-                throw new Error(`WGSL compilation failed: ${errors.map(message => `${message.lineNum}:${message.linePos} ${message.message}`).join('; ')}`);
+                throw new Error(`WGSL compilation failed: ${errors.map(message => `${shaderLabel}:${message.lineNum}:${message.linePos} ${message.message}`).join('; ')}`);
             this.pipeline = await device.createRenderPipelineAsync({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [this._viewLayout, this._materialLayout] }),
-                vertex: { module: shader, entryPoint: 'vertexMain', buffers: [{ arrayStride: 20, attributes: [
+                vertex: { module: shader, entryPoint: artifact.descriptor.entryPoints.vertex, buffers: [{ arrayStride: 20, attributes: [
                     { shaderLocation: 0, offset: 0, format: 'float32x3' },
                     { shaderLocation: 1, offset: 12, format: 'float32x2' },
                 ] }] },
-                fragment: { module: shader, entryPoint: 'fragmentMain', targets: [{ format: this.format }] },
+                fragment: { module: shader, entryPoint: artifact.descriptor.entryPoints.fragment, targets: [{ format: this.format }] },
                 primitive: { topology: 'triangle-list', cullMode: 'none' },
                 depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
             });
@@ -453,7 +460,11 @@ export class WebGpuCanvasRenderer {
     }
 
     getStatistics() {
-        return { ...this._stats };
+        return { ...this._stats, shaderArtifact: this._shaderArtifact && {
+            identity: this._shaderArtifact.identity,
+            requiredFeatures: [...this._shaderArtifact.requiredFeatures],
+            requiredLimits: { ...this._shaderArtifact.requiredLimits },
+        } };
     }
 
     dispose() {

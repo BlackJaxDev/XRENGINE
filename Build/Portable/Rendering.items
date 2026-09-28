@@ -20,5 +20,10 @@
     <Compile Include="Runtime/Browser/BrowserResourceHandle.cs" />
     <Compile Include="Runtime/Browser/BrowserFramePacket.cs" />
     <Compile Include="Runtime/Browser/BrowserFramePacketState.cs" />
+    <Compile Include="Rendering/Shaders/Compilation/ShaderCompileTarget.cs" />
+    <Compile Include="Rendering/Shaders/Compilation/ShaderArtifact.cs" />
+    <Compile Include="Rendering/Shaders/Compilation/ShaderCompileResult.cs" />
+    <Compile Include="Rendering/Shaders/Compilation/ShaderCompileDependency.cs" />
+    <Compile Include="Rendering/Shaders/Compilation/ShaderCompileDiagnostic.cs" />
   </ItemGroup>
 </Project>

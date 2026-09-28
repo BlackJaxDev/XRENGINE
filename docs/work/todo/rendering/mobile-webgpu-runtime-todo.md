@@ -2,7 +2,7 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Readiness audit and minimum portable scene boot implemented, with earlier scene-only browser evidence. Canvas hosting, indexed unlit mesh rendering and a batched bridge are implemented in source but unvalidated. Renderer-module integration, cooked content and broader browser/device acceptance remain pending.
+**Status:** Readiness audit and minimum portable scene boot implemented, with earlier scene-only browser evidence. Canvas hosting, indexed unlit mesh rendering, a batched bridge and explicit-WGSL artifact cooking/loading are implemented in source; rendering remains unvalidated. Renderer-module integration, cooked content and broader browser/device acceptance remain pending.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -25,12 +25,42 @@ The first local rendering milestone does not require multiplayer, voice chat, th
 
 ### Checklist rules
 
-- Every unchecked item is work to implement, reconcile, or validate. Existing code is recorded separately rather than marked browser-tested.
-- Use stable task IDs in changes, issues, and validation evidence. Check an item only after its deliverable and applicable acceptance criteria are satisfied.
+- Main task-ID checkboxes track the full deliverable and its acceptance criteria. The code-completion checklists below track source implementation separately; a checked code row does not certify a browser, GPU or device result.
+- Keep stable task IDs in this active tracker and validation evidence. Check a main item only after its deliverable and applicable acceptance criteria are satisfied; describe behavior rather than task IDs in lasting code and change summaries.
 - A working stub, enum, interface, successful desktop build, or dependency declaration does not establish browser functionality.
 - Keep implementation status and validation status separate. Record untested environments explicitly.
 - Preserve desktop OpenGL/Vulkan behavior while extracting shared code. Do not force desktop renderers through browser-specific abstractions.
 - Validate a live feature slice before adding its regression coverage, following the repository's applicable contribution/test policy.
+
+### Code completion on the implementation branch
+
+These rows answer what has actually been coded without changing the acceptance
+meaning of the main checklist. The canvas and later renderer work remains
+unvalidated under the user's explicit waiver. The earlier scene-only evidence
+still applies only to its recorded scope.
+
+- [x] **MW02.01–MW02.03 code:** Browser entry point, explicit canvas target and portable surface/input contracts.
+- [x] **MW02.04, MW02.07–MW02.10 code:** Asynchronous startup, bounded simulation, resize/suspension, multiple views and cancel-safe teardown.
+- [x] **MW03.03 code:** Versioned little-endian packet header and typed indexed-draw records.
+- [x] **MW03.04–MW03.07 draw-path code:** Reusable synchronous packet arena, bounded growth, typed generation handles, and separate CPU/GPU lifetimes.
+- [x] **MW03.10 instrumentation code:** Packet/draw/copy/upload/growth/call counters and explicit UI snapshots.
+- [x] **MW04.01–MW04.02 seed code:** Explicit position/UV, transform and tint layouts with depth-tested unlit texture WGSL.
+- [x] **MW04.03 code:** Target-tagged artifact payload and WebGPU WGSL target; Vulkan constructor/accessor compatibility retained.
+- [x] **MW04.04 explicit-WGSL code:** Deterministic descriptor identity includes source/dependency hashes, target, entry points, compiler identity, schema, layout and requirements. Unsupported preprocessing/specialization options fail explicitly.
+- [x] **MW04.06 explicit-WGSL code:** Offline packager and browser loading of cooked WGSL/metadata without a native runtime compiler.
+- [x] **MW04.10–MW04.11 explicit-WGSL code:** Named recipe errors, content-addressed assets, integrity/schema/layout checks and source-location shader diagnostics.
+- [x] **MW04.12 readiness code:** Await shader diagnostics and asynchronous pipeline creation before allowing frames; warm-up measurements remain open.
+- [x] **MW05.02 initial-profile code:** Check declared adapter limits and request the exact supported shader requirements before creating the device.
+- [x] **MW05.05–MW05.06 minimum-raster code:** Vertex/index/uniform buffers, aligned matrix upload, single-mip RGBA8 textures and material bind groups.
+- [x] **MW05.09, MW05.12–MW05.13 minimum-raster code:** Indexed packet submission, depth attachment, asynchronous retirement and terminal failure/loss handling.
+- [ ] **MW02.05, MW03.09, MW05.01/MW05.04/MW05.10/MW05.14 integration:** Existing engine mesh/material/camera resources, visibility/render-buffer publication, renderer module and frame-output contracts.
+- [ ] **MW03.04/MW03.10–MW03.11 acceptance:** Streaming upload arenas, malformed/stale/growth cases and measured memory/crossing evidence.
+- [ ] **MW04.05/MW04.07 production compiler:** Approved WGSL-producing toolchain and target-aware engine material generation.
+- [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
+
+Latest source delivery: [cooked browser shader artifacts](../../progress/rendering/browser-shader-artifacts.md).
+The next integration section remains renderer-module and engine-resource wiring;
+full shader cooking expands beyond the explicit unlit WGSL profile implemented here.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -168,13 +198,13 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** The browser updates an engine scene, remains responsive, handles resize and page suspension, and reports startup failures. No desktop loop runs inside a browser callback.
 
-**Code implementation record (2026-09-28):** [Browser WebGPU canvas host](../../progress/rendering/browser-webgpu-canvas-host.md). The user explicitly deferred validation; checkboxes below remain open until qualification rather than treating source edits as acceptance evidence.
+**Code implementation record (2026-09-28):** [Browser WebGPU canvas host](../../progress/rendering/browser-webgpu-canvas-host.md), extended by the [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md). Code rows above track completed source; main acceptance checkboxes remain open where qualification is required.
 
 - MW02.01–MW02.04: Canvas binding, portable target/surface/input contracts and asynchronous adapter/device/pipeline startup are implemented. The browser composition owns the pending startup; it does not block or pretend the existing synchronous desktop factory created a ready renderer.
-- MW02.05: Single-frame managed simulation and diagnostic two-view draw are implemented. Full visibility collection, engine render-buffer swaps and the general frame-packet producer remain open.
+- MW02.05: Single-frame managed simulation, indexed two-view collection and a versioned frame-packet producer are implemented. Full engine visibility collection and render-buffer publication remain open.
 - MW02.06–MW02.07: Single-thread caller scheduling, bounded 60 Hz fixed updates, variable-cadence rendering and visibility clock reset are implemented. No temporal history exists in this diagnostic renderer.
 - MW02.08–MW02.10: Resize/DPR/device limits, surface generations, zero-size/detach/reattach, independent canvas sessions, split view, cancellation, observer/listener cleanup and explicit stop/restart are implemented but unvalidated.
-- A minimal WebGPU executor and generated scalar interop seed MW03/MW05. The versioned batched command/upload ABI, ordinary mesh/material support and device qualification remain open; this does not satisfy G1.
+- The WebGPU executor now consumes one batched draw packet with focused mesh/material descriptors. Streaming uploads, existing engine asset adapters, renderer-module integration and device qualification remain open; this does not satisfy G1.
 
 
 ## MW03 — Batched .NET/JavaScript command and upload bridge
@@ -211,6 +241,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 **Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) supplies explicit position/UV, matrix and tint layouts plus depth-tested unlit color/texturing WGSL. MW04.01–MW04.02 remain open for engine-module integration and known-value visual/readback acceptance; this does not implement shader cooking.
 
 ### Production artifact path
+
+**Implementation record (2026-09-28):** [Cooked browser shader artifacts](../../progress/rendering/browser-shader-artifacts.md) adds target-tagged C# shader results, an explicit-WGSL offline packager, a versioned content-addressed descriptor/manifest, an abortable bounded browser loader, exact initial-profile requirement checks and source-location diagnostics. The sample package was generated. No .NET build, WGSL compilation, browser run, regression test or physical-device validation was performed. Main checkboxes retain their acceptance meaning; the checked code rows above show the delivered subset.
 
 - [ ] **MW04.03** Extend the existing compile-target contract with WGSL. Generalize the result's SPIR-V-specific payload into a target-tagged artifact representation while preserving existing Vulkan behavior and provenance.
 - [ ] **MW04.04** Define source language, entry point, stage, includes, defines, specialization, required capabilities, compiler identity, and reflection/schema identity in artifact/cache keys.
