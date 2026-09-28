@@ -198,7 +198,7 @@ def main() -> int:
             write_atomic(output / (digest(source) + ".wgsl"), source, immutable=True)
             write_atomic(output / descriptor_name, descriptor, immutable=True)
             artifacts.append({"name": name, "descriptor": descriptor_name, "sha256": identity})
-        manifest = canonical({"schemaVersion": 1, "backend": "WebGPU", "packetVersion": 1, "artifacts": artifacts})
+        manifest = canonical({"schemaVersion": 1, "backend": "WebGPU", "packetVersion": 2, "artifacts": artifacts})
         require(len(manifest) <= MAX_JSON_BYTES, "manifest exceeds the JSON byte limit")
         write_atomic(output / "manifest.json", manifest)
         print(f"Packaged {len(artifacts)} WGSL artifact(s); compiler identity {COMPILER_IDENTITY}.")

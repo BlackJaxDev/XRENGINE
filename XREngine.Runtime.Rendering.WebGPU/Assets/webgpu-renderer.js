@@ -48,7 +48,7 @@ export class WebGpuCanvasRenderer {
         this._dynamicOffsets = [0];
         this._submission = [null];
         this._colorAttachment = { view: undefined, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } };
-        this._depthAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' };
+        this._depthAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' };
         this._renderPassDescriptor = { colorAttachments: [this._colorAttachment], depthStencilAttachment: this._depthAttachment };
         this._stats = { packets: 0, draws: 0, copiedBytes: 0, uploadedBytes: 0, arenaGrowth: 0, rejectedPackets: 0, controlCalls: 0 };
         this._shaderArtifact = undefined;
@@ -65,6 +65,10 @@ export class WebGpuCanvasRenderer {
 
     get generation() {
         return this._generation;
+    }
+
+    get colorFormat() {
+        return this.format;
     }
 
     _assertActive(signal, lateDevice) {
@@ -414,6 +418,11 @@ export class WebGpuCanvasRenderer {
                 this._arenaGeneration, this._frameSequence, this._width, this._height, this._resources);
             if (!this._configured) throw new Error('The canvas surface is suspended.');
             this._executing = true;
+            const clear = this._colorAttachment.clearValue;
+            clear.r = data.getFloat32(64, true);
+            clear.g = data.getFloat32(68, true);
+            clear.b = data.getFloat32(72, true);
+            clear.a = data.getFloat32(76, true);
             this._growUniformStorage(count);
             for (let i = 0, base = packetHeaderBytes; i < count; i++, base += drawRecordBytes) {
                 const offset = i * this._uniformStride;

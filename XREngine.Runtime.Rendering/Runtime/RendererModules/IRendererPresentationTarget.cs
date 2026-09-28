@@ -13,8 +13,8 @@ public interface IRendererPresentationTarget
     RendererBackendCapabilities RequiredBackendCapabilities { get; }
 
     /// <summary>
-    /// Fixed output properties, or <see langword="null"/> when a live presentation system owns
-    /// the extent and format (for example a desktop window).
+    /// Fixed or currently known output properties, or <see langword="null"/> when a live
+    /// presentation system has not supplied a drawable extent and format.
     /// </summary>
     RenderTargetOutputProperties? OutputProperties { get; }
 

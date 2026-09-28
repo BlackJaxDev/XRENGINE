@@ -15,6 +15,8 @@ export class BrowserCanvasHost {
         this.disposed = false;
         this.splitView = true;
         this.instanceCount = 16;
+        this.cullingEnabled = true;
+        this.recolorAlternate = false;
         this.snapshotJson = null;
         this.pointerId = null;
         this.pointerX = 0.5;
@@ -55,7 +57,8 @@ export class BrowserCanvasHost {
             renderer.setOwner(this.session);
             this.renderers.set(this.session, renderer);
             if (!this.snapshotJson) this.scene.SetInstanceCount(this.session, this.instanceCount);
-            this.scene.InitializeGraphics(this.session);
+            this.scene.InitializeGraphics(this.session, renderer.colorFormat);
+            this.scene.SetCullingEnabled(this.session, this.cullingEnabled);
             if (!this.snapshotJson) this.scene.SetSplitView(this.session, this.splitView);
             this.installEvents(controller.signal);
             this.syncSurface();
@@ -232,7 +235,21 @@ export class BrowserCanvasHost {
 
     getStatistics() {
         // Diagnostic snapshots are explicit UI actions, never animation-frame work.
-        return this.renderer?.getStatistics() ?? null;
+        if (!this.renderer || !this.session) return null;
+        return { ...this.renderer.getStatistics(), scene: JSON.parse(this.scene.GetStatistics(this.session)) };
+    }
+
+    setCullingEnabled(enabled) {
+        this.cullingEnabled = enabled;
+        if (this.session) this.scene.SetCullingEnabled(this.session, enabled);
+    }
+
+    recolorFirstMesh() {
+        if (!this.session) return;
+        this.scene.SetRenderableTint(this.session, 0,
+            this.recolorAlternate ? 0.65 : 1, this.recolorAlternate ? 0.83 : 0.25,
+            this.recolorAlternate ? 1 : 0.15);
+        this.recolorAlternate = !this.recolorAlternate;
     }
 
     fail(error) {

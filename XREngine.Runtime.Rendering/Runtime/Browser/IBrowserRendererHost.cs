@@ -4,6 +4,8 @@ namespace XREngine.Rendering;
 public interface IBrowserRendererHost : IRuntimeRendererHost, IDisposable
 {
     BrowserRendererState State { get; }
+    /// <summary>Describes a drawable surface; this does not acquire or retain a GPU texture.</summary>
+    bool TryDescribeFrameOutput(out RenderFrameOutputDescription output);
     void MarkReady(int sessionId);
     void MarkFailed(bool deviceLost);
     int CreateMesh(BrowserMeshData mesh);

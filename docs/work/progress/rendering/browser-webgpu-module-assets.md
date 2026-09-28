@@ -133,3 +133,5 @@ captured static world.
 The active [runtime TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md)
 checks off module and static asset-bridge code separately from those open gates.
 Usage and publish commands remain in the [browser README](../../../../XREngine.Browser/README.md).
+
+Follow-up source work: [canvas output, visibility and live resource updates](browser-webgpu-frame-output.md).

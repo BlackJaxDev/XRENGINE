@@ -6,7 +6,7 @@ moves a mesh group, and the canvas can render two camera views of the same scene
 Indexed geometry, opaque unlit materials and RGBA8 textures use a versioned binary
 packet bridge with one managed-to-JavaScript submission per rendered frame.
 
-**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, packet and cooked-shader loading code is implemented but has not been built or run.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, packet and cooked-shader loading code are implemented but has not been built or run.
 Validation was explicitly deferred for this change. Earlier scene-only results
 in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
 do not qualify this renderer.
@@ -41,6 +41,7 @@ requirements; adapter limits are checked before requesting the device.
 
 - Drag on the canvas or focus it and use arrow keys to move the scene.
 - **Import scene** loads a versioned static scene JSON exported with `BrowserSceneSnapshot.ToJson()` (16 MiB maximum). The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
+- Toggle **Cull offscreen meshes** to control conservative per-view AABB rejection. **Recolor first mesh** replaces one material while retaining its texture. Empty imported scenes reject that action explicitly. Counter snapshots include last-frame candidates/culled/drawn counts, live resource counts and output metadata.
 - Toggle **Split view** to switch between one view and two camera projections.
 - Select **16**, **64**, or **256** mesh instances. These are separate indexed draws,
   not GPU instancing. **Capture counters** snapshots packet/draw counts, copied and
@@ -65,7 +66,7 @@ additional hosts without replacing an existing device.
 `BrowserCanvasRenderTarget` implements the portable presentation and surface
 contracts. It requests `BrowserCanvasPresentation`, never native WSI. Resize
 publishes physical dimensions and a generation; each submitted frame must match
-that generation. DPR is capped at 2 and backing dimensions are bounded by the
+that generation and extent. `TryDescribeFrameOutput` publishes the existing output contract only while the configured surface is drawable; it does not acquire a GPU texture. The logical RGBA8/depth formats include exact backend encoding metadata, one layer/sample and logical slot zero. The executor alone acquires the canvas texture at submission. Packet v2 supplies an opaque clear color and standard depth clear; color is stored and depth discarded. DPR is capped at 2 and backing dimensions are bounded by the
 device limit. Zero-sized/detached canvases are unconfigured and suspended;
 reattachment resumes with a new generation. Hidden pages pause scheduling and
 reset simulation time. Focus loss releases held input. Page restoration from the
@@ -98,8 +99,7 @@ immediate, while GPU retirement waits asynchronously for submitted work.
 The executor and shaders belong to `XREngine.Runtime.Rendering.WebGPU`. Static
 `XRMesh` and standard `XRCamera` export adapters plus explicit `XRMaterial` browser
 recipes now feed the same shared resource descriptors. This supports a bounded
-static snapshot, with full engine visibility/render-buffer publication, generic
-resource/pass wrappers, dynamic material updates and production shading still open.
+static snapshot and explicit live browser-scene changes. `SetCamera` replaces cached camera matrices; `ReplaceRenderableResources` acquires new shared resources before changing a component; `RemoveRenderable` stops submission and releases references. Mesh/material/texture descriptions remain immutable. Conservative culling uses each mesh AABB and current render transform independently for each viewport. Full engine visibility/render-buffer publication, generic resource/pass wrappers, automatic live desktop-asset binding and production shading remain open.
 The original `SceneBoot` exports remain available as a separate lifecycle fixture.
 The default page runs the continuous mesh scene. The packet is explicitly copied
 from transient .NET memory into reusable JavaScript storage; it is not zero-copy.
@@ -117,3 +117,5 @@ for recipe limits, identities, compiler-contract compatibility and deferred vali
 
 See [module and snapshot integration](../docs/work/progress/rendering/browser-webgpu-module-assets.md)
 for the export API, supported subset, ownership and remaining integration work.
+
+See [canvas output and live updates](../docs/work/progress/rendering/browser-webgpu-frame-output.md) for the output/pass ABI and remaining integration work.

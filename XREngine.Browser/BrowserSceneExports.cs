@@ -61,7 +61,31 @@ public static partial class BrowserSceneExports
     public static void Frame(int id, double timestampMilliseconds) => Get(id).Frame(timestampMilliseconds);
 
     [JSExport]
-    public static void InitializeGraphics(int id) => Get(id).InitializeGraphics();
+    public static void InitializeGraphics(int id, string colorFormat)
+    {
+        BrowserSceneSession session = Get(id);
+        session.Target.SetColorFormat(colorFormat);
+        session.InitializeGraphics();
+    }
+
+    [JSExport]
+    public static void SetCullingEnabled(int id, bool enabled) => Get(id).SetCullingEnabled(enabled);
+
+    [JSExport]
+    public static void SetRenderableTint(int id, int index, double red, double green, double blue)
+        => Get(id).SetRenderableTint(index,
+            new System.Numerics.Vector4((float)red, (float)green, (float)blue, 1));
+
+    /// <summary>Allocates a diagnostic snapshot only in response to an explicit host request.</summary>
+    [JSExport]
+    public static string GetStatistics(int id)
+    {
+        BrowserSceneSession session = Get(id);
+        return System.Text.Json.JsonSerializer.Serialize(new BrowserSceneStatistics(
+            session.CullingEnabled, session.VisibilityCandidates, session.VisibilityCulled, session.VisibilityDrawn,
+            session.RetainedMeshCount, session.RetainedMaterialCount, session.RetainedTextureCount,
+            session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null));
+    }
 
     /// <summary>Records a browser renderer failure before the frame loop stops.</summary>
     [JSExport]

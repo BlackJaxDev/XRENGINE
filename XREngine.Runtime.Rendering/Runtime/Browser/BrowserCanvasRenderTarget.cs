@@ -1,9 +1,12 @@
+using XREngine.Data.Rendering;
+
 namespace XREngine.Rendering;
 
 /// <summary>A browser-owned canvas presentation target with host-supplied surface and input snapshots.</summary>
 public sealed class BrowserCanvasRenderTarget : IRendererPresentationTarget, IRuntimeSurfaceHost
 {
     private double? _lastFrameTimestampMilliseconds;
+    private string? _colorEncoding;
 
     public BrowserCanvasRenderTarget(string canvasId)
     {
@@ -19,8 +22,51 @@ public sealed class BrowserCanvasRenderTarget : IRendererPresentationTarget, IRu
     public RendererBackendCapabilities RequiredBackendCapabilities =>
         RendererBackendCapabilities.BrowserCanvasPresentation;
 
-    /// <summary>The live canvas, rather than this target, owns its extent and format.</summary>
-    public RenderTargetOutputProperties? OutputProperties => null;
+    /// <summary>The host-reported drawable canvas extent and exact configured format.</summary>
+    public RenderTargetOutputProperties? OutputProperties =>
+        Surface.CanRender && Surface.Generation > 0 && _colorEncoding is not null
+            ? new RenderTargetOutputProperties(
+                (uint)Surface.PhysicalWidth,
+                (uint)Surface.PhysicalHeight,
+                Layers: 1,
+                ColorFormat: EPixelInternalFormat.Rgba8,
+                DepthFormat: EPixelInternalFormat.DepthComponent24,
+                ColorSpace: "Linear",
+                SampleCount: 1,
+                FrameSlotCount: 1)
+            {
+                ColorEncoding = _colorEncoding,
+                DepthEncoding = "depth24plus",
+            }
+            : null;
+
+    /// <summary>Sets the exact canvas encoding selected and configured by the browser host.</summary>
+    public void SetColorFormat(string format)
+    {
+        if (format is not ("rgba8unorm" or "bgra8unorm"))
+            throw new ArgumentOutOfRangeException(nameof(format), "The canvas requires rgba8unorm or bgra8unorm.");
+        if (_colorEncoding is not null && _colorEncoding != format)
+            throw new InvalidOperationException("A canvas session cannot change its configured color format.");
+        _colorEncoding = format;
+    }
+
+    /// <summary>Describes a drawable canvas output without exposing its acquired GPU texture.</summary>
+    public bool TryDescribeFrameOutput(out RenderFrameOutputDescription output)
+    {
+        if (OutputProperties is not { } properties)
+        {
+            output = default;
+            return false;
+        }
+
+        output = new RenderFrameOutputDescription(
+            ExecutionMode,
+            properties,
+            (ulong)Surface.Generation,
+            FrameSlotIndex: 0,
+            Capabilities: RenderFrameOutputCapabilities.Presentation);
+        return true;
+    }
 
     public RuntimeSurfaceState Surface { get; private set; } = new(0, 0, 0, 0, 1, 0, false, false, false);
 
