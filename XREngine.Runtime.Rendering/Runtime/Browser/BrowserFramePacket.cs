@@ -9,7 +9,7 @@ namespace XREngine.Rendering;
 /// </summary>
 public sealed class BrowserFramePacket
 {
-    public const int HeaderBytes = 64;
+    public const int HeaderBytes = 96;
     public const int DrawBytes = 112;
     public const int MaximumDraws = 4096;
 
@@ -19,6 +19,9 @@ public sealed class BrowserFramePacket
     private int _drawCount;
     private int _sessionId;
     private int _surfaceGeneration;
+    private BrowserRenderPassDescription _renderPass;
+    private int _outputWidth;
+    private int _outputHeight;
 
     public BrowserFramePacket(int initialDrawCapacity = 64)
     {
@@ -74,7 +77,7 @@ public sealed class BrowserFramePacket
     }
 
     /// <summary>Begins a frame with a fresh sequence; a device recreation requires a fresh session ID.</summary>
-    public void Begin(int sessionId, int surfaceGeneration)
+    public void Begin(int sessionId, int surfaceGeneration, in BrowserRenderPassDescription renderPass, int outputWidth, int outputHeight)
     {
         if (_state != BrowserFramePacketState.Idle)
             throw new InvalidOperationException("The preceding packet has not completed consumption.");
@@ -82,12 +85,18 @@ public sealed class BrowserFramePacket
             throw new ArgumentOutOfRangeException(nameof(sessionId));
         if (surfaceGeneration <= 0)
             throw new ArgumentOutOfRangeException(nameof(surfaceGeneration));
+        renderPass.Validate();
+        if (outputWidth <= 0 || outputHeight <= 0)
+            throw new ArgumentOutOfRangeException(nameof(outputWidth), "The canvas output extent must be positive.");
         if (_frameSequence == uint.MaxValue)
             throw new InvalidOperationException("The frame sequence is exhausted; start a fresh scene session.");
 
         _frameSequence++;
         _sessionId = sessionId;
         _surfaceGeneration = surfaceGeneration;
+        _renderPass = renderPass;
+        _outputWidth = outputWidth;
+        _outputHeight = outputHeight;
         _drawCount = 0;
         _bytes.AsSpan(0, HeaderBytes).Clear();
         _state = BrowserFramePacketState.Writing;
@@ -158,7 +167,7 @@ public sealed class BrowserFramePacket
 
         Span<byte> header = _bytes.AsSpan(0, HeaderBytes);
         Write32(header, 0, 0x50524558);
-        Write32(header, 4, 1);
+        Write32(header, 4, 2);
         Write32(header, 8, 0x55504757);
         Write32(header, 12, HeaderBytes);
         Write32(header, 16, HeaderBytes + _drawCount * DrawBytes);
@@ -168,6 +177,13 @@ public sealed class BrowserFramePacket
         Write32(header, 32, _surfaceGeneration);
         Write32(header, 36, ArenaGeneration);
         BinaryPrimitives.WriteUInt32LittleEndian(header.Slice(40), _frameSequence);
+        BinaryPrimitives.WriteSingleLittleEndian(header.Slice(64), _renderPass.ClearRed);
+        BinaryPrimitives.WriteSingleLittleEndian(header.Slice(68), _renderPass.ClearGreen);
+        BinaryPrimitives.WriteSingleLittleEndian(header.Slice(72), _renderPass.ClearBlue);
+        BinaryPrimitives.WriteSingleLittleEndian(header.Slice(76), _renderPass.ClearAlpha);
+        BinaryPrimitives.WriteSingleLittleEndian(header.Slice(80), _renderPass.ClearDepth);
+        Write32(header, 84, _outputWidth);
+        Write32(header, 88, _outputHeight);
         _state = BrowserFramePacketState.Sealed;
     }
 

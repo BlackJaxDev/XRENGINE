@@ -11,6 +11,7 @@ public sealed class BrowserSceneSession : IDisposable
     private const double FixedStep = 1.0 / 60.0;
     private const int MaxStepsPerFrame = 4;
     private const int MaxInstances = 256;
+    private static readonly BrowserRenderPassDescription CanvasPass = new(0.025f, 0.045f, 0.07f, 1f, 1f);
 
     private readonly RuntimeSceneHost _host;
     private readonly IBrowserRendererHost _renderer;
@@ -22,6 +23,9 @@ public sealed class BrowserSceneSession : IDisposable
     private readonly Dictionary<BrowserMeshData, int> _meshes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<BrowserTextureData, int> _textures = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<BrowserMaterialData, int> _materials = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<BrowserMeshData, int> _meshReferences = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<BrowserTextureData, int> _textureReferences = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<BrowserMaterialData, int> _materialReferences = new(ReferenceEqualityComparer.Instance);
     private BrowserMeshData? _cubeMesh;
     private BrowserMeshData? _panelMesh;
     private BrowserMaterialData? _checkerMaterial;
@@ -31,6 +35,8 @@ public sealed class BrowserSceneSession : IDisposable
     private int _instanceCount = 16;
     private bool _graphicsInitialized;
     private bool _splitView;
+    private bool _cullingEnabled = true;
+    private BrowserCameraSnapshot? _cameraOverride;
     private double _accumulator;
     private bool _disposed;
 
@@ -105,6 +111,105 @@ public sealed class BrowserSceneSession : IDisposable
 
     public int Id { get; }
     public BrowserCanvasRenderTarget Target { get; }
+    /// <summary>Whether conservative per-viewport frustum rejection is enabled.</summary>
+    public bool CullingEnabled => _cullingEnabled;
+    /// <summary>Renderable and viewport pairs inspected in the most recent submitted frame.</summary>
+    public int VisibilityCandidates { get; private set; }
+    /// <summary>Renderable and viewport pairs rejected by the frustum in the most recent submitted frame.</summary>
+    public int VisibilityCulled { get; private set; }
+    /// <summary>Draws submitted in the most recent frame.</summary>
+    public int VisibilityDrawn { get; private set; }
+    public int RetainedMeshCount => _meshes.Count;
+    public int RetainedMaterialCount => _materials.Count;
+    public int RetainedTextureCount => _textures.Count;
+
+    public void SetCullingEnabled(bool enabled)
+    {
+        ThrowIfDisposed();
+        _cullingEnabled = enabled;
+    }
+
+    /// <summary>Replaces the cached camera used by the scene; both matrices use row vectors and zero-to-one clip depth.</summary>
+    public void SetCamera(BrowserCameraSnapshot camera)
+    {
+        ThrowIfDisposed();
+        if (!IsFinite(camera.View) || !IsFinite(camera.Projection))
+            throw new ArgumentException("Browser camera matrices must be finite.", nameof(camera));
+        _cameraOverride = camera;
+        RebuildViews();
+    }
+
+    /// <summary>Updates one main renderable's tint while retaining its existing texture descriptor.</summary>
+    public void SetRenderableTint(int index, Vector4 tint)
+    {
+        ThrowIfDisposed();
+        if ((uint)index >= (uint)_renderables.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        BrowserMeshComponent component = _renderables[index];
+        ReplaceRenderableResources(component, component.Mesh!, new BrowserMaterialData(tint, component.Material!.Texture));
+    }
+
+    /// <summary>Changes a scene-owned component's descriptors after acquiring any required GPU resources.</summary>
+    public void ReplaceRenderableResources(BrowserMeshComponent component, BrowserMeshData mesh, BrowserMaterialData material)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(component);
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(material);
+        if (!_renderables.Contains(component) && !_customRenderables.Contains(component))
+            throw new ArgumentException("Renderable does not belong to this scene.", nameof(component));
+        BrowserMeshData oldMesh = component.Mesh!;
+        BrowserMaterialData oldMaterial = component.Material!;
+        if (ReferenceEquals(mesh, oldMesh) && ReferenceEquals(material, oldMaterial))
+            return;
+        int meshHandle = 0;
+        int materialHandle = 0;
+        if (_graphicsInitialized)
+        {
+            meshHandle = AcquireMesh(mesh);
+            try { materialHandle = AcquireMaterial(material); }
+            catch { ReleaseMesh(mesh); throw; }
+        }
+        component.Mesh = mesh;
+        component.Material = material;
+        component.MeshHandle = meshHandle;
+        component.MaterialHandle = materialHandle;
+        if (_graphicsInitialized)
+        {
+            try { ReleaseMaterial(oldMaterial); }
+            finally { ReleaseMesh(oldMesh); }
+        }
+    }
+
+    /// <summary>Stops submitting a scene-owned renderable and releases its shared GPU references.</summary>
+    public void RemoveRenderable(BrowserMeshComponent component)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(component);
+        bool custom = _customRenderables.Remove(component);
+        bool main = !custom && _renderables.Remove(component);
+        if (!custom && !main)
+            throw new ArgumentException("Renderable does not belong to this scene.", nameof(component));
+        if (main && _snapshot is null)
+        {
+            _instanceCount = Math.Min(_instanceCount, _renderables.Count);
+            if (_instanceCount > 0)
+                LayoutInstances();
+        }
+        ReservePacket();
+        component.RenderEnabled = false;
+        component.MeshHandle = 0;
+        component.MaterialHandle = 0;
+        try
+        {
+            if (_graphicsInitialized)
+            {
+                try { ReleaseMaterial(component.Material!); }
+                finally { ReleaseMesh(component.Mesh!); }
+            }
+        }
+        finally { component.SceneNode.Destroy(); }
+    }
 
     /// <summary>Adopts a transform into this scene and reuses uploads for identical descriptor objects.</summary>
     public BrowserMeshComponent AddRenderable(BrowserMeshData mesh, BrowserMaterialData material, Transform transform)
@@ -120,22 +225,38 @@ public sealed class BrowserSceneSession : IDisposable
         if (_renderables.Count + _customRenderables.Count >= 2048)
             throw new InvalidOperationException("Browser scene renderable capacity is exhausted.");
 
-        // Upload only on scene composition changes, never while traversing a frame.
+        // Acquire before adopting the node so upload failures leave no scene object behind.
+        int meshHandle = 0;
+        int materialHandle = 0;
         if (_graphicsInitialized)
         {
-            UploadMesh(mesh);
-            UploadMaterial(material);
+            meshHandle = AcquireMesh(mesh);
+            try { materialHandle = AcquireMaterial(material); }
+            catch { ReleaseMesh(mesh); throw; }
         }
-
-        SceneNode node = new(_parent, "BrowserRenderable", transform);
-        BrowserMeshComponent component = node.AddComponent(static () => new BrowserMeshComponent())
-            ?? throw new InvalidOperationException("Browser mesh component creation failed.");
-        component.Mesh = mesh;
-        component.Material = material;
-        if (_graphicsInitialized)
-            SetHandles(component);
-        destination.Add(component);
-        return component;
+        SceneNode? node = null;
+        try
+        {
+            node = new SceneNode(_parent, "BrowserRenderable", transform);
+            BrowserMeshComponent component = node.AddComponent(static () => new BrowserMeshComponent())
+                ?? throw new InvalidOperationException("Browser mesh component creation failed.");
+            component.Mesh = mesh;
+            component.Material = material;
+            component.MeshHandle = meshHandle;
+            component.MaterialHandle = materialHandle;
+            destination.Add(component);
+            return component;
+        }
+        catch
+        {
+            node?.Destroy();
+            if (_graphicsInitialized)
+            {
+                try { ReleaseMaterial(material); }
+                finally { ReleaseMesh(mesh); }
+            }
+            throw;
+        }
     }
 
     /// <summary>Maps the already-created scene to its renderer and uploads every unique descriptor once.</summary>
@@ -150,16 +271,14 @@ public sealed class BrowserSceneSession : IDisposable
             for (int i = 0; i < _renderables.Count; i++)
             {
                 BrowserMeshComponent component = _renderables[i];
-                UploadMesh(component.Mesh!);
-                UploadMaterial(component.Material!);
-                SetHandles(component);
+                component.MeshHandle = AcquireMesh(component.Mesh!);
+                component.MaterialHandle = AcquireMaterial(component.Material!);
             }
             for (int i = 0; i < _customRenderables.Count; i++)
             {
                 BrowserMeshComponent component = _customRenderables[i];
-                UploadMesh(component.Mesh!);
-                UploadMaterial(component.Material!);
-                SetHandles(component);
+                component.MeshHandle = AcquireMesh(component.Mesh!);
+                component.MaterialHandle = AcquireMaterial(component.Material!);
             }
             _graphicsInitialized = true;
         }
@@ -241,8 +360,14 @@ public sealed class BrowserSceneSession : IDisposable
             }
             Data.Core.XRObjectBase.ProcessPendingDestructions();
 
+            if (!_renderer.TryDescribeFrameOutput(out RenderFrameOutputDescription output))
+                return;
             ReservePacket();
-            _packet.Begin(Id, Target.Surface.Generation);
+            VisibilityCandidates = 0;
+            VisibilityCulled = 0;
+            VisibilityDrawn = 0;
+            _packet.Begin(Id, Target.Surface.Generation, in CanvasPass,
+                checked((int)output.Properties.Width), checked((int)output.Properties.Height));
             try
             {
                 AddViewDraws(_left);
@@ -282,9 +407,16 @@ public sealed class BrowserSceneSession : IDisposable
         // System.Numerics row vectors become WGSL column vectors when row-major
         // fields are read as columns by the browser renderer.
         Matrix4x4 matrix = component.SceneNode.Transform.RenderMatrix * viewport.ViewProjection;
+        VisibilityCandidates++;
+        if (_cullingEnabled && !BrowserFrustumVisibility.Intersects(component.Mesh!, in matrix))
+        {
+            VisibilityCulled++;
+            return;
+        }
         _packet.AddDraw(BrowserResourceHandle.FromPacked(component.MeshHandle),
             BrowserResourceHandle.FromPacked(component.MaterialHandle), viewport.X, viewport.Y,
             viewport.Width, viewport.Height, 0, component.Mesh!.IndexCount, in matrix);
+        VisibilityDrawn++;
     }
 
     private void RebuildViews()
@@ -292,6 +424,22 @@ public sealed class BrowserSceneSession : IDisposable
         RuntimeSurfaceState surface = Target.Surface;
         int width = surface.PhysicalWidth;
         int height = surface.PhysicalHeight;
+        if (_cameraOverride is BrowserCameraSnapshot camera)
+        {
+            Matrix4x4 viewProjection = camera.ViewProjection;
+            if (!_splitView)
+            {
+                _left = new BrowserViewport(0, 0, width, height, viewProjection);
+                _right = default;
+            }
+            else
+            {
+                int half = width / 2;
+                _left = new BrowserViewport(0, 0, half, height, viewProjection);
+                _right = new BrowserViewport(half, 0, width - half, height, viewProjection);
+            }
+            return;
+        }
         if (_snapshot is not null)
         {
             // The captured projection is used unchanged across canvas sizes; the viewport
@@ -341,43 +489,96 @@ public sealed class BrowserSceneSession : IDisposable
         }
     }
 
-    private int UploadMesh(BrowserMeshData mesh)
+    private int AcquireMesh(BrowserMeshData mesh)
     {
         if (_meshes.TryGetValue(mesh, out int handle))
+        {
+            _meshReferences[mesh]++;
             return handle;
+        }
         handle = _renderer.CreateMesh(mesh);
         if (handle <= 0)
             throw new InvalidOperationException("Browser renderer rejected a mesh upload.");
         _meshes.Add(mesh, handle);
+        _meshReferences.Add(mesh, 1);
         return handle;
     }
 
-    private int UploadMaterial(BrowserMaterialData material)
+    private int AcquireTexture(BrowserTextureData texture)
+    {
+        if (_textures.TryGetValue(texture, out int handle))
+        {
+            _textureReferences[texture]++;
+            return handle;
+        }
+        handle = _renderer.CreateTexture(texture);
+        if (handle <= 0)
+            throw new InvalidOperationException("Browser renderer rejected a texture upload.");
+        _textures.Add(texture, handle);
+        _textureReferences.Add(texture, 1);
+        return handle;
+    }
+
+    private int AcquireMaterial(BrowserMaterialData material)
     {
         if (_materials.TryGetValue(material, out int handle))
+        {
+            _materialReferences[material]++;
             return handle;
+        }
         int textureHandle = 0;
         if (material.Texture is BrowserTextureData texture)
+            textureHandle = AcquireTexture(texture);
+        try
         {
-            if (!_textures.TryGetValue(texture, out textureHandle))
-            {
-                textureHandle = _renderer.CreateTexture(texture);
-                if (textureHandle <= 0)
-                    throw new InvalidOperationException("Browser renderer rejected a texture upload.");
-                _textures.Add(texture, textureHandle);
-            }
+            handle = _renderer.CreateMaterial(material, textureHandle);
+            if (handle <= 0)
+                throw new InvalidOperationException("Browser renderer rejected a material upload.");
         }
-        handle = _renderer.CreateMaterial(material, textureHandle);
-        if (handle <= 0)
-            throw new InvalidOperationException("Browser renderer rejected a material upload.");
+        catch
+        {
+            if (material.Texture is BrowserTextureData acquiredTexture)
+                ReleaseTexture(acquiredTexture);
+            throw;
+        }
         _materials.Add(material, handle);
+        _materialReferences.Add(material, 1);
         return handle;
     }
 
-    private void SetHandles(BrowserMeshComponent component)
+    private void ReleaseMesh(BrowserMeshData mesh)
     {
-        component.MeshHandle = _meshes[component.Mesh!];
-        component.MaterialHandle = _materials[component.Material!];
+        if (--_meshReferences[mesh] != 0)
+            return;
+        _meshReferences.Remove(mesh);
+        int handle = _meshes[mesh];
+        _meshes.Remove(mesh);
+        _renderer.DestroyResource(handle);
+    }
+
+    private void ReleaseMaterial(BrowserMaterialData material)
+    {
+        if (--_materialReferences[material] != 0)
+            return;
+        _materialReferences.Remove(material);
+        int handle = _materials[material];
+        _materials.Remove(material);
+        try { _renderer.DestroyResource(handle); }
+        finally
+        {
+            if (material.Texture is BrowserTextureData texture)
+                ReleaseTexture(texture);
+        }
+    }
+
+    private void ReleaseTexture(BrowserTextureData texture)
+    {
+        if (--_textureReferences[texture] != 0)
+            return;
+        _textureReferences.Remove(texture);
+        int handle = _textures[texture];
+        _textures.Remove(texture);
+        _renderer.DestroyResource(handle);
     }
 
     private void ReleaseResources()
@@ -387,12 +588,15 @@ public sealed class BrowserSceneSession : IDisposable
         foreach (int handle in _materials.Values)
             TryDestroy(handle, ref error);
         _materials.Clear();
+        _materialReferences.Clear();
         foreach (int handle in _textures.Values)
             TryDestroy(handle, ref error);
         _textures.Clear();
+        _textureReferences.Clear();
         foreach (int handle in _meshes.Values)
             TryDestroy(handle, ref error);
         _meshes.Clear();
+        _meshReferences.Clear();
         if (error is not null)
             throw error;
     }
@@ -437,6 +641,12 @@ public sealed class BrowserSceneSession : IDisposable
                 return false;
         return true;
     }
+
+    private static bool IsFinite(in Matrix4x4 m)
+        => float.IsFinite(m.M11) && float.IsFinite(m.M12) && float.IsFinite(m.M13) && float.IsFinite(m.M14) &&
+           float.IsFinite(m.M21) && float.IsFinite(m.M22) && float.IsFinite(m.M23) && float.IsFinite(m.M24) &&
+           float.IsFinite(m.M31) && float.IsFinite(m.M32) && float.IsFinite(m.M33) && float.IsFinite(m.M34) &&
+           float.IsFinite(m.M41) && float.IsFinite(m.M42) && float.IsFinite(m.M43) && float.IsFinite(m.M44);
 
     private static BrowserMeshData CreateCubeMesh()
     {

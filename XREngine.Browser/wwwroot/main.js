@@ -33,6 +33,8 @@ const counters = document.querySelector('#counters');
 const capture = document.querySelector('#capture');
 const importScene = document.querySelector('#import-scene');
 const demo = document.querySelector('#demo');
+const culling = document.querySelector('#culling');
+const recolor = document.querySelector('#recolor');
 let host;
 let parked = false;
 const pageEvents = new AbortController();
@@ -47,6 +49,11 @@ restart.addEventListener('click', () => { void host?.start(); }, { signal: pageE
 stop.addEventListener('click', () => host?.stop(), { signal: pageEvents.signal });
 split.addEventListener('change', () => host?.setSplitView(split.checked), { signal: pageEvents.signal });
 instances.addEventListener('change', () => host?.setInstanceCount(Number(instances.value)), { signal: pageEvents.signal });
+culling.addEventListener('change', () => host?.setCullingEnabled(culling.checked), { signal: pageEvents.signal });
+recolor.addEventListener('click', () => {
+    try { host?.recolorFirstMesh(); }
+    catch (error) { console.error(error); status.textContent = `Material update rejected: ${error.message ?? error}`; }
+}, { signal: pageEvents.signal });
 capture.addEventListener('click', () => {
     const snapshot = host?.getStatistics();
     counters.textContent = snapshot ? JSON.stringify(snapshot, null, 2) : 'No active renderer.';
@@ -86,6 +93,7 @@ try {
         host = createHost(canvas, setState);
         host.setSplitView(split.checked);
         host.setInstanceCount(Number(instances.value));
+        host.setCullingEnabled(culling.checked);
         if (!parked) await host.start();
     }
 } catch (error) {

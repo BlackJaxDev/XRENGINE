@@ -126,3 +126,5 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 [Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU runtime TODO](work/todo/rendering/mobile-webgpu-runtime-todo.md).
 
+
+[Canvas output, visibility and live resource updates](work/progress/rendering/browser-webgpu-frame-output.md) records portable output metadata, the explicit canvas pass, per-view culling and resource replacement. Source implementation remains unvalidated.

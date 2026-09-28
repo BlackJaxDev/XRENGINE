@@ -32,6 +32,8 @@
     <Compile Include="Runtime/RendererModules/IRendererPresentationTarget.cs" />
     <Compile Include="Runtime/RendererModules/RenderTargetOutputProperties.cs" />
     <Compile Include="Runtime/RendererModules/RenderFrameOutputCapabilities.cs" />
+    <Compile Include="Runtime/RendererModules/RenderFrameOutputDescription.cs" />
+    <Compile Include="Runtime/Browser/BrowserRenderPassDescription.cs" />
     <Compile Include="Runtime/Browser/RuntimeSurfaceState.cs" />
     <Compile Include="Runtime/Browser/RuntimeInputState.cs" />
     <Compile Include="Runtime/Browser/IRuntimeSurfaceHost.cs" />

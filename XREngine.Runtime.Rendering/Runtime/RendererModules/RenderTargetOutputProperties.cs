@@ -13,6 +13,12 @@ public readonly record struct RenderTargetOutputProperties(
     uint SampleCount = 1,
     uint FrameSlotCount = 3)
 {
+    /// <summary>Exact backend color encoding when the pixel-format enum only represents its logical channels.</summary>
+    public string? ColorEncoding { get; init; }
+
+    /// <summary>Exact backend depth encoding when the storage precision is implementation-defined.</summary>
+    public string? DepthEncoding { get; init; }
+
     public void Validate()
     {
         if (Width == 0 || Height == 0)

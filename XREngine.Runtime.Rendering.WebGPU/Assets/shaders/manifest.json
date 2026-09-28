@@ -1,1 +1,1 @@
-{"artifacts":[{"descriptor":"4548dc84784d7d62104dd710ab694eed248f24d5e29c50edb10f1bf5788c29d5.shader.json","name":"browser-unlit","sha256":"4548dc84784d7d62104dd710ab694eed248f24d5e29c50edb10f1bf5788c29d5"}],"backend":"WebGPU","packetVersion":1,"schemaVersion":1}
+{"artifacts":[{"descriptor":"4548dc84784d7d62104dd710ab694eed248f24d5e29c50edb10f1bf5788c29d5.shader.json","name":"browser-unlit","sha256":"4548dc84784d7d62104dd710ab694eed248f24d5e29c50edb10f1bf5788c29d5"}],"backend":"WebGPU","packetVersion":2,"schemaVersion":1}

@@ -25,6 +25,12 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
     public bool IsDeviceLost => _deviceLost;
     public bool IsBackendReplacementFrameReady => State == BrowserRendererState.Ready && _submittedFrame;
 
+    public bool TryDescribeFrameOutput(out RenderFrameOutputDescription output)
+    {
+        output = default;
+        return State == BrowserRendererState.Ready && _target.TryDescribeFrameOutput(out output);
+    }
+
     public void MarkReady(int sessionId)
     {
         if (State != BrowserRendererState.Pending || sessionId <= 0)
@@ -107,9 +113,12 @@ public sealed class WebGpuRendererHost : IBrowserRendererHost
         Span<byte> bytes = packet.BeginConsume();
         try
         {
-            if (BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(24)) != _session ||
-                BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(32)) != _target.Surface.Generation)
-                throw new InvalidOperationException("Frame owner or target generation does not match this renderer.");
+            if (!TryDescribeFrameOutput(out RenderFrameOutputDescription output) ||
+                BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(24)) != _session ||
+                BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(32)) != output.TargetGeneration ||
+                BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(84)) != output.Properties.Width ||
+                BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(88)) != output.Properties.Height)
+                throw new InvalidOperationException("Frame owner, extent or target generation does not match a drawable renderer output.");
             WebGpuImports.SubmitPacket(_session, bytes);
             _submittedFrame = true;
         }

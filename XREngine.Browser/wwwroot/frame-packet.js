@@ -1,4 +1,4 @@
-export const packetHeaderBytes = 64;
+export const packetHeaderBytes = 96;
 export const drawRecordBytes = 112;
 export const maximumDraws = 4096;
 const magic = 0x50524558;
@@ -10,11 +10,21 @@ export function validateFramePacket(view, byteLength, session, surfaceGeneration
     previousArenaGeneration, previousFrameSequence, width, height, resources) {
     if (byteLength < packetHeaderBytes || byteLength > packetHeaderBytes + maximumDraws * drawRecordBytes)
         throw new RangeError('Invalid frame packet length.');
-    if (u32(view, 0) !== magic || u32(view, 4) !== 1 || u32(view, 8) !== backend || u32(view, 12) !== packetHeaderBytes
+    if (u32(view, 0) !== magic || u32(view, 4) !== 2 || u32(view, 8) !== backend || u32(view, 12) !== packetHeaderBytes
         || u32(view, 16) !== byteLength || u32(view, 24) !== session || u32(view, 28) !== session
         || u32(view, 32) !== surfaceGeneration || u32(view, 44) !== 0 || u32(view, 48) !== 0
-        || u32(view, 52) !== 0 || u32(view, 56) !== 0 || u32(view, 60) !== 0)
+        || u32(view, 52) !== 0 || u32(view, 56) !== 0 || u32(view, 60) !== 0 || u32(view, 92) !== 0)
         throw new Error('Frame packet header does not match this renderer.');
+    const red = view.getFloat32(64, true), green = view.getFloat32(68, true);
+    const blue = view.getFloat32(72, true), alpha = view.getFloat32(76, true);
+    const depth = view.getFloat32(80, true);
+    if (!Number.isFinite(red) || red < 0 || red > 1
+        || !Number.isFinite(green) || green < 0 || green > 1
+        || !Number.isFinite(blue) || blue < 0 || blue > 1
+        || alpha !== 1 || depth !== 1)
+        throw new RangeError('The canvas pass requires finite RGB, opaque alpha, and a depth clear of 1.');
+    if (!width || !height || u32(view, 84) !== width || u32(view, 88) !== height)
+        throw new RangeError('Frame packet output extent does not match the configured canvas.');
     const count = u32(view, 20);
     const arenaGeneration = u32(view, 36);
     const frameSequence = u32(view, 40);

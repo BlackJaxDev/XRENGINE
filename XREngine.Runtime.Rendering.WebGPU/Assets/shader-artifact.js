@@ -154,7 +154,7 @@ function validateDescriptor(descriptor, identity) {
 export async function loadBrowserUnlitArtifact(signal) {
     const manifest = parse(await readBounded(manifestUrl, 64 * 1024, signal, 'no-cache', 'manifest'), 'manifest');
     fields(manifest, ['schemaVersion', 'backend', 'packetVersion', 'artifacts'], 'manifest');
-    if (manifest.schemaVersion !== 1 || manifest.backend !== 'WebGPU' || manifest.packetVersion !== 1
+    if (manifest.schemaVersion !== 1 || manifest.backend !== 'WebGPU' || manifest.packetVersion !== 2
         || !Array.isArray(manifest.artifacts) || manifest.artifacts.length < 1 || manifest.artifacts.length > 16)
         fail('manifest', 'unsupported schema, backend, packet version, or artifact count.');
     const names = new Set();
