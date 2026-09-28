@@ -62,7 +62,7 @@ public static partial class SceneBoot
         Shutdown();
         if (Data.Core.XRObjectBase.ObjectsCache.Count != _initialObjectCount)
             throw new InvalidOperationException($"Scene teardown left registered engine objects: initial={_initialObjectCount}, remaining={string.Join(", ", Data.Core.XRObjectBase.ObjectsCache.Values.Select(static obj => $"{obj.GetType().Name}:{obj.Name}"))}.");
-        return "PASS: real SceneNode + Transform + XRComponent; 120 fixed updates; child=(2, 1, 0); begin/end once; no updates after stop; object cache restored. GPU rendering is not implemented yet.";
+        return "PASS: real SceneNode + Transform + XRComponent; 120 fixed updates; child=(2, 1, 0); begin/end once; no updates after stop; object cache restored. GPU rendering is not exercised by this fixture.";
     }
 
     [JSExport]
@@ -76,3 +76,4 @@ public static partial class SceneBoot
         _component = null;
     }
 }
+

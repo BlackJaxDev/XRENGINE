@@ -168,6 +168,15 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** The browser updates an engine scene, remains responsive, handles resize and page suspension, and reports startup failures. No desktop loop runs inside a browser callback.
 
+**Code implementation record (2026-09-28):** [Browser WebGPU canvas host](../../progress/rendering/browser-webgpu-canvas-host.md). The user explicitly deferred validation; checkboxes below remain open until qualification rather than treating source edits as acceptance evidence.
+
+- MW02.01–MW02.04: Canvas binding, portable target/surface/input contracts and asynchronous adapter/device/pipeline startup are implemented. The browser composition owns the pending startup; it does not block or pretend the existing synchronous desktop factory created a ready renderer.
+- MW02.05: Single-frame managed simulation and diagnostic two-view draw are implemented. Full visibility collection, engine render-buffer swaps and the general frame-packet producer remain open.
+- MW02.06–MW02.07: Single-thread caller scheduling, bounded 60 Hz fixed updates, variable-cadence rendering and visibility clock reset are implemented. No temporal history exists in this diagnostic renderer.
+- MW02.08–MW02.10: Resize/DPR/device limits, surface generations, zero-size/detach/reattach, independent canvas sessions, split view, cancellation, observer/listener cleanup and explicit stop/restart are implemented but unvalidated.
+- A minimal WebGPU executor and generated scalar interop seed MW03/MW05. The versioned batched command/upload ABI, ordinary mesh/material support and device qualification remain open; this does not satisfy G1.
+
+
 ## MW03 — Batched .NET/JavaScript command and upload bridge
 
 **Priority:** P0. **Depends on:** MW01–MW02. **Gate:** G1; maintained through G3.
@@ -507,3 +516,4 @@ References below are pinned to the reviewed commit. The relative navigation link
 [tunnel]: https://github.com/BlackJaxDev/XRENGINE/blob/4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63/XRENGINE.Runtime.Core/Networking/RealtimeTlsClientTunnel.cs
 [websocket-component]: https://github.com/BlackJaxDev/XRENGINE/blob/4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63/XREngine.Runtime.Core/Scene/Components/Networking/WebSocketClientComponent.cs
 [windows-ci]: https://github.com/BlackJaxDev/XRENGINE/blob/4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63/.github/workflows/windows-ci.yml
+
