@@ -16,6 +16,7 @@ async function createBrowserRuntime() {
         createMaterial: (id, texture, r, g, b, a) => renderer(id).createMaterial(texture, r, g, b, a),
         destroyResource: (id, handle) => renderer(id).destroyResource(handle),
         submitPacket: (id, packet) => renderer(id).submitPacket(packet),
+        submitUploads: (id, commands, payload) => renderer(id).submitUploads(commands, payload),
         copyTexture: (id, source, destination, sourceX, sourceY, destinationX, destinationY, width, height) =>
             renderer(id).copyTexture(source, destination, sourceX, sourceY, destinationX, destinationY, width, height),
         completeSubmittedWork: id => renderer(id).completeSubmittedWork(),
@@ -38,11 +39,13 @@ const importScene = document.querySelector('#import-scene');
 const demo = document.querySelector('#demo');
 const culling = document.querySelector('#culling');
 const recolor = document.querySelector('#recolor');
+const streamTexture = document.querySelector('#stream-texture');
 let host;
 let parked = false;
 const pageEvents = new AbortController();
 const setState = (state, message) => {
     split.disabled = instances.disabled = Boolean(host?.snapshotJson);
+    streamTexture.disabled = Boolean(host?.snapshotJson) || state !== 'running';
     status.dataset.state = state;
     status.textContent = message;
     restart.disabled = !host;
@@ -60,6 +63,10 @@ recolor.addEventListener('click', () => {
 capture.addEventListener('click', () => {
     const snapshot = host?.getStatistics();
     counters.textContent = snapshot ? JSON.stringify(snapshot, null, 2) : 'No active renderer.';
+}, { signal: pageEvents.signal });
+streamTexture.addEventListener('click', () => {
+    try { host?.streamDemoTexture(); }
+    catch (error) { console.error(error); status.textContent = `Texture upload rejected: ${error.message ?? error}`; }
 }, { signal: pageEvents.signal });
 importScene.addEventListener('change', async () => {
     const file = importScene.files?.[0];

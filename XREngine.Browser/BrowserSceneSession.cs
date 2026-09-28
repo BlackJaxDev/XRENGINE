@@ -18,6 +18,14 @@ public sealed class BrowserSceneSession : IDisposable
     private readonly BrowserSceneSnapshot? _snapshot;
     private readonly SceneNode _parent;
     private readonly BrowserFramePacket _packet = new();
+    private readonly BrowserUploadBatch _uploads = new();
+    private readonly byte[] _streamedCheckerPixels = new byte[8 * 8 * 4];
+    private bool _checkerAlternate;
+    private long _frameAttempts;
+    private long _submittedFrames;
+    private long _lastFrameAllocatedBytes;
+    private long _frameAllocatedBytes;
+    private int _lastFramePacketBytes;
     private BrowserCollectedRenderable[] _collected = new BrowserCollectedRenderable[64];
     private int _collectedCount;
     private readonly List<BrowserMeshComponent> _renderables = new();
@@ -114,7 +122,12 @@ public sealed class BrowserSceneSession : IDisposable
             }
             finally
             {
-                _renderer.Dispose();
+                try { _renderer.Dispose(); }
+                finally
+                {
+                    _packet.Dispose();
+                    _uploads.Dispose();
+                }
             }
             throw;
         }
@@ -137,6 +150,59 @@ public sealed class BrowserSceneSession : IDisposable
     public double VariableDeltaSeconds => _variableDeltaSeconds;
     /// <summary>Changes whenever any future temporal consumer must discard its previous frame.</summary>
     public uint HistoryGeneration => _historyGeneration;
+
+    /// <summary>Allocates a counter snapshot only when explicitly requested by the host.</summary>
+    public BrowserBridgeStatistics CaptureBridgeStatistics() => new(
+        _frameAttempts, _submittedFrames, _lastFrameAllocatedBytes, _frameAllocatedBytes, _lastFramePacketBytes,
+        _packet.DrawCapacity, _packet.GrowthCount, _uploads.CommandCapacity, _uploads.PayloadCapacity,
+        _uploads.CommandGrowthCount, _uploads.PayloadGrowthCount);
+
+    /// <summary>Streams pixels into a live texture without replacing its immutable resource descriptor.</summary>
+    public void UploadTextureRegion(BrowserTextureData texture, int x, int y, int width, int height, ReadOnlySpan<byte> rgba)
+    {
+        ThrowIfFrameBusy();
+        ArgumentNullException.ThrowIfNull(texture);
+        if (!_graphicsInitialized || !_textures.TryGetValue(texture, out int handle))
+            throw new InvalidOperationException("Texture uploads require a live texture owned by this scene.");
+        if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
+            (long)x + width > texture.Width || (long)y + height > texture.Height ||
+            (long)width * height * 4 != rgba.Length)
+            throw new ArgumentOutOfRangeException(nameof(rgba), "Upload pixels must exactly cover a rectangle within the texture.");
+        _uploads.EnsureCapacity(1, rgba.Length);
+        _uploads.Begin(Id);
+        try
+        {
+            _uploads.AddTexture(BrowserResourceHandle.FromPacked(handle), x, y, width, height, rgba);
+            _uploads.Seal();
+            _renderer.SubmitUploads(_uploads);
+        }
+        catch
+        {
+            _uploads.Abort();
+            throw;
+        }
+    }
+
+    /// <summary>Exercises the streaming lane using retained pixels for the shared demo checker texture.</summary>
+    public void StreamDemoTexture()
+    {
+        ThrowIfFrameBusy();
+        if (_snapshot is not null || _checkerMaterial?.Texture is not BrowserTextureData texture)
+            throw new InvalidOperationException("The checker texture belongs to the built-in demo.");
+        bool alternate = !_checkerAlternate;
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++)
+            {
+                int offset = (y * 8 + x) * 4;
+                byte shade = ((x ^ y) & 1) == 0 ? (byte)245 : (byte)48;
+                _streamedCheckerPixels[offset] = alternate ? (byte)(255 - shade) : shade;
+                _streamedCheckerPixels[offset + 1] = shade;
+                _streamedCheckerPixels[offset + 2] = shade;
+                _streamedCheckerPixels[offset + 3] = 255;
+            }
+        UploadTextureRegion(texture, 0, 0, 8, 8, _streamedCheckerPixels);
+        _checkerAlternate = alternate;
+    }
 
     public void SetCullingEnabled(bool enabled)
     {
@@ -392,6 +458,8 @@ public sealed class BrowserSceneSession : IDisposable
         _variableDeltaSeconds = Math.Min(elapsed, FixedStep * MaxStepsPerFrame);
         _accumulator = Math.Min(_accumulator + _variableDeltaSeconds, FixedStep * MaxStepsPerFrame);
         _frameInProgress = true;
+        long allocationStart = GC.GetAllocatedBytesForCurrentThread();
+        _frameAttempts++;
         try
         {
             int steps = 0;
@@ -420,6 +488,8 @@ public sealed class BrowserSceneSession : IDisposable
                     AddViewDraws(_right);
                 _packet.Seal();
                 _renderer.SubmitPacket(_packet);
+                _submittedFrames++;
+                _lastFramePacketBytes = BrowserFramePacket.HeaderBytes + _packet.DrawCount * BrowserFramePacket.DrawBytes;
             }
             catch
             {
@@ -431,6 +501,8 @@ public sealed class BrowserSceneSession : IDisposable
         {
             _frameInProgress = false;
             Data.Core.XRObjectBase.ProcessPendingDestructions();
+            _lastFrameAllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+            _frameAllocatedBytes += _lastFrameAllocatedBytes;
         }
     }
 
@@ -814,7 +886,13 @@ public sealed class BrowserSceneSession : IDisposable
             }
             finally
             {
-                _renderer.Dispose();
+                try { _renderer.Dispose(); }
+                finally
+                {
+                    _packet.Abort();
+                    _packet.Dispose();
+                    _uploads.Dispose();
+                }
             }
         }
     }

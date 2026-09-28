@@ -258,7 +258,12 @@ export class BrowserCanvasHost {
     getStatistics() {
         // Diagnostic snapshots are explicit UI actions, never animation-frame work.
         if (!this.renderer || !this.session) return null;
-        return { ...this.renderer.getStatistics(), scene: JSON.parse(this.scene.GetStatistics(this.session)) };
+        return { ...this.renderer.getStatistics(), capabilities: this.renderer.getCapabilities(),
+            scene: JSON.parse(this.scene.GetStatistics(this.session)) };
+    }
+
+    streamDemoTexture() {
+        if (this.session && !this.snapshotJson) this.scene.StreamDemoTexture(this.session);
     }
 
     setCullingEnabled(enabled) {

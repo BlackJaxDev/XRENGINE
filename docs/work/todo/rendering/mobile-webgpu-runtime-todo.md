@@ -64,9 +64,11 @@ still applies only to its recorded scope.
 
 - [x] **MW02.01–MW02.03 code:** Browser entry point, explicit canvas target and portable surface/input contracts.
 - [x] **MW02.04, MW02.07–MW02.10 code:** Asynchronous startup, bounded simulation, resize/suspension, multiple views and cancel-safe teardown.
-- [x] **MW03.03 code:** Versioned little-endian packet header and typed indexed-draw records.
-- [x] **MW03.04–MW03.07 draw-path code:** Reusable synchronous packet arena, bounded growth, typed generation handles, and separate CPU/GPU lifetimes.
-- [x] **MW03.10 instrumentation code:** Packet/draw/copy/upload/growth/call counters and explicit UI snapshots.
+- [x] **MW03.01 code:** Generated interop for session bootstrap/lifecycle, resource controls and diagnostic snapshots; cold capability snapshots include supported packet versions and device/arena limits.
+- [x] **MW03.03 code:** Versioned little-endian frame and upload headers with typed draw, vertex/index, texture-region and material-tint commands.
+- [x] **MW03.04–MW03.07 code:** Reusable frame/command/payload arenas, explicit synchronous consumption, typed required-capacity faults, idle growth/generation publication, whole-batch validation and separate CPU/GPU lifetimes. JavaScript owns copies before imports return; no transient view enters a promise.
+- [x] **MW03.08 code:** Device/session-checked completion and retirement callbacks, epoch-checked host failures, deferred failure notification outside a borrowed-span stack, and pipeline publication only after cancellation/lifetime checks.
+- [x] **MW03.10 instrumentation code:** Packet/draw/upload/copy/growth/submission counters, command index/opcode/offset failure context, cold capability snapshots and managed current-thread frame allocation counters. The demo exposes a retained-pixel texture update through the upload lane.
 - [x] **MW04.01–MW04.02 seed code:** Explicit position/UV, transform and tint layouts with depth-tested unlit texture WGSL.
 - [x] **MW04.03 code:** Target-tagged artifact payload and WebGPU WGSL target; Vulkan constructor/accessor compatibility retained.
 - [x] **MW04.04 explicit-WGSL code:** Deterministic descriptor identity includes source/dependency hashes, target, entry points, compiler identity, schema, layout and requirements. Unsupported preprocessing/specialization options fail explicitly.
@@ -84,12 +86,12 @@ still applies only to its recorded scope.
 - [x] **MW02.05 bounded visibility code:** Conservative per-view AABB frustum collection over real scene components, cached live camera snapshots, a culling toggle and last-frame counters.
 - [x] **MW05.04/MW05.14 live descriptor code:** Scene-owned mesh/material replacement and removal with shared resource reference counts, acquisition before replacement, and asynchronous backend retirement; an explicit page action updates a material.
 - [ ] **MW05.04/MW05.14 broader engine integration:** Arbitrary engine resource/pass lowering and automatic live-world camera/material binding remain open. The selected browser host now publishes real engine transform buffers and frozen renderable data; this does not establish arbitrary live-world portability or runtime acceptance.
-- [ ] **MW03.04/MW03.10–MW03.11 acceptance:** Streaming upload arenas, malformed/stale/growth cases and measured memory/crossing evidence.
+- [ ] **MW03.02/MW03.10–MW03.11 acceptance:** Exact-runtime memory-view/copy/disposal proof, increasing-draw crossing/allocation measurements, and malformed/stale/growth/cancellation/disposal/memory-pressure evidence. Code additions are not a substitute for this deliberately deferred validation.
 - [ ] **MW04.05/MW04.07 production compiler:** Approved WGSL-producing toolchain and target-aware engine material generation.
 - [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
 
-Latest source delivery: [Portable browser host implementation](../../progress/rendering/browser-portable-host-completion.md).
-The next integration section is broader engine resource/pass lowering and automatic live-world binding, followed by batched streaming uploads. Full shader cooking expands beyond the explicit unlit WGSL profile implemented here.
+Latest source delivery: [Batched browser upload bridge](../../progress/rendering/browser-upload-bridge.md).
+Remaining implementation expands shader cooking beyond the explicit unlit WGSL profile and adds broader engine resource/pass lowering and automatic live-world binding. The batched streaming upload lane is implemented; its acceptance evidence remains open.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -254,7 +256,7 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** G1 uses the real packet path. Many ordinary draws may produce many JavaScript WebGPU API calls, but they do not produce one managed-to-JavaScript transition per draw or state mutation. No stale arena access or implicit per-frame GPU wait is needed for correctness.
 
-**Implementation record (2026-09-28):** [Mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) adds a versioned, bounded little-endian draw packet, synchronous transient memory-view consumption with explicit copying, generation-stamped typed resource handles, monotonic frame identity, whole-packet checks and reusable matrix uploads. One managed submission contains all ordinary draws and views. Upload creation remains a bounded control call per resource; streaming upload commands, readback/completion tickets and measured crossing/allocation evidence remain open. MW03 acceptance is not checked because validation was explicitly deferred.
+**Implementation record (2026-09-28):** [Batched browser upload bridge](../../progress/rendering/browser-upload-bridge.md) completes the selected-profile source work with reusable command/payload arenas, vertex/index/texture/tint updates, one synchronous generated import per batch, pre-execution validation, required-capacity failures, lifetime guards and allocation/crossing diagnostics. The existing draw ABI stays at v2; the separate upload ABI is v1. Resource creation remains a bounded control call. The bridge deliberately copies transient managed views into retained JavaScript arrays and does not claim persistent-view or zero-copy proof. The user's validation waiver permits source implementation to proceed, but the exact-runtime prerequisite in MW03.02 and the measurement/adversarial acceptance in MW03.10–MW03.11 remain unfulfilled. No Python, build, test, browser run or audit execution was used for this delivery. Readback and broader renderer integration remain later capabilities, not claimed here.
 
 ## MW04 — WGSL shader artifacts and material/layout contracts
 

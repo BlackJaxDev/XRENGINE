@@ -130,3 +130,5 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 [Canvas output, visibility and live resource updates](work/progress/rendering/browser-webgpu-frame-output.md) records portable output metadata, the explicit canvas pass, per-view culling and resource replacement. Source implementation remains unvalidated.
 
 [Portable browser host implementation](work/progress/rendering/browser-portable-host-completion.md) records generated registration, portability/API guards, focused renderer capabilities and explicit frame publication. Code completion is separate from deferred acceptance evidence.
+
+[Batched browser upload bridge](work/progress/rendering/browser-upload-bridge.md) records reusable upload arenas, typed resource updates, ownership/overflow rules and bridge diagnostics. Exact-runtime lifetime and performance acceptance remains deferred.

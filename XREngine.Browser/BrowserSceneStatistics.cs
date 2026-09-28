@@ -13,4 +13,5 @@ public sealed record BrowserSceneStatistics(
     int RetainedTextureCount,
     double VariableDeltaSeconds,
     uint HistoryGeneration,
+    BrowserBridgeStatistics Bridge,
     RenderFrameOutputDescription? Output);
