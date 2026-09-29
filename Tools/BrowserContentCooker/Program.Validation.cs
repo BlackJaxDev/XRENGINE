@@ -42,6 +42,22 @@ internal static partial class Program
         return values;
     }
 
+    private static void ValidateServices(JsonElement services)
+    {
+        Members(services, "required", "optional");
+        HashSet<string> declared = new(StringComparer.Ordinal);
+        foreach (string list in new[] { "required", "optional" })
+        {
+            foreach (JsonElement value in Array(services, list, 16))
+            {
+                Require(value.ValueKind == JsonValueKind.String, "Service requirements must be strings.");
+                string service = value.GetString()!;
+                Require(Regex.IsMatch(service, "^[a-z][a-z0-9-]{0,63}\\z", RegexOptions.CultureInvariant), "Invalid service requirement token.");
+                Require(declared.Add(service), "Service requirements must be unique and required/optional lists must be disjoint.");
+            }
+        }
+    }
+
     private static string Choice(JsonElement owner, string name, params string[] supported)
     {
         JsonElement value = owner.GetProperty(name);

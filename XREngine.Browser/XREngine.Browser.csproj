@@ -4,6 +4,7 @@
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
     <IsPackable>false</IsPackable>
     <!-- Qualify the interpreter first. Trimming and AOT require their own
@@ -18,4 +19,3 @@
   </ItemGroup>
   <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
 </Project>
-

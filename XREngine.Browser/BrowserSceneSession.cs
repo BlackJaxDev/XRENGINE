@@ -95,6 +95,7 @@ public sealed partial class BrowserSceneSession : IDisposable
                     AddRenderableCore(snapshot.Meshes[instance.MeshIndex], snapshot.Materials[instance.MaterialIndex],
                         ImportTransform(instance.ModelMatrix), _renderables);
                 }
+                InitializeMotion();
                 _host.Start();
                 ReservePacket();
                 return;
@@ -137,10 +138,14 @@ public sealed partial class BrowserSceneSession : IDisposable
             AddRenderableCore(_panelMesh, new BrowserMaterialData(new Vector4(0.55f, 0.58f, 0.65f, 1),
                 shading: "lambert", castShadow: false), backdrop, _customRenderables);
             LayoutInstances();
+            InitializeMotion();
+            InitializeAnimation();
             _host.Start();
         }
         catch
         {
+            DisposeAnimation();
+            DisposeMotion();
             try
             {
                 _host.Dispose();
@@ -297,6 +302,7 @@ public sealed partial class BrowserSceneSession : IDisposable
         if (!IsFinite(camera.View) || !IsFinite(camera.Projection))
             throw new ArgumentException("Browser camera matrices must be finite.", nameof(camera));
         _cameraOverride = camera;
+        _character?.ResetVelocity();
         RebuildViews();
     }
 
@@ -517,6 +523,8 @@ public sealed partial class BrowserSceneSession : IDisposable
             throw new InvalidOperationException("Temporal history generation is exhausted; create a new scene session.");
         _accumulator = 0;
         _variableDeltaSeconds = 0;
+        ResetMotionInput();
+        _character?.ResetVelocity();
         _historyGeneration++;
     }
 
@@ -549,14 +557,18 @@ public sealed partial class BrowserSceneSession : IDisposable
             int steps = 0;
             while (_accumulator >= FixedStep && steps < MaxStepsPerFrame)
             {
+                AdvanceMotion((float)FixedStep);
                 _host.Advance((float)FixedStep, publishRenderBuffers: false);
+                AdvanceAnimation((float)FixedStep, MotionSpeed);
                 _accumulator -= FixedStep;
                 steps++;
             }
             Data.Core.XRObjectBase.ProcessPendingDestructions();
 
+            PublishAnimation();
             _host.SwapBuffers();
             CollectRenderables();
+            PublishAudioListener();
 
             if (!_renderer.TryDescribeFrameOutput(out RenderFrameOutputDescription output))
                 return;
@@ -642,7 +654,8 @@ public sealed partial class BrowserSceneSession : IDisposable
         // fields are read as columns by the browser renderer.
         Matrix4x4 matrix = component.ModelMatrix * viewport.ViewProjection;
         VisibilityCandidates++;
-        bool colorVisible = !_cullingEnabled || BrowserFrustumVisibility.Intersects(component.Mesh, in matrix);
+        bool colorVisible = !_cullingEnabled || IsAnimationMesh(component.Mesh)
+            || BrowserFrustumVisibility.Intersects(component.Mesh, in matrix);
         if (!colorVisible)
         {
             VisibilityCulled++;
@@ -698,6 +711,8 @@ public sealed partial class BrowserSceneSession : IDisposable
         RuntimeSurfaceState surface = Target.Surface;
         int width = surface.PhysicalWidth;
         int height = surface.PhysicalHeight;
+        if (TryBuildMotionViews(width, height))
+            return;
         if (_cameraOverride is BrowserCameraSnapshot camera)
         {
             Matrix4x4 viewProjection = camera.ViewProjection;
@@ -1004,6 +1019,8 @@ public sealed partial class BrowserSceneSession : IDisposable
         if (_frameInProgress)
             throw new InvalidOperationException("A browser scene cannot be disposed during its frame.");
         _disposed = true;
+        DisposeAnimation();
+        DisposeMotion();
         DiscardCollection();
         ClearCookedContent();
         try

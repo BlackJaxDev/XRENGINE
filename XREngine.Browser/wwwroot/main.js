@@ -10,6 +10,10 @@ async function createBrowserRuntime() {
         if (!value) throw new Error('The frame belongs to an inactive canvas session.');
         return value;
     };
+    runtime.setModuleImports('xrengine.audio', {
+        updateListener: (id, x, y, z, fx, fy, fz, ux, uy, uz) =>
+            renderers.get(id)?.audioService?.setListenerValues(x, y, z, fx, fy, fz, ux, uy, uz)
+    });
     runtime.setModuleImports('xrengine.webgpu', {
         getCapabilities: id => JSON.stringify(renderer(id).getCapabilities()),
         configurePipeline: (id, json) => renderer(id).focusedPipeline.configure(json),
@@ -75,9 +79,40 @@ const engineUi = document.querySelector('#engine-ui');
 const worldForm = document.querySelector('#world-form');
 const worldUrl = document.querySelector('#world-url');
 const contentProgress = document.querySelector('#content-progress');
+const enableAudio = document.querySelector('#enable-audio');
+const audioStatus = document.querySelector('#audio-status');
+const audioFile = document.querySelector('#audio-file');
+const audioLoop = document.querySelector('#audio-loop');
+const audioGain = document.querySelector('#audio-gain');
+const pauseAudio = document.querySelector('#pause-audio');
+const nameForm = document.querySelector('#player-name-form');
+const nameInput = document.querySelector('#player-name');
+let composingName = false;
 let host;
 let parked = false;
 const pageEvents = new AbortController();
+enableAudio.addEventListener('click', () => {
+    void host?.enableAudio().catch(error => { audioStatus.textContent = error.message ?? String(error); });
+}, { signal: pageEvents.signal });
+audioFile.addEventListener('change', () => {
+    const file = audioFile.files?.[0];
+    audioFile.value = '';
+    if (file && host) void host.playAudioFile(file, audioLoop.checked).catch(error => {
+        audioStatus.textContent = error.message ?? String(error);
+    });
+}, { signal: pageEvents.signal });
+audioGain.addEventListener('input', () => host?.audio?.setGain(Number(audioGain.value)), { signal: pageEvents.signal });
+pauseAudio.addEventListener('click', () => { void host?.audio?.pause(); }, { signal: pageEvents.signal });
+nameInput.addEventListener('compositionstart', () => { composingName = true; }, { signal: pageEvents.signal });
+nameInput.addEventListener('compositionend', () => { composingName = false; }, { signal: pageEvents.signal });
+nameForm.addEventListener('submit', event => {
+    event.preventDefault();
+    if (composingName) return;
+    try {
+        host?.setSceneLabel(nameInput.value);
+        status.textContent = `Scene named ${nameInput.value.trim()}.`;
+    } catch (error) { status.textContent = error.message ?? String(error); }
+}, { signal: pageEvents.signal });
 const setState = (state, message) => {
     split.disabled = instances.disabled = Boolean(host?.snapshotJson || host?.contentUrl);
     streamTexture.disabled = Boolean(host?.snapshotJson || host?.contentUrl) || state !== 'running';
@@ -154,6 +189,10 @@ try {
         host.setCullingEnabled(culling.checked);
         host.setQualityPreset(quality.value);
         host.setUiEnabled(engineUi.checked);
+        host.onAudioState = (state, reason) => {
+            audioStatus.textContent = state === 'ready' ? 'Sound is ready.' : (reason || 'Choose Enable sound to start audio.');
+            enableAudio.textContent = state === 'ready' ? 'Play sample sound' : 'Enable sound';
+        };
         host.onContentProgress = progress => {
             const received = (progress.receivedDecodedBytes / (1024 * 1024)).toFixed(1);
             contentProgress.textContent = progress.state === 'complete'

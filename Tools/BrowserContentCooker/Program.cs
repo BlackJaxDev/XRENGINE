@@ -35,8 +35,15 @@ internal static partial class Program
         RejectLinks(recipePath);
         using JsonDocument recipeDocument = ReadJson(ReadBounded(recipePath, JsonLimit));
         JsonElement recipe = recipeDocument.RootElement;
-        Members(recipe, "schema", "entrypoints", "streamed", "assets");
-        Require(recipe.GetProperty("schema").GetInt32() == 1, "Unsupported recipe schema.");
+        Require(recipe.ValueKind == JsonValueKind.Object, "Recipe must be an object.");
+        int schema = Integer(recipe.GetProperty("schema"), 1, 2);
+        if (schema == 1)
+            Members(recipe, "schema", "entrypoints", "streamed", "assets");
+        else
+        {
+            Members(recipe, "schema", "entrypoints", "streamed", "assets", "services");
+            ValidateServices(recipe.GetProperty("services"));
+        }
         JsonElement[] assets = Array(recipe, "assets", 4096, 1);
         Dictionary<string, JsonElement> byId = new(StringComparer.Ordinal);
         Dictionary<string, string[]> dependencies = new(StringComparer.Ordinal);
@@ -110,11 +117,14 @@ internal static partial class Program
             Require(maximumSelectedBytes <= AggregateLimit, "Selected asset payload budget exceeds 64 MiB.");
             cookedAssets.Add(new { id, kind, dependencies = dependencies[id], variants = cookedVariants });
         }
-        byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(new
+        Dictionary<string, object?> manifestValues = new(StringComparer.Ordinal)
         {
-            schema = 1, profile = "browser-forward-v1", toolchain = "xrengine-browser-content-1",
-            entrypoints, streamed, assets = cookedAssets
-        }, OutputOptions);
+            ["schema"] = schema, ["profile"] = "browser-forward-v1",
+            ["toolchain"] = schema == 1 ? "xrengine-browser-content-1" : "xrengine-browser-content-2",
+            ["entrypoints"] = entrypoints, ["streamed"] = streamed, ["assets"] = cookedAssets
+        };
+        if (schema == 2) manifestValues.Add("services", recipe.GetProperty("services").Clone());
+        byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestValues, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Manifest exceeds 1 MiB.");
 
         // The mutable manifest is published last. Previously referenced content remains valid.
