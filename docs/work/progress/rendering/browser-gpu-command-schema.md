@@ -24,7 +24,7 @@ The remaining creation methods accept JSON with exact, case-sensitive field name
 {
   "label": "Update particles",
   "layouts": [65537],
-  "compute": { "shader": 65538, "entryPoint": "computeMain" }
+  "compute": { "shader": 65538, "entryPoint": "computeMain", "workgroupSize": [64, 1, 1], "workgroupStorageSize": 0 }
 }
 ```
 
@@ -56,11 +56,13 @@ The remaining creation methods accept JSON with exact, case-sensitive field name
 
 Example handles are placeholders for values returned by the renderer. The target format must match the selected canvas format or offscreen attachment. Supported vertex formats are 32-bit float/signed/unsigned scalar or vectors of two to four components. Step mode is `vertex` or `instance`; topology is triangle-list, line-list or point-list. Color targets use baseline RGBA8/BGRA8 linear or sRGB formats, optional explicit color/alpha blend components, and write masks. Each blend component specifies `operation`, `srcFactor`, and `dstFactor`; factors use ordinary source/destination color/alpha values, excluding blend constants and dual-source blending. Depth formats are depth16unorm, depth24plus, depth24plus-stencil8 and depth32float. Optional finite depth bias fields are accepted. Combined depth/stencil pipelines accept `stencilFront` and `stencilBack` objects with explicit `compare`, `failOp`, `depthFailOp` and `passOp`, plus unsigned `stencilReadMask` and `stencilWriteMask`; attachment plans preserve read-only aspect policy. Samples are 1 or 4. Shader overrides, strips, storage textures and optional-format expansion are outside this initial command profile.
 
-Pipeline and layout cache keys include the entire admitted descriptor and opaque shader/layout identities. Cache eviction releases its reference; live resource handles retain their pipeline objects.
+Compute pipelines require `workgroupSize: [x,y,z]` matching the WGSL entry point. Each dimension and their product must fit the selected device's axis and invocation limits. Optional `workgroupStorageSize` defaults to zero and must fit `maxComputeWorkgroupStorageSize`; it must describe the actual shader's workgroup memory. These fields are producer metadata, not reflection. Native pipeline compilation checks the actual WGSL. The example's 64-thread choice must be checked against the current device; the reference selects a smaller matching shader variant from actual limits.
+
+All layouts together must fit per-stage uniform/storage/texture/sampler limits and dynamic-buffer totals. Render layouts also honor the combined bind-group/vertex-buffer limit when exposed. Writable storage cannot have vertex-stage visibility. Pipeline and layout cache keys include the entire admitted native descriptor and opaque shader/layout identities. Cache eviction releases its reference; live resource handles retain their pipeline objects.
 
 ## Ordered sequences
 
-`PrepareCommands` accepts `{ "label": "Frame", "commands": [...] }`. At most 4096 commands and 4096 indexed draws are admitted per sequence. Commands execute in supplied order in one encoder and one queue submission.
+`PrepareCommands` accepts `{ "label": "Frame", "commands": [...] }`. At most 4096 commands and 4096 total draws are admitted per sequence. Commands execute in supplied order in one encoder and one queue submission.
 
 A render command has:
 
@@ -81,9 +83,26 @@ A render command has:
 
 Pass view handle 0 denotes the current canvas color output; -1 denotes its depth attachment. Positive handles identify texture views. Color attachments may include a `resolveTargetHandle`; unused color slots are null. Attachment extents, formats, sample counts, load/store policy, clear values, read-only depth/stencil policy and incompatible aliasing are checked by the pass plan. `BrowserFrameBufferPlan.ToJson()` supplies the pass description from the managed attachment model. A fresh canvas texture view is acquired once per submission, and transient views are cleared after encoding.
 
-Render commands contain one pipeline, a complete ordered vertex-buffer list, one uint16/uint32 index buffer, and bounded direct indexed draws. Optional `stencilReference` supplies an unsigned reference value; its default is zero. They retain CPU-direct submission semantics. All pipeline groups must be supplied as `{ "index": 0, "group": groupHandle, "dynamicOffsets": [] }`. Render commands can use separate passes to express pipeline changes. GPU validation still governs the shader's actual index/vertex accesses; preparation checks index-buffer ranges, instance-buffer ranges, alignment and usages.
+Render commands contain one pipeline, a complete ordered vertex-buffer list, an optional uint16/uint32 index buffer, and bounded draws. An index buffer is required for indexed draws. Optional `stencilReference` supplies an unsigned reference value; its default is zero. All pipeline groups must be supplied as `{ "index": 0, "group": groupHandle, "dynamicOffsets": [] }`. Render commands use separate passes to express pipeline changes. GPU validation still governs the shader's actual index/vertex accesses; preparation checks direct index/instance/vertex ranges, alignment and usages.
 
-A compute command is `{ "type": "compute", "pipeline": pipelineHandle, "bindings": [...], "workgroups": [x, y, z] }`, with positive workgroup dimensions bounded by the selected device limit.
+Each draw uses one of the following forms:
+
+| Type | Fields and behavior |
+| --- | --- |
+| `drawIndexed` (default for legacy descriptions) | `indexCount`, optional `instanceCount:1`, `firstIndex:0`, signed `baseVertex:0`, `firstInstance:0` |
+| `draw` | `vertexCount`, optional `instanceCount:1`, `firstVertex:0`, `firstInstance:0` |
+| `drawIndexedIndirect` | `buffer`, optional `offset:0`, required `firstInstancePolicy`; reads a 20-byte indexed argument record |
+| `drawIndirect` | `buffer`, optional `offset:0`, required `firstInstancePolicy`; reads a 16-byte non-indexed argument record |
+
+Direct counts may be zero. Indirect buffers require INDIRECT usage, four-byte-aligned offsets and a complete argument record within the resource. Indexed arguments are `u32 indexCount, u32 instanceCount, u32 firstIndex, i32 baseVertex, u32 firstInstance`; non-indexed arguments are `u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance`. Newly allocated WebGPU buffers start with zero values, so untouched records are empty draws. Replayed GPU producers must rewrite all intended records, including zeroing culled instance counts, and keep argument values within the bound index/vertex/instance ranges.
+
+`firstInstancePolicy:"zero"` declares that the producer always writes zero. `"feature"` requires the **enabled** `indirect-first-instance` device feature and is rejected otherwise. The host does not read GPU argument contents to verify that promise. Nonzero values on a device without the feature do not provide portable drawing behavior. No optional feature is enabled automatically, and this API adds no indirect-count, multi-draw, draw-ID or descriptor-indexing semantics.
+
+For example, a compute-written STORAGE|INDIRECT buffer can be consumed by `{ "type":"drawIndexedIndirect", "buffer":65541, "offset":0, "firstInstancePolicy":"zero" }` after a compute command in the same prepared sequence. Resource references retain the buffer until the sequence is released.
+
+A compute command is `{ "type": "compute", "pipeline": pipelineHandle, "bindings": [...], "workgroups": [x, y, z] }`, with nonnegative workgroup counts bounded by `maxComputeWorkgroupsPerDimension`. Any zero count dispatches no work. Each compute command has its own pass and a single dispatch. Its writes may be consumed by later render/compute/copy commands without CPU mapping.
+
+Preparation checks each pass's bindings and attachments as a usage scope. A writable storage buffer cannot also appear as another storage/uniform/vertex/index/indirect resource in that pass, even through a disjoint range. Sampled texture mips cannot overlap attachment mips. These checks deliberately reserve all attachment aspects, including read-only depth, conservatively; some native-valid aliases are therefore excluded. Native WebGPU validation remains authoritative. Separate passes permit ordered write-to-read transitions; no desktop barrier command is exposed.
 
 A buffer-copy command is `{ "type": "copyBuffer", "source": sourceHandle, "destination": destinationHandle, "sourceOffset": 0, "destinationOffset": 0, "size": 256 }`. Source and destination must differ, have compatible copy usage and contain the four-byte-aligned ranges.
 
@@ -93,4 +112,4 @@ Replay traverses retained arrays without new per-draw objects. WebGPU encoder, p
 
 ## Status
 
-Source implementation is present. Builds, browser execution, GPU validation, shader execution, screenshots and performance checks were deliberately deferred at the user's request. These APIs do not establish hardware acceptance or the broader GPU-indirect rendering baseline.
+Source implementation and [opt-in compute/indirect references](browser-compute-indirect.md) are present. Builds, browser execution, GPU validation, shader execution, screenshots and performance checks were deliberately deferred at the user's request. These APIs do not establish hardware acceptance or a GPU-driven scene strategy.

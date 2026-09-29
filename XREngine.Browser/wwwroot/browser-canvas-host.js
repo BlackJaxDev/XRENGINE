@@ -3,6 +3,8 @@ import { BrowserContentLoader } from './content-loader.js';
 import { BrowserAudioService } from './browser-audio.js';
 import { BrowserServicePolicy } from './browser-services.js';
 import { BrowserInput } from './browser-input.js';
+import { runGpuBaselineReference } from './webgpu/gpu-baseline-reference.js';
+import { selectBrowserSubmissionStrategy } from './webgpu/browser-submission-strategy.js';
 
 // Ownership is keyed by the supplied element, never by a process-wide current canvas.
 const canvasOwners = new WeakMap();
@@ -40,6 +42,9 @@ export class BrowserCanvasHost {
         this.resolutionScale = 1;
         this.qualityPreset = 'balanced';
         this.uiEnabled = true;
+        this.submissionStrategy = 'Auto';
+        this.referenceRunning = false;
+        this.referenceResult = null;
         this.frozen = false;
         this.frame = this.frame.bind(this);
     }
@@ -80,7 +85,7 @@ export class BrowserCanvasHost {
             state => {
                 if (epoch === this.epoch) this.setState(state, state.replaceAll('-', ' '));
             },
-            error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName);
+            error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName, this.submissionStrategy);
         this.renderer = renderer;
         renderer.audioService = audio;
         try {
@@ -219,7 +224,7 @@ export class BrowserCanvasHost {
         this.scene.Resize(this.session, logicalWidth, logicalHeight, width, height,
             ratio, this.renderer.generation, visible, focused, this.attached);
         this.audio?.setVisible(visible);
-        this.drawable = visible && this.attached && width > 0 && height > 0 && (this.services?.ready ?? true);
+        this.drawable = visible && this.attached && width > 0 && height > 0 && !this.referenceRunning && (this.services?.ready ?? true);
         if (this.drawable) {
             this.setState('running', this.contentUrl ? 'Cooked world ready. Additional content streams within frame budgets.' : this.snapshotJson
                 ? 'Imported static scene ready. The captured camera projection fills the canvas.'
@@ -230,7 +235,7 @@ export class BrowserCanvasHost {
             this.frameId = 0;
             this.scene.ResetClock(this.session);
             this.clearInput();
-            this.setState('suspended', this.services && !this.services.ready
+            this.setState('suspended', this.referenceRunning ? 'Scene paused for the GPU reference cases.' : this.services && !this.services.ready
                 ? 'A required service is suspended. Enable sound to continue.'
                 : 'Rendering paused while the canvas is hidden, detached, or has no size.');
         }
@@ -343,7 +348,39 @@ export class BrowserCanvasHost {
             scene: JSON.parse(this.scene.GetStatistics(this.session)),
             content: this.contentLoader?.getStatistics() ?? null,
             contentResources: this.contentUrl ? JSON.parse(this.scene.GetCookedContentStatistics(this.session)) : null,
-            services: this.services?.getStatistics() ?? null, audio: this.audio?.getStatistics() ?? null };
+            services: this.services?.getStatistics() ?? null, audio: this.audio?.getStatistics() ?? null,
+            gpuReference: this.referenceResult };
+    }
+
+    setSubmissionStrategy(requested) {
+        selectBrowserSubmissionStrategy(requested);
+        if (this.session) throw new Error('Set the submission strategy before starting a canvas session.');
+        this.submissionStrategy = requested;
+    }
+
+    async runGpuReference() {
+        if (!this.session || !this.renderer || !this.graphicsReady || this.referenceRunning)
+            throw new Error('GPU reference cases require a ready scene with no reference run in progress.');
+        const epoch = this.epoch, renderer = this.renderer;
+        this.referenceRunning = true;
+        this.referenceResult = null;
+        try {
+            this.syncSurface();
+            const result = await runGpuBaselineReference(renderer);
+            if (epoch !== this.epoch || renderer !== this.renderer)
+                throw new DOMException('GPU reference session was replaced.', 'AbortError');
+            this.referenceResult = result;
+            return result;
+        } catch (error) {
+            if (epoch === this.epoch) this.referenceResult = { passed: false, error: error.message ?? String(error) };
+            throw error;
+        } finally {
+            if (epoch === this.epoch && renderer === this.renderer) {
+                this.referenceRunning = false;
+                this.scene.ResetClock(this.session);
+                this.syncSurface();
+            }
+        }
     }
 
     streamDemoTexture() {
@@ -375,6 +412,8 @@ export class BrowserCanvasHost {
 
     stop() {
         this.epoch++;
+        this.referenceRunning = false;
+        this.referenceResult = null;
         cancelAnimationFrame(this.frameId);
         this.frameId = 0;
         this.controller?.abort();

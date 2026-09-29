@@ -54,6 +54,9 @@ export class GpuResources {
         integer(usage, 1, supported, 'buffer usage');
         if (size % 4 || (usage & ~supported)) throw new RangeError('Buffer size must be four-byte aligned and usage supported.');
         debugLabel(label);
+        // WebGPU guarantees zero initialization before any read, including indirect
+        // argument consumption. Untouched argument records are therefore empty draws;
+        // compute producers must rewrite every record they make active on each replay.
         const buffer = r.device.createBuffer({ size, usage, label });
         try { return r._resources.add('buffer', { buffer, size, usage, label, state: 'ready', references: 0 }, r._owner); }
         catch (error) { r._retire(buffer); throw error; }

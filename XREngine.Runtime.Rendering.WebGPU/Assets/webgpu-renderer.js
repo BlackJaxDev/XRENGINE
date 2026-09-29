@@ -6,6 +6,7 @@ import { GpuReadback } from './gpu-readback.js';
 import { GpuCommands } from './gpu-commands.js';
 import { BrowserRenderPipeline } from './browser-render-pipeline.js';
 import { browserPipelineRequirements } from './browser-pipeline-requirements.js';
+import { selectBrowserSubmissionStrategy } from './browser-submission-strategy.js';
 import { createCookedTexture, isBrowserColorTexture } from './cooked-texture.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
@@ -92,11 +93,12 @@ async function scopedStartupOperation(device, stage, operation) {
 
 /** One device, one canvas surface, and one generation-stamped resource namespace. */
 export class WebGpuCanvasRenderer {
-    constructor(canvas, onState, onFailure, shaderName = 'browser-unlit') {
+    constructor(canvas, onState, onFailure, shaderName = 'browser-unlit', submissionStrategy = 'Auto') {
         if (typeof shaderName !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(shaderName))
             throw new TypeError('Shader artifact name must be a lowercase manifest name.');
         this.canvas = canvas;
         this._shaderName = shaderName;
+        this.submissionStrategy = selectBrowserSubmissionStrategy(submissionStrategy);
         this.onState = onState;
         this.onFailure = onFailure;
         this._generation = 0;
@@ -695,7 +697,15 @@ export class WebGpuCanvasRenderer {
             cookedTextureFormats.push('etc2-rgba8unorm', 'etc2-rgba8unorm-srgb');
         return {
             ...this._capabilities,
-            submissionStrategy: 'CpuDirect', baselineQualified: false,
+            submissionStrategy: this.submissionStrategy.selected, strategySelection: this.submissionStrategy,
+            baselineQualified: false,
+            commandCapabilities: { storageBuffers: true, compute: true,
+                indirectDraws: ['drawIndirect', 'drawIndexedIndirect'],
+                indirectFirstInstance: this.device.features.has('indirect-first-instance'),
+                portableIndirectFirstInstance: 0, indirectCount: false, multiDraw: false,
+                shaderDrawId: false, descriptorIndexing: false,
+                computeWorkgroupSize: 'explicit metadata checked against selected-device limits; native shader validation remains authoritative',
+                usageScopes: 'one dispatch or one render pass per command', qualification: 'pending' },
             focusedPipeline: { packetVersion: 1, maximumDraws: 4096, maximumUiQuads: 4096,
                 alphaModes: ['opaque', 'masked', 'transparent'], shading: ['unlit', 'flat-lambert'],
                 directionalLights: 1, hdrIntermediate: 'rgba16float', presentation: 'sRGB',

@@ -1,4 +1,6 @@
 import { GpuPassPlan } from './gpu-pass-plan.js';
+import { GpuCommandUsageScope } from './gpu-command-usage-scope.js';
+import { assertPipelineBindingLimits, computeWorkgroupMetadata } from './gpu-command-limits.js';
 
 const maxDescription = 262144;
 const maxCommands = 4096;
@@ -126,6 +128,7 @@ export class GpuCommands {
             if (e.buffer) {
                 object(e.buffer, ['type', 'hasDynamicOffset', 'minBindingSize']);
                 oneOf(e.buffer.type, ['uniform', 'storage', 'read-only-storage'], 'buffer binding type');
+                if (e.buffer.type === 'storage' && (e.visibility & 1)) throw new Error('Writable storage buffers cannot be visible to the vertex stage.');
                 if (e.buffer.hasDynamicOffset !== undefined && typeof e.buffer.hasDynamicOffset !== 'boolean') throw new TypeError('Dynamic-offset flag must be boolean.');
                 integer(e.buffer.minBindingSize ?? 0, 0, e.buffer.type === 'uniform' ? r.device.limits.maxUniformBufferBindingSize : r.device.limits.maxStorageBufferBindingSize, 'minimum binding size');
             } else if (e.sampler) {
@@ -151,7 +154,7 @@ export class GpuCommands {
             const layout = hold(dependencies, this.get(d.layout, 'binding-layout'));
             const input = array(d.entries, 32, 'binding group');
             if (input.length !== layout.descriptor.entries.length) throw new Error('Binding group must fill its layout exactly.');
-            const entries = [], dynamic = [];
+            const entries = [], dynamic = [], resources = [];
             const seen = new Set();
             for (const e of input) {
                 object(e, ['binding', 'resource', 'offset', 'size']);
@@ -165,12 +168,14 @@ export class GpuCommands {
                     const offset = e.offset ?? 0, size = e.size ?? b.size - offset;
                     resource = r.resources.bufferBinding(e.resource, offset, size, expected.buffer.type !== 'uniform');
                     if (size < (expected.buffer.minBindingSize ?? 0)) throw new Error('Buffer binding is smaller than the layout minimum.');
+                    resources.push({ kind: 'buffer', value: b, writable: expected.buffer.type === 'storage', role: expected.buffer.type });
                     if (expected.buffer.hasDynamicOffset) dynamic.push({ binding: e.binding, buffer: b, offset, size, alignment: expected.buffer.type === 'uniform' ? r.device.limits.minUniformBufferOffsetAlignment : r.device.limits.minStorageBufferOffsetAlignment });
                 } else {
                     if (e.offset !== undefined || e.size !== undefined) throw new Error('Only buffers accept binding ranges.');
                     const value = hold(dependencies, this.get(e.resource, expected.texture ? 'texture-view' : 'sampler'));
                     if (expected.texture && !(value.texture.usage & 4)) throw new Error('Texture view lacks texture-binding usage.');
                     if (expected.texture) {
+                        resources.push({ kind: 'texture', value, writable: false });
                         if ((expected.texture.multisampled ?? false) !== (value.sampleCount > 1)) throw new Error('Texture sample count does not match the binding layout.');
                         if ((expected.texture.sampleType === 'depth') !== value.format.startsWith('depth')) throw new Error('Texture format does not match the binding sample type.');
                         if (value.aspect === 'stencil-only' || value.format === 'depth24plus-stencil8' && value.aspect !== 'depth-only')
@@ -183,7 +188,7 @@ export class GpuCommands {
             dynamic.sort((a, b) => a.binding - b.binding);
             const name = label(d.label);
             const native = r.device.createBindGroup({ label: name, layout: layout.native, entries });
-            return this.publish('binding-group', { native, layout, dynamic, label: name }, dependencies);
+            return this.publish('binding-group', { native, layout, dynamic, resources, label: name }, dependencies);
         } catch (error) { release(dependencies); throw error; }
     }
 
@@ -197,6 +202,7 @@ export class GpuCommands {
         const dependencies = [];
         try {
             const layouts = array(d.layouts, r.device.limits.maxBindGroups, 'pipeline layouts').map(handle => hold(dependencies, this.get(handle, 'binding-layout')));
+            assertPipelineBindingLimits(layouts, r.device.limits);
             const layout = r.pipelineCache.getPipelineLayout({ bindGroupLayouts: layouts.map(value => value.native) });
             const descriptor = { label: label(d.label), layout };
             const stage = (input, vertex) => {
@@ -204,12 +210,18 @@ export class GpuCommands {
                 const shader = hold(dependencies, this.get(input.shader, 'shader'));
                 return { module: shader.native, entryPoint: entryPoint(input.entryPoint) };
             };
+            let workgroup;
             if (compute) {
-                object(d.compute, ['shader', 'entryPoint']);
-                descriptor.compute = stage(d.compute, false);
+                object(d.compute, ['shader', 'entryPoint', 'workgroupSize', 'workgroupStorageSize']);
+                workgroup = computeWorkgroupMetadata(d.compute, r.device.limits);
+                const shader = hold(dependencies, this.get(d.compute.shader, 'shader'));
+                descriptor.compute = { module: shader.native, entryPoint: entryPoint(d.compute.entryPoint) };
             } else {
                 descriptor.vertex = stage(d.vertex, true);
                 descriptor.vertex.buffers = array(d.vertex.buffers, r.device.limits.maxVertexBuffers, 'vertex buffers');
+                if (r.device.limits.maxBindGroupsPlusVertexBuffers !== undefined
+                    && layouts.length + descriptor.vertex.buffers.length > r.device.limits.maxBindGroupsPlusVertexBuffers)
+                    throw new RangeError('Pipeline exceeds the selected-device combined binding group and vertex buffer limit.');
                 let attributes = 0;
                 for (const buffer of descriptor.vertex.buffers) {
                     object(buffer, ['arrayStride', 'stepMode', 'attributes']);
@@ -270,7 +282,7 @@ export class GpuCommands {
                 if (d.multisample.alphaToCoverageEnabled !== undefined && typeof d.multisample.alphaToCoverageEnabled !== 'boolean') throw new TypeError('Alpha-to-coverage must be boolean.');
             }
             const native = await this.operation(() => compute ? r.pipelineCache.getComputePipelineAsync(descriptor) : r.pipelineCache.getRenderPipelineAsync(descriptor));
-            return this.publish(compute ? 'compute-pipeline' : 'render-pipeline', { native, descriptor, layouts, label: descriptor.label }, dependencies);
+            return this.publish(compute ? 'compute-pipeline' : 'render-pipeline', { native, descriptor, layouts, workgroup, label: descriptor.label }, dependencies);
         } catch (error) { release(dependencies); throw error; }
     }
 
@@ -292,7 +304,7 @@ export class GpuCommands {
                 integer(offsets[i], 0, 0xffffffff, 'dynamic offset');
                 if (offsets[i] % binding.alignment || offsets[i] + binding.offset + binding.size > binding.buffer.size) throw new RangeError('Dynamic buffer range is unaligned or out of bounds.');
             }
-            result[item.index] = { native: group.native, offsets };
+            result[item.index] = { native: group.native, offsets, resources: group.resources };
         }
         return result;
     }
@@ -327,45 +339,84 @@ export class GpuCommands {
                     if (command.pass.depthStencil?.viewHandle > 0) hold(dependencies, this.get(command.pass.depthStencil.viewHandle, 'texture-view'));
                     if (command.pass.depthStencil?.viewHandle === -1) hasCanvas = true;
                     const bindings = this.bindings(command.bindings, pipeline, dependencies);
+                    const scope = new GpuCommandUsageScope();
+                    scope.bindings(bindings);
+                    // Conservatively reserve every attachment aspect for the pass, even read-only depth.
+                    for (const attachment of plan.bindings) scope.texture(attachment.source, true, 'render attachment');
                     const vertexBuffers = array(command.vertexBuffers, pipeline.descriptor.vertex.buffers.length, 'vertex buffers').map((item, slot) => {
                         object(item, ['buffer', 'offset', 'size']);
                         const buffer = hold(dependencies, this.get(item.buffer, 'buffer'));
                         const offset = integer(item.offset ?? 0, 0, buffer.size, 'vertex offset');
                         const size = integer(item.size ?? buffer.size - offset, 1, buffer.size - offset, 'vertex range');
                         if (!(buffer.usage & 32) || offset % 4 || size % 4) throw new Error('Vertex buffer usage or alignment is invalid.');
+                        scope.buffer(buffer, false, 'vertex');
                         return { buffer: buffer.buffer, offset, size, slot };
                     });
                     if (vertexBuffers.length !== pipeline.descriptor.vertex.buffers.length) throw new Error('All vertex buffer slots must be supplied.');
-                    const index = object(command.indexBuffer, ['buffer', 'format', 'offset', 'size']);
-                    const indexBuffer = hold(dependencies, this.get(index.buffer, 'buffer'));
-                    const indexBytes = oneOf(index.format, ['uint16', 'uint32'], 'index format') === 'uint16' ? 2 : 4;
-                    const indexOffset = integer(index.offset ?? 0, 0, indexBuffer.size, 'index offset');
-                    const indexSize = integer(index.size ?? indexBuffer.size - indexOffset, indexBytes, indexBuffer.size - indexOffset, 'index range');
-                    if (!(indexBuffer.usage & 16) || indexOffset % indexBytes || indexSize % indexBytes) throw new Error('Index buffer usage or alignment is invalid.');
-                    const drawList = array(command.draws, maxCommands - draws, 'indexed draws');
+                    let indexBuffer, indexFormat, indexBytes = 0, indexOffset = 0, indexSize = 0;
+                    if (command.indexBuffer !== undefined) {
+                        const index = object(command.indexBuffer, ['buffer', 'format', 'offset', 'size']);
+                        indexBuffer = hold(dependencies, this.get(index.buffer, 'buffer'));
+                        indexFormat = oneOf(index.format, ['uint16', 'uint32'], 'index format');
+                        indexBytes = indexFormat === 'uint16' ? 2 : 4;
+                        indexOffset = integer(index.offset ?? 0, 0, indexBuffer.size, 'index offset');
+                        indexSize = integer(index.size ?? indexBuffer.size - indexOffset, indexBytes, indexBuffer.size - indexOffset, 'index range');
+                        if (!(indexBuffer.usage & 16) || indexOffset % indexBytes || indexSize % indexBytes) throw new Error('Index buffer usage or alignment is invalid.');
+                        scope.buffer(indexBuffer, false, 'index');
+                    }
+                    const drawList = array(command.draws, maxCommands - draws, 'draws');
                     for (const draw of drawList) {
-                        object(draw, ['indexCount', 'instanceCount', 'firstIndex', 'baseVertex', 'firstInstance']);
-                        integer(draw.indexCount, 1, 0xffffffff, 'index count');
-                        draw.instanceCount = integer(draw.instanceCount ?? 1, 1, 0xffffffff, 'instance count');
-                        draw.firstIndex = integer(draw.firstIndex ?? 0, 0, 0xffffffff, 'first index');
-                        draw.baseVertex = integer(draw.baseVertex ?? 0, -0x80000000, 0x7fffffff, 'base vertex');
+                        const type = oneOf(draw.type ?? 'drawIndexed', ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'], 'draw type');
+                        const indexed = type === 'drawIndexed' || type === 'drawIndexedIndirect';
+                        if (indexed && !indexBuffer) throw new Error('Indexed draws require an index buffer.');
+                        if (type === 'drawIndirect' || type === 'drawIndexedIndirect') {
+                            object(draw, ['type', 'buffer', 'offset', 'firstInstancePolicy']);
+                            const buffer = hold(dependencies, this.get(draw.buffer, 'buffer'));
+                            const offset = integer(draw.offset ?? 0, 0, buffer.size - (indexed ? 20 : 16), 'indirect argument offset');
+                            if (!(buffer.usage & 256) || offset % 4) throw new Error('Indirect arguments require INDIRECT usage and four-byte alignment.');
+                            oneOf(draw.firstInstancePolicy, ['zero', 'feature'], 'indirect first-instance policy');
+                            if (draw.firstInstancePolicy === 'feature' && !r.device.features.has('indirect-first-instance'))
+                                throw new Error('Nonzero indirect firstInstance requires the enabled indirect-first-instance feature.');
+                            // GPU producers must initialize all fields, bound counts/index/instance
+                            // addressing, and honor the declared firstInstance policy on every replay.
+                            scope.buffer(buffer, false, 'indirect');
+                            draw.native = buffer.buffer;
+                            draw.offset = offset;
+                            continue;
+                        }
+                        object(draw, indexed ? ['type', 'indexCount', 'instanceCount', 'firstIndex', 'baseVertex', 'firstInstance']
+                            : ['type', 'vertexCount', 'instanceCount', 'firstVertex', 'firstInstance']);
+                        draw.type = type;
+                        draw.instanceCount = integer(draw.instanceCount ?? 1, 0, 0xffffffff, 'instance count');
                         draw.firstInstance = integer(draw.firstInstance ?? 0, 0, 0xffffffff, 'first instance');
-                        if (draw.firstIndex + draw.indexCount > indexSize / indexBytes) throw new RangeError('Draw exceeds the bound index range.');
+                        if (indexed) {
+                            integer(draw.indexCount, 0, 0xffffffff, 'index count');
+                            draw.firstIndex = integer(draw.firstIndex ?? 0, 0, 0xffffffff, 'first index');
+                            draw.baseVertex = integer(draw.baseVertex ?? 0, -0x80000000, 0x7fffffff, 'base vertex');
+                            if (draw.firstIndex + draw.indexCount > indexSize / indexBytes) throw new RangeError('Draw exceeds the bound index range.');
+                        } else {
+                            integer(draw.vertexCount, 0, 0xffffffff, 'vertex count');
+                            draw.firstVertex = integer(draw.firstVertex ?? 0, 0, 0xffffffff, 'first vertex');
+                        }
                         for (let slot = 0; slot < vertexBuffers.length; slot++) {
                             const layout = pipeline.descriptor.vertex.buffers[slot];
                             if (layout.stepMode === 'instance' && (draw.firstInstance + draw.instanceCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound instance range.');
+                            if (!indexed && layout.stepMode === 'vertex' && (draw.firstVertex + draw.vertexCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound vertex range.');
                         }
                     }
                     draws += drawList.length;
                     const stencilReference = integer(command.stencilReference ?? 0, 0, 0xffffffff, 'stencil reference');
-                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer.buffer, indexFormat: index.format, indexOffset, indexSize, draws: drawList, stencilReference });
+                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, stencilReference });
                 } else if (command.type === 'compute') {
                     object(command, ['type', 'pipeline', 'bindings', 'workgroups']);
                     const pipeline = hold(dependencies, this.get(command.pipeline, 'compute-pipeline'));
                     const workgroups = array(command.workgroups, 3, 'workgroup dimensions');
                     if (workgroups.length !== 3) throw new Error('Compute workgroups require three dimensions.');
-                    for (const count of workgroups) integer(count, 1, r.device.limits.maxComputeWorkgroupsPerDimension, 'workgroup count');
-                    operations.push({ type: 'compute', pipeline: pipeline.native, bindings: this.bindings(command.bindings, pipeline, dependencies), workgroups });
+                    for (const count of workgroups) integer(count, 0, r.device.limits.maxComputeWorkgroupsPerDimension, 'workgroup count');
+                    const bindings = this.bindings(command.bindings, pipeline, dependencies);
+                    const scope = new GpuCommandUsageScope();
+                    scope.bindings(bindings);
+                    operations.push({ type: 'compute', pipeline: pipeline.native, bindings, workgroups });
                 } else if (command.type === 'copyBuffer') {
                     object(command, ['type', 'source', 'destination', 'sourceOffset', 'destinationOffset', 'size']);
                     const source = hold(dependencies, this.get(command.source, 'buffer'));
@@ -437,10 +488,13 @@ export class GpuCommands {
                         const buffer = operation.vertexBuffers[slot];
                         pass.setVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.size);
                     }
-                    pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
+                    if (operation.indexBuffer) pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
                     for (let draw = 0; draw < operation.draws.length; draw++) {
                         const value = operation.draws[draw];
-                        pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
+                        if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
+                        else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
+                        else if (value.type === 'draw') pass.draw(value.vertexCount, value.instanceCount, value.firstVertex, value.firstInstance);
+                        else pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
                     }
                 }
                 pass.end();

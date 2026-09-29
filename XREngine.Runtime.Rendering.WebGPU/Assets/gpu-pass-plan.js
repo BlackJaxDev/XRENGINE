@@ -2,13 +2,6 @@ const depthFormats = new Set(['depth16unorm', 'depth24plus', 'depth24plus-stenci
 const stencilFormats = new Set(['stencil8', 'depth24plus-stencil8', 'depth32float-stencil8']);
 
 function fields(value, allowed) {
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new TypeError('An attachment description object is required.');
-    for (const key of Object.keys(value))
-        if (!allowed.includes(key)) throw new TypeError(`Unsupported attachment field: ${key}.`);
-}
-
-function fields(value, allowed) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('An attachment plan object is required.');
     for (const key of Object.keys(value))
         if (!allowed.includes(key)) throw new TypeError(`Unsupported attachment plan field: ${key}.`);
@@ -29,7 +22,6 @@ function clearColor(value) {
 export class GpuPassPlan {
     constructor(resources, owner, plan, canvas = {}) {
         fields(plan, ['colors', 'depthStencil']);
-        fields(plan, ['colors', 'depthStencil']);
         if (!plan || !Array.isArray(plan.colors) || plan.colors.length > 8)
             throw new TypeError('A render pass requires at most eight color attachment slots.');
         this.resources = resources;
@@ -42,7 +34,6 @@ export class GpuPassPlan {
         for (let slot = 0; slot < plan.colors.length; slot++) {
             const color = plan.colors[slot];
             if (color === null) { this.descriptor.colorAttachments.push(null); this.signature.colorFormats.push(null); continue; }
-            fields(color, ['viewHandle', 'resolveTargetHandle', 'loadOp', 'storeOp', 'clearValue']);
             fields(color, ['viewHandle', 'resolveTargetHandle', 'loadOp', 'storeOp', 'clearValue']);
             const source = this._resolve(color.viewHandle, canvas);
             this._validateView(source, false);
@@ -77,10 +68,6 @@ export class GpuPassPlan {
             if (depth.depthReadOnly && (depth.depthLoadOp !== undefined || depth.depthStoreOp !== undefined)
                 || depth.stencilReadOnly && (depth.stencilLoadOp !== undefined || depth.stencilStoreOp !== undefined))
                 throw new TypeError('Read-only attachment aspects cannot specify load/store operations.');
-            fields(depth, ['viewHandle', 'depthReadOnly', 'depthLoadOp', 'depthStoreOp', 'depthClearValue',
-                'stencilReadOnly', 'stencilLoadOp', 'stencilStoreOp', 'stencilClearValue']);
-            for (const name of ['depthReadOnly', 'stencilReadOnly'])
-                if (depth[name] !== undefined && typeof depth[name] !== 'boolean') throw new TypeError('Attachment read-only flags must be boolean.');
             const source = this._resolve(depth.viewHandle, canvas);
             this._validateView(source, true);
             this._use(source);

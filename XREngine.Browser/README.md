@@ -173,6 +173,15 @@ framebuffer attachment lowering, bounded pipeline cache, reusable render/compute
 commands and cancellable asynchronous readback. Builds and browser/GPU acceptance
 remain deferred; this core resource profile is not full baseline qualification.
 
+See [compute and indirect commands](../docs/work/progress/rendering/browser-compute-indirect.md)
+for storage-to-render ordering, device-limited compute, indirect draw argument and
+usage rules, and the opt-in **Renderer counters → Run GPU reference cases** action.
+The action pauses scene frames, performs bounded offscreen work and asynchronous
+readback, and displays session-specific results. It has not been run for this
+delivery. `?strategy=Auto` permits only `CpuDirect`; forced unsupported scene
+strategies fail with a reason. Low-level indirect support does not change the
+focused scene pipeline or establish baseline qualification.
+
 See [focused browser forward pipeline](../docs/work/progress/rendering/browser-focused-pipeline.md)
 for material sorting, directional shadows, linear/HDR composition, binding/packet
 contracts, UI atlas constraints and mobile quality presets. The module-owned forward

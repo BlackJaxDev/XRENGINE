@@ -114,6 +114,8 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Browser compute and indirect commands](work/progress/rendering/browser-compute-indirect.md) records device-limited compute, indirect draw submission, usage-scope checks, opt-in offscreen references and honest scene strategy selection. Runtime and mobile performance acceptance remain deferred.
+
 [Browser interaction and runtime services](work/progress/rendering/browser-interactive-services.md) records touch/IME/gamepad input, CPU skeletal animation, bounded character collision, Web Audio and required-service declarations. Runtime acceptance remains deferred.
 
 [Browser cooked content delivery](work/progress/rendering/browser-cooked-content.md) records the offline packager, hash-addressed manifest, asynchronous budgeted engine uploads, texture variants and optional HTTP caching policy. Source implementation remains unvalidated.
