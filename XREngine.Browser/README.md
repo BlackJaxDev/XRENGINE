@@ -86,7 +86,11 @@ cache qualification remain deferred.
 The interactive demo adds explicit static-box character collision and a two-bone
 CPU-skinned reference whose idle/walk blend follows movement. Static imported worlds
 do not inherit the demo collision/animation data. Manifest schema 2 can declare
-required/optional services; unsupported required services fail, and required audio
+required/optional services; schema 3 supplies baked animation and static collision
+payloads. Animated instances share immutable inputs but own separate output meshes
+and playback state. The player uses engine transforms and authored cadence; CPU
+and compute deformation consume the same packed skin/morph records. Collision uses
+the existing fixed-step character and explicit cooked boxes. Unsupported required services fail, and required audio
 waits for a running user-activated context. See [interaction and runtime services](../docs/work/progress/rendering/browser-interactive-services.md)
 for selected profiles, limits, source inventory and remaining acceptance.
 
@@ -184,9 +188,10 @@ fail with a reason. No source addition establishes baseline qualification.
 The [compute reuse audit and integration](../docs/work/progress/rendering/browser-compute-reuse-audit.md)
 records reuse of existing palette/bounds contracts and canonical skinning/Hi-Z
 algorithms. **Renderer counters** now offers explicit experimental `GpuIndirect`,
-`ComputeCulling` and `HiZ` submission plus `Compute` deformation, with a restart
+`ComputeCulling`, `HiZ`, `BvhCulling` and `BvhHiZ` submission plus `Compute` deformation, with a restart
 action. Equivalent parameters are `?strategy=HiZ&skinning=Compute` (built-in
-animated sample) or `?strategy=ComputeCulling` (static/imported content). Required
+animated sample), `?world=./content/manifest.json&strategy=BvhHiZ&skinning=Compute`
+(an animated schema-3 package), or `?strategy=ComputeCulling` (static/imported content). Required
 compute deformation on a scene without admitted animation data fails visibly.
 Automatic choices remain CPU-direct and CPU deformation. Hi-Z accepts only
 explicitly designated opaque occluders; uncertain deformation bounds stay visible.
@@ -195,7 +200,8 @@ See [focused browser forward pipeline](../docs/work/progress/rendering/browser-f
 for material sorting, directional shadows, linear/HDR composition, binding/packet
 contracts, UI atlas constraints and mobile quality presets. The module-owned forward
 shaders are compiled during bounded startup; `?shader=` still selects the earlier
-cooked compatibility bootstrap. PBR, full desktop GPUScene/BVH and meshlets remain
+cooked compatibility bootstrap. The optional BVH uses canonical LBVH topology and
+node layout with WebGPU construction/refit/traversal passes. PBR, full desktop GPUScene ownership and meshlets remain
 outside this profile. Compute deformation and bounded indirect visibility are
 explicit experimental backend paths described by the audit above.
 

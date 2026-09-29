@@ -41,6 +41,7 @@
     <Compile Include="Rendering/SkinPaletteMatrix.cs" />
     <Compile Include="Runtime/Browser/IBrowserComputeSkinningCapability.cs" />
     <Compile Include="Runtime/Browser/Animation/BrowserSkinningData.cs" />
+    <Compile Include="Runtime/Browser/Animation/BrowserSkinningData.Cpu.cs" />
     <Compile Include="Runtime/Browser/BrowserPipelineUiQuad.cs" />
     <Compile Include="Runtime/Browser/BrowserPipelineFramePacket.cs" />
     <Compile Include="Runtime/Browser/BrowserRenderPipeline.cs" />

@@ -69,7 +69,7 @@
     <summary>Renderer counters</summary>
     <p>Capture a snapshot after changing instance count or restarting the scene.</p>
     <div class="controls">
-      <label>Submission <select id="submission-strategy"><option value="Auto">Automatic (CPU direct)</option><option value="CpuDirect">CPU direct</option><option value="GpuIndirect">GPU indirect</option><option value="ComputeCulling">GPU frustum culling</option><option value="HiZ">GPU frustum + Hi-Z</option></select></label>
+      <label>Submission <select id="submission-strategy"><option value="Auto">Automatic (CPU direct)</option><option value="CpuDirect">CPU direct</option><option value="GpuIndirect">GPU indirect</option><option value="ComputeCulling">GPU frustum culling</option><option value="HiZ">GPU frustum + Hi-Z</option><option value="BvhCulling">GPU BVH frustum culling</option><option value="BvhHiZ">GPU BVH + Hi-Z</option></select></label>
       <label>Skinning <select id="skinning-mode"><option value="Cpu">CPU</option><option value="Compute">Compute</option></select></label>
       <button id="apply-rendering" type="button">Restart with these options</button>
     </div>

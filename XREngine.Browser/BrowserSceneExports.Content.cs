@@ -22,6 +22,10 @@ public static partial class BrowserSceneExports
     public static void UploadCookedAsset(int id, string assetId, string kind, string metadataJson, byte[] payload)
         => Get(id).UploadCookedAsset(assetId, kind, metadataJson, payload);
 
+    /// <summary>Checks required deformation admission before simulation and streaming begin.</summary>
+    [JSExport]
+    public static void CompleteCookedEssentials(int id) => Get(id).CompleteCookedEssentials();
+
     /// <summary>Reports content payload ownership separately from browser network/cache accounting.</summary>
     [JSExport]
     public static string GetCookedContentStatistics(int id)

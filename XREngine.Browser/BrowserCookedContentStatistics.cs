@@ -6,4 +6,9 @@ public sealed record BrowserCookedContentStatistics(
     long CpuRetainedPayloadBytes, long EstimatedGpuResourceBytes,
     long PeakManagedBridgePayloadBytes, long PeakDecodeScratchPayloadBytes,
     long PeakManagedResourceUploadCopyBytes,
-    long TotalUploadedPayloadBytes, bool Failed);
+    long TotalUploadedPayloadBytes, bool Failed)
+{
+    public int AnimationAssets { get; init; }
+    public int AnimatedInstances { get; init; }
+    public int CollisionBoxes { get; init; }
+}

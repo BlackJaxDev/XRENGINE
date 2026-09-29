@@ -9,6 +9,11 @@ Web Audio. This is a declared portable sample profile. Static cooked worlds keep
 their captured camera and do not silently inherit the demo collision world or its
 animation fixture.
 
+Cooked schema 3 can explicitly supply baked animation and static collision data.
+It shares the existing character solver and engine hierarchy/timing types; it does
+not reuse the demo's animation fixture as a production state machine. See
+[cooked content delivery](browser-cooked-content.md) for those payloads and limits.
+
 ## Input and UI
 
 `BrowserInput` retains eight pointer slots per canvas, including pointer identity,
@@ -124,12 +129,13 @@ Manifest schema 1 remains compatible. Schema 2, emitted by
 ```
 
 Names are bounded, unique and disjoint across these arrays. Unknown required
-services fail by name before assets are consumed. Optional exclusions remain
+services fail by name before simulation begins. Optional exclusions remain
 visible in counter snapshots with reasons. `dom-ui` and `web-audio` are registered
 for static cooked content; required Web Audio waits for a successful gesture and
 blocks if the API is unavailable. `cpu-animation` and `character-collision` are
-currently admitted only by the built-in interactive sample. A static package
-requiring them fails because it has no corresponding payload descriptors.
+admitted by the built-in sample or by actual animated instances and an installed
+collision world in schema-3 essentials. Static packages requiring absent payloads
+still fail; an unused animation/collision asset does not admit the service.
 
 Native XR, native physics, native editor UI and native video decoding have explicit
 exclusion reasons. No required feature is replaced with a no-op. The sample requires
@@ -144,6 +150,7 @@ pose upload and allocation behavior, gesture denial, codec/decode cancellation,
 listener orientation, service gating and repeated unloading need runtime evidence.
 The source-completion TODO rows do not close G3 or claim device support.
 
-Broader cooked animation/collision/audio-source schemas and production physics,
-animation and UI integrations remain separate work. The next renderer phase covers
-compute/indirect submission and measured GPU-resident expansion.
+Native animation/state-machine cooking, cooked audio-source schemas and broader
+production physics and UI integrations remain separate work. Compute/indirect and
+bounded deformation/visibility implementations are described in the
+[reuse audit](browser-compute-reuse-audit.md); device qualification remains open.

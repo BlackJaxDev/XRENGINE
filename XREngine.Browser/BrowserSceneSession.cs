@@ -350,6 +350,8 @@ public sealed partial class BrowserSceneSession : IDisposable
             try { materialHandle = AcquireMaterial(material); }
             catch { ReleaseMesh(mesh); throw; }
         }
+        if (!ReferenceEquals(mesh, oldMesh))
+            DetachCookedAnimation(component);
         component.Mesh = mesh;
         component.Material = material;
         component.MeshHandle = meshHandle;
@@ -370,6 +372,7 @@ public sealed partial class BrowserSceneSession : IDisposable
         bool main = !custom && _renderables.Remove(component);
         if (!custom && !main)
             throw new ArgumentException("Renderable does not belong to this scene.", nameof(component));
+        DetachCookedAnimation(component);
         DiscardCollection();
         if (main && _snapshot is null)
         {

@@ -119,12 +119,6 @@ export class BrowserCanvasHost {
                     });
                 if (epoch !== this.epoch || controller.signal.aborted) return;
                 this.contentLoader = loader;
-                this.services.configure(loader.manifest.services);
-                if (!this.services.ready) {
-                    this.setState('waiting-services', 'This world requires sound. Choose Enable sound to continue.');
-                    await this.services.waitReady(controller.signal);
-                    if (epoch !== this.epoch || controller.signal.aborted) return;
-                }
                 const session = this.session;
                 const consume = (asset, variant, bytes) => {
                     if (epoch !== this.epoch || controller.signal.aborted || session !== this.session)
@@ -138,6 +132,15 @@ export class BrowserCanvasHost {
                 };
                 await loader.consumeEssential(consume);
                 if (epoch !== this.epoch || controller.signal.aborted) return;
+                this.scene.CompleteCookedEssentials(session);
+                const contentState = JSON.parse(this.scene.GetCookedContentStatistics(session));
+                this.services.setCookedCapabilities(contentState.animatedInstances > 0, contentState.collisionBoxes > 0);
+                this.services.configure(loader.manifest.services);
+                if (!this.services.ready) {
+                    this.setState('waiting-services', 'This world requires sound. Choose Enable sound to continue.');
+                    await this.services.waitReady(controller.signal);
+                    if (epoch !== this.epoch || controller.signal.aborted) return;
+                }
                 this.graphicsReady = true;
                 this.installEvents(controller.signal);
                 this.syncSurface();

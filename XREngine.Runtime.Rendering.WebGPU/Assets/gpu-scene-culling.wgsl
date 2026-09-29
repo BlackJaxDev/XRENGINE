@@ -14,11 +14,15 @@ struct Draw {
 struct IndexedArguments {
     indexCount: u32, instanceCount: u32, firstIndex: u32, baseVertex: i32, firstInstance: u32,
 }
-struct Frame { count: u32, width: u32, height: u32, padding: u32 }
+struct Frame { count: u32, width: u32, height: u32, viewCount: u32 }
 @group(0) @binding(0) var<storage, read> draws: array<Draw>;
 @group(0) @binding(1) var<storage, read_write> arguments: array<IndexedArguments>;
 @group(0) @binding(2) var<uniform> frame: Frame;
 @group(0) @binding(3) var pyramid: texture_2d<f32>;
+@group(0) @binding(4) var<storage, read> hierarchy: array<u32>;
+@group(0) @binding(5) var<storage, read> mortonObjects: array<vec2<u32>>;
+@group(0) @binding(6) var<storage, read> viewRanges: array<vec4<u32>>;
+@group(0) @binding(7) var<storage, read_write> hierarchyFaults: array<atomic<u32>>;
 
 fn corner(bounds: BoundsGpu, index: u32) -> vec3<f32> {
     return select(bounds.aabbMin.xyz, bounds.aabbMax.xyz,
@@ -110,3 +114,71 @@ fn frustumMain(@builtin(global_invocation_id) id: vec3<u32>) { writeVisibility(i
 
 @compute @workgroup_size(64)
 fn occlusionMain(@builtin(global_invocation_id) id: vec3<u32>) { writeVisibility(id.x, true); }
+
+@compute @workgroup_size(64)
+fn hierarchyArgumentsMain(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= frame.count) { return; }
+    let draw = draws[id.x];
+    let visible = (draw.flags & 2u) == 0u && (draw.flags & 12u) != 0u;
+    arguments[id.x] = IndexedArguments(draw.indexCount, select(0u, 1u, visible), draw.firstIndex, 0, 0u);
+}
+
+fn keepRangeVisible(first: u32, count: u32) {
+    for (var i = first; i < first + count; i++) {
+        arguments[i].instanceCount = select(1u, 0u, (draws[i].flags & 2u) != 0u);
+    }
+}
+
+// Root-down traversal of the canonical compact GpuBvhNode layout. Each view
+// owns a disjoint range of draw slots; Morton sorting never changes that identity.
+@compute @workgroup_size(1)
+fn hierarchyMain(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= frame.viewCount) { return; }
+    let range = viewRanges[id.x]; let first = range.x; let count = range.y;
+    if (count == 0u || first >= frame.count || count > frame.count - first) { return; }
+    let nodeCount = hierarchy[0]; let root = hierarchy[1];
+    if (atomicLoad(&hierarchyFaults[0]) != 0u || atomicLoad(&hierarchyFaults[1]) != 0u
+        || hierarchy[2] != 12u || hierarchy[3] != 1u || nodeCount != frame.count * 2u - 1u || root >= nodeCount) {
+        keepRangeVisible(first, count); return;
+    }
+    var stack: array<u32, 128>;
+    stack[0] = root; var length = 1u; var visited = 0u; var malformed = false;
+    var candidate = draws[first];
+    loop {
+        if (length == 0u) { break; }
+        if (visited >= nodeCount) { malformed = true; break; }
+        visited++; length--;
+        let index = stack[length];
+        if (index >= nodeCount) { malformed = true; break; }
+        let at = 4u + index * 12u;
+        candidate.bounds.aabbMin = vec4<f32>(bitcast<f32>(hierarchy[at]), bitcast<f32>(hierarchy[at + 1u]), bitcast<f32>(hierarchy[at + 2u]), 0.0);
+        candidate.bounds.aabbMax = vec4<f32>(bitcast<f32>(hierarchy[at + 4u]), bitcast<f32>(hierarchy[at + 5u]), bitcast<f32>(hierarchy[at + 6u]), 0.0);
+        if (!inFrustum(candidate)) { continue; }
+        if ((hierarchy[at + 11u] & 1u) != 0u) {
+            let primitive = hierarchy[at + 8u];
+            if (hierarchy[at + 9u] != 1u || primitive >= frame.count) { malformed = true; break; }
+            let objectId = mortonObjects[primitive].y;
+            if (objectId >= frame.count) { malformed = true; break; }
+            if (objectId >= first && objectId - first < count && (draws[objectId].flags & 2u) == 0u)
+                { arguments[objectId].instanceCount = 1u; }
+        } else {
+            if (length + 2u > 128u) { malformed = true; break; }
+            stack[length] = hierarchy[at + 3u]; stack[length + 1u] = hierarchy[at + 7u]; length += 2u;
+        }
+    }
+    if (malformed) { atomicOr(&hierarchyFaults[1], 4u); keepRangeVisible(first, count); }
+}
+
+@compute @workgroup_size(64)
+fn hierarchyOcclusionMain(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= frame.count || arguments[id.x].instanceCount == 0u) { return; }
+    let draw = draws[id.x];
+    if ((draw.flags & 12u) == 0u && occluded(draw)) { arguments[id.x].instanceCount = 0u; }
+}
+
+@compute @workgroup_size(64)
+fn hierarchyResolveMain(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= frame.count) { return; }
+    if (atomicLoad(&hierarchyFaults[0]) != 0u || atomicLoad(&hierarchyFaults[1]) != 0u)
+        { arguments[id.x].instanceCount = select(1u, 0u, (draws[id.x].flags & 2u) != 0u); }
+}

@@ -10,6 +10,8 @@ export class BrowserServicePolicy {
     constructor(audio, demo, onChange) {
         this.audio = audio;
         this.demo = demo;
+        this.cookedAnimation = false;
+        this.cookedCollision = false;
         this.onChange = onChange;
         this.required = ['dom-ui'];
         this.optional = ['web-audio'];
@@ -29,11 +31,20 @@ export class BrowserServicePolicy {
         this.changed();
     }
 
+    /** Admit services only after essential payloads have created their managed runtime owners. */
+    setCookedCapabilities(animation, collision) {
+        this.cookedAnimation = animation === true;
+        this.cookedCollision = collision === true;
+        this.changed();
+    }
+
     exclusion(service) {
         if (service === 'dom-ui') return null;
         if (service === 'web-audio') return this.audio.supported ? null : 'Web Audio is unavailable in this browser.';
-        if (service === 'cpu-animation' || service === 'character-collision')
-            return this.demo ? null : 'The static cooked profile has no animation/collision payload. These services are admitted only by the built-in interactive sample.';
+        if (service === 'cpu-animation')
+            return this.demo || this.cookedAnimation ? null : 'No animated instance was admitted by the essential cooked scene.';
+        if (service === 'character-collision')
+            return this.demo || this.cookedCollision ? null : 'No collision world was installed by the essential cooked scene.';
         return excluded[service] ?? 'No implementation is registered for this browser service.';
     }
 

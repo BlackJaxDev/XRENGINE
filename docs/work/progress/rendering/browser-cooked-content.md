@@ -16,12 +16,37 @@ native importer dependency. Model import, image conversion/compression, mip
 generation, collision cooking, shader cooking and font-atlas generation remain
 offline work. The example inputs are source fixtures, not an executed cook result.
 
-The manifest declares schema 1, toolchain `xrengine-browser-content-1`, renderer
+The manifest declares schema 1, 2 or 3, matching toolchain `xrengine-browser-content-<schema>`, renderer
 profile `browser-forward-v1`, opaque logical IDs, explicit dependencies and ordered
 payload variants. Each variant specifies its byte count, SHA-256, relative
 `payloads/<hash>.bin` URL, encoding and required device features. Texture variants
 also carry format, dimensions, per-mip byte lengths, normal convention and alpha
 convention. Materials and scene instances reference asset IDs rather than GPU handles.
+
+Schema 2 adds required/optional services. Schema 3 adds animation and collision
+assets, optional per-instance animation and rigid-occluder declarations, and a
+scene collision reference. Older static packages remain accepted. The package
+does not infer colliders or import native animation tracks at runtime.
+
+Animation payloads contain bounded baked TRS frames, authored cadence, a
+parent-before-child hierarchy, inverse binds and the engine's packed skin/morph
+records. The managed player reuses engine transforms, authored cadence and affine
+palettes. Each animated instance owns its output mesh and playback state while
+sharing immutable animation inputs. CPU and explicit compute deformation consume
+the same packed inputs; removing/replacing an instance detaches its deformation
+job. Animated bind-pose bounds are not used for rejection or depth occlusion.
+`PlayCookedAnimation` selects an admitted named clip by scene renderable index;
+changing clips preserves the selected deformation backend. Each asset allows
+128 bones, eight clips and 1,200 total frames; each clip allows 600 frames. A session
+allows 64 animated instances, 8,192 animated bones and 262,144 animated vertices,
+subject to the same retained-byte and individual JSON-payload limits.
+
+Collision payloads supply one world of at most 64 static AABBs, a clear character
+spawn and initial orientation. They feed the existing fixed-step character solver;
+they do not introduce another physics engine. Scene chunks retain the same camera
+and collision identity. The character drives the view after collision admission.
+Required animation/collision services are checked against actual essential scene
+owners before simulation; a declaration or unused asset alone does not suffice.
 
 The renderer profile binds these payloads to the shipped forward shader/material
 ABI. A shader/layout or incompatible material interpretation change must bump the

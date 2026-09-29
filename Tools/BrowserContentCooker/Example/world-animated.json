@@ -1,0 +1,9 @@
+{
+  "cameraView": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -3, 1],
+  "cameraProjection": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -0.1, 0, 0, 0, 0, 1],
+  "collision": "ground",
+  "instances": [
+    { "mesh": "triangle", "material": "paint", "animation": "idle", "modelMatrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5, 0.7, 0, 1] },
+    { "mesh": "triangle", "material": "paint", "occluder": true, "modelMatrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.7, 0.7, 0, 1] }
+  ]
+}
