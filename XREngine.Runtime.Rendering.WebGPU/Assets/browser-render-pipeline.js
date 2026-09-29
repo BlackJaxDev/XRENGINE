@@ -230,7 +230,7 @@ export class BrowserRenderPipeline {
         const selected = JSON.parse(json);
         if (!selected || Array.isArray(selected) || typeof selected !== 'object') throw new Error('Material selection must be an object.');
         for (const name of Object.keys(selected))
-            if (!['alphaMode','cullMode','shading','alphaCutoff','castShadow','receiveShadow'].includes(name))
+            if (!['alphaMode','cullMode','shading','alphaCutoff','castShadow','receiveShadow','sampler'].includes(name))
                 throw new Error(`Unsupported required browser material feature: ${name}.`);
         if ((selected.castShadow !== undefined && typeof selected.castShadow !== 'boolean')
             || (selected.receiveShadow !== undefined && typeof selected.receiveShadow !== 'boolean'))
@@ -242,6 +242,22 @@ export class BrowserRenderPipeline {
             throw new Error('Unsupported required browser material alpha, shading, culling or cutoff profile.');
         if (mode === 2 && selected.castShadow !== false)
             throw new Error('Transparent shadow casting is unsupported; explicitly disable castShadow.');
+        let sampler = this.renderer._sampler;
+        if (selected.sampler !== undefined) {
+            const policy = selected.sampler;
+            const fields = ['addressModeU','addressModeV','minFilter','magFilter','mipmapFilter','lodMaxClamp','maxAnisotropy'];
+            if (!policy || Array.isArray(policy) || typeof policy !== 'object' ||
+                Object.keys(policy).length !== fields.length || fields.some(field => !Object.hasOwn(policy, field)) ||
+                !['clamp-to-edge','repeat','mirror-repeat'].includes(policy.addressModeU) ||
+                !['clamp-to-edge','repeat','mirror-repeat'].includes(policy.addressModeV) ||
+                !['nearest','linear'].includes(policy.minFilter) || !['nearest','linear'].includes(policy.magFilter) ||
+                !['nearest','linear'].includes(policy.mipmapFilter) || !Number.isFinite(policy.lodMaxClamp) ||
+                policy.lodMaxClamp < 0 || policy.lodMaxClamp > 32 ||
+                !Number.isInteger(policy.maxAnisotropy) || policy.maxAnisotropy < 1 || policy.maxAnisotropy > 16 ||
+                (policy.maxAnisotropy > 1 && (policy.minFilter !== 'linear' || policy.magFilter !== 'linear' || policy.mipmapFilter !== 'linear')))
+                throw new Error('Unsupported browser texture sampler policy.');
+            sampler = this.renderer.device.createSampler(policy);
+        }
         if (material.texture && (material.texture.width > this.settings.maxTextureDimension
             || material.texture.height > this.settings.maxTextureDimension))
             throw new Error(`Material texture exceeds selected maxTextureDimension ${this.settings.maxTextureDimension}.`);
@@ -253,7 +269,14 @@ export class BrowserRenderPipeline {
         try {
             this.renderer.device.queue.writeBuffer(buffer, 0, new Float32Array([cutoff, mode, shading === 'lambert' ? 1 : 0, selected.receiveShadow === false ? 0 : 1]));
             const options = this.renderer.device.createBindGroup({ layout: this.optionsLayout, entries: [{ binding: 0, resource: { buffer } }] });
+            const bindGroup = this.renderer.device.createBindGroup({ layout: this.renderer._materialLayout, entries: [
+                { binding: 0, resource: { buffer: material.colorBuffer, size: 16 } },
+                { binding: 1, resource: material.texture?.view ?? this.renderer._whiteView },
+                { binding: 2, resource: sampler },
+            ] });
             this.releaseMaterial(handle);
+            material.sampler = sampler;
+            material.bindGroup = bindGroup;
             this.materials.set(handle, { mode, cull, shading, castShadow: selected.castShadow !== false && mode !== 2, buffer, options, material });
         } catch (error) { this.renderer._retire(buffer); throw error; }
     }

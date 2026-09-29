@@ -16,6 +16,12 @@ native importer dependency. Model import, image conversion/compression, mip
 generation, collision cooking, shader cooking and font-atlas generation remain
 offline work. The example inputs are source fixtures, not an executed cook result.
 
+The editor's `BrowserWebGPU` project target now produces those inputs from an
+admitted saved native world and calls the same `BrowserContentPackageBuilder`
+implementation as the CLI. Native extraction is kept outside the standalone tool
+and browser runtime. See [project publishing](browser-project-publishing.md) for
+supported assets, shared desktop stages and explicit export limitations.
+
 The manifest declares schema 1, 2 or 3, matching toolchain `xrengine-browser-content-<schema>`, renderer
 profile `browser-forward-v1`, opaque logical IDs, explicit dependencies and ordered
 payload variants. Each variant specifies its byte count, SHA-256, relative
@@ -96,8 +102,11 @@ dimensions must be block-aligned. Each mip's tightly packed block bytes are chec
 before upload; small physical mip extents are rounded to the compression block.
 The selected native blocks upload without runtime decompression or transcoding.
 
-The fixed material sampler uses linear minification/magnification/mip filtering
-and clamp-to-edge addressing. The selected forward material uses color textures
+Omitted material sampler policy retains linear minification/magnification/mip
+filtering and clamp-to-edge addressing. Explicit policies support clamp, repeat
+and mirror addressing, nearest/linear filters, a bounded maximum LOD and
+anisotropy up to sixteen when all filters are linear. The generic resource path
+and material path share the same immutable sampler descriptor. The selected forward material uses color textures
 with hardware sRGB decode when authored as sRGB. Normal-map metadata can be
 represented as linear tangent-Y-positive data, but the current forward material
 rejects its use as albedo; richer normal-map shading is not implied. Premultiplied

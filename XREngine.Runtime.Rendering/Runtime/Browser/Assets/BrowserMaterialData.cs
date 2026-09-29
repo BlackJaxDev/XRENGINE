@@ -8,7 +8,8 @@ public sealed class BrowserMaterialData
 {
     public BrowserMaterialData(Vector4 tint, BrowserTextureData? texture = null,
         string alphaMode = "opaque", string shading = "unlit", string cullMode = "none",
-        float alphaCutoff = 0.5f, bool castShadow = true, bool receiveShadow = true)
+        float alphaCutoff = 0.5f, bool castShadow = true, bool receiveShadow = true,
+        BrowserSamplerDescription? sampler = null)
     {
         if (!float.IsFinite(tint.X) || !float.IsFinite(tint.Y) || !float.IsFinite(tint.Z) || !float.IsFinite(tint.W) ||
             tint.X < 0 || tint.X > 1 || tint.Y < 0 || tint.Y > 1 || tint.Z < 0 || tint.Z > 1 || tint.W < 0 || tint.W > 1)
@@ -26,6 +27,7 @@ public sealed class BrowserMaterialData
         AlphaCutoff = alphaCutoff;
         CastShadow = castShadow;
         ReceiveShadow = receiveShadow;
+        Sampler = sampler;
     }
 
     public Vector4 Tint { get; }
@@ -36,11 +38,15 @@ public sealed class BrowserMaterialData
     public float AlphaCutoff { get; }
     public bool CastShadow { get; }
     public bool ReceiveShadow { get; }
+    public BrowserSamplerDescription? Sampler { get; }
 
     public BrowserMaterialData WithTint(Vector4 tint) =>
-        new(tint, Texture, AlphaMode, Shading, CullMode, AlphaCutoff, CastShadow, ReceiveShadow);
+        new(tint, Texture, AlphaMode, Shading, CullMode, AlphaCutoff, CastShadow, ReceiveShadow, Sampler);
 
     /// <summary>Cold-path immutable material configuration, separate from its GPU tint and texture handles.</summary>
-    public string ToPipelineJson() =>
-        $"{{\"alphaMode\":\"{AlphaMode}\",\"shading\":\"{Shading}\",\"cullMode\":\"{CullMode}\",\"alphaCutoff\":{AlphaCutoff.ToString("R", CultureInfo.InvariantCulture)},\"castShadow\":{(CastShadow ? "true" : "false")},\"receiveShadow\":{(ReceiveShadow ? "true" : "false")}}}";
+    public string ToPipelineJson()
+    {
+        string sampler = Sampler is null ? string.Empty : ",\"sampler\":" + Sampler.ToPipelineJson();
+        return $"{{\"alphaMode\":\"{AlphaMode}\",\"shading\":\"{Shading}\",\"cullMode\":\"{CullMode}\",\"alphaCutoff\":{AlphaCutoff.ToString("R", CultureInfo.InvariantCulture)},\"castShadow\":{(CastShadow ? "true" : "false")},\"receiveShadow\":{(ReceiveShadow ? "true" : "false")}{sampler}}}";
+    }
 }

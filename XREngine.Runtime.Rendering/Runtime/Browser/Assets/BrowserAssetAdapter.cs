@@ -9,13 +9,20 @@ public static class BrowserAssetAdapter
     public static BrowserMeshData FromXRMesh(XRMesh mesh)
     {
         ArgumentNullException.ThrowIfNull(mesh);
-        if (mesh.Type != EPrimitiveType.Triangles || mesh.Triangles is not { Count: > 0 } triangles)
-            throw new NotSupportedException("Browser mesh export requires indexed triangles.");
         if (mesh.HasSkinning || mesh.HasBlendshapes)
             throw new NotSupportedException("Browser mesh export does not support skinning or blendshapes.");
         foreach (Vertex vertex in mesh.Vertices)
             if (vertex.Weights is { Count: > 0 } || vertex.Blendshapes is { Count: > 0 })
                 throw new NotSupportedException("Browser mesh export does not support per-vertex skinning or blendshapes.");
+        return CopyGeometry(mesh);
+    }
+
+    /// <summary>Copies resident geometry only; callers exporting deformation must separately preserve its canonical animation data.</summary>
+    public static BrowserMeshData CopyGeometry(XRMesh mesh)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        if (mesh.Type != EPrimitiveType.Triangles || mesh.Triangles is not { Count: > 0 } triangles)
+            throw new NotSupportedException("Browser mesh export requires indexed triangles.");
         if (mesh.VertexCount < 3 || mesh.VertexCount > 16 * 1024 * 1024 / 5)
             throw new NotSupportedException("Browser mesh vertex count is outside the supported payload range.");
         if (mesh.ColorCount != 0 || mesh.TexCoordCount != 1)

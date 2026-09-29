@@ -177,14 +177,17 @@ export class GpuResources {
         return handle;
     }
 
-    createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label) {
+    createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp = 32, maxAnisotropy = 1) {
         const r = this._ready();
         if (![addressU, addressV].every(value => value === 'clamp-to-edge' || value === 'repeat' || value === 'mirror-repeat') ||
-            ![minFilter, magFilter, mipmapFilter].every(value => value === 'nearest' || value === 'linear'))
-            throw new RangeError('Sampler address or filtering mode is unsupported.');
+            ![minFilter, magFilter, mipmapFilter].every(value => value === 'nearest' || value === 'linear') ||
+            !Number.isFinite(lodMaxClamp) || lodMaxClamp < 0 || lodMaxClamp > 32 ||
+            !Number.isInteger(maxAnisotropy) || maxAnisotropy < 1 || maxAnisotropy > 16 ||
+            (maxAnisotropy > 1 && [minFilter, magFilter, mipmapFilter].some(value => value !== 'linear')))
+            throw new RangeError('Sampler address, filtering, LOD or anisotropy mode is unsupported.');
         debugLabel(label);
         const sampler = r.device.createSampler({ label, addressModeU: addressU, addressModeV: addressV,
-            addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, maxAnisotropy: 1 });
+            addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, lodMaxClamp, maxAnisotropy });
         return r._resources.add('sampler', { sampler, label, state: 'ready', references: 0,
             filtering: minFilter === 'linear' || magFilter === 'linear' || mipmapFilter === 'linear' }, r._owner);
     }

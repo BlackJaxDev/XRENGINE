@@ -1559,6 +1559,8 @@ internal partial class Program
         {
             throw new ArgumentException($"Unknown build platform '{platformArg}'.");
         }
+        if (platform == EBuildPlatform.BrowserWebGPU)
+            throw new NotSupportedException("BrowserWebGPU builds publish the portable application and content together; use --build-project.");
 
         string managedConfiguration = ResolveManagedBuildConfiguration(configuration);
         string managedPlatform = ResolveManagedBuildPlatform(platform);
@@ -1800,7 +1802,9 @@ internal partial class Program
         Engine.BuildSettings = settings;
         Console.WriteLine($"Resolved build settings: BuildManagedAssemblies={settings.BuildManagedAssemblies}, CopyGameAssemblies={settings.CopyGameAssemblies}, BuildLauncherExecutable={settings.BuildLauncherExecutable}");
 
-        Console.WriteLine($"Cooking project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
+        Console.WriteLine(settings.Platform == EBuildPlatform.BrowserWebGPU
+            ? $"Publishing project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' as browser content..."
+            : $"Cooking project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
         ProjectBuilder.BuildCurrentProjectSynchronously(settings, progress =>
         {
             int percent = (int)Math.Clamp(progress.Value * 100f, 0f, 100f);
@@ -1812,6 +1816,14 @@ internal partial class Program
             return;
 
         string buildRoot = Path.Combine(Engine.CurrentProject.BuildDirectory, settings.OutputSubfolder ?? string.Empty);
+        if (settings.Platform == EBuildPlatform.BrowserWebGPU)
+        {
+            string indexPath = Path.Combine(buildRoot, "index.html");
+            if (!File.Exists(indexPath))
+                throw new FileNotFoundException("Browser build finished without the static application entrypoint.", indexPath);
+            Console.WriteLine($"Browser static bundle ready: {buildRoot}");
+            return;
+        }
         string binariesPath = Path.Combine(buildRoot, settings.BinariesOutputFolder);
         string exeName = string.IsNullOrWhiteSpace(settings.LauncherExecutableName)
             ? "Game.exe"

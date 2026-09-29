@@ -175,8 +175,14 @@ public sealed partial class BrowserSceneSession
                 throw new ArgumentException("Cooked material texture dependency is not resident.");
         }
         ReserveCookedBytes(32);
+        BrowserCookedSamplerDto? selectedSampler = dto.Sampler;
+        BrowserSamplerDescription? sampler = selectedSampler is null ? null : new BrowserSamplerDescription(
+            selectedSampler.AddressModeU, selectedSampler.AddressModeV, selectedSampler.MinFilter,
+            selectedSampler.MagFilter, selectedSampler.MipmapFilter, "", selectedSampler.LodMaxClamp,
+            selectedSampler.MaxAnisotropy);
         BrowserMaterialData material = new(new Vector4(dto.Tint[0], dto.Tint[1], dto.Tint[2], dto.Tint[3]),
-            texture, dto.AlphaMode, dto.Shading, dto.CullMode, dto.AlphaCutoff, dto.CastShadow, dto.ReceiveShadow);
+            texture, dto.AlphaMode, dto.Shading, dto.CullMode, dto.AlphaCutoff, dto.CastShadow, dto.ReceiveShadow,
+            sampler);
         AcquireMaterial(material);
         _cookedMaterials.Add(assetId, material);
         _cookedRetainedBytes += 32;

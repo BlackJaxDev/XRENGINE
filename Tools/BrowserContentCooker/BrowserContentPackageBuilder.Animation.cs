@@ -2,9 +2,9 @@ using System.Numerics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace XREngine.Tools.BrowserContentCooker;
+namespace XREngine.Publishing;
 
-internal static partial class Program
+public static partial class BrowserContentPackageBuilder
 {
     private static string AnimationMeshId(string animationId, Dictionary<string, JsonElement> assets, string directory,
         Dictionary<string, string> cache)
@@ -142,7 +142,8 @@ internal static partial class Program
         int totalFrames = 0;
         foreach (JsonElement clip in Array(payload, "clips", 8, 1))
         {
-            Members(clip, "name", "framesPerSecond", "frameCount", "loop", "frames", "morphWeights");
+            MembersOptional(clip, ["name", "framesPerSecond", "frameCount", "loop", "frames", "morphWeights"], ["endInclusiveSamples"]);
+            if (clip.TryGetProperty("endInclusiveSamples", out _)) Boolean(clip, "endInclusiveSamples");
             names.Add(ClipName(clip.GetProperty("name")));
             Integer(clip.GetProperty("framesPerSecond"), 1, 120);
             int frames = Integer(clip.GetProperty("frameCount"), 2, 600);

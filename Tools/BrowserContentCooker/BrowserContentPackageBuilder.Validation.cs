@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace XREngine.Tools.BrowserContentCooker;
+namespace XREngine.Publishing;
 
-internal static partial class Program
+public static partial class BrowserContentPackageBuilder
 {
     private static void Require(bool condition, string message)
     {
@@ -169,3 +169,4 @@ internal static partial class Program
         return height;
     }
 }
+

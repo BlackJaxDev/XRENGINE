@@ -143,4 +143,5 @@
     </Content>
   </ItemGroup>
 
+  <Import Project="../Build/Shared/BrowserContentPublishing.props" />
 </Project>

@@ -1,0 +1,20 @@
+<Project>
+  <!-- Offline-only shared implementation. The browser app compiles its wire DTOs
+       normally; it never imports the filesystem/process publishing code. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../../Tools/BrowserContentCooker/BrowserContentPackageBuilder.cs" Link="Publishing/BrowserContentPackageBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../Tools/BrowserContentCooker/BrowserContentPackageBuilder.Payloads.cs" Link="Publishing/BrowserContentPackageBuilder.Payloads.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../Tools/BrowserContentCooker/BrowserContentPackageBuilder.Validation.cs" Link="Publishing/BrowserContentPackageBuilder.Validation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../Tools/BrowserContentCooker/BrowserContentPackageBuilder.Animation.cs" Link="Publishing/BrowserContentPackageBuilder.Animation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedAnimationDto.cs" Link="Publishing/Contracts/BrowserCookedAnimationDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedAnimationClipDto.cs" Link="Publishing/Contracts/BrowserCookedAnimationClipDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedCollisionDto.cs" Link="Publishing/Contracts/BrowserCookedCollisionDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedCollisionBoxDto.cs" Link="Publishing/Contracts/BrowserCookedCollisionBoxDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedInstanceDto.cs" Link="Publishing/Contracts/BrowserCookedInstanceDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedMaterialDto.cs" Link="Publishing/Contracts/BrowserCookedMaterialDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedSamplerDto.cs" Link="Publishing/Contracts/BrowserCookedSamplerDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedMeshDto.cs" Link="Publishing/Contracts/BrowserCookedMeshDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedSceneDto.cs" Link="Publishing/Contracts/BrowserCookedSceneDto.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedTextureDto.cs" Link="Publishing/Contracts/BrowserCookedTextureDto.cs" />
+  </ItemGroup>
+</Project>
