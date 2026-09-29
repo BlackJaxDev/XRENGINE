@@ -13,6 +13,7 @@
     <RunAOTCompilation>false</RunAOTCompilation>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../XREngine.Animation/AuthoredCadence.cs" Link="Shared/AuthoredCadence.cs" />
     <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
     <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
     <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" AdditionalProperties="XREnginePortableRuntime=true" />

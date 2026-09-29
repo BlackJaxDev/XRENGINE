@@ -1,0 +1,13 @@
+{
+  "schema": 3,
+  "services": { "required": ["cpu-animation", "character-collision"], "optional": ["dom-ui"] },
+  "entrypoints": ["world-animated"],
+  "streamed": [],
+  "assets": [
+    { "id": "triangle", "kind": "mesh", "dependencies": [], "variants": [{ "source": "triangle.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "paint", "kind": "material", "dependencies": [], "variants": [{ "source": "paint.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "idle", "kind": "animation", "dependencies": ["triangle"], "variants": [{ "source": "idle-animation.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "ground", "kind": "collision", "dependencies": [], "variants": [{ "source": "ground-collision.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "world-animated", "kind": "scene", "dependencies": ["triangle", "paint", "idle", "ground"], "variants": [{ "source": "world-animated.json", "encoding": "json", "requiredFeatures": [] }] }
+  ]
+}

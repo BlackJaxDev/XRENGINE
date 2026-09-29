@@ -13,6 +13,11 @@ export function browserPipelineRequirements(adapter, requirements, strategy, ski
             maxComputeWorkgroupSizeY: strategy?.hiZ ? 8 : 1, maxComputeWorkgroupSizeZ: 1,
             maxComputeInvocationsPerWorkgroup: 64, maxComputeWorkgroupsPerDimension: 256 });
         if (strategy?.hiZ) selected.maxStorageTexturesPerShaderStage = 1;
+        if (strategy?.hierarchy) {
+            selected.maxBindingsPerBindGroup = 8;
+            selected.maxStorageBuffersPerShaderStage = 6;
+            selected.maxUniformBuffersPerShaderStage = 2;
+        }
         if (skinningMode === 'Compute') {
             selected.maxBufferSize = 4 * 1024 * 1024;
             selected.maxStorageBufferBindingSize = 4 * 1024 * 1024;

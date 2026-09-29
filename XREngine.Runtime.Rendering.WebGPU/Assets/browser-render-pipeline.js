@@ -95,16 +95,17 @@ export class BrowserRenderPipeline {
     }
 
     async _initializeDevice(device, signal) {
-        const [rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource] = await Promise.all([
+        const [rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource, hierarchySource] = await Promise.all([
             loadShader('browser-raster.wgsl', signal), loadShader('browser-compose.wgsl', signal),
             this.gpuScene ? loadShader('gpu-scene-culling.wgsl', signal) : null,
             this.hiZ ? loadShader('gpu-hiz-init.wgsl', signal) : null,
             this.hiZ ? loadShader('gpu-hiz-reduce.wgsl', signal) : null,
-            this.renderer.skinningMode === 'Compute' ? loadShader('gpu-skinning.wgsl', signal) : null]);
+            this.renderer.skinningMode === 'Compute' ? loadShader('gpu-skinning.wgsl', signal) : null,
+            this.renderer.submissionStrategy.hierarchy ? loadShader('gpu-scene-bvh.wgsl', signal) : null]);
         if (signal.aborted || this._disposed) throw new DOMException('Raster startup canceled.', 'AbortError');
         device.pushErrorScope('out-of-memory'); device.pushErrorScope('validation');
         let operation;
-        try { operation = this._compile(device, rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource); }
+        try { operation = this._compile(device, rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource, hierarchySource); }
         catch (error) { operation = Promise.reject(error); }
         const validation = device.popErrorScope(), memory = device.popErrorScope();
         const results = await Promise.allSettled([operation, validation, memory]);
@@ -114,7 +115,7 @@ export class BrowserRenderPipeline {
         }
     }
 
-    async _compile(device, rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource) {
+    async _compile(device, rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource, hierarchySource) {
         const raster = device.createShaderModule({ label: 'Browser flat raster', code: rasterSource });
         const compose = device.createShaderModule({ label: 'Browser linear SDR composition', code: composeSource });
         const compilation = Promise.all([raster.getCompilationInfo(), compose.getCompilationInfo()]);
@@ -141,7 +142,7 @@ export class BrowserRenderPipeline {
             { arrayStride: 128, stepMode: 'instance', attributes: instanceAttributes }];
         const blend = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
         const pending = [];
-        if (this.gpuScene) pending.push(this.gpuScene.initialize(cullingSource));
+        if (this.gpuScene) pending.push(this.gpuScene.initialize(cullingSource, hierarchySource));
         if (this.hiZ) pending.push(this.hiZ.initialize(depthSource, reductionSource));
         if (skinningSource) pending.push(this.renderer.skinning.initialize(skinningSource));
         for (let format = 0; format < 2; format++) {
@@ -386,7 +387,11 @@ export class BrowserRenderPipeline {
             if (uiCount) device.queue.writeBuffer(this.uiBuffer, 0, this.bytes.buffer, uiOffset, uiCount * pipelineUiBytes);
             const encoder = device.createCommandEncoder(this.encoderDescriptor);
             if (renderer.skinningMode === 'Compute') renderer.skinning.encode(encoder);
-            if (this.gpuScene) { this.gpuScene.encode(encoder, false); if (count) this.stats.cullingDispatches++; }
+            if (this.gpuScene) {
+                const before = this.gpuScene.stats.dispatches;
+                this.gpuScene.encode(encoder, false);
+                this.stats.cullingDispatches += this.gpuScene.stats.dispatches - before;
+            }
             if (updateShadows) {
                 const shadow = encoder.beginRenderPass(this.shadowPass);
                 shadow.setBindGroup(0, this.composeFrame);
@@ -401,7 +406,9 @@ export class BrowserRenderPipeline {
                 depth.setBindGroup(0, this.composeFrame);
                 this._drawMeshes(depth, count, false, true); depth.end();
                 this.hiZ.encode(encoder); this.stats.depthPyramids++;
-                this.gpuScene.encode(encoder, true); if (count) this.stats.cullingDispatches++;
+                const before = this.gpuScene.stats.dispatches;
+                this.gpuScene.encode(encoder, true);
+                this.stats.cullingDispatches += this.gpuScene.stats.dispatches - before;
             }
             const pass = encoder.beginRenderPass(this.scenePass);
             pass.setPipeline(this.skyPipelines[this.settings.hdr ? 1 : 0]); pass.setBindGroup(0, this.composeFrame); pass.draw(3);
@@ -474,6 +481,9 @@ export class BrowserRenderPipeline {
     getStatistics() {
         return { ...this.stats, residentMaterials: this.materials.size, pipelineVariants: 26,
             submissionMode: this.renderer.submissionStrategy.selected, skinning: this.renderer.skinningMode,
+            visibilityAlgorithm: this.renderer.submissionStrategy.visibilityAlgorithm,
+            hierarchy: this.gpuScene?.hierarchy ? { ...this.gpuScene.hierarchy.stats, views: this.gpuScene.hierarchy.viewCount,
+                primitives: this.gpuScene.hierarchy.count, nodes: Math.max(0, this.gpuScene.hierarchy.count * 2 - 1) } : null,
             pyramidMipCount: this.hiZ?.mipCount ?? 0, qualified: false,
             shading: 'unlit-or-flat-lambert', settings: { ...this.settings },
             exclusions: ['bindless', 'normal maps', 'reversed Z', 'desktop post effects'] };

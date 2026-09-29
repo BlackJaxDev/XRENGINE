@@ -36,7 +36,7 @@ internal static partial class Program
         using JsonDocument recipeDocument = ReadJson(ReadBounded(recipePath, JsonLimit));
         JsonElement recipe = recipeDocument.RootElement;
         Require(recipe.ValueKind == JsonValueKind.Object, "Recipe must be an object.");
-        int schema = Integer(recipe.GetProperty("schema"), 1, 2);
+        int schema = Integer(recipe.GetProperty("schema"), 1, 3);
         if (schema == 1)
             Members(recipe, "schema", "entrypoints", "streamed", "assets");
         else
@@ -52,7 +52,8 @@ internal static partial class Program
             Members(asset, "id", "kind", "dependencies", "variants");
             string id = Identifier(asset.GetProperty("id"));
             Require(byId.TryAdd(id, asset), $"Duplicate asset ID '{id}'.");
-            Choice(asset, "kind", "mesh", "texture", "material", "scene");
+            string kind = Choice(asset, "kind", "mesh", "texture", "material", "scene", "animation", "collision");
+            Require(schema == 3 || kind is "mesh" or "texture" or "material" or "scene", "Animation and collision require recipe schema 3.");
             dependencies.Add(id, Ids(asset, "dependencies", 64));
         }
         string[] entrypoints = Ids(recipe, "entrypoints", 4096);
@@ -65,12 +66,17 @@ internal static partial class Program
         foreach (string id in byId.Keys)
             ValidateGraph(id, byId, dependencies, visiting, heights, 0);
         Require(assets.Count(asset => asset.GetProperty("kind").GetString() == "material") <= 256, "Package exceeds 256 materials.");
+        Require(assets.Count(asset => asset.GetProperty("kind").GetString() == "collision") <= 1, "Package permits one collision world.");
 
         List<object> cookedAssets = [];
         Dictionary<string, byte[]> payloads = new(StringComparer.Ordinal);
         long maximumSelectedBytes = 0;
         int instanceCount = 0;
         float[]? packageCamera = null;
+        string? packageCollision = null;
+        bool essentialAnimation = false;
+        bool essentialCollision = false;
+        Dictionary<string, string> animationMeshes = new(StringComparer.Ordinal);
         string recipeDirectory = Path.GetDirectoryName(recipePath)!;
         foreach (JsonElement asset in assets)
         {
@@ -91,13 +97,22 @@ internal static partial class Program
                 if (kind == "texture") ValidateTextureBytes(variant, payload.Length);
                 else
                 {
-                    (int instances, float[]? camera) = ValidatePayload(kind, payload, dependencies[id], byId);
+                    (int instances, float[]? camera, string? collision, bool animated) =
+                        ValidatePayload(kind, payload, dependencies[id], byId, schema, recipeDirectory, animationMeshes);
                     instanceCount += instances;
                     Require(instanceCount <= 2048, "Package exceeds 2048 scene instances.");
                     if (camera is not null)
                     {
                         Require(packageCamera is null || packageCamera.AsSpan().SequenceEqual(camera), "Scene chunks must share the same camera matrices.");
+                        Require(packageCamera is null || packageCollision == collision,
+                            "Every scene chunk must retain the same collision reference or omit it throughout the package.");
                         packageCamera ??= camera;
+                        packageCollision = collision;
+                    }
+                    if (entrypoints.Contains(id, StringComparer.Ordinal))
+                    {
+                        essentialAnimation |= animated;
+                        essentialCollision |= collision is not null;
                     }
                 }
                 string hash = Convert.ToHexStringLower(SHA256.HashData(payload));
@@ -117,13 +132,21 @@ internal static partial class Program
             Require(maximumSelectedBytes <= AggregateLimit, "Selected asset payload budget exceeds 64 MiB.");
             cookedAssets.Add(new { id, kind, dependencies = dependencies[id], variants = cookedVariants });
         }
+        if (schema >= 2)
+        {
+            string[] requiredServices = Ids(recipe.GetProperty("services"), "required", 16);
+            Require(!requiredServices.Contains("cpu-animation", StringComparer.Ordinal) || essentialAnimation,
+                "Required cpu-animation needs an animated instance in an essential scene.");
+            Require(!requiredServices.Contains("character-collision", StringComparer.Ordinal) || essentialCollision,
+                "Required character-collision needs a collision world in an essential scene.");
+        }
         Dictionary<string, object?> manifestValues = new(StringComparer.Ordinal)
         {
             ["schema"] = schema, ["profile"] = "browser-forward-v1",
-            ["toolchain"] = schema == 1 ? "xrengine-browser-content-1" : "xrengine-browser-content-2",
+            ["toolchain"] = $"xrengine-browser-content-{schema}",
             ["entrypoints"] = entrypoints, ["streamed"] = streamed, ["assets"] = cookedAssets
         };
-        if (schema == 2) manifestValues.Add("services", recipe.GetProperty("services").Clone());
+        if (schema >= 2) manifestValues.Add("services", recipe.GetProperty("services").Clone());
         byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestValues, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Manifest exceeds 1 MiB.");
 

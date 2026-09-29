@@ -7,17 +7,17 @@ namespace XREngine.Browser;
 public sealed partial class BrowserSceneSession
 {
     private BrowserCpuAnimator? _animator;
-    private BrowserCpuSkinnedMesh? _animatedMesh;
+    private BrowserMeshData? _animatedMesh;
     private BrowserMeshComponent? _animatedComponent;
     private bool _animationDirty;
     private bool _computeSkinning;
     private BrowserSkinningData? _computeSkinningData;
     private SkinPaletteMatrix[]? _computePalette;
     private readonly Vector2[] _activeAnimationMorphs = new Vector2[1];
-    private Vector3[]? _referenceMorphDeltas;
+    private float[]? _referenceCpuVertices;
     private int _computeSkinningMesh;
 
-    public bool HasCpuAnimation => _animator is not null;
+    public bool HasCpuAnimation => _animator is not null || _cookedAnimationPlayers.Count != 0;
     public string SkinningProfile => _computeSkinning ? "Compute" : "Cpu";
     public float AnimationMovementBlend => _animator?.MovementBlend ?? 0;
 
@@ -69,7 +69,6 @@ public sealed partial class BrowserSceneSession
         uint[] coreWeights = new uint[mesh.VertexCount];
         Vector3[] normals = new Vector3[mesh.VertexCount];
         Vector4[] tangents = new Vector4[mesh.VertexCount];
-        Vector3[] morphDeltas = new Vector3[mesh.VertexCount];
         uint[] sparseRecords = new uint[mesh.VertexCount * 4];
         uint[] quantizedDeltas = new uint[(mesh.VertexCount + 1) * 2];
         for (int vertex = 0; vertex < mesh.VertexCount; vertex++)
@@ -82,7 +81,6 @@ public sealed partial class BrowserSceneSession
             normals[vertex] = Vector3.UnitZ;
             tangents[vertex] = new Vector4(1, 0, 0, 1);
             short x = (short)MathF.Round((vertex % 2 == 0 ? -1 : 1) * vertices[vertex * 5 + 1] / 1.8f * 32767);
-            morphDeltas[vertex] = new Vector3(x / 32767f * 0.12f, 0, 0);
             sparseRecords[vertex * 4] = (uint)vertex;
             sparseRecords[vertex * 4 + 1] = (uint)vertex + 1;
             quantizedDeltas[(vertex + 1) * 2] = unchecked((ushort)x);
@@ -91,9 +89,7 @@ public sealed partial class BrowserSceneSession
             normals, tangents, shapeRanges: [0, (uint)mesh.VertexCount, 0, 0], sparseRecords: sparseRecords,
             quantizedDeltas: quantizedDeltas, quantizationMetadata: [Vector4.Zero, Vector4.Zero, new Vector4(0.12f, 0, 0, 0), Vector4.Zero]);
         _computePalette = new SkinPaletteMatrix[skeleton.BoneCount];
-        _referenceMorphDeltas = morphDeltas;
-        BrowserCpuSkinnedMesh animatedMesh = new(skeleton, mesh, weights);
-        animatedMesh.Update(animator);
+        _referenceCpuVertices = new float[mesh.VertexCount * 5];
         Transform transform = (Transform)BrowserStaticRegistrations.CreateRequiredTransform(BrowserStaticRegistrations.TransformId);
         transform.Translation = new Vector3(1.8f, 0, -1.5f);
         BrowserMeshComponent component = AddRenderableCore(mesh,
@@ -101,7 +97,7 @@ public sealed partial class BrowserSceneSession
             transform, _customRenderables);
         _uploads.EnsureCapacity(1, vertices.Length * sizeof(float));
         _animator = animator;
-        _animatedMesh = animatedMesh;
+        _animatedMesh = mesh;
         _animatedComponent = component;
         _animationDirty = true;
     }
@@ -112,7 +108,7 @@ public sealed partial class BrowserSceneSession
         ThrowIfFrameBusy();
         if (_graphicsInitialized)
             throw new InvalidOperationException("Restart the canvas to change its compute skinning profile.");
-        if (enabled && (_renderer is not IBrowserComputeSkinningCapability || _animator is null))
+        if (enabled && (_renderer is not IBrowserComputeSkinningCapability || (_animator is null && !_cookedContent)))
             throw new NotSupportedException("Compute skinning requires the packed deformation capability and an admitted animated scene.");
         _computeSkinning = enabled;
     }
@@ -121,6 +117,8 @@ public sealed partial class BrowserSceneSession
     {
         if (!_computeSkinning)
             return;
+        if (_cookedContent)
+            return; // Cooked instances arrive through bounded essential-content admission after renderer startup.
         if (_renderer is not IBrowserComputeSkinningCapability compute || _computeSkinningData is null ||
             _animatedComponent is null || _animatedComponent.MeshHandle == 0)
             throw new InvalidOperationException("Compute skinning startup requires its admitted mesh and immutable inputs.");
@@ -146,8 +144,10 @@ public sealed partial class BrowserSceneSession
     /// <summary>Runs after fixed-step collision and motion; all arrays are retained from scene creation.</summary>
     private void AdvanceAnimation(float deltaSeconds, float movementSpeed)
     {
+        for (int i = 0; i < _cookedAnimationPlayers.Count; i++)
+            _cookedAnimationPlayers[i].Advance(deltaSeconds);
         if (_animator is null || _animatedMesh is null || _animatedComponent is null ||
-            !_animatedComponent.RenderEnabled || !ReferenceEquals(_animatedComponent.Mesh, _animatedMesh.Mesh))
+            !_animatedComponent.RenderEnabled || !ReferenceEquals(_animatedComponent.Mesh, _animatedMesh))
             return;
         _animator.Advance(deltaSeconds, movementSpeed);
         _animationDirty = true;
@@ -156,29 +156,33 @@ public sealed partial class BrowserSceneSession
     /// <summary>Skins and uploads only the final simulated pose once per render frame, before visibility collection.</summary>
     private void PublishAnimation()
     {
+        for (int i = 0; i < _cookedAnimationPlayers.Count; i++)
+            _cookedAnimationPlayers[i].Publish(_renderer, _uploads, Id);
         if (!_animationDirty || _animator is null || _animatedMesh is null || _animatedComponent is null ||
-            !_animatedComponent.RenderEnabled || !ReferenceEquals(_animatedComponent.Mesh, _animatedMesh.Mesh) ||
+            !_animatedComponent.RenderEnabled || !ReferenceEquals(_animatedComponent.Mesh, _animatedMesh) ||
             _animatedComponent.MeshHandle == 0)
             return;
         float morphWeight = 0.25f + _animator.MovementBlend * 0.75f;
+        if (_computePalette is null || _computeSkinningData is null || _referenceCpuVertices is null)
+            throw new InvalidOperationException("The reference deformation inputs are unavailable.");
+        ReadOnlySpan<Matrix4x4> palette = _animator.Palette;
+        for (int bone = 0; bone < palette.Length; bone++)
+            _computePalette[bone] = SkinPaletteMatrix.FromRowVectorMatrix(palette[bone]);
+        _activeAnimationMorphs[0] = new Vector2(0, morphWeight);
         if (_computeSkinning)
         {
-            if (_renderer is not IBrowserComputeSkinningCapability compute || _computePalette is null ||
+            if (_renderer is not IBrowserComputeSkinningCapability compute ||
                 _animatedComponent.MeshHandle != _computeSkinningMesh)
                 throw new InvalidOperationException("The compute deformation resource binding is obsolete; recreate its scene.");
-            ReadOnlySpan<Matrix4x4> palette = _animator.Palette;
-            for (int bone = 0; bone < palette.Length; bone++)
-                _computePalette[bone] = SkinPaletteMatrix.FromRowVectorMatrix(palette[bone]);
-            _activeAnimationMorphs[0] = new Vector2(0, morphWeight);
             compute.UpdateComputeSkinning(BrowserResourceHandle.FromPacked(_computeSkinningMesh), _computePalette, _activeAnimationMorphs);
             _animationDirty = false;
             return;
         }
-        _animatedMesh.Update(_animator, _referenceMorphDeltas, morphWeight);
+        _computeSkinningData.EvaluatePositionsCpu(_computePalette, _activeAnimationMorphs, _referenceCpuVertices);
         _uploads.Begin(Id);
         try
         {
-            _uploads.AddMeshVertices(BrowserResourceHandle.FromPacked(_animatedComponent.MeshHandle), 0, _animatedMesh.Vertices);
+            _uploads.AddMeshVertices(BrowserResourceHandle.FromPacked(_animatedComponent.MeshHandle), 0, _referenceCpuVertices);
             _uploads.Seal();
             _renderer.SubmitUploads(_uploads);
             _animationDirty = false;
@@ -191,18 +195,20 @@ public sealed partial class BrowserSceneSession
     }
 
     /// <summary>The initial descriptor has bind-pose bounds, so this dynamic reference bypasses static frustum rejection.</summary>
-    private bool IsAnimationMesh(BrowserMeshData mesh) => _animatedMesh is not null && ReferenceEquals(_animatedMesh.Mesh, mesh);
+    private bool IsAnimationMesh(BrowserMeshData mesh) =>
+        (_animatedMesh is not null && ReferenceEquals(_animatedMesh, mesh)) || IsCookedAnimationMesh(mesh);
 
     /// <summary>Drops CPU animation state; the regular scene resource registry owns GPU release and node teardown.</summary>
     private void DisposeAnimation()
     {
+        DisposeCookedAnimation();
         _animationDirty = false;
         _animatedComponent = null;
         _animatedMesh = null;
         _animator = null;
         _computeSkinningData = null;
         _computePalette = null;
-        _referenceMorphDeltas = null;
+        _referenceCpuVertices = null;
         _computeSkinningMesh = 0;
     }
 }

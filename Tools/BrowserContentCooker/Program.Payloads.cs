@@ -4,13 +4,15 @@ namespace XREngine.Tools.BrowserContentCooker;
 
 internal static partial class Program
 {
-    private static (int Instances, float[]? Camera) ValidatePayload(string kind, byte[] bytes, string[] dependencies, Dictionary<string, JsonElement> assets)
+    private static (int Instances, float[]? Camera, string? Collision, bool Animated) ValidatePayload(string kind, byte[] bytes, string[] dependencies, Dictionary<string, JsonElement> assets, int schema, string recipeDirectory, Dictionary<string, string> animationMeshes)
     {
         using JsonDocument document = ReadJson(bytes);
         JsonElement payload = document.RootElement;
         HashSet<string> used = new(StringComparer.Ordinal);
         int instances = 0;
         float[]? camera = null;
+        string? collisionId = null;
+        bool animated = false;
         switch (kind)
         {
             case "mesh":
@@ -37,23 +39,86 @@ internal static partial class Program
                 Require(alpha != "transparent" || !castsShadow, "Transparent materials must disable shadow casting.");
                 break;
             case "scene":
-                Members(payload, "cameraView", "cameraProjection", "instances");
+                if (schema == 3)
+                    MembersOptional(payload, ["cameraView", "cameraProjection", "instances"], ["collision"]);
+                else Members(payload, "cameraView", "cameraProjection", "instances");
                 Floats(payload, "cameraView", 16);
                 Floats(payload, "cameraProjection", 16);
                 camera = Array(payload, "cameraView", 16, 16).Concat(Array(payload, "cameraProjection", 16, 16)).Select(value => Number(value)).ToArray();
+                if (payload.TryGetProperty("collision", out JsonElement collision))
+                {
+                    Reference(collision, "collision", assets, used);
+                    collisionId = Identifier(collision);
+                }
                 foreach (JsonElement instance in Array(payload, "instances", 64))
                 {
                     instances++;
-                    Members(instance, "mesh", "material", "modelMatrix");
+                    if (schema == 3)
+                        MembersOptional(instance, ["mesh", "material", "modelMatrix"], ["animation", "occluder"]);
+                    else Members(instance, "mesh", "material", "modelMatrix");
                     Reference(instance.GetProperty("mesh"), "mesh", assets, used);
                     Reference(instance.GetProperty("material"), "material", assets, used);
+                    if (instance.TryGetProperty("animation", out JsonElement animation))
+                    {
+                        animated = true;
+                        Reference(animation, "animation", assets, used);
+                        Require(AnimationMeshId(Identifier(animation), assets, recipeDirectory, animationMeshes) ==
+                            Identifier(instance.GetProperty("mesh")), "Animated instance mesh must match its animation's source mesh.");
+                    }
+                    if (instance.TryGetProperty("occluder", out JsonElement occluder) &&
+                        occluder.ValueKind == JsonValueKind.True)
+                    {
+                        Require(!instance.TryGetProperty("animation", out _),
+                            "Animated instances cannot act as static occluders.");
+                        string materialId = Identifier(instance.GetProperty("material"));
+                        JsonElement materialAsset = assets[materialId];
+                        JsonElement materialVariant = Array(materialAsset, "variants", 1, 1)[0];
+                        using JsonDocument material = ReadJson(ReadBounded(SourcePath(recipeDirectory,
+                            materialVariant.GetProperty("source").GetString()!), JsonLimit));
+                        Require(Choice(material.RootElement, "alphaMode", "opaque", "masked", "transparent") == "opaque",
+                            "Occluders require an opaque material.");
+                    }
+                    else if (instance.TryGetProperty("occluder", out _)) Boolean(instance, "occluder");
                     Floats(instance, "modelMatrix", 16);
                 }
+                break;
+            case "collision":
+                Require(schema == 3, "Collision assets require schema 3.");
+                ValidateCollisionPayload(payload);
+                break;
+            case "animation":
+                Require(schema == 3, "Animation assets require schema 3.");
+                ValidateAnimationPayload(payload, assets, used, recipeDirectory);
                 break;
             default: throw new InvalidDataException("Unsupported JSON asset kind.");
         }
         Require(used.SetEquals(dependencies), "Declared dependencies must exactly match payload references.");
-        return (instances, camera);
+        return (instances, camera, collisionId, animated);
+    }
+
+    private static void ValidateCollisionPayload(JsonElement payload)
+    {
+        Members(payload, "boxes", "spawn", "yaw", "pitch");
+        JsonElement[] spawn = Array(payload, "spawn", 3, 3);
+        float[] position = spawn.Select(value => Number(value, -10000, 10000)).ToArray();
+        Number(payload.GetProperty("yaw"), -MathF.PI, MathF.PI);
+        Number(payload.GetProperty("pitch"), -1.4f, 1.4f);
+        foreach (JsonElement box in Array(payload, "boxes", 64, 1))
+        {
+            Members(box, "minimum", "maximum");
+            JsonElement[] minimum = Array(box, "minimum", 3, 3);
+            JsonElement[] maximum = Array(box, "maximum", 3, 3);
+            bool overlaps = true;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                float low = Number(minimum[axis], -10000, 10000);
+                float high = Number(maximum[axis], -10000, 10000);
+                Require(low < high, "Collision box extents must be positive on every axis.");
+                float halfExtent = axis == 1 ? 0.85f : 0.25f;
+                overlaps &= position[axis] > low - halfExtent && position[axis] < high + halfExtent;
+            }
+            Require(!overlaps, "Collision spawn overlaps a box.");
+        }
     }
 
     private static void Reference(JsonElement value, string kind, Dictionary<string, JsonElement> assets, HashSet<string> used)

@@ -19,6 +19,30 @@ internal static partial class Program
         Require(remaining.Count == 0, $"Missing required properties: {string.Join(", ", remaining)}.");
     }
 
+    private static void MembersOptional(JsonElement value, string[] required, string[] optional)
+    {
+        Require(value.ValueKind == JsonValueKind.Object, "Expected a JSON object.");
+        HashSet<string> missing = new(required, StringComparer.Ordinal);
+        HashSet<string> allowed = new(required.Concat(optional), StringComparer.Ordinal);
+        foreach (JsonProperty member in value.EnumerateObject())
+        {
+            Require(allowed.Remove(member.Name), $"Unknown or duplicate property '{member.Name}'.");
+            missing.Remove(member.Name);
+        }
+        Require(missing.Count == 0, $"Missing required properties: {string.Join(", ", missing)}.");
+    }
+
+    private static uint Unsigned(JsonElement value, uint maximum = uint.MaxValue)
+    {
+        uint result = 0;
+        Require(value.ValueKind == JsonValueKind.Number && value.TryGetUInt32(out result) && result <= maximum,
+            "Unsigned integer outside supported range.");
+        return result;
+    }
+
+    private static uint[] UnsignedArray(JsonElement owner, string name, int maximum, int minimum = 0)
+        => Array(owner, name, maximum, minimum).Select(value => Unsigned(value)).ToArray();
+
     private static JsonElement[] Array(JsonElement owner, string name, int maximum, int minimum = 0)
     {
         JsonElement value = owner.GetProperty(name);

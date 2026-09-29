@@ -58,6 +58,8 @@ public sealed partial class BrowserSceneSession
                 case "mesh": UploadCookedMesh(assetId, payload); break;
                 case "texture": UploadCookedTexture(assetId, metadataJson, payload); break;
                 case "material": UploadCookedMaterial(assetId, payload); break;
+                case "animation": UploadCookedAnimation(assetId, payload); break;
+                case "collision": UploadCookedCollision(assetId, payload); break;
                 case "scene": UploadCookedScene(payload); break;
                 default: throw new NotSupportedException("Cooked asset kind is unsupported.");
             }
@@ -71,6 +73,34 @@ public sealed partial class BrowserSceneSession
             _cookedFailed = true;
             throw;
         }
+    }
+
+    /// <summary>Requires actual essential animated instances when compute deformation was explicitly requested.</summary>
+    public void CompleteCookedEssentials()
+    {
+        ThrowIfFrameBusy();
+        if (!_cookedContent || !_graphicsInitialized || _cookedFailed || _cookedSceneChunks == 0)
+            throw new InvalidOperationException("Cooked essentials require a healthy resident scene.");
+        if (_computeSkinning && CookedAnimatedInstanceCount == 0)
+        {
+            _cookedFailed = true;
+            throw new NotSupportedException("Compute skinning requires an animated instance in the essential cooked scene.");
+        }
+    }
+
+    private void UploadCookedAnimation(string assetId, byte[] payload)
+    {
+        BrowserCookedAnimationDto dto = JsonSerializer.Deserialize(payload,
+            BrowserCookedJsonContext.Default.BrowserCookedAnimationDto)
+            ?? throw new ArgumentException("Cooked animation payload is null.");
+        ValidateCookedId(dto.Mesh);
+        if (!_cookedMeshes.TryGetValue(dto.Mesh, out BrowserMeshData? mesh))
+            throw new ArgumentException("Cooked animation mesh dependency is not resident.");
+        BrowserCookedAnimationAsset asset = new(dto, mesh);
+        ReserveCookedBytes(asset.RetainedBytes);
+        RegisterCookedAnimation(assetId, asset);
+        _cookedRetainedBytes += asset.RetainedBytes;
+        _peakCookedScratchBytes = Math.Max(_peakCookedScratchBytes, asset.RetainedBytes);
     }
 
     private void UploadCookedMesh(string assetId, byte[] payload)
@@ -165,9 +195,11 @@ public sealed partial class BrowserSceneSession
         BrowserCameraSnapshot camera = new(CookedMatrix(dto.CameraView), CookedMatrix(dto.CameraProjection));
         if (_cookedSceneChunks != 0 && _cameraOverride != camera)
             throw new ArgumentException("Cooked scene chunks must use the same camera.");
+        ValidateCookedCollisionReference(dto.Collision);
         long bytes = dto.Instances.Length * 64L;
         ReserveCookedBytes(bytes);
         Matrix4x4[] transforms = new Matrix4x4[dto.Instances.Length];
+        int animatedInstances = 0, animatedBones = 0, animatedVertices = 0;
         for (int i = 0; i < dto.Instances.Length; i++)
         {
             BrowserCookedInstanceDto instance = dto.Instances[i]
@@ -176,18 +208,44 @@ public sealed partial class BrowserSceneSession
             ValidateCookedId(instance.Material);
             if (!_cookedMeshes.ContainsKey(instance.Mesh) || !_cookedMaterials.ContainsKey(instance.Material))
                 throw new ArgumentException("Cooked scene instance dependencies are not resident.");
+            if (instance.Occluder && (instance.Animation is not null || _cookedMaterials[instance.Material].AlphaMode != "opaque"))
+                throw new ArgumentException("Cooked depth occluders must be opaque rigid instances.");
+            if (instance.Animation is not null)
+            {
+                ValidateCookedId(instance.Animation);
+                BrowserCookedAnimationAsset animation = GetCookedAnimationAsset(instance.Animation);
+                if (animation.MeshId != instance.Mesh)
+                    throw new ArgumentException("Cooked animation must reference the instance's bind mesh.");
+                bytes += animation.PlayerRetainedBytes + animation.OutputMeshBytes;
+                animatedInstances++;
+                animatedBones += animation.BoneCount;
+                animatedVertices += animation.VertexCount;
+            }
             transforms[i] = CookedMatrix(instance.ModelMatrix);
             ValidateImportTransform(transforms[i], out _, out _, out _);
         }
+        ValidateCookedAnimationCapacity(animatedInstances, animatedBones, animatedVertices);
+        ReserveCookedBytes(bytes);
         _peakCookedScratchBytes = Math.Max(_peakCookedScratchBytes, bytes * 2 + 128);
         // Validate the whole chunk before adopting any nodes; bridge failures poison the session.
         for (int i = 0; i < dto.Instances.Length; i++)
         {
             BrowserCookedInstanceDto instance = dto.Instances[i];
-            AddRenderableCore(_cookedMeshes[instance.Mesh], _cookedMaterials[instance.Material],
+            BrowserCookedAnimationAsset? animation = instance.Animation is null ? null : GetCookedAnimationAsset(instance.Animation);
+            BrowserMeshData mesh = animation?.CreateOutputMesh() ?? _cookedMeshes[instance.Mesh];
+            BrowserMeshComponent component = AddRenderableCore(mesh, _cookedMaterials[instance.Material],
                 ImportTransform(transforms[i]), _renderables);
+            component.IsOcclusionOccluder = instance.Occluder;
+            if (animation is not null)
+            {
+                AttachCookedAnimation(component, animation);
+                _cookedGpuBytes += animation.OutputMeshBytes + (_computeSkinning ? animation.ComputeGpuBytes : 0);
+            }
         }
-        SetCamera(camera);
+        if (_cookedSceneChunks == 0)
+            SetCamera(camera);
+        if (dto.Collision is not null)
+            InstallCookedCollision(dto.Collision);
         _cookedInstances += dto.Instances.Length;
         _cookedSceneChunks++;
         _cookedRetainedBytes += bytes;
@@ -224,7 +282,12 @@ public sealed partial class BrowserSceneSession
     public BrowserCookedContentStatistics CaptureCookedContentStatistics()
         => new(_cookedAssetIds.Count, _cookedMeshes.Count, _cookedMaterials.Count, _cookedTextures.Count,
             _cookedInstances, _cookedRetainedBytes, _cookedGpuBytes, _peakCookedBridgeBytes,
-            _peakCookedScratchBytes, _peakCookedUploadBytes, _cookedUploadedBytes, _cookedFailed);
+            _peakCookedScratchBytes, _peakCookedUploadBytes, _cookedUploadedBytes, _cookedFailed)
+        {
+            AnimationAssets = CookedAnimationAssetCount,
+            AnimatedInstances = CookedAnimatedInstanceCount,
+            CollisionBoxes = HasCookedCollision ? CookedCollisionBoxCount : 0
+        };
 
     private void ClearCookedContent()
     {
@@ -233,6 +296,7 @@ public sealed partial class BrowserSceneSession
         _cookedMeshes.Clear();
         _cookedMaterials.Clear();
         _cookedTextures.Clear();
+        ClearCookedCollision();
         _cookedRetainedBytes = 0;
         _cookedGpuBytes = 0;
     }

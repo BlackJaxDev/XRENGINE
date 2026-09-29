@@ -9,5 +9,7 @@ namespace XREngine.Browser;
 [JsonSerializable(typeof(BrowserCookedMaterialDto))]
 [JsonSerializable(typeof(BrowserCookedTextureDto))]
 [JsonSerializable(typeof(BrowserCookedSceneDto))]
+[JsonSerializable(typeof(BrowserCookedAnimationDto))]
+[JsonSerializable(typeof(BrowserCookedCollisionDto))]
 [JsonSerializable(typeof(BrowserCookedContentStatistics))]
 internal sealed partial class BrowserCookedJsonContext : JsonSerializerContext { }

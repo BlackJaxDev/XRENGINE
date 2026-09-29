@@ -21,8 +21,9 @@ public sealed partial class BrowserSceneSession
     public float MotionSpeed => _character?.Speed ?? 0;
     public bool MotionGrounded => _character?.Grounded ?? false;
     public string PhysicsProfile => _character is null ? "excluded-no-collision-descriptors" : "static-aabb-character-v1";
-    public Vector3 MotionPosition => _character is not null && _cameraOverride is null ? _character.Eye : GetImportedEye();
-    public Vector3 MotionForward => _character is null || _cameraOverride is not null ? GetImportedForward() :
+    public Vector3 MotionPosition => _character is not null && (HasCookedCollision || _cameraOverride is null)
+        ? _character.Eye : GetImportedEye();
+    public Vector3 MotionForward => _character is null || (_cameraOverride is not null && !HasCookedCollision) ? GetImportedForward() :
         new(MathF.Sin(_yaw) * MathF.Cos(_pitch), MathF.Sin(_pitch), -MathF.Cos(_yaw) * MathF.Cos(_pitch));
     public ReadOnlySpan<BrowserPointerSnapshot> Pointers => _pointerSlots;
     public double WheelPixels => _wheelPixels;
@@ -153,7 +154,7 @@ public sealed partial class BrowserSceneSession
 
     private void AdvanceMotion(float deltaSeconds)
     {
-        if (_character is null || _cameraOverride is not null)
+        if (_character is null || (_cameraOverride is not null && !HasCookedCollision))
             return;
         _yaw = MathF.IEEERemainder(_yaw + _lookDelta.X + _look.X * 2.2f * deltaSeconds, MathF.Tau);
         _pitch = Math.Clamp(_pitch + _lookDelta.Y + _look.Y * 1.8f * deltaSeconds, -1.4f, 1.4f);
@@ -165,7 +166,7 @@ public sealed partial class BrowserSceneSession
 
     private bool TryBuildMotionViews(int width, int height)
     {
-        if (_character is null || _cameraOverride is not null)
+        if (_character is null || (_cameraOverride is not null && !HasCookedCollision))
             return false;
         Vector3 eye = MotionPosition;
         Matrix4x4 view = Matrix4x4.CreateLookAt(eye, eye + MotionForward, Vector3.UnitY);

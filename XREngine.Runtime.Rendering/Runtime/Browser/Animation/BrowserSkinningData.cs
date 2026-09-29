@@ -8,7 +8,7 @@ namespace XREngine.Rendering;
 /// Cold-boundary packing adapter for the canonical Core4/spill and quantized sparse morph payloads.
 /// This changes binding placement, not influence, palette, or morph encodings.
 /// </summary>
-public sealed class BrowserSkinningData
+public sealed partial class BrowserSkinningData
 {
     private readonly byte[] _packet;
 
@@ -66,10 +66,12 @@ public sealed class BrowserSkinningData
         Write(19, (uint)influenceCap); Write(20, (uint)(sparseRecords.Length / 4));
         Write(21, (uint)(quantizedDeltas.Length / 2)); Write(22, (uint)spillEntries.Length);
         Write(23, (uint)(_packet.Length / 4)); Write(24, BitConverter.SingleToUInt32Bits(morphWeightThreshold));
+        ValidateCanonicalRecords();
     }
 
     public int BoneCount { get; }
     public int MorphCount { get; }
+    public int PacketByteLength => _packet.Length;
     public byte[] CopyPacket() => (byte[])_packet.Clone();
 
     private void Write(int word, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(_packet.AsSpan(word * 4), value);

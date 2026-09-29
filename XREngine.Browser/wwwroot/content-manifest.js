@@ -61,11 +61,11 @@ export function contentManifestUrl(value, base = globalThis.location.href) {
 /** Validates the entire graph, including variants the current device will not select. */
 export function validateContentManifest(manifest, manifestUrl, capabilities) {
     const schema = manifest?.schema;
-    keys(manifest, schema === 2 ? ['schema', 'profile', 'toolchain', 'entrypoints', 'streamed', 'assets', 'services']
+    keys(manifest, schema >= 2 ? ['schema', 'profile', 'toolchain', 'entrypoints', 'streamed', 'assets', 'services']
         : ['schema', 'profile', 'toolchain', 'entrypoints', 'streamed', 'assets'], 'manifest');
-    if (![1, 2].includes(schema) || manifest.profile !== 'browser-forward-v1'
+    if (![1, 2, 3].includes(schema) || manifest.profile !== 'browser-forward-v1'
         || manifest.toolchain !== `xrengine-browser-content-${schema}`) reject('Unsupported schema, profile or toolchain.');
-    if (schema === 2) {
+    if (schema >= 2) {
         keys(manifest.services, ['required', 'optional'], 'services');
         const used = new Set();
         for (const mode of ['required', 'optional']) {
@@ -97,7 +97,8 @@ export function validateContentManifest(manifest, manifestUrl, capabilities) {
         keys(asset, ['id', 'kind', 'dependencies', 'variants'], 'asset');
         id(asset.id);
         if (assets.has(asset.id)) reject(`Duplicate asset ${asset.id}.`);
-        if (!['mesh', 'texture', 'material', 'scene'].includes(asset.kind)) reject(`${asset.id}: unsupported kind.`);
+        if (!(schema === 3 ? ['mesh', 'texture', 'material', 'scene', 'animation', 'collision']
+            : ['mesh', 'texture', 'material', 'scene']).includes(asset.kind)) reject(`${asset.id}: unsupported kind.`);
         ids(asset.dependencies, CONTENT_LIMITS.dependencies, `${asset.id} dependencies`);
         if (!Array.isArray(asset.variants) || !asset.variants.length || asset.variants.length > 8)
             reject(`${asset.id}: variant count is outside the supported range.`);
