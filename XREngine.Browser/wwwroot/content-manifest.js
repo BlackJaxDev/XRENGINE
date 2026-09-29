@@ -60,9 +60,27 @@ export function contentManifestUrl(value, base = globalThis.location.href) {
 
 /** Validates the entire graph, including variants the current device will not select. */
 export function validateContentManifest(manifest, manifestUrl, capabilities) {
-    keys(manifest, ['schema', 'profile', 'toolchain', 'entrypoints', 'streamed', 'assets'], 'manifest');
-    if (manifest.schema !== 1 || manifest.profile !== 'browser-forward-v1'
-        || manifest.toolchain !== 'xrengine-browser-content-1') reject('Unsupported schema, profile or toolchain.');
+    const schema = manifest?.schema;
+    keys(manifest, schema === 2 ? ['schema', 'profile', 'toolchain', 'entrypoints', 'streamed', 'assets', 'services']
+        : ['schema', 'profile', 'toolchain', 'entrypoints', 'streamed', 'assets'], 'manifest');
+    if (![1, 2].includes(schema) || manifest.profile !== 'browser-forward-v1'
+        || manifest.toolchain !== `xrengine-browser-content-${schema}`) reject('Unsupported schema, profile or toolchain.');
+    if (schema === 2) {
+        keys(manifest.services, ['required', 'optional'], 'services');
+        const used = new Set();
+        for (const mode of ['required', 'optional']) {
+            const services = manifest.services[mode];
+            if (!Array.isArray(services) || services.length > 16) reject('Service declarations exceed their limit.');
+            for (const service of services) {
+                if (typeof service !== 'string' || service.length > 64 || /\s/.test(service)
+                    || !/^[a-z][a-z0-9-]{0,63}$/.test(service) || used.has(service))
+                    reject('Service names must be valid, unique and disjoint.');
+                used.add(service);
+            }
+            Object.freeze(services);
+        }
+        Object.freeze(manifest.services);
+    }
     if (!Array.isArray(manifest.assets) || !manifest.assets.length || manifest.assets.length > CONTENT_LIMITS.assets)
         reject('Asset count is outside the supported range.');
     ids(manifest.entrypoints, CONTENT_LIMITS.assets, 'entrypoints');

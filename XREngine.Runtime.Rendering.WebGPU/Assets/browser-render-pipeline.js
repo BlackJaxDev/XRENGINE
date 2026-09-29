@@ -417,7 +417,7 @@ export class BrowserRenderPipeline {
     getStatistics() {
         return { ...this.stats, residentMaterials: this.materials.size, pipelineVariants: 26,
             submissionMode: 'CpuDirect', shading: 'unlit-or-flat-lambert', settings: { ...this.settings },
-            exclusions: ['bindless', 'normal maps', 'skinning', 'reversed Z', 'GPU indirect', 'desktop post effects'] };
+            exclusions: ['bindless', 'normal maps', 'GPU skinning', 'reversed Z', 'GPU indirect', 'desktop post effects'] };
     }
 
     dispose() {

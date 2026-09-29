@@ -110,7 +110,8 @@ public static partial class BrowserSceneExports
             session.RetainedMeshCount, session.RetainedMaterialCount, session.RetainedTextureCount,
             session.VariableDeltaSeconds, session.HistoryGeneration, session.CaptureBridgeStatistics(),
             session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null,
-            session.QualityPreset, session.UiEnabled));
+            session.QualityPreset, session.UiEnabled, session.PhysicsProfile,
+            session.MotionSpeed, session.MotionGrounded, session.HasCpuAnimation, session.AnimationMovementBlend));
     }
 
     /// <summary>Records a browser renderer failure before the frame loop stops.</summary>

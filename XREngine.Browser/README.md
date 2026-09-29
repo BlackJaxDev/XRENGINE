@@ -40,7 +40,13 @@ path; `WebGL2` and unknown renderer names produce a diagnostic. No fallback
 renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
 
-- Drag on the canvas or focus it and use arrow keys to move the scene.
+- In the demo, drag the left canvas half to move and the right half to look. Focus
+  the canvas for WASD/arrows, Space or an enabled standard gamepad. **Jump** is also
+  touch accessible. Text/IME input stays with DOM fields.
+- **Enable audio** activates Web Audio from a gesture and plays a sample pulse.
+  Load a bounded **Audio clip**, optionally loop it, adjust volume or pause it.
+  Browser codec/permission failures remain visible. **Apply label** changes the
+  engine scene-node name from committed text.
 - **Import scene** loads static scene JSON exported with `BrowserSceneSnapshot.ToJson()` (versions 1 and 2) or a stable-ID `xre.browser.scene.v1` envelope (16 MiB maximum). Version 2 preserves authored alpha, shading, culling and shadow policies. The captured camera fills the canvas; its aspect can stretch on a differently shaped canvas. **Demo scene** returns to the interactive fixture. Imported scenes disable demo density and split-view controls.
 - Toggle **Cull offscreen meshes** to control conservative per-view AABB rejection. **Recolor first mesh** replaces one material while retaining its texture. Empty imported scenes reject that action explicitly. Counter snapshots include last-frame candidates/culled/drawn counts, live resource counts and output metadata.
 - Toggle **Split view** to switch between one view and two camera projections.
@@ -76,6 +82,13 @@ See [cooked content delivery](../docs/work/progress/rendering/browser-cooked-con
 and the [cooker README](../Tools/BrowserContentCooker/README.md) for contracts,
 limits, deployment, memory accounting and remaining acceptance work. Runtime and
 cache qualification remain deferred.
+
+The interactive demo adds explicit static-box character collision and a two-bone
+CPU-skinned reference whose idle/walk blend follows movement. Static imported worlds
+do not inherit the demo collision/animation data. Manifest schema 2 can declare
+required/optional services; unsupported required services fail, and required audio
+waits for a running user-activated context. See [interaction and runtime services](../docs/work/progress/rendering/browser-interactive-services.md)
+for selected profiles, limits, source inventory and remaining acceptance.
 
 `BrowserRendererComposition` registers `WebGpuRendererBackendModule` in the existing
 `RendererBackendCatalog`. Each canvas creates a pending managed renderer through

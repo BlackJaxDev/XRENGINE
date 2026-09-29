@@ -1,5 +1,8 @@
 import { WebGpuCanvasRenderer } from './webgpu/webgpu-renderer.js';
 import { BrowserContentLoader } from './content-loader.js';
+import { BrowserAudioService } from './browser-audio.js';
+import { BrowserServicePolicy } from './browser-services.js';
+import { BrowserInput } from './browser-input.js';
 
 // Ownership is keyed by the supplied element, never by a process-wide current canvas.
 const canvasOwners = new WeakMap();
@@ -29,10 +32,9 @@ export class BrowserCanvasHost {
         this.contentLoader = null;
         this.contentProgress = null;
         this.graphicsReady = false;
-        this.pointerId = null;
-        this.pointerX = 0.5;
-        this.pointerY = 0.5;
-        this.keys = new Set();
+        this.audio = null;
+        this.services = null;
+        this.input = new BrowserInput(this);
         this.maxPixelRatio = 1.5;
         this.maxBackingDimension = 1280;
         this.resolutionScale = 1;
@@ -59,12 +61,28 @@ export class BrowserCanvasHost {
         const epoch = this.epoch;
         const controller = new AbortController();
         this.controller = controller;
+        const audio = new BrowserAudioService({ onState: () => {
+            if (epoch !== this.epoch || controller.signal.aborted) return;
+            this.onAudioState?.(this.audio?.state, this.audio?.reason);
+            this.services?.changed();
+        } });
+        this.audio = audio;
+        this.onAudioState?.(audio.state, audio.reason);
+        audio.setVisible(!document.hidden);
+        document.addEventListener('visibilitychange', () => audio.setVisible(!document.hidden && !this.frozen),
+            { signal: controller.signal });
+        this.services = new BrowserServicePolicy(audio, !this.contentUrl && !this.snapshotJson, () => {
+            if (epoch === this.epoch && this.graphicsReady) this.syncSurface();
+        });
+        this.services.configure(!this.contentUrl && !this.snapshotJson
+            ? { required: ['dom-ui', 'cpu-animation', 'character-collision'], optional: ['web-audio'] } : null);
         const renderer = new WebGpuCanvasRenderer(this.canvas,
             state => {
                 if (epoch === this.epoch) this.setState(state, state.replaceAll('-', ' '));
             },
             error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName);
         this.renderer = renderer;
+        renderer.audioService = audio;
         try {
             this.session = this.contentUrl ? this.scene.CreateCooked(this.canvas.id) : this.snapshotJson
                 ? this.scene.CreateFromSnapshot(this.canvas.id, this.snapshotJson)
@@ -93,6 +111,12 @@ export class BrowserCanvasHost {
                     });
                 if (epoch !== this.epoch || controller.signal.aborted) return;
                 this.contentLoader = loader;
+                this.services.configure(loader.manifest.services);
+                if (!this.services.ready) {
+                    this.setState('waiting-services', 'This world requires sound. Choose Enable sound to continue.');
+                    await this.services.waitReady(controller.signal);
+                    if (epoch !== this.epoch || controller.signal.aborted) return;
+                }
                 const session = this.session;
                 const consume = (asset, variant, bytes) => {
                     if (epoch !== this.epoch || controller.signal.aborted || session !== this.session)
@@ -127,8 +151,12 @@ export class BrowserCanvasHost {
         const epoch = this.epoch;
         const refresh = () => {
             if (signal.aborted || epoch !== this.epoch) return;
-            try { this.syncSurface(); } catch (error) { this.fail(error); }
+            try {
+                this.canvas.style.setProperty('--browser-viewport-height', `${window.visualViewport?.height ?? window.innerHeight}px`);
+                this.syncSurface();
+            } catch (error) { this.fail(error); }
         };
+        this.canvas.style.setProperty('--browser-viewport-height', `${window.visualViewport?.height ?? window.innerHeight}px`);
         this.resizeObserver = new ResizeObserver(refresh);
         this.resizeObserver.observe(this.canvas);
         this.attachmentObserver = new MutationObserver(() => {
@@ -137,6 +165,8 @@ export class BrowserCanvasHost {
         this.attachmentObserver.observe(document.documentElement, { childList: true, subtree: true });
         window.addEventListener('resize', refresh, { signal });
         window.addEventListener('orientationchange', refresh, { signal });
+        window.visualViewport?.addEventListener('resize', refresh, { signal });
+        window.visualViewport?.addEventListener('scroll', refresh, { signal });
         document.addEventListener('visibilitychange', () => {
             this.clearInput();
             refresh();
@@ -161,69 +191,11 @@ export class BrowserCanvasHost {
             this.clearInput();
             refresh();
         }, { signal });
-        this.canvas.addEventListener('pointerdown', event => {
-            if (!event.isPrimary || event.button !== 0 || this.pointerId !== null) return;
-            this.canvas.focus({ preventScroll: true });
-            if (!this.session) return;
-            this.pointerId = event.pointerId;
-            this.canvas.setPointerCapture(event.pointerId);
-            this.updatePointer(event);
-            event.preventDefault();
-        }, { signal });
-        this.canvas.addEventListener('pointermove', event => {
-            if (event.pointerId === this.pointerId) this.updatePointer(event);
-        }, { signal });
-        const release = event => {
-            if (event.pointerId === this.pointerId) this.clearPointer();
-        };
-        this.canvas.addEventListener('pointerup', release, { signal });
-        this.canvas.addEventListener('pointercancel', release, { signal });
-        this.canvas.addEventListener('lostpointercapture', release, { signal });
-        this.canvas.addEventListener('keydown', event => {
-            if (!this.isMovementKey(event.code)) return;
-            this.keys.add(event.code);
-            this.publishInput();
-            event.preventDefault();
-        }, { signal });
-        this.canvas.addEventListener('keyup', event => {
-            if (!this.isMovementKey(event.code)) return;
-            this.keys.delete(event.code);
-            this.publishInput();
-            event.preventDefault();
-        }, { signal });
-    }
-
-    isMovementKey(code) {
-        return code === 'ArrowLeft' || code === 'ArrowRight' || code === 'ArrowUp' || code === 'ArrowDown';
-    }
-
-    updatePointer(event) {
-        const bounds = this.canvas.getBoundingClientRect();
-        if (bounds.width <= 0 || bounds.height <= 0) return;
-        this.pointerX = (event.clientX - bounds.left) / bounds.width;
-        this.pointerY = (event.clientY - bounds.top) / bounds.height;
-        this.publishInput();
-    }
-
-    publishInput() {
-        if (!this.session) return;
-        try {
-            this.scene.Input(this.session, this.pointerX, this.pointerY, this.pointerId !== null,
-                Number(this.keys.has('ArrowRight')) - Number(this.keys.has('ArrowLeft')),
-                Number(this.keys.has('ArrowUp')) - Number(this.keys.has('ArrowDown')));
-        } catch (error) { this.fail(error); }
-    }
-
-    clearPointer() {
-        const pointer = this.pointerId;
-        this.pointerId = null;
-        if (pointer !== null && this.canvas.hasPointerCapture(pointer)) this.canvas.releasePointerCapture(pointer);
-        this.publishInput();
+        this.input.install(signal);
     }
 
     clearInput() {
-        this.keys.clear();
-        this.clearPointer();
+        this.input.clear();
     }
 
     syncSurface() {
@@ -246,18 +218,21 @@ export class BrowserCanvasHost {
         const focused = document.hasFocus() && document.activeElement === this.canvas;
         this.scene.Resize(this.session, logicalWidth, logicalHeight, width, height,
             ratio, this.renderer.generation, visible, focused, this.attached);
-        this.drawable = visible && this.attached && width > 0 && height > 0;
+        this.audio?.setVisible(visible);
+        this.drawable = visible && this.attached && width > 0 && height > 0 && (this.services?.ready ?? true);
         if (this.drawable) {
             this.setState('running', this.contentUrl ? 'Cooked world ready. Additional content streams within frame budgets.' : this.snapshotJson
                 ? 'Imported static scene ready. The captured camera projection fills the canvas.'
-                : 'WebGPU ready. Drag the scene or focus the canvas and use arrow keys.');
+                : 'WebGPU ready. Left touch moves; right touch looks. Keyboard: WASD/arrows and Space.');
             if (!this.frameId) this.frameId = requestAnimationFrame(this.frame);
         } else {
             cancelAnimationFrame(this.frameId);
             this.frameId = 0;
             this.scene.ResetClock(this.session);
             this.clearInput();
-            this.setState('suspended', 'Rendering paused while the canvas is hidden, detached, or has no size.');
+            this.setState('suspended', this.services && !this.services.ready
+                ? 'A required service is suspended. Enable sound to continue.'
+                : 'Rendering paused while the canvas is hidden, detached, or has no size.');
         }
     }
 
@@ -269,6 +244,7 @@ export class BrowserCanvasHost {
             if ((window.devicePixelRatio || 1) !== this.rawPixelRatio || this.canvas.isConnected !== this.attached)
                 this.syncSurface();
             if (!this.drawable) return;
+            this.input.poll(timestamp);
             this.scene.Frame(this.session, timestamp);
             if (!this.frameId) this.frameId = requestAnimationFrame(this.frame);
         } catch (error) { this.fail(error); }
@@ -293,6 +269,40 @@ export class BrowserCanvasHost {
         this.contentUrl = url;
         this.snapshotJson = null;
         await this.start();
+    }
+
+    enableAudio() {
+        const audio = this.audio;
+        if (!audio) return Promise.resolve(false);
+        const epoch = this.epoch;
+        // Invoke resume immediately while the trusted button gesture is still active.
+        return audio.unlock().then(ready => {
+            if (epoch !== this.epoch || this.audio !== audio) return false;
+            if (ready && !this.contentUrl && !this.snapshotJson)
+                audio.play('engine-demo-step', { gain: 0.2, loop: false, position: [0, 0, -2] });
+            this.services?.changed();
+            return ready;
+        });
+    }
+
+    setSceneLabel(label) {
+        if (!this.session || !this.graphicsReady) throw new Error('Load a scene before naming it.');
+        this.scene.SetSceneLabel(this.session, label);
+    }
+
+    async playAudioFile(file, loop) {
+        const audio = this.audio, epoch = this.epoch;
+        if (!audio || audio.state !== 'ready') throw new Error('Enable sound before loading an audio clip.');
+        if (file.size <= 0 || file.size > 8 * 1024 * 1024) throw new Error('Audio files must fit within 8 MiB.');
+        const signal = this.controller.signal;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        signal.throwIfAborted();
+        if (epoch !== this.epoch) return;
+        audio.unload('user-clip');
+        await audio.load('user-clip', bytes, signal);
+        signal.throwIfAborted();
+        if (epoch !== this.epoch) return;
+        audio.play('user-clip', { loop: Boolean(loop), gain: 1, position: [0, 0, -2] });
     }
 
     setSplitView(enabled) {
@@ -332,7 +342,8 @@ export class BrowserCanvasHost {
         return { ...this.renderer.getStatistics(), capabilities: this.renderer.getCapabilities(),
             scene: JSON.parse(this.scene.GetStatistics(this.session)),
             content: this.contentLoader?.getStatistics() ?? null,
-            contentResources: this.contentUrl ? JSON.parse(this.scene.GetCookedContentStatistics(this.session)) : null };
+            contentResources: this.contentUrl ? JSON.parse(this.scene.GetCookedContentStatistics(this.session)) : null,
+            services: this.services?.getStatistics() ?? null, audio: this.audio?.getStatistics() ?? null };
     }
 
     streamDemoTexture() {
@@ -369,6 +380,11 @@ export class BrowserCanvasHost {
         this.controller?.abort();
         this.controller = null;
         this.graphicsReady = false;
+        this.services?.dispose();
+        this.services = null;
+        this.audio?.dispose();
+        this.audio = null;
+        this.onAudioState?.('closed', 'Sound is stopped. Restart the scene, then enable sound.');
         this.contentLoader?.dispose();
         this.contentLoader = null;
         this.contentProgress = null;

@@ -2,28 +2,50 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="color-scheme" content="dark">
   <title>XRENGINE WebGPU canvas</title>
   <script type="module" src="./main.js"></script>
   <style>
-    body { margin: 2rem auto; padding: 0 1rem; max-width: 72rem; font: 16px/1.6 system-ui, sans-serif; background: #10151d; color: #e4edf4; }
+    * { box-sizing: border-box; }
+    body { margin: 0 auto; padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); max-width: 72rem; font: 16px/1.6 system-ui, sans-serif; background: #10151d; color: #e4edf4; }
     h1 { font-size: 1.6rem; margin-bottom: .25rem; } p { color: #b3c2d2; }
-    canvas { display: block; width: 100%; height: clamp(240px, 60vh, 640px); background: #080d14; outline: 1px solid #526478; touch-action: none; }
+    canvas { display: block; width: 100%; height: clamp(160px, calc(var(--browser-viewport-height, 100dvh) * .6), 640px); background: #080d14; outline: 1px solid #526478; touch-action: none; }
     canvas:focus-visible { outline: 2px solid #90c9ef; }
     #status { min-height: 3.2em; margin-top: 1rem; }
     [data-state="running"] { color: #a8ebc0; } [data-state="failed"] { color: #ffb5b5; }
     .controls { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-    select { font: inherit; } pre { overflow: auto; }
-    button { padding: .6rem 1rem; font: inherit; cursor: pointer; } label { cursor: pointer; }
+    select, input { font: inherit; max-width: 100%; } pre { overflow: auto; }
+    input[type="text"], select { min-height: 44px; }
+    button { min-height: 44px; padding: .6rem 1rem; font: inherit; cursor: pointer; } label { cursor: pointer; }
+    .controls > * { min-width: 0; } .controls label { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .4rem; }
+    #jump { touch-action: none; user-select: none; }
+    #input-help { font-size: .9rem; }
   </style>
 </head>
 <body>
   <h1>XRENGINE WebGPU canvas</h1>
   <p>Explore a lit engine scene with cutout and translucent surfaces, directional shadows and an overlay. Split view shows two cameras.</p>
-  <canvas id="scene" tabindex="0" aria-label="Interactive engine scene. Drag or use arrow keys to move the scene.">
+  <canvas id="scene" tabindex="0" aria-label="Interactive engine scene" aria-describedby="input-help">
     This scene requires a browser with WebGPU support.
   </canvas>
+  <p id="input-help">Touch: drag the left half to move and the right half to look, together. Mouse: drag to look. Keyboard: focus the scene, use WASD or arrows to move, and Space to jump. Text fields keep normal keyboard and IME behavior. Movement is available in the demo world.</p>
+  <div class="controls" aria-label="Player controls">
+    <button id="jump" type="button" data-input-for="scene" data-action="jump">Jump</button>
+    <label><input id="gamepad" type="checkbox" data-input-for="scene" data-action="gamepad"> Enable standard gamepad while scene is focused <span role="status"></span></label>
+    <button id="enable-audio" type="button">Enable audio</button>
+  </div>
+  <p id="audio-status" role="status">Audio awaits a user gesture.</p>
+  <div class="controls" aria-label="Sound controls">
+    <label>Audio clip <input id="audio-file" type="file" accept="audio/*"></label>
+    <label><input id="audio-loop" type="checkbox"> Loop clip</label>
+    <label>Volume <input id="audio-gain" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+    <button id="pause-audio" type="button">Pause sound</button>
+  </div>
+  <form id="player-name-form" class="controls">
+    <label>Scene label <input id="player-name" type="text" maxlength="64" autocomplete="off" enterkeyhint="done" value="Browser scene"></label>
+    <button type="submit">Apply label</button>
+  </form>
   <div id="status" role="status" data-state="loading-runtime">Loading the .NET runtime…</div>
   <form id="world-form" class="controls">
     <label>Cooked world <input id="world-url" type="text" placeholder="./content/manifest.json" required></label>

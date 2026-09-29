@@ -16,4 +16,9 @@ public sealed record BrowserSceneStatistics(
     BrowserBridgeStatistics Bridge,
     RenderFrameOutputDescription? Output,
     string QualityPreset,
-    bool UiEnabled);
+    bool UiEnabled,
+    string PhysicsProfile,
+    float MotionSpeed,
+    bool MotionGrounded,
+    bool HasCpuAnimation,
+    float AnimationMovementBlend);

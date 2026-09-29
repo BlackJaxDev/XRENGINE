@@ -34,6 +34,20 @@ That abbreviated recipe requires the referenced assets to be added; the `Example
 
 The fixed profile identifies the matching browser raster shader/material ABI. Content and host must use the same profile; incompatible ABI changes require a profile version bump rather than silently reinterpreting existing payloads.
 
+## Service requirements
+
+Schema 1 recipes remain supported unchanged. Schema 2 adds exactly one required root property:
+
+```json
+"services": { "required": ["dom-ui"], "optional": ["web-audio"] }
+```
+
+Schema 2 output retains `profile: "browser-forward-v1"`, uses `toolchain: "xrengine-browser-content-2"`, and preserves the validated `services` object. Each array permits at most 16 distinct strings matching `^[a-z][a-z0-9-]{0,63}$`; the required and optional sets must be disjoint. Empty arrays are permitted. The cooker checks syntax and bounds without a hardcoded service whitelist. Runtime admission decides whether the selected host actually provides each requested service, fails unsupported required services, and reports why optional services are unavailable.
+
+The current imported static-scene profile supports `dom-ui` and `web-audio`. Audio availability does not bypass browser activation policy: playback remains gated on a user gesture. `cpu-animation` and `character-collision` are implemented for the built-in reference scene only, so imported packages cannot require them. Native-only services such as `native-xr`, `native-physics`, and `native-editor` are excluded from this browser profile and receive explicit unavailability reasons. Declaring a service does not introduce an asset kind or serialize native engine components; this tool still accepts only mesh, texture, material and scene assets.
+
+`Example/recipe-services.json` is a schema 2 source example requiring DOM UI and optionally requesting Web Audio; it reuses the existing mesh, material and scene files. Neither example claims that a cook has been executed.
+
 Non-texture assets have one feature-independent JSON variant:
 
 - Mesh: `{ "vertices": [x,y,z,u,v,...], "indices": [0,1,2,...] }`. Triangle indices must be in range; values must be finite. At most 65,535 vertices and 196,605 indices, also subject to the JSON byte limit.
