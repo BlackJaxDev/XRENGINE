@@ -21,4 +21,6 @@ public sealed record BrowserSceneStatistics(
     float MotionSpeed,
     bool MotionGrounded,
     bool HasCpuAnimation,
-    float AnimationMovementBlend);
+    float AnimationMovementBlend,
+    string SkinningProfile,
+    bool GpuVisibility);

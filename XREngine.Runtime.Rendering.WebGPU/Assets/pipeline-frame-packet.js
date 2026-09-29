@@ -1,7 +1,7 @@
 import { isBrowserColorTexture } from './cooked-texture.js';
 
 export const pipelineHeaderBytes = 256;
-export const pipelineDrawBytes = 176;
+export const pipelineDrawBytes = 304;
 export const pipelineUiBytes = 80;
 export const pipelineMaximumItems = 4096;
 export const pipelineMaximumBytes = pipelineHeaderBytes + pipelineMaximumItems * (pipelineDrawBytes + pipelineUiBytes);
@@ -10,7 +10,7 @@ export const pipelineMaximumBytes = pipelineHeaderBytes + pipelineMaximumItems *
 export function validatePipelinePacket(view, byteLength, pipeline) {
     const renderer = pipeline.renderer;
     if (byteLength < pipelineHeaderBytes || byteLength > pipelineMaximumBytes
-        || view.getUint32(0, true) !== 0x46524558 || view.getUint32(4, true) !== 1
+        || view.getUint32(0, true) !== 0x46524558 || view.getUint32(4, true) !== 2
         || view.getUint32(8, true) !== byteLength)
         throw new Error('Invalid focused raster packet envelope.');
     const draws = view.getUint32(12, true), ui = view.getUint32(28, true);
@@ -51,11 +51,28 @@ export function validatePipelinePacket(view, byteLength, pipeline) {
             throw new Error('Raster draw viewport or index range is invalid.');
         for (let j = 32; j < 160; j += 4)
             if (!Number.isFinite(view.getFloat32(at + j, true))) throw new Error('Instance matrices must be finite.');
-        if ((view.getUint32(at + 160, true) & ~3) || view.getUint32(at + 164, true)
+        if (view.getFloat32(at + 44, true) !== 0 || view.getFloat32(at + 60, true) !== 0
+            || view.getFloat32(at + 76, true) !== 0 || view.getFloat32(at + 92, true) !== 1)
+            throw new Error('World bounds require an affine model transform.');
+        if ((view.getUint32(at + 160, true) & ~15) || view.getUint32(at + 164, true)
             || view.getUint32(at + 168, true) || view.getUint32(at + 172, true))
             throw new Error('Unsupported raster instance flags.');
         if ((view.getUint32(at + 160, true) & 2) && !(view.getUint32(at + 160, true) & 1))
             throw new Error('Shadow-only instances must cast shadows.');
+        const flags = view.getUint32(at + 160, true);
+        if ((flags & 8) && (material.mode !== 0 || (flags & 4) || mesh.computeSkinned))
+            throw new Error('Hi-Z occluders require opaque geometry with trusted bounds.');
+        for (let j = 176; j < 224; j += 4)
+            if (!Number.isFinite(view.getFloat32(at + j, true))) throw new Error('World bounds must be finite.');
+        for (let j = 240; j < 304; j += 4)
+            if (!Number.isFinite(view.getFloat32(at + j, true))) throw new Error('View projection must be finite.');
+        if (view.getFloat32(at + 188, true) < 0 || view.getUint32(at + 204, true)
+            || view.getUint32(at + 220, true) || view.getUint32(at + 228, true)
+            || view.getUint32(at + 232, true) || view.getUint32(at + 236, true))
+            throw new Error('Canonical world bounds radius or padding is invalid.');
+        for (let j = 0; j < 12; j += 4)
+            if (view.getFloat32(at + 192 + j, true) > view.getFloat32(at + 208 + j, true))
+                throw new Error('World AABB minimum exceeds its maximum.');
     }
     if (ui && !pipeline.settings.uiEnabled) throw new Error('UI composition is disabled by the selected quality profile.');
     for (let i = 0, at = pipelineHeaderBytes + draws * pipelineDrawBytes; i < ui; i++, at += pipelineUiBytes) {

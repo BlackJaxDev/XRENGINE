@@ -77,11 +77,12 @@ explicitly. Existing CPU visibility collection remains controlled by the culling
 checkbox. Capability snapshots report the request, actual selection, permitted
 automatic choices and reason, separately from low-level compute/indirect support.
 
-Forced `ComputeCulling`, `GpuIndirect`, `ComputeSkinning`, `HiZ` or `Meshlet` scene
-requests fail with the missing implementation/qualification reason. Unknown
-strategies also fail. The reference does not silently turn a forced GPU request
-into CPU scene rendering. Existing focused-pipeline material grouping stays bounded
-by explicit bind groups and preserves transparent ordering.
+The subsequent [reuse audit and integration](browser-compute-reuse-audit.md) adds
+explicit experimental `GpuIndirect`, `ComputeCulling` and `HiZ` scene strategies
+and separate `skinning=Compute` deformation. Unsupported device/meshlet/unknown
+requests fail visibly; no required GPU path silently falls back. These options are
+not promoted automatic defaults or qualified profiles. Focused-pipeline material
+binding remains bounded and transparent ordering is preserved.
 
 ## Remaining work
 
@@ -89,11 +90,9 @@ by explicit bind groups and preserves transparent ordering.
   including device loss, cancellation, resize and native validation errors.
 - Qualify optional nonzero indirect instance addressing before enabling it in a
   published profile, and expand argument/vertex/instance boundary coverage.
-- Integrate GPU scene culling into the focused pipeline only after correctness and
-  physical-device total-frame-cost measurements justify it.
-- Implement compute skinning/blendshapes with CPU parity, normal/tangent handling,
-  bone/morph bounds and visible-avatar budgets when measurements justify the path.
-- Implement Hi-Z only after depth construction, conservative reductions and resize
-  invalidation are qualified.
+- Qualify the now-integrated experimental GPU scene culling, skin/morph deformation
+  and Hi-Z paths before production promotion. Conservative deformation bounds,
+  full desktop GPUScene/BVH and cooked animated-content integration remain broader
+  work; uncertain deformed bounds are kept visible.
 - Compare CPU-direct, CPU-culling, compute-culling and skinning under sustained
   mobile load before changing defaults. No measured performance claim is made here.

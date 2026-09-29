@@ -1,6 +1,8 @@
 import { pipelineHeaderBytes, pipelineDrawBytes, pipelineUiBytes, pipelineMaximumItems,
     pipelineMaximumBytes, validatePipelinePacket } from './pipeline-frame-packet.js';
 import { isBrowserColorTexture } from './cooked-texture.js';
+import { BrowserGpuSceneCulling } from './gpu-scene-culling.js';
+import { BrowserGpuHiZ } from './gpu-hiz.js';
 
 const alphaModes = ['opaque', 'masked', 'transparent'];
 const cullModes = ['none', 'back', 'front'];
@@ -26,10 +28,12 @@ async function loadShader(name, signal) {
     return new TextDecoder('utf-8', { fatal: true }).decode(data.subarray(0, size));
 }
 
-/** Bounded CPU-direct raster passes, distinct from the desktop advanced pipeline. */
+/** Bounded forward passes consuming the engine's published draw and bounds records. */
 export class BrowserRenderPipeline {
     constructor(renderer) {
         this.renderer = renderer;
+        this.gpuScene = renderer.submissionStrategy.gpu ? new BrowserGpuSceneCulling(renderer) : null;
+        this.hiZ = renderer.submissionStrategy.hiZ ? new BrowserGpuHiZ(renderer) : null;
         this.materials = new Map();
         this.sequence = 0;
         this.settings = { resolutionScale: 1, maxDevicePixelRatio: 2, shadowResolution: 1024,
@@ -43,20 +47,24 @@ export class BrowserRenderPipeline {
         this.shadowMatrix[0] = this.shadowMatrix[5] = this.shadowMatrix[10] = this.shadowMatrix[15] = 1;
         this.pipelines = new Array(18);
         this.shadowPipelines = new Array(3);
+        this.occluderPipelines = new Array(3);
         this.skyPipelines = new Array(2);
         this.submission = [null];
-        this.encoderDescriptor = { label: 'Browser CPU-direct raster frame' };
+        this.encoderDescriptor = { label: 'Browser forward frame' };
         this.shadowAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' };
         this.shadowPass = { colorAttachments: [], depthStencilAttachment: this.shadowAttachment };
         this.sceneAttachment = { view: undefined, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } };
         this.sceneDepth = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' };
         this.scenePass = { colorAttachments: [this.sceneAttachment], depthStencilAttachment: this.sceneDepth };
+        this.occluderAttachment = { view: undefined, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' };
+        this.occluderPass = { colorAttachments: [], depthStencilAttachment: this.occluderAttachment };
         this.composeAttachment = { view: undefined, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } };
         this.composePass = { colorAttachments: [this.composeAttachment] };
         this.outputAttachment = { view: undefined, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } };
         this.outputPass = { colorAttachments: [this.outputAttachment] };
         this.stats = { frames: 0, sceneDrawCalls: 0, shadowDrawCalls: 0, instances: 0, uiDrawCalls: 0,
-            shadowUpdates: 0, rejectedPackets: 0, copiedBytes: 0, targetGenerations: 0 };
+            shadowUpdates: 0, rejectedPackets: 0, copiedBytes: 0, targetGenerations: 0,
+            indirectDrawCalls: 0, occluderDrawCalls: 0, cullingDispatches: 0, depthPyramids: 0 };
         this._stop = new AbortController();
         this._disposed = false;
         this.ready = false;
@@ -87,12 +95,16 @@ export class BrowserRenderPipeline {
     }
 
     async _initializeDevice(device, signal) {
-        const [rasterSource, composeSource] = await Promise.all([
-            loadShader('browser-raster.wgsl', signal), loadShader('browser-compose.wgsl', signal)]);
+        const [rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource] = await Promise.all([
+            loadShader('browser-raster.wgsl', signal), loadShader('browser-compose.wgsl', signal),
+            this.gpuScene ? loadShader('gpu-scene-culling.wgsl', signal) : null,
+            this.hiZ ? loadShader('gpu-hiz-init.wgsl', signal) : null,
+            this.hiZ ? loadShader('gpu-hiz-reduce.wgsl', signal) : null,
+            this.renderer.skinningMode === 'Compute' ? loadShader('gpu-skinning.wgsl', signal) : null]);
         if (signal.aborted || this._disposed) throw new DOMException('Raster startup canceled.', 'AbortError');
         device.pushErrorScope('out-of-memory'); device.pushErrorScope('validation');
         let operation;
-        try { operation = this._compile(device, rasterSource, composeSource); }
+        try { operation = this._compile(device, rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource); }
         catch (error) { operation = Promise.reject(error); }
         const validation = device.popErrorScope(), memory = device.popErrorScope();
         const results = await Promise.allSettled([operation, validation, memory]);
@@ -102,7 +114,7 @@ export class BrowserRenderPipeline {
         }
     }
 
-    async _compile(device, rasterSource, composeSource) {
+    async _compile(device, rasterSource, composeSource, cullingSource, depthSource, reductionSource, skinningSource) {
         const raster = device.createShaderModule({ label: 'Browser flat raster', code: rasterSource });
         const compose = device.createShaderModule({ label: 'Browser linear SDR composition', code: composeSource });
         const compilation = Promise.all([raster.getCompilationInfo(), compose.getCompilationInfo()]);
@@ -129,6 +141,9 @@ export class BrowserRenderPipeline {
             { arrayStride: 128, stepMode: 'instance', attributes: instanceAttributes }];
         const blend = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
         const pending = [];
+        if (this.gpuScene) pending.push(this.gpuScene.initialize(cullingSource));
+        if (this.hiZ) pending.push(this.hiZ.initialize(depthSource, reductionSource));
+        if (skinningSource) pending.push(this.renderer.skinning.initialize(skinningSource));
         for (let format = 0; format < 2; format++) {
             for (let mode = 0; mode < 3; mode++) {
                 for (let cull = 0; cull < 3; cull++) {
@@ -154,6 +169,14 @@ export class BrowserRenderPipeline {
                 primitive: { topology: 'triangle-list', frontFace: 'ccw', cullMode: cullModes[cull] },
                 depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 } })
                 .then(pipeline => { if (!this._disposed) this.shadowPipelines[cull] = pipeline; }));
+        if (this.hiZ) {
+            for (let cull = 0; cull < 3; cull++)
+                pending.push(device.createRenderPipelineAsync({ layout: shadowLayout,
+                    vertex: { module: raster, entryPoint: 'sceneVertex', buffers },
+                    primitive: { topology: 'triangle-list', frontFace: 'ccw', cullMode: cullModes[cull] },
+                    depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less' } })
+                    .then(pipeline => { if (!this._disposed) this.occluderPipelines[cull] = pipeline; }));
+        }
         pending.push(device.createRenderPipelineAsync({ layout: screenLayout,
             vertex: { module: compose, entryPoint: 'screenVertex' },
             fragment: { module: compose, entryPoint: 'presentFragment', targets: [{ format: 'rgba8unorm' }] } })
@@ -286,6 +309,7 @@ export class BrowserRenderPipeline {
         if (!width || !height) { this._releaseTargets(); this.width = width; this.height = height; return; }
         const device = this.renderer.device;
         const targets = [];
+        let hiZCandidate;
         try {
             const scene = device.createTexture({ size: [width,height], format: this.settings.hdr ? 'rgba16float' : 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING }); targets.push(scene);
             const sdr = device.createTexture({ size: [width,height], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING }); targets.push(sdr);
@@ -293,23 +317,37 @@ export class BrowserRenderPipeline {
             const size = this.settings.shadowResolution && this.settings.directionalLightCount ? this.settings.shadowResolution : 1;
             if (size > device.limits.maxTextureDimension2D) throw new Error('Shadow size exceeds the device texture extent limit.');
             const shadow = device.createTexture({ size: [size,size], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING }); targets.push(shadow);
+            const occluder = this.hiZ ? device.createTexture({ size: [width,height], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING }) : null;
+            if (occluder) targets.push(occluder);
             const sceneView = scene.createView(), sdrView = sdr.createView(), depthView = depth.createView(), shadowView = shadow.createView();
             const frame = device.createBindGroup({ layout: this.frameLayout, entries: [
                 { binding: 0, resource: { buffer: this.uniformBuffer } }, { binding: 1, resource: shadowView }, { binding: 2, resource: this.comparisonSampler }] });
             const sceneImage = this._imageGroup(sceneView), sdrImage = this._imageGroup(sdrView);
+            const occluderView = occluder?.createView();
+            hiZCandidate = this.hiZ?.prepareResize(width, height, occluderView);
+            const visibilityCandidate = this.gpuScene?.prepareResize(hiZCandidate?.view ?? null);
             this._releaseTargets();
             this.targets = targets; this.width = width; this.height = height; this.shadowSize = size;
             this.sceneAttachment.view = sceneView; this.sceneDepth.view = depthView; this.composeAttachment.view = sdrView;
             this.shadowAttachment.view = shadowView; this.frameGroup = frame;
             this.sceneImage = sceneImage; this.sdrImage = sdrImage; this.shadowValid = false;
+            this.occluderAttachment.view = occluderView;
+            if (this.hiZ) this.hiZ.commitResize(hiZCandidate);
+            if (this.gpuScene) this.gpuScene.commitResize(visibilityCandidate);
             this.stats.targetGenerations++;
-        } catch (error) { for (const target of targets) this.renderer._retire(target); throw error; }
+        } catch (error) {
+            this.hiZ?.discardResize(hiZCandidate);
+            for (const target of targets) this.renderer._retire(target);
+            throw error;
+        }
     }
 
     _releaseTargets() {
+        this.hiZ?.release();
         if (this.targets) for (const target of this.targets) this.renderer._retire(target);
         this.targets = null; this.sceneAttachment.view = undefined; this.sceneDepth.view = undefined;
         this.composeAttachment.view = undefined; this.shadowAttachment.view = undefined;
+        this.occluderAttachment.view = undefined;
         this.frameGroup = null; this.shadowFrameGroup = null; this.sceneImage = null; this.sdrImage = null;
     }
 
@@ -339,6 +377,7 @@ export class BrowserRenderPipeline {
         this.uniform.set(this.shadowMatrix, 0);
         this.uniform[36] = shadows ? 1 : 0; this.uniform[37] = this.settings.toneMap === 'reinhard' ? 1 : 0;
         if (!this.settings.directionalLightCount) this.uniform[19] = 0;
+        this.gpuScene?.prepare(view, count, this.width, this.height, renderer.submissionStrategy.culling);
         renderer._executing = true;
         try {
             const device = renderer.device;
@@ -346,12 +385,23 @@ export class BrowserRenderPipeline {
             if (count) device.queue.writeBuffer(this.instanceBuffer, 0, this.instances.buffer, 0, count * 128);
             if (uiCount) device.queue.writeBuffer(this.uiBuffer, 0, this.bytes.buffer, uiOffset, uiCount * pipelineUiBytes);
             const encoder = device.createCommandEncoder(this.encoderDescriptor);
+            if (renderer.skinningMode === 'Compute') renderer.skinning.encode(encoder);
+            if (this.gpuScene) { this.gpuScene.encode(encoder, false); if (count) this.stats.cullingDispatches++; }
             if (updateShadows) {
                 const shadow = encoder.beginRenderPass(this.shadowPass);
                 shadow.setBindGroup(0, this.composeFrame);
                 shadow.setVertexBuffer(1, this.instanceBuffer);
                 this._drawMeshes(shadow, count, true);
                 shadow.end(); this.shadowValid = true; this.stats.shadowUpdates++;
+            }
+            if (this.hiZ) {
+                // Only explicitly admitted opaque occluders populate this depth.
+                // They are excluded from Hi-Z rejection, avoiding candidate self-occlusion.
+                const depth = encoder.beginRenderPass(this.occluderPass);
+                depth.setBindGroup(0, this.composeFrame);
+                this._drawMeshes(depth, count, false, true); depth.end();
+                this.hiZ.encode(encoder); this.stats.depthPyramids++;
+                this.gpuScene.encode(encoder, true); if (count) this.stats.cullingDispatches++;
             }
             const pass = encoder.beginRenderPass(this.scenePass);
             pass.setPipeline(this.skyPipelines[this.settings.hdr ? 1 : 0]); pass.setBindGroup(0, this.composeFrame); pass.draw(3);
@@ -381,15 +431,17 @@ export class BrowserRenderPipeline {
         finally { this.outputAttachment.view = undefined; this.submission[0] = null; renderer._executing = false; }
     }
 
-    _drawMeshes(pass, count, shadow) {
+    _drawMeshes(pass, count, shadow, occluders = false) {
         const view = this.view, renderer = this.renderer;
         for (let i = 0; i < count;) {
             const at = pipelineHeaderBytes + i * pipelineDrawBytes;
             const meshHandle = view.getUint32(at, true), materialHandle = view.getUint32(at + 4, true);
             const material = this.materials.get(materialHandle), flags = view.getUint32(at + 160, true);
             if (shadow ? !(flags & 1) || !material.castShadow : (flags & 2)) { i++; continue; }
+            if (occluders && (!(flags & 8) || material.mode !== 0)) { i++; continue; }
+            const indirect = !shadow && this.gpuScene !== null;
             let instances = 1;
-            while (i + instances < count) {
+            while (!indirect && i + instances < count) {
                 const next = at + instances * pipelineDrawBytes;
                 if (view.getUint32(next, true) !== meshHandle || view.getUint32(next + 4, true) !== materialHandle
                     || view.getUint32(next + 160, true) !== flags || view.getUint32(next + 24, true) !== view.getUint32(at + 24, true)
@@ -401,29 +453,37 @@ export class BrowserRenderPipeline {
                 instances++;
             }
             const mesh = renderer._resources.getHandle(meshHandle, 'mesh', renderer._owner);
-            pass.setPipeline(shadow ? this.shadowPipelines[material.cull] : this.pipelines[(this.settings.hdr ? 9 : 0) + material.mode * 3 + material.cull]);
+            pass.setPipeline(shadow ? this.shadowPipelines[material.cull] : occluders ? this.occluderPipelines[material.cull]
+                : this.pipelines[(this.settings.hdr ? 9 : 0) + material.mode * 3 + material.cull]);
             pass.setBindGroup(1, material.material.bindGroup); pass.setBindGroup(2, material.options);
             pass.setVertexBuffer(0, mesh.vertexBuffer); pass.setIndexBuffer(mesh.indexBuffer, 'uint32');
             if (!shadow) {
                 const x=view.getUint32(at+8,true),y=view.getUint32(at+12,true),width=view.getUint32(at+16,true),height=view.getUint32(at+20,true);
                 pass.setViewport(x,y,width,height,0,1); pass.setScissorRect(x,y,width,height);
             }
-            pass.drawIndexed(view.getUint32(at + 28, true), instances, view.getUint32(at + 24, true), 0, i);
-            if (shadow) this.stats.shadowDrawCalls++; else this.stats.sceneDrawCalls++;
+            if (indirect) {
+                pass.setVertexBuffer(1, this.instanceBuffer, i * 128, 128);
+                pass.drawIndexedIndirect(this.gpuScene.argumentBuffer, i * 20);
+                this.stats.indirectDrawCalls++;
+            } else pass.drawIndexed(view.getUint32(at + 28, true), instances, view.getUint32(at + 24, true), 0, i);
+            if (shadow) this.stats.shadowDrawCalls++; else if (occluders) this.stats.occluderDrawCalls++; else this.stats.sceneDrawCalls++;
             i += instances;
         }
     }
 
     getStatistics() {
         return { ...this.stats, residentMaterials: this.materials.size, pipelineVariants: 26,
-            submissionMode: 'CpuDirect', shading: 'unlit-or-flat-lambert', settings: { ...this.settings },
-            exclusions: ['bindless', 'normal maps', 'GPU skinning', 'reversed Z', 'GPU indirect', 'desktop post effects'] };
+            submissionMode: this.renderer.submissionStrategy.selected, skinning: this.renderer.skinningMode,
+            pyramidMipCount: this.hiZ?.mipCount ?? 0, qualified: false,
+            shading: 'unlit-or-flat-lambert', settings: { ...this.settings },
+            exclusions: ['bindless', 'normal maps', 'reversed Z', 'desktop post effects'] };
     }
 
     dispose() {
         if (this._disposed) return;
         this._disposed = true; this._stop.abort(); this.ready = false;
         this._releaseTargets();
+        this.gpuScene?.dispose(); this.hiZ?.dispose();
         for (const material of this.materials.values()) this.renderer._retire(material.buffer);
         this.materials.clear();
         this.renderer._retire(this.uniformBuffer); this.renderer._retire(this.instanceBuffer); this.renderer._retire(this.uiBuffer);

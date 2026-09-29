@@ -114,6 +114,8 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Browser compute reuse audit and integration](work/progress/rendering/browser-compute-reuse-audit.md) maps existing skinning, GPU scene and Hi-Z contracts to their WebGPU backend implementations, experimental controls and deferred qualification. Canonical palette/bounds types are shared; no second production animator or scene database is introduced.
+
 [Browser compute and indirect commands](work/progress/rendering/browser-compute-indirect.md) records device-limited compute, indirect draw submission, usage-scope checks, opt-in offscreen references and honest scene strategy selection. Runtime and mobile performance acceptance remain deferred.
 
 [Browser interaction and runtime services](work/progress/rendering/browser-interactive-services.md) records touch/IME/gamepad input, CPU skeletal animation, bounded character collision, Web Audio and required-service declarations. Runtime acceptance remains deferred.

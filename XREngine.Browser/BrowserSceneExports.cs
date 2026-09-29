@@ -76,6 +76,9 @@ public static partial class BrowserSceneExports
     public static void Frame(int id, double timestampMilliseconds) => Get(id).Frame(timestampMilliseconds);
 
     [JSExport]
+    public static void SetGpuVisibility(int id, bool enabled) => Get(id).SetGpuVisibility(enabled);
+
+    [JSExport]
     public static void InitializeGraphics(int id, string colorFormat)
     {
         BrowserSceneSession session = Get(id);
@@ -111,7 +114,8 @@ public static partial class BrowserSceneExports
             session.VariableDeltaSeconds, session.HistoryGeneration, session.CaptureBridgeStatistics(),
             session.Target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ? output : null,
             session.QualityPreset, session.UiEnabled, session.PhysicsProfile,
-            session.MotionSpeed, session.MotionGrounded, session.HasCpuAnimation, session.AnimationMovementBlend));
+            session.MotionSpeed, session.MotionGrounded, session.HasCpuAnimation, session.AnimationMovementBlend,
+            session.SkinningProfile, session.GpuVisibility));
     }
 
     /// <summary>Records a browser renderer failure before the frame loop stops.</summary>

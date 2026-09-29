@@ -9,4 +9,5 @@ internal readonly record struct BrowserCollectedRenderable(
     BrowserMaterialData Material,
     BrowserResourceHandle MeshHandle,
     BrowserResourceHandle MaterialHandle,
-    Matrix4x4 ModelMatrix);
+    Matrix4x4 ModelMatrix,
+    bool IsOcclusionOccluder);

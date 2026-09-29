@@ -10,8 +10,15 @@ public sealed partial class BrowserSceneSession
     private BrowserCpuSkinnedMesh? _animatedMesh;
     private BrowserMeshComponent? _animatedComponent;
     private bool _animationDirty;
+    private bool _computeSkinning;
+    private BrowserSkinningData? _computeSkinningData;
+    private SkinPaletteMatrix[]? _computePalette;
+    private readonly Vector2[] _activeAnimationMorphs = new Vector2[1];
+    private Vector3[]? _referenceMorphDeltas;
+    private int _computeSkinningMesh;
 
     public bool HasCpuAnimation => _animator is not null;
+    public string SkinningProfile => _computeSkinning ? "Compute" : "Cpu";
     public float AnimationMovementBlend => _animator?.MovementBlend ?? 0;
 
     /// <summary>Creates a two-bone weighted strip with an interpolated idle and movement clip in the built-in reference world.</summary>
@@ -33,7 +40,8 @@ public sealed partial class BrowserSceneSession
         for (int row = 0; row < rows; row++)
         {
             float y = row * 0.3f;
-            float tipWeight = Math.Clamp((y - 0.6f) / 0.6f, 0, 1);
+            // Both reference paths use the canonical UNorm8 weights, including quantization.
+            float tipWeight = MathF.Round(Math.Clamp((y - 0.6f) / 0.6f, 0, 1) * 255) / 255;
             for (int side = 0; side < 2; side++)
             {
                 int vertex = row * 2 + side;
@@ -57,6 +65,33 @@ public sealed partial class BrowserSceneSession
             indices[first + 5] = lower + 2;
         }
         BrowserMeshData mesh = new(vertices, indices);
+        uint[] coreIndices = new uint[mesh.VertexCount];
+        uint[] coreWeights = new uint[mesh.VertexCount];
+        Vector3[] normals = new Vector3[mesh.VertexCount];
+        Vector4[] tangents = new Vector4[mesh.VertexCount];
+        Vector3[] morphDeltas = new Vector3[mesh.VertexCount];
+        uint[] sparseRecords = new uint[mesh.VertexCount * 4];
+        uint[] quantizedDeltas = new uint[(mesh.VertexCount + 1) * 2];
+        for (int vertex = 0; vertex < mesh.VertexCount; vertex++)
+        {
+            uint tipWeight = (uint)MathF.Round(weights[vertex].Weights.Y * 255);
+            coreIndices[vertex] = 1u << 8;
+            coreWeights[vertex] = (255u - tipWeight) | (tipWeight << 8);
+            weights[vertex] = new BrowserSkinWeights(0, 1, 0, 0,
+                new Vector4((255u - tipWeight) / 255f, tipWeight / 255f, 0, 0));
+            normals[vertex] = Vector3.UnitZ;
+            tangents[vertex] = new Vector4(1, 0, 0, 1);
+            short x = (short)MathF.Round((vertex % 2 == 0 ? -1 : 1) * vertices[vertex * 5 + 1] / 1.8f * 32767);
+            morphDeltas[vertex] = new Vector3(x / 32767f * 0.12f, 0, 0);
+            sparseRecords[vertex * 4] = (uint)vertex;
+            sparseRecords[vertex * 4 + 1] = (uint)vertex + 1;
+            quantizedDeltas[(vertex + 1) * 2] = unchecked((ushort)x);
+        }
+        _computeSkinningData = new BrowserSkinningData(mesh, skeleton.BoneCount, 1, coreIndices, coreWeights,
+            normals, tangents, shapeRanges: [0, (uint)mesh.VertexCount, 0, 0], sparseRecords: sparseRecords,
+            quantizedDeltas: quantizedDeltas, quantizationMetadata: [Vector4.Zero, Vector4.Zero, new Vector4(0.12f, 0, 0, 0), Vector4.Zero]);
+        _computePalette = new SkinPaletteMatrix[skeleton.BoneCount];
+        _referenceMorphDeltas = morphDeltas;
         BrowserCpuSkinnedMesh animatedMesh = new(skeleton, mesh, weights);
         animatedMesh.Update(animator);
         Transform transform = (Transform)BrowserStaticRegistrations.CreateRequiredTransform(BrowserStaticRegistrations.TransformId);
@@ -68,6 +103,29 @@ public sealed partial class BrowserSceneSession
         _animator = animator;
         _animatedMesh = animatedMesh;
         _animatedComponent = component;
+        _animationDirty = true;
+    }
+
+    /// <summary>Selects deformation explicitly before graphics allocation; unsupported requests fail at startup.</summary>
+    public void SetComputeSkinning(bool enabled)
+    {
+        ThrowIfFrameBusy();
+        if (_graphicsInitialized)
+            throw new InvalidOperationException("Restart the canvas to change its compute skinning profile.");
+        if (enabled && (_renderer is not IBrowserComputeSkinningCapability || _animator is null))
+            throw new NotSupportedException("Compute skinning requires the packed deformation capability and an admitted animated scene.");
+        _computeSkinning = enabled;
+    }
+
+    private void InitializeComputeAnimationGraphics()
+    {
+        if (!_computeSkinning)
+            return;
+        if (_renderer is not IBrowserComputeSkinningCapability compute || _computeSkinningData is null ||
+            _animatedComponent is null || _animatedComponent.MeshHandle == 0)
+            throw new InvalidOperationException("Compute skinning startup requires its admitted mesh and immutable inputs.");
+        _computeSkinningMesh = _animatedComponent.MeshHandle;
+        compute.ConfigureComputeSkinning(BrowserResourceHandle.FromPacked(_computeSkinningMesh), _computeSkinningData);
         _animationDirty = true;
     }
 
@@ -102,7 +160,21 @@ public sealed partial class BrowserSceneSession
             !_animatedComponent.RenderEnabled || !ReferenceEquals(_animatedComponent.Mesh, _animatedMesh.Mesh) ||
             _animatedComponent.MeshHandle == 0)
             return;
-        _animatedMesh.Update(_animator);
+        float morphWeight = 0.25f + _animator.MovementBlend * 0.75f;
+        if (_computeSkinning)
+        {
+            if (_renderer is not IBrowserComputeSkinningCapability compute || _computePalette is null ||
+                _animatedComponent.MeshHandle != _computeSkinningMesh)
+                throw new InvalidOperationException("The compute deformation resource binding is obsolete; recreate its scene.");
+            ReadOnlySpan<Matrix4x4> palette = _animator.Palette;
+            for (int bone = 0; bone < palette.Length; bone++)
+                _computePalette[bone] = SkinPaletteMatrix.FromRowVectorMatrix(palette[bone]);
+            _activeAnimationMorphs[0] = new Vector2(0, morphWeight);
+            compute.UpdateComputeSkinning(BrowserResourceHandle.FromPacked(_computeSkinningMesh), _computePalette, _activeAnimationMorphs);
+            _animationDirty = false;
+            return;
+        }
+        _animatedMesh.Update(_animator, _referenceMorphDeltas, morphWeight);
         _uploads.Begin(Id);
         try
         {
@@ -128,5 +200,9 @@ public sealed partial class BrowserSceneSession
         _animatedComponent = null;
         _animatedMesh = null;
         _animator = null;
+        _computeSkinningData = null;
+        _computePalette = null;
+        _referenceMorphDeltas = null;
+        _computeSkinningMesh = 0;
     }
 }

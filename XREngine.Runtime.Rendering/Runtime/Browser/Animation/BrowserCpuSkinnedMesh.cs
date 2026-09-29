@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace XREngine.Rendering;
 
-/// <summary>CPU linear-blend skinning for the browser position/UV vertex profile; retains bind data and upload storage separately.</summary>
+/// <summary>CPU reference-fixture linear-blend skinning; production assets use the engine's packed deformation contracts.</summary>
 public sealed class BrowserCpuSkinnedMesh
 {
     public const int MaximumVertices = 16384;
@@ -34,11 +34,13 @@ public sealed class BrowserCpuSkinnedMesh
     public Vector3 BoundsMinimum { get; private set; }
     public Vector3 BoundsMaximum { get; private set; }
 
-    public void Update(BrowserCpuAnimator animator)
+    public void Update(BrowserCpuAnimator animator, ReadOnlySpan<Vector3> bindPositionDeltas = default, float morphWeight = 0)
     {
         ArgumentNullException.ThrowIfNull(animator);
         if (!ReferenceEquals(animator.Skeleton, _skeleton))
             throw new ArgumentException("The skinned mesh and animator must share their skeleton identity.", nameof(animator));
+        if ((!bindPositionDeltas.IsEmpty && bindPositionDeltas.Length != _weights.Length) || !float.IsFinite(morphWeight))
+            throw new ArgumentException("Reference morph deltas must match the bind vertices and use a finite weight.");
         ReadOnlySpan<Matrix4x4> palette = animator.Palette;
         Vector3 minimum = new(float.PositiveInfinity);
         Vector3 maximum = new(float.NegativeInfinity);
@@ -46,6 +48,8 @@ public sealed class BrowserCpuSkinnedMesh
         {
             int offset = vertex * 5;
             Vector3 bind = new(_bindVertices[offset], _bindVertices[offset + 1], _bindVertices[offset + 2]);
+            if (!bindPositionDeltas.IsEmpty)
+                bind += bindPositionDeltas[vertex] * morphWeight;
             BrowserSkinWeights skin = _weights[vertex];
             Vector3 position = Vector3.Transform(bind, palette[skin.Bone0]) * skin.Weights.X +
                 Vector3.Transform(bind, palette[skin.Bone1]) * skin.Weights.Y +

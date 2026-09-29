@@ -15,6 +15,13 @@ async function createBrowserRuntime() {
             renderers.get(id)?.audioService?.setListenerValues(x, y, z, fx, fy, fz, ux, uy, uz)
     });
     runtime.setModuleImports('xrengine.webgpu', {
+        configureSkinning: (id, mesh, packet) => renderer(id).skinning.configure(mesh, packet),
+        updateSkinning: (id, mesh, palette, morphs) => renderer(id).skinning.update(mesh, palette, morphs),
+        releaseSkinning: (id, mesh) => {
+            const value = renderer(id);
+            value._requireOwner();
+            value.skinning.releaseMesh(mesh);
+        },
         getCapabilities: id => JSON.stringify(renderer(id).getCapabilities()),
         configurePipeline: (id, json) => renderer(id).focusedPipeline.configure(json),
         configurePipelineMaterial: (id, material, json) => renderer(id).focusedPipeline.configureMaterial(material, json),
@@ -71,6 +78,9 @@ const counters = document.querySelector('#counters');
 const capture = document.querySelector('#capture');
 const gpuReference = document.querySelector('#gpu-reference');
 const gpuReferenceStatus = document.querySelector('#gpu-reference-status');
+const submissionStrategy = document.querySelector('#submission-strategy');
+const skinningMode = document.querySelector('#skinning-mode');
+const applyRendering = document.querySelector('#apply-rendering');
 const importScene = document.querySelector('#import-scene');
 const demo = document.querySelector('#demo');
 const culling = document.querySelector('#culling');
@@ -93,6 +103,15 @@ let composingName = false;
 let host;
 let parked = false;
 const pageEvents = new AbortController();
+applyRendering.addEventListener('click', async () => {
+    if (!host) return;
+    try {
+        host.stop();
+        host.setSubmissionStrategy(submissionStrategy.value);
+        host.setSkinningMode(skinningMode.value);
+        await host.start();
+    } catch (error) { status.textContent = `Rendering options rejected: ${error.message ?? error}`; }
+}, { signal: pageEvents.signal });
 enableAudio.addEventListener('click', () => {
     void host?.enableAudio().catch(error => { audioStatus.textContent = error.message ?? String(error); });
 }, { signal: pageEvents.signal });
@@ -202,6 +221,9 @@ try {
     if (!pageEvents.signal.aborted) {
         host = createHost(canvas, setState, new URLSearchParams(location.search).get('shader') ?? 'browser-unlit');
         host.setSubmissionStrategy(new URLSearchParams(location.search).get('strategy') ?? 'Auto');
+        host.setSkinningMode(new URLSearchParams(location.search).get('skinning') ?? 'Cpu');
+        submissionStrategy.value = host.submissionStrategy;
+        skinningMode.value = host.skinningMode;
         host.setSplitView(split.checked);
         host.setInstanceCount(Number(instances.value));
         host.setCullingEnabled(culling.checked);
