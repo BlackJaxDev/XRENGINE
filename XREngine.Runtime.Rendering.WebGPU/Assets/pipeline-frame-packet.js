@@ -1,3 +1,5 @@
+import { isBrowserColorTexture } from './cooked-texture.js';
+
 export const pipelineHeaderBytes = 256;
 export const pipelineDrawBytes = 176;
 export const pipelineUiBytes = 80;
@@ -60,7 +62,7 @@ export function validatePipelinePacket(view, byteLength, pipeline) {
         const handle = view.getUint32(at, true);
         if (handle) {
             const texture = renderer._resources.getHandle(handle, 'texture', renderer._owner);
-            if (!texture.uiBindGroup || texture.sampleCount !== 1 || !['rgba8unorm','rgba8unorm-srgb'].includes(texture.format))
+            if (!texture.uiBindGroup || texture.sampleCount !== 1 || !isBrowserColorTexture(texture))
                 throw new Error('UI texture must be a registered, single-sample color atlas.');
         }
         for (let j = 4; j <= 64; j += 4)

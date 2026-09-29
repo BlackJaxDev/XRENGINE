@@ -6,6 +6,7 @@ import { GpuReadback } from './gpu-readback.js';
 import { GpuCommands } from './gpu-commands.js';
 import { BrowserRenderPipeline } from './browser-render-pipeline.js';
 import { browserPipelineRequirements } from './browser-pipeline-requirements.js';
+import { createCookedTexture, isBrowserColorTexture } from './cooked-texture.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
 import { formatShaderDiagnostic, loadBrowserUnlitArtifact, shaderDeviceRequirements } from './shader-artifact.js';
@@ -243,6 +244,10 @@ export class WebGpuCanvasRenderer {
             this._assertActive(signal);
             const deviceRequirements = browserPipelineRequirements(adapter,
                 shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity));
+            // Payload selection happens against enabled device features, never a user-agent guess.
+            for (const feature of ['texture-compression-astc', 'texture-compression-etc2'])
+                if (adapter.features.has(feature) && !deviceRequirements.requiredFeatures.includes(feature))
+                    deviceRequirements.requiredFeatures.push(feature);
             this._shaderArtifact = {
                 identity: artifact.artifactIdentity,
                 requiredFeatures: [...deviceRequirements.requiredFeatures],
@@ -443,6 +448,10 @@ export class WebGpuCanvasRenderer {
         }
     }
 
+    createCookedTexture(description, bytes) {
+        return createCookedTexture(this, description, bytes);
+    }
+
     createTexture(width, height, rgbaMemory) {
         this._stats.controlCalls++;
         this._requireOwner();
@@ -478,9 +487,8 @@ export class WebGpuCanvasRenderer {
         if (![r, g, b, a].every(value => Number.isFinite(value) && value >= 0 && value <= 1))
             throw new RangeError('Material tint must have finite linear channels and alpha in [0, 1].');
         const texture = textureHandle === 0 ? null : this._resources.getHandle(textureHandle, 'texture', this._owner);
-        if (texture && (!(texture.usage & GPUTextureUsage.TEXTURE_BINDING) || texture.sampleCount !== 1
-            || !['rgba8unorm', 'rgba8unorm-srgb'].includes(texture.format)))
-            throw new Error('Browser materials require a single-sample, sampleable RGBA8 color texture.');
+        if (texture && !isBrowserColorTexture(texture))
+            throw new Error('Browser materials require a supported sampleable color texture with straight alpha.');
         let colorBuffer;
         try {
             colorBuffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -680,6 +688,11 @@ export class WebGpuCanvasRenderer {
         if (!this._capabilities || this._disposed || this._failed)
             throw new Error('Device capabilities are unavailable until validated startup completes.');
         const limits = this._capabilities.limits;
+        const cookedTextureFormats = ['rgba8unorm', 'rgba8unorm-srgb'];
+        if (this.device.features.has('texture-compression-astc'))
+            cookedTextureFormats.push('astc-4x4-unorm', 'astc-4x4-unorm-srgb');
+        if (this.device.features.has('texture-compression-etc2'))
+            cookedTextureFormats.push('etc2-rgba8unorm', 'etc2-rgba8unorm-srgb');
         return {
             ...this._capabilities,
             submissionStrategy: 'CpuDirect', baselineQualified: false,
@@ -690,6 +703,10 @@ export class WebGpuCanvasRenderer {
             textureDimensions: ['2d'], textureFormats: ['rgba8unorm', 'rgba8unorm-srgb',
                 'depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'],
             textureSampleCounts: [1, 4], optionalTextureFormats: [],
+            cookedContent: { profile: 'browser-forward-v1', schema: 1,
+                textureFormats: cookedTextureFormats, fullMipChains: true,
+                alphaModes: ['straight'], normalStorageConventions: ['none', 'tangent-y-positive'],
+                sampler: 'linear-min-mag-mip-clamp', maximumPayloadBytes: 4 * 1024 * 1024 },
             maximumResourceBufferBytes: 256 * 1024 * 1024,
             maximumResourceTextureBytes: 256 * 1024 * 1024,
             maximumReadbackTickets: 16, maximumReadbackBytes: 16 * 1024 * 1024,

@@ -58,6 +58,25 @@ requirements; adapter limits are checked before requesting the device.
 
 ## Ownership and scheduling
 
+Use **Cooked world** or `?world=./content/manifest.json` to load a same-origin
+package produced by `Tools/BrowserContentCooker`. Essential dependency closures
+load first; later scene chunks integrate one bounded asset per animation frame.
+The loader checks schema/profile, byte budgets and SHA-256 before passing bytes
+to the engine. Stop/restart cancels pending requests and drops stale session work.
+
+The offline packager accepts preconverted mesh/material/scene JSON and full raw
+texture mip chains. Supported device-enabled ASTC 4×4 or ETC2 RGBA8 variants can
+be selected with a matching RGBA8 fallback. Conversion, native imports, collision
+cooking and font generation stay offline; no runtime Basis transcoder is included.
+The fixed material sampler is linear with clamp-to-edge addressing. Payloads use
+immutable hash URLs; the bootstrap is revalidated. Persistent browser storage is
+not required.
+
+See [cooked content delivery](../docs/work/progress/rendering/browser-cooked-content.md)
+and the [cooker README](../Tools/BrowserContentCooker/README.md) for contracts,
+limits, deployment, memory accounting and remaining acceptance work. Runtime and
+cache qualification remain deferred.
+
 `BrowserRendererComposition` registers `WebGpuRendererBackendModule` in the existing
 `RendererBackendCatalog`. Each canvas creates a pending managed renderer through
 that catalog and uses its `IBrowserRendererHost` capability for resources and

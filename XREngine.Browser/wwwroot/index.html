@@ -25,6 +25,11 @@
     This scene requires a browser with WebGPU support.
   </canvas>
   <div id="status" role="status" data-state="loading-runtime">Loading the .NET runtime…</div>
+  <form id="world-form" class="controls">
+    <label>Cooked world <input id="world-url" type="text" placeholder="./content/manifest.json" required></label>
+    <button type="submit">Load world</button>
+  </form>
+  <p id="content-progress" role="status"></p>
   <div class="controls">
     <button id="restart" disabled>Restart</button>
     <button id="stop" disabled>Stop</button>

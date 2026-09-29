@@ -1,5 +1,6 @@
 import { pipelineHeaderBytes, pipelineDrawBytes, pipelineUiBytes, pipelineMaximumItems,
     pipelineMaximumBytes, validatePipelinePacket } from './pipeline-frame-packet.js';
+import { isBrowserColorTexture } from './cooked-texture.js';
 
 const alphaModes = ['opaque', 'masked', 'transparent'];
 const cullModes = ['none', 'back', 'front'];
@@ -190,8 +191,8 @@ export class BrowserRenderPipeline {
         if (texture.width > this.settings.maxTextureDimension || texture.height > this.settings.maxTextureDimension)
             throw new Error(`UI texture exceeds selected maxTextureDimension ${this.settings.maxTextureDimension}.`);
         if (!(texture.usage & GPUTextureUsage.TEXTURE_BINDING) || texture.sampleCount !== 1
-            || !['rgba8unorm','rgba8unorm-srgb'].includes(texture.format))
-            throw new Error('UI atlases require a sampleable single-sample RGBA8 texture.');
+            || !isBrowserColorTexture(texture))
+            throw new Error('UI atlases require a sampleable single-sample supported color texture with straight alpha.');
         texture.uiBindGroup = this._imageGroup(texture.view);
     }
 
