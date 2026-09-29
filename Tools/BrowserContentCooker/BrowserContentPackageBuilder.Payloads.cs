@@ -1,8 +1,8 @@
 using System.Text.Json;
 
-namespace XREngine.Tools.BrowserContentCooker;
+namespace XREngine.Publishing;
 
-internal static partial class Program
+public static partial class BrowserContentPackageBuilder
 {
     private static (int Instances, float[]? Camera, string? Collision, bool Animated) ValidatePayload(string kind, byte[] bytes, string[] dependencies, Dictionary<string, JsonElement> assets, int schema, string recipeDirectory, Dictionary<string, string> animationMeshes)
     {
@@ -26,7 +26,9 @@ internal static partial class Program
                 foreach (JsonElement value in indices) Integer(value, 0, vertices.Length / 5 - 1);
                 break;
             case "material":
-                Members(payload, "tint", "texture", "alphaMode", "shading", "cullMode", "alphaCutoff", "castShadow", "receiveShadow");
+                MembersOptional(payload,
+                    ["tint", "texture", "alphaMode", "shading", "cullMode", "alphaCutoff", "castShadow", "receiveShadow"],
+                    ["sampler"]);
                 Floats(payload, "tint", 4, 0, 1);
                 if (payload.GetProperty("texture").ValueKind != JsonValueKind.Null)
                     Reference(payload.GetProperty("texture"), "texture", assets, used);
@@ -37,6 +39,19 @@ internal static partial class Program
                 bool castsShadow = Boolean(payload, "castShadow");
                 Boolean(payload, "receiveShadow");
                 Require(alpha != "transparent" || !castsShadow, "Transparent materials must disable shadow casting.");
+                if (payload.TryGetProperty("sampler", out JsonElement sampler))
+                {
+                    Members(sampler, "addressModeU", "addressModeV", "minFilter", "magFilter", "mipmapFilter", "lodMaxClamp", "maxAnisotropy");
+                    Choice(sampler, "addressModeU", "clamp-to-edge", "repeat", "mirror-repeat");
+                    Choice(sampler, "addressModeV", "clamp-to-edge", "repeat", "mirror-repeat");
+                    string min = Choice(sampler, "minFilter", "nearest", "linear");
+                    string mag = Choice(sampler, "magFilter", "nearest", "linear");
+                    string mip = Choice(sampler, "mipmapFilter", "nearest", "linear");
+                    Number(sampler.GetProperty("lodMaxClamp"), 0, 32);
+                    int anisotropy = Integer(sampler.GetProperty("maxAnisotropy"), 1, 16);
+                    Require(anisotropy == 1 || min == "linear" && mag == "linear" && mip == "linear",
+                        "Anisotropic sampling requires linear minification, magnification and mip filtering.");
+                }
                 break;
             case "scene":
                 if (schema == 3)

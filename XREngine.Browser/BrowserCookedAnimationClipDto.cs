@@ -7,6 +7,7 @@ internal sealed class BrowserCookedAnimationClipDto
     public int FramesPerSecond { get; init; }
     public int FrameCount { get; init; }
     public bool Loop { get; init; } = true;
+    public bool EndInclusiveSamples { get; init; }
     public required float[] Frames { get; init; }
     public float[] MorphWeights { get; init; } = [];
 }

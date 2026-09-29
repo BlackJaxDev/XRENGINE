@@ -7,6 +7,7 @@ namespace XREngine.Browser;
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(BrowserCookedMeshDto))]
 [JsonSerializable(typeof(BrowserCookedMaterialDto))]
+[JsonSerializable(typeof(BrowserCookedSamplerDto))]
 [JsonSerializable(typeof(BrowserCookedTextureDto))]
 [JsonSerializable(typeof(BrowserCookedSceneDto))]
 [JsonSerializable(typeof(BrowserCookedAnimationDto))]

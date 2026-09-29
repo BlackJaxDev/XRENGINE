@@ -1037,8 +1037,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string platform,
         string[] targets,
         IReadOnlyDictionary<string, string?>? extraProperties,
-        out string? log)
+        out string? log,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var startInfo = new DiagnosticsProcessStartInfo("dotnet")
         {
             UseShellExecute = false,
@@ -1079,10 +1081,23 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
         using DiagnosticsProcess process = DiagnosticsProcess.Start(startInfo)
             ?? throw new InvalidOperationException($"Failed to start dotnet msbuild for '{projectFilePath}'.");
+        using CancellationTokenRegistration cancellation = cancellationToken.Register(static state =>
+        {
+            DiagnosticsProcess running = (DiagnosticsProcess)state!;
+            try
+            {
+                if (!running.HasExited) running.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }, process);
 
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
+        Task<string> stdoutRead = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderrRead = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
+        cancellationToken.ThrowIfCancellationRequested();
+        string stdout = stdoutRead.GetAwaiter().GetResult();
+        string stderr = stderrRead.GetAwaiter().GetResult();
 
         log = string.Concat(stdout, string.IsNullOrWhiteSpace(stderr) ? string.Empty : Environment.NewLine + stderr);
         return process.ExitCode == 0;

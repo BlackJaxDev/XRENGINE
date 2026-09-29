@@ -1,5 +1,6 @@
 import { dotnet } from './_framework/dotnet.js';
 import { BrowserCanvasHost } from './browser-canvas-host.js';
+import { loadBrowserPublishConfig } from './browser-publish-config.js';
 
 /** One runtime may create several independently owned canvas hosts. */
 async function createBrowserRuntime() {
@@ -36,8 +37,8 @@ async function createBrowserRuntime() {
             renderer(id).resources.uploadTextureMip(handle, mip, x, y, width, height, bytes),
         createTextureView: (id, texture, baseMip, mipCount, aspect, label) =>
             renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label),
-        createSampler: (id, addressU, addressV, minFilter, magFilter, mipmapFilter, label) =>
-            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label),
+        createSampler: (id, addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy) =>
+            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy),
         createMesh: (id, vertices, indices) => renderer(id).createMesh(vertices, indices),
         createTexture: (id, width, height, bytes) => renderer(id).createTexture(width, height, bytes),
         createCookedTexture: (id, description, bytes) => renderer(id).createCookedTexture(description, bytes),
@@ -214,20 +215,22 @@ window.addEventListener('pageshow', event => {
 }, { signal: pageEvents.signal });
 
 try {
+    const published = await loadBrowserPublishConfig(pageEvents.signal);
     const requested = new URLSearchParams(location.search).get('renderer') ?? 'WebGPU';
     if (requested !== 'WebGPU' && requested !== 'Auto')
         throw new Error(`${requested} is not packaged. This application contains WebGPU only.`);
     const createHost = await createBrowserRuntime();
     if (!pageEvents.signal.aborted) {
         host = createHost(canvas, setState, new URLSearchParams(location.search).get('shader') ?? 'browser-unlit');
-        host.setSubmissionStrategy(new URLSearchParams(location.search).get('strategy') ?? 'Auto');
-        host.setSkinningMode(new URLSearchParams(location.search).get('skinning') ?? 'Cpu');
+        host.setSubmissionStrategy(new URLSearchParams(location.search).get('strategy') ?? published.submissionStrategy);
+        host.setSkinningMode(new URLSearchParams(location.search).get('skinning') ?? published.skinning);
         submissionStrategy.value = host.submissionStrategy;
         skinningMode.value = host.skinningMode;
         host.setSplitView(split.checked);
         host.setInstanceCount(Number(instances.value));
         host.setCullingEnabled(culling.checked);
-        host.setQualityPreset(quality.value);
+        quality.value = published.quality;
+        host.setQualityPreset(published.quality);
         host.setUiEnabled(engineUi.checked);
         host.onAudioState = (state, reason) => {
             audioStatus.textContent = state === 'ready' ? 'Sound is ready.' : (reason || 'Choose Enable sound to start audio.');
@@ -239,7 +242,7 @@ try {
                 ? `World loaded: ${progress.consumedAssets} assets, ${received} MiB received.`
                 : `Loading world: ${progress.consumedAssets} of ${progress.selectedAssets} assets ready, ${received} MiB received.`;
         };
-        const requestedWorld = new URLSearchParams(location.search).get('world');
+        const requestedWorld = new URLSearchParams(location.search).get('world') ?? published.world;
         if (requestedWorld) {
             worldUrl.value = requestedWorld;
             host.contentUrl = requestedWorld;

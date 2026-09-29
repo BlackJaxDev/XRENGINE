@@ -10,6 +10,7 @@ internal sealed class BrowserCookedAnimationClip
     private readonly TransformState[] _frames;
     private readonly float[] _morphWeights;
     private readonly AuthoredCadence _cadence;
+    private readonly bool _endInclusiveSamples;
 
     internal BrowserCookedAnimationClip(BrowserCookedAnimationClipDto dto, int boneCount, int morphCount)
     {
@@ -26,7 +27,8 @@ internal sealed class BrowserCookedAnimationClip
         MorphCount = morphCount;
         FrameCount = dto.FrameCount;
         Loop = dto.Loop;
-        _cadence = new AuthoredCadence(dto.FrameCount, dto.FramesPerSecond);
+        _endInclusiveSamples = dto.EndInclusiveSamples;
+        _cadence = new AuthoredCadence(dto.FrameCount - (dto.EndInclusiveSamples ? 1 : 0), dto.FramesPerSecond);
         LengthTicks = _cadence.GetLengthStopwatchTicks(Stopwatch.Frequency);
         _frames = new TransformState[dto.FrameCount * boneCount];
         for (int i = 0; i < _frames.Length; i++) _frames[i] = DecodePose(dto.Frames.AsSpan(i * 10, 10));
@@ -48,7 +50,8 @@ internal sealed class BrowserCookedAnimationClip
         if (pose.Length != BoneCount || morphs.Length != MorphCount) throw new ArgumentException("Pose destination shape mismatch.");
         ticks = Loop ? ticks % LengthTicks : Math.Clamp(ticks, 0, LengthTicks);
         if (ticks < 0) ticks += LengthTicks;
-        int first = _cadence.GetFrameFloor(ticks, Stopwatch.Frequency);
+        int first = _endInclusiveSamples && !Loop && ticks == LengthTicks
+            ? FrameCount - 1 : _cadence.GetFrameFloor(ticks, Stopwatch.Frequency);
         int next = first == FrameCount - 1 ? (Loop ? 0 : first) : first + 1;
         float fraction = _cadence.GetFrameFraction(ticks, Stopwatch.Frequency);
         for (int bone = 0; bone < BoneCount; bone++)
