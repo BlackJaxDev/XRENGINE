@@ -69,6 +69,8 @@ const split = document.querySelector('#split');
 const instances = document.querySelector('#instances');
 const counters = document.querySelector('#counters');
 const capture = document.querySelector('#capture');
+const gpuReference = document.querySelector('#gpu-reference');
+const gpuReferenceStatus = document.querySelector('#gpu-reference-status');
 const importScene = document.querySelector('#import-scene');
 const demo = document.querySelector('#demo');
 const culling = document.querySelector('#culling');
@@ -146,6 +148,21 @@ capture.addEventListener('click', () => {
     const snapshot = host?.getStatistics();
     counters.textContent = snapshot ? JSON.stringify(snapshot, null, 2) : 'No active renderer.';
 }, { signal: pageEvents.signal });
+gpuReference.addEventListener('click', async () => {
+    if (!host || gpuReference.disabled) return;
+    const epoch = host.epoch;
+    gpuReference.disabled = true;
+    gpuReferenceStatus.textContent = 'Running offscreen compute and indirect reference cases…';
+    try {
+        const result = await host.runGpuReference();
+        if (epoch !== host.epoch) return;
+        counters.textContent = JSON.stringify(result, null, 2);
+        gpuReferenceStatus.textContent = 'Reference cases passed on this session. Full device qualification remains separate.';
+    } catch (error) {
+        gpuReferenceStatus.textContent = epoch === host.epoch
+            ? `GPU reference failed: ${error.message ?? error}` : 'Reference run canceled because the scene stopped or restarted.';
+    } finally { gpuReference.disabled = false; }
+}, { signal: pageEvents.signal });
 streamTexture.addEventListener('click', () => {
     try { host?.streamDemoTexture(); }
     catch (error) { console.error(error); status.textContent = `Texture upload rejected: ${error.message ?? error}`; }
@@ -184,6 +201,7 @@ try {
     const createHost = await createBrowserRuntime();
     if (!pageEvents.signal.aborted) {
         host = createHost(canvas, setState, new URLSearchParams(location.search).get('shader') ?? 'browser-unlit');
+        host.setSubmissionStrategy(new URLSearchParams(location.search).get('strategy') ?? 'Auto');
         host.setSplitView(split.checked);
         host.setInstanceCount(Number(instances.value));
         host.setCullingEnabled(culling.checked);
