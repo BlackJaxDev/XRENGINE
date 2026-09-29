@@ -61,6 +61,7 @@ export function validateUploadPacket(view, commandBytes, payloadView, payloadByt
                     || destination > capacity || length > capacity - destination)
                     throw new RangeError('Mesh upload range is invalid.');
                 if (opcode === 1) {
+                    if (mesh.computeSkinned) throw new Error('Release compute deformation before replacing its owned vertex output.');
                     for (let p = offset; p < offset + length; p += 4) {
                         if (!Number.isFinite(payloadView.getFloat32(p, true)))
                             throw new RangeError('Mesh vertex components must be finite.');

@@ -7,6 +7,7 @@ import { GpuCommands } from './gpu-commands.js';
 import { BrowserRenderPipeline } from './browser-render-pipeline.js';
 import { browserPipelineRequirements } from './browser-pipeline-requirements.js';
 import { selectBrowserSubmissionStrategy } from './browser-submission-strategy.js';
+import { GpuSkinning } from './gpu-skinning.js';
 import { createCookedTexture, isBrowserColorTexture } from './cooked-texture.js';
 import { drawRecordBytes, maximumDraws, packetHeaderBytes, validateFramePacket } from '../frame-packet.js';
 import { maximumUploadPayloadBytes, uploadHeaderBytes, uploadRecordBytes, maximumUploadCommands, validateUploadPacket } from '../upload-packet.js';
@@ -93,12 +94,15 @@ async function scopedStartupOperation(device, stage, operation) {
 
 /** One device, one canvas surface, and one generation-stamped resource namespace. */
 export class WebGpuCanvasRenderer {
-    constructor(canvas, onState, onFailure, shaderName = 'browser-unlit', submissionStrategy = 'Auto') {
+    constructor(canvas, onState, onFailure, shaderName = 'browser-unlit', submissionStrategy = 'Auto', skinningMode = 'Cpu') {
         if (typeof shaderName !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(shaderName))
             throw new TypeError('Shader artifact name must be a lowercase manifest name.');
         this.canvas = canvas;
         this._shaderName = shaderName;
         this.submissionStrategy = selectBrowserSubmissionStrategy(submissionStrategy);
+        if (!['Cpu', 'Compute'].includes(skinningMode)) throw new Error('Unsupported browser skinning mode.');
+        this.skinningMode = skinningMode;
+        this.skinning = new GpuSkinning(this);
         this.onState = onState;
         this.onFailure = onFailure;
         this._generation = 0;
@@ -245,7 +249,7 @@ export class WebGpuCanvasRenderer {
             finally { this._startup.timingsMs.fetchHash = performance.now() - fetchStart; }
             this._assertActive(signal);
             const deviceRequirements = browserPipelineRequirements(adapter,
-                shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity));
+                shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity), this.submissionStrategy, this.skinningMode);
             // Payload selection happens against enabled device features, never a user-agent guess.
             for (const feature of ['texture-compression-astc', 'texture-compression-etc2'])
                 if (adapter.features.has(feature) && !deviceRequirements.requiredFeatures.includes(feature))
@@ -435,7 +439,7 @@ export class WebGpuCanvasRenderer {
         }
         let vertexBuffer, indexBuffer;
         try {
-            vertexBuffer = this.device.createBuffer({ size: vertexBytes, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+            vertexBuffer = this.device.createBuffer({ size: vertexBytes, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE });
             indexBuffer = this.device.createBuffer({ size: indexBytes, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
             this.device.queue.writeBuffer(vertexBuffer, 0, vertices);
             this.device.queue.writeBuffer(indexBuffer, 0, indices);
@@ -524,6 +528,7 @@ export class WebGpuCanvasRenderer {
             throw new Error('A resource referenced by a live view, binding, pipeline or command plan cannot be destroyed.');
         if (entry.kind === 'material') this.focusedPipeline.releaseMaterial(handle);
         if (entry.kind === 'texture') this.focusedPipeline.releaseTexture(handle);
+        if (entry.kind === 'mesh') this.skinning.releaseMesh(handle);
         this._resources.remove(handle, this._owner);
         this._destroyEntry(entry, false);
     }
@@ -706,10 +711,12 @@ export class WebGpuCanvasRenderer {
                 shaderDrawId: false, descriptorIndexing: false,
                 computeWorkgroupSize: 'explicit metadata checked against selected-device limits; native shader validation remains authoritative',
                 usageScopes: 'one dispatch or one render pass per command', qualification: 'pending' },
-            focusedPipeline: { packetVersion: 1, maximumDraws: 4096, maximumUiQuads: 4096,
+            focusedPipeline: { packetVersion: 2, maximumDraws: 4096, maximumUiQuads: 4096,
+                skinning: this.skinningMode, visibility: this.submissionStrategy.selected,
                 alphaModes: ['opaque', 'masked', 'transparent'], shading: ['unlit', 'flat-lambert'],
                 directionalLights: 1, hdrIntermediate: 'rgba16float', presentation: 'sRGB',
-                exclusions: ['transparent shadows', 'PBR', 'normal maps', 'GPU skinning', 'GPU indirect', 'reversed Z'] },
+                exclusions: ['transparent shadows', 'PBR', 'normal maps', 'reversed Z', 'GPU BVH', 'meshlets'],
+                experimentalComputeQualified: false },
             textureDimensions: ['2d'], textureFormats: ['rgba8unorm', 'rgba8unorm-srgb',
                 'depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'],
             textureSampleCounts: [1, 4], optionalTextureFormats: [],
@@ -752,6 +759,8 @@ export class WebGpuCanvasRenderer {
         this._stats.controlCalls++;
         this._stats.frameSubmitCalls++;
         this._requireOwner();
+        if (this.submissionStrategy.gpu)
+            throw new Error('The legacy mesh packet cannot fulfill a required GPU scene strategy; submit the focused bounds packet.');
         try {
             const length = byteLengthOf(memoryView);
             if (length < packetHeaderBytes || length > packetHeaderBytes + maximumDraws * drawRecordBytes)
@@ -784,6 +793,7 @@ export class WebGpuCanvasRenderer {
             this._colorAttachment.view = this.context.getCurrentTexture().createView();
             this._depthAttachment.view = this.depthView;
             const encoder = this.device.createCommandEncoder();
+            if (this.skinningMode === 'Compute') this.skinning.encode(encoder);
             const pass = encoder.beginRenderPass(this._renderPassDescriptor);
             pass.setPipeline(this.pipeline);
             for (let i = 0, base = packetHeaderBytes; i < count; i++, base += drawRecordBytes) {
@@ -828,6 +838,7 @@ export class WebGpuCanvasRenderer {
     getStatistics() {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
             focusedPipeline: this.focusedPipeline.getStatistics(),
+            deformation: { mode: this.skinningMode, ...this.skinning.stats },
             resources: { live: this._resources.slots.reduce((count, entry) => count + (entry ? 1 : 0), 0),
                 retiring: this._retired.size, pipelineCacheEntries: this.pipelineCache?.entries.size ?? 0,
                 readbackTickets: this.readback.activeCount, readbackResidentBytes: this.readback.residentBytes },
@@ -852,6 +863,7 @@ export class WebGpuCanvasRenderer {
         this._configured = false;
         this.commands.dispose();
         this.focusedPipeline.dispose();
+        this.skinning.dispose();
         this.readback.dispose();
         this._resources.clear(entry => this._destroyEntry(entry, true));
         this.resources.dispose();

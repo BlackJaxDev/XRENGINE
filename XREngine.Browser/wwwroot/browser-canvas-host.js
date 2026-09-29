@@ -43,6 +43,7 @@ export class BrowserCanvasHost {
         this.qualityPreset = 'balanced';
         this.uiEnabled = true;
         this.submissionStrategy = 'Auto';
+        this.skinningMode = 'Cpu';
         this.referenceRunning = false;
         this.referenceResult = null;
         this.frozen = false;
@@ -85,7 +86,7 @@ export class BrowserCanvasHost {
             state => {
                 if (epoch === this.epoch) this.setState(state, state.replaceAll('-', ' '));
             },
-            error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName, this.submissionStrategy);
+            error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName, this.submissionStrategy, this.skinningMode);
         this.renderer = renderer;
         renderer.audioService = audio;
         try {
@@ -99,6 +100,8 @@ export class BrowserCanvasHost {
             }
             renderer.setOwner(this.session);
             this.renderers.set(this.session, renderer);
+            this.scene.SetGpuVisibility(this.session, renderer.submissionStrategy.gpu);
+            this.scene.SetComputeSkinning(this.session, this.skinningMode === 'Compute');
             this.scene.SetQualityPreset(this.session, this.qualityPreset);
             this.scene.SetUiEnabled(this.session, this.uiEnabled);
             if (!this.snapshotJson && !this.contentUrl) this.scene.SetInstanceCount(this.session, this.instanceCount);
@@ -356,6 +359,12 @@ export class BrowserCanvasHost {
         selectBrowserSubmissionStrategy(requested);
         if (this.session) throw new Error('Set the submission strategy before starting a canvas session.');
         this.submissionStrategy = requested;
+    }
+
+    setSkinningMode(mode) {
+        if (!['Cpu', 'Compute'].includes(mode)) throw new Error('Unsupported browser skinning mode.');
+        if (this.session) throw new Error('Set skinning mode before starting a canvas session.');
+        this.skinningMode = mode;
     }
 
     async runGpuReference() {

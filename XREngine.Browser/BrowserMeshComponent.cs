@@ -11,6 +11,7 @@ public sealed class BrowserMeshComponent : XRComponent
     private int _materialHandle;
     private bool _renderEnabled = true;
     private bool _inPlay;
+    private bool _isOcclusionOccluder;
 
     public BrowserMeshData? Mesh
     {
@@ -41,6 +42,13 @@ public sealed class BrowserMeshComponent : XRComponent
     {
         get => _renderEnabled;
         set => SetField(ref _renderEnabled, value);
+    }
+
+    /// <summary>Explicitly admits an opaque rigid mesh to the dedicated current-frame occluder depth pass.</summary>
+    public bool IsOcclusionOccluder
+    {
+        get => _isOcclusionOccluder;
+        set => SetField(ref _isOcclusionOccluder, value);
     }
 
     internal bool IsRenderable => _inPlay && _renderEnabled && _mesh is not null && _material is not null;

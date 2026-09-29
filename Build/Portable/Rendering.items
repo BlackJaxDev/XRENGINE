@@ -37,6 +37,10 @@
     <Compile Include="Runtime/Browser/BrowserPipelineQualitySettings.cs" />
     <Compile Include="Runtime/Browser/BrowserPipelineEnvironment.cs" />
     <Compile Include="Runtime/Browser/BrowserPipelineDraw.cs" />
+    <Compile Include="Commands/GPUIndirectRenderCommand.cs" />
+    <Compile Include="Rendering/SkinPaletteMatrix.cs" />
+    <Compile Include="Runtime/Browser/IBrowserComputeSkinningCapability.cs" />
+    <Compile Include="Runtime/Browser/Animation/BrowserSkinningData.cs" />
     <Compile Include="Runtime/Browser/BrowserPipelineUiQuad.cs" />
     <Compile Include="Runtime/Browser/BrowserPipelineFramePacket.cs" />
     <Compile Include="Runtime/Browser/BrowserRenderPipeline.cs" />

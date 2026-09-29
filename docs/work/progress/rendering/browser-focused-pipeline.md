@@ -8,6 +8,10 @@ WebGPU executor. It selects an explicit CPU-direct forward profile before render
 It does not traverse the desktop advanced pipeline. Existing module, resource,
 frame-output and scene ownership contracts remain in use.
 
+An additional [reuse audit and integration](browser-compute-reuse-audit.md) adds
+explicit experimental compute deformation, bounded indirect scene submission and
+dedicated-occluder Hi-Z. Automatic selection still uses the CPU-direct path below.
+
 ## Selected rendering behavior
 
 | Surface | Ordering | Depth and alpha |
@@ -79,10 +83,12 @@ for these forward passes. General cooked user-material expansion remains separat
 ## Packet and frame lifetime
 
 The focused packet has its own magic and version, preserving the earlier mesh
-packet ABI. It contains a 256-byte header, 176-byte mesh records and 80-byte UI
+packet ABI. Version 2 contains a 256-byte header, 304-byte mesh records and 80-byte UI
 records. Header data includes owner, surface generation, frame sequence, output
 extent, lighting and shadow matrices. Each draw carries world and projected
-transforms, resource handles, viewport, index range and shadow flags.
+transforms, resource handles, viewport, index range and shadow flags. The last 128
+bytes carry canonical `BoundsGpu` world bounds and per-view projection; additional
+flags identify uncertain bounds and explicitly admitted rigid opaque occluders.
 
 Managed collection uses retained arrays and a stable merge sort. Its bounded arena
 grows only at idle scene mutation boundaries. The synchronous import copies bytes

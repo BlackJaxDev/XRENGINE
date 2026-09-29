@@ -8,7 +8,7 @@ namespace XREngine.Rendering;
 public sealed class BrowserPipelineFramePacket : IDisposable
 {
     public const int HeaderBytes = 256;
-    public const int DrawBytes = 176;
+    public const int DrawBytes = 304;
     public const int UiBytes = 80;
     public const int MaximumDraws = 4096;
     public const int MaximumUiQuads = 4096;
@@ -79,7 +79,7 @@ public sealed class BrowserPipelineFramePacket : IDisposable
         DrawCount = 0; _uiCount = 0; FrameSequence++;
         Span<byte> header = _bytes.AsSpan(0, HeaderBytes);
         header.Clear();
-        Write(header, 0, 0x46524558); Write(header, 4, 1);
+        Write(header, 0, 0x46524558); Write(header, 4, 2);
         Write(header, 16, sessionId); Write(header, 20, surfaceGeneration);
         BinaryPrimitives.WriteUInt32LittleEndian(header[24..], FrameSequence);
         Write(header, 32, width); Write(header, 36, height); Write(header, 40, updateShadow ? 1 : 0);
@@ -101,7 +101,14 @@ public sealed class BrowserPipelineFramePacket : IDisposable
             draw.ViewportWidth <= 0 || draw.ViewportHeight <= 0 || (long)draw.ViewportX + draw.ViewportWidth > _width ||
             (long)draw.ViewportY + draw.ViewportHeight > _height || draw.FirstIndex < 0 || draw.FirstIndex % 3 != 0 ||
             draw.IndexCount <= 0 || draw.IndexCount % 3 != 0 || (long)draw.FirstIndex + draw.IndexCount > int.MaxValue ||
-            !Finite(draw.Model) || !Finite(draw.Mvp) || !float.IsFinite(draw.ViewDepth) ||
+            !Finite(draw.Model) || !Finite(draw.Mvp) || !Finite(draw.ViewProjection) || !float.IsFinite(draw.ViewDepth) ||
+            draw.Model.M14 != 0 || draw.Model.M24 != 0 || draw.Model.M34 != 0 || draw.Model.M44 != 1 ||
+            !Finite(draw.WorldBounds.BoundingSphere) || draw.WorldBounds.BoundingSphere.W < 0 ||
+            !Finite(draw.WorldBounds.AabbMin) || !Finite(draw.WorldBounds.AabbMax) ||
+            draw.WorldBounds.AabbMin.X > draw.WorldBounds.AabbMax.X ||
+            draw.WorldBounds.AabbMin.Y > draw.WorldBounds.AabbMax.Y ||
+            draw.WorldBounds.AabbMin.Z > draw.WorldBounds.AabbMax.Z ||
+            (draw.Occluder && (draw.AlphaMode != "opaque" || draw.DisableCulling)) ||
             draw.AlphaMode is not ("opaque" or "masked" or "transparent") || (draw.ShadowOnly && !draw.CastShadow))
         { _state = BrowserFramePacketState.Faulted; throw new ArgumentException("Invalid focused draw; discard packet.", nameof(draw)); }
         Span<byte> bytes = _bytes.AsSpan(HeaderBytes + DrawCount * DrawBytes, DrawBytes);
@@ -111,7 +118,14 @@ public sealed class BrowserPipelineFramePacket : IDisposable
         Write(bytes, 24, draw.FirstIndex); Write(bytes, 28, draw.IndexCount);
         BrowserShaderAbi.WriteTransform(bytes.Slice(32, 64), draw.Model);
         BrowserShaderAbi.WriteTransform(bytes.Slice(96, 64), draw.Mvp);
-        Write(bytes, 160, (draw.CastShadow ? 1 : 0) | (draw.ShadowOnly ? 2 : 0));
+        Write(bytes, 160, (draw.CastShadow ? 1 : 0) | (draw.ShadowOnly ? 2 : 0)
+            | (draw.DisableCulling ? 4 : 0) | (draw.Occluder ? 8 : 0));
+        // Preserve BoundsGpu's 64-byte ABI; reserved lanes stay zero in the cleared arena.
+        WriteVector(bytes, 176, draw.WorldBounds.BoundingSphere);
+        WriteVector(bytes, 192, new Vector4(draw.WorldBounds.AabbMin.X, draw.WorldBounds.AabbMin.Y, draw.WorldBounds.AabbMin.Z, 0));
+        WriteVector(bytes, 208, new Vector4(draw.WorldBounds.AabbMax.X, draw.WorldBounds.AabbMax.Y, draw.WorldBounds.AabbMax.Z, 0));
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes[224..], draw.WorldBounds.BoundsVersion);
+        BrowserShaderAbi.WriteTransform(bytes.Slice(240, 64), draw.ViewProjection);
         DrawCount++;
     }
 

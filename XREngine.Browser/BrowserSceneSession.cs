@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -8,6 +9,8 @@ namespace XREngine.Browser;
 /// <summary>Owns one real scene, its browser GPU resources, clock and batched frame submission.</summary>
 public sealed partial class BrowserSceneSession : IDisposable
 {
+    private bool _gpuVisibility;
+    public bool GpuVisibility => _gpuVisibility;
     private const double FixedStep = 1.0 / 60.0;
     private const int MaxStepsPerFrame = 4;
     private const int MaxInstances = 256;
@@ -136,7 +139,7 @@ public sealed partial class BrowserSceneSession : IDisposable
             backdrop.Translation = new Vector3(0, 0, -5.8f);
             backdrop.Scale = new Vector3(10, 10, 1);
             AddRenderableCore(_panelMesh, new BrowserMaterialData(new Vector4(0.55f, 0.58f, 0.65f, 1),
-                shading: "lambert", castShadow: false), backdrop, _customRenderables);
+                shading: "lambert", castShadow: false), backdrop, _customRenderables).IsOcclusionOccluder = true;
             LayoutInstances();
             InitializeMotion();
             InitializeAnimation();
@@ -293,6 +296,13 @@ public sealed partial class BrowserSceneSession : IDisposable
     {
         ThrowIfFrameBusy();
         _cullingEnabled = enabled;
+    }
+
+    /// <summary>GPU submission receives the published candidate set; visibility is resolved by the backend.</summary>
+    public void SetGpuVisibility(bool enabled)
+    {
+        ThrowIfFrameBusy();
+        _gpuVisibility = enabled;
     }
 
     /// <summary>Replaces the cached camera used by the scene; both matrices use row vectors and zero-to-one clip depth.</summary>
@@ -457,6 +467,7 @@ public sealed partial class BrowserSceneSession : IDisposable
                 component.MeshHandle = AcquireMesh(component.Mesh!);
                 component.MaterialHandle = AcquireMaterial(component.Material!);
             }
+            InitializeComputeAnimationGraphics();
             _graphicsInitialized = true;
         }
         catch
@@ -637,7 +648,7 @@ public sealed partial class BrowserSceneSession : IDisposable
         _collected[_collectedCount++] = new BrowserCollectedRenderable(
             component.Mesh!, component.Material!, BrowserResourceHandle.FromPacked(component.MeshHandle),
             BrowserResourceHandle.FromPacked(component.MaterialHandle),
-            component.SceneNode.Transform.RenderMatrix);
+            component.SceneNode.Transform.RenderMatrix, component.IsOcclusionOccluder);
     }
 
     private void AddViewDraws(BrowserViewport viewport, bool includeShadows = true)
@@ -654,7 +665,7 @@ public sealed partial class BrowserSceneSession : IDisposable
         // fields are read as columns by the browser renderer.
         Matrix4x4 matrix = component.ModelMatrix * viewport.ViewProjection;
         VisibilityCandidates++;
-        bool colorVisible = !_cullingEnabled || IsAnimationMesh(component.Mesh)
+        bool colorVisible = _gpuVisibility || !_cullingEnabled || IsAnimationMesh(component.Mesh)
             || BrowserFrustumVisibility.Intersects(component.Mesh, in matrix);
         if (!colorVisible)
         {
@@ -666,10 +677,37 @@ public sealed partial class BrowserSceneSession : IDisposable
         Vector3 viewCenter = Vector3.Transform(Vector3.Transform(center, component.ModelMatrix), viewport.View);
         BrowserPipelineDraw draw = new(component.MeshHandle, component.MaterialHandle, component.Material.AlphaMode,
             viewport.X, viewport.Y, viewport.Width, viewport.Height, 0, component.Mesh.IndexCount,
-            component.ModelMatrix, matrix, -viewCenter.Z, includeShadows && component.Material.CastShadow, !colorVisible);
+            component.ModelMatrix, matrix, -viewCenter.Z, includeShadows && component.Material.CastShadow, !colorVisible)
+        {
+            ViewProjection = viewport.ViewProjection,
+            WorldBounds = GetWorldBounds(component),
+            DisableCulling = !_cullingEnabled || IsAnimationMesh(component.Mesh),
+            Occluder = _cullingEnabled && component.IsOcclusionOccluder && component.Material.AlphaMode == "opaque" && !IsAnimationMesh(component.Mesh)
+        };
         _pipeline.AddDraw(in draw);
         if (colorVisible)
             VisibilityDrawn++;
+    }
+
+    private static BoundsGpu GetWorldBounds(in BrowserCollectedRenderable component)
+    {
+        // Lower the existing mesh descriptor to the canonical GPUScene world AABB.
+        Vector3 minimum = new(float.PositiveInfinity), maximum = new(float.NegativeInfinity);
+        Vector3 localMinimum = component.Mesh.BoundsMinimum, localMaximum = component.Mesh.BoundsMaximum;
+        for (int corner = 0; corner < 8; corner++)
+        {
+            Vector3 local = new((corner & 1) == 0 ? localMinimum.X : localMaximum.X,
+                (corner & 2) == 0 ? localMinimum.Y : localMaximum.Y,
+                (corner & 4) == 0 ? localMinimum.Z : localMaximum.Z);
+            Vector3 world = Vector3.Transform(local, component.ModelMatrix);
+            minimum = Vector3.Min(minimum, world); maximum = Vector3.Max(maximum, world);
+        }
+        Vector3 center = (minimum + maximum) * 0.5f;
+        return new BoundsGpu
+        {
+            BoundingSphere = new Vector4(center, Vector3.Distance(center, maximum)),
+            AabbMin = new Vector4(minimum, 0), AabbMax = new Vector4(maximum, 0)
+        };
     }
 
     private void AddUiOverlay()

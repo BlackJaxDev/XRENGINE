@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace XREngine.Rendering;
 
-/// <summary>Explicit CPU idle/movement blend, hierarchy evaluation and retained skinning palette for bounded browser characters.</summary>
+/// <summary>Reference-fixture idle/movement clips; this is not a second production animation state system.</summary>
 public sealed class BrowserCpuAnimator
 {
     private readonly BrowserSkeleton _skeleton;

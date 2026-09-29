@@ -178,16 +178,26 @@ for storage-to-render ordering, device-limited compute, indirect draw argument a
 usage rules, and the opt-in **Renderer counters → Run GPU reference cases** action.
 The action pauses scene frames, performs bounded offscreen work and asynchronous
 readback, and displays session-specific results. It has not been run for this
-delivery. `?strategy=Auto` permits only `CpuDirect`; forced unsupported scene
-strategies fail with a reason. Low-level indirect support does not change the
-focused scene pipeline or establish baseline qualification.
+delivery. `?strategy=Auto` permits only `CpuDirect`; unsupported scene strategies
+fail with a reason. No source addition establishes baseline qualification.
+
+The [compute reuse audit and integration](../docs/work/progress/rendering/browser-compute-reuse-audit.md)
+records reuse of existing palette/bounds contracts and canonical skinning/Hi-Z
+algorithms. **Renderer counters** now offers explicit experimental `GpuIndirect`,
+`ComputeCulling` and `HiZ` submission plus `Compute` deformation, with a restart
+action. Equivalent parameters are `?strategy=HiZ&skinning=Compute` (built-in
+animated sample) or `?strategy=ComputeCulling` (static/imported content). Required
+compute deformation on a scene without admitted animation data fails visibly.
+Automatic choices remain CPU-direct and CPU deformation. Hi-Z accepts only
+explicitly designated opaque occluders; uncertain deformation bounds stay visible.
 
 See [focused browser forward pipeline](../docs/work/progress/rendering/browser-focused-pipeline.md)
 for material sorting, directional shadows, linear/HDR composition, binding/packet
 contracts, UI atlas constraints and mobile quality presets. The module-owned forward
 shaders are compiled during bounded startup; `?shader=` still selects the earlier
-cooked compatibility bootstrap. This profile does not include PBR, skinning or
-GPU-driven scene submission.
+cooked compatibility bootstrap. PBR, full desktop GPUScene/BVH and meshlets remain
+outside this profile. Compute deformation and bounded indirect visibility are
+explicit experimental backend paths described by the audit above.
 
 See [portable host completion](../docs/work/progress/rendering/browser-portable-host-completion.md)
 for generated registrations, source/API guards, frame publication and the remaining
