@@ -114,6 +114,8 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Browser cooked content delivery](work/progress/rendering/browser-cooked-content.md) records the offline packager, hash-addressed manifest, asynchronous budgeted engine uploads, texture variants and optional HTTP caching policy. Source implementation remains unvalidated.
+
 [Focused browser forward pipeline](work/progress/rendering/browser-focused-pipeline.md) records CPU-direct opaque/masked/transparent rendering, bounded material bindings, directional shadows, HDR/SDR composition, engine UI and mobile quality settings. Runtime acceptance remains deferred.
 
 [WebGPU module and engine snapshot bridge](work/progress/rendering/browser-webgpu-module-assets.md) records real catalog registration, module-owned browser assets and static XRMesh/material/camera export and import. Source implementation remains unvalidated.

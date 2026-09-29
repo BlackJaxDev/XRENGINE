@@ -75,14 +75,6 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
         return Track(WebGpuImports.CreateMesh(_session, vertices, indices));
     }
 
-    public int CreateTexture(BrowserTextureData texture)
-    {
-        RequireReady();
-        ArgumentNullException.ThrowIfNull(texture);
-        byte[] pixels = texture.CopyRgbaBytes();
-        return Track(WebGpuImports.CreateTexture(_session, texture.Width, texture.Height, pixels));
-    }
-
     public int CreateMaterial(BrowserMaterialData material, int textureHandle)
     {
         RequireReady();

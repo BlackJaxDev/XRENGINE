@@ -1,0 +1,10 @@
+{
+  "tint": [0.25, 0.7, 1, 1],
+  "texture": null,
+  "alphaMode": "opaque",
+  "shading": "lambert",
+  "cullMode": "none",
+  "alphaCutoff": 0.5,
+  "castShadow": true,
+  "receiveShadow": true
+}

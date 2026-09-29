@@ -77,6 +77,7 @@
     <Compile Include="Runtime/Browser/BrowserRendererState.cs" />
     <Compile Include="Runtime/Browser/Assets/BrowserMeshData.cs" />
     <Compile Include="Runtime/Browser/Assets/BrowserTextureData.cs" />
+    <Compile Include="Runtime/Browser/Assets/BrowserTextureFormat.cs" />
     <Compile Include="Runtime/Browser/Assets/BrowserMaterialData.cs" />
     <Compile Include="Runtime/Browser/Assets/BrowserCameraSnapshot.cs" />
     <Compile Include="Runtime/Browser/Assets/BrowserSceneSnapshot.cs" />

@@ -6,7 +6,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Browser;
 
 /// <summary>Owns one real scene, its browser GPU resources, clock and batched frame submission.</summary>
-public sealed class BrowserSceneSession : IDisposable
+public sealed partial class BrowserSceneSession : IDisposable
 {
     private const double FixedStep = 1.0 / 60.0;
     private const int MaxStepsPerFrame = 4;
@@ -523,6 +523,8 @@ public sealed class BrowserSceneSession : IDisposable
     public void Frame(double timestampMilliseconds)
     {
         ThrowIfDisposed();
+        if (_cookedFailed)
+            throw new InvalidOperationException("Cooked content failed; dispose this scene session before rendering again.");
         if (_frameInProgress)
             throw new InvalidOperationException("Browser scene frames cannot overlap.");
         if (!_graphicsInitialized)
@@ -1003,6 +1005,7 @@ public sealed class BrowserSceneSession : IDisposable
             throw new InvalidOperationException("A browser scene cannot be disposed during its frame.");
         _disposed = true;
         DiscardCollection();
+        ClearCookedContent();
         try
         {
             ReleaseResources();

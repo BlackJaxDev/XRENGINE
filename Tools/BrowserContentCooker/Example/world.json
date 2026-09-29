@@ -1,0 +1,5 @@
+{
+  "cameraView": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -3, 1],
+  "cameraProjection": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -0.1, 0, 0, 0, 0, 1],
+  "instances": [{ "mesh": "triangle", "material": "paint", "modelMatrix": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }]
+}

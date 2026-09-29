@@ -1,4 +1,5 @@
 import { WebGpuCanvasRenderer } from './webgpu/webgpu-renderer.js';
+import { BrowserContentLoader } from './content-loader.js';
 
 // Ownership is keyed by the supplied element, never by a process-wide current canvas.
 const canvasOwners = new WeakMap();
@@ -24,6 +25,10 @@ export class BrowserCanvasHost {
         this.cullingEnabled = true;
         this.recolorAlternate = false;
         this.snapshotJson = null;
+        this.contentUrl = null;
+        this.contentLoader = null;
+        this.contentProgress = null;
+        this.graphicsReady = false;
         this.pointerId = null;
         this.pointerX = 0.5;
         this.pointerY = 0.5;
@@ -61,7 +66,7 @@ export class BrowserCanvasHost {
             error => { if (epoch === this.epoch) this.fail(error); }, this.shaderName);
         this.renderer = renderer;
         try {
-            this.session = this.snapshotJson
+            this.session = this.contentUrl ? this.scene.CreateCooked(this.canvas.id) : this.snapshotJson
                 ? this.scene.CreateFromSnapshot(this.canvas.id, this.snapshotJson)
                 : this.scene.Create(this.canvas.id);
             await renderer.initialize(controller.signal);
@@ -73,10 +78,44 @@ export class BrowserCanvasHost {
             this.renderers.set(this.session, renderer);
             this.scene.SetQualityPreset(this.session, this.qualityPreset);
             this.scene.SetUiEnabled(this.session, this.uiEnabled);
-            if (!this.snapshotJson) this.scene.SetInstanceCount(this.session, this.instanceCount);
+            if (!this.snapshotJson && !this.contentUrl) this.scene.SetInstanceCount(this.session, this.instanceCount);
             this.scene.InitializeGraphics(this.session, renderer.colorFormat);
             this.scene.SetCullingEnabled(this.session, this.cullingEnabled);
-            if (!this.snapshotJson) this.scene.SetSplitView(this.session, this.splitView);
+            if (!this.snapshotJson && !this.contentUrl) this.scene.SetSplitView(this.session, this.splitView);
+            if (this.contentUrl) {
+                this.setState('loading-content', 'Loading the cooked world essentials…');
+                const loader = await BrowserContentLoader.open(this.contentUrl,
+                    { features: Array.from(renderer.device.features) }, controller.signal,
+                    progress => {
+                        if (epoch !== this.epoch || controller.signal.aborted) return;
+                        this.contentProgress = progress;
+                        this.onContentProgress?.(progress);
+                    });
+                if (epoch !== this.epoch || controller.signal.aborted) return;
+                this.contentLoader = loader;
+                const session = this.session;
+                const consume = (asset, variant, bytes) => {
+                    if (epoch !== this.epoch || controller.signal.aborted || session !== this.session)
+                        throw new DOMException('Content session was replaced.', 'AbortError');
+                    const metadata = asset.kind === 'texture' ? JSON.stringify({
+                        width: variant.width, height: variant.height, format: variant.format,
+                        mipByteLengths: variant.mipByteLengths, normalConvention: variant.normalConvention,
+                        alphaMode: variant.alphaMode
+                    }) : '{}';
+                    this.scene.UploadCookedAsset(session, asset.id, asset.kind, metadata, bytes);
+                };
+                await loader.consumeEssential(consume);
+                if (epoch !== this.epoch || controller.signal.aborted) return;
+                this.graphicsReady = true;
+                this.installEvents(controller.signal);
+                this.syncSurface();
+                // Streaming has the same owner and cancellation lifetime as frame submission.
+                void loader.consumeStreamed(consume).catch(error => {
+                    if (epoch === this.epoch && !controller.signal.aborted) this.fail(error);
+                });
+                return;
+            }
+            this.graphicsReady = true;
             this.installEvents(controller.signal);
             this.syncSurface();
         } catch (error) {
@@ -188,7 +227,7 @@ export class BrowserCanvasHost {
     }
 
     syncSurface() {
-        if (!this.session || !this.renderer) return;
+        if (!this.session || !this.renderer || !this.graphicsReady) return;
         const bounds = this.canvas.getBoundingClientRect();
         this.attached = this.canvas.isConnected;
         this.rawPixelRatio = window.devicePixelRatio || 1;
@@ -209,7 +248,7 @@ export class BrowserCanvasHost {
             ratio, this.renderer.generation, visible, focused, this.attached);
         this.drawable = visible && this.attached && width > 0 && height > 0;
         if (this.drawable) {
-            this.setState('running', this.snapshotJson
+            this.setState('running', this.contentUrl ? 'Cooked world ready. Additional content streams within frame budgets.' : this.snapshotJson
                 ? 'Imported static scene ready. The captured camera projection fills the canvas.'
                 : 'WebGPU ready. Drag the scene or focus the canvas and use arrow keys.');
             if (!this.frameId) this.frameId = requestAnimationFrame(this.frame);
@@ -243,14 +282,23 @@ export class BrowserCanvasHost {
         if (epoch !== this.epoch || this.disposed) return;
         // Parse and reject malformed packages before stopping the current scene.
         this.scene.ValidateSnapshot(json);
+        this.contentUrl = null;
         this.snapshotJson = json;
+        await this.start();
+    }
+
+    async loadCookedWorld(url) {
+        if (this.disposed) throw new Error('The canvas host is disposed.');
+        // The loader enforces origin, protocol, credentials and payload path policy.
+        this.contentUrl = url;
+        this.snapshotJson = null;
         await this.start();
     }
 
     setSplitView(enabled) {
         this.splitView = enabled;
         try {
-            if (this.session && !this.snapshotJson) this.scene.SetSplitView(this.session, enabled);
+            if (this.session && !this.snapshotJson && !this.contentUrl) this.scene.SetSplitView(this.session, enabled);
         } catch (error) { this.fail(error); }
     }
 
@@ -274,7 +322,7 @@ export class BrowserCanvasHost {
             throw new Error('Instance count must be between 1 and 256.');
         this.instanceCount = count;
         try {
-            if (this.session && !this.snapshotJson) this.scene.SetInstanceCount(this.session, count);
+            if (this.session && !this.snapshotJson && !this.contentUrl) this.scene.SetInstanceCount(this.session, count);
         } catch (error) { this.fail(error); }
     }
 
@@ -282,11 +330,13 @@ export class BrowserCanvasHost {
         // Diagnostic snapshots are explicit UI actions, never animation-frame work.
         if (!this.renderer || !this.session) return null;
         return { ...this.renderer.getStatistics(), capabilities: this.renderer.getCapabilities(),
-            scene: JSON.parse(this.scene.GetStatistics(this.session)) };
+            scene: JSON.parse(this.scene.GetStatistics(this.session)),
+            content: this.contentLoader?.getStatistics() ?? null,
+            contentResources: this.contentUrl ? JSON.parse(this.scene.GetCookedContentStatistics(this.session)) : null };
     }
 
     streamDemoTexture() {
-        if (this.session && !this.snapshotJson) this.scene.StreamDemoTexture(this.session);
+        if (this.session && !this.snapshotJson && !this.contentUrl) this.scene.StreamDemoTexture(this.session);
     }
 
     setCullingEnabled(enabled) {
@@ -318,6 +368,10 @@ export class BrowserCanvasHost {
         this.frameId = 0;
         this.controller?.abort();
         this.controller = null;
+        this.graphicsReady = false;
+        this.contentLoader?.dispose();
+        this.contentLoader = null;
+        this.contentProgress = null;
         this.resizeObserver?.disconnect();
         this.attachmentObserver?.disconnect();
         this.resizeObserver = null;
