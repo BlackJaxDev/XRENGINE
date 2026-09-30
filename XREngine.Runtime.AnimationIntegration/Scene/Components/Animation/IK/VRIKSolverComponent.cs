@@ -247,6 +247,8 @@ namespace XREngine.Components.Animation
             }
 
             SyncSolverTargets();
+            if (_calibrationTargets.Count > 0)
+                UpdateTrackingWeights(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds);
             base.UpdateSolver();
             TrySendPose();
         }
@@ -365,10 +367,11 @@ namespace XREngine.Components.Animation
             Solver.RightArm.Target = ResolveCalibrationTarget(EHumanoidIKTarget.RightHand);
             Solver.LeftLeg.Target = ResolveCalibrationTarget(EHumanoidIKTarget.LeftFoot);
             Solver.RightLeg.Target = ResolveCalibrationTarget(EHumanoidIKTarget.RightFoot);
-            Solver.LeftArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftElbow);
-            Solver.RightArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.RightElbow);
-            Solver.LeftLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftKnee);
-            Solver.RightLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.RightKnee);
+            Solver.LeftArm.UpperArmTarget = ResolveCalibrationTarget(EHumanoidIKTarget.LeftElbow);
+            Solver.RightArm.UpperArmTarget = ResolveCalibrationTarget(EHumanoidIKTarget.RightElbow);
+            Solver.LeftLeg.KneeTarget = ResolveCalibrationTarget(EHumanoidIKTarget.LeftKnee);
+            Solver.RightLeg.KneeTarget = ResolveCalibrationTarget(EHumanoidIKTarget.RightKnee);
+            Solver.Spine.ChestTarget = ResolveCalibrationTarget(EHumanoidIKTarget.Chest);
         }
 
         private ushort PoseIdFromSceneNode()

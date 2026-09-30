@@ -134,9 +134,23 @@ The scene components only ask for a left/right controller model or a tracker mod
 
 ## SteamVR VIVE Trackers
 
-`XR_HTCX_vive_tracker_interaction` is integrated as the OpenXR source of truth for SteamVR tracker identity and role paths. The engine suggests bindings for the standard VIVE tracker role paths, calls `xrEnumerateViveTrackerPathsHTCX` when the extension is enabled, and handles `XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX` when trackers connect or roles change.
+The engine enumerates physical trackers through `XR_HTCX_vive_tracker_interaction` and keys scene nodes by the opaque persistent path within a session generation. Body slots are assigned only by calibration proximity. A transport role change does not change a tracker's identity or assign a body part.
 
-The default role paths are only binding candidates. They are not exposed as scene trackers until SteamVR reports a tracker through HTCX enumeration/events or a tracker action pose becomes valid. Each scene tracker keeps the canonical user path plus any persistent path, assigned role path, role name, and pose-availability flag supplied by the runtime.
+Suggested component bindings contain only profile-supported role paths; persistent paths are used only as action subaction paths. The advertised extension revision determines whether wrist and ankle bindings (revision 3) are included. All other defined roles, including handheld objects, are covered. The engine never enables an alternate pose provider because a tracker fails to stream.
+
+Role-independent streaming on SteamVR hardware is still unverified. The extension permits persistent-path subactions but does not establish that every runtime streams devices with default, duplicated, absent, or disabled mappings. A runtime-hidden/disabled device is indistinguishable from a disconnected device when enumeration omits it. Do not infer a disabled status from an inactive action.
+
+Trackers discovered after input attachment are reported as requiring a VR restart. OpenXR action subactions cannot be extended after attachment, and a session cannot attach a second action set. The player must explicitly restart VR after connecting new physical trackers; reconnecting an already admitted persistent identity can resume its existing space. There is no automatic gameplay rebuild or provider switch.
+
+Simulation/calibration reads one caller-buffered predicted snapshot containing headset, controllers, and tracker samples with a session generation, snapshot ID, and OpenXR nanosecond display time. Late poses remain separate render inputs. Current validity requires an active action and valid position/orientation; a failed location clears it immediately. Retained display poses and separate ever-tracked/last-valid diagnostics never qualify as capture samples. Publications older than 250 ms, and all stopped sessions, are unusable.
+
+Native discovery callbacks update transport metadata only. Scene tracker reconciliation and discontinuity delivery happen on the engine's pre-update scene owner. Owned tracker nodes are destroyed on collection deactivation and replaced on session-generation change.
+
+The smoke summary includes extension revision and per-identity connection, binding, activity, validity, sample/snapshot IDs, last valid sample, and restart requirement. For a hardware probe, record the runtime/version and implementation commit, start with every tracker connected, capture the summary with default and duplicate mappings, then test occlusion, reconnection, disabled devices, and late connections. A nonempty enumeration alone is not evidence of streaming.
+
+### Calibration action bindings
+
+The Global action category provides `CalibrationOpen` and `CalibrationCancel` booleans and independent `CalibrationCaptureLeft`/`CalibrationCaptureRight` float actions. Index uses left A/right B to open/cancel; Touch uses left Y/right B; Vive, Microsoft Motion, and simple controllers use left/right menu. Capture uses both triggers; simple controllers use both select buttons. These actions do not share mute bindings. Vive/Motion quick-menu activation uses left trackpad click, keeping left menu dedicated to calibration. Simple controller right-menu jump is omitted so cancel does not also jump.
 
 ## Frame Lifecycle
 
@@ -250,9 +264,9 @@ Use small values first, usually within a few milliseconds. Large positive values
 
 The OpenXR adapter logs missing/inactive action diagnostics for the active interaction profile. Open SteamVR's binding UI and verify locomotion, turn, grab, jump, quick menu, mute, and haptic outputs are bound for the controller profile in use.
 
-### Tracker roles are not assigned
+### A tracker is not streaming
 
-VIVE tracker pose actions use SteamVR role paths. Assign tracker roles in SteamVR before expecting OpenXR tracker transforms to appear. The engine records known role and persistent paths when `XR_HTCX_vive_tracker_interaction` is advertised.
+Check the per-identity tracker diagnostics in the smoke summary. Distinguish not enumerated, discovered but requiring a VR restart, unbound, inactive, stale, and tracking-lost states. Connect new trackers before explicitly restarting VR. If a runtime does not stream admitted persistent paths, record its version, extension revision, enumeration and pose results; do not silently switch to OpenVR or require player-side body assignments.
 
 ### Hand tracking extension is unavailable
 

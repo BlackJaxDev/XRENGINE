@@ -165,6 +165,7 @@ public static class BootstrapPawnFactory
         var playspaceNode = footNode.NewChild("Playspace Node");
 
         CreateVRDevices(out hmdTfm, out leftTfm, out rightTfm, vrPlayspaceNode, characterComp, vrInput, playspaceNode);
+        BootstrapVrAvatarFactory.TryCreateConfiguredAvatar(vrPlayspaceNode, footNode);
 
         return footNode;
     }
@@ -243,6 +244,7 @@ public static class BootstrapPawnFactory
         _ = AddTrackerCollectionNode(vrPlayspaceNode);
         _ = pawn?.SceneNode?.AddComponent<VRPlayerInputSet>();
         createdPawn = pawn ?? throw new InvalidOperationException("VR headset hierarchy did not create a pawn.");
+        BootstrapVrAvatarFactory.TryCreateConfiguredAvatar(vrPlayspaceNode, vrPlayspaceNode);
         return vrPlayspaceNode;
     }
 

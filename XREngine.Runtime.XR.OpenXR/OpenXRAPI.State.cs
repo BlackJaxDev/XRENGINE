@@ -164,8 +164,12 @@ public unsafe partial class OpenXRAPI
     public bool TryGetHeadLocalPose(OpenXrPoseTiming timing, out Matrix4x4 localPose)
     {
         lock (_openXrPoseLock)
-            localPose = timing == OpenXrPoseTiming.Late ? _openXrLateHeadLocalPose : _openXrPredHeadLocalPose;
-        return true;
+        {
+            localPose = timing == OpenXrPoseTiming.Late ? _openXrLateHeadLocalPose : _openXrPublishedTrackingSnapshot.HeadPose;
+            return timing == OpenXrPoseTiming.Late
+                ? _openXrLateHeadValid && IsTrackingSampleFresh(_openXrLateActionSampleTimestamp)
+                : _openXrPredHeadValid && _openXrPublishedTrackingSnapshot.HeadValid && IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp);
+        }
     }
 
     /// <summary>
@@ -229,25 +233,32 @@ public unsafe partial class OpenXRAPI
             {
                 if (leftHand)
                 {
-                    localPose = _openXrPredLeftControllerLocalPose;
-                    valid = _openXrPredLeftControllerValid;
+                    localPose = _openXrPublishedTrackingSnapshot.LeftControllerPose;
+                    valid = _openXrPublishedTrackingSnapshot.LeftControllerValid ? 1 : 0;
                 }
                 else
                 {
-                    localPose = _openXrPredRightControllerLocalPose;
-                    valid = _openXrPredRightControllerValid;
+                    localPose = _openXrPublishedTrackingSnapshot.RightControllerPose;
+                    valid = _openXrPublishedTrackingSnapshot.RightControllerValid ? 1 : 0;
                 }
             }
         }
-        return valid != 0;
+        return valid != 0 && IsTrackingSampleFresh(timing == OpenXrPoseTiming.Late ? _openXrLateActionSampleTimestamp : _openXrTrackingPublicationTimestamp);
     }
 
     public bool TryGetTrackerLocalPose(string trackerUserPath, OpenXrPoseTiming timing, out Matrix4x4 localPose)
     {
         lock (_openXrPoseLock)
         {
+            if (timing != OpenXrPoseTiming.Late)
+            {
+                bool published = _openXrPublishedTrackerPoses.TryGetValue(trackerUserPath, out RuntimeVrTrackerPose tracker);
+                localPose = tracker.LocalPose;
+                return published && tracker.Info.PoseCurrentlyUsable && IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp);
+            }
             var dict = timing == OpenXrPoseTiming.Late ? _openXrLateTrackerLocalPose : _openXrPredTrackerLocalPose;
-            return dict.TryGetValue(trackerUserPath, out localPose);
+            bool found = dict.TryGetValue(trackerUserPath, out localPose);
+            return found && IsTrackingSampleFresh(timing == OpenXrPoseTiming.Late ? _openXrLateActionSampleTimestamp : _openXrTrackingPublicationTimestamp);
         }
     }
 
@@ -260,7 +271,13 @@ public unsafe partial class OpenXRAPI
     public RuntimeVrTrackerInfo[] GetKnownTrackers()
     {
         lock (_openXrPoseLock)
-            return [.. _openXrKnownTrackers.Values];
+        {
+            RuntimeVrTrackerInfo[] result = [.. _openXrKnownTrackers.Values];
+            if (!IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp))
+                for (int i = 0; i < result.Length; i++)
+                    result[i] = result[i] with { PoseAvailable = false, IsStale = true };
+            return result;
+        }
     }
     private TransformBase? _openXrLocomotionRoot;
 

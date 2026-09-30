@@ -377,6 +377,13 @@ public unsafe partial class OpenXRAPI
     private bool LocateViews(OpenXrPoseTiming timing)
     {
         AssertOpenXrRenderThread(nameof(LocateViews));
+        lock (_openXrPoseLock)
+        {
+            if (timing == OpenXrPoseTiming.Late)
+                _openXrLateHeadValid = false;
+            else
+                _openXrPredHeadValid = false;
+        }
         var displayTime = ResolveOpenXrPoseDisplayTime(timing);
 
         var viewLocateInfo = new ViewLocateInfo
@@ -394,6 +401,7 @@ public unsafe partial class OpenXRAPI
             var viewsSpan = new Span<View>(viewsPtr, (int)_viewCount);
             if (CheckResult(Api.LocateView(_session, &viewLocateInfo, &viewState, &viewCountOutput, viewsSpan), "xrLocateViews") != Result.Success)
             {
+                Volatile.Write(ref _openXrLatestViewTrackingValid, 0);
                 Debug.LogWarning("Failed to locate OpenXR views.");
                 return false;
             }
@@ -505,6 +513,12 @@ public unsafe partial class OpenXRAPI
         var l = _views[0].Pose;
         var r = _views[1].Pose;
 
+        if (!IsFiniteTrackedViewPose(l) || !IsFiniteTrackedViewPose(r))
+        {
+            Volatile.Write(ref _openXrLatestViewTrackingValid, 0);
+            return;
+        }
+
         var lPos = new System.Numerics.Vector3(l.Position.X, l.Position.Y, l.Position.Z);
         var rPos = new System.Numerics.Vector3(r.Position.X, r.Position.Y, r.Position.Z);
         var centerPos = (lPos + rPos) * 0.5f;
@@ -564,6 +578,7 @@ public unsafe partial class OpenXRAPI
 
             if (timing == OpenXrPoseTiming.Late)
             {
+                _openXrLateHeadValid = Volatile.Read(ref _openXrLatestViewTrackingValid) != 0;
                 _openXrLateLeftEyeLocalPose = lRotM;
                 _openXrLateRightEyeLocalPose = rRotM;
                 _openXrLateHeadLocalPose = headLocal;
@@ -572,6 +587,7 @@ public unsafe partial class OpenXRAPI
             }
             else
             {
+                _openXrPredHeadValid = Volatile.Read(ref _openXrLatestViewTrackingValid) != 0;
                 _openXrPredLeftEyeLocalPose = lRotM;
                 _openXrPredRightEyeLocalPose = rRotM;
                 _openXrPredHeadLocalPose = headLocal;
@@ -580,6 +596,14 @@ public unsafe partial class OpenXRAPI
             }
         }
         RecordSmokeViewPoseCache(timing);
+    }
+
+    private static bool IsFiniteTrackedViewPose(Posef pose)
+    {
+        float lengthSquared = pose.Orientation.X * pose.Orientation.X + pose.Orientation.Y * pose.Orientation.Y
+            + pose.Orientation.Z * pose.Orientation.Z + pose.Orientation.W * pose.Orientation.W;
+        return float.IsFinite(pose.Position.X) && float.IsFinite(pose.Position.Y) && float.IsFinite(pose.Position.Z)
+            && float.IsFinite(lengthSquared) && lengthSquared > 1e-12f;
     }
 
     internal static void CreatePhase524bDeterministicRuntimePoseBasis(
@@ -699,6 +723,17 @@ public unsafe partial class OpenXRAPI
                     break;
                 case StructureType.EventDataViveTrackerConnectedHtcx:
                     HandleViveTrackerConnectedEvent((EventDataViveTrackerConnectedHTCX*)eventDataPtr);
+                    break;
+                case StructureType.EventDataInteractionProfileChanged:
+                    _controllerProfilesDirty = true;
+                    EnumerateViveTrackerPaths();
+                    break;
+                case StructureType.EventDataReferenceSpaceChangePending:
+                    {
+                        var change = (EventDataReferenceSpaceChangePending*)eventDataPtr;
+                        if (change->Session.Handle == _session.Handle && change->ReferenceSpaceType == ReferenceSpaceType.Local)
+                            _openXrPendingReferenceSpaceChangeTime = change->ChangeTime;
+                    }
                     break;
                 default:
                     if (eventData.Type.ToString().Contains("VisibilityMask", StringComparison.OrdinalIgnoreCase))

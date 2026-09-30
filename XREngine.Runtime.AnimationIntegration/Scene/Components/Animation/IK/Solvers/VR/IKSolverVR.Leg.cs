@@ -394,7 +394,7 @@ namespace XREngine.Components.Animation
                     var thighToPos = TargetPosition - Thigh.SolverPosition;
                     var footToThigh = Thigh.SolverPosition - Foot.SolverPosition;
 
-                    Vector3 b = Vector3.Cross(thighToKnee, thighToPos);
+                    Vector3 b = Vector3.Cross(thighToPos, thighToKnee);
                     Quaternion l = XRMath.LookRotation(_bendNormal, footToThigh);
                     Vector3 bRelative = Quaternion.Inverse(l).Rotate(b);
                     bAngle = float.RadiansToDegrees(MathF.Atan2(bRelative.X, bRelative.Z)) * _kneeTargetWeight;
@@ -405,8 +405,8 @@ namespace XREngine.Components.Animation
                     sO = float.DegreesToRadians(sO);
                     var lastBoneToThigh = Thigh.SolverPosition - LastBone.SolverPosition;
 
-                    _bendNormal = Quaternion.CreateFromAxisAngle(lastBoneToThigh, sO).Rotate(_bendNormal);
-                    Thigh.SolverRotation = Quaternion.CreateFromAxisAngle(Thigh.SolverRotation.Rotate(Thigh.Axis), -sO) * Thigh.SolverRotation;
+                    _bendNormal = Quaternion.CreateFromAxisAngle(lastBoneToThigh.Normalized(), sO).Rotate(_bendNormal);
+                    Thigh.SolverRotation = Quaternion.CreateFromAxisAngle(Thigh.SolverRotation.Rotate(Thigh.Axis).Normalized(), -sO) * Thigh.SolverRotation;
                 }
             }
 

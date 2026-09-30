@@ -35,16 +35,24 @@ namespace XREngine.Components
 
         public IHumanoidHeightReference? GetHumanoid()
             => HumanoidComponent as IHumanoidHeightReference
-            ?? SceneNode.GetComponents<XRComponent>().Where(component => component != this).OfType<IHumanoidHeightReference>().FirstOrDefault();
+            ?? SceneNode?.GetComponents<XRComponent>().Where(component => component != this).OfType<IHumanoidHeightReference>().FirstOrDefault();
         public IRuntimeCharacterMovementComponent? GetCharacterMovement()
             => CharacterMovementComponent as IRuntimeCharacterMovementComponent
-            ?? SceneNode.GetComponents<XRComponent>().Where(component => component != this).OfType<IRuntimeCharacterMovementComponent>().FirstOrDefault();
+            ?? SceneNode?.GetComponents<XRComponent>().Where(component => component != this).OfType<IRuntimeCharacterMovementComponent>().FirstOrDefault();
 
         public Vector3 ScaledToRealWorldEyeOffsetFromHead => EyeOffsetFromHead * ModelToRealWorldHeightRatio;
 
         protected abstract float ModelToRealWorldHeightRatio { get; }
         protected abstract float ModelHeightMeters { get; }
         public abstract void ApplyMeasuredHeight(float modelHeight);
+
+        public virtual bool TryApplyPlayerMeasurements(out string notice)
+        {
+            notice = VrBodyScaleCalculation.UnsetNotice;
+            return false;
+        }
+
+        public virtual string? GetCaptureMeasurementWarning(float trackedEyeHeightMeters) => null;
 
         protected override void OnComponentActivated()
         {
@@ -61,6 +69,12 @@ namespace XREngine.Components
             if (h is null)
                 return;
 
+            if (h.TryGetCanonicalBodyMeasurements(EyeOffsetFromHead, out AvatarBodyMeasurements measurements))
+            {
+                ApplyMeasuredHeight(measurements.EyeHeight);
+                return;
+            }
+
             var headNode = h.HeadNode;
             if (headNode is null)
                 return;
@@ -71,6 +85,9 @@ namespace XREngine.Components
             float eyeY = headTfm.BindMatrix.Translation.Y + EyeOffsetFromHead.Y;
             float footY = rootTfm.BindMatrix.Translation.Y;
             float height = eyeY - footY;
+
+            if (!float.IsFinite(height) || height <= 0.0001f)
+                return;
 
             ApplyMeasuredHeight(height);
 
@@ -117,23 +134,23 @@ namespace XREngine.Components
 
                 if (bones.Any(b => IsEyeBone(b.tfm, eyeLBoneName, eyeRBoneName)))
                 {
-                    SumEyeVertexPositions(lod, out Vector3 eyePosWorldAvg, eyeLBoneName, eyeRBoneName);
+                    if (!SumEyeVertexPositions(lod, out Vector3 eyePosWorldAvg, eyeLBoneName, eyeRBoneName))
+                        continue;
                     lodCount++;
                     avgEyePos += eyePosWorldAvg;
                 }
             }
+            if (lodCount == 0)
+                return;
             avgEyePos /= lodCount;
 
+            if (!Matrix4x4.Invert(headNode.Transform.WorldMatrix, out Matrix4x4 inverseHead))
+                return;
+            Vector3 headLocalEye = Vector3.Transform(avgEyePos, inverseHead);
             if (forceXToZero)
-                avgEyePos.X = 0;
-
-            Vector3 rootToHead = headNode.Transform.WorldMatrix.Translation - Transform.WorldMatrix.Translation;
-            avgEyePos -= rootToHead;
-
-            //if (forceXToZero)
-            //    avgEyePos.X = 0;
-
-            EyeOffsetFromHead = avgEyePos;
+                headLocalEye.X = 0;
+            if (float.IsFinite(headLocalEye.X) && float.IsFinite(headLocalEye.Y) && float.IsFinite(headLocalEye.Z))
+                EyeOffsetFromHead = headLocalEye;
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -145,6 +162,7 @@ namespace XREngine.Components
                 case nameof(ModelToRealWorldHeightRatio):
                 case nameof(RadiusRatio):
                 case nameof(FootTransform):
+                case nameof(EyeOffsetFromHead):
                     UpdateHeightScale();
                     break;
 
@@ -166,16 +184,23 @@ namespace XREngine.Components
             }
         }
 
-        protected void UpdateHeightScale()
+        protected virtual void UpdateHeightScale()
         {
             IHumanoidHeightReference? humanoid = GetHumanoid();
             if (humanoid is null)
                 return;
 
             float height = ModelHeightMeters * ModelToRealWorldHeightRatio;
+            float ratio = ModelToRealWorldHeightRatio;
+            if (!float.IsFinite(height) || height <= 0.0001f || !float.IsFinite(ratio) || ratio <= 0.0f ||
+                !float.IsFinite(RadiusRatio) || RadiusRatio is < 0.0f or >= 0.5f ||
+                !float.IsFinite(CrouchedHeightRatio) || CrouchedHeightRatio is <= 0.0f or > 1.0f ||
+                !float.IsFinite(ProneHeightRatio) || ProneHeightRatio is <= 0.0f or > 1.0f)
+                return;
 
             TransformBase rootTfm = humanoid.RootTransform;
-            TransformBase? footTfm = FootTransform ?? rootTfm.Parent;
+            // A tracking/playspace parent is not an implicit avatar foot offset.
+            TransformBase? footTfm = FootTransform;
 
             float radius = height * RadiusRatio;
             float radius2 = radius * 2.0f;
@@ -199,7 +224,11 @@ namespace XREngine.Components
                 if (footTfm is Transform tfm)
                     tfm.Translation = translation;
                 else
-                    footTfm.DeriveLocalMatrix(Matrix4x4.CreateTranslation(translation));
+                {
+                    Matrix4x4 local = footTfm.LocalMatrix;
+                    local.Translation = translation;
+                    footTfm.DeriveLocalMatrix(local);
+                }
             }
 
             //Scale the root transform to match the real-world height
@@ -207,7 +236,11 @@ namespace XREngine.Components
             if (rootTfm is Transform transform)
                 transform.Scale = scale;
             else
-                rootTfm.DeriveLocalMatrix(Matrix4x4.CreateScale(scale));
+            {
+                if (!Matrix4x4.Decompose(rootTfm.LocalMatrix, out _, out Quaternion rotation, out Vector3 translation))
+                    return;
+                rootTfm.DeriveLocalMatrix(Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(translation));
+            }
         }
 
         protected static bool SumEyeBonePositions((TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
@@ -242,18 +275,18 @@ namespace XREngine.Components
             return computedValue;
         }
 
-        protected static void SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
+        protected static bool SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
         {
             if (lod is null)
             {
                 eyePosWorldAvg = Vector3.Zero;
-                return;
+                return false;
             }
             var mesh = lod.Mesh;
             if (mesh is null)
             {
                 eyePosWorldAvg = Vector3.Zero;
-                return;
+                return false;
             }
 
             eyePosWorldAvg = Vector3.Zero;
@@ -282,6 +315,7 @@ namespace XREngine.Components
             bool any = counted > 0;
             if (any)
                 eyePosWorldAvg /= counted;
+            return any;
         }
 
         protected static bool IsEyeBone(TransformBase tfm, string? eyeLBoneName, string? eyeRBoneName)

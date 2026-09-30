@@ -62,6 +62,8 @@ public readonly record struct RuntimeVrTrackerInfo(
 /// </summary>
 public interface IRuntimeVrStateServices
 {
+    /// <summary>Persisted per-player settings, when supplied by the application host.</summary>
+    UserSettings? PlayerSettings => null;
     /// <summary>
     /// Raised when the runtime advances the app frame and transform caches should be marked dirty.
     /// </summary>
@@ -116,6 +118,8 @@ public interface IRuntimeVrStateServices
     /// Host-owned calibration settings object consumed by avatar calibration code.
     /// </summary>
     object? CalibrationSettings { get; }
+    float CalibrationHeadTiltToleranceDegrees => 10.0f;
+    string? GetControllerInteractionProfile(bool leftHand) => null;
 
     /// <summary>
     /// User interpupillary distance in real-world meters.
@@ -168,6 +172,14 @@ public interface IRuntimeVrStateServices
     /// </summary>
     RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers();
 
+    /// <summary>Copies one coherent predicted publication; insufficient capacity reports the required count without copying.</summary>
+    bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
+    {
+        snapshot = default;
+        trackerCount = 0;
+        return false;
+    }
+
     /// <summary>
     /// Returns true when the OpenVR tracked device index represents a generic tracker.
     /// </summary>
@@ -205,6 +217,7 @@ public interface IRuntimeVrStateServices
 /// </summary>
 public static class RuntimeVrStateServices
 {
+    public static UserSettings? PlayerSettings => Current.PlayerSettings;
     private static readonly DefaultRuntimeVrStateServices Default = new();
     private static IRuntimeVrStateServices _current = Default;
 
@@ -264,6 +277,8 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.CalibrationSettings"/>
     public static object? CalibrationSettings
         => Current.CalibrationSettings;
+    public static float CalibrationHeadTiltToleranceDegrees => Current.CalibrationHeadTiltToleranceDegrees;
+    public static string? GetControllerInteractionProfile(bool leftHand) => Current.GetControllerInteractionProfile(leftHand);
 
     /// <inheritdoc cref="IRuntimeVrStateServices.RealWorldIPD"/>
     public static float RealWorldIPD
@@ -307,6 +322,10 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.GetKnownOpenXrTrackers"/>
     public static RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers()
         => Current.GetKnownOpenXrTrackers();
+
+    /// <inheritdoc cref="IRuntimeVrStateServices.TryCopyTrackingSnapshot"/>
+    public static bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
+        => Current.TryCopyTrackingSnapshot(trackers, out snapshot, out trackerCount);
 
     #endregion
 

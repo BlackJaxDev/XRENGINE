@@ -197,6 +197,8 @@ public unsafe partial class OpenXRAPI
                 RightControllerAimPoseAvailable = Volatile.Read(ref _openXrPredRightControllerAimValid) != 0 || Volatile.Read(ref _openXrLateRightControllerAimValid) != 0,
                 TrackerPoseAvailable = HasAnyTrackerPoseAvailable(),
                 KnownTrackerUserPaths = GetKnownTrackerUserPaths(),
+                TrackerExtensionRevision = _viveTrackerExtensionRevision,
+                Trackers = GetTrackerSmokeDiagnostics(),
                 LeftHandJointsActive = Volatile.Read(ref _leftHandJointsActive) != 0,
                 RightHandJointsActive = Volatile.Read(ref _rightHandJointsActive) != 0,
                 DesktopMirrorComposed = Volatile.Read(ref _smokeDesktopMirrorComposed) != 0,
@@ -655,7 +657,8 @@ public unsafe partial class OpenXRAPI
     private bool HasAnyTrackerPoseAvailable()
     {
         lock (_openXrPoseLock)
-            return _openXrPredTrackerLocalPose.Count > 0 || _openXrLateTrackerLocalPose.Count > 0;
+            return IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp) && _openXrPredTrackerLocalPose.Count > 0
+                || IsTrackingSampleFresh(_openXrLateActionSampleTimestamp) && _openXrLateTrackerLocalPose.Count > 0;
     }
 
     private static (string? RuntimeName, string? RuntimeVersion) TryReadRuntimeManifestMetadata(string? runtimeManifestPath)

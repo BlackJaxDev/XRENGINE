@@ -66,6 +66,7 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
         }
 
         internal XRCamera Camera { get; }
+        public int CullingMask { get => Camera.CullingMask.Value; set => Camera.CullingMask = value; }
 
         public float Near
         {

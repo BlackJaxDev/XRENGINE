@@ -27,10 +27,17 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     bool TryGetHeadLocalPose(out Matrix4x4 localPose);
     bool TryGetHeadLocalPose(RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);
     bool TryGetEyeLocalPose(bool leftEye, out Matrix4x4 localPose);
+    string? GetControllerInteractionProfile(bool leftHand) => null;
     bool TryGetControllerLocalPose(bool leftHand, RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);
     bool TryGetTrackerLocalPose(string trackerUserPath, RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);
     string[] GetKnownTrackerUserPaths();
     RuntimeVrTrackerInfo[] GetKnownTrackers();
+    bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
+    {
+        snapshot = default;
+        trackerCount = 0;
+        return false;
+    }
     bool IsInputActionKnown(string category, string name, RuntimeVrActionValueType valueType);
     bool TryGetBooleanActionState(string category, string name, out bool value, out bool active);
     bool TryGetFloatActionState(string category, string name, out float value, out bool active);

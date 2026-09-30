@@ -145,7 +145,8 @@ public sealed class RuntimeVrState
         }
     }
 
-    public float ScaledIPD => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;
+    /// <summary>Metric eye separation with only the explicitly configured stereo scalar; avatar measurements never rescale tracking.</summary>
+    public float ScaledIPD => RealWorldIPD * IPDScalar;
     public float RealToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
     public float ModelToRealWorldHeightRatio => RealWorldHeight / ModelHeight;
     public float RealWorldToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;

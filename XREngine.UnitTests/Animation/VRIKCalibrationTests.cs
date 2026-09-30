@@ -197,22 +197,28 @@ public sealed class VRIKCalibrationTests
         rig.Tick();
         AssertSameTargets(targets, rig.GetSolverTargets());
         rig.CountTargetNodes().ShouldBe(6);
-        rig.Humanoid.GetIKTarget(EHumanoidIKTarget.LeftHand).offset.ShouldBe(offset);
+        rig.Humanoid.GetIKTarget(EHumanoidIKTarget.LeftHand).offset.ShouldBe(Matrix4x4.Identity, "Only the calibrated child owns the offset.");
         targets[2]!.LocalMatrix.ShouldBe(local);
     }
 
     [Test]
-    public void Calibration_RebindingControllers_ReparentsOwnedTargetsWithoutDuplicates()
+    public void Calibration_RebindingControllers_ReplacesOnlyReboundChildrenWithoutDuplicates()
     {
         using var rig = new SyntheticVrCalibrationRig();
         rig.Calibrate().ShouldNotBeNull();
         TransformBase?[] targets = rig.GetSolverTargets();
         RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, rig.Head, rig.Hips,
-            rig.RightHand, rig.LeftHand, rig.LeftFoot, rig.RightFoot).ShouldNotBeNull();
+            rig.RightHand, rig.LeftHand, rig.LeftFoot, rig.RightFoot).Success.ShouldBeTrue();
         rig.Tick();
-        AssertSameTargets(targets, rig.GetSolverTargets());
-        targets[2]!.Parent.ShouldBeSameAs(rig.RightHand);
-        targets[3]!.Parent.ShouldBeSameAs(rig.LeftHand);
+        var current = rig.GetSolverTargets();
+        current[0].ShouldBeSameAs(targets[0]);
+        current[1].ShouldBeSameAs(targets[1]);
+        current[2].ShouldNotBeSameAs(targets[2]);
+        current[3].ShouldNotBeSameAs(targets[3]);
+        current[2]!.Parent.ShouldBeSameAs(rig.RightHand);
+        current[3]!.Parent.ShouldBeSameAs(rig.LeftHand);
+        targets[2]!.SceneNode!.IsDestroyed.ShouldBeTrue();
+        targets[3]!.SceneNode!.IsDestroyed.ShouldBeTrue();
         rig.Humanoid.GetIKTargetTransform(EHumanoidIKTarget.LeftHand).ShouldBeSameAs(rig.RightHand);
         rig.CountTargetNodes().ShouldBe(6);
     }
@@ -224,7 +230,7 @@ public sealed class VRIKCalibrationTests
         rig.Calibrate().ShouldNotBeNull();
         TransformBase?[] targets = rig.GetSolverTargets();
         RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, targets[0], targets[1],
-            targets[2], targets[3], targets[4], targets[5]).ShouldNotBeNull();
+            targets[2], targets[3], targets[4], targets[5]).Success.ShouldBeTrue();
         rig.Tick();
         AssertSameTargets(targets, rig.GetSolverTargets());
         AssertCalibratedTargets(rig, targets);
@@ -236,7 +242,7 @@ public sealed class VRIKCalibrationTests
     {
         using var rig = new SyntheticVrCalibrationRig();
         rig.Calibrate().ShouldNotBeNull();
-        RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, rig.Head).ShouldNotBeNull();
+        RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, rig.Head).Success.ShouldBeTrue();
         rig.Tick();
         rig.CountTargetNodes().ShouldBe(1);
         rig.GetSolverTargets().Skip(1).ShouldAllBe(target => target == null);

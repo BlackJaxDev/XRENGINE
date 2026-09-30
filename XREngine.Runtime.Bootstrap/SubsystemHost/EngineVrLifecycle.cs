@@ -200,11 +200,11 @@ namespace XREngine
             }
 
             /// <summary>
-            /// Calculates the interpupillary distance (IPD) in world space,
-            /// scaling the real-world IPD to match the avatar�s in-world height.
+            /// Returns metric interpupillary distance with the explicit stereo scalar.
+            /// Avatar body measurements never rescale the headset's tracking basis.
             /// </summary>
             public static float ScaledIPD
-                => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;
+                => RuntimeEngine.VRState.ScaledIPD;
 
             /// <summary>
             /// The ratio of the desired avatar height to the real-world height (desired divided by real).

@@ -720,25 +720,10 @@ public static partial class EditorUnitTests
                 rigidBodyNode = rotationNode.Parent!;
                 heightScale.CharacterMovementComponent = rigidBodyNode.GetComponent<CharacterMovement3DComponent>()!;
 
-                var player = rigidBodyNode.AddComponent<VRPlayerCharacterComponent>()!;
-                player.HeightScaleComponent = heightScale as VRHeightScaleComponent;
-                player.IKSolver = vrIKSolver;
-                player.HumanoidComponent = humanComp;
-                player.EyeLBoneName = EyeLNodeName;
-                player.EyeRBoneName = EyeRNodeName;
-                player.EyesModelResolveName = faceNodeName;
+                var player = XREngine.Runtime.Bootstrap.Builders.BootstrapVrAvatarFactory.ConfigureImportedAvatar(
+                    rigidBodyNode, humanComp, heightScale as VRHeightScaleComponent, vrIKSolver);
 
                 VRPlayerInputSet input = rigidBodyNode.GetComponent<VRPlayerInputSet>()!;
-
-                void EndCalibration(bool enabled)
-                {
-                    if (player.IsCalibrating)
-                        player.EndCalibration();
-                    else
-                        player.BeginCalibration();
-                }
-
-                input.IsMutedChanged += EndCalibration;
 
                 if (Toggles.SceneOnlyVRPawn)
                 {

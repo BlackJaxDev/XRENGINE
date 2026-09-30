@@ -11,7 +11,9 @@ namespace XREngine.Components.Animation
         RightHand,
         LeftFoot,
         RightFoot,
+        /// <summary>Legacy serialized name for the left upper-arm tracker pose, not a positional elbow goal.</summary>
         LeftElbow,
+        /// <summary>Legacy serialized name for the right upper-arm tracker pose, not a positional elbow goal.</summary>
         RightElbow,
         LeftKnee,
         RightKnee,

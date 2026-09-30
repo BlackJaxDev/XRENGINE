@@ -149,7 +149,13 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
         => RuntimeEngine.VRState.IsInVR;
 
     public object? CalibrationSettings
-        => RuntimeEngine.VRState.CalibrationSettings;
+        => EngineVrLifecycle.CalibrationSettings;
+
+    public string? GetControllerInteractionProfile(bool leftHand) => RuntimeEngine.VRState.OpenXRApi?.GetControllerInteractionProfile(leftHand);
+
+    public float CalibrationHeadTiltToleranceDegrees => EngineVrLifecycle.CalibrationSettings.HeadTiltToleranceDegrees;
+
+    public UserSettings? PlayerSettings => Engine.UserSettings;
 
     public float RealWorldIPD
         => RuntimeEngine.VRState.RealWorldIPD;
@@ -190,6 +196,15 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
     public bool IsGenericTracker(uint deviceIndex)
         => OpenVrDeviceBackend.IsGenericTracker(deviceIndex);
 
+    public bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
+    {
+        if (TryGetOpenXr(out IOpenXrRuntime? openXrApi))
+            return openXrApi.TryCopyTrackingSnapshot(trackers, out snapshot, out trackerCount);
+        snapshot = default;
+        trackerCount = 0;
+        return false;
+    }
+
     public bool TryGetDeviceLocalPose(uint deviceIndex, RuntimeVrPoseTiming timing, out Matrix4x4 pose)
         => OpenVrDeviceBackend.TryGetDeviceLocalPose(deviceIndex, timing, out pose);
 
@@ -197,6 +212,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
     {
         if (TryGetOpenXr(out IOpenXrRuntime? openXrApi))
             return openXrApi.TryGetHeadLocalPose(MapPoseTiming(openXrApi, timing), out pose);
+
+        if (IsOpenXRActive)
+        {
+            pose = Matrix4x4.Identity;
+            return false;
+        }
 
         if (Headset is { } headset && TryGetDeviceLocalPose(headset.DeviceIndex, timing, out Matrix4x4 matrix))
         {
@@ -212,6 +233,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
     {
         if (TryGetOpenXr(out IOpenXrRuntime? openXrApi))
             return openXrApi.TryGetControllerLocalPose(leftHand, MapPoseTiming(openXrApi, timing), out pose);
+
+        if (IsOpenXRActive)
+        {
+            pose = Matrix4x4.Identity;
+            return false;
+        }
 
         RuntimeVrDeviceInfo? controller = leftHand ? LeftController : RightController;
         if (controller is { } tracked && TryGetDeviceLocalPose(tracked.DeviceIndex, timing, out Matrix4x4 matrix))
