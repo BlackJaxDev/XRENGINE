@@ -1,3 +1,4 @@
+using XREngine.Core.Files;
 using XREngine.Core.Attributes;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -97,7 +98,7 @@ public partial class UIProjectBrowserComponent : UIComponent
         }
     }
 
-    private void FileCreated(FileSystemEventArgs args)
+    private void FileCreated(AssetFileChangeEventArgs args)
     {
         string path = args.FullPath;
         if (_fileCache.ContainsKey(path))
@@ -106,7 +107,7 @@ public partial class UIProjectBrowserComponent : UIComponent
         _fileCache.Add(path, new FileInfo(args.FullPath));
     }
 
-    private void FileRenamed(RenamedEventArgs args)
+    private void FileRenamed(AssetFileRenameEventArgs args)
     {
         string prevPath = args.OldFullPath;
         if (!_fileCache.ContainsKey(prevPath))
@@ -116,7 +117,7 @@ public partial class UIProjectBrowserComponent : UIComponent
         _fileCache.Add(args.FullPath, new FileInfo(args.FullPath));
     }
 
-    private void FileDeleted(FileSystemEventArgs args)
+    private void FileDeleted(AssetFileChangeEventArgs args)
     {
         string path = args.FullPath;
         if (!_fileCache.ContainsKey(path))
@@ -125,7 +126,7 @@ public partial class UIProjectBrowserComponent : UIComponent
         _fileCache.Remove(path);
     }
 
-    private void FileChanged(FileSystemEventArgs args)
+    private void FileChanged(AssetFileChangeEventArgs args)
     {
 
     }

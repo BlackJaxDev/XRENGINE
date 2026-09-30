@@ -1,4 +1,6 @@
-﻿using OpenVR.NET.Manifest;
+
+
+using XREngine.Input;
 
 namespace XREngine
 {
@@ -6,8 +8,8 @@ namespace XREngine
         where TCategory : struct, Enum
         where TAction : struct, Enum
     {
-        private VrManifest? _vrManifest;
-        private ActionManifest<TCategory, TAction>? _actionManifest;
+        private RuntimeOpenVrApplicationManifest? _vrManifest;
+        private RuntimeOpenVrActionManifest<TCategory, TAction>? _actionManifest;
         private (Environment.SpecialFolder folder, string relativePath)[] _gameSearchPaths = [];
         private string _gameName = "XREngine Game";
         private EVRRuntime _vrRuntime = EVRRuntime.Auto;
@@ -31,28 +33,23 @@ namespace XREngine
             get => _gameSearchPaths;
             set => SetField(ref _gameSearchPaths, value);
         }
-        public VrManifest? VRManifest
+        public RuntimeOpenVrApplicationManifest? VRManifest
         {
             get => _vrManifest;
             set => SetField(ref _vrManifest, value);
         }
-        public ActionManifest<TCategory, TAction>? ActionManifest
+        public RuntimeOpenVrActionManifest<TCategory, TAction>? ActionManifest
         {
             get => _actionManifest;
             set => SetField(ref _actionManifest, value);
         }
-        object? IVRGameStartupSettings.VRManifest
+        RuntimeOpenVrApplicationManifest? IVRGameStartupSettings.VRManifest
         {
             get => VRManifest;
-            set => VRManifest = value switch
-            {
-                null => null,
-                VrManifest manifest => manifest,
-                _ => throw new ArgumentException($"Expected {typeof(VrManifest).FullName}.", nameof(value)),
-            };
+            set => VRManifest = value;
         }
 
-        object? IVRGameStartupSettings.ActionManifest => ActionManifest;
+        IRuntimeOpenVrActionManifest? IVRGameStartupSettings.ActionManifest => ActionManifest;
 
         public EVRRuntime VRRuntime
         {

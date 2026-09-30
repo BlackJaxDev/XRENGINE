@@ -557,9 +557,9 @@ Final acceptance criteria:
 - `XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs`
 - `XREngine.Runtime.Core/Scene/Physics/PhysicsBackendService.cs`
 - `XREngine.Runtime.Core/Scene/Physics/PhysicsContracts.cs`
-- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltCharacterVirtualController.cs`
-- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltBackendService.cs`
-- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs`
+- `XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltCharacterVirtualController.cs`
+- `XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltBackendService.cs`
+- `XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltScene.cs`
 - `XRENGINE/Scene/Physics/Physx/PhysxBackendService.cs`
 - `XREngine.UnitTests/Physics/JoltControllerParityTests.cs`
 

@@ -41,11 +41,11 @@ internal static class EditorOpenXrPawnSwitcher
             if (!_configured || _preparing)
                 return false;
 
-            OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+            IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
             if (_requested && _startsOnLaunch && api is null)
                 return false;
 
-            return _requested || api is null || api.RuntimeState == OpenXRAPI.OpenXrRuntimeState.DesktopOnly;
+            return _requested || api is null || api.RuntimeState == RuntimeOpenXrState.DesktopOnly;
         }
     }
 
@@ -59,16 +59,16 @@ internal static class EditorOpenXrPawnSwitcher
             if (_preparing)
                 return "Preparing selected VR runtime";
 
-            OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+            IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
             if (api is null)
                 return _requested ? "OpenXR startup pending" : "Desktop";
 
             return api.RuntimeState switch
             {
-                OpenXRAPI.OpenXrRuntimeState.SessionRunning => _requested ? "VR session running" : "Stopping VR",
-                OpenXRAPI.OpenXrRuntimeState.SessionStopping or OpenXRAPI.OpenXrRuntimeState.SessionLost => "Stopping VR",
-                OpenXRAPI.OpenXrRuntimeState.Unavailable => "OpenXR unavailable; see diagnostics",
-                OpenXRAPI.OpenXrRuntimeState.DesktopOnly => _requested ? "Starting VR" : "Desktop",
+                RuntimeOpenXrState.SessionRunning => _requested ? "VR session running" : "Stopping VR",
+                RuntimeOpenXrState.SessionStopping or RuntimeOpenXrState.SessionLost => "Stopping VR",
+                RuntimeOpenXrState.Unavailable => "OpenXR unavailable; see diagnostics",
+                RuntimeOpenXrState.DesktopOnly => _requested ? "Starting VR" : "Desktop",
                 _ => _requested ? "Starting VR" : "Stopping VR",
             };
         }
@@ -124,8 +124,8 @@ internal static class EditorOpenXrPawnSwitcher
                 return false;
             }
 
-            OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
-            if (api is not null && api.RuntimeState != OpenXRAPI.OpenXrRuntimeState.DesktopOnly)
+            IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
+            if (api is not null && api.RuntimeState != RuntimeOpenXrState.DesktopOnly)
             {
                 LastError = "Wait for OpenXR session teardown before starting it again.";
                 return false;

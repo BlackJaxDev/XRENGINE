@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System.Numerics;
 using XREngine.Browser;
 using XREngine.Data.Rendering;
@@ -87,7 +87,7 @@ public sealed partial class BrowserWorldPublishExporter
         {
             if (texture.Mipmaps.Length != 1 || (!texture.AutoGenerateMipmaps && texture.MinFilter is not (ETexMinFilter.Nearest or ETexMinFilter.Linear)))
                 throw Unsupported(path, $"texture '{texture.Name}' has an incomplete authored mip chain");
-            using MagickImage image = texture.Mipmaps[0].GetImage();
+            using RuntimeImage image = texture.Mipmaps[0].GetImage();
             nativeMips = XRTexture2D.GetMipmapsFromImage(image);
         }
         List<byte[]> mips = [];
@@ -100,9 +100,8 @@ public sealed partial class BrowserWorldPublishExporter
                 Mipmap2D native = nativeMips[mip];
                 if (native.Width != Math.Max(1u, texture.Width >> mip) || native.Height != Math.Max(1u, texture.Height >> mip) || !native.HasData())
                     throw Unsupported(path, $"texture '{texture.Name}' mip {mip} is incomplete");
-                using MagickImage image = native.GetImage();
-                using var pixels = image.GetPixels();
-                byte[] bytes = pixels.ToByteArray(PixelMapping.RGBA) ?? throw Unsupported(path, "texture RGBA conversion failed");
+                using RuntimeImage image = native.GetImage();
+                byte[] bytes = image.CopyRgba8Pixels();
                 total = checked(total + bytes.Length);
                 if (total > 4 * 1024 * 1024)
                     throw Unsupported(path, "texture mip payload exceeds 4 MiB");

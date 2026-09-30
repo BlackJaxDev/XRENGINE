@@ -103,7 +103,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// ONLY compiles the game client, does not regenerate project files.
     /// </summary>
     /// <param name="e"></param>
-    private void VerifyCodeFileModified(FileSystemEventArgs e)
+    private void VerifyCodeFileModified(AssetFileChangeEventArgs e)
     {
         if (e.FullPath.EndsWith(".cs"))
             _isGameClientInvalid = true;
@@ -113,7 +113,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// Will regenerate project files and compile the game client.
     /// </summary>
     /// <param name="e"></param>
-    private void VerifyCodeAssetsChanged(FileSystemEventArgs e)
+    private void VerifyCodeAssetsChanged(AssetFileChangeEventArgs e)
     {
         if (!e.FullPath.EndsWith(".cs"))
             return;

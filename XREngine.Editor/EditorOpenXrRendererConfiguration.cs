@@ -19,7 +19,7 @@ internal sealed class EditorOpenXrRendererConfiguration(EditorOpenXrRuntimePrepa
         Environment.SetEnvironmentVariable("XRE_UNIT_TEST_OPENXR_RUNTIME_JSON", prepared.RuntimeJsonPath);
         RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer = prepared.RuntimeServiceEnsurer;
         RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart = prepared.RecommendedDimensionsRequireServiceRestart;
-        OpenXRAPI.ClearVulkanRuntimeRequirementsCache();
+        OpenXrRuntimeSettings.ClearVulkanRuntimeRequirementsCache();
     }
 
     public void RestoreBeforeRollback()
@@ -29,12 +29,12 @@ internal sealed class EditorOpenXrRendererConfiguration(EditorOpenXrRuntimePrepa
         Environment.SetEnvironmentVariable("XRE_UNIT_TEST_OPENXR_RUNTIME_JSON", _previousOverride);
         RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer = _previousEnsurer;
         RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart = _previousRestart;
-        OpenXRAPI.ClearVulkanRuntimeRequirementsCache();
+        OpenXrRuntimeSettings.ClearVulkanRuntimeRequirementsCache();
     }
 
     private static void EnsureRuntimeCanChange()
     {
-        if (!OpenXRAPI.CanChangeRuntimeConfiguration)
-            throw new InvalidOperationException(OpenXRAPI.RuntimeConfigurationChangeFailureReason);
+        if (!OpenXrRuntimeSettings.CanChangeRuntimeConfiguration)
+            throw new InvalidOperationException(OpenXrRuntimeSettings.RuntimeConfigurationChangeFailureReason);
     }
 }

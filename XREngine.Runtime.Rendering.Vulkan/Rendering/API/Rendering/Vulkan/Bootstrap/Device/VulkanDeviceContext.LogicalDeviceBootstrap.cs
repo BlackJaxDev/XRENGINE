@@ -377,7 +377,7 @@ internal sealed unsafe partial class VulkanDeviceContext
                 extensionsToEnable.Add(requiredStreamlineExtension);
         }
 
-        var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
+        var openXrRequirements = OpenXrVulkanBootstrapServices.GetRequestedVulkanRuntimeRequirements();
         foreach (string requiredOpenXrExtension in openXrRequirements.DeviceExtensions)
         {
             if (string.IsNullOrWhiteSpace(requiredOpenXrExtension))

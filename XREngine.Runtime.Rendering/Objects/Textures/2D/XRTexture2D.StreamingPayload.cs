@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
@@ -40,7 +40,7 @@ public partial class XRTexture2D
         long DataOffset,
         int DataLength);
 
-    internal static byte[] CreateTextureStreamingPayload(string sourceFilePath, MagickImage image)
+    internal static byte[] CreateTextureStreamingPayload(string sourceFilePath, RuntimeImage image)
     {
         XRTexture2D texture = CreateTextureStreamingCacheTexture(sourceFilePath, image);
         return CreateTextureStreamingPayloadFromTexture(texture);
@@ -141,21 +141,21 @@ public partial class XRTexture2D
         try
         {
             byte[] fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(sourceFilePath);
-            using MagickImage sourceImage = new(fileBytes);
+            using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes);
             texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage));
             texture.FilePath = cacheFilePath;
             texture.OriginalPath = sourceFilePath;
             texture.OriginalLastWriteTimeUtc = sourceLastWriteTimeUtc;
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or MagickException or InvalidOperationException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or NotSupportedException)
         {
             texture = new XRTexture2D();
             return false;
         }
     }
 
-    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, MagickImage image)
+    private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, RuntimeImage image)
         => CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(image));
 
     private static XRTexture2D CreateTextureStreamingCacheTexture(string sourceFilePath, Mipmap2D[] mipmaps)
@@ -633,7 +633,7 @@ public partial class XRTexture2D
         if (resolved is not null)
             return resolved;
 
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+        if (XRRuntimeEnvironment.IsPublishedBuild)
             return null;
 
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())

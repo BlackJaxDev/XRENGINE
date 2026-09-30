@@ -1,5 +1,4 @@
 global using System.Numerics;
-global using Valve.VR;
 global using XREngine.Core;
 global using XREngine.Data;
 global using XREngine.Data.Colors;

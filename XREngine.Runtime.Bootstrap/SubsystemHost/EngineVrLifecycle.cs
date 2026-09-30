@@ -1,16 +1,8 @@
 using XREngine.Extensions;
-using OpenVR.NET;
-using OpenVR.NET.Devices;
-using OpenVR.NET.Manifest;
-using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using Valve.VR;
 using XREngine.Components.Animation;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -24,7 +16,6 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using ETextureType = Valve.VR.ETextureType;
 
 namespace XREngine
 {
@@ -51,12 +42,12 @@ namespace XREngine
             public static bool IsOpenVRActive => _activeRuntime == VRRuntime.OpenVR;
             public static bool IsOpenXRActive => _activeRuntime == VRRuntime.OpenXR;
 
-            private static OpenXRAPI? _openXRApi
+            private static IOpenXrRuntime? _openXRApi
             {
                 get => RuntimeEngine.VRState.OpenXRApi;
                 set => RuntimeEngine.VRState.OpenXRApi = value;
             }
-            public static OpenXRAPI? OpenXRApi => RuntimeEngine.VRState.OpenXRApi;
+            public static IOpenXrRuntime? OpenXRApi => RuntimeEngine.VRState.OpenXRApi;
             public static event Action<bool>? OpenXRSessionRunningChanged;
 
             private static void SyncRuntimeVrState()
@@ -71,19 +62,6 @@ namespace XREngine
                 RuntimeEngine.VRState.ViewInformation = (_viewInformation.left, _viewInformation.right, _viewInformation.world, _viewInformation.HMDNode);
             }
 
-            private static VR? _openVRApi
-            {
-                get => RuntimeEngine.VRState.OpenVRApiIfCreated;
-                set
-                {
-                    if (value is not null)
-                        RuntimeEngine.VRState.OpenVRApi = value;
-                }
-            }
-            public static VR OpenVRApi => RuntimeEngine.VRState.OpenVRApi;
-
-            private static VR? OpenVRApiIfActive => IsOpenVRActive ? _openVRApi : null;
-
             public enum VRMode
             {
                 /// <summary>
@@ -97,7 +75,7 @@ namespace XREngine
                 Local,
             }
 
-            public static ETrackingUniverseOrigin Origin { get; set; } = ETrackingUniverseOrigin.TrackingUniverseStanding;
+            public static RuntimeVrTrackingOrigin Origin { get; set; } = RuntimeVrTrackingOrigin.Standing;
 
             public static VRIKCalibrationSettings CalibrationSettings
             {
@@ -112,10 +90,6 @@ namespace XREngine
                 }
                 set => RuntimeEngine.VRState.CalibrationSettings = value;
             }
-
-            private static Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> _actions
-                => RuntimeEngine.VRState.Actions;
-            public static Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> Actions => _actions;
 
             private static bool _vrCallbacksInstalled;
             private static bool _vrCallbacksStereo;
@@ -183,8 +157,6 @@ namespace XREngine
 
                 _vrCallbacksStereo = wantStereo;
             }
-            public static event Action<Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>>? ActionsChanged;
-
             private static Frustum? _stereoCullingFrustum
             {
                 get => RuntimeEngine.VRState.StereoCullingFrustum;
@@ -291,24 +263,6 @@ namespace XREngine
                 remove => RuntimeEngine.VRState.ModelHeightChanged -= value;
             }
 
-            public static OpenVR.NET.Input.Action? GetAction<TCategory, TName>(TCategory category, TName name)
-                where TCategory : struct, Enum
-                where TName : struct, Enum
-            {
-                if (_actions.TryGetValue(category.ToString(), out var nameDic))
-                    if (nameDic.TryGetValue(name.ToString(), out var action))
-                        return action;
-                return null;
-            }
-
-            public static bool TryGetAction<TCategory, TName>(TCategory category, TName name, [NotNullWhen(true)] out OpenVR.NET.Input.Action? action)
-                where TCategory : struct, Enum
-                where TName : struct, Enum
-            {
-                action = GetAction(category, name);
-                return action is not null;
-            }
-
             public static bool InitializeOpenXR(XRWindow? window)
             {
                 if (window is null)
@@ -323,7 +277,7 @@ namespace XREngine
                     // as the OpenVR path. Disable OpenVR submission/state, but keep callback wiring unified.
                     DisableOpenVRRuntimeState();
 
-                    _openXRApi ??= new OpenXRAPI();
+                    _openXRApi ??= OpenXrRuntimeServices.Create();
                     _openXRApi.Window = window;
                     ((IOpenXrApplicationLifecycle)_openXRApi).EnableRuntimeMonitoring();
                     _openXrRuntimeMonitoring = true;
@@ -411,29 +365,6 @@ namespace XREngine
             internal static void InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
                 => RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(timing);
 
-            private static void CreateActions(IActionManifest actionManifest, VR vr)
-            {
-                _actions.Clear();
-                foreach (var actionSet in actionManifest.ActionSets)
-                {
-                    var actions = actionManifest.ActionsForSet(actionSet);
-                    foreach (var action in actions)
-                    {
-                        var a = action.CreateAction(vr, null);
-                        if (a is null)
-                            continue;
-
-                        string categoryName = actionSet.Name.ToString();
-                        if (!_actions.TryGetValue(categoryName, out var nameDic))
-                            _actions.Add(categoryName, nameDic = []);
-
-                        nameDic.Add(action.Name.ToString(), a);
-                    }
-                }
-                ActionsChanged?.Invoke(_actions);
-                RuntimeEngine.VRState.NotifyActionsChanged();
-            }
-
             //public static XRTexture2DArray? VRStereoViewTextureArray { get; private set; } = null;
             public static XRFrameBuffer? VRStereoRenderTarget
             {
@@ -484,38 +415,15 @@ namespace XREngine
                 set => RuntimeEngine.VRState.Renderer = value;
             }
 
-            private static async Task<bool> InitSteamVR(IActionManifest actionManifest, VrManifest vrManifest)
+            private static async Task<bool> InitSteamVR(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest)
                 => await Task.Run(() =>
                 {
-                    var vr = OpenVRApi;
-                    vr.DeviceDetected += OnDeviceDetected;
-                    if (!vr.TryStart(EVRApplicationType.VRApplication_Scene))
+                    if (!OpenVrRuntimeBackend.TryStartScene(actionManifest, vrManifest, out string? failure))
                     {
-                        Debug.LogWarning("Failed to initialize SteamVR.");
-                        vr.DeviceDetected -= OnDeviceDetected;
+                        Debug.LogWarning(failure ?? "Failed to initialize SteamVR.");
                         return false;
                     }
-
-                    // OpenVR.NET reports Init success when the system interface exists,
-                    // even if the scene compositor interface cannot be obtained. A scene
-                    // renderer requires both; otherwise UpdateDraw would dereference a
-                    // null compositor on every render callback.
-                    if (vr.CVR is null || Valve.VR.OpenVR.Compositor is null)
-                    {
-                        Debug.LogWarning(
-                            "SteamVR initialized without an IVRCompositor interface. " +
-                            "OpenVR scene rendering will not start.");
-                        vr.DeviceDetected -= OnDeviceDetected;
-                        vr.Exit();
-                        return false;
-                    }
-
-                    _openVRApi = vr;
                     _activeRuntime = VRRuntime.OpenVR;
-
-                    InstallApp(vrManifest);
-                    vr.SetActionManifest(actionManifest);
-                    CreateActions(actionManifest, vr);
                     Engine.Time.Timer.PreUpdateFrame += Update;
                     IsInVR = true;
                     SyncRuntimeVrState();
@@ -531,8 +439,8 @@ namespace XREngine
             /// <param name="getEyeTextureHandleFunc"></param>
             /// <returns></returns>
             public static async Task<bool> InitializeLocal(
-                IActionManifest actionManifest,
-                VrManifest vrManifest,
+                IRuntimeOpenVrActionManifest actionManifest,
+                RuntimeOpenVrApplicationManifest vrManifest,
                 XRWindow window)
             {
                 bool init = await InitSteamVR(actionManifest, vrManifest);
@@ -627,7 +535,7 @@ namespace XREngine
                 {
                     try
                     {
-                        OpenVRApi.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                        OpenVrRuntimeBackend.TryGetRecommendedRenderTargetSize(out rW, out rH);
                     }
                     catch
                     {
@@ -670,7 +578,7 @@ namespace XREngine
                 InitRenderCallbacks(window);
 
                 uint rW = 0u, rH = 0u;
-                OpenVRApi.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                OpenVrRuntimeBackend.TryGetRecommendedRenderTargetSize(out rW, out rH);
                 _lastRenderWidth = rW;
                 _lastRenderHeight = rH;
 
@@ -1025,13 +933,13 @@ namespace XREngine
 
                 //Begin drawing to the headset (OpenVR runtime only)
                 if (_openVrRuntimeActiveForRender && IsOpenVRActive)
-                    _ = OpenVRApi.UpdateDraw(Origin);
+                    OpenVrRuntimeBackend.UpdateDraw(Origin);
 
                 //Update VR-related transforms
                 RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Recalc);
 
                 if (_openVrRuntimeActiveForRender && IsOpenVRActive)
-                    IsPowerSaving = OpenVRApi.CVR.ShouldApplicationReduceRenderingWork();
+                    IsPowerSaving = OpenVrRuntimeBackend.ShouldReduceRenderingWork();
 
                 var beforeVrPass = RuntimeEngine.Rendering.Stats.Frame.CurrentCounters;
                 long vrPassStartTicks = Stopwatch.GetTimestamp();
@@ -1145,9 +1053,7 @@ namespace XREngine
                 if (!_openVrRuntimeActiveForRender)
                     return;
 
-                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                float hz = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
-                if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
+                if (!OpenVrRuntimeBackend.TryGetDisplayFrequency(out float hz))
                     return;
                 
                 //Time.Timer.TargetRenderFrequency = hz;
@@ -1157,9 +1063,7 @@ namespace XREngine
                 if (!_openVrRuntimeActiveForRender)
                     return;
 
-                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                float hz = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
-                if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
+                if (!OpenVrRuntimeBackend.TryGetDisplayFrequency(out float hz))
                     return;
                 
                 //Time.Timer.TargetRenderFrequency = hz / 2;
@@ -1200,8 +1104,8 @@ namespace XREngine
             /// </summary>
             /// <returns></returns>
             public static async Task<bool> IninitializeClient(
-                IActionManifest actionManifest,
-                VrManifest vrManifest)
+                IRuntimeOpenVrActionManifest actionManifest,
+                RuntimeOpenVrApplicationManifest vrManifest)
                 => await InitSteamVR(actionManifest, vrManifest);
 
             /// <summary>
@@ -1214,23 +1118,6 @@ namespace XREngine
                 return false;
             }
 
-            private static void InstallApp(VrManifest vrManifest)
-            {
-                string path = Path.Combine(Directory.GetCurrentDirectory(), ".vrmanifest");
-                string manifestJson = JsonSerializer.Serialize(
-                    new VrManifestInstallDocument
-                    {
-                        Applications = [vrManifest]
-                    },
-                    XREnginePrettyJsonContext.Default.VrManifestInstallDocument);
-                File.WriteAllText(path, manifestJson);
-
-                //Valve.VR.OpenVR.Applications.RemoveApplicationManifest( path );
-                var error = Valve.VR.OpenVR.Applications?.AddApplicationManifest(path, false);
-                if (error != EVRApplicationError.None)
-                    Debug.LogWarning($"Error installing app manifest: {error}");
-            }
-
             //public static float PosePredictionSec { get; set; } = 0f / 1000.0f;
 
             private static void Update()
@@ -1239,33 +1126,7 @@ namespace XREngine
                     ? Engine.Allocations.BeginScope("VR.OpenVR.InputUpdate", AllocationScopeCategory.VrInput)
                     : default;
 
-                if (OpenVRApi.Headset is null)
-                    OpenVRApi.UpdateInput(0);
-                else
-                {
-                    uint deviceIndex = OpenVRApi.Headset!.DeviceIndex;
-                    ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-
-                    float secondsSinceLastVsync = 0.0f;
-                    ulong frameCount = 0uL;
-                    OpenVRApi.CVR.GetTimeSinceLastVsync(ref secondsSinceLastVsync, ref frameCount);
-
-                    float displayFrequency = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(
-                        deviceIndex,
-                        ETrackedDeviceProperty.Prop_DisplayFrequency_Float,
-                        ref error);
-
-                    float motionToPhoton = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(
-                        deviceIndex,
-                        ETrackedDeviceProperty.Prop_SecondsFromVsyncToPhotons_Float,
-                        ref error);
-
-                    float frameDuration = 1.0f / displayFrequency;
-                    float fSecondsFromNow = frameDuration - secondsSinceLastVsync + motionToPhoton;
-
-                    OpenVRApi.UpdateInput(fSecondsFromNow);
-                }
-                OpenVRApi.Update();
+                OpenVrRuntimeBackend.UpdateInputAndDevices();
             }
 
             /// <summary>
@@ -1294,122 +1155,31 @@ namespace XREngine
                 private set => RuntimeEngine.VRState.RightEyeViewport = value;
             }
 
-            private static void OnDeviceDetected(VrDevice device)
-            {
-                Debug.Out($"Device detected: {device}");
-            }
-
-            //private static VRTextureBounds_t _leftEyeTexBounds = new()
-            //{
-            //    uMin = 0.0f,
-            //    uMax = 0.5f,
-            //    vMin = 0.0f,
-            //    vMax = 1.0f,
-            //};
-
-            //private static VRTextureBounds_t _rightEyeTexBounds = new()
-            //{
-            //    uMin = 0.5f,
-            //    uMax = 1.0f,
-            //    vMin = 0.0f,
-            //    vMax = 1.0f,
-            //};
-
             public static void SubmitRenders(
                 IntPtr leftEyeHandle,
                 IntPtr rightEyeHandle,
-                ETextureType apiType = ETextureType.OpenGL,
-                EColorSpace colorSpace = EColorSpace.Auto,
-                EVRSubmitFlags flags = EVRSubmitFlags.Submit_Default)
+                RuntimeOpenVrTextureType apiType = RuntimeOpenVrTextureType.OpenGL,
+                RuntimeOpenVrColorSpace colorSpace = RuntimeOpenVrColorSpace.Auto,
+                RuntimeOpenVrSubmitFlags flags = RuntimeOpenVrSubmitFlags.Default)
             {
                 if (!IsOpenVRActive)
                     return;
 
-                Texture_t eyeTexture = RuntimeEngine.VRState.EyeTexture;
-                VRTextureBounds_t textureBounds = RuntimeEngine.VRState.SingleTextureBounds;
-                eyeTexture.eColorSpace = colorSpace;
-                eyeTexture.eType = apiType;
+                if (apiType == RuntimeOpenVrTextureType.OpenGL && Renderer?.BackendId != RendererBackendId.OpenGL)
+                {
+                    throw new NotSupportedException(
+                        "OpenVR OpenGL texture submission requires an active OpenGL renderer; Vulkan image handles cannot be submitted as OpenGL textures.");
+                }
 
-                var comp = Valve.VR.OpenVR.Compositor;
-
-                eyeTexture.handle = leftEyeHandle;
-                bool leftSubmitFailed = CheckError(comp.Submit(EVREye.Eye_Left, ref eyeTexture, ref textureBounds, flags));
-
-                eyeTexture.handle = rightEyeHandle;
-                bool rightSubmitFailed = CheckError(comp.Submit(EVREye.Eye_Right, ref eyeTexture, ref textureBounds, flags));
-                RuntimeEngine.VRState.EyeTexture = eyeTexture;
-                RuntimeEngine.VRState.SingleTextureBounds = textureBounds;
-
-                comp.PostPresentHandoff();
-                if (!leftSubmitFailed && !rightSubmitFailed)
+                RuntimeOpenVrSubmitResult result = (RuntimeOpenVrCompositorServices.Current
+                    ?? throw new InvalidOperationException("The OpenVR compositor service is unavailable."))
+                    .SubmitEyes(leftEyeHandle, rightEyeHandle, apiType, colorSpace, flags);
+                if (result.LeftError != 0)
+                    Debug.LogWarning($"OpenVR left-eye compositor error: {result.LeftError}");
+                if (result.RightError != 0)
+                    Debug.LogWarning($"OpenVR right-eye compositor error: {result.RightError}");
+                if (result.Succeeded)
                     RuntimeEngine.Rendering.Stats.Vr.RecordVrRenderFramePresented();
-            }
-
-            //public static void SubmitRender(
-            //    IntPtr eyesHandle,
-            //    ETextureType apiType = ETextureType.OpenGL,
-            //    EColorSpace colorSpace = EColorSpace.Auto,
-            //    EVRSubmitFlags flags = EVRSubmitFlags.Submit_GlArrayTexture)
-            //{
-            //    _eyeTex.eColorSpace = colorSpace;
-            //    _eyeTex.handle = eyesHandle;
-            //    _eyeTex.eType = apiType;
-
-            //    var comp = Valve.VR.OpenVR.Compositor;
-            //    CheckError(comp.Submit(EVREye.Eye_Left, ref _eyeTex, ref _singleTexBounds, flags));
-            //    CheckError(comp.Submit(EVREye.Eye_Right, ref _eyeTex, ref _singleTexBounds, flags));
-
-            //    comp.PostPresentHandoff();
-            //}
-
-            //enum EVRSubmitFlags
-            //{
-            //    // Simple render path. App submits rendered left and right eye images with no lens distortion correction applied.
-            //    Submit_Default = 0x00,
-
-            //    // App submits final left and right eye images with lens distortion already applied (lens distortion makes the images appear
-            //    // barrel distorted with chromatic aberration correction applied). The app would have used the data returned by
-            //    // vr::IVRSystem::ComputeDistortion() to apply the correct distortion to the rendered images before calling Submit().
-            //    Submit_LensDistortionAlreadyApplied = 0x01,
-
-            //    // If the texture pointer passed in is actually a renderbuffer (e.g. for MSAA in OpenGL) then set this flag.
-            //    Submit_GlRenderBuffer = 0x02,
-
-            //    // Do not use
-            //    Submit_Reserved = 0x04,
-
-            //    // Set to indicate that pTexture is a pointer to a VRTextureWithPose_t.
-            //    // This flag can be combined with Submit_TextureWithDepth to pass a VRTextureWithPoseAndDepth_t.
-            //    Submit_TextureWithPose = 0x08,
-
-            //    // Set to indicate that pTexture is a pointer to a VRTextureWithDepth_t.
-            //    // This flag can be combined with Submit_TextureWithPose to pass a VRTextureWithPoseAndDepth_t.
-            //    Submit_TextureWithDepth = 0x10,
-
-            //    // Set to indicate a discontinuity between this and the last frame.
-            //    // This will prevent motion smoothing from attempting to extrapolate using the pair.
-            //    Submit_FrameDiscontinuty = 0x20,
-
-            //    // Set to indicate that pTexture->handle is a contains VRVulkanTextureArrayData_t
-            //    Submit_VulkanTextureWithArrayData = 0x40,
-
-            //    // If the texture pointer passed in is an OpenGL Array texture, set this flag
-            //    Submit_GlArrayTexture = 0x80,
-
-            //    // If the texture is an EGL texture and not an glX/wGL texture (Linux only, currently)
-            //    Submit_IsEgl = 0x100,
-
-            //    // Do not use
-            //    Submit_Reserved2 = 0x08000,
-            //    Submit_Reserved3 = 0x10000,
-            //};
-
-            public static bool CheckError(EVRCompositorError error)
-            {
-                bool hasError = error != EVRCompositorError.None;
-                if (hasError)
-                    Debug.LogWarning($"OpenVR compositor error: {error}");
-                return hasError;
             }
 
             public static NamedPipeServerStream? PipeServer { get; private set; }
@@ -1469,41 +1239,14 @@ namespace XREngine
                 if (!IsOpenVRActive)
                     return;
 
-                uint size = (uint)Marshal.SizeOf<Compositor_FrameTiming>();
-                Compositor_FrameTiming currentFrame = new();
-                Compositor_FrameTiming previousFrame = new();
-                currentFrame.m_nSize = size;
-                previousFrame.m_nSize = size;
-                Valve.VR.OpenVR.Compositor.GetFrameTiming(ref currentFrame, 0);
-                Valve.VR.OpenVR.Compositor.GetFrameTiming(ref previousFrame, 1);
+                if (!OpenVrRuntimeBackend.TryReadFrameStats(LastFrameSampleIndex, out RuntimeVrFrameStats stats))
+                    return;
 
-                uint currentFrameIndex = currentFrame.m_nFrameIndex;
-                uint amountOfFramesSinceLast = currentFrameIndex - LastFrameSampleIndex;
-
-                double gpuFrametimeMs = 0;
-                double cpuFrametimeMs = 0;
-                double totalFrametimeMs = 0;
-
-                for (uint i = 0; i < amountOfFramesSinceLast; i++)
-                {
-                    Valve.VR.OpenVR.Compositor.GetFrameTiming(ref currentFrame, i);
-                    Valve.VR.OpenVR.Compositor.GetFrameTiming(ref previousFrame, i + 1);
-
-                    gpuFrametimeMs += currentFrame.m_flTotalRenderGpuMs;
-                    cpuFrametimeMs += currentFrame.m_flNewFrameReadyMs - currentFrame.m_flNewPosesReadyMs + currentFrame.m_flCompositorRenderCpuMs;
-                    totalFrametimeMs += (currentFrame.m_flSystemTimeInSeconds - previousFrame.m_flSystemTimeInSeconds) * 1000f;
-                }
-
-                gpuFrametimeMs /= amountOfFramesSinceLast;
-                cpuFrametimeMs /= amountOfFramesSinceLast;
-                totalFrametimeMs /= amountOfFramesSinceLast;
-
-                LastFrameSampleIndex = currentFrameIndex;
-
-                GpuFrametime = (float)gpuFrametimeMs;
-                CpuFrametime = (float)cpuFrametimeMs;
-                TotalFrametime = (float)totalFrametimeMs;
-                Framerate = (int)(1.0f / totalFrametimeMs * 1000.0f);
+                LastFrameSampleIndex = stats.LastFrameSampleIndex;
+                GpuFrametime = stats.GpuFrameTimeMs;
+                CpuFrametime = stats.CpuFrameTimeMs;
+                TotalFrametime = stats.TotalFrameTimeMs;
+                Framerate = stats.FrameRate;
 
                 Debug.Out($"VR: {Framerate}fps / GPU: {MathF.Round(GpuFrametime, 2, MidpointRounding.AwayFromZero)}ms / CPU: {MathF.Round(CpuFrametime, 2, MidpointRounding.AwayFromZero)}ms");
             }

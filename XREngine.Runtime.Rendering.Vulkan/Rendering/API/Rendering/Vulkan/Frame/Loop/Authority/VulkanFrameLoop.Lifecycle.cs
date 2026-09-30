@@ -48,7 +48,7 @@ internal sealed partial class VulkanFrameLoop
             EnterInitializationStage(VulkanFrameLoopInitializationStage.Instance);
             InitializeDeviceBootstrap();
             EnterInitializationStage(VulkanFrameLoopInitializationStage.TargetInstanceResources);
-            CreateTargetInstanceResources(Api, _window);
+            CreateTargetInstanceResources(Api);
             EnterInitializationStage(VulkanFrameLoopInitializationStage.OutputServices);
             AttachOutputServices(Api);
             EnterInitializationStage(VulkanFrameLoopInitializationStage.PhysicalDevice);
@@ -239,7 +239,7 @@ internal sealed partial class VulkanFrameLoop
             {
                 RunCleanupStep(
                     "target instance resources",
-                    () => DestroyTargetInstanceResources(Api, _window),
+                    () => DestroyTargetInstanceResources(Api),
                     failures);
             }
             if (stage >= VulkanFrameLoopInitializationStage.Instance)
@@ -487,7 +487,7 @@ internal sealed partial class VulkanFrameLoop
     {
         _outputRuntime.PrepareObsHookCompatibility();
         OpenXrVulkanRuntimeRequirements openXrRequirements =
-            OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
+            OpenXrVulkanBootstrapServices.GetRequestedVulkanRuntimeRequirements();
         VulkanDiagnosticOptions diagnostics = _telemetry._diagnosticOptions;
         VulkanDeviceBootstrapResult result = _deviceContext.CreateInstance(
             Api,
@@ -519,7 +519,7 @@ internal sealed partial class VulkanFrameLoop
     private void SelectPhysicalDevice()
     {
         OpenXrVulkanRuntimeRequirements openXrRequirements =
-            OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
+            OpenXrVulkanBootstrapServices.GetRequestedVulkanRuntimeRequirements();
         VulkanOpenXrRequestedDeviceFacts openXrRequestedDevice = ResolveOpenXrRequestedDevice();
         VulkanDeviceExtensionRequirements extensions = new(
             _targetDriver.RequiredDeviceExtensions,
@@ -580,7 +580,7 @@ internal sealed partial class VulkanFrameLoop
         }
         else
         {
-            querySucceeded = OpenXRAPI.TryGetRequestedVulkanPhysicalDevice(
+            querySucceeded = OpenXrVulkanBootstrapServices.TryGetRequestedVulkanPhysicalDevice(
                 (nint)_deviceContext.Instance.Handle,
                 out requestedDevice,
                 out failureReason);
@@ -665,7 +665,7 @@ internal sealed partial class VulkanFrameLoop
         VulkanDeviceExtensionRequirements extensions = new(
             _targetDriver.RequiredDeviceExtensions,
             provisioning.RequiredDeviceExtensions,
-            OpenXRAPI.GetRequestedVulkanRuntimeRequirements().DeviceExtensions);
+            OpenXrVulkanBootstrapServices.GetRequestedVulkanRuntimeRequirements().DeviceExtensions);
         VulkanLogicalDeviceBootstrapResult result = _deviceContext.BootstrapLogicalDevice(
             new VulkanLogicalDeviceBootstrapRequest(
                 extensions,

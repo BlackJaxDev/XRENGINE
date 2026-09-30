@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Platform.Desktop\XREngine.Runtime.Platform.Desktop.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
@@ -36,7 +37,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.XR.OpenVR\XREngine.Runtime.XR.OpenVR.csproj" />
   </ItemGroup>
 
   <ItemGroup>

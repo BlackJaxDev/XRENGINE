@@ -227,7 +227,7 @@ namespace XREngine
                 return true;
             }
 
-            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (!XRRuntimeEnvironment.IsPublishedBuild)
             {
                 foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {

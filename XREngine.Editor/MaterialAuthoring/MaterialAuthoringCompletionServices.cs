@@ -1,6 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -75,19 +75,27 @@ public static class MaterialTextureArrayBuilder
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     MaterialTextureArrayLayer layer = recipe.Layers[index];
-                    using MagickImage image = new(layer.SourcePath);
+                    using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(layer.SourcePath));
+                    RuntimeImage selected = image;
                     if (image.Width != (uint)width || image.Height != (uint)height)
                     {
                         if (!recipe.AllowResample)
                             throw new InvalidDataException(
                                 $"Layer '{layer.SourcePath}' does not match {width}x{height}.");
-                        image.FilterType = FilterType.Lanczos;
-                        image.Resize((uint)width, (uint)height);
+                        selected = RuntimeImageCodecs.Require().Resize(image, (uint)width, (uint)height, RuntimeImageResizeMode.Lanczos);
                     }
-                    layers[index] = new XRTexture2D(image)
+                    try
                     {
-                        FilePath = Path.GetFullPath(layer.SourcePath),
-                    };
+                        layers[index] = new XRTexture2D(selected)
+                        {
+                            FilePath = Path.GetFullPath(layer.SourcePath),
+                        };
+                    }
+                    finally
+                    {
+                        if (!ReferenceEquals(selected, image))
+                            selected.Dispose();
+                    }
                     sources[index] = Path.GetFullPath(layer.SourcePath);
                 }
                 return new MaterialTextureArrayBuildResult(

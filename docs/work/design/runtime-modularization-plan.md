@@ -1,5 +1,7 @@
 # Runtime Modularization And Bootstrap Architecture
 
+> Historical implementation record. Later native subsystem extraction and full-project portability extend these boundaries. Use [Runtime Project Organization](../../architecture/runtime/project-organization.md) for current ownership and [the integration checklist](../todo/platform/native-subsystem-project-split-todo.md) for remaining acceptance.
+
 ## Overview
 
 This document records the staged restructuring and the implemented runtime assembly boundaries:

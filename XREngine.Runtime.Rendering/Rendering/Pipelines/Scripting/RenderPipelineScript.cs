@@ -14,12 +14,31 @@ namespace XREngine.Rendering;
 public sealed class RenderPipelineScript
 {
     private static readonly Lazy<ScriptCommandRegistry> s_commandRegistry = new(BuildCommandRegistry, LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Dictionary<Type, (string? MethodName, bool IncludeLegacyTypeNameAlias)> s_staticCommandNames = [];
+    private static readonly object s_staticCommandNamesGate = new();
     private readonly IReadOnlyList<IScriptStep> _steps;
 
     private RenderPipelineScript(IReadOnlyList<IScriptStep> steps)
         => _steps = steps;
 
     public static IReadOnlyDictionary<string, Type> CommandTypes => s_commandRegistry.Value.Lookup;
+
+    /// <summary>Registers a generated or host-supplied script name for a statically installed command.</summary>
+    public static void RegisterCommandScriptName(Type commandType, string? methodName, bool includeLegacyTypeNameAlias)
+    {
+        ArgumentNullException.ThrowIfNull(commandType);
+        if (!typeof(ViewportRenderCommand).IsAssignableFrom(commandType))
+            throw new ArgumentException("Script command type must derive from ViewportRenderCommand.", nameof(commandType));
+        lock (s_staticCommandNamesGate)
+        {
+            if (s_staticCommandNames.TryGetValue(commandType, out var existing) &&
+                existing == (methodName, includeLegacyTypeNameAlias))
+                return;
+            if (s_commandRegistry.IsValueCreated)
+                throw new InvalidOperationException("Render command script names must be registered before the command registry is first read.");
+            s_staticCommandNames[commandType] = (methodName, includeLegacyTypeNameAlias);
+        }
+    }
 
     public static RenderPipelineScript Create(Action<Builder> build)
     {
@@ -65,28 +84,20 @@ public sealed class RenderPipelineScript
             if (type.IsAbstract || type.ContainsGenericParameters || !baseType.IsAssignableFrom(type))
                 continue;
 
-            string scriptMethodName = ResolveScriptCommandMethodName(type, inspectAttributes: !XRRuntimeEnvironment.IsAotRuntimeBuild);
+            bool hasStaticName;
+            (string? MethodName, bool IncludeLegacyTypeNameAlias) staticName;
+            lock (s_staticCommandNamesGate)
+                hasStaticName = s_staticCommandNames.TryGetValue(type, out staticName);
+            RenderPipelineScriptCommandAttribute? attribute = hasStaticName || XRRuntimeEnvironment.IsPublishedBuild
+                ? null
+                : type.GetCustomAttribute<RenderPipelineScriptCommandAttribute>();
+            string scriptMethodName = staticName.MethodName ?? attribute?.MethodName ?? ResolveScriptCommandMethodName(type, inspectAttributes: false);
             TryAddLookupName(lookup, scriptMethodName, type);
             methodNames[type] = scriptMethodName;
-        }
-
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-            return new ScriptCommandRegistry(lookup, methodNames);
-
-        foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(baseType.Assembly))
-        {
-            if (type.IsAbstract || type.ContainsGenericParameters || !baseType.IsAssignableFrom(type) || type.GetConstructor(Type.EmptyTypes) is null)
-                continue;
-
-            if (methodNames.ContainsKey(type))
-                continue;
-
-            string scriptMethodName = ResolveScriptCommandMethodName(type, inspectAttributes: true);
-            TryAddLookupName(lookup, scriptMethodName, type);
-            methodNames[type] = scriptMethodName;
-
-            RenderPipelineScriptCommandAttribute? attribute = type.GetCustomAttribute<RenderPipelineScriptCommandAttribute>();
-            if ((attribute?.IncludeLegacyTypeNameAlias ?? false) && !string.Equals(scriptMethodName, type.Name, StringComparison.Ordinal))
+            bool includeLegacyAlias = hasStaticName
+                ? staticName.IncludeLegacyTypeNameAlias
+                : attribute?.IncludeLegacyTypeNameAlias ?? false;
+            if (includeLegacyAlias && !string.Equals(scriptMethodName, type.Name, StringComparison.Ordinal))
                 TryAddLookupName(lookup, type.Name, type);
         }
 
@@ -336,7 +347,7 @@ public sealed class RenderPipelineScript
 
             if (!ViewportRenderCommandContainer.TryCreateRegisteredCommand(commandType, out ViewportRenderCommand? command) || command is null)
             {
-                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                if (XRRuntimeEnvironment.IsPublishedBuild)
                     throw new InvalidOperationException($"No registered render command factory for '{commandType.Name}'.");
 
                 command = (ViewportRenderCommand)(Activator.CreateInstance(commandType)

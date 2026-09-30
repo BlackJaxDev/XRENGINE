@@ -326,7 +326,7 @@ namespace XREngine
                 allowedEntries.Add(projectFileName);
 
             List<string> unexpected = [];
-            foreach (string entry in Directory.EnumerateFileSystemEntries(ProjectDirectory))
+            foreach (string entry in AssetFileSystemServices.Required.EnumerateFileSystemEntries(ProjectDirectory))
             {
                 string? name = Path.GetFileName(entry);
                 if (name is null)

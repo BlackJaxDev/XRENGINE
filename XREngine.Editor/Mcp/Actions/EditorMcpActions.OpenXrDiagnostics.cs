@@ -63,7 +63,7 @@ public sealed partial class EditorMcpActions
     [Description("Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion.")]
     public static Task<McpToolResponse> GetOpenXrRuntimeDiagnosticsAsync(McpToolContext context)
     {
-        OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+        IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
         if (api is null)
             return Task.FromResult(new McpToolResponse("No OpenXR API has been created.", isError: true));
 
@@ -83,7 +83,7 @@ public sealed partial class EditorMcpActions
     [Description("Request orderly exit of the active OpenXR session through the runtime. Inspect runtime diagnostics to observe completion.")]
     public static Task<McpToolResponse> RequestOpenXrSessionExitAsync(McpToolContext context)
     {
-        OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+        IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
         if (api is null || !RuntimeEngine.VRState.IsOpenXRActive || !api.IsSessionRunning)
             return Task.FromResult(new McpToolResponse("No active OpenXR session is available.", isError: true));
 
@@ -98,7 +98,7 @@ public sealed partial class EditorMcpActions
     [Description("Request OpenXR session startup on the configured window after an orderly exit. Inspect runtime diagnostics to observe asynchronous creation or an explicit recovery failure.")]
     public static Task<McpToolResponse> RequestOpenXrSessionStartAsync(McpToolContext context)
     {
-        OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+        IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
         if (api?.Window is null)
             return Task.FromResult(new McpToolResponse("No configured OpenXR window is available.", isError: true));
         if (RuntimeEngine.VRState.IsOpenVRActive)

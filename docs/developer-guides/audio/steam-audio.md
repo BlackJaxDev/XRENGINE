@@ -10,7 +10,8 @@ For the broader audio subsystem overview, see [Audio Architecture](../../archite
 
 Steam Audio is a DSP and simulation library, not an output device. It spatializes and transforms PCM, but final playback still belongs to a transport such as OpenAL or NAudio.
 
-That constraint is the reason XRENGINE moved away from the old OpenAL-only listener model and adopted a transport/effects split:
+The optional V2 path composes transport and effects independently. The default
+legacy listener still uses the OpenAL listener backend:
 
 | Axis | Responsibility | Current Implementations |
 |---|---|---|
@@ -156,16 +157,31 @@ Key areas of the implementation live in:
 ```text
 XREngine.Audio/
   Abstractions/
-  OpenAL/
-  Steam/
   ListenerContext.cs
   AudioSource.cs
   AudioBuffer.cs
   AudioManager.cs
 
-XRENGINE/Scene/Components/Audio/
+XREngine.Audio.OpenAL/OpenAL/
+  OpenALTransport.cs
+  OpenALEfxProcessor.cs
+
+XREngine.Audio.NAudio/
+  NAudioTransport.cs
+
+XREngine.Audio.SteamAudio/Steam/
+  SteamAudioProcessor.cs
+  SteamAudioScene.cs
+  SteamAudioProbeBatch.cs
+  SteamAudioBaker.cs
+  SteamAudioMaterial.cs
+  Phonon.cs
+
+XREngine.Runtime.AudioIntegration/Scene/Components/Audio/
   AudioListenerComponent.cs
   AudioSourceComponent.cs
+
+XREngine.Audio.SteamAudio/Scene/Components/Audio/
   SteamAudioGeometryComponent.cs
   SteamAudioProbeComponent.cs
 
@@ -226,4 +242,4 @@ The main operational risks for this feature remain:
 
 - Steam Audio SDK Documentation: <https://valvesoftware.github.io/steam-audio/>
 - Steam Audio GitHub: <https://github.com/ValveSoftware/steam-audio>
-- Existing bindings: `XREngine.Audio/Steam/Phonon.cs`
+- Existing bindings: `XREngine.Audio.SteamAudio/Steam/Phonon.cs`

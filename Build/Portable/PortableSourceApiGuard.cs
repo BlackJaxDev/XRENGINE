@@ -19,12 +19,37 @@ namespace XREngine.Build
         [Required]
         public string PolicyFile { get; set; } = string.Empty;
 
+        [Required]
+        public string ProjectName { get; set; } = string.Empty;
+
+        [Required]
+        public string ProjectFile { get; set; } = string.Empty;
+
+        [Required]
+        public string ProjectsFile { get; set; } = string.Empty;
+
+        [Required]
+        public string PackagesFile { get; set; } = string.Empty;
+
+        public string GeneratedRenderCommandRegistrations { get; set; } = string.Empty;
+
+        public ITaskItem[] ProjectReferences { get; set; } = Array.Empty<ITaskItem>();
+
+        public ITaskItem[] Packages { get; set; } = Array.Empty<ITaskItem>();
+
         public override bool Execute()
         {
             try
             {
                 if (Sources.Length == 0)
                     throw new ArgumentException("The portable Compile source list is empty.");
+
+                HashSet<string> portableProjects = ReadProjects();
+                if (!portableProjects.Contains(ProjectName))
+                    throw new ArgumentException($"{ProjectName} was marked portable but is absent from the reviewed project set.");
+                ValidateWholeProjectSourceSet();
+                ValidateProjectReferences(portableProjects);
+                ValidatePackages();
 
                 // This is a lexical guard, not semantic analysis. In particular, aliases,
                 // interpolated expressions and dynamically selected calls need source review.
@@ -87,6 +112,108 @@ namespace XREngine.Build
             {
                 Log.LogError("Portable source API guard failed: {0}", exception.Message);
                 return false;
+            }
+        }
+
+        private HashSet<string> ReadProjects()
+        {
+            var projects = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string line in File.ReadAllLines(ProjectsFile))
+            {
+                string name = line.Trim();
+                if (name.Length == 0 || name.StartsWith("#", StringComparison.Ordinal))
+                    continue;
+                if (!Regex.IsMatch(name, "^XREngine[.][A-Za-z0-9.]+$") || !projects.Add(name))
+                    throw new ArgumentException($"Invalid or duplicate portable project: {name}.");
+            }
+            if (projects.Count == 0)
+                throw new ArgumentException("The reviewed portable project set is empty.");
+            return projects;
+        }
+
+        private void ValidateProjectReferences(HashSet<string> portableProjects)
+        {
+            foreach (ITaskItem reference in ProjectReferences)
+            {
+                string name = Path.GetFileNameWithoutExtension(reference.ItemSpec);
+                if (!portableProjects.Contains(name))
+                    Log.LogError("Portable project {0} references nonportable project {1}.", ProjectName, reference.ItemSpec);
+                string removed = reference.GetMetadata("GlobalPropertiesToRemove");
+                if (removed.IndexOf("XREnginePortableProject", StringComparison.OrdinalIgnoreCase) >= 0)
+                    Log.LogError("Portable project {0} removes the portability property from {1}.", ProjectName, reference.ItemSpec);
+            }
+        }
+
+        private void ValidateWholeProjectSourceSet()
+        {
+            string project = File.ReadAllText(ProjectFile);
+            if (ProjectName == "XREngine.Runtime.Rendering")
+            {
+                const string generatedItem = "<Compile Include=\"$(GeneratedRenderCommandRegistrations)\" />";
+                if (project.Contains(generatedItem, StringComparison.Ordinal))
+                {
+                    bool generatedSourcePresent = false;
+                    if (string.IsNullOrWhiteSpace(GeneratedRenderCommandRegistrations))
+                        Log.LogError("Portable project {0} has no evaluated render command registration path.", ProjectName);
+                    string expectedPath = string.Empty;
+                    if (!string.IsNullOrWhiteSpace(GeneratedRenderCommandRegistrations))
+                    {
+                        string candidate = Path.IsPathRooted(GeneratedRenderCommandRegistrations)
+                            ? GeneratedRenderCommandRegistrations
+                            : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ProjectFile)) ?? string.Empty,
+                                GeneratedRenderCommandRegistrations);
+                        expectedPath = Path.GetFullPath(candidate);
+                    }
+                    foreach (ITaskItem source in Sources)
+                    {
+                        string path = Path.GetFullPath(source.GetMetadata("FullPath"));
+                        if (path.Equals(expectedPath,
+                                Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) &&
+                            Path.GetFileName(path).Equals("RenderCommandRegistrations.g.cs", StringComparison.Ordinal))
+                        {
+                            generatedSourcePresent = true;
+                            break;
+                        }
+                    }
+                    if (!generatedSourcePresent)
+                        Log.LogError("Portable project {0} omits its generated render command source from Compile.", ProjectName);
+                    project = project.Replace(generatedItem, string.Empty, StringComparison.Ordinal);
+                }
+            }
+            if (CreateRegex(@"<Compile\s+[^>]*(?:Include|Remove)\s*=").IsMatch(project) ||
+                CreateRegex(@"<(?:DefaultItemExcludes|DefaultItemExcludesInProjectFolder|EnableDefaultCompileItems|OverrideDefaultCompileItems)\b").IsMatch(project))
+            {
+                Log.LogError("Portable project {0} filters or replaces its default Compile source set.", ProjectName);
+            }
+        }
+
+        private void ValidatePackages()
+        {
+            var reviewed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string line in File.ReadAllLines(PackagesFile))
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#", StringComparison.Ordinal))
+                    continue;
+                string[] fields = line.Split('\t');
+                if (fields.Length != 4 || string.IsNullOrWhiteSpace(fields[3]) ||
+                    !reviewed.Add(fields[0] + "|" + fields[1] + "|" + fields[2]))
+                    throw new ArgumentException("Invalid or duplicate portable package policy entry.");
+            }
+            foreach (ITaskItem package in Packages)
+            {
+                // The WebAssembly SDK injects its own build pack. It is not an engine
+                // dependency; the resolved native-runtime check handles SDK assets.
+                if (ProjectName == "XREngine.Browser" &&
+                    package.ItemSpec.Equals("Microsoft.NET.Sdk.WebAssembly.Pack", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string version = package.GetMetadata("Version");
+                if (string.IsNullOrEmpty(version))
+                    version = package.GetMetadata("VersionOverride");
+                string identity = ProjectName + "|" + package.ItemSpec + "|" + version;
+                if (!reviewed.Contains(identity))
+                    Log.LogError("Portable project {0} has unreviewed package {1} version {2}.",
+                        ProjectName, package.ItemSpec, string.IsNullOrEmpty(version) ? "<unspecified>" : version);
             }
         }
 

@@ -31,16 +31,16 @@ internal sealed class EngineRuntimeShaderServices : IRuntimeShaderServices, IRun
     public void LogWarning(string message)
         => Debug.LogWarning(message);
 
-    private void OnFileCreated(FileSystemEventArgs args)
+    private void OnFileCreated(AssetFileChangeEventArgs args)
         => ShaderSourceFileChanged?.Invoke(new(args.FullPath, ShaderSourceFileChangeKind.Created));
 
-    private void OnFileChanged(FileSystemEventArgs args)
+    private void OnFileChanged(AssetFileChangeEventArgs args)
         => ShaderSourceFileChanged?.Invoke(new(args.FullPath, ShaderSourceFileChangeKind.Changed));
 
-    private void OnFileDeleted(FileSystemEventArgs args)
+    private void OnFileDeleted(AssetFileChangeEventArgs args)
         => ShaderSourceFileChanged?.Invoke(new(args.FullPath, ShaderSourceFileChangeKind.Deleted));
 
-    private void OnFileRenamed(RenamedEventArgs args)
+    private void OnFileRenamed(AssetFileRenameEventArgs args)
         => ShaderSourceFileChanged?.Invoke(
             new(args.FullPath, ShaderSourceFileChangeKind.Renamed, args.OldFullPath));
 }

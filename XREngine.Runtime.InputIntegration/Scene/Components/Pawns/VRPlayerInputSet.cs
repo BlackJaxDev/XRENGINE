@@ -1,4 +1,3 @@
-using MagicPhysX;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Core.Attributes;
@@ -10,8 +9,6 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Scene.Physics.Physx;
-using XREngine.Scene.Physics.Physx.Joints;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Joints;
@@ -164,7 +161,7 @@ namespace XREngine.Components
             if (pipeline is null)
                 return;
 
-            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string desktop = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
 
             BoundingRectangle vp = new BoundingRectangle();
@@ -563,8 +560,6 @@ namespace XREngine.Components
 
             SetHandKinematicTarget(RightHandRigidBody, tfm);
 
-            //if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is PhysxScene px)
-            //    RightHandOverlap = OverlapTest(tfm, px);
         }
 
         private unsafe void LeftHandTransform_WorldMatrixChanged(TransformBase tfm, Matrix4x4 worldMatrix)
@@ -575,8 +570,6 @@ namespace XREngine.Components
 
             SetHandKinematicTarget(LeftHandRigidBody, tfm);
 
-            //if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is PhysxScene px)
-            //    LeftHandOverlap = OverlapTest(tfm, px);
         }
 
         private static void SetHandKinematicTarget(
@@ -585,17 +578,6 @@ namespace XREngine.Components
             => body.KinematicTarget = (
                 transform?.WorldTranslation ?? Vector3.Zero,
                 transform?.WorldRotation ?? Quaternion.Identity);
-
-        private unsafe PhysxDynamicRigidBody? OverlapTestPhysxExtension(TransformBase tfm, PhysxScene px)
-        {
-            var handPos = tfm.WorldTranslation;
-            var sphere = new IPhysicsGeometry.Sphere(GrabRadius);
-            return px.OverlapAny(sphere, (handPos, Quaternion.Identity), out var hit, PxQueryFlags.Dynamic, null, null) &&
-                PhysxDynamicRigidBody.AllDynamic.TryGetValue((nint)hit.actor, out var a) &&
-                a is PhysxDynamicRigidBody rb
-                ? rb
-                : null;
-        }
 
         private void Turn(Vector2 oldValue, Vector2 newValue)
             => CharacterPawn.LookRight(newValue.X);

@@ -1,11 +1,9 @@
-using System.Numerics;
 using System.Runtime.CompilerServices;
-using MagicPhysX;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Tools;
+using XREngine.Scene;
 using XREngine.Scene.Physics;
-using XREngine.Scene.Physics.Physx;
 
 namespace XREngine;
 
@@ -92,9 +90,11 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
                 for (int i = 0; i < batch.Inputs.Count; i++)
                 {
                     ConvexHullInput input = batch.Inputs[i];
-                    IReadOnlyList<CoACD.ConvexHullMesh>? generated = await CoACD.CalculateAsync(
+                    IReadOnlyList<CoACD.ConvexHullMesh>? generated = await PhysicsColliderAuthoringServices.Require().GenerateAsync(
                         input.Positions,
-                        input.Indices).ConfigureAwait(false);
+                        input.Indices,
+                        CoACD.CoACDParameters.Default,
+                        CancellationToken.None).ConfigureAwait(false);
                     if (generated is { Count: > 0 })
                         hulls.AddRange(generated);
                 }
@@ -105,13 +105,11 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
             if (hulls.Count == 0)
                 return;
 
-            IReadOnlyList<PhysxConvexMesh> meshes = PhysxConvexHullCooker.CookHulls(
-                hulls,
-                out _,
-                out _,
-                requestGpuData: true);
-            RuntimeThreadServices.Current.EnqueuePhysicsThread(
-                () => AttachMeshes(component, meshes));
+            AbstractPhysicsScene? scene = component.WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene;
+            if (scene?.BackendService is not IPhysicsConvexHullInstaller installer)
+                throw new NotSupportedException(
+                    $"Physics backend '{scene?.GetType().Name ?? "<none>"}' does not install convex-hull authoring support.");
+            installer.PrepareAndAttach(component, hulls);
         }
         catch (Exception ex)
         {
@@ -123,48 +121,4 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
         }
     }
 
-    private static void AttachMeshes(
-        StaticRigidBodyComponent component,
-        IReadOnlyList<PhysxConvexMesh> meshes)
-    {
-        if (!component.IsActive || component.RigidBody is not PhysxStaticRigidBody body || body.ShapeCount > 0)
-            return;
-
-        PhysxMaterial material = ResolveMaterial(component);
-        for (int i = 0; i < meshes.Count; i++)
-        {
-            unsafe
-            {
-                PhysxConvexMeshGeometryExtension geometry = new(
-                    meshes[i].ConvexMeshPtr,
-                    Vector3.One,
-                    Quaternion.Identity,
-                    tightBounds: false);
-                PhysxShape shape = new(
-                    geometry,
-                    material,
-                    PxShapeFlags.SimulationShape | PxShapeFlags.SceneQueryShape | PxShapeFlags.Visualization,
-                    isExclusive: true)
-                {
-                    LocalPose = (component.ShapeOffsetTranslation, component.ShapeOffsetRotation),
-                };
-                body.AttachShape(shape);
-            }
-        }
-    }
-
-    private static PhysxMaterial ResolveMaterial(StaticRigidBodyComponent component)
-    {
-        if (component.Material is PhysxMaterial material)
-            return material;
-        PhysicsMaterialDefinition? definition = component.MaterialDefinition;
-        PhysxMaterial created = definition is null
-            ? new PhysxMaterial(0.5f, 0.5f, 0.1f)
-            : new PhysxMaterial(definition.StaticFriction, definition.DynamicFriction, definition.Restitution)
-            {
-                Damping = definition.Damping,
-            };
-        component.Material = created;
-        return created;
-    }
 }

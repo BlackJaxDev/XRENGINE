@@ -1,9 +1,7 @@
 using XREngine.Extensions;
-using ImageMagick;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
-using Silk.NET.OpenGL.Extensions.ImGui;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
@@ -30,7 +28,7 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
-    private ImGuiController? _imguiController;
+    private OpenGLImGuiController? _imguiController;
     private OpenGLImGuiBackend? _imguiBackend;
     private OpenGLImGuiMultiViewportController? _imguiMultiViewportController;
     private int _imguiFontValidationCountdown;
@@ -40,10 +38,10 @@ public partial class OpenGLRenderer
 
     protected override bool SupportsImGui => true;
 
-    private sealed class OpenGLImGuiBackend(OpenGLRenderer renderer, ImGuiController controller) : IImGuiRendererBackend
+    private sealed class OpenGLImGuiBackend(OpenGLRenderer renderer, OpenGLImGuiController controller) : IImGuiRendererBackend
     {
         private readonly OpenGLRenderer _renderer = renderer;
-        private readonly ImGuiController _controller = controller;
+        private readonly OpenGLImGuiController _controller = controller;
         private readonly Action _queueMultiViewportInput = () => renderer._imguiMultiViewportController?.QueueMainViewportInput();
 
         public void MakeCurrent()
@@ -51,14 +49,7 @@ public partial class OpenGLRenderer
 
         public void Update(float deltaSeconds)
         {
-            if (_renderer._imguiMultiViewportController is not null
-                && ImGuiControllerUtilities.TryUpdateWithoutPollingInput(_controller, deltaSeconds, _queueMultiViewportInput))
-            {
-                return;
-            }
-
-            _renderer._imguiMultiViewportController?.ClearQueuedMainMouseWheelEvents();
-            _controller.Update(deltaSeconds);
+            _controller.Update(deltaSeconds, _queueMultiViewportInput);
         }
 
         public void Render()
@@ -116,49 +107,29 @@ public partial class OpenGLRenderer
         }
     }
 
-    private ImGuiController? GetImGuiController()
+    private OpenGLImGuiController? GetImGuiController()
     {
         var controller = _imguiController;
         if (controller is not null)
             return controller;
 
-        var input = XRWindow.Input;
-        if (input is null)
+        if (XRWindow.DesktopGlContext is null)
             return null;
 
         OpenGLImGuiMultiViewportController? multiViewport = null;
-        try
+        controller = new OpenGLImGuiController(Api, XRWindow, () =>
         {
-            controller = new ImGuiController(Api, XRWindow.Window, input, () =>
-            {
-                // Silk invokes this callback before it creates the font device
-                // texture and before its constructor's first NewFrame(). Dear
-                // ImGui requires docking, viewports, platform callbacks, DPI,
-                // and font-atlas configuration to be complete by that boundary.
-                var io = ImGui.GetIO();
-                io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
-                ImGuiControllerUtilities.TryUseDefaultEditorFont(io, 18.0f);
+            // Configure the context before device textures and the first frame.
+            var io = ImGui.GetIO();
+            io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
+            ImGuiControllerUtilities.TryUseDefaultEditorFont(io, 18.0f);
 
-                multiViewport = OpenGLImGuiMultiViewportController.TryCreate(this);
-                multiViewport?.Install();
-            });
-        }
-        catch
-        {
-            multiViewport?.Dispose();
-            throw;
-        }
+            multiViewport = OpenGLImGuiMultiViewportController.TryCreate(this);
+            multiViewport?.Install();
+        }, () => multiViewport?.Dispose());
 
         ImGuiContextTracker.Register(controller.Context);
         multiViewport?.AttachController(controller);
-
-        // Silk starts an implicit ImGui frame in its constructor. Complete
-        // that frame and its platform-window phase before the renderer starts
-        // frame 2; otherwise Dear ImGui correctly reports that the required
-        // UpdatePlatformWindows call was skipped between frames.
-        controller.Render();
-        multiViewport?.UpdatePlatformWindows(deferGpuLifecycle: false);
-        multiViewport?.RenderPlatformWindows();
 
         _imguiMultiViewportController = multiViewport;
 
@@ -181,7 +152,7 @@ public partial class OpenGLRenderer
     public void ForceRebuildImGuiFontAtlas()
         => Interlocked.Exchange(ref _imguiFontAtlasRebuildRequested, 1);
 
-    private void EnsureImGuiFontAtlasValid(ImGuiController controller)
+    private unsafe void EnsureImGuiFontAtlasValid(OpenGLImGuiController controller)
     {
         bool rebuildRequested = Interlocked.Exchange(ref _imguiFontAtlasRebuildRequested, 0) != 0;
         if (!rebuildRequested && _imguiFontValidationCountdown > 0)
@@ -199,7 +170,8 @@ public partial class OpenGLRenderer
             if (rebuildRequested)
             {
                 Debug.Textures("Rebuilding queued ImGui font atlas at a frame boundary.");
-                ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+                if (ImGuiFontAtlasUtilities.TryUseDefaultEditorFont((nint)ImGui.GetIO().NativePtr, 18.0f, forceReload: true))
+                    controller.RebuildFontTexture();
                 return;
             }
 
@@ -211,7 +183,8 @@ public partial class OpenGLRenderer
                 return;
 
             Debug.TexturesWarning($"ImGui font atlas texture became invalid (texId={texId}); rebuilding font device texture.");
-            ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+            if (ImGuiFontAtlasUtilities.TryUseDefaultEditorFont((nint)ImGui.GetIO().NativePtr, 18.0f, forceReload: true))
+                controller.RebuildFontTexture();
         }
         catch (Exception ex)
         {

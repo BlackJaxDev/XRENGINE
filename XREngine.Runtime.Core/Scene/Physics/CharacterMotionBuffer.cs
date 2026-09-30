@@ -6,7 +6,7 @@ namespace XREngine.Scene.Physics;
 /// Fixed-capacity, allocation-free handoff from movement-command producers to the
 /// fixed-step native character controller.
 /// </summary>
-internal sealed class CharacterMotionBuffer(int capacity = 64)
+public sealed class CharacterMotionBuffer(int capacity = 64)
 {
     private const float DurationEpsilon = 1e-7f;
 
@@ -137,7 +137,7 @@ internal sealed class CharacterMotionBuffer(int capacity = 64)
         => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 }
 
-internal readonly record struct CharacterMotionStep(
+public readonly record struct CharacterMotionStep(
     Vector3 Displacement,
     Vector3 Velocity,
     float MinDistance,

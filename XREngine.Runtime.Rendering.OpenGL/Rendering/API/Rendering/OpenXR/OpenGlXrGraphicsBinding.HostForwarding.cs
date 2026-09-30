@@ -1,28 +1,20 @@
-using Silk.NET.OpenXR;
 using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.OpenGL;
 
-using OpenXrEyeSwapchainExtent = OpenXRAPI.OpenXrEyeSwapchainExtent;
-
 /// <summary>
-/// Maps the legacy backend implementation names to the narrow, backend-neutral
-/// host surface owned by <see cref="OpenXRAPI"/>.
+/// Maps renderer operations to the runtime-owned graphics host.
 /// </summary>
 internal sealed unsafe partial class OpenGlXrGraphicsBinding
 {
-    private OpenXRAPI.OpenXrGraphicsBindingHost BindingHost
-        => Host.GraphicsBindingHost;
+    private IOpenXrGraphicsHost BindingHost => Host;
 
-    private XR Api => BindingHost.Api;
     private XRWindow? Window => BindingHost.Window;
-    private ref Instance _instance => ref BindingHost.Instance;
-    private ref Session _session => ref BindingHost.Session;
     private ulong _systemId => BindingHost.SystemId;
     private uint _viewCount => BindingHost.ViewCount;
-    private ViewConfigurationView[] _viewConfigViews => BindingHost.ViewConfigurationViews;
-    private Swapchain[] _swapchains => BindingHost.Swapchains;
-    private uint[] _swapchainImageCounts => BindingHost.SwapchainImageCounts;
+    private ReadOnlySpan<OpenXrViewConfiguration> _viewConfigViews => BindingHost.ViewConfigurationViews;
+    private ReadOnlySpan<ulong> _swapchains => BindingHost.Swapchains;
+    private ReadOnlySpan<uint> _swapchainImageCounts => BindingHost.SwapchainImageCounts;
     private IRuntimeRenderWorld? _openXrFrameWorld => BindingHost.FrameWorld;
     private XRCamera? _openXrLeftEyeCamera => BindingHost.LeftEyeCamera;
     private XRCamera? _openXrRightEyeCamera => BindingHost.RightEyeCamera;
@@ -38,7 +30,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
         => RuntimeEngine.Rendering.Settings.OpenXrDebugClearOnly;
     private const int OpenXrDebugLogEveryNFrames = 60;
 
-    private Result CheckResult(Result result, string operation)
+    private int CheckResult(int result, string operation)
         => BindingHost.CheckResult(result, operation);
 
     private bool TryResolveOpenXrFoveation(
@@ -49,8 +41,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
     private void InitializeOpenXrViewsForActiveConfiguration(string backendLabel)
         => BindingHost.InitializeOpenXrViewsForActiveConfiguration(backendLabel);
 
-    private static bool IsLeftEyeLikeOpenXrView(uint viewIndex)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.IsLeftEyeLikeOpenXrView(viewIndex);
+    private bool IsLeftEyeLikeOpenXrView(uint viewIndex)
+        => BindingHost.IsLeftEyeLikeOpenXrView(viewIndex);
 
     private XRViewport? GetOpenXrEyeViewport(uint viewIndex)
         => BindingHost.GetOpenXrEyeViewport(viewIndex);
@@ -63,11 +55,11 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             ? _previewLeftEyeTexture
             : _previewRightEyeTexture;
 
-    private static void EnsureOpenXrViewportExtent(
+    private void EnsureOpenXrViewportExtent(
         XRViewport viewport,
         uint width,
         uint height)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.EnsureOpenXrViewportExtent(
+        => BindingHost.EnsureOpenXrViewportExtent(
             viewport,
             width,
             height);
@@ -116,8 +108,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
     private void RecordSmokeDesktopMirrorComposed()
         => BindingHost.RecordSmokeDesktopMirrorComposed();
 
-    private static bool ShouldLogLifecycle(int frameNumber)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.ShouldLogLifecycle(frameNumber);
+    private bool ShouldLogLifecycle(int frameNumber)
+        => BindingHost.ShouldLogLifecycle(frameNumber);
 
     private static string? TryGetOpenXRActiveRuntime()
     {

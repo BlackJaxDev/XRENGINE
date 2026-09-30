@@ -1,4 +1,4 @@
-﻿using System.IO.Hashing;
+using System.IO.Hashing;
 using System.Text;
 using XREngine.Data;
 
@@ -286,7 +286,7 @@ namespace XREngine.Core.Files
             for (int i = 0; i < assets.Count; i++)
                 lookup[assets[i].Path] = i;
 
-            foreach (string filePath in Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories))
+            foreach (string filePath in XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(inputDir, "*", SearchOption.AllDirectories))
             {
                 string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
                 byte[] rawData = File.ReadAllBytes(filePath);
@@ -453,7 +453,7 @@ namespace XREngine.Core.Files
             if (string.IsNullOrWhiteSpace(inputDir) || !Directory.Exists(inputDir))
                 throw new DirectoryNotFoundException($"Input directory '{inputDir}' does not exist.");
 
-            string[] files = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories);
+            string[] files = XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(inputDir, "*", SearchOption.AllDirectories).ToArray();
             if (files.Length == 0)
                 throw new InvalidOperationException("No files found to pack.");
 

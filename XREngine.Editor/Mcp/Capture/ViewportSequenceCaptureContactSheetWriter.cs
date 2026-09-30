@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 
 namespace XREngine.Editor.Mcp;
 
@@ -30,7 +30,8 @@ internal static class ViewportSequenceCaptureContactSheetWriter
 
         try
         {
-            using MagickImage first = new(successfulFrames[0].Path);
+            IRuntimeImageCodec codec = RuntimeImageCodecs.Require();
+            using RuntimeImage first = codec.Decode(File.ReadAllBytes(successfulFrames[0].Path));
             int columns = requestedColumns > 0
                 ? Math.Min(requestedColumns, successfulFrames.Length)
                 : Math.Max(1, (int)Math.Ceiling(Math.Sqrt(successfulFrames.Length)));
@@ -45,7 +46,9 @@ internal static class ViewportSequenceCaptureContactSheetWriter
             uint sheetWidth = checked((uint)(columns * cellWidth));
             uint sheetHeight = checked((uint)(rows * cellHeight));
 
-            using MagickImage sheet = new(MagickColors.Black, sheetWidth, sheetHeight);
+            byte[] sheetPixels = new byte[checked((int)((long)sheetWidth * sheetHeight * 4))];
+            for (int pixel = 3; pixel < sheetPixels.Length; pixel += 4)
+                sheetPixels[pixel] = byte.MaxValue;
             for (int i = 0; i < successfulFrames.Length; i++)
             {
                 ViewportSequenceCaptureFrame frame = successfulFrames[i];
@@ -54,22 +57,42 @@ internal static class ViewportSequenceCaptureContactSheetWriter
                 frame.ContactSheetRow = row;
                 frame.ContactSheetColumn = column;
 
-                using MagickImage thumbnail = new(frame.Path);
-                CalculateContainedSize(thumbnail.Width, thumbnail.Height, thumbnailWidth, thumbnailHeight, out uint width, out uint height);
-                thumbnail.Resize(width, height);
+                using RuntimeImage source = codec.Decode(File.ReadAllBytes(frame.Path));
+                CalculateContainedSize(source.Width, source.Height, thumbnailWidth, thumbnailHeight, out uint width, out uint height);
+                using RuntimeImage thumbnail = codec.Resize(source, width, height, RuntimeImageResizeMode.Standard);
 
                 int x = column * cellWidth + GutterPixels + (thumbnailWidth - (int)width) / 2;
                 int y = row * cellHeight + GutterPixels + (thumbnailHeight - (int)height) / 2;
-                sheet.Composite(thumbnail, x, y, CompositeOperator.Over);
+                CompositeOverBlack(sheetPixels, (int)sheetWidth, thumbnail, x, y);
             }
 
-            sheet.Write(outputPath, MagickFormat.Png);
+            using RuntimeImage sheet = new(sheetWidth, sheetHeight, RuntimePixelFormat.Rgba8, sheetPixels);
+            File.WriteAllBytes(outputPath, codec.EncodePng(sheet));
             return true;
         }
         catch (Exception ex)
         {
             error = ex.Message;
             return false;
+        }
+    }
+
+    private static void CompositeOverBlack(byte[] sheet, int sheetWidth, RuntimeImage thumbnail, int x, int y)
+    {
+        byte[] pixels = thumbnail.CopyRgba8Pixels();
+        int width = checked((int)thumbnail.Width);
+        int height = checked((int)thumbnail.Height);
+        for (int row = 0; row < height; row++)
+        {
+            for (int column = 0; column < width; column++)
+            {
+                int source = (row * width + column) * 4;
+                int target = ((y + row) * sheetWidth + x + column) * 4;
+                int alpha = pixels[source + 3];
+                sheet[target] = (byte)((pixels[source] * alpha + 127) / 255);
+                sheet[target + 1] = (byte)((pixels[source + 1] * alpha + 127) / 255);
+                sheet[target + 2] = (byte)((pixels[source + 2] * alpha + 127) / 255);
+            }
         }
     }
 

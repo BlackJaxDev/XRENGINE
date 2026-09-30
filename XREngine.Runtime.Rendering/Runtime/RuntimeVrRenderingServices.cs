@@ -33,14 +33,14 @@ public sealed class RuntimeVrRenderModelDescriptor
         string key,
         string displayName,
         RuntimeVrRenderModelSourceKind sourceKind,
-        object? nativeModel,
+        string? openVrModelName,
         byte[]? binaryModelData,
         string? binaryModelFileExtension)
     {
         Key = key;
         DisplayName = displayName;
         SourceKind = sourceKind;
-        NativeModel = nativeModel;
+        OpenVrModelName = openVrModelName;
         BinaryModelData = binaryModelData;
         BinaryModelFileExtension = binaryModelFileExtension;
     }
@@ -48,12 +48,12 @@ public sealed class RuntimeVrRenderModelDescriptor
     public string Key { get; }
     public string DisplayName { get; }
     public RuntimeVrRenderModelSourceKind SourceKind { get; }
-    public object? NativeModel { get; }
+    public string? OpenVrModelName { get; }
     public byte[]? BinaryModelData { get; }
     public string? BinaryModelFileExtension { get; }
 
-    public static RuntimeVrRenderModelDescriptor FromOpenVrDeviceModel(object deviceModel, string key, string displayName)
-        => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenVrDeviceModel, deviceModel, null, null);
+    public static RuntimeVrRenderModelDescriptor FromOpenVrModelName(string modelName, string key, string displayName)
+        => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenVrDeviceModel, modelName, null, null);
 
     public static RuntimeVrRenderModelDescriptor FromOpenXrControllerModel(byte[] glbData, string key, string displayName)
         => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenXrControllerModel, null, glbData, ".glb");

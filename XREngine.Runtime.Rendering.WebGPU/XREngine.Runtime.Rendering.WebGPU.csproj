@@ -4,10 +4,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+
   <ItemGroup>
-    <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
+    <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
   </ItemGroup>
 </Project>

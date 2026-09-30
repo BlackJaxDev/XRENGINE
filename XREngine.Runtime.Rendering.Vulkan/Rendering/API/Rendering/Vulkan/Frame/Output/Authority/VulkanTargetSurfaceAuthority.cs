@@ -12,15 +12,16 @@ internal sealed unsafe class VulkanTargetSurfaceAuthority(
     Vk api,
     VulkanDeviceContext deviceContext,
     VulkanOutputRuntime outputRuntime,
-    Silk.NET.Windowing.IWindow? window)
+    IRuntimeWindowVulkanSurface? desktopSurface)
 {
     internal void CreateDesktopSurface()
     {
         if (!api.TryGetInstanceExtension<KhrSurface>(deviceContext.Instance, out outputRuntime.SurfaceApi))
             throw new NotSupportedException("KHR_surface extension not found.");
 
-        outputRuntime.Surface = window?.VkSurface?.Create<AllocationCallbacks>(deviceContext.Instance.ToHandle(), null).ToSurface()
-            ?? throw new InvalidOperationException("Desktop Vulkan output requires a window surface.");
+        IRuntimeWindowVulkanSurface surface = desktopSurface
+            ?? throw new InvalidOperationException("Desktop Vulkan output requires an installed window surface service.");
+        outputRuntime.Surface = new SurfaceKHR(surface.CreateSurface(deviceContext.Instance.Handle));
     }
 
     internal void DestroyDesktopSurface()

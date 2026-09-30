@@ -1,0 +1,5 @@
+License file not detected for referenced binary item.
+
+Project: XREngine.Audio.Audio2Face.csproj
+Path: $(Audio2XBridgeNativeOutputDir)*.dll
+

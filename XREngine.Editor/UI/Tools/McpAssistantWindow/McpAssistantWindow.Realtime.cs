@@ -14,6 +14,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Rendering.UI;
+using XREngine.Imaging;
 
 
 namespace XREngine.Editor.UI.Tools;
@@ -466,9 +467,8 @@ public sealed partial class McpAssistantWindow
 
                 try
                 {
-                    if (renderer.ScreenshotRequiresVerticalFlip)
-                        img.Flip();
-                    tcs.TrySetResult(img.ToByteArray(ImageMagick.MagickFormat.Png));
+                    using (img)
+                        tcs.TrySetResult(RuntimeImageCodecs.Require().EncodePng(img));
                 }
                 catch (Exception ex)
                 {
@@ -565,9 +565,8 @@ public sealed partial class McpAssistantWindow
 
                 try
                 {
-                    if (renderer.ScreenshotRequiresVerticalFlip)
-                        img.Flip();
-                    img.Write(path);
+                    using (img)
+                        File.WriteAllBytes(path, RuntimeImageCodecs.Require().EncodePng(img));
                     tcs.TrySetResult(path);
                 }
                 catch (Exception ex)

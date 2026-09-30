@@ -156,11 +156,17 @@ public sealed class WindowInputSnapshotAccumulator
     private readonly List<WindowKeyTransition> _unconsumedKeyTransitions = new(32);
     private WindowKeyTransition[] _unconsumedKeyTransitionSnapshot = [];
     private readonly HashSet<EKey> _pressedKeys = [];
+    private EKey[] _pressedKeySnapshot = [];
+    private bool _pressedKeysChanged;
     private readonly List<WindowMouseButtonTransition> _mouseButtonTransitions = new(16);
     private readonly List<WindowMouseButtonTransition> _unconsumedMouseButtonTransitions = new(16);
     private WindowMouseButtonTransition[] _unconsumedMouseButtonTransitionSnapshot = [];
     private readonly HashSet<EMouseButton> _pressedMouseButtons = [];
+    private EMouseButton[] _pressedMouseButtonSnapshot = [];
+    private bool _pressedMouseButtonsChanged;
     private readonly List<char> _textInputCharacters = new(16);
+    private readonly List<WindowInputEvent> _orderedEvents = new(64);
+    private readonly List<WindowInputEvent> _unconsumedOrderedEvents = new(64);
     private readonly List<char> _unconsumedTextInputCharacters = new(16);
     private char[] _unconsumedTextInputCharacterSnapshot = [];
     private int _keyDownTransitionCount;
@@ -208,6 +214,13 @@ public sealed class WindowInputSnapshotAccumulator
     /// consumption. Events recorded concurrently but not yet published remain pending.
     /// </summary>
     public WindowInputSnapshot ConsumeLatest()
+        => ConsumeLatest(null);
+
+    /// <summary>
+    /// Drains ordered UI transitions into a caller-owned reusable buffer. The caller must
+    /// finish replay before reusing that buffer; published snapshots retain no event arrays.
+    /// </summary>
+    public WindowInputSnapshot ConsumeLatest(List<WindowInputEvent>? orderedDestination)
     {
         lock (_sync)
         {
@@ -215,12 +228,19 @@ public sealed class WindowInputSnapshotAccumulator
             if (snapshot.Sequence == 0)
                 return snapshot;
 
+            if (orderedDestination is not null)
+            {
+                orderedDestination.Clear();
+                orderedDestination.AddRange(_unconsumedOrderedEvents);
+            }
+
             _unconsumedKeyTransitions.Clear();
             _unconsumedKeyTransitionSnapshot = [];
             _unconsumedMouseButtonTransitions.Clear();
             _unconsumedMouseButtonTransitionSnapshot = [];
             _unconsumedTextInputCharacters.Clear();
             _unconsumedTextInputCharacterSnapshot = [];
+            _unconsumedOrderedEvents.Clear();
             _unconsumedPointerDeltaX = 0.0f;
             _unconsumedPointerDeltaY = 0.0f;
             _unconsumedScrollDeltaX = 0.0f;
@@ -250,8 +270,10 @@ public sealed class WindowInputSnapshotAccumulator
         lock (_sync)
         {
             bool isNewPress = key != EKey.Unknown && _pressedKeys.Add(key);
+            _pressedKeysChanged |= isNewPress;
 
             _keyTransitions.Add(new WindowKeyTransition(key, true));
+            _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.Key, key, default, true, default, 0, 0));
             return isNewPress;
         }
     }
@@ -265,9 +287,10 @@ public sealed class WindowInputSnapshotAccumulator
         lock (_sync)
         {
             if (key != EKey.Unknown)
-                _pressedKeys.Remove(key);
+                _pressedKeysChanged |= _pressedKeys.Remove(key);
 
             _keyTransitions.Add(new WindowKeyTransition(key, false));
+            _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.Key, key, default, false, default, 0, 0));
         }
     }
 
@@ -280,7 +303,10 @@ public sealed class WindowInputSnapshotAccumulator
         lock (_sync)
         {
             if (character != '\0')
+            {
                 _textInputCharacters.Add(character);
+                _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.Text, default, default, false, character, 0, 0));
+            }
         }
     }
 
@@ -292,8 +318,9 @@ public sealed class WindowInputSnapshotAccumulator
         Interlocked.Increment(ref _mouseDownTransitionCount);
         lock (_sync)
         {
-            _pressedMouseButtons.Add(button);
+            _pressedMouseButtonsChanged |= _pressedMouseButtons.Add(button);
             _mouseButtonTransitions.Add(new WindowMouseButtonTransition(button, true));
+            _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.MouseButton, default, button, true, default, 0, 0));
         }
     }
 
@@ -305,8 +332,9 @@ public sealed class WindowInputSnapshotAccumulator
         Interlocked.Increment(ref _mouseUpTransitionCount);
         lock (_sync)
         {
-            _pressedMouseButtons.Remove(button);
+            _pressedMouseButtonsChanged |= _pressedMouseButtons.Remove(button);
             _mouseButtonTransitions.Add(new WindowMouseButtonTransition(button, false));
+            _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.MouseButton, default, button, false, default, 0, 0));
         }
     }
 
@@ -336,6 +364,7 @@ public sealed class WindowInputSnapshotAccumulator
 
             _lastPointerX = x;
             _lastPointerY = y;
+            _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.Pointer, default, default, false, default, x, y));
         }
     }
 
@@ -345,6 +374,7 @@ public sealed class WindowInputSnapshotAccumulator
         {
             _scrollDeltaX += x;
             _scrollDeltaY += y;
+            _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.Scroll, default, default, false, default, x, y));
         }
     }
 
@@ -382,6 +412,12 @@ public sealed class WindowInputSnapshotAccumulator
                 _unconsumedTextInputCharacterSnapshot = [.. _unconsumedTextInputCharacters];
             }
 
+            if (_orderedEvents.Count > 0)
+            {
+                _unconsumedOrderedEvents.AddRange(_orderedEvents);
+                _orderedEvents.Clear();
+            }
+
             _unconsumedPointerDeltaX += _pointerDeltaX;
             _unconsumedPointerDeltaY += _pointerDeltaY;
             _unconsumedScrollDeltaX += _scrollDeltaX;
@@ -390,6 +426,18 @@ public sealed class WindowInputSnapshotAccumulator
             _pointerDeltaY = 0.0f;
             _scrollDeltaX = 0.0f;
             _scrollDeltaY = 0.0f;
+
+            if (_pressedKeysChanged)
+            {
+                _pressedKeySnapshot = _pressedKeys.Count == 0 ? [] : [.. _pressedKeys];
+                _pressedKeysChanged = false;
+            }
+
+            if (_pressedMouseButtonsChanged)
+            {
+                _pressedMouseButtonSnapshot = _pressedMouseButtons.Count == 0 ? [] : [.. _pressedMouseButtons];
+                _pressedMouseButtonsChanged = false;
+            }
 
             snapshot = new WindowInputSnapshot(
                 sequence,
@@ -411,12 +459,14 @@ public sealed class WindowInputSnapshotAccumulator
                 (uint)Math.Max(0, Volatile.Read(ref _mouseUpTransitionCount)),
                 (uint)Math.Max(0, Volatile.Read(ref _textInputCount)),
                 _unconsumedKeyTransitionSnapshot,
-                _pressedKeys.Count == 0 ? [] : [.. _pressedKeys],
+                _pressedKeySnapshot,
                 _unconsumedMouseButtonTransitionSnapshot,
-                _pressedMouseButtons.Count == 0 ? [] : [.. _pressedMouseButtons],
+                _pressedMouseButtonSnapshot,
                 _unconsumedTextInputCharacterSnapshot,
                 System.Diagnostics.Stopwatch.GetTimestamp(),
-                Environment.CurrentManagedThreadId);
+                Environment.CurrentManagedThreadId)
+            {
+            };
 
             _latest = snapshot;
         }

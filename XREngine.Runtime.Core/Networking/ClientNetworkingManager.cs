@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Net;
-using System.Net.Sockets;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Input;
@@ -82,7 +81,7 @@ namespace XREngine
             /// <summary>
             /// Sends from client to server.
             /// </summary>
-            public UdpClient? UdpSender { get; set; }
+            public IDatagramTransport? UdpSender { get; set; }
             public Guid? SessionId { get; set; }
             public string? SessionToken { get; set; }
             /// <summary>Stable client-instance identity supplied by a trusted launcher when available.</summary>
@@ -127,13 +126,10 @@ namespace XREngine
 
             protected void StartUdpSender(IPAddress serverIP, int udpMulticastServerPort, int udpClientReceivePort)
             {
-                UdpClient udpClient = new(AddressFamily.InterNetwork)
-                {
-                    ExclusiveAddressUse = false,
-                };
-                UdpSocketOptions.DisableConnectionReset(udpClient, "client UDP sender/receiver");
-                udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, udpClientReceivePort));
+                IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("client UDP sender/receiver");
+                udpClient.ExclusiveAddressUse = false;
+                udpClient.ReuseAddress = true;
+                udpClient.Bind(new IPEndPoint(IPAddress.Any, udpClientReceivePort));
                 UdpSender = udpClient;
                 UdpReceiver = udpClient;
                 ServerIP = new IPEndPoint(serverIP, udpMulticastServerPort);

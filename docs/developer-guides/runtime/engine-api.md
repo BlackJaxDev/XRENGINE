@@ -1,10 +1,17 @@
 # Engine API Reference
 
-XRENGINE's core engine API provides the foundation for all engine functionality, including initialization, game loop management, and core systems.
+The `Engine` facade in `XREngine.Runtime.Bootstrap` composes application
+startup, the game loop, and installed backends. Lower projects expose
+`RuntimeEngine` in `XREngine.Runtime.Rendering` and managed contracts in
+Runtime.Core, Data, Input, and Audio. Public namespaces can stay the same after
+a type moves to another project; see [Runtime Project Organization](../../architecture/runtime/project-organization.md).
+The implementation entry points are [Engine.cs](../../../XREngine.Runtime.Bootstrap/Engine/Engine.cs)
+and [RuntimeEngine.cs](../../../XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs).
 
 ## Engine Class
 
-The main engine class that manages all core systems and provides the primary API.
+The Bootstrap-owned application facade that connects lower runtime systems to
+desktop rendering, audio, input, physics, and XR implementations.
 
 ### Static Properties
 
@@ -17,12 +24,10 @@ public static partial class Engine
     public static BaseNetworkingManager? Networking { get; }
     public static partial class Rendering { get; }
     public static partial class State { get; }
-    public static partial class VRState { get; }
     
     // Configuration
     public static UserSettings UserSettings { get; set; }
     public static GameStartupSettings GameSettings { get; set; }
-    public static IEventListReadOnly<XRWindow> Windows { get; }
     public static IReadOnlyCollection<XRWorldInstance> WorldInstances { get; }
     
     // Utilities
@@ -40,6 +45,9 @@ public static partial class Engine
     public static event Action<bool>? FocusChanged;
 }
 ```
+
+The lower `RuntimeEngine.Windows` and `RuntimeEngine.VRState` expose window and
+VR state without returning native window or XR runtime objects.
 
 ### Core Methods
 
@@ -60,10 +68,16 @@ private static bool IsEngineStillActive();
 
 #### Window Management
 ```csharp
-public static void CreateWindow(GameWindowStartupSettings windowSettings);
+public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings);
 public static void CreateWindows(List<GameWindowStartupSettings> windows);
 public static void RemoveWindow(XRWindow window);
 ```
+
+`GameWindowStartupSettings` and these creation methods live in Bootstrap;
+`XRWindow` is a renderer-neutral facade in Runtime.Rendering. The desktop
+window module owns the actual native window, event pump, and handles.
+See [Engine.Windows.cs](../../../XREngine.Runtime.Bootstrap/RenderingHost/Engine.Windows.cs)
+and [XRWindow.cs](../../../XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs).
 
 #### World Management
 ```csharp
@@ -134,18 +148,19 @@ Manages audio playback and 3D spatial audio.
 public class AudioManager
 {
     public bool Enabled { get; set; }
-    public float MasterVolume { get; set; }
-    public float MusicVolume { get; set; }
-    public float SFXVolume { get; set; }
-    
-    // Audio methods would be implemented here
-    public void PlaySound(AudioClip clip, Vector3 position);
-    public void PlayMusic(AudioClip clip, bool loop = true);
-    public void StopMusic();
-    public void FadeIn(float duration);
-    public void FadeOut(float duration);
+    public float GainScale { get; set; }
+    public EAudioTransport DefaultTransport { get; set; }
+    public EAudioEffects DefaultEffects { get; set; }
+    public ListenerContext NewListener(string? name = null);
 }
 ```
+
+`AudioManager` and its listener/source/buffer contracts live in
+`XREngine.Audio`. Bootstrap registers the OpenAL, NAudio, and Steam Audio
+implementations before creating listeners; scene audio components live in
+`XREngine.Runtime.AudioIntegration`.
+See [AudioManager.cs](../../../XREngine.Audio/AudioManager.cs) for the current
+listener and backend-selection API.
 
 ## Input System
 
@@ -164,24 +179,24 @@ public static class Input
 
 ### VR Input
 ```csharp
-public static partial class VRState
+public sealed class RuntimeVrState
 {
-    public static VR Api { get; }
-    public static Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> Actions { get; }
-    public static ETrackingUniverseOrigin Origin { get; set; }
-    public static VRIKCalibrator.Settings CalibrationSettings { get; set; }
-    
-    public enum VRMode
-    {
-        Server,
-        Client,
-        Local
-    }
-    
-    // VR initialization
-    public static async Task InitializeLocal(IActionManifest actionManifest, VrManifest? vrManifest, XRWindow window);
+    public VRRuntime ActiveRuntime { get; set; }
+    public bool IsInVR { get; set; }
+    public bool IsOpenVRActive { get; }
+    public bool IsOpenXRActive { get; }
+    public Task<bool> InitializeLocal(IRuntimeOpenVrActionManifest actions,
+        RuntimeOpenVrApplicationManifest manifest, XRWindow window);
 }
 ```
+
+Read this state through `RuntimeEngine.VRState`. OpenVR action and application
+manifests are neutral contracts in `XREngine.Data/Input`; native action objects
+and runtime ownership stay in `XREngine.Runtime.XR.OpenVR`. OpenXR's lower
+surface is `IOpenXrRuntime`, implemented by `XREngine.Runtime.XR.OpenXR`.
+Bootstrap installs the lifecycle and input services used by `InitializeLocal`.
+See [RuntimeVrState.cs](../../../XREngine.Runtime.Rendering/Runtime/RuntimeVrState.cs)
+and [IVRGameStartupSettings.cs](../../../XREngine.Runtime.Core/Settings/RuntimeStartupContracts/IVRGameStartupSettings.cs).
 
 ## Rendering System
 
@@ -269,6 +284,10 @@ public class UserSettings : XRBase
     public EEngineQuality SoundQuality { get; set; }
     public ERenderLibrary RenderLibrary { get; set; }
     public EAudioLibrary AudioLibrary { get; set; }
+    public EAudioTransport AudioTransport { get; set; }
+    public EAudioEffects AudioEffects { get; set; }
+    public bool AudioArchitectureV2 { get; set; }
+    public int AudioSampleRate { get; set; }
     public EPhysicsLibrary PhysicsLibrary { get; set; }
     public float? TargetFramesPerSecond { get; set; }
     public float? UnfocusedTargetFramesPerSecond { get; set; }
@@ -277,6 +296,11 @@ public class UserSettings : XRBase
     public double DebugOutputRecencySeconds { get; set; }
 }
 ```
+
+`AudioTransport`, `AudioEffects`, `AudioArchitectureV2`, and
+`AudioSampleRate` are the current audio composition settings. The older
+`AudioLibrary` value remains serialized for compatibility; backend selection
+uses the transport/effects settings.
 
 ## Game Startup Settings
 
@@ -347,8 +371,12 @@ public class GameWindowStartupSettings : XRBase
 ```csharp
 public interface IVRGameStartupSettings
 {
-    VrManifest? VRManifest { get; set; }
-    IActionManifest? ActionManifest { get; }
+    RuntimeOpenVrApplicationManifest? VRManifest { get; set; }
+    IRuntimeOpenVrActionManifest? ActionManifest { get; }
+    EVRRuntime VRRuntime { get; set; }
+    bool StartVrOnLaunch { get; set; }
+    EVrViewRenderMode VrViewRenderMode { get; set; }
+    bool EnableOpenXrVulkanParallelRendering { get; set; }
     string GameName { get; set; }
     (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths { get; set; }
 }
@@ -357,13 +385,22 @@ public class VRGameStartupSettings<TCategory, TAction> : GameStartupSettings, IV
     where TCategory : struct, Enum
     where TAction : struct, Enum
 {
-    public VrManifest? VRManifest { get; set; }
-    public ActionManifest<TCategory, TAction>? ActionManifest { get; set; }
+    public RuntimeOpenVrApplicationManifest? VRManifest { get; set; }
+    public RuntimeOpenVrActionManifest<TCategory, TAction>? ActionManifest { get; set; }
+    public EVRRuntime VRRuntime { get; set; }
+    public bool StartVrOnLaunch { get; set; }
+    public EVrViewRenderMode VrViewRenderMode { get; set; }
+    public bool EnableOpenXrVulkanParallelRendering { get; set; }
     public string GameName { get; set; }
     public (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths { get; set; }
-    IActionManifest? IVRGameStartupSettings.ActionManifest => ActionManifest;
+    IRuntimeOpenVrActionManifest? IVRGameStartupSettings.ActionManifest => ActionManifest;
 }
 ```
+
+`IVRGameStartupSettings` is a lower Runtime.Core contract. The generic startup
+settings type is composed in Bootstrap; its manifest value types live in Data.
+Native OpenVR and OpenXR implementations are installed by their respective XR
+modules rather than exposed through these settings.
 
 ## Game State
 
@@ -453,6 +490,8 @@ var vrSettings = new VRGameStartupSettings<EVRActionCategory, EVRGameAction>
     GameName = "VR Game",
     ActionManifest = CreateActionManifest(),
     VRManifest = CreateVRManifest(),
+    VRRuntime = EVRRuntime.Auto,
+    StartVrOnLaunch = true,
     RunVRInPlace = true,
     StartupWindows = new List<GameWindowStartupSettings>
     {
@@ -466,13 +505,13 @@ var vrSettings = new VRGameStartupSettings<EVRActionCategory, EVRGameAction>
     }
 };
 
-// Initialize VR
-await Engine.VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window);
-
 // Create VR player
 var vrPlayer = new SceneNode("VRPlayer");
 var humanoid = vrPlayer.AddComponent<HumanoidComponent>();
 var vrIK = vrPlayer.AddComponent<VRIKSolverComponent>();
+
+// Add the player to your world, then start with the configured XR runtime.
+Engine.Run(vrSettings, gameState);
 ```
 
 ## Performance Monitoring

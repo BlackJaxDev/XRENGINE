@@ -109,7 +109,7 @@ public class StaticRigidBodyComponent : PhysicsActorComponent, IPhysicsReplicati
     [Browsable(false)]
     public override IAbstractPhysicsActor? PhysicsActor => RigidBody;
 
-    internal void SetRigidBodyFromRigidBodyOwner(IAbstractStaticRigidBody? body)
+    public void SetRigidBodyFromRigidBodyOwner(IAbstractStaticRigidBody? body)
     {
         try { _ownershipSyncDepth++; RigidBody = body; }
         finally { _ownershipSyncDepth--; }

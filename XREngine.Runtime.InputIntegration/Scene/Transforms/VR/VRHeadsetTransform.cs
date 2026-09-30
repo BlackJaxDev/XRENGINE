@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using XREngine.Data.Components.Scene;
 using XREngine.Input;
 
@@ -13,6 +12,6 @@ namespace XREngine.Scene.Transforms
         public VRHeadsetTransform() { }
         public VRHeadsetTransform(TransformBase parent) : base(parent) { }
 
-        public override VrDevice? Device => RuntimeVrStateServices.Headset;
+        public override RuntimeVrDeviceInfo? Device => RuntimeVrStateServices.Headset;
     }
 }

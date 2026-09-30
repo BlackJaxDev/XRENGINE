@@ -1,19 +1,10 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
-using BooleanAction = OpenVR.NET.Input.BooleanAction;
-using HandSkeletonAction = OpenVR.NET.Input.HandSkeletonAction;
-using HapticAction = OpenVR.NET.Input.HapticAction;
-using OpenVRAction = OpenVR.NET.Input.Action;
-using PoseAction = OpenVR.NET.Input.PoseAction;
-using ScalarAction = OpenVR.NET.Input.ScalarAction;
-using Vector2Action = OpenVR.NET.Input.Vector2Action;
-using Vector3Action = OpenVR.NET.Input.Vector3Action;
 
 namespace XREngine;
 
-internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IRuntimeVrLegacyActionServices, IDisposable
+internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IRuntimeVrActionSetServices, IDisposable
 {
     private readonly Dictionary<string, BoolRegistration> _boolRegistrations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FloatRegistration> _floatRegistrations = new(StringComparer.Ordinal);
@@ -24,22 +15,21 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
     private readonly HashSet<string> _acceptedDiagnostics = new(StringComparer.Ordinal);
     private readonly HashSet<string> _rejectedDiagnostics = new(StringComparer.Ordinal);
 
-    private event Action<Dictionary<string, Dictionary<string, OpenVRAction>>>? RuntimeActionsChanged;
+    private event Action? RuntimeActionsChanged;
 
     public EngineRuntimeVrInputServices()
     {
-        RuntimeEngine.VRState.ActionsChanged += ForwardActionsChanged;
+        OpenVrActionBackend.ActionsChanged += ForwardActionsChanged;
         RuntimeEngine.VRState.OpenXRSessionRunningChanged += OpenXRSessionRunningChanged;
     }
 
-    public event Action<Dictionary<string, Dictionary<string, OpenVRAction>>>? ActionsChanged
+    public event Action? ActionsChanged
     {
         add => RuntimeActionsChanged += value;
         remove => RuntimeActionsChanged -= value;
     }
 
-    public Dictionary<string, Dictionary<string, OpenVRAction>> Actions
-        => RuntimeEngine.VRState.Actions;
+    public bool HasActions => OpenVrActionBackend.HasActions;
 
     public RuntimeVrRuntimeKind ActiveRuntime
         => RuntimeEngine.VRState.ActiveRuntime switch
@@ -155,8 +145,8 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
             return openXrApi.TryGetControllerPoseState(leftHand, poseKind, MapPoseTiming(openXrApi, timing), out pose);
 
         var controller = leftHand
-            ? RuntimeEngine.VRState.OpenVRApi.LeftController
-            : RuntimeEngine.VRState.OpenVRApi.RightController;
+            ? OpenVrRuntimeBackend.Api.LeftController
+            : OpenVrRuntimeBackend.Api.RightController;
         if ((timing == RuntimeVrPoseTiming.Recalc ? controller?.RenderDeviceToAbsoluteTrackingMatrix : controller?.DeviceToAbsoluteTrackingMatrix) is Matrix4x4 localPose)
         {
             Matrix4x4.Decompose(localPose, out _, out Quaternion rotation, out Vector3 position);
@@ -191,8 +181,8 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
         if (ActiveRuntime == RuntimeVrRuntimeKind.OpenXR && RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
             return openXrApi.ApplyHapticAction(category, name, duration, frequency, amplitude, delay);
 
-        if (TryGetOpenVrAction(category, name, out HapticAction? hapticAction))
-            return hapticAction.TriggerVibration(duration, frequency, amplitude, delay);
+        if (OpenVrActionBackend.Vibrate(category, name, duration, frequency, amplitude, delay))
+            return true;
 
         LogRegistrationResult(RuntimeVrActionValueType.Haptic, category, name, accepted: false, unregister: false);
         return false;
@@ -206,7 +196,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
         return true;
     }
 
-    private void DispatchOpenXrActions(OpenXRAPI openXrApi)
+    private void DispatchOpenXrActions(IOpenXrRuntime openXrApi)
     {
         foreach (BoolRegistration registration in _boolRegistrations.Values)
         {
@@ -234,7 +224,7 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
 
         foreach (PoseRegistration registration in _poseRegistrations.Values)
         {
-            if (openXrApi.TryGetControllerPoseState(registration.LeftHand, registration.PoseKind, OpenXRAPI.OpenXrPoseTiming.Predicted, out RuntimeVrPoseState pose))
+            if (openXrApi.TryGetControllerPoseState(registration.LeftHand, registration.PoseKind, RuntimeOpenXrPoseTiming.Predicted, out RuntimeVrPoseState pose))
                 registration.Dispatch(in pose);
         }
 
@@ -249,77 +239,38 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
     {
         foreach (BoolRegistration registration in _boolRegistrations.Values)
         {
-            if (TryGetOpenVrAction(registration.Category, registration.Name, out BooleanAction? action))
-            {
-                action.Update();
-                registration.Dispatch(action.Value);
-            }
+            if (OpenVrActionBackend.TryReadBool(registration.Category, registration.Name, out bool value))
+                registration.Dispatch(value);
         }
 
         foreach (FloatRegistration registration in _floatRegistrations.Values)
         {
-            if (TryGetOpenVrAction(registration.Category, registration.Name, out ScalarAction? action))
-            {
-                action.Update();
-                registration.Dispatch(action.Value);
-            }
+            if (OpenVrActionBackend.TryReadFloat(registration.Category, registration.Name, out float value))
+                registration.Dispatch(value);
         }
 
         foreach (Vector2Registration registration in _vector2Registrations.Values)
         {
-            if (TryGetOpenVrAction(registration.Category, registration.Name, out Vector2Action? action))
-            {
-                action.Update();
-                registration.Dispatch(action.Value);
-            }
+            if (OpenVrActionBackend.TryReadVector2(registration.Category, registration.Name, out Vector2 value))
+                registration.Dispatch(value);
         }
 
         foreach (Vector3Registration registration in _vector3Registrations.Values)
         {
-            if (TryGetOpenVrAction(registration.Category, registration.Name, out Vector3Action? action))
-            {
-                action.Update();
-                registration.Dispatch(action.Value);
-            }
+            if (OpenVrActionBackend.TryReadVector3(registration.Category, registration.Name, out Vector3 value))
+                registration.Dispatch(value);
         }
 
         foreach (PoseRegistration registration in _poseRegistrations.Values)
         {
-            if (TryGetOpenVrAction(registration.Category, registration.Name, out PoseAction? action) &&
-                action.FetchDataForPrediction(0.0f) is { } data)
-            {
-                var pose = new RuntimeVrPoseState(
-                    data.DeviceToAbsoluteTrackingMatrix,
-                    data.Position,
-                    data.Rotation,
-                    data.Velocity,
-                    data.AngularVelocity,
-                    isActive: true,
-                    isValid: true);
+            if (OpenVrActionBackend.TryReadPose(registration.Category, registration.Name, out RuntimeVrPoseState pose))
                 registration.Dispatch(in pose);
-            }
         }
 
         foreach (SkeletonSummaryRegistration registration in _skeletonSummaryRegistrations.Values)
         {
-            if (TryGetOpenVrAction(registration.Category, registration.Name, out HandSkeletonAction? action) &&
-                action.GetSummary(Valve.VR.EVRSummaryType.FromDevice) is { } summary)
-            {
-                action.Update();
-                var runtimeSummary = new RuntimeVrSkeletonSummary(
-                    summary.ThumbCurl,
-                    summary.IndexCurl,
-                    summary.MiddleCurl,
-                    summary.RingCurl,
-                    summary.PinkyCurl,
-                    summary.ThumbIndexSplay,
-                    summary.IndexMiddleSplay,
-                    summary.MiddleRingSplay,
-                    summary.RingPinkySplay,
-                    hasRealHandJoints: true,
-                    isActive: true);
+            if (OpenVrActionBackend.TryReadSkeletonSummary(registration.Category, registration.Name, out RuntimeVrSkeletonSummary runtimeSummary))
                 registration.Dispatch(in runtimeSummary);
-            }
         }
     }
 
@@ -360,33 +311,8 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
         if (RuntimeEngine.VRState.OpenXRApi is { } openXrApi && openXrApi.IsInputActionKnown(category, name, valueType))
             return true;
 
-        return valueType switch
-        {
-            RuntimeVrActionValueType.Boolean => TryGetOpenVrAction(category, name, out BooleanAction? _),
-            RuntimeVrActionValueType.Float => TryGetOpenVrAction(category, name, out ScalarAction? _),
-            RuntimeVrActionValueType.Vector2 => TryGetOpenVrAction(category, name, out Vector2Action? _),
-            RuntimeVrActionValueType.Vector3 => TryGetOpenVrAction(category, name, out Vector3Action? _),
-            RuntimeVrActionValueType.Pose => TryGetOpenVrAction(category, name, out PoseAction? _),
-            RuntimeVrActionValueType.Haptic => TryGetOpenVrAction(category, name, out HapticAction? _),
-            RuntimeVrActionValueType.HandSkeleton => RuntimeEngine.VRState.OpenXRApi is not null ||
-                                                     TryGetOpenVrAction(category, name, out HandSkeletonAction? _),
-            _ => false,
-        };
-    }
-
-    private static bool TryGetOpenVrAction<TAction>(string category, string name, [NotNullWhen(true)] out TAction? action)
-        where TAction : OpenVRAction
-    {
-        action = null;
-        if (!RuntimeEngine.VRState.Actions.TryGetValue(category, out Dictionary<string, OpenVRAction>? actions) ||
-            !actions.TryGetValue(name, out OpenVRAction? raw) ||
-            raw is not TAction typed)
-        {
-            return false;
-        }
-
-        action = typed;
-        return true;
+        return (valueType == RuntimeVrActionValueType.HandSkeleton && RuntimeEngine.VRState.OpenXRApi is not null) ||
+            OpenVrActionBackend.HasAction(valueType, category, name);
     }
 
     private void LogRegistrationResult(RuntimeVrActionValueType valueType, string category, string name, bool accepted, bool unregister)
@@ -400,18 +326,18 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
         Debug.Out($"VR input service {ActiveServiceName} {verb} {valueType} action {category}/{name}.");
     }
 
-    private void ForwardActionsChanged(Dictionary<string, Dictionary<string, OpenVRAction>> actions)
-        => RuntimeActionsChanged?.Invoke(actions);
+    private void ForwardActionsChanged()
+        => RuntimeActionsChanged?.Invoke();
 
     private void OpenXRSessionRunningChanged(bool running)
     {
         if (running)
-            RuntimeActionsChanged?.Invoke(Actions);
+            RuntimeActionsChanged?.Invoke();
     }
 
     public void Dispose()
     {
-        RuntimeEngine.VRState.ActionsChanged -= ForwardActionsChanged;
+        OpenVrActionBackend.ActionsChanged -= ForwardActionsChanged;
         RuntimeEngine.VRState.OpenXRSessionRunningChanged -= OpenXRSessionRunningChanged;
         RuntimeActionsChanged = null;
         _boolRegistrations.Clear();
@@ -422,10 +348,10 @@ internal sealed class EngineRuntimeVrInputServices : IRuntimeVrInputServices, IR
         _skeletonSummaryRegistrations.Clear();
     }
 
-    private static OpenXRAPI.OpenXrPoseTiming MapPoseTiming(OpenXRAPI openXrApi, RuntimeVrPoseTiming timing)
+    private static RuntimeOpenXrPoseTiming MapPoseTiming(IOpenXrRuntime openXrApi, RuntimeVrPoseTiming timing)
         => timing == RuntimeVrPoseTiming.Late || timing == RuntimeVrPoseTiming.Recalc
-            ? OpenXRAPI.OpenXrPoseTiming.Late
-            : OpenXRAPI.OpenXrPoseTiming.Predicted;
+            ? RuntimeOpenXrPoseTiming.Late
+            : RuntimeOpenXrPoseTiming.Predicted;
 
     private static string MakeKey(string category, string name)
         => string.Concat(category, "/", name);

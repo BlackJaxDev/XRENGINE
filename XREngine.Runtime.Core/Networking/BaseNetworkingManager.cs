@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using System;
 using System.Diagnostics;
 using System.Collections.Concurrent;
@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Net;
 using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Numerics;
 using System.Text;
 using XREngine.Components;
@@ -77,7 +76,7 @@ namespace XREngine
             public abstract bool HasConnectedRemotePeer { get; }
 
             public bool UDPServerConnectionEstablished
-                => UdpReceiver?.Client is { } socket && (socket.Connected || socket.IsBound);
+                => UdpReceiver is { } transport && (transport.Connected || transport.IsBound);
             public string LocalPeerId { get; }
             protected static string CurrentProtocolVersion => RuntimeNetworkingHostServices.Current.ProtocolVersion;
             public event Func<RemoteJobRequest, Task<RemoteJobResponse?>>? RemoteJobRequestReceived;
@@ -144,17 +143,17 @@ namespace XREngine
             /// <summary>
             /// Sends from server to all connected clients, or from client to all other p2p clients.
             /// </summary>
-            public UdpClient? UdpMulticastSender { get; set; }
+            public IDatagramTransport? UdpMulticastSender { get; set; }
             /// <summary>
             /// Receives from server or from other p2p clients.
             /// </summary>
-            public UdpClient? UdpReceiver { get; set; }
+            public IDatagramTransport? UdpReceiver { get; set; }
             public IPEndPoint? MulticastEndPoint { get; set; }
 
             protected virtual void DisposeSockets()
             {
-                UdpClient? receiver = UdpReceiver;
-                UdpClient? sender = UdpMulticastSender;
+                IDatagramTransport? receiver = UdpReceiver;
+                IDatagramTransport? sender = UdpMulticastSender;
 
                 try
                 {
@@ -179,22 +178,10 @@ namespace XREngine
             }
 
             public static bool IsConnected()
-                => NetworkInterface.GetIsNetworkAvailable();
+                => NetworkTransportServices.Required.IsNetworkAvailable();
 
             public static string[] GetAllLocalIPv4(NetworkInterfaceType type)
-            {
-                List<string> ipAddrList = [];
-                foreach (NetworkInterface item in NetworkInterface.GetAllNetworkInterfaces())
-                {
-                    if (item.NetworkInterfaceType != type || item.OperationalStatus != OperationalStatus.Up)
-                        continue;
-                    
-                    foreach (UnicastIPAddressInformation ip in item.GetIPProperties().UnicastAddresses)
-                        if (ip.Address.AddressFamily == AddressFamily.InterNetwork)
-                            ipAddrList.Add(ip.Address.ToString());
-                }
-                return [.. ipAddrList];
-            }
+                => NetworkTransportServices.Required.GetLocalIPv4((int)type);
 
             protected abstract Task SendUDP();
             protected virtual async Task ReadUDP()
@@ -203,7 +190,7 @@ namespace XREngine
                 bool anyAcked = false;
                 while ((receiver?.Available ?? 0) > 0)
                 {
-                    UdpReceiveResult result = await receiver!.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
+                    DatagramReceiveResult result = await receiver!.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
                     if (result.Buffer.Length > MaxInboundDatagramBytes)
                     {
                         Debug.NetworkingWarning("[Net] Dropped oversized UDP datagram ({0} bytes) from {1}.", result.Buffer.Length, result.RemoteEndPoint);
@@ -262,8 +249,7 @@ namespace XREngine
             /// <param name="udpMulticastPort"></param>
             protected void StartUdpMulticastSender(IPAddress udpMulticastIP, int udpMulticastPort)
             {
-                UdpClient udpClient = new() { /*ExclusiveAddressUse = false*/ };
-                UdpSocketOptions.DisableConnectionReset(udpClient, "multicast sender");
+                IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("multicast sender");
                 UdpMulticastSender = udpClient;
                 MulticastEndPoint = new IPEndPoint(udpMulticastIP, udpMulticastPort);
                 //UdpMulticastSender.Connect(MulticastEndPoint);
@@ -278,14 +264,11 @@ namespace XREngine
             {
                 // Multiple local clients need to share the same multicast port.
                 // On Windows this requires ReuseAddress + ExclusiveAddressUse=false before binding.
-                UdpClient udpClient = new(AddressFamily.InterNetwork)
-                {
-                    MulticastLoopback = false,
-                    ExclusiveAddressUse = false,
-                };
-                UdpSocketOptions.DisableConnectionReset(udpClient, "multicast receiver");
-                udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, upMulticastServerPort));
+                IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("multicast receiver");
+                udpClient.MulticastLoopback = false;
+                udpClient.ExclusiveAddressUse = false;
+                udpClient.ReuseAddress = true;
+                udpClient.Bind(new IPEndPoint(IPAddress.Any, upMulticastServerPort));
                 udpClient.JoinMulticastGroup(udpMulticastServerIP);
                 UdpReceiver = udpClient;
             }
@@ -522,7 +505,7 @@ namespace XREngine
                 }
             }
 
-            protected async Task ConsumeAndSendUDPQueue(UdpClient? client, IPEndPoint? endPoint)
+            protected async Task ConsumeAndSendUDPQueue(IDatagramTransport? client, IPEndPoint? endPoint)
             {
                 if (endPoint is null)
                     return;
@@ -531,13 +514,13 @@ namespace XREngine
                 await ConsumeAndSendUDPQueue(client, peer).ConfigureAwait(false);
             }
 
-            protected async Task ConsumeAndSendUDPQueues(UdpClient? client)
+            protected async Task ConsumeAndSendUDPQueues(IDatagramTransport? client)
             {
                 foreach (UdpPeerState peer in _udpPeers.Values)
                     await ConsumeAndSendUDPQueue(client, peer).ConfigureAwait(false);
             }
 
-            private async Task ConsumeAndSendUDPQueue(UdpClient? client, UdpPeerState peer)
+            private async Task ConsumeAndSendUDPQueue(IDatagramTransport? client, UdpPeerState peer)
             {
                 ClearOldRTTs(peer);
 
@@ -1598,9 +1581,7 @@ namespace XREngine
                 var fileInfo = new FileInfo(filePath);
                 long fileLength = fileInfo.Length;
 
-                using TcpClient client = new();
-                await client.ConnectAsync(targetIP, port);
-                using NetworkStream ns = client.GetStream();
+                using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
 
                 byte[] lengthBytes = BitConverter.GetBytes(fileLength);
                 await ns.WriteAsync(lengthBytes);
@@ -1620,9 +1601,7 @@ namespace XREngine
             public static async Task SendStreamAsync(Stream stream, string targetIP, int port, IProgress<double> progress)
             {
                 long fileLength = stream.Length;
-                using TcpClient client = new();
-                await client.ConnectAsync(targetIP, port);
-                using NetworkStream ns = client.GetStream();
+                using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
                 byte[] lengthBytes = BitConverter.GetBytes(fileLength);
                 await ns.WriteAsync(lengthBytes);
                 byte[] buffer = new byte[8192];
@@ -1638,10 +1617,7 @@ namespace XREngine
 
             public static async Task ReceiveFileAsync(string filePath, int port, IProgress<double> progress)
             {
-                using TcpListener listener = new(IPAddress.Any, port);
-                listener.Start();
-                using TcpClient client = await listener.AcceptTcpClientAsync();
-                using NetworkStream ns = client.GetStream();
+                using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
                 byte[] lengthBytes = new byte[8];
                 await ns.ReadExactlyAsync(lengthBytes);
                 long fileLength = BitConverter.ToInt64(lengthBytes);
@@ -1659,10 +1635,7 @@ namespace XREngine
 
             public static async Task ReceiveStreamAsync(Stream stream, int port, IProgress<double> progress)
             {
-                using TcpListener listener = new(IPAddress.Any, port);
-                listener.Start();
-                using TcpClient client = await listener.AcceptTcpClientAsync();
-                using NetworkStream ns = client.GetStream();
+                using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
                 byte[] lengthBytes = new byte[8];
                 await ns.ReadExactlyAsync(lengthBytes);
                 long fileLength = BitConverter.ToInt64(lengthBytes);
@@ -1677,116 +1650,6 @@ namespace XREngine
                 }
             }
 
-            ///// <summary>
-            ///// Receives from server or from other clients in a p2p scenario.
-            ///// </summary>
-            //public TcpClient? TcpReceiver { get; set; }
-            ///// <summary>
-            ///// Sends from client to server.
-            ///// </summary>
-            //public TcpClient? TcpSender { get; set; }
-            ///// <summary>
-            ///// Listener for incoming TCP connections.
-            ///// </summary>
-            //public TcpListener? TcpListener { get; set; }
-            ///// <summary>
-            ///// List of TCP clients connected to this server, or in a p2p scenario, connected to this client.
-            ///// </summary>
-            //public List<TcpClient> TcpClients { get; } = [];
-
-            //public bool TCPConnectionEstablished => TcpReceiver?.Connected ?? false;
-
-            //private void StartTcpSender(IPAddress serverIP, int tcpPort)
-            //{
-            //    TcpSender = new TcpClient();
-            //    if (ServerIP is not null)
-            //        TcpSender.Connect(serverIP, tcpPort);
-            //}
-
-            //private void StartTcpListener(IPAddress tcpListenerIP, int tcpListenerPort)
-            //{
-            //    TcpListener = new TcpListener(tcpListenerIP, tcpListenerPort);
-            //    TcpListener.Start();
-            //}
-
-            //private void SendDirectTcp()
-            //{
-            //    if (TcpReceiver is null)
-            //        return;
-
-            //    NetworkStream stream = TcpReceiver.GetStream();
-            //    while (TcpSendQueue.TryDequeue(out byte[]? bytes))
-            //    {
-            //        stream.Write(bytes, 0, bytes.Length);
-            //        stream.Flush();
-            //    }
-            //}
-
-            //private void BroadcastToTcpClients()
-            //{
-            //    AcceptClientConnections();
-            //    while (TcpSendQueue.TryDequeue(out byte[]? bytes))
-            //    {
-            //        lock (TcpClients)
-            //        {
-            //            List<TcpClient> disconnectedClients = [];
-            //            foreach (var client in TcpClients)
-            //            {
-            //                try
-            //                {
-            //                    if (client.Connected)
-            //                    {
-            //                        NetworkStream stream = client.GetStream();
-            //                        stream.Write(bytes, 0, bytes.Length);
-            //                        stream.Flush();
-            //                    }
-            //                    else
-            //                    {
-            //                        Debug.Out("Client disconnected");
-            //                        disconnectedClients.Add(client);
-            //                    }
-            //                }
-            //                catch
-            //                {
-            //                    Debug.Out("Client disconnected");
-            //                    disconnectedClients.Add(client);
-            //                }
-            //            }
-            //            foreach (var client in disconnectedClients)
-            //            {
-            //                TcpClients.Remove(client);
-            //                client.Close();
-            //            }
-            //        }
-            //    }
-            //}
-
-            //private void AcceptClientConnections()
-            //{
-            //    while (TcpListener?.Pending() ?? false)
-            //    {
-            //        var client = TcpListener.AcceptTcpClient();
-            //        lock (TcpClients)
-            //        {
-            //            TcpClients.Add(client);
-            //        }
-            //    }
-            //}
-
-            //private async Task ReadTCP()
-            //{
-            //    if (!(TcpReceiver?.Connected ?? false))
-            //        return;
-
-            //    NetworkStream stream = TcpReceiver.GetStream();
-            //    while (stream.DataAvailable)
-            //    {
-            //        int bytesRead = await stream.ReadAsync(_tcpInBuffer.AsMemory(_tcpBufferOffset, _tcpInBuffer.Length - _tcpBufferOffset));
-            //        _tcpBufferOffset += bytesRead;
-            //    }
-
-            //    ReadReceivedData(_tcpInBuffer, ref _tcpBufferOffset, _decompBuffer);
-            //}
             #endregion
         }
 

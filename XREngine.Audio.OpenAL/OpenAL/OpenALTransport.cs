@@ -1,0 +1,638 @@
+using System.Buffers;
+using Silk.NET.OpenAL;
+using Silk.NET.OpenAL.Extensions.Creative;
+using Silk.NET.OpenAL.Extensions.EXT;
+using System.Diagnostics;
+using System.Numerics;
+using System.Runtime.InteropServices;
+
+namespace XREngine.Audio
+{
+    /// <summary>
+    /// OpenAL implementation of <see cref="IAudioTransport"/>.
+    /// Owns the OpenAL device, context, source/buffer lifecycle, listener state,
+    /// and all format/capture extensions.
+    /// <para>
+    /// Extracted from the original monolithic <see cref="ListenerContext"/> to support
+    /// the transport/effects split architecture.
+    /// </para>
+    /// </summary>
+    public sealed unsafe partial class OpenALTransport : IAudioListenerBackend, IAudioSourceEffectsProvider
+    {
+        private bool _loggedFloatFallbackWarning;
+
+        // --- OpenAL core objects ---
+
+        public AL Api { get; }
+        public ALContext Context { get; }
+        internal Device* DeviceHandle { get; }
+        internal Context* ContextHandle { get; }
+
+        // --- Format extensions ---
+
+        public VorbisFormat? VorbisFormat { get; }
+        public MP3Format? MP3Format { get; }
+        public XRam? XRam { get; }
+        public MultiChannelBuffers? MultiChannel { get; }
+        public DoubleFormat? DoubleFormat { get; }
+        public MULAWFormat? MuLawFormat { get; }
+        public FloatFormat? FloatFormat { get; }
+        public MCFormats? MCFormats { get; }
+        public ALAWFormat? ALawFormat { get; }
+
+        // --- EFX extension (exposed for OpenALEfxProcessor) ---
+
+        internal EffectExtension? EffectExtension { get; }
+
+        public IAudioSourceEffects? CreateSourceEffects(ListenerContext listener)
+            => EffectExtension is { } extension ? new EffectContext(listener, extension) : null;
+
+        // --- Capture ---
+
+        public Capture? Capture { get; private set; }
+
+        // --- State ---
+
+        public string? DeviceName { get; private set; }
+        public int SampleRate { get; private set; } = 44100;
+        public bool IsOpen { get; private set; }
+
+        /// <summary>
+        /// Tracks which transport is "current" for the OpenAL context.
+        /// OpenAL uses a thread-global current context; we must ensure ours is active.
+        /// </summary>
+        public static OpenALTransport? CurrentTransport { get; private set; }
+        private static readonly object NativeGate = new();
+
+        /// <summary>Serializes context selection and a complete native operation across listeners.</summary>
+        internal NativeOperation EnterNative()
+        {
+            System.Threading.Monitor.Enter(NativeGate);
+            try
+            {
+                MakeCurrentCore();
+                return new NativeOperation(this);
+            }
+            catch
+            {
+                System.Threading.Monitor.Exit(NativeGate);
+                throw;
+            }
+        }
+
+        internal readonly struct NativeOperation(OpenALTransport transport) : IDisposable
+        {
+            public void Dispose()
+            {
+                try { transport.VerifyErrorCore(); }
+                finally { System.Threading.Monitor.Exit(NativeGate); }
+            }
+        }
+
+        public OpenALTransport(string? deviceName = null)
+        {
+            Api = AL.GetApi();
+
+            // Open device and context
+            Context = ALContext.GetApi(false);
+            lock (NativeGate)
+            {
+                DeviceHandle = Context.OpenDevice(deviceName);
+                if (DeviceHandle == null)
+                    throw new InvalidOperationException(
+                        $"OpenAL could not open playback device '{deviceName ?? "default"}'.");
+
+                ContextHandle = Context.CreateContext(DeviceHandle, null);
+                if (ContextHandle == null)
+                {
+                    Context.CloseDevice(DeviceHandle);
+                    throw new InvalidOperationException(
+                        $"OpenAL could not create a context for playback device '{deviceName ?? "default"}'.");
+                }
+
+                DeviceName = deviceName;
+
+                try
+                {
+                    using var native = EnterNative();
+                    // Extension queries require an active device context.
+                    VorbisFormat = Api.TryGetExtension<VorbisFormat>(out var vf) ? vf : null;
+                    MP3Format = Api.TryGetExtension<MP3Format>(out var mp3) ? mp3 : null;
+                    MultiChannel = Api.TryGetExtension<MultiChannelBuffers>(out var mc) ? mc : null;
+                    DoubleFormat = Api.TryGetExtension<DoubleFormat>(out var df) ? df : null;
+                    MuLawFormat = Api.TryGetExtension<MULAWFormat>(out var mul) ? mul : null;
+                    FloatFormat = Api.TryGetExtension<FloatFormat>(out var ff) ? ff : null;
+                    MCFormats = Api.TryGetExtension<MCFormats>(out var mcf) ? mcf : null;
+                    ALawFormat = Api.TryGetExtension<ALAWFormat>(out var alf) ? alf : null;
+                    XRam = Api.TryGetExtension<XRam>(out var xram) ? xram : null;
+                    EffectExtension = Api.TryGetExtension<EffectExtension>(out var efx) ? efx : null;
+                    Capture = Context.TryGetExtension<Capture>(DeviceHandle, out var capture) ? capture : null;
+                }
+                catch
+                {
+                    Context.MakeContextCurrent((Context*)null);
+                    CurrentTransport = null;
+                    Context.DestroyContext(ContextHandle);
+                    Context.CloseDevice(DeviceHandle);
+                    throw;
+                }
+
+                IsOpen = true;
+            }
+            VerifyError();
+        }
+
+        // --- Context management ---
+
+        public void MakeCurrent()
+        {
+            lock (NativeGate)
+                MakeCurrentCore();
+        }
+
+        private void MakeCurrentCore()
+        {
+            if (!Context.MakeContextCurrent(ContextHandle))
+                throw new InvalidOperationException("OpenAL could not make the transport context current.");
+
+            CurrentTransport = this;
+        }
+
+        public void VerifyError()
+        {
+            lock (NativeGate)
+            {
+                MakeCurrentCore();
+                VerifyErrorCore();
+            }
+        }
+
+        private void VerifyErrorCore()
+        {
+            var error = Api.GetError();
+            if (error != AudioError.NoError)
+            {
+                Trace.WriteLine($"OpenAL Error: {error}");
+                AudioDiagnostics.RecordOpenALError($"{error}");
+            }
+        }
+
+        // --- IAudioTransport: Device ---
+
+        public void Open(string? deviceName = null)
+        {
+            // Already opened in constructor for OpenAL (device must exist at construction time).
+            // This method exists for transports that support deferred open.
+        }
+
+        public void Close()
+        {
+            lock (NativeGate)
+            {
+                if (!IsOpen)
+                    return;
+
+                IsOpen = false;
+                if (CurrentTransport == this)
+                {
+                    Context.MakeContextCurrent((Context*)null);
+                    CurrentTransport = null;
+                }
+
+                Context.DestroyContext(ContextHandle);
+                Context.CloseDevice(DeviceHandle);
+            }
+        }
+
+        // --- IAudioTransport: Listener ---
+
+        public void SetListenerPosition(Vector3 position)
+        {
+            using var native = EnterNative();
+            Api.SetListenerProperty(ListenerVector3.Position, position);
+            VerifyError();
+        }
+
+        public void SetListenerVelocity(Vector3 velocity)
+        {
+            using var native = EnterNative();
+            Api.SetListenerProperty(ListenerVector3.Velocity, velocity);
+            VerifyError();
+        }
+
+        public void SetListenerOrientation(Vector3 forward, Vector3 up)
+        {
+            using var native = EnterNative();
+            float* orientation = stackalloc float[6]
+            {
+                forward.X, forward.Y, forward.Z,
+                up.X, up.Y, up.Z,
+            };
+            Api.SetListenerProperty(ListenerFloatArray.Orientation, orientation);
+            VerifyError();
+        }
+
+        public void SetListenerGain(float gain)
+        {
+            using var native = EnterNative();
+            Api.SetListenerProperty(ListenerFloat.Gain, gain);
+            VerifyError();
+        }
+
+        // --- Listener getters (not in interface, used internally) ---
+
+        internal Vector3 GetListenerPosition()
+        {
+            using var native = EnterNative();
+            Api.GetListenerProperty(ListenerVector3.Position, out Vector3 position);
+            VerifyError();
+            return position;
+        }
+
+        internal Vector3 GetListenerVelocity()
+        {
+            using var native = EnterNative();
+            Api.GetListenerProperty(ListenerVector3.Velocity, out Vector3 velocity);
+            VerifyError();
+            return velocity;
+        }
+
+        internal void GetListenerOrientation(out Vector3 forward, out Vector3 up)
+        {
+            using var native = EnterNative();
+            float* orientation = stackalloc float[6];
+            Api.GetListenerProperty(ListenerFloatArray.Orientation, orientation);
+            VerifyError();
+            forward = new Vector3(orientation[0], orientation[1], orientation[2]);
+            up = new Vector3(orientation[3], orientation[4], orientation[5]);
+        }
+
+        internal float GetListenerGain()
+        {
+            using var native = EnterNative();
+            Api.GetListenerProperty(ListenerFloat.Gain, out float gain);
+            VerifyError();
+            return gain;
+        }
+
+        // --- IAudioTransport: Source lifecycle ---
+
+        public AudioSourceHandle CreateSource()
+        {
+            using var native = EnterNative();
+            uint id = Api.GenSource();
+            VerifyError();
+            return new AudioSourceHandle(id);
+        }
+
+        public void DestroySource(AudioSourceHandle source)
+        {
+            if (!source.IsValid)
+                return;
+            using var native = EnterNative();
+            Api.SourceStop(source.Id);
+            Api.DeleteSource(source.Id);
+            VerifyError();
+        }
+
+        // --- IAudioTransport: Buffer lifecycle ---
+
+        public AudioBufferHandle CreateBuffer()
+        {
+            using var native = EnterNative();
+            uint id = Api.GenBuffer();
+            VerifyError();
+            return new AudioBufferHandle(id);
+        }
+
+        public void DestroyBuffer(AudioBufferHandle buffer)
+        {
+            if (!buffer.IsValid)
+                return;
+            using var native = EnterNative();
+            Api.DeleteBuffer(buffer.Id);
+            VerifyError();
+        }
+
+        public void UploadBufferData(AudioBufferHandle buffer, ReadOnlySpan<byte> pcm, int frequency, int channels, SampleFormat format)
+        {
+            using var native = EnterNative();
+
+            // Use pointer-based BufferData to avoid generic overload resolution issues
+            // with ReadOnlySpan<byte>. All PCM data is passed as raw bytes regardless
+            // of sample format — the OpenAL format enum handles interpretation.
+            bool stereo = channels >= 2;
+            fixed (byte* ptr = pcm)
+            {
+                switch (format)
+                {
+                    case SampleFormat.Byte:
+                        Api.BufferData(buffer.Id, stereo ? BufferFormat.Stereo8 : BufferFormat.Mono8, ptr, pcm.Length, frequency);
+                        break;
+                    case SampleFormat.Short:
+                        Api.BufferData(buffer.Id, stereo ? BufferFormat.Stereo16 : BufferFormat.Mono16, ptr, pcm.Length, frequency);
+                        break;
+                    case SampleFormat.Float:
+                        if (FloatFormat is not null)
+                        {
+                            Api.BufferData(buffer.Id, stereo ? FloatBufferFormat.Stereo : FloatBufferFormat.Mono, ptr, pcm.Length, frequency);
+                        }
+                        else
+                        {
+                            if (!_loggedFloatFallbackWarning)
+                            {
+                                Trace.WriteLine("OpenAL float format extension not available; falling back to 16-bit PCM uploads.");
+                                _loggedFloatFallbackWarning = true;
+                            }
+
+                            int sampleCount = GetFloatSampleCount(pcm);
+                            short[] convertedPcm = ArrayPool<short>.Shared.Rent(sampleCount);
+                            try
+                            {
+                                int convertedSampleCount = ConvertFloatPcmToInt16Pcm(pcm, convertedPcm);
+                                fixed (short* convertedPtr = convertedPcm)
+                                {
+                                    Api.BufferData(
+                                        buffer.Id,
+                                        stereo ? BufferFormat.Stereo16 : BufferFormat.Mono16,
+                                        convertedPtr,
+                                        convertedSampleCount * sizeof(short),
+                                        frequency);
+                                }
+                            }
+                            finally
+                            {
+                                ArrayPool<short>.Shared.Return(convertedPcm);
+                            }
+                        }
+                        break;
+                }
+            }
+
+            VerifyError();
+        }
+
+        internal static int GetFloatSampleCount(ReadOnlySpan<byte> pcm)
+        {
+            if (pcm.Length % sizeof(float) != 0)
+                throw new ArgumentException("Float PCM byte count must be a multiple of 4.", nameof(pcm));
+
+            return pcm.Length / sizeof(float);
+        }
+
+        internal static int ConvertFloatPcmToInt16Pcm(ReadOnlySpan<byte> pcm, Span<short> destination)
+        {
+            int sampleCount = GetFloatSampleCount(pcm);
+            if (destination.Length < sampleCount)
+                throw new ArgumentException("Destination buffer is too small for converted PCM data.", nameof(destination));
+
+            ReadOnlySpan<float> source = MemoryMarshal.Cast<byte, float>(pcm);
+            for (int i = 0; i < source.Length; i++)
+                destination[i] = ConvertFloatSampleToInt16(source[i]);
+
+            return source.Length;
+        }
+
+        internal static short ConvertFloatSampleToInt16(float sample)
+        {
+            float clampedSample = Math.Clamp(sample, -1.0f, 1.0f);
+            if (clampedSample <= -1.0f)
+                return short.MinValue;
+            if (clampedSample >= 1.0f)
+                return short.MaxValue;
+
+            float scale = clampedSample < 0.0f ? 32768.0f : short.MaxValue;
+            int converted = (int)MathF.Round(clampedSample * scale);
+            return (short)Math.Clamp(converted, short.MinValue, short.MaxValue);
+        }
+
+        // --- IAudioTransport: Playback ---
+
+        public void Play(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            Api.SourcePlay(source.Id);
+            VerifyError();
+        }
+
+        public void Stop(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            Api.SourceStop(source.Id);
+            VerifyError();
+        }
+
+        public void Pause(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            Api.SourcePause(source.Id);
+            VerifyError();
+        }
+
+        public void Rewind(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            Api.SourceRewind(source.Id);
+            VerifyError();
+        }
+
+        public void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer)
+        {
+            using var native = EnterNative();
+            Api.SetSourceProperty(source.Id, SourceInteger.Buffer, buffer.Id);
+            VerifyError();
+        }
+
+        public void QueueBuffers(AudioSourceHandle source, ReadOnlySpan<AudioBufferHandle> buffers)
+        {
+            using var native = EnterNative();
+            uint* handles = stackalloc uint[buffers.Length];
+            for (int i = 0; i < buffers.Length; i++)
+                handles[i] = buffers[i].Id;
+            Api.SourceQueueBuffers(source.Id, buffers.Length, handles);
+            VerifyError();
+        }
+
+        public int UnqueueProcessedBuffers(AudioSourceHandle source, Span<AudioBufferHandle> output)
+        {
+            using var native = EnterNative();
+            int processed = GetSourcePropertyInt(source.Id, GetSourceInteger.BuffersProcessed);
+            int count = Math.Min(processed, output.Length);
+            if (count <= 0)
+                return 0;
+
+            uint* handles = stackalloc uint[count];
+            Api.SourceUnqueueBuffers(source.Id, count, handles);
+            VerifyError();
+
+            for (int i = 0; i < count; i++)
+                output[i] = new AudioBufferHandle(handles[i]);
+
+            return count;
+        }
+
+        public int GetBuffersProcessed(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            return GetSourcePropertyInt(source.Id, GetSourceInteger.BuffersProcessed);
+        }
+
+        public int GetBuffersQueued(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            return GetSourcePropertyInt(source.Id, GetSourceInteger.BuffersQueued);
+        }
+
+        // --- IAudioTransport: Source properties ---
+
+        public void SetSourcePosition(AudioSourceHandle source, Vector3 position)
+        {
+            using var native = EnterNative();
+            Api.SetSourceProperty(source.Id, SourceVector3.Position, position);
+            VerifyError();
+        }
+
+        public void SetSourceVelocity(AudioSourceHandle source, Vector3 velocity)
+        {
+            using var native = EnterNative();
+            Api.SetSourceProperty(source.Id, SourceVector3.Velocity, velocity);
+            VerifyError();
+        }
+
+        public void SetSourceGain(AudioSourceHandle source, float gain)
+        {
+            using var native = EnterNative();
+            Api.SetSourceProperty(source.Id, SourceFloat.Gain, gain);
+            VerifyError();
+        }
+
+        public void SetSourcePitch(AudioSourceHandle source, float pitch)
+        {
+            using var native = EnterNative();
+            Api.SetSourceProperty(source.Id, SourceFloat.Pitch, pitch);
+            VerifyError();
+        }
+
+        public void SetSourceLooping(AudioSourceHandle source, bool loop)
+        {
+            using var native = EnterNative();
+            Api.SetSourceProperty(source.Id, SourceBoolean.Looping, loop);
+            VerifyError();
+        }
+
+        public bool IsSourcePlaying(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            int state = GetSourcePropertyInt(source.Id, GetSourceInteger.SourceState);
+            VerifyError();
+            return (SourceState)state == SourceState.Playing;
+        }
+
+        public int GetSampleOffset(AudioSourceHandle source)
+        {
+            using var native = EnterNative();
+            return GetSourcePropertyInt(source.Id, GetSourceInteger.SampleOffset);
+        }
+
+        // --- IAudioTransport: Capture ---
+
+        public IAudioCaptureDevice? OpenCaptureDevice(string? device, int sampleRate, SampleFormat format, int bufferSize)
+        {
+            // OpenAL capture wrappers own separate capture devices; microphone components
+            // use the registered desktop capture stream.
+            return null;
+        }
+
+        // --- Extended OpenAL state (not in IAudioTransport, used by ListenerContext) ---
+
+        internal float GetDopplerFactor()
+        {
+            using var native = EnterNative();
+            var factor = Api.GetStateProperty(StateFloat.DopplerFactor);
+            VerifyError();
+            return factor;
+        }
+
+        internal void SetDopplerFactor(float factor)
+        {
+            using var native = EnterNative();
+            Api.DopplerFactor(factor);
+            VerifyError();
+        }
+
+        internal float GetSpeedOfSound()
+        {
+            using var native = EnterNative();
+            var speed = Api.GetStateProperty(StateFloat.SpeedOfSound);
+            VerifyError();
+            return speed;
+        }
+
+        internal void SetSpeedOfSound(float speed)
+        {
+            using var native = EnterNative();
+            Api.SpeedOfSound(speed);
+            VerifyError();
+        }
+
+        internal DistanceModel GetDistanceModel()
+        {
+            using var native = EnterNative();
+            var model = (DistanceModel)Api.GetStateProperty(StateInteger.DistanceModel);
+            VerifyError();
+            return model;
+        }
+
+        internal void SetDistanceModel(DistanceModel model)
+        {
+            using var native = EnterNative();
+            Api.DistanceModel(model);
+            VerifyError();
+        }
+
+        internal bool IsExtensionPresent(string extension)
+        {
+            using var native = EnterNative();
+            return Api.IsExtensionPresent(extension);
+        }
+
+        internal string GetVendor()
+        {
+            using var native = EnterNative();
+            return Api.GetStateProperty(StateString.Vendor);
+        }
+        internal string GetRenderer()
+        {
+            using var native = EnterNative();
+            return Api.GetStateProperty(StateString.Renderer);
+        }
+        internal string GetVersion()
+        {
+            using var native = EnterNative();
+            return Api.GetStateProperty(StateString.Version);
+        }
+        internal string[] GetExtensions()
+        {
+            using var native = EnterNative();
+            return Api.GetStateProperty(StateString.Extensions).Split(' ');
+        }
+
+        // --- Helpers ---
+
+        private int GetSourcePropertyInt(uint sourceId, GetSourceInteger param)
+        {
+            using var native = EnterNative();
+            Api.GetSourceProperty(sourceId, param, out int value);
+            VerifyError();
+            return value;
+        }
+
+        // --- IDisposable ---
+
+        public void Dispose()
+        {
+            Close();
+            GC.SuppressFinalize(this);
+        }
+    }
+}

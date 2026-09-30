@@ -34,7 +34,7 @@ namespace XREngine.Components
             index = -1;
             return false;
         }
-        public const string MissingAdapterMessage = "No Audio2Face-3D live client adapter is registered. Add an Audio2Face3DNativeBridgeComponent beside the runtime component or register a custom adapter through Audio2Face3DRegistry.Adapter.";
+        public const string MissingAdapterMessage = "No Audio2Face-3D live client adapter is registered. Register an adapter in the host application, then add its scene component when required.";
 
         public static IAudio2Face3DLiveClientAdapter? Adapter { get; set; }
         public static bool HasAdapter => Adapter is not null;

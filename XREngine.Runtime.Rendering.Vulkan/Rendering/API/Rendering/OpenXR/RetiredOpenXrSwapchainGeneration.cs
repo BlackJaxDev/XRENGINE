@@ -1,4 +1,3 @@
-using Silk.NET.OpenXR;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
@@ -10,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// until GPU timeline completion and OpenXR runtime release are both satisfied.
 /// </summary>
 internal sealed unsafe record RetiredOpenXrSwapchainGeneration(
-    Swapchain[] Swapchains,
+    ulong[] Swapchains,
     SwapchainImageVulkan2KHR*[] SwapchainImagesVK,
     uint[] SwapchainImageCounts,
     uint ViewCount,
@@ -21,12 +20,18 @@ internal sealed unsafe record RetiredOpenXrSwapchainGeneration(
     bool HasResourceLifetimeAuthority,
     Image[] LifetimeImages,
     VulkanResourceSlotHandle[] DetachedLifetimeSlots,
-    bool ExternalImageLifetimesDetached,
-    VulkanOpenXrSwapchainChildRetirementReceipt ChildRetirementReceipt,
-    bool RuntimeImagesReleased,
+    bool InitialExternalImageLifetimesDetached,
+    VulkanOpenXrSwapchainChildRetirementReceipt InitialChildRetirementReceipt,
+    bool InitialRuntimeImagesReleased,
     long EnqueuedTimestamp,
-    long RetirementGenerationId)
+    long RetirementGenerationId,
+    OpenXrRetirementToken RetirementToken)
 {
+    public bool ExternalImageLifetimesDetached { get; set; } = InitialExternalImageLifetimesDetached;
+    public VulkanOpenXrSwapchainChildRetirementReceipt ChildRetirementReceipt { get; set; } = InitialChildRetirementReceipt;
+    public bool RuntimeImagesReleased { get; set; } = InitialRuntimeImagesReleased;
+    public string? PermanentRecoveryFailureReason { get; set; }
+
     // Destruction is independently retryable per view. A failed xrDestroySwapchain
     // leaves both the native handle and its image-array owner reachable.
     public bool[] DestroyedSwapchains { get; } = new bool[Swapchains.Length];

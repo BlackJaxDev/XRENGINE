@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using System.Numerics;
 using XREngine.Input;
 using XREngine.Scene.Transforms;
@@ -35,7 +34,7 @@ namespace XREngine.Data.Components.Scene
         /// <summary>
         /// The VR device associated with this transform.
         /// </summary>
-        public abstract VrDevice? Device { get; }
+        public abstract RuntimeVrDeviceInfo? Device { get; }
 
         protected override void OnSceneNodeActivated()
         {
@@ -71,12 +70,13 @@ namespace XREngine.Data.Components.Scene
         {
             if (!TryGetTrackedLocalPose(timing, out Matrix4x4 mtx))
             {
-                VrDevice? device = Device;
+                RuntimeVrDeviceInfo? device = Device;
                 if (device is null)
                     mtx = LocalMatrixOffset ?? Matrix4x4.Identity;
                 else
                 {
-                    mtx = device.RenderDeviceToAbsoluteTrackingMatrix;
+                    if (!RuntimeVrStateServices.TryGetDeviceLocalPose(device.Value.DeviceIndex, RuntimeVrPoseTiming.Recalc, out mtx))
+                        mtx = Matrix4x4.Identity;
                     if (LocalMatrixOffset.HasValue)
                         mtx *= LocalMatrixOffset.Value;
                 }
@@ -97,11 +97,12 @@ namespace XREngine.Data.Components.Scene
             if (TryGetTrackedLocalPose(RuntimeVrPoseTiming.Predicted, out Matrix4x4 localPose))
                 return localPose;
 
-            VrDevice? device = Device;
+            RuntimeVrDeviceInfo? device = Device;
             if (device is null)
                 return LocalMatrixOffset ?? Matrix4x4.Identity;
 
-            Matrix4x4 mtx = device.DeviceToAbsoluteTrackingMatrix;
+            if (!RuntimeVrStateServices.TryGetDeviceLocalPose(device.Value.DeviceIndex, RuntimeVrPoseTiming.Predicted, out Matrix4x4 mtx))
+                mtx = Matrix4x4.Identity;
             if (LocalMatrixOffset.HasValue)
                 mtx *= LocalMatrixOffset.Value;
             return mtx;

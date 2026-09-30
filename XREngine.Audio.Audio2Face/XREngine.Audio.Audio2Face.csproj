@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+    <Audio2XBridgeNativeOutputDir Condition="'$(Audio2XBridgeNativeOutputDir)' == ''">$(MSBuildProjectDirectory)\..\Build\_AgentValidation\00000000-000000-shared\tools\$(Configuration)\Audio2XBridge\</Audio2XBridgeNativeOutputDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(Audio2XBridgeNativeOutputDir)*.dll" Condition="Exists('$(Audio2XBridgeNativeOutputDir)Audio2XBridge.Native.dll')">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+</Project>

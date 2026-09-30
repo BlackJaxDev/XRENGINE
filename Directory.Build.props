@@ -1,15 +1,12 @@
 <Project>
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser'">
-    <XREnginePortableRuntime>true</XREnginePortableRuntime>
-  </PropertyGroup>
-  <!-- Portable and desktop assemblies keep their public identities but must
-       never reuse generated files, restored assets, or build outputs. -->
-  <PropertyGroup Condition="'$(XREnginePortableRuntime)' == 'true'">
-    <BaseOutputPath>bin/portable/</BaseOutputPath>
-    <BaseIntermediateOutputPath>obj/portable/</BaseIntermediateOutputPath>
-    <ArtifactsProjectName>$(MSBuildProjectName).portable</ArtifactsProjectName>
     <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Extensions' or '$(MSBuildProjectName)' == 'XREngine.Data' or '$(MSBuildProjectName)' == 'XREngine.Audio' or '$(MSBuildProjectName)' == 'XREngine.Animation' or '$(MSBuildProjectName)' == 'XREngine.Input' or '$(MSBuildProjectName)' == 'XREngine.Modeling' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Core' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AudioIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AnimationIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.InputIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.ModelingIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering.WebGPU' or '$(MSBuildProjectName)' == 'XREngine.Browser'">
+    <XREnginePortableProject>true</XREnginePortableProject>
+  </PropertyGroup>
+
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -18,7 +15,7 @@
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <Nullable>disable</Nullable>
-    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**;**/obj/**;**/bin/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**;**/Build/_AgentValidation/**;**/obj/**;**/bin/**</DefaultItemExcludes>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-dev</PackageVersion>
     <Authors Condition="'$(Authors)' == ''">BlackJax</Authors>
     <Company Condition="'$(Company)' == ''">BlackJax LLC</Company>

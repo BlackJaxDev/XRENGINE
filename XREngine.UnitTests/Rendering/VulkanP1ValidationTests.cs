@@ -943,7 +943,8 @@ public sealed class VulkanP1ValidationTests
     {
         string drawingSource = ReadVulkanDesktopFrameLoopSources();
         string syncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
-        string win32ResizeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/Win32ModalLoopTimerInteractiveResizeStrategy.cs");
+        string win32ResizeSource = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopWin32ModalResizeHook.cs");
+        string desktopBackendSource = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopSilkWindowBackend.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string resizeResourceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs");
 
@@ -978,12 +979,16 @@ public sealed class VulkanP1ValidationTests
         pipelineInstanceSource.ShouldContain("return PendingGeneration is null && !_requiresManagedResourceGeneration;");
         pipelineInstanceSource.ShouldContain("legacy");
         syncSource.ShouldContain("GetSemaphoreCounterValue");
-        win32ResizeSource.ShouldContain("case WM_PAINT:");
-        win32ResizeSource.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-paint\")");
-        win32ResizeSource.ShouldContain("RequestInteractiveResizePaint()");
-        win32ResizeSource.ShouldContain("case WM_SIZING:");
-        win32ResizeSource.ShouldContain("ApplyCoalescedClientPresentationResize(\"win32-sizing-live\")");
-        win32ResizeSource.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-sizing-live\")");
+        win32ResizeSource.ShouldContain("case WmPaint when _inSizeMove:");
+        win32ResizeSource.ShouldContain("case WmSizing:");
+        win32ResizeSource.ShouldContain("case WmTimer when wParam == TimerId:");
+        win32ResizeSource.ShouldContain("_window?.UpdateNativeResize();");
+        win32ResizeSource.ShouldContain("RequestPaint();");
+        win32ResizeSource.ShouldContain("_window?.EndNativeResize();");
+        desktopBackendSource.ShouldContain("internal void UpdateNativeResize()");
+        desktopBackendSource.ShouldContain("AssertOwnerThread();");
+        desktopBackendSource.ShouldContain("_sink?.RepaintRequested();");
+        win32ResizeSource.ShouldNotContain("RenderInteractiveResizeFrame");
         win32ResizeSource.ShouldNotContain("VulkanActiveSizingRenderHz");
         win32ResizeSource.ShouldNotContain("if (ApplyCoalescedClientPresentationResize(\"win32-timer\"))");
         pipelineInstanceSource.ShouldContain(

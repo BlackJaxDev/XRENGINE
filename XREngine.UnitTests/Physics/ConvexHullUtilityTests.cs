@@ -9,6 +9,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Tools;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Runtime.Physics.Authoring;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 
@@ -19,12 +20,14 @@ public sealed class ConvexHullUtilityTests
 {
     private string? _cacheRoot;
     private IDisposable? _physicsServicesLease;
+    private IDisposable? _authoringServicesLease;
 
     [SetUp]
     public void SetUp()
     {
         _cacheRoot = Path.Combine(Path.GetTempPath(), $"xre_coacd_cache_test_{Guid.NewGuid():N}");
         ConvexHullDiskCache.CacheRootOverride = _cacheRoot;
+        _authoringServicesLease = PhysicsColliderAuthoringServices.Install(new CoAcdPhysicsColliderAuthoringService());
         _physicsServicesLease = RuntimePhysicsServices.Install(
             RuntimePhysicsServices.Current,
             new EngineConvexHullInputProvider());
@@ -34,6 +37,8 @@ public sealed class ConvexHullUtilityTests
     public void TearDown()
     {
         ConvexHullDiskCache.CacheRootOverride = null;
+        _authoringServicesLease?.Dispose();
+        _authoringServicesLease = null;
         _physicsServicesLease?.Dispose();
         _physicsServicesLease = null;
 

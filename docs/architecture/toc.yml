@@ -2,6 +2,8 @@
   href: README.md
 - name: Getting Started In The Codebase
   href: getting-started-in-codebase.md
+- name: Runtime Project Organization
+  href: runtime/project-organization.md
 
 - name: Assets
   items:

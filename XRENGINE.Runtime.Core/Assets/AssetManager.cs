@@ -179,8 +179,8 @@ namespace XREngine
             GameWatcher.Path = GameAssetsPath;
             GameWatcher.Filter = "*.*";
             GameWatcher.IncludeSubdirectories = true;
-            GameWatcher.EnableRaisingEvents = true;
-            GameWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName;
+            GameWatcher.EnableRaisingEvents = AssetFileSystemServices.SupportsChangeNotifications;
+            GameWatcher.NotifyFilter = AssetNotifyFilters.LastWrite | AssetNotifyFilters.FileName | AssetNotifyFilters.DirectoryName;
             GameWatcher.Created += OnGameFileCreated;
             GameWatcher.Changed += OnGameFileChanged;
             GameWatcher.Deleted += OnGameFileDeleted;
@@ -190,8 +190,8 @@ namespace XREngine
             EngineWatcher.Path = EngineAssetsPath;
             EngineWatcher.Filter = "*.*";
             EngineWatcher.IncludeSubdirectories = true;
-            EngineWatcher.EnableRaisingEvents = true;
-            EngineWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName;
+            EngineWatcher.EnableRaisingEvents = AssetFileSystemServices.SupportsChangeNotifications;
+            EngineWatcher.NotifyFilter = AssetNotifyFilters.LastWrite | AssetNotifyFilters.FileName | AssetNotifyFilters.DirectoryName;
             EngineWatcher.Created += OnEngineFileCreated;
             EngineWatcher.Changed += OnEngineFileChanged;
             EngineWatcher.Deleted += OnEngineFileDeleted;
@@ -331,8 +331,8 @@ namespace XREngine
 
         #region Properties and Fields
 
-        public FileSystemWatcher GameWatcher { get; } = new FileSystemWatcher();
-        public FileSystemWatcher EngineWatcher { get; } = new FileSystemWatcher();
+        public AssetChangeMonitor GameWatcher { get; } = new AssetChangeMonitor();
+        public AssetChangeMonitor EngineWatcher { get; } = new AssetChangeMonitor();
         /// <summary>
         /// This is the path to /Build/CommonAssets/ in the root folder of the engine.
         /// </summary>
@@ -506,7 +506,7 @@ namespace XREngine
 
             try
             {
-                foreach (string metaFile in Directory.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
+                foreach (string metaFile in AssetFileSystemServices.Required.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
                 {
                     if (IsTransientMetadataPath(metaFile))
                         continue;

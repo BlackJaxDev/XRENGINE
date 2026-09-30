@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.Json;
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Rendering;
 
 namespace XREngine.Editor.MaterialAuthoring;
@@ -105,11 +105,11 @@ public static class MaterialTextureAssetWriter
         policy.Validate();
         string validatedOutput = MaterialTexturePacker.ValidateOutputPath(projectAssetRoot, outputPath);
         string extension = Path.GetExtension(validatedOutput).ToLowerInvariant();
-        MagickFormat format = extension switch
+        RuntimeImageFileFormat format = extension switch
         {
-            ".png" => MagickFormat.Png,
-            ".jpg" or ".jpeg" => MagickFormat.Jpeg,
-            ".exr" => MagickFormat.Exr,
+            ".png" => RuntimeImageFileFormat.Png,
+            ".jpg" or ".jpeg" => RuntimeImageFileFormat.Jpeg,
+            ".exr" => RuntimeImageFileFormat.Exr,
             _ => throw new InvalidDataException($"Encoding '{extension}' is unavailable."),
         };
         if (pixels.Length != checked(policy.Width * policy.Height))
@@ -156,7 +156,7 @@ public static class MaterialTextureAssetWriter
         string outputPath,
         ReadOnlySpan<Vector4> pixels,
         MaterialTextureOutputPolicy policy,
-        MagickFormat format,
+        RuntimeImageFileFormat format,
         CancellationToken cancellationToken)
     {
         float[] rgba = new float[pixels.Length * 4];
@@ -172,19 +172,14 @@ public static class MaterialTextureAssetWriter
             rgba[offset + 3] = pixel.W;
         }
 
-        using MagickImage image = new(MagickColors.Transparent, (uint)policy.Width, (uint)policy.Height);
-        image.ImportPixels(
-            rgba,
-            new PixelImportSettings(
-                (uint)policy.Width,
-                (uint)policy.Height,
-                StorageType.Float,
-                PixelMapping.RGBA));
-        image.ColorSpace = policy.ColorSpace == EMaterialTextureColorSpace.Srgb
-            ? ColorSpace.sRGB
-            : ColorSpace.RGB;
-        image.Quality = (uint)policy.Quality;
-        image.Write(outputPath, format);
+        byte[] rawPixels = new byte[checked(rgba.Length * sizeof(float))];
+        Buffer.BlockCopy(rgba, 0, rawPixels, 0, rawPixels.Length);
+        using RuntimeImage image = new((uint)policy.Width, (uint)policy.Height,
+            RuntimePixelFormat.RgbaFloat32, rawPixels);
+        byte[] encoded = RuntimeImageCodecs.Require().Encode(image, format, policy.Quality,
+            policy.ColorSpace == EMaterialTextureColorSpace.Srgb);
+        cancellationToken.ThrowIfCancellationRequested();
+        File.WriteAllBytes(outputPath, encoded);
     }
 }
 

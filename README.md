@@ -66,7 +66,7 @@ Silk.NET operates as the main C# backend glue for supporting most typical render
 
 - **Rendering:** Vulkan is the primary developed path. OpenGL 4.6 is maintained as a compatibility option. GLFW is the windowing backend. *Wishlisted: D3D12 & Metal.*
 
-- **Physics:** PhysX is the current default with character controller support. Jolt is being actively developed as an alternate main option. *Wishlisted: Jitter 2, Box3D*
+- **Physics:** PhysX is the current default with character controller support. Jolt is an installed alternative with browser qualification and default-promotion gates still open. Jitter2 is an experimental opt-in module; Box3D remains a proposal.
 
 - **Audio:** OpenAL & NAudio are the two supported buffering & output options, and Steam Audio and OpenAL EFX are the two supported audio effect drivers. *Wishlisted: FMOD*
 
@@ -80,11 +80,21 @@ Silk.NET operates as the main C# backend glue for supporting most typical render
 
 - **Input:** Silk.NET.Input for keyboard, mouse, and gamepad. OpenXR and OpenVR are used for VR controller input.
 
-- **Asset import:** FBX uses the native `XREngine.Fbx` importer and glTF/GLB uses the native `XREngine.Gltf` importer by default. Other model formats load through Assimp (via AssimpNetter). *Wishlisted: .usd, .blend, .max*
+- **Asset import:** FBX uses the engine's managed `XREngine.Fbx` importer; glTF/GLB uses `XREngine.Gltf` with FastGltfBridge. `XREngine.Runtime.ModelAssetPipeline` assembles imported runtime objects and handles other formats through Assimp (via AssimpNetter). *Wishlisted: .usd, .blend, .max*
 
 - **Animation:** Fully in-house animation support & compression.
 
 - **Networking:** Fully in-house client/server realtime transport with entity and avatar pose replication.
+
+## Source layout
+
+The shared engine lives in `XREngine.Runtime.Core`, `XREngine.Runtime.Rendering`,
+the Animation/Audio/Input/Modeling libraries, and their integration projects.
+Native backends have separate projects; `XREngine.Runtime.Bootstrap` installs
+desktop services for application hosts. The former monolithic `XRENGINE`
+project is removed. See [Runtime Project Organization](docs/architecture/runtime/project-organization.md)
+for the complete map and [Portable Project Rules](docs/developer-guides/runtime/portable-projects.md)
+for the shared `net10.0` compilation boundary and browser qualification limits.
 
 ## Prerequisites
 
@@ -181,19 +191,24 @@ than repository components.
 
 ### Engine projects and applications
 
+The [runtime project map](docs/architecture/runtime/project-organization.md) expands the backend groups below and explains their contracts, composition, and native asset ownership.
+
 | Folder | What it is for |
 |--------|----------------|
 | `XREngine.AgentOrchestration/` | Agent context, evidence, model-provider, tool-policy, and orchestration services. |
 | `XREngine.Animation/` | Animation clips, curves, key collections, compression, and VR IK data and logic. |
-| `XREngine.Audio/` | Audio buffers, sources, playback, capture, effects, diagnostics, and backend abstractions. |
+| `XREngine.Audio/` | Managed audio buffers, processing, and playback/capture/effects contracts. |
+| `XREngine.Audio.*` | OpenAL, NAudio, SteamAudio, OVRLipSync, and Audio2Face implementation modules. |
+| `XREngine.Browser/` | Browser canvas application and WebGPU composition host. |
 | `XREngine.Benchmarks/` | BenchmarkDotNet suites and focused performance or regression harnesses. |
 | `XREngine.ControlPlane/` | Multiplayer control-plane models and host, instance, session, and world-package orchestration. |
 | `XREngine.Data/` | Shared data types, serialization primitives, collections, interpolation, archives, and stream helpers. |
 | `XREngine.Editor/` | The desktop editor application and its editing, inspection, asset, play-mode, and world-bootstrap tools. |
 | `XREngine.Extensions/` | Reusable .NET extension methods and low-level memory, numeric, collection, and threading helpers. |
-| `XREngine.Fbx/` | Native FBX parsing, semantic conversion, animation support, and export tooling. |
+| `XREngine.Fbx/` | Managed FBX parsing, semantic conversion, animation support, and export tooling. |
 | `XREngine.Gltf/` | Native glTF/GLB document loading, data models, and import support. |
 | `XREngine.Input/` | Input-device abstractions, action state, and runtime keyboard, mouse, gamepad, and VR input services. |
+| `XREngine.Input.Silk/`, `XREngine.Input.XInput/` | Native input-device implementations. |
 | `XREngine.Modeling/` | Editable mesh, half-edge topology, CSG, mesh generation, and modeling document types. |
 | `XREngine.Profiler/` | Standalone profiler application and its network receiver. |
 | `XREngine.Profiler.UI/` | Reusable UI panels and rendering components for profiler data. |
@@ -201,14 +216,24 @@ than repository components.
 | `XREngine.Runtime.AnimationIntegration/` | Scene components and bootstrap services that connect animation systems to the runtime. |
 | `XREngine.Runtime.AudioIntegration/` | Scene components and bootstrap services that connect audio systems to the runtime. |
 | `XREngine.Runtime.Automation/` | Runtime MCP automation, permission, capture, and render-profiling infrastructure. |
-| `XREngine.Runtime.Bootstrap/` | Shared application startup, world construction, rendering setup, networking profiles, and asset bootstrap. |
-| `XREngine.Runtime.Core/` | Core runtime lifecycle, assets, jobs, scene graph, physics, networking, XR, and foundational engine services. |
+| `XREngine.Runtime.Bootstrap/` | Desktop application composition, backend registration, settings, world construction, and startup/lifecycle services. |
+| `XREngine.Runtime.Core/` | Shared runtime lifecycle, assets, jobs, scene graph, neutral physics/XR contracts, replication, and foundational engine services. |
 | `XREngine.Runtime.InputIntegration/` | Player controllers, pawns, locomotion, camera, game-mode, and runtime input integration. |
 | `XREngine.Runtime.ModelAssetPipeline/` | Runtime model import, conversion, repair, cooking, and prefab-loading pipeline. |
 | `XREngine.Runtime.ModelingIntegration/` | Conversion between modeling documents and runtime meshes, including authoring operations and policies. |
 | `XREngine.Runtime.Rendering/` | Renderer-independent resources, render graph, shaders, scene submission, and rendering systems. |
 | `XREngine.Runtime.Rendering.OpenGL/` | OpenGL 4.6 renderer backend and API object implementations. |
 | `XREngine.Runtime.Rendering.Vulkan/` | Vulkan renderer backend, OpenXR graphics binding, shader translation, and vendor upscaling integration. |
+| `XREngine.Runtime.Rendering.WebGPU/` | Browser WebGPU renderer and command bridge. |
+| `XREngine.Runtime.Rendering.ImGui/` | Shared ImGui integration; graphics controllers stay in renderer modules. |
+| `XREngine.Runtime.Physics.*` | PhysX, Jolt, experimental Jitter, and editor/cook Authoring modules. |
+| `XREngine.Runtime.Platform.Desktop/` | Native windows, event pumping, filesystem/process/platform services, and development assembly loading. |
+| `XREngine.Runtime.XR.*` | OpenXR and OpenVR runtime implementations. |
+| `XREngine.Runtime.Imaging.Magick/`, `XREngine.Runtime.Media.FFmpeg/` | Native image codecs/mips and media decoding. |
+| `XREngine.Runtime.Text.FreeType/`, `XREngine.Runtime.UI.*` | Font tooling and Skia, Rive, and Ultralight UI implementations. |
+| `XREngine.Runtime.IO.DirectStorage/`, `XREngine.Runtime.Diagnostics.Desktop/` | Native storage/codec services and device/hardware diagnostics. |
+| `XREngine.Runtime.Net.Sockets/`, `XREngine.Runtime.Net.Osc/` | Socket and OSC/VMC transports and backend-specific components. |
+| `XREngine.Runtime.MeshProcessing.Meshoptimizer/` | Optional native mesh-processing implementation. |
 | `XREngine.Server/` | Dedicated server executable, authentication, command handling, storage, and server bootstrap. |
 | `XREngine.UnitTests/` | Automated unit, integration, rendering, networking, and source-contract tests. |
 | `XREngine.VRClient/` | Standalone OpenVR companion that forwards input and displays per-eye frames from the engine process. |

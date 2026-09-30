@@ -1,3 +1,4 @@
+using XREngine.Core.Files;
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -7,17 +8,17 @@ namespace XREngine
 {
     public partial class AssetManager
     {
-        public event Action<FileSystemEventArgs>? EngineFileCreated;
-        public event Action<FileSystemEventArgs>? EngineFileChanged;
-        public event Action<FileSystemEventArgs>? EngineFileDeleted;
-        public event Action<RenamedEventArgs>? EngineFileRenamed;
+        public event Action<AssetFileChangeEventArgs>? EngineFileCreated;
+        public event Action<AssetFileChangeEventArgs>? EngineFileChanged;
+        public event Action<AssetFileChangeEventArgs>? EngineFileDeleted;
+        public event Action<AssetFileRenameEventArgs>? EngineFileRenamed;
 
-        public event Action<FileSystemEventArgs>? GameFileCreated;
-        public event Action<FileSystemEventArgs>? GameFileChanged;
-        public event Action<FileSystemEventArgs>? GameFileDeleted;
-        public event Action<RenamedEventArgs>? GameFileRenamed;
+        public event Action<AssetFileChangeEventArgs>? GameFileCreated;
+        public event Action<AssetFileChangeEventArgs>? GameFileChanged;
+        public event Action<AssetFileChangeEventArgs>? GameFileDeleted;
+        public event Action<AssetFileRenameEventArgs>? GameFileRenamed;
 
-        void OnEngineFileCreated(object sender, FileSystemEventArgs args)
+        void OnEngineFileCreated(object sender, AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -25,7 +26,7 @@ namespace XREngine
             OnFileCreated(args);
             EngineFileCreated?.Invoke(args);
         }
-        void OnGameFileCreated(object sender, FileSystemEventArgs args)
+        void OnGameFileCreated(object sender, AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -35,12 +36,12 @@ namespace XREngine
             RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "created");
             GameFileCreated?.Invoke(args);
         }
-        private static void OnFileCreated(FileSystemEventArgs args)
+        private static void OnFileCreated(AssetFileChangeEventArgs args)
         {
             LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was created.");
         }
 
-        async void OnEngineFileChanged(object sender, FileSystemEventArgs args)
+        async void OnEngineFileChanged(object sender, AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -48,7 +49,7 @@ namespace XREngine
             await OnFileChanged(args);
             EngineFileChanged?.Invoke(args);
         }
-        async void OnGameFileChanged(object sender, FileSystemEventArgs args)
+        async void OnGameFileChanged(object sender, AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -58,7 +59,7 @@ namespace XREngine
             RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "changed");
             GameFileChanged?.Invoke(args);
         }
-        private async Task OnFileChanged(FileSystemEventArgs args)
+        private async Task OnFileChanged(AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -69,7 +70,7 @@ namespace XREngine
                 await asset.ReloadAsync(args.FullPath);
         }
 
-        void OnEngineFileDeleted(object sender, FileSystemEventArgs args)
+        void OnEngineFileDeleted(object sender, AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -77,7 +78,7 @@ namespace XREngine
             OnFileDeleted(args);
             EngineFileDeleted?.Invoke(args);
         }
-        void OnGameFileDeleted(object sender, FileSystemEventArgs args)
+        void OnGameFileDeleted(object sender, AssetFileChangeEventArgs args)
         {
             if (ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
@@ -87,7 +88,7 @@ namespace XREngine
             RuntimeAssetAuthoringServices.Current.HandleSourceDeleted(args.FullPath);
             GameFileDeleted?.Invoke(args);
         }
-        private static void OnFileDeleted(FileSystemEventArgs args)
+        private static void OnFileDeleted(AssetFileChangeEventArgs args)
         {
             LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was deleted.");
             //Leave files intact
@@ -99,20 +100,20 @@ namespace XREngine
             //}
         }
 
-        void OnGameFileError(object sender, ErrorEventArgs args)
+        void OnGameFileError(object sender, AssetMonitorErrorEventArgs args)
         {
             OnFileError(args);
         }
-        void OnEngineFileError(object sender, ErrorEventArgs args)
+        void OnEngineFileError(object sender, AssetMonitorErrorEventArgs args)
         {
             OnFileError(args);
         }
-        private static void OnFileError(ErrorEventArgs args)
+        private static void OnFileError(AssetMonitorErrorEventArgs args)
         {
             Debug.LogWarning($"An error occurred in the file system watcher: {args.GetException().Message}");
         }
 
-        void OnGameFileRenamed(object sender, RenamedEventArgs args)
+        void OnGameFileRenamed(object sender, AssetFileRenameEventArgs args)
         {
             if (ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
                 return;
@@ -123,7 +124,7 @@ namespace XREngine
             RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "renamed");
             GameFileRenamed?.Invoke(args);
         }
-        void OnEngineFileRenamed(object sender, RenamedEventArgs args)
+        void OnEngineFileRenamed(object sender, AssetFileRenameEventArgs args)
         {
             if (ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
                 return;
@@ -132,7 +133,7 @@ namespace XREngine
             EngineFileRenamed?.Invoke(args);
         }
 
-        private void OnFileRenamed(RenamedEventArgs args)
+        private void OnFileRenamed(AssetFileRenameEventArgs args)
         {
             LogFileWatcherEvent(args.FullPath, $"File '{args.OldFullPath}' was renamed to '{args.FullPath}'.");
 

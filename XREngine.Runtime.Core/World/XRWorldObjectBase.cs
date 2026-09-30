@@ -288,7 +288,7 @@ public abstract class XRWorldObjectBase : XRObjectBase
 
     private static void InitializeReplicationMetadata()
     {
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+        if (XRRuntimeEnvironment.IsPublishedBuild)
         {
             LoadReplicablePropertiesFromAotMetadata();
             return;
@@ -311,21 +311,23 @@ public abstract class XRWorldObjectBase : XRObjectBase
         {
             Type? type = AotRuntimeMetadataStore.ResolveType(entry.AssemblyQualifiedName);
             if (type is null || !typeof(RuntimeWorldObjectBase).IsAssignableFrom(type))
-                continue;
+                throw new InvalidOperationException($"Published replication type '{entry.AssemblyQualifiedName}' is missing or invalid.");
 
             ReplicationInfo replication = new();
             foreach (string propertyName in entry.ReplicateOnChangeProperties)
             {
                 PropertyInfo? property = type.GetProperty(propertyName, flags);
-                if (property is not null)
-                    replication.ReplicateOnChangePropertiesInternal[property.Name] = property;
+                if (property is null)
+                    throw new InvalidOperationException($"Published replication property '{type.FullName}.{propertyName}' is missing.");
+                replication.ReplicateOnChangePropertiesInternal[property.Name] = property;
             }
 
             foreach (string propertyName in entry.ReplicateOnTickProperties)
             {
                 PropertyInfo? property = type.GetProperty(propertyName, flags);
-                if (property is not null)
-                    replication.ReplicateOnTickPropertiesInternal[property.Name] = property;
+                if (property is null)
+                    throw new InvalidOperationException($"Published replication property '{type.FullName}.{propertyName}' is missing.");
+                replication.ReplicateOnTickPropertiesInternal[property.Name] = property;
             }
 
             replication.CompressedPropertyNamesInternal = [.. entry.CompressedPropertyNames.Distinct(StringComparer.Ordinal)];

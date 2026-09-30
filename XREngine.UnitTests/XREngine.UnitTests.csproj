@@ -9,9 +9,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.Net.Sockets\XREngine.Runtime.Net.Sockets.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering.ImGui\XREngine.Runtime.Rendering.ImGui.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.OpenAL\XREngine.Audio.OpenAL.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.UI.Skia\XREngine.Runtime.UI.Skia.csproj" />
     <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
     <PackageReference Include="Magick.NET-Q16-HDRI-x64" Version="14.16.0" />
-    <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />
     <PackageReference Include="NUnit3TestAdapter" Version="6.2.0" />
@@ -24,11 +28,23 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.MeshProcessing.Meshoptimizer\XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Imaging.Magick\XREngine.Runtime.Imaging.Magick.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Net.Osc\XREngine.Runtime.Net.Osc.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.XR.OpenVR\XREngine.Runtime.XR.OpenVR.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.NAudio\XREngine.Audio.NAudio.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />
+    <ProjectReference Include="..\XREngine.Input.Silk\XREngine.Input.Silk.csproj" />
+    <ProjectReference Include="..\XREngine.Input.XInput\XREngine.Input.XInput.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.Jolt\XREngine.Runtime.Physics.Jolt.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.PhysX\XREngine.Runtime.Physics.PhysX.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.Jitter\XREngine.Runtime.Physics.Jitter.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.Authoring\XREngine.Runtime.Physics.Authoring.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />

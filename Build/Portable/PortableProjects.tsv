@@ -1,0 +1,15 @@
+# Whole-project browser compile closure. Names must match MSBuildProjectName.
+XREngine.Extensions
+XREngine.Data
+XREngine.Audio
+XREngine.Animation
+XREngine.Input
+XREngine.Modeling
+XREngine.Runtime.Core
+XREngine.Runtime.Rendering
+XREngine.Runtime.AudioIntegration
+XREngine.Runtime.AnimationIntegration
+XREngine.Runtime.InputIntegration
+XREngine.Runtime.ModelingIntegration
+XREngine.Runtime.Rendering.WebGPU
+XREngine.Browser

@@ -42,7 +42,7 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 
 ## Rendering Volumes
 ### `VolumetricFogVolumeComponent`
-- Located at `XRENGINE/Scene/Components/Volumes/VolumetricFog.cs`; registers a bounded box volume consumed by the separated volumetric fog pipeline for local volumetric fog.
+- Located at `XREngine.Runtime.Rendering/Scene/Components/Volumes/VolumetricFog.cs`; registers a bounded box volume consumed by the separated volumetric fog pipeline for local volumetric fog.
 - Shape is driven by the node transform plus the component's `HalfExtents`, so non-uniform scaling and rotation are respected automatically.
 - Selecting the component in the ImGui editor draws a wireframe bounds preview over the volume; inactive or non-renderable volumes use an orange preview color.
 - Use the component to author local fog banks, god-ray pockets, or dusty interior shafts without changing global world fog.
@@ -137,7 +137,7 @@ listener.StartListening();
 ```
 
 ### `TcpClientComponent`
-- Located at `XREngine.Runtime.Core/Scene/Components/Networking/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
+- Located at `XREngine.Runtime.Net.Sockets/Components/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
 - Supports auto-reconnect, configurable timeouts, optional text dispatch, and main-thread events for connection, data, and errors.
 - Call `SendAsync` for arbitrary bytes or `SendStringAsync` for UTF-8 payloads; enable TLS by toggling `UseTls` and providing `TlsHostName` when required.
 
@@ -155,7 +155,7 @@ await client.SendStringAsync("ping\n");
 ```
 
 ### `UdpSocketComponent`
-- Located at `XREngine.Runtime.Core/Scene/Components/Networking/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
+- Located at `XREngine.Runtime.Net.Sockets/Components/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
 - Offers optional multicast join, auto-rebind on failure, and helper events for raw payloads plus decoded text.
 - Use `SendAsync`/`SendStringAsync` for unicast traffic or override the host/port per call when broadcasting.
 
@@ -172,7 +172,7 @@ await udp.SendStringAsync("discover");
 ```
 
 ### `TcpServerComponent`
-- Located at `XREngine.Runtime.Core/Scene/Components/Networking/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
+- Located at `XREngine.Runtime.Net.Sockets/Components/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
 - Exposes `ClientConnected`, `ClientDisconnected`, and data events on the main thread while providing `SendAsync`/`BroadcastAsync` helpers.
 - Configure `ListenAddress`, `ListenPort`, and `AutoStartOnActivate` for quick local test servers or in-game debugging consoles.
 

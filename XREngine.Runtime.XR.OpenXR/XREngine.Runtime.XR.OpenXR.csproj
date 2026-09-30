@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
+    <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenXR.Extensions.EXT" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenXR.Extensions.HTC" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenXR.Extensions.HTCX" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenXR.Extensions.KHR" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenXR.Extensions.MSFT" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenXR.Extensions.VALVE" Version="2.23.0" />
+  </ItemGroup>
+</Project>

@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Net;
 using System.Threading.Tasks;
+using XREngine.Input;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -27,8 +28,8 @@ namespace XREngine
         /// </remarks>
         private static async Task<bool> InitializeVR(IVRGameStartupSettings vrSettings, bool runVRInPlace)
         {
-            object? vrManifest = vrSettings.VRManifest;
-            object? actionManifest = vrSettings.ActionManifest;
+            RuntimeOpenVrApplicationManifest? vrManifest = vrSettings.VRManifest;
+            IRuntimeOpenVrActionManifest? actionManifest = vrSettings.ActionManifest;
 
             bool result;
             if (runVRInPlace)

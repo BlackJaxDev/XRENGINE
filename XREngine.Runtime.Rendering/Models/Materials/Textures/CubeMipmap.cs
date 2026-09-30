@@ -1,5 +1,6 @@
 using XREngine.Extensions;
-using ImageMagick;
+using XREngine.Imaging;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
@@ -14,7 +15,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
         public Mipmap2D[] Sides { get; private set; } = new Mipmap2D[6];
 
         public CubeMipmap() { }
-        public CubeMipmap(MagickImage cubeCrossBmp, bool isFillerBitmap = false)
+        public CubeMipmap(RuntimeImage cubeCrossBmp, bool isFillerBitmap = false)
         {
             if (isFillerBitmap)
                 SetSides(cubeCrossBmp);
@@ -28,172 +29,23 @@ namespace XREngine.Rendering.Models.Materials.Textures
             Mipmap2D posZ, Mipmap2D negZ)
             => Sides = [posX, negX, posY, negY, posZ, negZ];
         
-        public CubeMipmap(uint dim, MagickColor? color = null)
+        public CubeMipmap(uint dim, ColorF4? color = null)
             => SetSides(dim, color);
         public CubeMipmap(uint dim, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData)
             => Sides.Fill(i => new Mipmap2D(dim, dim, internalFormat, format, type, allocateData));
 
-        public bool SetEquirectangularMap(MagickImage equirectangularBmp)
+        public bool SetEquirectangularMap(RuntimeImage equirectangularImage)
         {
-            //Convert the equirectangular map to a cubemap.
-
-            uint inWidth = equirectangularBmp.Width;
-            uint inHeight = equirectangularBmp.Height;
-            uint outWidth = inWidth;
-            uint outHeight = inWidth * 3 / 4;
-
-            using MagickImage imgOut = new(MagickColors.Black, outWidth, outHeight);
-            imgOut.Format = equirectangularBmp.Format;
-            imgOut.ColorSpace = equirectangularBmp.ColorSpace;
-            imgOut.Depth = equirectangularBmp.Depth;
-            ConvertBack(equirectangularBmp, imgOut);
-            return SetCrossCubeMap(imgOut);
-
+            using RuntimeImage cross = RuntimeImageCodecs.Require().ReprojectEquirectangularToCubeCross(equirectangularImage);
+            return SetCrossCubeMap(cross);
         }
-        static void ConvertBack(MagickImage imgIn, MagickImage imgOut)
-        {
-            uint inWidth = imgIn.Width;
-            uint inHeight = imgIn.Height;
-            uint outWidth = imgOut.Width;
-            uint outHeight = imgOut.Height;
-
-            uint edge = inWidth / 4;
-
-            using IPixelCollection<float> inPixels = imgIn.GetPixels()
-                ?? throw new InvalidOperationException("ImageMagick could not expose the equirectangular source pixels.");
-            using IPixelCollection<float> outPixels = imgOut.GetPixels()
-                ?? throw new InvalidOperationException("ImageMagick could not expose the cubemap destination pixels.");
-
-            float[] outputPixel = new float[3];
-            double maxValue = Quantum.Max;
-            bool preserveHdrRange = imgIn.Format is MagickFormat.Exr or MagickFormat.Hdr or MagickFormat.Pfm;
-
-            for (uint i = 0; i < outWidth; i++)
-            {
-                uint face = i / edge;
-                int startRow = face == 2 ? 0 : (int)edge;
-                int endRow = face == 2 ? (int)edge * 3 : (int)edge * 2;
-
-                for (int j = startRow; j < endRow; j++)
-                {
-                    int face2;
-                    if (j < edge)
-                    {
-                        face2 = 4; // top
-                    }
-                    else if (j >= 2 * edge)
-                    {
-                        face2 = 5; // bottom
-                    }
-                    else
-                    {
-                        face2 = (int)face;
-                    }
-
-                    OutImgToXYZ((int)i, j, face2, (int)edge, out double x, out double y, out double z);
-                    double theta = Math.Atan2(y, x); // -pi to pi
-                    double r = Hypot(x, y);
-                    double phi = Math.Atan2(z, r); // -pi/2 to pi/2
-
-                    // Source image coordinates
-                    double uf = (2.0 * edge * (theta + Math.PI) / Math.PI);
-                    double vf = (2.0 * edge * (Math.PI / 2 - phi) / Math.PI);
-
-                    // Bilinear interpolation
-                    int ui = (int)Math.Floor(uf);
-                    int vi = (int)Math.Floor(vf);
-                    int u2 = ui + 1;
-                    int v2 = vi + 1;
-                    double mu = uf - ui;
-                    double nu = vf - vi;
-
-                    // Get pixel values
-                    int ui_mod = ui % (int)inWidth;
-                    if (ui_mod < 0) ui_mod += (int)inWidth;
-                    int u2_mod = u2 % (int)inWidth;
-                    if (u2_mod < 0) u2_mod += (int)inWidth;
-                    int vi_clipped = Clip(vi, 0, (int)inHeight - 1);
-                    int v2_clipped = Clip(v2, 0, (int)inHeight - 1);
-
-                    var A = inPixels.GetPixel(ui_mod, vi_clipped);
-                    var B = inPixels.GetPixel(u2_mod, vi_clipped);
-                    var C = inPixels.GetPixel(ui_mod, v2_clipped);
-                    var D = inPixels.GetPixel(u2_mod, v2_clipped);
-
-                    // Interpolate
-                    double red = A.GetChannel(0) * (1 - mu) * (1 - nu) + B.GetChannel(0) * mu * (1 - nu)
-                               + C.GetChannel(0) * (1 - mu) * nu + D.GetChannel(0) * mu * nu;
-                    double green = A.GetChannel(1) * (1 - mu) * (1 - nu) + B.GetChannel(1) * mu * (1 - nu)
-                                 + C.GetChannel(1) * (1 - mu) * nu + D.GetChannel(1) * mu * nu;
-                    double blue = A.GetChannel(2) * (1 - mu) * (1 - nu) + B.GetChannel(2) * mu * (1 - nu)
-                                + C.GetChannel(2) * (1 - mu) * nu + D.GetChannel(2) * mu * nu;
-
-                    outputPixel[0] = (float)(preserveHdrRange ? red : Math.Clamp(red, 0.0, maxValue));
-                    outputPixel[1] = (float)(preserveHdrRange ? green : Math.Clamp(green, 0.0, maxValue));
-                    outputPixel[2] = (float)(preserveHdrRange ? blue : Math.Clamp(blue, 0.0, maxValue));
-                    outPixels.SetPixel((int)i, j, outputPixel);
-                }
-            }
-        }
-
-        static void OutImgToXYZ(int i, int j, int face, int edge, out double x, out double y, out double z)
-        {
-            double a = 2.0 * (double)i / edge;
-            double b = 2.0 * (double)j / edge;
-            x = 0;
-            y = 0;
-            z = 0;
-
-            switch (face)
-            {
-                case 0: // back
-                    x = -1.0;
-                    y = 1.0 - a;
-                    z = 3.0 - b;
-                    break;
-                case 1: // left
-                    x = a - 3.0;
-                    y = -1.0;
-                    z = 3.0 - b;
-                    break;
-                case 2: // front
-                    x = 1.0;
-                    y = a - 5.0;
-                    z = 3.0 - b;
-                    break;
-                case 3: // right
-                    x = 7.0 - a;
-                    y = 1.0;
-                    z = 3.0 - b;
-                    break;
-                case 4: // top
-                    x = b - 1.0;
-                    y = a - 5.0;
-                    z = 1.0;
-                    break;
-                case 5: // bottom
-                    x = 5.0 - b;
-                    y = a - 5.0;
-                    z = -1.0;
-                    break;
-            }
-
-        }
-
-        static int Clip(int x, int min, int max)
-        {
-            return Math.Min(Math.Max(x, min), max);
-        }
-
-        static double Hypot(double x, double y)
-        {
-            return Math.Sqrt(x * x + y * y);
-        }
-        public bool SetCrossCubeMap(MagickImage cubeCrossBmp)
+        public bool SetCrossCubeMap(RuntimeImage cubeCrossBmp)
         {
             uint w = cubeCrossBmp.Width;
             uint h = cubeCrossBmp.Height;
-            MagickGeometry[] crops;
+            if (w == 0 || h == 0)
+                return false;
+            (uint X, uint Y, uint Width, uint Height)[] crops;
 
             if (w % 4 == 0 && 
                 w / 4 * 3 == h)
@@ -207,12 +59,12 @@ namespace XREngine.Rendering.Models.Materials.Textures
                 uint dim = w / 4;
                 crops =
                 [
-                    new((int)dim * 2, (int)dim, dim, dim), //+X
-                    new(0, (int)dim, dim, dim), //-X
-                    new((int)dim, 0, dim, dim), //+Y
-                    new((int)dim, (int)dim * 2, dim, dim), //-Y
-                    new((int)dim * 3, (int)dim, dim, dim), //+Z
-                    new((int)dim, (int)dim, dim, dim), //-Z
+                    (dim * 2, dim, dim, dim), //+X
+                    (0, dim, dim, dim), //-X
+                    (dim, 0, dim, dim), //+Y
+                    (dim, dim * 2, dim, dim), //-Y
+                    (dim * 3, dim, dim, dim), //+Z
+                    (dim, dim, dim, dim), //-Z
                 ];
             }
             else if (
@@ -229,12 +81,12 @@ namespace XREngine.Rendering.Models.Materials.Textures
                 uint dim = h / 4;
                 crops =
                 [
-                    new((int)dim * 2, (int)dim, dim, dim), //+X
-                    new(0, (int)dim, dim, dim), //-X
-                    new((int)dim, 0, dim, dim), //+Y
-                    new((int)dim, (int)dim * 2, dim, dim), //-Y
-                    new((int)dim, (int)dim * 3, dim, dim), //+Z
-                    new((int)dim, (int)dim, dim, dim), //-Z
+                    (dim * 2, dim, dim, dim), //+X
+                    (0, dim, dim, dim), //-X
+                    (dim, 0, dim, dim), //+Y
+                    (dim, dim * 2, dim, dim), //-Y
+                    (dim, dim * 3, dim, dim), //+Z
+                    (dim, dim, dim, dim), //-Z
                 ];
             }
             else
@@ -243,8 +95,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
             Mipmap2D[] sides = new Mipmap2D[crops.Length];
             for (int i = 0; i < crops.Length; i++)
             {
-                using MagickImage clone = (MagickImage)cubeCrossBmp.Clone();
-                clone.Crop(crops[i]);
+                using RuntimeImage clone = cubeCrossBmp.CopyRegion(crops[i].X, crops[i].Y, crops[i].Width, crops[i].Height);
                 sides[i] = new Mipmap2D(clone);
             }
             Sides = sides;
@@ -258,15 +109,28 @@ namespace XREngine.Rendering.Models.Materials.Textures
             Mipmap2D posZ, Mipmap2D negZ)
             => Sides = [posX, negX, posY, negY, posZ, negZ];
 
-        public void SetSides(MagickImage bmp)
+        public void SetSides(RuntimeImage bmp)
         {
             for (int i = 0; i < 6; ++i)
                 Sides[i] = new Mipmap2D(bmp);
         }
         
-        public void SetSides(uint dim, MagickColor? color = null)
+        public void SetSides(uint dim, ColorF4? color = null)
         {
-            using MagickImage image = new(color ?? new MagickColor(0, 0, 0, 0), dim, dim);
+            ColorF4 fill = color ?? new ColorF4(0, 0, 0, 0);
+            byte[] pixels = new byte[checked((int)((long)dim * dim * 4))];
+            byte red = (byte)Math.Clamp((int)Math.Round(fill.R * 255), 0, 255);
+            byte green = (byte)Math.Clamp((int)Math.Round(fill.G * 255), 0, 255);
+            byte blue = (byte)Math.Clamp((int)Math.Round(fill.B * 255), 0, 255);
+            byte alpha = (byte)Math.Clamp((int)Math.Round(fill.A * 255), 0, 255);
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i] = red;
+                pixels[i + 1] = green;
+                pixels[i + 2] = blue;
+                pixels[i + 3] = alpha;
+            }
+            using RuntimeImage image = new(dim, dim, EPixelFormat.Rgba, EPixelType.UnsignedByte, pixels);
             SetSides(image);
         }
 
@@ -278,7 +142,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
             foreach (var side in Sides)
                 side.Resize(extent, extent);
         }
-        public void InterpolativeResize(uint extent, PixelInterpolateMethod method)
+        public void InterpolativeResize(uint extent, RuntimeImageResizeMode method)
         {
             foreach (var side in Sides)
                 side.InterpolativeResize(extent, extent, method);
@@ -290,7 +154,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
         }
         public async Task ResizeAsync(uint extent)
             => await Task.WhenAll(Sides.Select(x => x.ResizeAsync(extent, extent)));
-        public async Task InterpolativeResizeAsync(uint extent, PixelInterpolateMethod method)
+        public async Task InterpolativeResizeAsync(uint extent, RuntimeImageResizeMode method)
             => await Task.WhenAll(Sides.Select(x => x.InterpolativeResizeAsync(extent, extent, method)));
         public async Task AdaptiveResizeAsync(uint extent)
             => await Task.WhenAll(Sides.Select(x => x.AdaptiveResizeAsync(extent, extent)));

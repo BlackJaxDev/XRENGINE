@@ -1,4 +1,3 @@
-using ImageMagick;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.IO;

@@ -1,10 +1,9 @@
 using ImGuiNET;
-using Silk.NET.Input;
-using Silk.NET.Maths;
-using Silk.NET.Windowing;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Rendering.UI;
+using XREngine.Data.Vectors;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -16,15 +15,13 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
     {
         private const int PlatformWindowDisposalQuietFrames = 2;
         private const int MaximumRetainedPlatformWindowRetirees = 8;
-        private static readonly List<IWindow> AbandonedShutdownWindows = [];
-        private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
 
         private static bool DisposeNativeViewportWindows
             => XREnvironment.IsEnabled(XREngineEnvironmentVariables.ImGuiViewportDisposeNative);
 
         private readonly IVulkanImGuiOutputHost _outputHost;
         private readonly nint _context;
-        private readonly IWindow _mainWindow;
+        private readonly IRuntimeWindowBackend _mainWindow;
         private readonly Dictionary<uint, VulkanImGuiPlatformWindow> _platformWindows = [];
         private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
         private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
@@ -35,6 +32,8 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private bool _disposed;
         private bool _deferGpuLifecycle;
         private bool _retirementBackpressureReported;
+        private bool _leftCtrl, _rightCtrl, _leftShift, _rightShift;
+        private bool _leftAlt, _rightAlt, _leftSuper, _rightSuper;
 
         private VulkanImGuiMultiViewportController(IVulkanImGuiOutputHost outputHost, nint context)
         {
@@ -45,13 +44,21 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
         public static VulkanImGuiMultiViewportController? TryCreate(IVulkanImGuiOutputHost outputHost, nint context)
         {
+            IRuntimeWindowBackend mainWindow = outputHost.MainWindow;
+            if (mainWindow.OwnerThreadId != Environment.CurrentManagedThreadId)
+            {
+                Debug.RenderingWarning(
+                    "Vulkan ImGui multi-viewports require a collapsed desktop window/render owner; synchronous platform callbacks are unavailable on this split topology.");
+                return null;
+            }
+
             if (context == nint.Zero)
             {
                 Debug.RenderingWarning("Vulkan ImGui multi-viewports disabled: no ImGui context is available.");
                 return null;
             }
 
-            if (!outputHost.TargetRequiresSwapchainOutput || outputHost.MainWindow.VkSurface is null)
+            if (!outputHost.TargetRequiresSwapchainOutput || mainWindow.VulkanSurface is null)
             {
                 Debug.RenderingWarning("Vulkan ImGui multi-viewports disabled: the renderer does not own a desktop Vulkan surface.");
                 return null;
@@ -132,9 +139,17 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             PrepareImplicitWindowForNewFrame();
             EnsureMainViewportPlatformData();
 
-            if (!OperatingSystem.IsWindows() || !GetCursorPos(out NativePoint cursorPosition))
+            foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
+                window.DrainInput();
+
+            if (!_mainWindow.Events.IsFocused)
                 return;
 
+            WindowInputSnapshot input = _mainWindow.Input;
+            if (!input.HasMouse)
+                return;
+            IVector2 origin = _mainWindow.ClientScreenPosition;
+            IVector2 cursorPosition = new(origin.X + (int)input.PointerX, origin.Y + (int)input.PointerY);
             uint viewportId = ResolveHoveredViewportId(cursorPosition);
             io.AddMousePosEvent(cursorPosition.X, cursorPosition.Y);
             io.AddMouseViewportEvent(viewportId);
@@ -262,9 +277,9 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private void EnsureMainViewportPlatformData()
         {
             ImGuiViewportPtr mainViewport = ImGui.GetMainViewport();
-            mainViewport.PlatformHandle = _mainWindow.Handle;
-            mainViewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(_mainWindow);
-            Vector2D<int> clientPosition = GetClientScreenPosition(_mainWindow);
+            mainViewport.PlatformHandle = _mainWindow.PlatformWindowHandle;
+            mainViewport.PlatformHandleRaw = _mainWindow.OperatingSystemWindowHandle;
+            IVector2 clientPosition = GetClientScreenPosition(_mainWindow);
             mainViewport.Pos = new Vector2(clientPosition.X, clientPosition.Y);
             mainViewport.DpiScale = GetWindowDpiScale(_mainWindow);
         }
@@ -291,8 +306,13 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 : null;
         }
 
-        private IWindow GetWindow(ImGuiViewportPtr viewport)
-            => GetPlatformWindow(viewport)?.Window ?? _mainWindow;
+        private IRuntimeWindowBackend GetWindow(ImGuiViewportPtr viewport)
+        {
+            if (viewport.ID == ImGui.GetMainViewport().ID)
+                return _mainWindow;
+            return GetPlatformWindow(viewport)?.Window
+                ?? throw new InvalidOperationException($"ImGui viewport {viewport.ID} has no desktop window.");
+        }
 
         private void PlatformCreateWindow(ImGuiViewport* nativeViewport)
         {
@@ -313,8 +333,8 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 VulkanImGuiPlatformWindow window = new(this, _outputHost, viewport);
                 _platformWindows.Add(viewport.ID, window);
                 viewport.PlatformUserData = window.Handle;
-                viewport.PlatformHandle = window.Window.Handle;
-                viewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window.Window);
+                viewport.PlatformHandle = window.Window.PlatformWindowHandle;
+                viewport.PlatformHandleRaw = window.Window.OperatingSystemWindowHandle;
             }
             catch (Exception ex)
             {
@@ -375,7 +395,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             try
             {
-                Vector2D<int> position = GetClientScreenPosition(GetWindow(new ImGuiViewportPtr(nativeViewport)));
+                IVector2 position = GetClientScreenPosition(GetWindow(new ImGuiViewportPtr(nativeViewport)));
                 *outPosition = new Vector2(position.X, position.Y);
             }
             catch (Exception ex)
@@ -401,8 +421,8 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             try
             {
-                Vector2D<int> size = GetWindow(new ImGuiViewportPtr(nativeViewport)).Size;
-                *outSize = new Vector2(size.X, size.Y);
+                WindowSurfaceSnapshot surface = GetWindow(new ImGuiViewportPtr(nativeViewport)).Surface;
+                *outSize = new Vector2(surface.ClientWidth, surface.ClientHeight);
             }
             catch (Exception ex)
             {
@@ -415,7 +435,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             try
             {
-                GetWindow(new ImGuiViewportPtr(nativeViewport)).Focus();
+                GetWindow(new ImGuiViewportPtr(nativeViewport)).RequestFocus();
             }
             catch (Exception ex)
             {
@@ -441,7 +461,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             try
             {
-                return GetWindow(new ImGuiViewportPtr(nativeViewport)).WindowState == WindowState.Minimized
+                return GetWindow(new ImGuiViewportPtr(nativeViewport)).Surface.IsMinimized
                     ? (byte)1
                     : (byte)0;
             }
@@ -461,7 +481,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
                 string? value = title is null ? null : Marshal.PtrToStringUTF8((nint)title);
                 if (!string.IsNullOrWhiteSpace(value))
-                    window.Window.Title = value;
+                    window.Window.RequestTitle(value);
             }
             catch (Exception ex)
             {
@@ -471,7 +491,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
         private static void PlatformSetWindowAlpha(ImGuiViewport* nativeViewport, float alpha)
         {
-            // Silk.NET.Windowing does not expose cross-platform native window opacity.
+            // Native window opacity is optional and the desktop backend does not expose it.
         }
 
         private void PlatformUpdateWindow(ImGuiViewport* nativeViewport)
@@ -654,7 +674,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             _pendingPlatformWindowDisposals.Clear();
         }
 
-        private uint ResolveHoveredViewportId(NativePoint screenPosition)
+        private uint ResolveHoveredViewportId(IVector2 screenPosition)
         {
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
             {
@@ -681,71 +701,76 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 new ImGuiViewportPtr(viewport).PlatformRequestClose = true;
         }
 
-        internal void PushMousePosition(uint viewportId, IWindow window, Vector2 localPosition)
-        {
-            MakeCurrent();
-            Vector2D<int> clientPosition = GetClientScreenPosition(window);
-            ImGuiIOPtr io = ImGui.GetIO();
-            io.AddMousePosEvent(clientPosition.X + localPosition.X, clientPosition.Y + localPosition.Y);
-            io.AddMouseViewportEvent(viewportId);
-        }
-
-        internal void PushMouseButton(uint viewportId, MouseButton button, bool down)
-        {
-            if (!VulkanImGuiInputRouter.TryConvertMouseButton(button, out int imGuiButton))
-                return;
-
-            MakeCurrent();
-            ImGuiIOPtr io = ImGui.GetIO();
-            io.AddMouseButtonEvent(imGuiButton, down);
-            io.AddMouseViewportEvent(viewportId);
-        }
-
-        internal void PushMouseWheel(uint viewportId, ScrollWheel wheel)
+        internal void ReplayViewportInput(
+            uint viewportId,
+            IVector2 screenOrigin,
+            WindowInputSnapshot input,
+            ReadOnlySpan<WindowInputEvent> events)
         {
             MakeCurrent();
             ImGuiIOPtr io = ImGui.GetIO();
-            io.AddMouseWheelEvent(wheel.X, wheel.Y);
-            io.AddMouseViewportEvent(viewportId);
+            for (int i = 0; i < events.Length; i++)
+            {
+                WindowInputEvent item = events[i];
+                switch (item.Kind)
+                {
+                    case WindowInputEventKind.Key:
+                        if (VulkanImGuiInputRouter.TryConvertKey(item.Key, out ImGuiKey key))
+                            io.AddKeyEvent(key, item.IsDown);
+                        ReplayModifier(io, item.Key, item.IsDown);
+                        break;
+                    case WindowInputEventKind.MouseButton:
+                        io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
+                        io.AddMouseViewportEvent(viewportId);
+                        break;
+                    case WindowInputEventKind.Text:
+                        io.AddInputCharacter(item.Character);
+                        break;
+                    case WindowInputEventKind.Pointer:
+                        io.AddMousePosEvent(screenOrigin.X + item.X, screenOrigin.Y + item.Y);
+                        io.AddMouseViewportEvent(viewportId);
+                        break;
+                    case WindowInputEventKind.Scroll:
+                        io.AddMouseWheelEvent(item.X, item.Y);
+                        io.AddMouseViewportEvent(viewportId);
+                        break;
+                }
+            }
+            if (input.IsFocused)
+                io.AddFocusEvent(true);
         }
 
-        internal void PushKey(IKeyboard keyboard, Key key, bool down)
+        private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)
         {
-            if (!VulkanImGuiInputRouter.TryConvertKey(key, out ImGuiKey imGuiKey))
-                return;
-
-            MakeCurrent();
-            ImGuiIOPtr io = ImGui.GetIO();
-            io.AddKeyEvent(imGuiKey, down);
-            io.AddKeyEvent(ImGuiKey.ModCtrl, keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight));
-            io.AddKeyEvent(ImGuiKey.ModAlt, keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight));
-            io.AddKeyEvent(ImGuiKey.ModShift, keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight));
-            io.AddKeyEvent(ImGuiKey.ModSuper, keyboard.IsKeyPressed(Key.SuperLeft) || keyboard.IsKeyPressed(Key.SuperRight));
-        }
-
-        internal void PushChar(char value)
-        {
-            MakeCurrent();
-            ImGui.GetIO().AddInputCharacter(value);
+            switch (key)
+            {
+                case EKey.ControlLeft: _leftCtrl = down; io.AddKeyEvent(ImGuiKey.ModCtrl, _leftCtrl || _rightCtrl); break;
+                case EKey.ControlRight: _rightCtrl = down; io.AddKeyEvent(ImGuiKey.ModCtrl, _leftCtrl || _rightCtrl); break;
+                case EKey.ShiftLeft: _leftShift = down; io.AddKeyEvent(ImGuiKey.ModShift, _leftShift || _rightShift); break;
+                case EKey.ShiftRight: _rightShift = down; io.AddKeyEvent(ImGuiKey.ModShift, _leftShift || _rightShift); break;
+                case EKey.AltLeft: _leftAlt = down; io.AddKeyEvent(ImGuiKey.ModAlt, _leftAlt || _rightAlt); break;
+                case EKey.AltRight: _rightAlt = down; io.AddKeyEvent(ImGuiKey.ModAlt, _leftAlt || _rightAlt); break;
+                case EKey.WinLeft: _leftSuper = down; io.AddKeyEvent(ImGuiKey.ModSuper, _leftSuper || _rightSuper); break;
+                case EKey.WinRight: _rightSuper = down; io.AddKeyEvent(ImGuiKey.ModSuper, _leftSuper || _rightSuper); break;
+            }
         }
 
         private void UpdatePlatformMonitors()
         {
             _monitorScratch.Clear();
-            if (OperatingSystem.IsWindows())
+            ReadOnlySpan<RuntimeDesktopMonitor> monitors = _mainWindow.Monitors.Span;
+            for (int i = 0; i < monitors.Length; i++)
             {
-                try
+                RuntimeDesktopMonitor monitor = monitors[i];
+                _monitorScratch.Add(new ImGuiPlatformMonitor
                 {
-                    EnumDisplayMonitors(
-                        nint.Zero,
-                        nint.Zero,
-                        RendererImGuiViewportCallbackBridge.MonitorEnumeration,
-                        nint.Zero);
-                }
-                catch (Exception ex)
-                {
-                    LogCallbackException(nameof(UpdatePlatformMonitors), ex);
-                }
+                    MainPos = new Vector2(monitor.X, monitor.Y),
+                    MainSize = new Vector2(monitor.Width, monitor.Height),
+                    WorkPos = new Vector2(monitor.WorkX, monitor.WorkY),
+                    WorkSize = new Vector2(monitor.WorkWidth, monitor.WorkHeight),
+                    DpiScale = monitor.DpiScale,
+                    PlatformHandle = (void*)monitor.PlatformHandle,
+                });
             }
 
             if (_monitorScratch.Count == 0)
@@ -753,49 +778,16 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             WritePlatformMonitorBuffer();
         }
 
-        private bool EnumerateMonitor(nint monitor)
-        {
-            NativeMonitorInfo monitorInfo = new() { Size = Marshal.SizeOf<NativeMonitorInfo>() };
-            if (!GetMonitorInfo(monitor, ref monitorInfo))
-                return true;
-
-            _monitorScratch.Add(new ImGuiPlatformMonitor
-            {
-                MainPos = new Vector2(monitorInfo.Monitor.Left, monitorInfo.Monitor.Top),
-                MainSize = new Vector2(monitorInfo.Monitor.Width, monitorInfo.Monitor.Height),
-                WorkPos = new Vector2(monitorInfo.Work.Left, monitorInfo.Work.Top),
-                WorkSize = new Vector2(monitorInfo.Work.Width, monitorInfo.Work.Height),
-                DpiScale = GetMonitorDpiScale(monitor),
-                PlatformHandle = (void*)monitor,
-            });
-            return true;
-        }
-
         private void AddFallbackMonitor()
         {
-            IMonitor? monitor = _mainWindow.Monitor;
-            if (monitor is not null)
-            {
-                Rectangle<int> bounds = monitor.Bounds;
-                _monitorScratch.Add(new ImGuiPlatformMonitor
-                {
-                    MainPos = new Vector2(bounds.Origin.X, bounds.Origin.Y),
-                    MainSize = new Vector2(bounds.Size.X, bounds.Size.Y),
-                    WorkPos = new Vector2(bounds.Origin.X, bounds.Origin.Y),
-                    WorkSize = new Vector2(bounds.Size.X, bounds.Size.Y),
-                    DpiScale = 1.0f,
-                });
-                return;
-            }
-
-            Vector2D<int> position = GetClientScreenPosition(_mainWindow);
-            Vector2D<int> size = _mainWindow.Size;
+            IVector2 position = GetClientScreenPosition(_mainWindow);
+            WindowSurfaceSnapshot surface = _mainWindow.Surface;
             _monitorScratch.Add(new ImGuiPlatformMonitor
             {
                 MainPos = new Vector2(position.X, position.Y),
-                MainSize = new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y)),
+                MainSize = new Vector2(Math.Max(1, surface.ClientWidth), Math.Max(1, surface.ClientHeight)),
                 WorkPos = new Vector2(position.X, position.Y),
-                WorkSize = new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y)),
+                WorkSize = new Vector2(Math.Max(1, surface.ClientWidth), Math.Max(1, surface.ClientHeight)),
                 DpiScale = 1.0f,
             });
         }
@@ -864,90 +856,42 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             _installed = false;
         }
 
-        private static Vector2D<int> ToWindowSize(Vector2 size)
+        private static IVector2 ToWindowSize(Vector2 size)
             => new(Math.Max(1, (int)MathF.Round(size.X)), Math.Max(1, (int)MathF.Round(size.Y)));
 
-        private static Vector2D<int> ToWindowPosition(Vector2 position)
+        private static IVector2 ToWindowPosition(Vector2 position)
             => new((int)MathF.Round(position.X), (int)MathF.Round(position.Y));
 
-        internal static Vector2D<int> GetClientScreenPosition(IWindow window)
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                NativePoint point = default;
-                nint windowHandle = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window);
-                if (windowHandle != nint.Zero && ClientToScreen(windowHandle, ref point))
-                    return new Vector2D<int>(point.X, point.Y);
-            }
-
-            return window.Position;
-        }
-
-        internal static void SetClientScreenPosition(IWindow window, Vector2D<int> targetClientPosition)
-        {
-            Vector2D<int> clientPosition = GetClientScreenPosition(window);
-            Vector2D<int> clientOffset = clientPosition - window.Position;
-            window.Position = targetClientPosition - clientOffset;
-        }
+        internal static IVector2 GetClientScreenPosition(IRuntimeWindowBackend window)
+            => window.ClientScreenPosition;
 
         private static void ShowPlatformWindow(VulkanImGuiPlatformWindow platformWindow, ImGuiViewportFlags flags)
         {
             platformWindow.UpdateViewportFlags(flags);
-            IWindow window = platformWindow.Window;
-            if (window.IsVisible)
-                return;
-
-            if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window, flags))
-                window.IsVisible = true;
+            IRuntimeWindowBackend window = platformWindow.Window;
+            if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window.OperatingSystemWindowHandle, (uint)flags))
+                window.RequestVisibility(true);
         }
 
-        private static bool TryGetWindowScreenRect(IWindow window, out NativeRect rect)
+        private static bool TryGetWindowScreenRect(IRuntimeWindowBackend window, out NativeRect rect)
         {
-            if (OperatingSystem.IsWindows())
-            {
-                nint windowHandle = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window);
-                if (windowHandle != nint.Zero && GetWindowRect(windowHandle, out rect))
-                    return true;
-            }
-
-            Vector2D<int> position = GetClientScreenPosition(window);
-            Vector2D<int> size = window.Size;
+            IVector2 position = GetClientScreenPosition(window);
+            WindowSurfaceSnapshot surface = window.Surface;
             rect = new NativeRect
             {
                 Left = position.X,
                 Top = position.Y,
-                Right = position.X + Math.Max(1, size.X),
-                Bottom = position.Y + Math.Max(1, size.Y),
+                Right = position.X + Math.Max(1, surface.ClientWidth),
+                Bottom = position.Y + Math.Max(1, surface.ClientHeight),
             };
             return true;
         }
 
-        private static float GetWindowDpiScale(IWindow window)
+        private static float GetWindowDpiScale(IRuntimeWindowBackend window)
         {
-            Vector2D<int> size = window.Size;
-            Vector2D<int> framebufferSize = window.FramebufferSize;
-            if (size.X <= 0 || size.Y <= 0)
-                return 1.0f;
-
-            float scale = MathF.Max(framebufferSize.X / (float)size.X, framebufferSize.Y / (float)size.Y);
+            WindowSurfaceSnapshot surface = window.Surface;
+            float scale = MathF.Max(surface.DpiScaleX, surface.DpiScaleY);
             return float.IsFinite(scale) && scale > 0.0f && scale < 99.0f ? scale : 1.0f;
-        }
-
-        private static float GetMonitorDpiScale(nint monitor)
-        {
-            if (!OperatingSystem.IsWindowsVersionAtLeast(6, 3))
-                return 1.0f;
-
-            try
-            {
-                return GetDpiForMonitor(monitor, MonitorDpiType.Effective, out uint dpiX, out uint dpiY) == 0
-                    ? MathF.Max(MathF.Max(dpiX, dpiY) / 96.0f, 1.0f)
-                    : 1.0f;
-            }
-            catch
-            {
-                return 1.0f;
-            }
         }
 
         private static void LogCallbackException(string callback, Exception ex)
@@ -1005,7 +949,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         void IRendererImGuiViewportCallbacks.RendererSwapBuffers(nint viewport, nint renderArgument)
             => RendererSwapBuffers((ImGuiViewport*)viewport, (void*)renderArgument);
         int IRendererImGuiViewportCallbacks.EnumerateMonitor(nint monitor, nint hdc, nint rectangle)
-            => EnumerateMonitor(monitor) ? 1 : 0;
+            => 1;
 
         internal struct PendingPlatformWindowDisposal(VulkanImGuiPlatformWindow window)
         {
@@ -1022,13 +966,6 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        internal struct NativePoint
-        {
-            public int X;
-            public int Y;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
         internal struct NativeRect
         {
             public int Left;
@@ -1037,42 +974,8 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             public int Bottom;
             public readonly int Width => Right - Left;
             public readonly int Height => Bottom - Top;
-            public readonly bool Contains(NativePoint point)
+            public readonly bool Contains(IVector2 point)
                 => point.X >= Left && point.X < Right && point.Y >= Top && point.Y < Bottom;
-        }
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-        internal struct NativeMonitorInfo
-        {
-            public int Size;
-            public NativeRect Monitor;
-            public NativeRect Work;
-            public uint Flags;
-        }
-
-        internal enum MonitorDpiType
-        {
-            Effective = 0,
-        }
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool ClientToScreen(nint hWnd, ref NativePoint point);
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool GetCursorPos(out NativePoint point);
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool EnumDisplayMonitors(nint hdc, nint clipRect, nint callback, nint data);
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern bool GetMonitorInfo(nint monitor, ref NativeMonitorInfo monitorInfo);
-        [DllImport("shcore.dll")]
-        private static extern int GetDpiForMonitor(nint monitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
-
-        internal static void PreserveAbandonedWindow(IWindow window, IInputContext? input)
-        {
-            if (input is not null)
-                AbandonedShutdownInputContexts.Add(input);
-            AbandonedShutdownWindows.Add(window);
         }
 
         internal static bool ShouldDisposeNativeWindow => DisposeNativeViewportWindows;

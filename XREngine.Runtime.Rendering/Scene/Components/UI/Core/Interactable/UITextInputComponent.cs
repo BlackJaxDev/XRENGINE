@@ -1,11 +1,10 @@
 using XREngine.Extensions;
-using NAudio.SoundFont;
 using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Input.Devices;
-using XREngine.Native;
+using XREngine.Input;
 using XREngine.Timers;
 
 namespace XREngine.Rendering.UI
@@ -92,7 +91,7 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            if (NativeMethods.TryDetermineSystemCapsLockState(out bool capsOn))
+            if (InputPlatformServices.TryGetCapsLockState(out bool capsOn))
                 _capsLock = capsOn;
         }
         protected override void OnComponentDeactivated()
@@ -193,7 +192,7 @@ namespace XREngine.Rendering.UI
             if (pressed)
                 return; //Only toggle on release, not on press
 
-            if (NativeMethods.TryDetermineSystemCapsLockState(out bool capsOn))
+            if (InputPlatformServices.TryGetCapsLockState(out bool capsOn))
                 _capsLock = capsOn;
             else
                 _capsLock = !_capsLock;

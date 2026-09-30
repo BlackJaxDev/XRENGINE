@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -15,10 +15,11 @@
     <HeadlessBootstrapAssetsFile>$(MSBuildThisFileDirectory)..\XREngine.Runtime.Bootstrap\obj\renderer-None\project.assets.json</HeadlessBootstrapAssetsFile>
     <HeadlessBootstrapBuildTargets Condition="Exists('$(HeadlessBootstrapAssetsFile)')">Build</HeadlessBootstrapBuildTargets>
     <HeadlessBootstrapBuildTargets Condition="!Exists('$(HeadlessBootstrapAssetsFile)')">Restore;Build</HeadlessBootstrapBuildTargets>
-    <XREngineHeadlessExcludedPublishPattern>(?i)(openvr_api\.dll|actionmanifest\.json|bindings_.*\.json|ovrlipsync\.dll|naudio\.sdl2\.dll|(?:lib)?sdl2(?:-2\.0)?\.(dll|so|dylib|a)|glfw3\.dll|libglfw(?:\.so\.3|\.3\.dylib)|vulkanmemoryallocator.*\.(dll|so|dylib)|soft_oal\.dll|libopenal\.(so|dylib)|av(codec|device|filter|format|util)-[0-9]+\.dll|postproc-[0-9]+\.dll|swresample-[0-9]+\.dll|swscale-[0-9]+\.dll|libmp3lame\.(32|64)\.dll|cimgui\.(dll|so|dylib)|raylib\.(dll|so|dylib)|ultralight(core)?\.(dll|so|dylib)|appcore\.(dll|so|dylib)|webcore\.(dll|so|dylib)|dstorage(core)?\.dll|openal-soft)</XREngineHeadlessExcludedPublishPattern>
+    <XREngineHeadlessExcludedPublishPattern>(?i)(openvr_api\.dll|actionmanifest\.json|bindings_.*\.json|ovrlipsync\.dll|naudio\.sdl2\.dll|(?:lib)?sdl2(?:-2\.0)?\.(dll|so|dylib|a)|glfw3\.dll|libglfw(?:\.so\.3|\.3\.dylib)|vulkanmemoryallocator.*\.(dll|so|dylib)|soft_oal\.dll|libopenal\.(so|dylib)|av(codec|device|filter|format|util)-[0-9]+\.dll|postproc-[0-9]+\.dll|swresample-[0-9]+\.dll|swscale-[0-9]+\.dll|libmp3lame\.(32|64)\.dll|cimgui\.(dll|so|dylib)|ultralight(core)?\.(dll|so|dylib)|appcore\.(dll|so|dylib)|webcore\.(dll|so|dylib)|dstorage(core)?\.dll|openal-soft)</XREngineHeadlessExcludedPublishPattern>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.Net.Sockets\XREngine.Runtime.Net.Sockets.csproj" />
     <RuntimeHostConfigurationOption Include="System.GC.NoAffinitize" Value="true" />
   </ItemGroup>
 

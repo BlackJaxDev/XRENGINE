@@ -15,17 +15,17 @@ It is intended to answer four practical questions:
 
 This document covers the runtime rendering path centered on:
 
-- `XRENGINE/Core/Time/EngineTimer.cs`
-- `XRENGINE/Rendering/XRWorldInstance.cs`
-- `XRENGINE/Rendering/XRViewport.cs`
-- `XRENGINE/Rendering/VisualScene.cs`
-- `XRENGINE/Rendering/VisualScene2D.cs`
-- `XRENGINE/Rendering/VisualScene3D.cs`
-- `XRENGINE/Rendering/Commands/RenderCommandCollection.cs`
-- `XRENGINE/Rendering/Commands/GPUScene.cs`
-- `XRENGINE/Rendering/Commands/GPURenderPassCollection*.cs`
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/*`
-- `XRENGINE/Rendering/HybridRenderingManager.cs`
+- `XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs`
+- `XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer*.cs`
+- `XREngine.Runtime.Rendering/Rendering/XRViewport.cs`
+- `XREngine.Runtime.Rendering/Rendering/VisualScene.cs`
+- `XREngine.Runtime.Rendering/Rendering/VisualScene2D.cs`
+- `XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection*.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/*`
+- `XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs`
 
 It does not try to fully document every backend detail of OpenGL, Vulkan, OpenXR, or OpenVR. Those topics are covered in the backend-specific architecture pages.
 
@@ -44,7 +44,7 @@ The important design rule is that gameplay mutation and render submission do not
 | Actor | Responsibility |
 |---|---|
 | `EngineTimer` | Owns the thread/fence model for `Update`, `PreCollectVisible`, `CollectVisible`, `SwapBuffers`, `RenderFrame`, and `FixedUpdate`. |
-| `XRWorldInstance` | Owns the live world binding for rendering. Subscribes world-level callbacks into timer phases. |
+| `RuntimeWorldRenderer` | Owns visual publication and render-thread state for a Core-owned `RuntimeWorld`; the world retains lifecycle, scene, tick, and physics ownership. |
 | `XRViewport` | Per-camera entry point for `CollectVisible`, `SwapBuffers`, and `Render`. Owns a render pipeline instance. |
 | `VisualScene` | Scene-level bridge between world content and renderable proxies. Owns `GPUScene` plus the scene tree. |
 | `VisualScene2D` | 2D scene collection using a quadtree. |
@@ -99,17 +99,16 @@ This is why `CollectVisible`, `SwapBuffers`, and `Render` should be treated as h
 Window ownership is now explicit:
 
 - The app/update thread owns gameplay and editor decisions.
-- The window thread owns native Silk.NET window/event/input callbacks.
+- The window thread owns native desktop window, event, and input callbacks in `XREngine.Runtime.Platform.Desktop`.
 - The render thread owns renderer state, graphics context work, swapchain/present
   work, GPU resource wrapper creation, and renderer-specific readback setup.
 
-Code outside backend-owned paths should not reach through `XRWindow.Window` or
-`XRWindow.Input`. `XRWindow` publishes app/editor-safe wrappers for common
+`XRWindow` exposes no raw Silk window or input object. It publishes app/editor-safe wrappers for common
 window events and immutable snapshots for window surface, close/focus, and
 input state. The local player viewport contract exposes `WindowInputSnapshot`;
 gameplay/editor possession binds snapshot-backed keyboard and mouse adapters
-instead of Silk input devices. Cursor capture requests flow back through the
-viewport/window wrapper instead of mutating the live Silk mouse object.
+instead of native input devices. Cursor capture requests flow back through the
+viewport/window wrapper, preserving native window-thread ownership.
 
 Use `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` or
 `InvokeWindowThreadTask<T>` for native window operations that require the window
@@ -127,7 +126,7 @@ Important consequences:
 
 - Transform changes are not immediately consumed by rendering.
 - Render proxies queue changes that will later be applied during swap/publication.
-- `XRWorldInstance` uses `PostUpdate` and queued render-matrix publication to keep gameplay mutation separate from render consumption.
+- `RuntimeWorldRenderer` queues render-matrix changes and applies them during `GlobalPreCollectVisible()`, keeping gameplay mutation separate from render consumption.
 
 At this stage the engine is preparing the next render snapshot, not drawing.
 
@@ -137,7 +136,7 @@ At this stage the engine is preparing the next render snapshot, not drawing.
 
 For a world instance this currently means:
 
-- `XRWorldInstance.PreCollectVisible()` calls `VisualScene.GlobalCollectVisible()`.
+- `RuntimeWorldRenderer.GlobalPreCollectVisible()` calls `VisualScene.GlobalCollectVisible()`.
 
 This phase is used for scene-owned housekeeping that must complete before viewports start collecting. In 3D, `VisualScene3D.GlobalCollectVisible()` flushes pending renderable add/remove operations. In CPU-dispatch mode it also swaps the active CPU spatial tree (`Octree` by default, or `Bvh` when selected) needed for subsequent tree walks.
 
@@ -147,7 +146,7 @@ After `PreCollectVisible`, `EngineTimer.DispatchCollectVisible()` invokes `Colle
 
 Two major subscriber categories matter here:
 
-- World-level collection such as `XRWorldInstance.GlobalCollectVisible()`, which currently collects light visibility data.
+- World-level collection such as `RuntimeWorldRenderer.GlobalCollectVisible()`, which currently collects light visibility data.
 - Viewport-level collection such as `XRViewport.CollectVisibleAutomatic()`, which drives camera-based collection into that viewport's `RenderCommandCollection`.
 
 For a normal 3D viewport, the flow is:
@@ -188,7 +187,7 @@ There are two distinct swap layers:
 
 #### World/scene swap
 
-`XRWorldInstance.GlobalSwapBuffers()` performs world-level render publication:
+`RuntimeWorldRenderer.GlobalSwapBuffers()` performs world-level render publication:
 
 - Applies queued render matrices.
 - Processes pending render-matrix updates for meshes.
@@ -242,8 +241,8 @@ At the window level the relevant order is:
 
 ```text
 XRWindow.RenderFrame()
-  -> Window.DoEvents()
-  -> Window.DoRender()
+  -> consume published window-surface snapshot and pending resize
+  -> DesktopWindowBackend.DispatchRender()
   -> XRWindow.RenderCallback()
        -> TargetWorldInstance.GlobalPreRender()
        -> RenderViewportsCallback
@@ -252,6 +251,8 @@ XRWindow.RenderFrame()
        -> Renderer.RenderWindow(delta)
        -> PostRenderViewportsCallback
 ```
+
+The native window owner pumps events separately through the installed desktop backend and publishes the snapshots consumed here.
 
 `GlobalPreRender` and `GlobalPostRender` are render-thread hooks around actual viewport rendering. In 3D they are also where GPU BVH raycast dispatch/completion hooks run.
 
@@ -430,7 +431,7 @@ Examples:
 - `XRMesh.BVHTree`
 - `RenderableMesh.GetSkinnedBvh()`
 - `SkinnedMeshBvhScheduler`
-- world raycast helpers in `XRWorldInstance`
+- world raycast helpers in `RuntimeWorldRenderer`
 
 This BVH is for:
 
@@ -704,43 +705,44 @@ Use this list when tracing the system in code.
 
 ### Frame lifecycle
 
-- `XRENGINE/Core/Time/EngineTimer.cs`
-- `XRENGINE/Rendering/API/XRWindow.cs`
+- `XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs`
+- `XREngine.Runtime.Platform.Desktop/Windowing/DesktopSilkWindowBackend.cs`
 
 ### World and viewport orchestration
 
-- `XRENGINE/Rendering/XRWorldInstance.cs`
-- `XRENGINE/Rendering/XRViewport.cs`
+- `XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer*.cs`
+- `XREngine.Runtime.Rendering/Rendering/XRViewport.cs`
 
 ### Scene collection
 
-- `XRENGINE/Rendering/VisualScene.cs`
-- `XRENGINE/Rendering/VisualScene2D.cs`
-- `XRENGINE/Rendering/VisualScene3D.cs`
+- `XREngine.Runtime.Rendering/Rendering/VisualScene.cs`
+- `XREngine.Runtime.Rendering/Rendering/VisualScene2D.cs`
+- `XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs`
 
 ### Command buffering and GPU scene state
 
-- `XRENGINE/Rendering/Commands/RenderCommandCollection.cs`
-- `XRENGINE/Rendering/Commands/GPUScene.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs`
 
 ### GPU culling and indirect generation
 
-- `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`
-- `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
-- `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
-- `XRENGINE/Rendering/Compute/GpuBvhTree.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs`
+- `XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhTree.cs`
 
 ### Draw routing
 
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Shared/VPRC_RenderMeshesPassShared.cs`
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs`
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs`
-- `XRENGINE/Rendering/HybridRenderingManager.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Shared/VPRC_RenderMeshesPassShared.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs`
+- `XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs`
 
 ### Per-mesh BVH and raycast helpers
 
-- `XRENGINE/Rendering/Compute/SkinnedMeshBvhScheduler.cs`
-- `XRENGINE/Rendering/XRWorldInstance.cs`
+- `XREngine.Runtime.Rendering/Rendering/Compute/SkinnedMeshBvhScheduler.cs`
+- `XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer*.cs`
 - `XREngine.Data/Trees/BVH/BVH.cs`
 
 ## Related Documents

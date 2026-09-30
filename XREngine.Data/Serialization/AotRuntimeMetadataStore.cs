@@ -25,6 +25,8 @@ public static class AotRuntimeMetadataStore
     private static AotRuntimeMetadata? _metadata;
     private static readonly ConcurrentDictionary<string, Type?> TypeCache = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, Type?> IgnoreCaseTypeCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Type?> PublishedTypeCache = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, Type?> PublishedIgnoreCaseTypeCache = new(StringComparer.OrdinalIgnoreCase);
 
     public static AotRuntimeMetadata? Metadata
     {
@@ -37,7 +39,7 @@ public static class AotRuntimeMetadataStore
 
     public static AotRuntimeMetadata RequireMetadata()
         => Metadata ?? throw new InvalidOperationException(
-            $"Published AOT runtime metadata is missing. Ensure '{MetadataFileName}' is present in the published config archive.");
+            $"Published runtime metadata is missing. Ensure '{MetadataFileName}' is present in the published config archive.");
 
     public static void ResetForTestsOrReconfiguration()
     {
@@ -47,6 +49,8 @@ public static class AotRuntimeMetadataStore
             _metadata = null;
             TypeCache.Clear();
             IgnoreCaseTypeCache.Clear();
+            PublishedTypeCache.Clear();
+            PublishedIgnoreCaseTypeCache.Clear();
         }
     }
 
@@ -55,7 +59,9 @@ public static class AotRuntimeMetadataStore
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        return TypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key));
+        return XRRuntimeEnvironment.IsPublishedBuild
+            ? PublishedTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key))
+            : TypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key));
     }
 
     public static Type? ResolveTypeIgnoreCase(string? typeName)
@@ -63,7 +69,9 @@ public static class AotRuntimeMetadataStore
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        return IgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true));
+        return XRRuntimeEnvironment.IsPublishedBuild
+            ? PublishedIgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true))
+            : IgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true));
     }
 
     public static Type? ResolveType(int typeIndex)
@@ -128,7 +136,7 @@ public static class AotRuntimeMetadataStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyQualifiedName);
 
-        AotRuntimeMetadata metadata = XRRuntimeEnvironment.IsAotRuntimeBuild
+        AotRuntimeMetadata metadata = XRRuntimeEnvironment.IsPublishedBuild
             ? RequireMetadata()
             : Metadata ?? new AotRuntimeMetadata();
         string requestedTypeName = TypeNameOnly(assemblyQualifiedName);
@@ -185,13 +193,16 @@ public static class AotRuntimeMetadataStore
 
     private static Type? ResolveTypeCore(string typeName, bool ignoreCase = false)
     {
-        Type? direct = Type.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase);
-        if (direct is not null)
-            return direct;
+        if (!XRRuntimeEnvironment.IsPublishedBuild)
+        {
+            Type? direct = Type.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase);
+            if (direct is not null)
+                return direct;
+        }
 
         string fullTypeName = SerializedTypeIdentity.GetUnqualifiedTypeName(typeName);
 
-        AotRuntimeMetadata? metadata = Metadata;
+        AotRuntimeMetadata? metadata = XRRuntimeEnvironment.IsPublishedBuild ? RequireMetadata() : Metadata;
         if (metadata is not null)
         {
             string? assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames
@@ -218,7 +229,7 @@ public static class AotRuntimeMetadataStore
         // Type.GetType(string) only searches the calling assembly and System.Private.CoreLib
         // when given a namespace-qualified name without assembly qualifier, so types from other
         // engine assemblies (e.g., the main XREngine assembly) won't be found without this scan.
-        if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+        if (!XRRuntimeEnvironment.IsPublishedBuild)
         {
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {

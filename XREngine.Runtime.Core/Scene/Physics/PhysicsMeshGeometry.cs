@@ -71,7 +71,7 @@ public sealed class PhysicsConvexHullGeometry : XRBase, IPhysicsGeometry
             TightBounds = TightBounds,
         };
 
-    internal void Validate()
+    public void Validate()
     {
         if (Vertices.Length < 4)
             throw new InvalidOperationException("A convex collider requires at least four vertices.");
@@ -167,7 +167,7 @@ public sealed class PhysicsTriangleMeshGeometry : XRBase, IPhysicsGeometry
             DoubleSided = DoubleSided,
         };
 
-    internal void Validate()
+    public void Validate()
     {
         if (Vertices.Length < 3)
             throw new InvalidOperationException("A triangle collider requires at least three vertices.");
@@ -290,7 +290,7 @@ public sealed class PhysicsHeightFieldGeometry : XRBase, IPhysicsGeometry
             DoubleSided = DoubleSided,
         };
 
-    internal void Validate()
+    public void Validate()
     {
         if (RowCount < 2 || ColumnCount < 2)
             throw new InvalidOperationException("A height-field collider requires at least two rows and columns.");

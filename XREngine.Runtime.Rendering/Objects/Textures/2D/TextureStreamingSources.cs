@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
@@ -198,12 +198,12 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
         {
-            using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
+            using RuntimeImage filler = XRTexture2D.FillerImage;
             return XRTexture2D.BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
         }
 
         long decodeStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-        using MagickImage sourceImage = new(sourcePath);
+        using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(sourcePath));
         double decodeMilliseconds = XRTexture2D.CompleteImportedTextureTiming(decodeStartTimestamp);
         cancellationToken.ThrowIfCancellationRequested();
         return XRTexture2D.BuildResidentDataFromImage(

@@ -8,6 +8,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 |----------|-------------|
 | [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) | How the engine creates OS windows on startup, selects OpenGL or Vulkan, instantiates renderers, and begins the render loop. Start here for the full picture. |
 | [Rendering Runtime Overview](runtime-overview.md) | How worlds, visibility collection, GPUScene, render pipelines, and pass execution fit together at runtime. |
+| [Image, Media, And Font Backends](image-media-font-boundaries.md) | Neutral image, media, and font services, their native leaf owners, and runtime checks still needed. |
 | [Rendering Frame Lifecycle And Dispatch Paths](frame-lifecycle-and-dispatch-paths.md) | The end-to-end `CollectVisible -> SwapBuffers -> Render` lifecycle, how worlds/viewports/scenes hand buffers across threads, and how CPU, GPU, BVH, octree, quadtree, and meshlet-related paths fit together. |
 | [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md) | Implemented contract for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. Design source: [proposal](../../work/design/rendering/render-pipeline-resource-lifecycle-design.md). |
 | [Global Illumination Ownership And Selection](global-illumination-ownership.md) | Conservative ownership, invalidation, selection, and GPU-retirement rules for modular GI providers and host adapters. |
@@ -24,7 +25,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Deferred+ Render Path](../../work/design/rendering/deferred-plus-render-path-design.md) | Proposal for a compact visibility-buffer render path with froxel/material classification, deferred texture mapping, material-region shading, and clustered lighting reuse. |
 | [Uber Shader Varianting](uber-shader-varianting.md) | How Uber materials store authored feature/property state, generate fragment variants, and expose requested-vs-active status to the editor. |
 | [Uber Shader UI Annotations](uber-shader-ui-annotations.md) | How `//@feature`, `//@property`, and related directives define the curated Uber inspector surface and how Uber-specific validation treats missing coverage. |
-| [OpenGL Renderer](opengl-renderer.md) | OpenGL 4.6 renderer initialization, GL state management, draw call submission, indirect drawing, framebuffer management, and ImGui integration. |
+| [OpenGL Renderer](opengl-renderer.md) | OpenGL 4.6 renderer initialization, GL state management, draw call submission, indirect drawing, and framebuffer management. ImGui integration is installed from `XREngine.Runtime.Rendering.ImGui`. |
 | [Vulkan Renderer](vulkan-renderer.md) | Vulkan 1.4 renderer initialization (instance → swapchain → sync), the explicit frame loop (acquire → record → submit → present), render graph compilation, and resource management. |
 | [Vulkan Primary And Secondary Command Recording](vulkan-command-recording.md) | Primary orchestration, reusable secondary command chains, persistent worker recording, deterministic merge, lifetime safety, and OpenXR differences. |
 | [Vulkan Primary Command-Buffer Reuse](vulkan-primary-command-buffer-reuse.md) | Per-image state ownership, secondary merge semantics, cache identity, exact rejection telemetry, and the 99% CPU-direct reuse gate. |
@@ -42,18 +43,17 @@ Program.Main()
        │    ├─ UserSettings.RenderLibrary    ← OpenGL or Vulkan
        │    ├─ CreateWindows()
        │    │    └─ for each window:
-       │    │         ├─ Silk.NET.Window.Create()     ← OS window
-       │    │         ├─ Window.Initialize()          ← Graphics context
+       │    │         ├─ XRWindow → installed desktop window backend
+       │    │         ├─ Window.Initialize()          ← borrowed GL context or Vulkan surface
        │    │         ├─ Renderer = OpenGLRenderer     ← (or VulkanRenderer)
-       │    │         │    └─ [Vulkan fallback → OpenGL if init fails]
        │    │         ├─ CreateViewports()
        │    │         └─ SetWorld() → BeginTick()
        │    │              └─ Renderer.Initialize()   ← Full API setup
        │    ├─ Time.Initialize()
        │    ├─ BeginPlayAllWorlds()
        │    └─ [VR enabled?]
-       │         ├─ OpenXR: OpenXRAPI.Startup() → session → render on RenderViewportsCallback
-       │         └─ OpenVR: InitSteamVR() → InitRender() → timer callbacks
+       │         ├─ OpenXR leaf via IOpenXrRuntime → renderer graphics binding
+       │         └─ OpenVR leaf via neutral compositor/input services → timer callbacks
        ├─ RunGameLoop()          ← Update/physics threads
        └─ BlockForRendering()    ← Main thread render loop
 ```
@@ -62,7 +62,7 @@ Program.Main()
 
 | Aspect | OpenGL | Vulkan |
 |--------|--------|--------|
-| **Context** | Obtained from Silk.NET GL context | `Vk.GetApi()` entry points |
+| **Context** | Borrowed from the installed window backend on its owning thread | `Vk.GetApi()` entry points and a borrowed window surface |
 | **Initialization** | Eager (in constructor via `InitGL`) | Deferred (in `Initialize()`: instance → device → swapchain) |
 | **Frame completion** | Automatic (Silk.NET SwapBuffers) | Explicit (acquire → record → submit → present) |
 | **Command model** | Immediate-mode state machine | Command buffer recording + deferred submission |

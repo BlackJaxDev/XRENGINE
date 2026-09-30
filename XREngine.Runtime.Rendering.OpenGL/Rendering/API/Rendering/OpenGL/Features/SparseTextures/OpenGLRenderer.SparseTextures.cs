@@ -140,22 +140,10 @@ public partial class OpenGLRenderer
 
     private void LoadSparseTextureDelegates()
     {
-        if (Window.GLContext is not INativeContext nativeContext)
-            return;
-
-        if (_glGetInternalformativ == 0
-            && nativeContext.TryGetProcAddress("glGetInternalformativ", out IntPtr getInternalformatProc)
-            && getInternalformatProc != IntPtr.Zero)
-        {
-            _glGetInternalformativ = getInternalformatProc;
-        }
-
-        if (_glTexPageCommitmentArb == 0
-            && nativeContext.TryGetProcAddress("glTexPageCommitmentARB", out IntPtr texPageCommitmentProc)
-            && texPageCommitmentProc != IntPtr.Zero)
-        {
-            _glTexPageCommitmentArb = texPageCommitmentProc;
-        }
+        if (_glGetInternalformativ == 0)
+            _glGetInternalformativ = ResolveWindowProcAddress("glGetInternalformativ");
+        if (_glTexPageCommitmentArb == 0)
+            _glTexPageCommitmentArb = ResolveWindowProcAddress("glTexPageCommitmentARB");
     }
 
     internal bool TryCommitSparseTexturePages(

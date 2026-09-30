@@ -88,7 +88,7 @@ namespace XREngine.Core.Files
             if (resolved is not null)
                 return resolved;
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (XRRuntimeEnvironment.IsPublishedBuild)
                 return null;
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())

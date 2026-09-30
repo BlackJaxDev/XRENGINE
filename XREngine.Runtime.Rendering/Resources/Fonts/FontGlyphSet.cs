@@ -1,7 +1,5 @@
-using ImageMagick;
+using XREngine.Imaging;
 using MemoryPack;
-using SharpFont;
-using SkiaSharp;
 using System.Buffers;
 using System.Numerics;
 using System.Collections.Concurrent;
@@ -12,8 +10,6 @@ using XREngine.Core.Attributes;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
-using Process = System.Diagnostics.Process;
-using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 
 namespace XREngine.Rendering
 {
@@ -31,9 +27,6 @@ namespace XREngine.Rendering
     {
         private static readonly string[] AsciiGlyphKeys = CreateAsciiGlyphKeys();
 
-        static partial void StaticConstructor()
-            => EnsureNativeFreetypeAvailable();
-
         [MemoryPackConstructor]
         public FontGlyphSet(List<string> characters, Dictionary<string, Glyph>? glyphs, XRTexture2D? atlas)
         {
@@ -50,7 +43,6 @@ namespace XREngine.Rendering
         private const float DefaultWorldMtsdfPixelRange = 10.0f;
         private const float DefaultUiMtsdfFontSize = 96.0f;
         private const float DefaultUiMtsdfPixelRange = 12.0f;
-        private const int BitmapAtlasPadding = 8;
         private const int FontCacheSchemaVersion = 2;
         private const float DefaultMsdfDistanceRangeMiddle = 0.5f;
         private const string FontDiagnosticsLogName = "font-diagnostics.log";
@@ -158,10 +150,7 @@ namespace XREngine.Rendering
         {
             string name = Path.GetFileNameWithoutExtension(filePath);
 
-            using Library lib = new();
-            using Face face = new(lib, filePath);
-
-            HashSet<uint> characterSet = GetSupportedCharacters(face);
+            HashSet<uint> characterSet = FontCharacterEnumeratorRegistry.Require().GetSupportedCharacters(filePath);
             List<string> characters = [];
             foreach (uint codepoint in characterSet)
             {
@@ -192,13 +181,6 @@ namespace XREngine.Rendering
                     return false;
             }
 
-            using SKTypeface? typeface = SKTypeface.FromFile(filePath);
-            if (typeface is null)
-            {
-                Debug.RenderingWarning($"Failed to load SKTypeface from '{filePath}'");
-                return false;
-            }
-
             string? atlasPath = resolveAuxiliaryPath($"{name}.png");
             if (string.IsNullOrWhiteSpace(atlasPath))
             {
@@ -206,7 +188,7 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            GenerateBitmapFontAtlas(typeface, characters, atlasPath, options.BitmapFontDrawSize > 0.0f ? options.BitmapFontDrawSize : DefaultBitmapFontDrawSize);
+            GenerateBitmapFontAtlas(filePath, characters, atlasPath, options.BitmapFontDrawSize > 0.0f ? options.BitmapFontDrawSize : DefaultBitmapFontDrawSize);
             AtlasType = EFontAtlasType.Bitmap;
             DistanceRange = 0.0f;
             DistanceRangeMiddle = DefaultMsdfDistanceRangeMiddle;
@@ -215,152 +197,40 @@ namespace XREngine.Rendering
             return true;
         }
 
-        private static void EnsureNativeFreetypeAvailable()
-        {
-            try
-            {
-                string baseDir = AppContext.BaseDirectory;
-                string archFolder = Environment.Is64BitProcess ? "x64" : "x86";
-                string sourcePath = Path.Combine(baseDir, "lib", archFolder, "freetype6.dll");
-                if (!File.Exists(sourcePath))
-                    return;
-
-                string destPath = Path.Combine(baseDir, "freetype6.dll");
-                File.Copy(sourcePath, destPath, overwrite: true);
-            }
-            catch (Exception ex)
-            {
-                Debug.RenderingWarning($"Failed to ensure SharpFont native dependency: {ex.Message}");
-            }
-        }
-
-        private static bool TryResolveMsdfAtlasGenExecutable([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? executablePath)
-        {
-            executablePath = null;
-
-            string[] candidateRelativePaths =
-            [
-                Path.Combine("Build", "Dependencies", "MsdfAtlasGen", "msdf-atlas-gen.exe"),
-                "msdf-atlas-gen.exe",
-            ];
-
-            string? basePath = AppContext.BaseDirectory;
-            while (!string.IsNullOrWhiteSpace(basePath))
-            {
-                foreach (string relativePath in candidateRelativePaths)
-                {
-                    string candidate = Path.Combine(basePath, relativePath);
-                    if (File.Exists(candidate))
-                    {
-                        executablePath = candidate;
-                        return true;
-                    }
-                }
-
-                basePath = Path.GetDirectoryName(basePath);
-            }
-
-            return false;
-        }
-
         private bool TryGenerateDistanceFieldAtlas(string filePath, string atlasPath, string metadataPath, XRFontImportOptions options, HashSet<uint> characterSet)
         {
-            if (!TryResolveMsdfAtlasGenExecutable(out string? executablePath))
+            IFontDistanceFieldAtlasGenerator? generator = FontDistanceFieldAtlasGeneratorRegistry.Current;
+            if (generator is null)
             {
-                Debug.RenderingWarning("MSDF font import requested, but msdf-atlas-gen.exe was not found. Run Tools/Dependencies/Get-MsdfAtlasGen.ps1 to install it.");
+                Debug.RenderingWarning("Distance-field font import requires a registered font atlas generator. Register the FreeType font backend in the authoring application.");
                 return false;
             }
 
-            string? atlasDirectory = Path.GetDirectoryName(atlasPath);
-            if (!string.IsNullOrWhiteSpace(atlasDirectory))
-                Directory.CreateDirectory(atlasDirectory);
-
-            string? metadataDirectory = Path.GetDirectoryName(metadataPath);
-            if (!string.IsNullOrWhiteSpace(metadataDirectory))
-                Directory.CreateDirectory(metadataDirectory);
-
-            // Write a charset file so msdf-atlas-gen outputs unicode codepoints
-            // (-allglyphs only emits glyph indices which the parser cannot map to characters).
-            string charsetPath = Path.Combine(
-                atlasDirectory ?? Path.GetTempPath(),
-                Path.GetFileNameWithoutExtension(filePath) + ".msdf-charset.txt");
-            WriteCharsetFile(charsetPath, characterSet);
-
-            var startInfo = new ProcessStartInfo
+            FontDistanceFieldAtlasRequest request = new(
+                filePath,
+                atlasPath,
+                metadataPath,
+                GetDistanceFieldAtlasType(options.AtlasMode),
+                characterSet,
+                options.MsdfFontSize > 0.0f ? options.MsdfFontSize : 48.0f,
+                options.MsdfPixelRange > 0.0f ? options.MsdfPixelRange : 6.0f,
+                MathF.Max(0.0f, options.MsdfInnerPixelPadding),
+                MathF.Max(0.0f, options.MsdfOuterPixelPadding),
+                Math.Max(0, options.MsdfThreadCount));
+            FontDistanceFieldAtlasResult result = generator.Generate(in request);
+            if (!result.Succeeded)
             {
-                FileName = executablePath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                WorkingDirectory = Path.GetDirectoryName(executablePath) ?? AppContext.BaseDirectory,
-            };
-
-            startInfo.ArgumentList.Add("-font");
-            startInfo.ArgumentList.Add(filePath);
-            startInfo.ArgumentList.Add("-charset");
-            startInfo.ArgumentList.Add(charsetPath);
-            startInfo.ArgumentList.Add("-type");
-            startInfo.ArgumentList.Add(GetDistanceFieldToolType(options.AtlasMode));
-            startInfo.ArgumentList.Add("-format");
-            startInfo.ArgumentList.Add("png");
-            startInfo.ArgumentList.Add("-imageout");
-            startInfo.ArgumentList.Add(atlasPath);
-            startInfo.ArgumentList.Add("-json");
-            startInfo.ArgumentList.Add(metadataPath);
-            startInfo.ArgumentList.Add("-size");
-            startInfo.ArgumentList.Add((options.MsdfFontSize > 0.0f ? options.MsdfFontSize : 48.0f).ToString(System.Globalization.CultureInfo.InvariantCulture));
-            startInfo.ArgumentList.Add("-pxrange");
-            startInfo.ArgumentList.Add((options.MsdfPixelRange > 0.0f ? options.MsdfPixelRange : 6.0f).ToString(System.Globalization.CultureInfo.InvariantCulture));
-            startInfo.ArgumentList.Add("-pxpadding");
-            startInfo.ArgumentList.Add(MathF.Max(0.0f, options.MsdfInnerPixelPadding).ToString(System.Globalization.CultureInfo.InvariantCulture));
-            startInfo.ArgumentList.Add("-outerpxpadding");
-            startInfo.ArgumentList.Add(MathF.Max(0.0f, options.MsdfOuterPixelPadding).ToString(System.Globalization.CultureInfo.InvariantCulture));
-            startInfo.ArgumentList.Add("-coloringstrategy");
-            startInfo.ArgumentList.Add("inktrap");
-            startInfo.ArgumentList.Add("-pxalign");
-            startInfo.ArgumentList.Add("on");
-            startInfo.ArgumentList.Add("-scanline");
-            startInfo.ArgumentList.Add("-yorigin");
-            startInfo.ArgumentList.Add("top");
-            startInfo.ArgumentList.Add("-threads");
-            startInfo.ArgumentList.Add(Math.Max(0, options.MsdfThreadCount).ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-            using var process = new Process { StartInfo = startInfo };
-            process.Start();
-            string stdOut = process.StandardOutput.ReadToEnd();
-            string stdErr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            // Clean up temporary charset file.
-            try { File.Delete(charsetPath); } catch { /* best effort */ }
-
-            if (process.ExitCode != 0)
-            {
-                Debug.RenderingWarning($"msdf-atlas-gen failed for '{filePath}' with exit code {process.ExitCode}. {stdErr}".Trim());
+                Debug.RenderingWarning($"msdf-atlas-gen failed for '{filePath}' with exit code {result.ExitCode}. {result.Diagnostic} {result.StandardError}".Trim());
                 return false;
             }
 
             if (!TryLoadDistanceFieldMetadata(atlasPath, metadataPath, GetDistanceFieldAtlasType(options.AtlasMode)))
             {
-                Debug.RenderingWarning($"msdf-atlas-gen completed for '{filePath}', but the generated metadata could not be parsed. {stdOut} {stdErr}".Trim());
+                Debug.RenderingWarning($"msdf-atlas-gen completed for '{filePath}', but the generated metadata could not be parsed. {result.StandardOutput} {result.StandardError}".Trim());
                 return false;
             }
 
             return true;
-        }
-
-        /// <summary>
-        /// Writes a charset file with hex Unicode codepoints for msdf-atlas-gen.
-        /// </summary>
-        private static void WriteCharsetFile(string path, HashSet<uint> characterSet)
-        {
-            using var writer = new StreamWriter(path, append: false, System.Text.Encoding.ASCII);
-            foreach (uint codepoint in characterSet)
-            {
-                if (codepoint >= 0x20 && codepoint <= 0x10FFFF)
-                    writer.WriteLine($"0x{codepoint:X4}");
-            }
         }
 
         private bool TryLoadDistanceFieldMetadata(string atlasPath, string metadataPath, EFontAtlasType atlasType)
@@ -464,7 +334,7 @@ namespace XREngine.Rendering
             ETexMagFilter magFilter,
             bool autoGenerateMipmaps)
         {
-            using MagickImage atlasImage = new(atlasPath);
+            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath));
             var atlasTexture = new XRTexture2D(atlasImage)
             {
                 FilePath = atlasPath,
@@ -492,7 +362,7 @@ namespace XREngine.Rendering
 
         private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)
         {
-            using MagickImage atlasImage = new(atlasPath);
+            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath));
             byte[] coverage = ExtractAlphaCoverage(atlasImage);
 
             var atlasTexture = new XRTexture2D(
@@ -520,12 +390,21 @@ namespace XREngine.Rendering
             return atlasTexture;
         }
 
-        private static byte[] ExtractAlphaCoverage(MagickImage atlasImage)
+        private static byte[] ExtractAlphaCoverage(RuntimeImage atlasImage)
         {
-            using IPixelCollection<float> pixels = atlasImage.GetPixels()
-                ?? throw new InvalidOperationException("ImageMagick could not expose the font atlas pixels.");
-            return pixels.ToByteArray("A")
-                ?? throw new InvalidDataException("ImageMagick returned no font atlas alpha data.");
+            if (atlasImage.PixelFormat != RuntimePixelFormat.Rgba8)
+                throw new NotSupportedException("Bitmap font atlases require RGBA8 pixels.");
+            byte[] coverage = new byte[checked((int)((long)atlasImage.Width * atlasImage.Height))];
+            ReadOnlySpan<byte> pixels = atlasImage.Pixels.Span;
+            for (int row = 0; row < atlasImage.Height; row++)
+            {
+                int sourceRow = atlasImage.Origin == RuntimeImageOrigin.BottomLeft
+                    ? checked((int)atlasImage.Height - row - 1)
+                    : row;
+                for (int column = 0; column < atlasImage.Width; column++)
+                    coverage[row * (int)atlasImage.Width + column] = pixels[sourceRow * atlasImage.RowStrideBytes + column * 4 + 3];
+            }
+            return coverage;
         }
 
         private static bool TryGetBounds(JsonElement element, string propertyName, out float left, out float top, out float right, out float bottom, bool topDown)
@@ -589,182 +468,18 @@ namespace XREngine.Rendering
             };
         }
 
-        /// <summary>
-        /// Retrieves the set of supported characters in a font face.
-        /// </summary>
-        /// <param name="face"></param>
-        /// <returns></returns>
-        public static HashSet<uint> GetSupportedCharacters(Face face)
+        /// <summary>Renders a source font into a bitmap atlas for cooked font assets.</summary>
+        public void GenerateBitmapFontAtlas(string fontPath, List<string> characters, string outputAtlasPath, float textSize)
         {
-            HashSet<uint> characterSet = [];
-
-            // Select Unicode charmap
-            face.SetCharmap(face.CharMaps[0]);
-
-            // Iterate over all characters
-            uint code = face.GetFirstChar(out uint glyphIndex);
-            while (glyphIndex != 0)
-            {
-                characterSet.Add(code);
-                code = face.GetNextChar(code, out glyphIndex);
-            }
-            return characterSet;
-        }
-
-        /// <summary>
-        /// Generates a font atlas texture from a list of characters.
-        /// Will save the atlas to a PNG file at the specified path and store glyph coordinates in this set.
-        /// </summary>
-        /// <param name="typeface"></param>
-        /// <param name="characters"></param>
-        /// <param name="outputAtlasPath"></param>
-        /// <param name="textSize"></param>
-        /// <param name="style"></param>
-        /// <param name="strokeWidth"></param>
-        public void GenerateBitmapFontAtlas(
-            SKTypeface typeface,
-            List<string> characters,
-            string outputAtlasPath,
-            float textSize,
-            SKPaintStyle style = SKPaintStyle.Fill,
-            float strokeWidth = 0.0f,
-            bool embolden = false)
-        {
-            // List to hold glyph data
-            List<(string character, Glyph info)> glyphInfos = [];
-            List<SKBitmap> glyphBitmaps = [];
-
-            // Create a paint object
-            using SKPaint paint = new()
-            {
-                Color = SKColors.White,
-                Style = style,
-                StrokeWidth = strokeWidth,
-                IsDither = true,
-                BlendMode = SKBlendMode.SrcOver,
-                IsAntialias = true,
-            };
-
-            using SKFont font = new(typeface, textSize);
-            font.BaselineSnap = true;
-            font.Edging = SKFontEdging.Antialias;
-            font.ForceAutoHinting = true;
-            font.Subpixel = false;
-            font.Embolden = embolden;
-            font.Hinting = SKFontHinting.Full;
-
-            // Process each character
-            foreach (string character in characters)
-            {
-                // Get glyph indices
-                ushort[] glyphs = new ushort[character.Length]; 
-                font.GetGlyphs(character.AsSpan(), glyphs.AsSpan());
-                if (glyphs.Length == 0 || glyphs[0] == 0)
-                {
-                    // Skip characters without glyphs
-                    continue;
-                }
-
-                float[] widths = new float[glyphs.Length];
-                SKRect[] bounds = new SKRect[glyphs.Length];
-                font.GetGlyphWidths(glyphs, widths.AsSpan(), bounds.AsSpan(), paint);
-                if (bounds.Length > 1)
-                    Debug.RenderingWarning($"Multiple glyphs for character '{character}'");
-
-                SKRect glyphBounds = bounds[0];
-                float x = -glyphBounds.Left;
-                float y = -glyphBounds.Top;
-                int width = (int)Math.Ceiling(glyphBounds.Width);
-                int height = (int)Math.Ceiling(glyphBounds.Height);
-
-                if (width == 0 || height == 0)
-                {
-                    width = 1;
-                    height = 1;
-                }
-
-                float advance = widths[0] > 0.0f ? widths[0] : width;
-
-                SKBitmap bitmap = new(width, height);
-                using (SKCanvas canvas = new(bitmap))
-                {
-                    canvas.Clear(SKColors.Transparent);
-                    canvas.DrawText(character, x, y, SKTextAlign.Left, font, paint);
-                }
-
-                glyphBitmaps.Add(bitmap);
-                glyphInfos.Add((character, new(
-                    new Vector2(width, height),
-                    new Vector2(-glyphBounds.Left, -glyphBounds.Top))
-                {
-                    AtlasSize = new Vector2(width, height),
-                    AdvanceX = advance,
-                }));
-            }
-
-            // Pack glyphs into an atlas
-            int glyphsPerRow = (int)Math.Ceiling(Math.Sqrt(glyphBitmaps.Count));
-            int maxGlyphWidth = 0;
-            int maxGlyphHeight = 0;
-
-            foreach (var g in glyphInfos)
-            {
-                if (g.info.Size.X > maxGlyphWidth)
-                    maxGlyphWidth = (int)Math.Ceiling(g.info.Size.X);
-
-                if (g.info.Size.Y > maxGlyphHeight)
-                    maxGlyphHeight = (int)Math.Ceiling(g.info.Size.Y);
-            }
-
-            int glyphCellWidth = maxGlyphWidth + (BitmapAtlasPadding * 2);
-            int glyphCellHeight = maxGlyphHeight + (BitmapAtlasPadding * 2);
-
-            int atlasWidth = glyphCellWidth * glyphsPerRow;
-            int numRows = (int)Math.Ceiling((double)glyphBitmaps.Count / glyphsPerRow);
-            int atlasHeight = glyphCellHeight * numRows;
-
-            using SKBitmap atlasBitmap = new(atlasWidth, atlasHeight);
-            using (SKCanvas atlasCanvas = new(atlasBitmap))
-            {
-                atlasCanvas.Clear(SKColors.Transparent);
-
-                // Draw each glyph onto the atlas
-                for (int i = 0; i < glyphBitmaps.Count; i++)
-                {
-                    int row = i / glyphsPerRow;
-                    int col = i % glyphsPerRow;
-
-                    int x = (col * glyphCellWidth) + BitmapAtlasPadding;
-                    int y = (row * glyphCellHeight) + BitmapAtlasPadding;
-
-                    atlasCanvas.DrawBitmap(glyphBitmaps[i], x, y, SKSamplingOptions.Default, null);
-                    glyphInfos[i].info.Position = new Vector2(x, y);
-                }
-            }
-
-            // Save the atlas texture to the (cache) output path.
-            string? outputDir = Path.GetDirectoryName(outputAtlasPath);
-            if (!string.IsNullOrWhiteSpace(outputDir))
-                Directory.CreateDirectory(outputDir);
-
-            using (var image = SKImage.FromBitmap(atlasBitmap))
-            using (var data = image.Encode(SKEncodedImageFormat.Png, 100))
-            using (var stream = new FileStream(outputAtlasPath, FileMode.Create, FileAccess.Write, FileShare.Read))
-            {
-                data.SaveTo(stream);
-            }
-
+            FontBitmapAtlasResult result = FontBitmapRasterizerRegistry.Require()
+                .Rasterize(fontPath, characters, outputAtlasPath, textSize);
             Atlas = CreateBitmapAtlasTexture(outputAtlasPath);
             ConfigureBitmapAtlasTexture(Atlas, outputAtlasPath);
-
-            Glyphs = glyphInfos.ToDictionary(g => g.character, g => g.info);
+            Glyphs = result.Glyphs;
             AtlasType = EFontAtlasType.Bitmap;
             DistanceRange = 0.0f;
             DistanceRangeMiddle = DefaultMsdfDistanceRangeMiddle;
             LayoutEmSize = textSize > 0.0f ? textSize : DefaultBitmapFontDrawSize;
-
-            foreach (var bitmap in glyphBitmaps)
-                bitmap.Dispose();
         }
 
         public enum EWrapMode
@@ -1367,7 +1082,7 @@ namespace XREngine.Rendering
             if (!OperatingSystem.IsWindows())
                 return null;
 
-            string fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+            string fontsDirectory = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.Fonts);
             if (string.IsNullOrWhiteSpace(fontsDirectory))
                 return null;
 
@@ -1965,9 +1680,6 @@ namespace XREngine.Rendering
                 MsdfPixelRange = DefaultUiMtsdfPixelRange,
                 MsdfOuterPixelPadding = 4.0f,
             };
-
-        private static string GetDistanceFieldToolType(EFontAtlasImportMode atlasMode)
-            => atlasMode == EFontAtlasImportMode.Msdf ? "msdf" : "mtsdf";
 
         private static string GetDistanceFieldAuxiliarySuffix(EFontAtlasImportMode atlasMode)
             => atlasMode == EFontAtlasImportMode.Msdf ? "msdf" : "mtsdf";

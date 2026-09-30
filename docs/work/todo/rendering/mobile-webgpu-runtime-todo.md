@@ -2,6 +2,8 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
+> **Direction update (2026-09-29):** the [unified desktop and browser runtime design](../../design/platform/unified-desktop-browser-runtime-design.md) replaces this tracker's separate browser runtime (same-identity portable source profiles, browser-only scene/component/pipeline types, and the flattening world exporter) with the real engine running on both platforms. Bridge, WebGPU resource, delivery, recovery, budget, hosting, and device-validation items remain valid; see the [carry-over table](../platform/unified-desktop-browser-runtime-todo.md#mobile-todo-carry-over). The earlier audit found a `System.Drawing` source-guard failure. The policy correction and replacement of subset profiles with full `net10.0` projects are now implemented; fresh build results remain pending. See [current project organization](../../../architecture/runtime/project-organization.md) and [integration validation](../platform/native-subsystem-project-split-todo.md). Checked source rows below do not certify compilation or runtime behavior.
+
 **Status:** Code deliverables through the selected portable kernel, browser host and focused forward pipeline are implemented. The WebGPU leaf supports opaque/masked/transparent indexed instances, bounded materials, directional shadows, sky/ambient light, HDR/SDR composition, engine UI rectangles and mobile quality settings. Builds, restored-graph evidence and browser/device qualification remain pending; broader engine rendering and cooked-world integration follow.
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
@@ -44,10 +46,10 @@ are outside this selected profile.
 
 - [x] **MW00.01–MW00.05/MW00.07–MW00.08 source and planning deliverables:** Scope reconciliation, source dependency classifications/owners, sample specification, budgets and service requirements; evaluated graph/restore-asset reporting and initializer/API inventory tooling. The evaluated report has not been run for this delivery.
 - [ ] **MW00.06 qualification evidence:** Proposed reference devices are recorded; hardware availability and exact tested OS/browser versions are unconfirmed.
-- [x] **MW01.01–MW01.04 code:** Same-identity portable scene/data/rendering profiles, isolated native leaves, neutral-project auditing and focused resource/frame/presentation descriptions.
+- [x] **MW01.01–MW01.04 code:** Full-source `net10.0` shared projects (superseding the original subset profiles), isolated native leaves, neutral-project auditing, and focused resource/frame/presentation descriptions. Current boundaries are maintained in the project organization guide.
 - [x] **MW01.05 code:** Resource, pass/packet submission, texture-copy, presentation and asynchronous completion capabilities implemented by the WebGPU leaf without the legacy desktop renderer surface.
 - [x] **MW01.06–MW01.07 code:** Explicit browser composition, deterministic generated registrations for admitted component/transform/resource/serializer/module identities, and generated scene-JSON metadata.
-- [x] **MW01.08–MW01.10 code:** Selected-profile API/reflection inventory and SDK-hosted C# source guard (no Python build prerequisite), explicit reviewed exceptions, trim/AOT rejection, isolated cook/generator tooling and project/package/native-asset guards.
+- [x] **MW01.08–MW01.10 code:** Whole-project API/reflection inventory and SDK-hosted C# source guard (no Python build prerequisite), explicit reviewed exceptions, trim/AOT rejection, isolated cook/generator tooling and project/package/native-asset guards.
 - [ ] **MW01.11 remaining evidence:** Earlier scene-only browser evidence exists; the expanded graph and affected desktop paths still need build/runtime qualification.
 - [x] **MW02.01–MW02.04 code:** Supplied-canvas executable/bootstrap, portable surface/input/presentation contracts and asynchronous pending/ready/failure/loss transitions.
 - [x] **MW02.05–MW02.07 code:** Single-frame fixed-step simulation, explicit engine transform-buffer publication, frozen renderable collection, per-view visibility and packet production, caller-thread scheduling, bounded catch-up and history invalidation on suspension/large time gaps.

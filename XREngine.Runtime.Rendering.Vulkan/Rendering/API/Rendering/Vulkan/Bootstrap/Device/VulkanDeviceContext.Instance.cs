@@ -21,7 +21,7 @@ internal sealed partial class VulkanDeviceContext
         VulkanInstanceExtensionSet.Empty;
     public uint InstanceApiVersion { get; private set; }
     public bool InstanceCreatedThroughOpenXr { get; private set; }
-    public OpenXrVulkanEnable2BootstrapContext? OpenXrBootstrapContext { get; private set; }
+    public IOpenXrVulkanBootstrapLease? OpenXrBootstrapContext { get; private set; }
     public ExtDebugUtils? DebugUtils { get; private set; }
     public bool HasInstance => Instance.Handle != 0;
     public bool HasDebugMessenger => _debugMessenger.Handle != 0;
@@ -39,7 +39,7 @@ internal sealed partial class VulkanDeviceContext
         IEnumerable<string> enabledExtensions,
         uint apiVersion,
         bool createdThroughOpenXr,
-        OpenXrVulkanEnable2BootstrapContext? openXrBootstrapContext)
+        IOpenXrVulkanBootstrapLease? openXrBootstrapContext)
     {
         ArgumentNullException.ThrowIfNull(api);
         if (instance.Handle == 0)
@@ -138,18 +138,18 @@ internal sealed partial class VulkanDeviceContext
             }
 
             Instance createdInstance;
-            OpenXrVulkanEnable2BootstrapContext? createdOpenXrContext;
+            IOpenXrVulkanBootstrapLease? createdOpenXrContext;
             bool createdThroughOpenXr;
             var getInstanceProcAddr = api.GetInstanceProcAddr(default, "vkGetInstanceProcAddr");
-            if (OpenXRAPI.TryCreateVulkanEnable2BootstrapContext(
-                out OpenXrVulkanEnable2BootstrapContext? openXrContext,
+            if (OpenXrVulkanBootstrapServices.TryCreateVulkanEnable2BootstrapContext(
+                out IOpenXrVulkanBootstrapLease? openXrContext,
                 out string? openXrContextFailure))
             {
-                OpenXrVulkanEnable2BootstrapContext activeOpenXrContext = openXrContext
+                IOpenXrVulkanBootstrapLease activeOpenXrContext = openXrContext
                     ?? throw new InvalidOperationException("OpenXR returned a successful bootstrap result without a context.");
                 if (!activeOpenXrContext.TryCreateVulkanInstance(
-                    &createInfo,
-                    getInstanceProcAddr,
+                    (nint)(&createInfo),
+                    (nint)getInstanceProcAddr,
                     out nint openXrCreatedInstanceHandle,
                     out _,
                     out string? openXrCreateFailure))
@@ -705,33 +705,20 @@ internal sealed partial class VulkanDeviceContext
     }
 
     public bool TryGetOpenXrBootstrapInstance(
-        out Silk.NET.OpenXR.XR api,
-        out Silk.NET.OpenXR.Instance xrInstance,
-        out string[] enabledExtensions)
+        out IOpenXrVulkanBootstrapLease? lease)
     {
-        if (OpenXrBootstrapContext is not null)
-        {
-            api = OpenXrBootstrapContext.Api;
-            xrInstance = OpenXrBootstrapContext.XrInstance;
-            enabledExtensions = OpenXrBootstrapContext.EnabledExtensions;
-            return xrInstance.Handle != 0;
-        }
-
-        api = null!;
-        xrInstance = default;
-        enabledExtensions = [];
-        return false;
+        lease = OpenXrBootstrapContext;
+        return lease?.InstanceHandle != 0;
     }
 
     public bool InvalidateOpenXrBootstrapInstance(string reason)
     {
-        OpenXrVulkanEnable2BootstrapContext? context = OpenXrBootstrapContext;
+        IOpenXrVulkanBootstrapLease? context = OpenXrBootstrapContext;
         if (context is null)
             return false;
 
         bool ownsOpenXrCreatedDevice = InstanceCreatedThroughOpenXr && CreatedThroughOpenXr;
-        context.AbandonXrInstanceOnDispose(reason);
-        context.Dispose();
+        context.Invalidate(reason);
         OpenXrBootstrapContext = null;
         Debug.VulkanWarning(
             "[OpenXR] Invalidated XR_KHR_vulkan_enable2 bootstrap instance. Reason={0}",
@@ -744,20 +731,20 @@ internal sealed partial class VulkanDeviceContext
         return true;
     }
 
-    public Silk.NET.OpenXR.Result TryDestroyRendererOwnedInstanceAfterDeviceLoss(string reason)
+    public int TryDestroyRendererOwnedInstanceAfterDeviceLoss(string reason)
     {
-        OpenXrVulkanEnable2BootstrapContext? context = OpenXrBootstrapContext;
+        IOpenXrVulkanBootstrapLease? context = OpenXrBootstrapContext;
         if (context is null)
-            return Silk.NET.OpenXR.Result.ErrorHandleInvalid;
+            return OpenXrResultCodes.ErrorHandleInvalid;
 
-        Silk.NET.OpenXR.Result result = context.DestroyXrInstanceAfterDeviceLoss();
-        if (result == Silk.NET.OpenXR.Result.Success || result == Silk.NET.OpenXR.Result.ErrorInstanceLost)
+        int result = context.TryDestroyAfterDeviceLoss(reason);
+        if (result == OpenXrResultCodes.Success || result == OpenXrResultCodes.ErrorInstanceLost)
         {
             context.Dispose();
             OpenXrBootstrapContext = null;
         }
         else
-            context.AbandonXrInstanceOnDispose($"Device-loss instance destruction failed ({result}): {reason}");
+            context.AbandonOnDispose($"Device-loss instance destruction failed ({result}): {reason}");
         return result;
     }
 
@@ -777,7 +764,7 @@ internal sealed partial class VulkanDeviceContext
 
         if (FirstNativeDeviceFault is not null)
         {
-            OpenXrBootstrapContext?.AbandonXrInstanceOnDispose(
+            OpenXrBootstrapContext?.AbandonOnDispose(
                 string.IsNullOrWhiteSpace(deviceLostReason)
                     ? "Vulkan logical device lost"
                     : deviceLostReason);

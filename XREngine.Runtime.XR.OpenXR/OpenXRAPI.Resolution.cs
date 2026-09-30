@@ -1,0 +1,492 @@
+using System;
+using System.Threading;
+using XREngine;
+using XREngine.Rendering;
+using Debug = XREngine.Debug;
+
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
+public unsafe partial class OpenXRAPI
+{
+    private readonly record struct OpenXrEyeResolutionSettingsSnapshot(
+        EOpenXrEyeResolutionPreset Preset,
+        float Scale,
+        uint CustomWidth,
+        uint CustomHeight)
+    {
+        public override string ToString()
+            => $"{Preset} scale={Scale:F2} custom={CustomWidth}x{CustomHeight}";
+    }
+
+    internal static OpenXrEyeSwapchainExtent ResolveOpenXrEyeSwapchainExtentForSettings(
+        EOpenXrEyeResolutionPreset preset,
+        float scale,
+        uint customWidth,
+        uint customHeight,
+        uint recommendedWidth,
+        uint recommendedHeight,
+        uint maxWidth,
+        uint maxHeight)
+    {
+        float requiredScale = RequireOpenXrEyeResolutionScale(scale);
+
+        uint baseWidth;
+        uint baseHeight;
+        string source;
+        switch (preset)
+        {
+            case EOpenXrEyeResolutionPreset.RuntimeRecommended:
+                if (recommendedWidth == 0u || recommendedHeight == 0u)
+                {
+                    throw new InvalidOperationException(
+                        $"OpenXR runtime recommended eye resolution is invalid: {recommendedWidth}x{recommendedHeight}.");
+                }
+
+                baseWidth = recommendedWidth;
+                baseHeight = recommendedHeight;
+                source = "OpenXR runtime recommended";
+                break;
+            case EOpenXrEyeResolutionPreset.ValveIndex:
+                baseWidth = 1440u;
+                baseHeight = 1600u;
+                source = "Valve Index";
+                break;
+            case EOpenXrEyeResolutionPreset.QuestPro:
+                baseWidth = 1800u;
+                baseHeight = 1920u;
+                source = "Quest Pro";
+                break;
+            case EOpenXrEyeResolutionPreset.BigscreenBeyond2:
+                baseWidth = 2560u;
+                baseHeight = 2560u;
+                source = "Bigscreen Beyond 2";
+                break;
+            case EOpenXrEyeResolutionPreset.Custom:
+                if (customWidth == 0u || customHeight == 0u)
+                {
+                    throw new InvalidOperationException(
+                        $"OpenXR custom eye resolution requires non-zero CustomWidth and CustomHeight, got {customWidth}x{customHeight}.");
+                }
+
+                baseWidth = customWidth;
+                baseHeight = customHeight;
+                source = "Custom";
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported OpenXR eye resolution preset '{preset}'.");
+        }
+
+        uint requestedWidth = ScaleDimension(baseWidth, requiredScale);
+        uint requestedHeight = ScaleDimension(baseHeight, requiredScale);
+        uint resolvedWidth = requestedWidth;
+        uint resolvedHeight = requestedHeight;
+        bool clampedWidth = maxWidth > 0 && resolvedWidth > maxWidth;
+        bool clampedHeight = maxHeight > 0 && resolvedHeight > maxHeight;
+        if (clampedWidth)
+            resolvedWidth = maxWidth;
+        if (clampedHeight)
+            resolvedHeight = maxHeight;
+
+        bool exceedsRuntimeMax =
+            clampedWidth ||
+            clampedHeight;
+
+        return new(
+            resolvedWidth,
+            resolvedHeight,
+            requestedWidth,
+            requestedHeight,
+            baseWidth,
+            baseHeight,
+            recommendedWidth,
+            recommendedHeight,
+            maxWidth,
+            maxHeight,
+            preset,
+            requiredScale,
+            exceedsRuntimeMax,
+            source);
+    }
+
+    private OpenXrEyeSwapchainExtent ResolveOpenXrEyeSwapchainExtent(uint viewIndex)
+    {
+        int index = (int)Math.Min(viewIndex, (uint)_viewConfigViews.Length - 1u);
+        var viewConfig = _viewConfigViews[index];
+        IRuntimeRenderPresentationServices settings = RuntimeRenderingHostServices.Presentation;
+        return ResolveOpenXrEyeSwapchainExtentForSettings(
+            settings.OpenXrEyeResolutionPreset,
+            settings.OpenXrEyeResolutionScale,
+            settings.OpenXrCustomEyeResolutionWidth,
+            settings.OpenXrCustomEyeResolutionHeight,
+            viewConfig.RecommendedImageRectWidth,
+            viewConfig.RecommendedImageRectHeight,
+            viewConfig.MaxImageRectWidth,
+            viewConfig.MaxImageRectHeight);
+    }
+
+    private uint GetOpenXrSwapchainWidth(uint viewIndex)
+    {
+        int index = (int)Math.Min(viewIndex, (uint)_swapchainWidths.Length - 1u);
+        uint width = _swapchainWidths[index];
+        return width != 0 ? width : ResolveOpenXrEyeSwapchainExtent(viewIndex).Width;
+    }
+
+    private uint GetOpenXrSwapchainHeight(uint viewIndex)
+    {
+        int index = (int)Math.Min(viewIndex, (uint)_swapchainHeights.Length - 1u);
+        uint height = _swapchainHeights[index];
+        return height != 0 ? height : ResolveOpenXrEyeSwapchainExtent(viewIndex).Height;
+    }
+
+    private void RecordOpenXrSwapchainExtent(uint viewIndex, uint width, uint height)
+    {
+        int index = (int)Math.Min(viewIndex, (uint)_swapchainWidths.Length - 1u);
+        _swapchainWidths[index] = width;
+        _swapchainHeights[index] = height;
+    }
+
+    private void SubscribeOpenXrRenderSettingsChanged()
+    {
+        if (_renderSettingsChangedSubscribed)
+            return;
+
+        RuntimeEngine.Rendering.SettingsChanged += HandleOpenXrRenderSettingsChanged;
+        _renderSettingsChangedSubscribed = true;
+    }
+
+    private void UnsubscribeOpenXrRenderSettingsChanged()
+    {
+        if (!_renderSettingsChangedSubscribed)
+            return;
+
+        RuntimeEngine.Rendering.SettingsChanged -= HandleOpenXrRenderSettingsChanged;
+        _renderSettingsChangedSubscribed = false;
+    }
+
+    private void HandleOpenXrRenderSettingsChanged()
+    {
+        OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
+        OpenXrEyeResolutionSettingsSnapshot applied = CaptureAppliedOpenXrEyeResolutionSettings();
+        if (OpenXrEyeResolutionSettingsMatch(current, applied))
+            return;
+
+        if (!_runtimeMonitoringEnabled)
+        {
+            Debug.Out($"[OpenXR] Eye resolution settings changed from {applied} to {current}; runtime monitoring is disabled, so the next OpenXR startup will apply the new extent.");
+            return;
+        }
+
+        if (!HasCreatedOpenXrSwapchains())
+        {
+            Debug.Out($"[OpenXR] Eye resolution settings changed from {applied} to {current}; no OpenXR swapchains exist yet, so the next session creation will apply the new extent.");
+            return;
+        }
+
+        QueueOpenXrEyeResolutionSessionRecreate(current, applied);
+    }
+
+    private void QueueOpenXrEyeResolutionSessionRecreate(
+        OpenXrEyeResolutionSettingsSnapshot current,
+        OpenXrEyeResolutionSettingsSnapshot applied)
+    {
+        if (Interlocked.CompareExchange(
+                ref _openXrEyeResolutionReplacementAdmissionState,
+                (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested,
+                (int)OpenXrEyeResolutionReplacementAdmissionState.Idle) !=
+            (int)OpenXrEyeResolutionReplacementAdmissionState.Idle)
+            return;
+
+        string reason = $"OpenXR eye resolution changed from {applied} to {current}.";
+        Debug.LogWarning($"[OpenXR] {reason} Draining the active frame before replacing session swapchains.");
+    }
+
+    private void ServiceOpenXrEyeResolutionReplacement()
+    {
+        if (!_sessionBegun || IsOpenXrRuntimeLossPending() ||
+            Window?.Renderer is not { IsDeviceLost: false })
+            return;
+
+        PromoteOpenXrEyeResolutionReplacementRetryIfDue();
+        if (Volatile.Read(ref _openXrEyeResolutionReplacementAdmissionState) !=
+            (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested ||
+            !CanReplaceOpenXrSwapchainsInSession())
+            return;
+
+        OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
+        OpenXrEyeResolutionSettingsSnapshot applied = CaptureAppliedOpenXrEyeResolutionSettings();
+        if (OpenXrEyeResolutionSettingsMatch(current, applied))
+        {
+            CompleteActiveOpenXrEyeResolutionReplacementRequest();
+            return;
+        }
+
+        RecreateOpenXrSessionResourcesForEyeResolution(
+            $"OpenXR eye resolution changed from {applied} to {current}.");
+    }
+
+    private void PublishOpenXrEyeResolutionReplacementRetryBackoff()
+    {
+        long delay = (long)(_intentionalOpenXrRecreateProbeInterval.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        Volatile.Write(
+            ref _openXrEyeResolutionReplacementRetryTimestamp,
+            System.Diagnostics.Stopwatch.GetTimestamp() + Math.Max(1L, delay));
+        Volatile.Write(
+            ref _openXrEyeResolutionReplacementAdmissionState,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.RetryBackoff);
+    }
+
+    private void PromoteOpenXrEyeResolutionReplacementRetryIfDue()
+    {
+        if (Volatile.Read(ref _openXrEyeResolutionReplacementAdmissionState) !=
+            (int)OpenXrEyeResolutionReplacementAdmissionState.RetryBackoff ||
+            System.Diagnostics.Stopwatch.GetTimestamp() <
+            Volatile.Read(ref _openXrEyeResolutionReplacementRetryTimestamp))
+            return;
+
+        Interlocked.CompareExchange(
+            ref _openXrEyeResolutionReplacementAdmissionState,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.RetryBackoff);
+    }
+
+    private void ClearOpenXrEyeResolutionReplacementRequest()
+    {
+        Volatile.Write(ref _openXrEyeResolutionReplacementRetryTimestamp, 0L);
+        Volatile.Write(
+            ref _openXrEyeResolutionReplacementAdmissionState,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.Idle);
+        if (_sessionBegun)
+            SignalPacingThreadFrameSubmitted();
+    }
+
+    /// <summary>
+    /// Completes a live-session request, then rechecks settings so a change
+    /// coalesced while the prior replacement was active is not lost.
+    /// </summary>
+    private void CompleteActiveOpenXrEyeResolutionReplacementRequest()
+    {
+        ClearOpenXrEyeResolutionReplacementRequest();
+        HandleOpenXrRenderSettingsChanged();
+    }
+
+    private void RecreateOpenXrSessionResourcesForEyeResolution(string reason)
+    {
+        if (!_runtimeMonitoringEnabled)
+            return;
+
+        if (!HasCreatedOpenXrSwapchains())
+        {
+            if (_runtimeState == OpenXrRuntimeState.SessionRunning)
+                RecoverFromDetachedSwapchainReplacementFailure(reason);
+            return;
+        }
+
+        Debug.Out($"[OpenXR] Recreating session resources for eye resolution change. Reason={reason}");
+        _intentionalOpenXrRecreateBackoffBypassUntilUtc =
+            DateTime.UtcNow + _intentionalOpenXrRecreateBackoffBypassDuration;
+        OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
+        OpenXrRuntimeDimensionRefreshRequirement refreshRequirement =
+            GetOpenXrRuntimeDimensionRefreshRequirement(current);
+        if (refreshRequirement != OpenXrRuntimeDimensionRefreshRequirement.None)
+        {
+            if (!CanReplaceOpenXrSwapchainsInSession())
+            {
+                return;
+            }
+
+            if (RequiresRendererRecreationForInstanceReplacement(out string rendererRecreationReason))
+            {
+                ClearOpenXrEyeResolutionReplacementRequest();
+                EnterRendererRecreationRequiredTerminal(
+                    OpenXrRuntimeLossReason.RuntimeUnavailable,
+                    $"runtime dimension refresh requires service restart, but {rendererRecreationReason}");
+                return;
+            }
+
+            BeginOpenXrRuntimeDimensionRefresh(refreshRequirement, reason);
+            if (!TearDownSessionResourcesOnOwningThread(destroyInstance: true))
+            {
+                ClearOpenXrEyeResolutionReplacementRequest();
+                // Teardown can stop pacing and clear the begun state before a
+                // deferred child blocks parent destruction. Never retain the
+                // SessionRunning label after that boundary.
+                SetRuntimeState(OpenXrRuntimeState.SessionStopping);
+                Debug.LogWarning($"[OpenXR] Runtime dimension refresh teardown is waiting for child retirement. Requirement={refreshRequirement}; Reason={reason}");
+                return;
+            }
+
+            ClearOpenXrEyeResolutionReplacementRequest();
+
+            string serviceReason = $"OpenXR eye resolution dimension refresh: {reason}";
+            SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+            if (!TryCompletePendingOpenXrRuntimeDimensionRefresh(serviceReason))
+            {
+                ScheduleProbeRetry(_intentionalOpenXrRecreateProbeInterval);
+                SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+                Debug.LogWarning($"[OpenXR] Runtime service rejected the required dimension refresh; retrying from a non-running state. Requirement={refreshRequirement}; Reason={reason}");
+                return;
+            }
+
+            ResetOpenXrProbeFailureState();
+            _nextProbeUtc = DateTime.UtcNow;
+            return;
+        }
+
+        OpenXrSwapchainReplacementOutcome replacement = TryReplaceSwapchainsInSession(reason);
+        if (replacement == OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment)
+        {
+            return;
+        }
+
+        if (replacement == OpenXrSwapchainReplacementOutcome.FailedAfterDetachment)
+        {
+            RecoverFromDetachedSwapchainReplacementFailure(reason);
+            return;
+        }
+
+        // A successful replacement keeps the same session, instance, and
+        // runtime state. Re-probing/restarting here would invalidate a live
+        // session after the new swapchains were already created.
+        RecordAppliedOpenXrEyeResolutionSettings();
+        CompleteActiveOpenXrEyeResolutionReplacementRequest();
+        ResetOpenXrProbeFailureState();
+        Debug.Out($"[OpenXR] Applied in-session eye-resolution replacement. Reason={reason}");
+    }
+
+    private bool HasCreatedOpenXrSwapchains()
+    {
+        for (int i = 0; i < _swapchains.Length; i++)
+        {
+            if (_swapchains[i].Handle != 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the explicit runtime quirk that prevents in-session dimension
+    /// replacement. RuntimeRecommended is otherwise an ordinary swapchain
+    /// extent source and must not restart hardware runtimes.
+    /// </summary>
+    private static OpenXrRuntimeDimensionRefreshRequirement GetOpenXrRuntimeDimensionRefreshRequirement(
+        in OpenXrEyeResolutionSettingsSnapshot settings)
+    {
+        if (settings.Preset != EOpenXrEyeResolutionPreset.RuntimeRecommended)
+            return OpenXrRuntimeDimensionRefreshRequirement.None;
+
+        return RuntimeRenderingHostServices.Presentation.OpenXrRecommendedDimensionsRequireServiceRestart
+            ? OpenXrRuntimeDimensionRefreshRequirement.MonadoSimulatedDisplayProfile
+            : OpenXrRuntimeDimensionRefreshRequirement.None;
+    }
+
+    private void BeginOpenXrRuntimeDimensionRefresh(
+        OpenXrRuntimeDimensionRefreshRequirement requirement,
+        string reason)
+    {
+        _pendingOpenXrRuntimeDimensionRefreshRequirement = requirement;
+        _pendingOpenXrRuntimeDimensionRefreshReason = reason;
+    }
+
+    private bool TryCompletePendingOpenXrRuntimeDimensionRefresh(string serviceReason)
+    {
+        if (_pendingOpenXrRuntimeDimensionRefreshRequirement == OpenXrRuntimeDimensionRefreshRequirement.None)
+            return true;
+
+        try
+        {
+            if (!RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason))
+                return false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[OpenXR] Runtime service threw while applying pending dimension refresh: {ex.Message}");
+            return false;
+        }
+
+        _pendingOpenXrRuntimeDimensionRefreshRequirement = OpenXrRuntimeDimensionRefreshRequirement.None;
+        _pendingOpenXrRuntimeDimensionRefreshReason = null;
+        return true;
+    }
+
+    private void RecordAppliedOpenXrEyeResolutionSettings()
+    {
+        OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
+        _appliedOpenXrEyeResolutionPreset = current.Preset;
+        _appliedOpenXrEyeResolutionScale = current.Scale;
+        _appliedOpenXrCustomEyeResolutionWidth = current.CustomWidth;
+        _appliedOpenXrCustomEyeResolutionHeight = current.CustomHeight;
+    }
+
+    private OpenXrEyeResolutionSettingsSnapshot CaptureCurrentOpenXrEyeResolutionSettings()
+    {
+        IRuntimeRenderPresentationServices settings = RuntimeRenderingHostServices.Presentation;
+        return new(
+            settings.OpenXrEyeResolutionPreset,
+            NormalizeOpenXrEyeResolutionScale(settings.OpenXrEyeResolutionScale),
+            settings.OpenXrCustomEyeResolutionWidth,
+            settings.OpenXrCustomEyeResolutionHeight);
+    }
+
+    private OpenXrEyeResolutionSettingsSnapshot CaptureAppliedOpenXrEyeResolutionSettings()
+        => new(
+            _appliedOpenXrEyeResolutionPreset,
+            NormalizeOpenXrEyeResolutionScale(_appliedOpenXrEyeResolutionScale),
+            _appliedOpenXrCustomEyeResolutionWidth,
+            _appliedOpenXrCustomEyeResolutionHeight);
+
+    private static bool OpenXrEyeResolutionSettingsMatch(
+        OpenXrEyeResolutionSettingsSnapshot left,
+        OpenXrEyeResolutionSettingsSnapshot right)
+        => left.Preset == right.Preset &&
+           Math.Abs(left.Scale - right.Scale) <= 0.0001f &&
+           left.CustomWidth == right.CustomWidth &&
+           left.CustomHeight == right.CustomHeight;
+
+    private static float NormalizeOpenXrEyeResolutionScale(float scale)
+        => RequireOpenXrEyeResolutionScale(scale);
+
+    private static float RequireOpenXrEyeResolutionScale(float scale)
+    {
+        if (!float.IsFinite(scale) || scale < 0.1f || scale > 2.0f)
+        {
+            throw new InvalidOperationException(
+                $"OpenXR eye resolution scale must be finite and in the inclusive range [0.1, 2.0], got {scale}.");
+        }
+
+        return scale;
+    }
+
+    private void LogOpenXrEyeSwapchainExtent(string backend, uint viewIndex, OpenXrEyeSwapchainExtent extent)
+    {
+        string maxText = extent.MaxWidth > 0 && extent.MaxHeight > 0
+            ? $"{extent.MaxWidth}x{extent.MaxHeight}"
+            : "<unspecified>";
+        Debug.Out(
+            $"OpenXR {backend} view[{viewIndex}] swapchain size: {extent.Width}x{extent.Height} " +
+            $"source={extent.Source} preset={extent.Preset} scale={extent.Scale:F2} " +
+            $"requested={extent.RequestedWidth}x{extent.RequestedHeight} base={extent.BaseWidth}x{extent.BaseHeight} recommended={extent.RecommendedWidth}x{extent.RecommendedHeight} " +
+            $"max={maxText} exceedsRuntimeMax={extent.ExceedsRuntimeMax}");
+
+        if (!extent.ExceedsRuntimeMax)
+            return;
+
+        Debug.LogWarning(
+            $"[OpenXR] {backend} eye {viewIndex} requested {extent.RequestedWidth}x{extent.RequestedHeight} from {extent.Source} at {extent.Scale:F2}x, " +
+            $"which exceeds reported runtime max {maxText}. Clamping swapchain extent to {extent.Width}x{extent.Height}.");
+    }
+
+    private static uint ScaleDimension(uint value, float scale)
+    {
+        double scaled = Math.Round(value * (double)scale, MidpointRounding.AwayFromZero);
+        if (scaled < 1.0)
+            return 1u;
+        if (scaled > uint.MaxValue)
+        {
+            throw new OverflowException(
+                $"OpenXR eye resolution dimension {value} scaled by {scale} exceeds UInt32.MaxValue.");
+        }
+
+        return (uint)scaled;
+    }
+}

@@ -1,3 +1,5 @@
+using XREngine.Input;
+
 namespace XREngine;
 
 /// <summary>
@@ -8,11 +10,11 @@ public interface IVRGameStartupSettings
     /// <summary>
     /// Gets or sets the host-owned VR manifest used for initializing the VR runtime.
     /// </summary>
-    object? VRManifest { get; set; }
+    RuntimeOpenVrApplicationManifest? VRManifest { get; set; }
     /// <summary>
     /// Gets the host-owned action manifest used for defining VR input actions.
     /// </summary>
-    object? ActionManifest { get; }
+    IRuntimeOpenVrActionManifest? ActionManifest { get; }
     /// <summary>
     /// Gets or sets the VR runtime to be used (e.g., OpenXR or OpenVR).
     /// </summary>

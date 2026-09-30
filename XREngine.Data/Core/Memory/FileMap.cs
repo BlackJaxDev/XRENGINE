@@ -96,11 +96,7 @@ namespace XREngine
             else
                 length = length.ClampMax(stream.Length);
 
-            return Environment.OSVersion.Platform switch
-            {
-                PlatformID.Win32NT => new XREngine.Data.WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _path = stream.Name },
-                _ => new CFileMap(stream, prot, offset, length) { _path = stream.Name },
-            };
+            return new ProviderFileMap(FileMappingServices.Required.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: false);
         }
 
         public static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, long offset, long length)
@@ -112,11 +108,7 @@ namespace XREngine
 
             length = length.ClampMin(stream.Length);
 
-            return Environment.OSVersion.Platform switch
-            {
-                PlatformID.Win32NT => new XREngine.Data.WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _baseStream = stream, _path = stream.Name },
-                _ => new CFileMap(stream, prot, offset, length) { _baseStream = stream, _path = stream.Name },
-            };
+            return new ProviderFileMap(FileMappingServices.Required.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: true);
         }
     }
 }

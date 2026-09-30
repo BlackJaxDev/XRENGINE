@@ -13,6 +13,9 @@ namespace XREngine.UnitTests.Rendering;
 [NonParallelizable]
 public sealed class MeshletProductionCloseoutTests
 {
+    [OneTimeSetUp]
+    public void InstallMeshProcessing() => MeshOptimizerBackend.Register();
+
     [TestCase(1.0f)]
     [TestCase(0.01f)]
     [TestCase(0.00001f)]

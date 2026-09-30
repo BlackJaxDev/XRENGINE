@@ -73,22 +73,27 @@ namespace XREngine.Scene.Transforms
 
         private static Type[] ResolveTransformTypes()
         {
-            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (!XRRuntimeEnvironment.IsPublishedBuild)
                 return GetAllTransformTypes();
 
             AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
             if (metadata.TransformTypes is null || metadata.TransformTypes.Length == 0)
                 return [];
 
-            return [.. metadata.TransformTypes
-                .Select(x => AotRuntimeMetadataStore.ResolveType(x.AssemblyQualifiedName))
-                .OfType<Type>()
-                .Where(x => x.IsSubclassOf(typeof(TransformBase)))];
+            List<Type> types = new(metadata.TransformTypes.Length);
+            foreach (AotTransformTypeInfo entry in metadata.TransformTypes)
+            {
+                Type? type = AotRuntimeMetadataStore.ResolveType(entry.AssemblyQualifiedName);
+                if (type is null || !type.IsSubclassOf(typeof(TransformBase)))
+                    throw new InvalidOperationException($"Published transform type '{entry.AssemblyQualifiedName}' is missing or invalid.");
+                types.Add(type);
+            }
+            return [.. types];
         }
 
         [RequiresUnreferencedCode("This method is used to find all transform types in all assemblies in the current domain and should not be trimmed.")]
         public static string[] GetFriendlyTransformTypeSelector()
-            => XRRuntimeEnvironment.IsAotRuntimeBuild
+            => XRRuntimeEnvironment.IsPublishedBuild
                 ? ResolveFriendlyTransformNamesFromMetadata()
                 : TransformTypes.Select(FriendlyTransformName).ToArray();
 

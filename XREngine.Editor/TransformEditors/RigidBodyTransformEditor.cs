@@ -2,9 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using ImGuiNET;
-using MagicPhysX;
 using XREngine.Data.Transforms.Rotations;
-using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
@@ -110,13 +108,13 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
             return;
         }
 
-        if (actor is not PhysxRigidActor physxActor)
+        if (actor is not IPhysicsEditableActor editableActor)
         {
-            ImGui.TextDisabled("Rigid body editing requires a PhysX actor.");
+            ImGui.TextDisabled("This physics actor does not support live pose editing.");
             return;
         }
 
-        var (currentPosition, currentRotation) = physxActor.Transform;
+        var (currentPosition, currentRotation) = editableActor.Transform;
         Vector3 editedPosition = currentPosition;
         Vector3 rotationEuler = Rotator.FromQuaternion(currentRotation).PitchYawRoll;
         Quaternion editedRotation = currentRotation;
@@ -149,28 +147,17 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
 
         var queuedPosition = editedPosition;
         var queuedRotation = editedRotation;
-        ApplyRigidBodyTransform(rigidBody, physxActor, queuedPosition, queuedRotation);
-        EnqueueSceneEdit(() => ApplyRigidBodyTransform(rigidBody, physxActor, queuedPosition, queuedRotation));
+        ApplyRigidBodyTransform(rigidBody, editableActor, queuedPosition, queuedRotation);
+        EnqueueSceneEdit(() => ApplyRigidBodyTransform(rigidBody, editableActor, queuedPosition, queuedRotation));
     }
 
-    private static void ApplyRigidBodyTransform(RigidBodyTransform transform, PhysxRigidActor actor, Vector3 position, Quaternion rotation)
+    private static void ApplyRigidBodyTransform(RigidBodyTransform transform, IPhysicsEditableActor actor, Vector3 position, Quaternion rotation)
     {
-        if (actor.IsReleased)
+        if (!actor.IsAvailable)
             return;
 
         transform.SetPositionAndRotation(position, rotation);
-
-        if (actor is PhysxDynamicRigidBody dynamicBody)
-        {
-            bool isKinematic = dynamicBody.Flags.HasFlag(PxRigidBodyFlags.Kinematic);
-            if (isKinematic)
-                dynamicBody.KinematicTarget = (position, rotation);
-            else
-                actor.Transform = (position, rotation);
-            return;
-        }
-
-        actor.Transform = (position, rotation);
+        actor.SetEditorPose(position, rotation);
     }
 
     private static void DrawPhysicsSummary(RigidBodyTransform rigidBody)

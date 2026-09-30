@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
@@ -9,7 +9,7 @@ public partial class OpenGLRenderer : IRenderCaptureBackendCapability
     bool IRenderCaptureBackendCapability.TryCaptureTexture(
         XRTexture texture,
         BoundingRectangle region,
-        Action<MagickImage, int, int> callback,
+        Action<RuntimeImage, int, int> callback,
         int mipLevel,
         int layerIndex)
     {
@@ -28,14 +28,14 @@ public partial class OpenGLRenderer : IRenderCaptureBackendCapability
     bool IRenderCaptureBackendCapability.TryCaptureFrameBufferAttachment(
         XRFrameBuffer frameBuffer,
         BoundingRectangle region,
-        bool flipY,
-        Action<MagickImage, int> callback,
+        bool withTransparency,
+        Action<RuntimeImage, int> callback,
         EFrameBufferAttachment attachment)
     {
         if (frameBuffer.APIWrappers.FirstOrDefault(static wrapper => wrapper is GLFrameBuffer) is not GLFrameBuffer glFrameBuffer)
             return false;
 
-        CaptureFBOAttachment(region, flipY, callback, glFrameBuffer.BindingId, attachment);
+        CaptureFBOAttachment(region, withTransparency, callback, glFrameBuffer.BindingId, attachment);
         return true;
     }
 
@@ -72,7 +72,7 @@ public partial class OpenGLRenderer : IRenderCaptureBackendCapability
 
     void IRenderCaptureBackendCapability.CaptureTexture(
         BoundingRectangle region,
-        Action<MagickImage, int, int> callback,
+        Action<RuntimeImage, int, int> callback,
         uint bindingId,
         int mipLevel,
         int layerIndex)
@@ -85,11 +85,11 @@ public partial class OpenGLRenderer : IRenderCaptureBackendCapability
 
     void IRenderCaptureBackendCapability.CaptureFrameBufferAttachment(
         BoundingRectangle region,
-        bool flipY,
-        Action<MagickImage, int> callback,
+        bool withTransparency,
+        Action<RuntimeImage, int> callback,
         uint frameBufferBindingId,
         EFrameBufferAttachment attachment)
-        => CaptureFBOAttachment(region, flipY, callback, frameBufferBindingId, attachment);
+        => CaptureFBOAttachment(region, withTransparency, callback, frameBufferBindingId, attachment);
 
     bool IRenderCaptureBackendCapability.TryCaptureTextureBytes(
         uint textureBindingId,

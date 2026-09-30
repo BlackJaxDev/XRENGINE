@@ -1,4 +1,3 @@
-using ImGuiNET;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -75,7 +74,7 @@ public static unsafe class RendererImGuiViewportCallbackBridge
 
     private static bool TryGetCallbacks(out IRendererImGuiViewportCallbacks callbacks)
     {
-        nint context = ImGui.GetCurrentContext();
+        nint context = UI.ImGuiRuntimeServices.Current?.CurrentContext ?? 0;
         lock (Sync)
         {
             if (Registrations.TryGetValue(context, out Registration? registration))

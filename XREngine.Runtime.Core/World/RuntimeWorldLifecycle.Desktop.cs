@@ -1,3 +1,5 @@
+using XREngine.Scene;
+
 namespace XREngine;
 
 public sealed partial class RuntimeWorldLifecycle

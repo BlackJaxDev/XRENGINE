@@ -1,4 +1,3 @@
-using Silk.NET.Core.Native;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
@@ -27,11 +26,13 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
 
     public string[] GetRequiredInstanceExtensions()
     {
-        if (_window.Window.VkSurface is null)
-            throw new InvalidOperationException("The desktop windowing platform does not provide Vulkan surface services.");
-
-        byte** extensionNames = _window.Window.VkSurface.GetRequiredExtensions(out uint extensionCount);
-        return SilkMarshal.PtrToStringArray((nint)extensionNames, checked((int)extensionCount));
+        IRuntimeWindowVulkanSurface surface = _window.DesktopVulkanSurface
+            ?? throw new InvalidOperationException("The desktop windowing platform does not provide Vulkan surface services.");
+        IReadOnlyList<string> source = surface.RequiredInstanceExtensions;
+        string[] copied = new string[source.Count];
+        for (int i = 0; i < copied.Length; i++)
+            copied[i] = source[i];
+        return copied;
     }
 
     public void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces)

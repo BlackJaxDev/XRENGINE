@@ -203,7 +203,7 @@ public sealed class RuntimeSceneHost : IRuntimeWorldContext, IDisposable
         Matrix4x4 matrix = transform.WorldMatrix;
         if (transform.ShouldEnqueueRenderMatrix(matrix))
             transform.SetRenderMatrixImmediate(matrix);
-        for (int index = 0; index < transform.Count; index++)
+        for (int index = 0; index < transform.ChildCount; index++)
             PublishTransform(transform[index]);
     }
 

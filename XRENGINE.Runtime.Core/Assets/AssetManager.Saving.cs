@@ -65,13 +65,13 @@ namespace XREngine
             => RunOnJobThreadBlocking(() => { SaveExistingAssetCore(asset); return true; }, priority, bypassJobThread);
 
         public void SaveTo(XRAsset asset, Environment.SpecialFolder folder, params string[] folderNames)
-            => SaveTo(asset, Path.Combine([Environment.GetFolderPath(folder), ..folderNames]));
+            => SaveTo(asset, Path.Combine([XREngine.Data.RuntimePlatformPaths.GetFolderPath(folder), ..folderNames]));
 
         public void SaveTo(XRAsset asset, string directory, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
             => RunOnJobThreadBlocking(() => { SaveToDirectoryCore(asset, directory); return true; }, priority, bypassJobThread);
 
         public Task SaveToAsync(XRAsset asset, Environment.SpecialFolder folder, params string[] folderNames)
-            => SaveToAsync(asset, Path.Combine([Environment.GetFolderPath(folder), .. folderNames]));
+            => SaveToAsync(asset, Path.Combine([XREngine.Data.RuntimePlatformPaths.GetFolderPath(folder), .. folderNames]));
 
         public Task SaveToAsync(XRAsset asset, string directory, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
             => RunOnJobThreadAsync(() => { SaveToDirectoryCore(asset, directory); return true; }, priority, bypassJobThread);

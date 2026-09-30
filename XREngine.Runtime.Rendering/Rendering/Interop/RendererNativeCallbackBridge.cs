@@ -99,37 +99,14 @@ public static unsafe class RendererNativeCallbackBridge
 
         try
         {
-            if (!OpenClipboard(0))
+            string? text = RuntimeClipboardServices.Current?.GetText();
+            if (text is null)
                 return null;
-
-            try
-            {
-                nint handle = GetClipboardData(CfUnicodeText);
-                if (handle == 0)
-                    return null;
-
-                nint data = GlobalLock(handle);
-                if (data == 0)
-                    return null;
-
-                try
-                {
-                    byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(
-                        Marshal.PtrToStringUni(data) ?? string.Empty);
-                    _clipboardReturnBuffer = Marshal.AllocHGlobal(utf8.Length + 1);
-                    Marshal.Copy(utf8, 0, _clipboardReturnBuffer, utf8.Length);
-                    Marshal.WriteByte(_clipboardReturnBuffer, utf8.Length, 0);
-                    return (byte*)_clipboardReturnBuffer;
-                }
-                finally
-                {
-                    GlobalUnlock(data);
-                }
-            }
-            finally
-            {
-                CloseClipboard();
-            }
+            byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+            _clipboardReturnBuffer = Marshal.AllocHGlobal(utf8.Length + 1);
+            Marshal.Copy(utf8, 0, _clipboardReturnBuffer, utf8.Length);
+            Marshal.WriteByte(_clipboardReturnBuffer, utf8.Length, 0);
+            return (byte*)_clipboardReturnBuffer;
         }
         catch
         {
@@ -142,34 +119,8 @@ public static unsafe class RendererNativeCallbackBridge
     {
         try
         {
-            if (text is null || !OpenClipboard(0))
-                return;
-
-            try
-            {
-                EmptyClipboard();
-                byte[] bytes = System.Text.Encoding.Unicode.GetBytes(
-                    Marshal.PtrToStringUTF8((nint)text) ?? string.Empty);
-                nint handle = GlobalAlloc(GmemMoveable, (nuint)(bytes.Length + 2));
-                if (handle == 0)
-                    return;
-
-                nint data = GlobalLock(handle);
-                if (data == 0)
-                {
-                    GlobalFree(handle);
-                    return;
-                }
-
-                Marshal.Copy(bytes, 0, data, bytes.Length);
-                Marshal.WriteInt16(data, bytes.Length, 0);
-                GlobalUnlock(handle);
-                SetClipboardData(CfUnicodeText, handle);
-            }
-            finally
-            {
-                CloseClipboard();
-            }
+            if (text is not null)
+                RuntimeClipboardServices.Current?.SetText(Marshal.PtrToStringUTF8((nint)text) ?? string.Empty);
         }
         catch
         {
@@ -214,26 +165,4 @@ public static unsafe class RendererNativeCallbackBridge
         }
     }
 
-    private const uint CfUnicodeText = 13;
-    private const uint GmemMoveable = 0x0002;
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool OpenClipboard(nint owner);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool CloseClipboard();
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool EmptyClipboard();
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern nint GetClipboardData(uint format);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern nint SetClipboardData(uint format, nint memory);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint GlobalLock(nint memory);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GlobalUnlock(nint memory);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint GlobalAlloc(uint flags, nuint bytes);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint GlobalFree(nint memory);
 }

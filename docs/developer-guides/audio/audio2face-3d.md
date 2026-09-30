@@ -32,7 +32,11 @@ The shipped runtime includes two source modes:
 - `CsvPlayback` for `animation_frames.csv` playback.
 - `LiveStream` for a registered live client adapter.
 
-XREngine now includes the managed side of the native bridge and a starter shim project at `Build/Native/Audio2XBridge/Audio2XBridge.vcxproj`.
+`XREngine.Runtime.AudioIntegration` owns the managed CSV/live component and
+microphone contract. `XREngine.Audio.Audio2Face` owns the native bridge
+component, session, converter, and explicit backend registration. These types
+retain their public namespaces after the project split. The native shim project
+remains at `Build/Native/Audio2XBridge/Audio2XBridge.vcxproj`.
 
 The repo also now includes a dependency getter for the upstream NVIDIA SDK source:
 

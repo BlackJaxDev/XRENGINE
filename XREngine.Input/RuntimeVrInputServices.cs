@@ -1,4 +1,3 @@
-using OpenVRAction = OpenVR.NET.Input.Action;
 using System.Numerics;
 
 namespace XREngine.Input;
@@ -173,18 +172,11 @@ public interface IRuntimeVrInputServices
     bool StopVibration(string category, string name);
 }
 
-public interface IRuntimeVrLegacyActionServices
-{
-    event System.Action<Dictionary<string, Dictionary<string, OpenVRAction>>>? ActionsChanged;
-    Dictionary<string, Dictionary<string, OpenVRAction>> Actions { get; }
-}
-
 public static class RuntimeVrInputServices
 {
     private static readonly DefaultRuntimeVrInputServices Default = new();
     private static IRuntimeVrInputServices _current = Default;
-    private static event System.Action<Dictionary<string, Dictionary<string, OpenVRAction>>>? StaticActionsChanged;
-    private static readonly Dictionary<string, Dictionary<string, OpenVRAction>> EmptyLegacyActions = [];
+    private static event System.Action? StaticActionsChanged;
 
     static RuntimeVrInputServices()
     {
@@ -199,14 +191,14 @@ public static class RuntimeVrInputServices
             if (ReferenceEquals(_current, next))
                 return;
 
-            DetachLegacyActionEvents(_current);
+            DetachActionSetEvents(_current);
             _current = next;
-            AttachLegacyActionEvents(_current);
+            AttachActionSetEvents(_current);
         }
     }
 
-    public static Dictionary<string, Dictionary<string, OpenVRAction>> Actions
-        => Current is IRuntimeVrLegacyActionServices legacy ? legacy.Actions : EmptyLegacyActions;
+    public static bool HasActions
+        => Current is IRuntimeVrActionSetServices actionSet && actionSet.HasActions;
 
     public static RuntimeVrRuntimeKind ActiveRuntime
         => Current.ActiveRuntime;
@@ -214,7 +206,7 @@ public static class RuntimeVrInputServices
     public static string ActiveServiceName
         => Current.ActiveServiceName;
 
-    public static event System.Action<Dictionary<string, Dictionary<string, OpenVRAction>>>? ActionsChanged
+    public static event System.Action? ActionsChanged
     {
         add => StaticActionsChanged += value;
         remove => StaticActionsChanged -= value;
@@ -259,19 +251,19 @@ public static class RuntimeVrInputServices
     public static bool StopVibration(string category, string name)
         => Current.StopVibration(category, name);
 
-    private static void ForwardActionsChanged(Dictionary<string, Dictionary<string, OpenVRAction>> actions)
-        => StaticActionsChanged?.Invoke(actions);
+    private static void ForwardActionsChanged()
+        => StaticActionsChanged?.Invoke();
 
-    private static void AttachLegacyActionEvents(IRuntimeVrInputServices services)
+    private static void AttachActionSetEvents(IRuntimeVrInputServices services)
     {
-        if (services is IRuntimeVrLegacyActionServices legacy)
-            legacy.ActionsChanged += ForwardActionsChanged;
+        if (services is IRuntimeVrActionSetServices actionSet)
+            actionSet.ActionsChanged += ForwardActionsChanged;
     }
 
-    private static void DetachLegacyActionEvents(IRuntimeVrInputServices services)
+    private static void DetachActionSetEvents(IRuntimeVrInputServices services)
     {
-        if (services is IRuntimeVrLegacyActionServices legacy)
-            legacy.ActionsChanged -= ForwardActionsChanged;
+        if (services is IRuntimeVrActionSetServices actionSet)
+            actionSet.ActionsChanged -= ForwardActionsChanged;
     }
 
     private sealed class DefaultRuntimeVrInputServices : IRuntimeVrInputServices

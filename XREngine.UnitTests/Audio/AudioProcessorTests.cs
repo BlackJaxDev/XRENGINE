@@ -266,10 +266,11 @@ namespace XREngine.UnitTests.Audio
         }
 
         [Test]
-        public void NewListener_V2_SteamAudio_FallsBackWhenDllMissing()
+        public void NewListener_V2_SteamAudio_CreatesProcessorWhenAvailable()
         {
-            // If phonon.dll is not present, SteamAudioProcessor construction will fail.
-            // AudioManager should gracefully fall back to PassthroughProcessor.
+            if (!SteamAudioProcessor.IsNativeLibraryAvailable())
+                Assert.Inconclusive("Steam Audio native library is unavailable.");
+
             bool prev = AudioSettings.AudioArchitectureV2;
             try
             {
@@ -280,15 +281,12 @@ namespace XREngine.UnitTests.Audio
                     DefaultEffects = EAudioEffects.SteamAudio,
                 };
 
-                using var listener = manager.NewListener("test-steamaudio-fallback");
+                using var listener = manager.NewListener("test-steamaudio");
 
                 listener.IsV2.ShouldBeTrue();
-                // Either SteamAudioProcessor (if phonon.dll present) or PassthroughProcessor (fallback)
-                listener.EffectsProcessor.ShouldNotBeNull();
-                (listener.EffectsProcessor is SteamAudioProcessor || listener.EffectsProcessor is PassthroughProcessor)
-                    .ShouldBeTrue("Should be SteamAudioProcessor or PassthroughProcessor fallback.");
+                listener.EffectsProcessor.ShouldBeOfType<SteamAudioProcessor>();
             }
-            catch (Exception ex) when (ex.Message.Contains("OpenAL", StringComparison.OrdinalIgnoreCase))
+            catch (InvalidOperationException ex) when (ex.Message.Contains("could not open playback device", StringComparison.OrdinalIgnoreCase))
             {
                 Assert.Inconclusive($"OpenAL device unavailable — skipping: {ex.Message}");
             }

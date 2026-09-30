@@ -4,7 +4,7 @@ using System.Numerics;
 using System.Text.Json;
 using NUnit.Framework;
 using Shouldly;
-using Valve.VR;
+using XREngine.Input;
 using XREngine.Components;
 using XREngine.Networking;
 
@@ -93,8 +93,8 @@ public sealed class AotJsonContractsTests
     {
         RuntimeVrState.VRInputData input = new()
         {
-            DeviceClass = ETrackedDeviceClass.Controller,
-            TrackingResult = ETrackingResult.Running_OK,
+            DeviceClass = RuntimeVrDeviceClass.Controller,
+            TrackingResult = RuntimeVrTrackingResult.RunningOk,
             Connected = true,
             PoseValid = true,
             Position = new Vector3(1.0f, 2.0f, 3.0f),

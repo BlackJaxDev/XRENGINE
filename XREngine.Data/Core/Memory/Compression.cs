@@ -2,8 +2,8 @@ using System.Buffers;
 using System.Numerics;
 using System.Text;
 using K4os.Compression.LZ4;
-using Silk.NET.Core.Native;
-using Silk.NET.DirectStorage;
+
+
 using XREngine.Data.Transforms.Rotations;
 using ZstdSharp;
 
@@ -11,146 +11,23 @@ namespace XREngine.Data
 {
     public static partial class Compression
     {
-        private sealed class GDeflateCodecContext(DStorage api, ComPtr<IDStorageCompressionCodec> codec) : IDisposable
-        {
-            public DStorage Api { get; } = api;
-            public ComPtr<IDStorageCompressionCodec> Codec { get; } = codec;
-            public object SyncRoot { get; } = new();
+        /// <summary>Optional codec installed by the application composition root.</summary>
+        public static IGDeflateCodec? GDeflateBackend { get; set; }
 
-            public void Dispose()
-            {
-                Codec.Dispose();
-                Api.Dispose();
-            }
-        }
-
-        private static readonly Lazy<GDeflateCodecContext?> GDeflateCodec = new(CreateGDeflateCodec, LazyThreadSafetyMode.ExecutionAndPublication);
-
-        private static unsafe GDeflateCodecContext? CreateGDeflateCodec()
-        {
-            if (!OperatingSystem.IsWindows())
-                return null;
-
-            try
-            {
-                DStorage api = DStorage.GetApi();
-                ComPtr<IDStorageCompressionCodec> codec = api.CreateCompressionCodec<IDStorageCompressionCodec>((CompressionFormat)1, 0);
-                if (codec.Handle is null)
-                {
-                    api.Dispose();
-                    return null;
-                }
-
-                return new GDeflateCodecContext(api, codec);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        public static unsafe bool TryCompressGDeflate(ReadOnlySpan<byte> source, out byte[] encoded)
+        public static bool TryCompressGDeflate(ReadOnlySpan<byte> source, out byte[] encoded)
         {
             encoded = [];
             if (source.IsEmpty)
                 return true;
-
-            GDeflateCodecContext? context = GDeflateCodec.Value;
-            if (context is null)
-                return false;
-
-            lock (context.SyncRoot)
-            {
-                try
-                {
-                    nuint bound = context.Codec.CompressBufferBound((nuint)source.Length);
-                    if (bound == 0 || bound > int.MaxValue)
-                        return false;
-
-                    encoded = new byte[(int)bound];
-                    nuint compressedSize = 0;
-
-                    int hr;
-                    fixed (byte* sourcePtr = source)
-                    fixed (byte* encodedPtr = encoded)
-                    {
-                        hr = context.Codec.CompressBuffer(
-                            sourcePtr,
-                            (nuint)source.Length,
-                            (Silk.NET.DirectStorage.Compression)1,
-                            encodedPtr,
-                            (nuint)encoded.Length,
-                            &compressedSize);
-                    }
-
-                    if (hr < 0 || compressedSize == 0 || compressedSize > (nuint)encoded.Length)
-                    {
-                        encoded = [];
-                        return false;
-                    }
-
-                    if (compressedSize != (nuint)encoded.Length)
-                        Array.Resize(ref encoded, (int)compressedSize);
-
-                    return true;
-                }
-                catch
-                {
-                    encoded = [];
-                    return false;
-                }
-            }
+            return GDeflateBackend?.TryCompress(source, out encoded) ?? false;
         }
 
-        public static unsafe bool TryDecompressGDeflate(ReadOnlySpan<byte> encodedSource, int expectedDecodedLength, out byte[] decoded)
+        public static bool TryDecompressGDeflate(ReadOnlySpan<byte> source, int expectedDecodedLength, out byte[] decoded)
         {
             decoded = [];
-            if (expectedDecodedLength < 0)
-                return false;
-
             if (expectedDecodedLength == 0)
-                return encodedSource.IsEmpty;
-
-            if (encodedSource.IsEmpty)
-                return false;
-
-            GDeflateCodecContext? context = GDeflateCodec.Value;
-            if (context is null)
-                return false;
-
-            lock (context.SyncRoot)
-            {
-                try
-                {
-                    decoded = new byte[expectedDecodedLength];
-                    nuint actualDecodedSize = 0;
-
-                    int hr;
-                    fixed (byte* encodedPtr = encodedSource)
-                    fixed (byte* decodedPtr = decoded)
-                    {
-                        hr = context.Codec.DecompressBuffer(
-                            encodedPtr,
-                            (nuint)encodedSource.Length,
-                            decodedPtr,
-                            (nuint)decoded.Length,
-                            &actualDecodedSize);
-                    }
-
-                    if (hr < 0 || actualDecodedSize != (nuint)expectedDecodedLength)
-                    {
-                        decoded = [];
-                        return false;
-                    }
-
-                    return true;
-                }
-                catch
-                {
-                    decoded = [];
-                    return false;
-                }
-            }
+                return source.IsEmpty;
+            return GDeflateBackend?.TryDecompress(source, expectedDecodedLength, out decoded) ?? false;
         }
 
         public static byte[] DecompressFromString(uint? length, string byteStr)
@@ -774,71 +651,31 @@ namespace XREngine.Data
             return decoded;
         }
 
-        // ═══════════════════ nvCOMP stub (GPU-accelerated) ══════════════════════
-        //
-        // NVIDIA nvCOMP provides GPU-accelerated compression/decompression via CUDA.
-        // On Blackwell+, the hardware Decompression Engine handles LZ4/Snappy/Deflate
-        // with zero SM usage.  On older CUDA GPUs, SM-based fallback is used.
-        //
-        // Integration requires:
-        //  1. nvcomp.dll (not on NuGet — separate NVIDIA download)
-        //  2. CUDA runtime (cudart)
-        //  3. P/Invoke bindings to nvcompBatchedLZ4DecompressAsync, etc.
-        //  4. GPU buffer management (cudaMalloc / cudaFree / cudaMemcpy)
-        //
-        // The stub below provides the API surface.  When nvcomp.dll is present,
-        // it will be used; otherwise it falls back to CPU LZ4.
-        // ────────────────────────────────────────────────────────────────────────
+        /// <summary>Optional hardware LZ4 codec installed during application composition.</summary>
+        public static IHardwareLz4Codec? NvCompBackend { get; set; }
+        public static bool IsNvCompAvailable => NvCompBackend?.IsAvailable ?? false;
 
-        /// <summary>Whether the nvCOMP native library is loaded and usable.</summary>
-        public static bool IsNvCompAvailable => NvCompInterop.IsAvailable;
-
-        /// <summary>
-        /// Compresses using nvCOMP (GPU LZ4).  Falls back to CPU <see cref="CompressLz4"/>
-        /// if the GPU path is unavailable.
-        /// </summary>
-        public static byte[] CompressNvComp(ReadOnlySpan<byte> source)
+        /// <summary>Compresses on the installed hardware backend, with explicitly requested managed fallback.</summary>
+        public static byte[] CompressNvComp(ReadOnlySpan<byte> source, bool allowManagedFallback = false)
         {
-            if (NvCompInterop.IsAvailable)
-            {
-                try
-                {
-                    return NvCompInterop.Compress(source);
-                }
-                catch
-                {
-                    // Fall back to CPU path if native interop is present but runtime
-                    // invocation fails (ABI drift, driver/runtime mismatch, etc.).
-                }
-            }
-
-            // Fallback: CPU LZ4
-            return CompressLz4(source);
+            IHardwareLz4Codec? backend = NvCompBackend;
+            if (backend?.IsAvailable == true)
+                return backend.Compress(source);
+            if (allowManagedFallback)
+                return CompressLz4(source);
+            throw new NotSupportedException("nvCOMP compression requires an installed and available CUDA backend.");
         }
 
-        /// <summary>
-        /// Decompresses using nvCOMP (GPU LZ4).  Falls back to CPU <see cref="DecompressLz4"/>
-        /// if the GPU path is unavailable.
-        /// </summary>
-        public static byte[] DecompressNvComp(ReadOnlySpan<byte> compressed)
+        /// <summary>Decompresses on the installed hardware backend, with explicitly requested managed fallback.</summary>
+        public static byte[] DecompressNvComp(ReadOnlySpan<byte> compressed, bool allowManagedFallback = false)
         {
-            if (NvCompInterop.IsAvailable)
-            {
-                try
-                {
-                    return NvCompInterop.Decompress(compressed);
-                }
-                catch
-                {
-                    // Fall back to CPU path if native interop is present but runtime
-                    // invocation fails (ABI drift, driver/runtime mismatch, etc.).
-                }
-            }
-
-            // Fallback: CPU LZ4
-            return DecompressLz4(compressed);
+            IHardwareLz4Codec? backend = NvCompBackend;
+            if (backend?.IsAvailable == true)
+                return backend.Decompress(compressed);
+            if (allowManagedFallback)
+                return DecompressLz4(compressed);
+            throw new NotSupportedException("nvCOMP decompression requires an installed and available CUDA backend.");
         }
-
         // ══════════════════════ Unified codec dispatch ══════════════════════════
 
         /// <summary>

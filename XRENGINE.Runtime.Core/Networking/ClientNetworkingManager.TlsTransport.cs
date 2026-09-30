@@ -30,7 +30,7 @@ public partial class ClientNetworkingManager
                 DevelopmentTlsCertificatePin).GetAwaiter().GetResult();
             IPEndPoint local = _tlsTunnel.LocalEndpoint;
             StartUdpSender(local.Address, local.Port, clientPort);
-            _tlsTunnel.Start(new IPEndPoint(IPAddress.Loopback, ((IPEndPoint)UdpSender!.Client.LocalEndPoint!).Port));
+            _tlsTunnel.Start(new IPEndPoint(IPAddress.Loopback, ((IPEndPoint)UdpSender!.LocalEndPoint!).Port));
         }
         catch
         {

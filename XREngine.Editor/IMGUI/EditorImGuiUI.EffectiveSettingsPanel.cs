@@ -650,6 +650,7 @@ public static partial class EditorImGuiUI
         => value switch
         {
             null => "<null>",
+            EPhysicsLibrary.Jitter => "Jitter (experimental; install module to select)",
             float f => f.ToString("0.###", CultureInfo.InvariantCulture),
             double d => d.ToString("0.###", CultureInfo.InvariantCulture),
             decimal m => m.ToString("0.###", CultureInfo.InvariantCulture),

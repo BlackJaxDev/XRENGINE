@@ -1,8 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using System.Runtime.InteropServices;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
-using static XREngine.Components.OVRLipSync;
 using static XREngine.Data.AudioData;
 
 namespace XREngine.Components
@@ -13,7 +11,7 @@ namespace XREngine.Components
     /// </summary>
     public class OVRLipSyncComponent : XRComponent
     {
-        private readonly string[] _resolvedVisemeNames = new string[VisemeCount];
+        private readonly string[] _resolvedVisemeNames = new string[LipSyncVisemeInfo.Count];
         public AudioSourceComponent? GetAudioSource() => GetSiblingComponent<AudioSourceComponent>(false);
 
         private AudioSourceComponent? _audioSource;
@@ -32,7 +30,7 @@ namespace XREngine.Components
             set => SetField(ref _modelComponent, value);
         }
 
-        private ovrLipSyncContext _ctx = new();
+        private ILipSyncSession? _session;
 
         private static readonly long DirtyWindowTicks = RuntimeAudioIntegrationServices.SecondsToElapsedTicks(0.2f);
         private long _lastDirtyTicks;
@@ -40,10 +38,10 @@ namespace XREngine.Components
         private float _visemeExaggeration = 1.5f;
         private float _laughExaggeration = 1.5f;
 
-        private readonly float[] _lastInputVisemes = new float[VisemeCount];
+        private readonly float[] _lastInputVisemes = new float[LipSyncVisemeInfo.Count];
         private float _lastInputLaughterScore = 0.0f;
 
-        private readonly float[] _visemes = new float[VisemeCount];
+        private readonly float[] _visemes = new float[LipSyncVisemeInfo.Count];
         private float _laughterScore = 0.0f;
 
         private float _laughterThreshold = 0.5f;
@@ -110,41 +108,26 @@ namespace XREngine.Components
         {
             base.OnComponentActivated();
 
-            // Initialize the OVRLipSync library
-            // Feed data to the LipSync engine in 10 ms chunks (100 Hz)
-            var bufferSize = (int)(RuntimeAudioIntegrationServices.Current.SampleRate * 0.1f);
-            if (ovrLipSyncDll_Initialize(RuntimeAudioIntegrationServices.Current.SampleRate, bufferSize) == 0)
-            {
-                Debug.Audio("OVRLipSync library initialized.");
-            }
-            else
-            {
-                Debug.Audio("Failed to initialize OVRLipSync library.");
-                return;
-            }
-
-            // Create a new OVRLipSync context
-            ovrLipSyncResult result = ovrLipSyncDll_CreateContextEx(
-                ref _ctx,
-                ovrLipSyncContextProvider.ovrLipSyncContextProvider_EnhancedWithLaughter,
-                RuntimeAudioIntegrationServices.Current.SampleRate,
-                true);
-
-            if (result == ovrLipSyncResult.ovrLipSyncSuccess)
-            {
-                Debug.Audio("OVRLipSync context created.");
-            }
-            else
-            {
-                Debug.Audio("Failed to create OVRLipSync context.");
-                return;
-            }
-
             AudioSource = GetAudioSource();
             if (AudioSource is null)
             {
                 Debug.Audio("No AudioSourceComponent found.");
                 return;
+            }
+
+            // Match the analysis buffer size used by the native integration.
+            int sampleRate = RuntimeAudioIntegrationServices.Current.SampleRate;
+            int bufferSize = sampleRate / 10;
+            _session = LipSyncSessionRegistry.Create(sampleRate, bufferSize);
+            try
+            {
+                _session.SetSmoothing(_smoothAmount);
+            }
+            catch
+            {
+                _session.Dispose();
+                _session = null;
+                throw;
             }
 
             ModelComponent = GetModelComponent();
@@ -155,111 +138,34 @@ namespace XREngine.Components
             AudioSource.StreamingBufferEnqueuedShort += OnAudioDataReceived;
             AudioSource.StreamingBufferEnqueuedFloat += OnAudioDataReceived;
 
-            ovrLipSyncDll_SendSignal(_ctx, ovrLipSyncSignals.ovrLipSyncSignals_VisemeSmoothing, _smoothAmount, 0);
-
             RegisterTick(ETickGroup.Late, ETickOrder.Animation, UpdateModel);
         }
 
-        private unsafe void OnAudioDataReceived((int frequency, bool stereo, byte[] buffer) data)
+        private void OnAudioDataReceived((int frequency, bool stereo, byte[] buffer) data)
         {
-            if (data.buffer.Length == 0)
+            if (data.buffer.Length == 0 || _session is null)
                 return;
-
-            // Convert each byte to a float
-            float* samples = stackalloc float[data.buffer.Length];
-            for (int i = 0; i < data.buffer.Length; i++)
-                samples[i] = data.buffer[i] / 255.0f;
-
-            int frameNumber = 0;
-            int frameDelay = 0;
-            var result = ovrLipSyncDll_ProcessFrameEx(
-                _ctx.handle,
-                (nint)samples,
-                (uint)data.buffer.Length,
-                ovrLipSyncAudioDataType.ovrLipSyncAudioDataType_F32_Mono,
-                ref frameNumber,
-                ref frameDelay,
-                _lastInputVisemes,
-                VisemeCount,
-                ref _lastInputLaughterScore,
-                null,
-                0);
-
-            if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                Debug.AudioWarning("Failed to process audio data.");
-            else
-                _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
+            _session.Process(data.buffer, data.stereo, _lastInputVisemes, ref _lastInputLaughterScore);
+            _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
         }
 
-        private unsafe void OnAudioDataReceived((int frequency, bool stereo, short[] buffer) data)
+        private void OnAudioDataReceived((int frequency, bool stereo, short[] buffer) data)
         {
-            if (data.buffer.Length == 0)
+            if (data.buffer.Length == 0 || _session is null)
                 return;
-
-            GCHandle handle = GCHandle.Alloc(data.buffer, GCHandleType.Pinned);
-            try
-            {
-                int frameNumber = 0;
-                int frameDelay = 0;
-                var result = ovrLipSyncDll_ProcessFrameEx(
-                    _ctx.handle,
-                    handle.AddrOfPinnedObject(),
-                    (uint)data.buffer.Length,
-                    ovrLipSyncAudioDataType.ovrLipSyncAudioDataType_F32_Mono,
-                    ref frameNumber,
-                    ref frameDelay,
-                    _lastInputVisemes,
-                    VisemeCount,
-                    ref _lastInputLaughterScore,
-                    null,
-                    0);
-
-                if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                    Debug.AudioWarning("Failed to process audio data.");
-                else
-                    _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
-            }
-            finally
-            {
-                handle.Free();
-            }
+            _session.Process(data.buffer, data.stereo, _lastInputVisemes, ref _lastInputLaughterScore);
+            _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
         }
 
-        private unsafe void OnAudioDataReceived((int frequency, bool stereo, float[] buffer) data)
+        private void OnAudioDataReceived((int frequency, bool stereo, float[] buffer) data)
         {
-            if (data.buffer.Length == 0)
+            if (data.buffer.Length == 0 || _session is null)
                 return;
-
-            GCHandle handle = GCHandle.Alloc(data.buffer, GCHandleType.Pinned);
-            try
-            {
-                int frameNumber = 0;
-                int frameDelay = 0;
-                var result = ovrLipSyncDll_ProcessFrameEx(
-                    _ctx.handle,
-                    handle.AddrOfPinnedObject(),
-                    (uint)data.buffer.Length,
-                    ovrLipSyncAudioDataType.ovrLipSyncAudioDataType_F32_Mono,
-                    ref frameNumber,
-                    ref frameDelay,
-                    _lastInputVisemes,
-                    VisemeCount,
-                    ref _lastInputLaughterScore,
-                    null,
-                    0);
-
-                if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                    Debug.AudioWarning("Failed to process audio data.");
-                else
-                    _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
-            }
-            finally
-            {
-                handle.Free();
-            }
+            _session.Process(data.buffer, data.stereo, _lastInputVisemes, ref _lastInputLaughterScore);
+            _lastDirtyTicks = RuntimeAudioIntegrationServices.Current.ElapsedTicks;
         }
 
-        private unsafe void OnAudioDataReceived(AudioData data)
+        private void OnAudioDataReceived(AudioData data)
         {
             if (data.Data is null)
                 return;
@@ -276,15 +182,6 @@ namespace XREngine.Components
                     OnAudioDataReceived((data.Frequency, data.Stereo, data.Data!.GetFloats()));
                     break;
             }
-        }
-
-        private void Callback(IntPtr opaque, IntPtr pFrame, ovrLipSyncResult result)
-        {
-            if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                return;
-
-            ovrLipSyncFrame frame = Marshal.PtrToStructure<ovrLipSyncFrame>(pFrame);
-            UpdateModel(frame);
         }
 
         public float InputSmoothSpeed
@@ -306,13 +203,13 @@ namespace XREngine.Components
         internal static float GetSmoothingFactor(float deltaSeconds, float smoothingSpeed)
             => Math.Clamp(deltaSeconds * smoothingSpeed, 0.0f, 1.0f);
 
-        private unsafe void UpdateModel()
+        private void UpdateModel()
         {
             bool hasDataUpdated = HasRecentAudioData(RuntimeAudioIntegrationServices.Current.ElapsedTicks, _lastDirtyTicks);
             if (hasDataUpdated)
             {
                 float dt = GetSmoothingFactor(RuntimeAudioIntegrationServices.Current.UpdateDeltaSeconds, InputSmoothSpeed);
-                for (int i = 0; i < VisemeCount; i++)
+                for (int i = 0; i < LipSyncVisemeInfo.Count; i++)
                     _visemes[i] = Interp.Lerp(_visemes[i], _lastInputVisemes[i] * VisemeExaggeration, dt);
 
                 _laughterScore = Interp.Lerp(_laughterScore, _lastInputLaughterScore * LaughExaggeration, dt);
@@ -324,7 +221,7 @@ namespace XREngine.Components
                     _laughterScore = MathF.Max(0.0f, _laughterScore - dt);
                 if (_visemes[0] < 1.0f) // Silence
                     _visemes[0] = MathF.Min(1.0f, _visemes[0] + dt);
-                for (int i = 1; i < VisemeCount; i++)
+                for (int i = 1; i < LipSyncVisemeInfo.Count; i++)
                 {
                     if (_visemes[i] > 0.0f)
                         _visemes[i] = MathF.Max(0.0f, _visemes[i] - dt);
@@ -339,50 +236,12 @@ namespace XREngine.Components
             
             for (int i = 0; i < _visemes.Length; i++)
             {
-                //if (visemes[i] > 0.0f)
-                //    Debug.Audio($"Viseme {VisemeNames[i]}: {visemes[i]}");
                 modelComp.SetBlendShapeWeightNormalized(_resolvedVisemeNames[i], _visemes[i]);
             }
 
             //if (laughterScore > 0.0f)
             //    Debug.Audio($"Laughter: {laughterScore}");
             modelComp.SetBlendShapeWeightNormalized(_laughterBlendshapeName, _laughterScore);
-        }
-
-        private void UpdateModel(ovrLipSyncFrame frame)
-        {
-            SetVisemeToMorphTarget(frame);
-            SetLaughterToMorphTarget(frame);
-        }
-
-        /// <summary>
-        /// Sets the viseme to morph target.
-        /// </summary>
-        private unsafe void SetVisemeToMorphTarget(ovrLipSyncFrame frame)
-        {
-            float* visemes = (float*)frame.visemes;
-            uint len;
-            if (frame.visemesLength != VisemeNames.Length)
-            {
-                Debug.Audio("Viseme length mismatch, using minimum.");
-                len = (uint)Math.Min(frame.visemesLength, VisemeNames.Length);
-            }
-            else
-            {
-                len = frame.visemesLength;
-            }
-
-            for (int i = 0; i < len; i++)
-                _visemes[i] = visemes[i];
-        }
-
-        void SetLaughterToMorphTarget(ovrLipSyncFrame frame)
-        {
-            // Laughter score will be raw classifier output in [0,1]
-            float laughterScore = frame.laughterScore;
-            // Threshold then re-map to [0,1]
-            ConvertLaughterScore(ref laughterScore);
-            _laughterScore = laughterScore;
         }
 
         private void ConvertLaughterScore(ref float laughterScore)
@@ -394,8 +253,8 @@ namespace XREngine.Components
 
         private void RefreshBlendshapeNameCache()
         {
-            for (int i = 0; i < VisemeCount; i++)
-                _resolvedVisemeNames[i] = ResolveBlendshapeName(VisemeNames[i]);
+            for (int i = 0; i < LipSyncVisemeInfo.Count; i++)
+                _resolvedVisemeNames[i] = ResolveBlendshapeName(LipSyncVisemeInfo.Names[i]);
         }
 
         private string ResolveBlendshapeName(string sourceName)
@@ -423,13 +282,8 @@ namespace XREngine.Components
 
             UnregisterTick(ETickGroup.Late, ETickOrder.Animation, UpdateModel);
 
-            if (_ctx.handle != 0)
-            {
-                ovrLipSyncDll_DestroyContext(_ctx);
-                _ctx = new ovrLipSyncContext();
-            }
-
-            ovrLipSyncDll_Shutdown();
+            _session?.Dispose();
+            _session = null;
             base.OnComponentDeactivated();
         }
     }

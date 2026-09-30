@@ -1,5 +1,4 @@
 using XREngine.Extensions;
-using JoltPhysicsSharp;
 using System;
 using System.Diagnostics;
 using System.Numerics;
@@ -1660,7 +1659,14 @@ public partial class PhysicsChainComponent : XRComponent
             // freeze axis, project to plane 
             if (FreezeAxis != EFreezeAxis.None)
             {
-                Vector4 planeNormal = parentPtcl.TransformLocalToWorldMatrix.GetColumn((int)FreezeAxis - 1).Normalized();
+                Matrix4x4 matrix = parentPtcl.TransformLocalToWorldMatrix;
+                Vector4 planeNormal = FreezeAxis switch
+                {
+                    EFreezeAxis.X => new Vector4(matrix.M11, matrix.M21, matrix.M31, matrix.M41),
+                    EFreezeAxis.Y => new Vector4(matrix.M12, matrix.M22, matrix.M32, matrix.M42),
+                    _ => new Vector4(matrix.M13, matrix.M23, matrix.M33, matrix.M43),
+                };
+                planeNormal = planeNormal.Normalized();
                 Plane movePlane = XRMath.CreatePlaneFromPointAndNormal(parentPtcl.Position, planeNormal.XYZ());
                 childPtcl.Position -= movePlane.Normal * GeoUtil.DistanceFrom.PlaneToPoint(movePlane, childPtcl.Position);
             }

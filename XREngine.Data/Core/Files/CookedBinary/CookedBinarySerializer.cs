@@ -1704,8 +1704,8 @@ public static partial class CookedBinarySerializer
             if (resolved is not null)
                 return resolved;
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-                throw new InvalidOperationException($"Unable to resolve type '{key}' from published AOT metadata.");
+            if (XRRuntimeEnvironment.IsPublishedBuild)
+                throw new InvalidOperationException($"Unable to resolve type '{key}' from published metadata.");
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {

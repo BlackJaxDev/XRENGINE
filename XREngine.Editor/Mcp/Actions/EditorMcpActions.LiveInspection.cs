@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Scene;
-using XREngine.Scene.Physics.Physx;
 
 namespace XREngine.Editor.Mcp
 {
@@ -635,11 +634,11 @@ namespace XREngine.Editor.Mcp
             // Do not recursively reflect a managed PhysX wrapper that has no native scene.
             // Native access violations are process-fatal and cannot be recovered by the
             // reflection exception handling below.
-            if (value is PhysxScene { HasNativeScene: false } physxScene)
+            if (value is AbstractPhysicsScene { IsReadyForInspection: false } physicsScene)
             {
                 return new
                 {
-                    objectType = physxScene.GetType().FullName ?? physxScene.GetType().Name,
+                    objectType = physicsScene.GetType().FullName ?? physicsScene.GetType().Name,
                     nativeSceneAvailable = false
                 };
             }

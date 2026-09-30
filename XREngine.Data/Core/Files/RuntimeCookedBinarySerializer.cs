@@ -883,12 +883,12 @@ public static class RuntimeCookedBinarySerializer
         if (resolved is not null)
             return resolved;
 
+        if (XRRuntimeEnvironment.IsPublishedBuild)
+            throw new InvalidOperationException($"Unable to resolve runtime cooked type '{name}' from published metadata.");
+
         resolved = Type.GetType(name, throwOnError: false, ignoreCase: false);
         if (resolved is not null)
             return resolved;
-
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-            throw new InvalidOperationException($"Unable to resolve runtime cooked type '{name}' from published AOT metadata.");
 
         foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
         {

@@ -2,7 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using ImageMagick;
+using XREngine.Imaging;
 using Silk.NET.Vulkan;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -312,7 +312,7 @@ namespace XREngine.Rendering.Vulkan
         // Do not reuse FramebufferTextureYDirection here; that is shader sampling policy.
         internal bool ScreenshotRequiresVerticalFlip => false;
 
-        internal void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
+        internal void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback)
         {
             if (TryQueueScreenshotReadback(
                     region,
@@ -784,14 +784,9 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                using var image = new MagickImage(rgba8, new MagickReadSettings
-                {
-                    Width = checked((uint)width),
-                    Height = checked((uint)height),
-                    Format = MagickFormat.Rgba,
-                    Depth = 8,
-                });
-                image.Write(fullPath);
+                using RuntimeImage image = new(checked((uint)width), checked((uint)height),
+                    RuntimePixelFormat.Rgba8, rgba8);
+                File.WriteAllBytes(fullPath, RuntimeImageCodecs.Require().EncodePng(image));
                 metrics = StereoRenderedOutputMetrics.MeasureCapture(
                     rgbaFloats,
                     width,

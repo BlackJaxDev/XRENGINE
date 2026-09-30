@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+    <Content Include="../XREngine.Runtime.Core/runtimes/win-x64/native/lib_coacd.dll" Link="runtimes/win-x64/native/lib_coacd.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <PropertyGroup>
+    <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(MSBuildProjectDirectory)/../Tools/Dependencies/Build-CoACD.ps1</CoACDBuildScript>
+    <CoACDRef Condition="'$(CoACDRef)' == ''">1.0.7</CoACDRef>
+    <CoACDRid Condition="'$(CoACDRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</CoACDRid>
+    <CoACDRid Condition="'$(CoACDRid)' == ''">win-x64</CoACDRid>
+    <ForceCoACDBuildSwitch Condition="'$(ForceCoACDBuild)' == 'true'">-ForceBuild</ForceCoACDBuildSwitch>
+  </PropertyGroup>
+  <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)/../XREngine.Runtime.Core/runtimes/$(CoACDRid)/native/lib_coacd.dll'))">
+    <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
+  </Target>
+</Project>

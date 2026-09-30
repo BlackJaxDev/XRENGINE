@@ -38,7 +38,10 @@ The remote-profiler design is now implemented in shipping repo code:
 
 - `XREngine.Profiler` provides the standalone Silk.NET + ImGui application.
 - `XREngine.Profiler.UI` provides the shared panel renderer used by both the standalone app and the editor.
-- `Engine.ProfilerSender.cs` and `UdpProfilerSender` bridge engine snapshots into the UDP protocol.
+- `XREngine.Runtime.Bootstrap/Engine/Engine.ProfilerSender.cs` installs the six
+  snapshot collectors. `XREngine.Data/Profiling/UdpProfilerSender.cs` is a
+  neutral sender facade; `XREngine.Runtime.Net.Sockets` owns the background UDP
+  sender and registers its transport backend during Bootstrap startup.
 - Editor preferences can enable UDP sending at runtime and optionally launch the standalone profiler on startup.
 
 Published launcher builds compile out the runtime profiler sender and related live profiling hooks behind `XRE_PUBLISHED`, so shipped builds do not keep the editor/developer profiling surface active.
@@ -124,6 +127,8 @@ cause GC pauses visible on the main thread.
 Shared protocol types live in `XREngine.Data/Profiling/` and are referenced by
 both the engine and the profiler app — the profiler has **no dependency on the
 engine assembly**.
+The engine-side sender facade is in the same Data directory, while the socket
+implementation is in `XREngine.Runtime.Net.Sockets/Profiling/`.
 
 ## Profiler App (XREngine.Profiler)
 
@@ -689,9 +694,13 @@ XREngine.Data/Profiling/
 ├── ProfilerProtocol.cs          # Wire constants, framing helpers
 ├── ProfilerFramePacket.cs       # Frame + thread + node MemoryPack DTOs
 ├── ProfilerStatsPacket.cs       # Render, alloc, BVH, job, invoke, heartbeat DTOs
-└── UdpProfilerSender.cs         # Background sender thread (engine-side)
+└── UdpProfilerSender.cs         # Neutral sender facade and collector delegates
 
-XRENGINE/Engine/
+XREngine.Runtime.Net.Sockets/Profiling/
+├── NativeUdpProfilerSender.cs   # Background UDP sender and packet serialization
+└── SocketProfilerTransportBackend.cs # Installed transport capability
+
+XREngine.Runtime.Bootstrap/Engine/
 ├── Engine.ProfilerSender.cs     # 6 collector delegates bridging engine → packets
 └── Engine.Lifecycle.cs          # Init/cleanup hooks
 
@@ -699,9 +708,11 @@ XREngine.Profiler/
 ├── Program.cs                   # Entry point (Silk.NET GLFW window)
 ├── UdpProfilerReceiver.cs       # Background receiver thread + multi-instance tracking
 ├── ProfilerImGuiApp.cs          # ImGui lifecycle, docking, menu bar, waiting overlay
-├── ProfilerPanelRenderer.cs     # All 9 panel draw methods + aggregation logic
 ├── ImGuiDockBuilderNative.cs    # P/Invoke wrapper for cimgui DockBuilder
-└── XREngine.Profiler.csproj     # Depends only on XREngine.Data (not the engine)
+└── XREngine.Profiler.csproj     # Depends on Data and Profiler.UI, not the engine
+
+XREngine.Profiler.UI/
+└── ProfilerPanelRenderer.cs     # Shared panel draw methods and aggregation
 ```
 
 ## In-Process Profiler Panels

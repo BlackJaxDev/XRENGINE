@@ -1,6 +1,5 @@
-﻿using NAudio.Wave;
-using NAudio.Lame;
-using System.Collections;
+﻿using System.Collections;
+using XREngine.Audio;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Threading;
@@ -16,7 +15,7 @@ namespace XREngine.Components
         public AudioSourceComponent? GetAudioSourceComponent(bool forceCreate)
             => GetSiblingComponent<AudioSourceComponent>(forceCreate);
 
-        private WaveInEvent? _waveIn;
+        private IAudioCaptureStream? _waveIn;
         private int _deviceIndex = 0;
         private int _bufferMs = 100;
         private int _sampleRate = RuntimeAudioIntegrationServices.Current.SampleRate;
@@ -158,31 +157,21 @@ namespace XREngine.Components
         }
 
         public static string[] GetInputDeviceNames()
-        {
-            List<string> devices = [];
-            for (int i = 0; i < WaveInEvent.DeviceCount; i++)
-                devices.Add(WaveInEvent.GetCapabilities(i).ProductName);
-            return [.. devices];
-        }
+            => AudioCaptureRegistry.GetDeviceNames();
 
         public void StartCapture()
         {
             if (_waveIn is not null)
                 return;
 
-            _waveIn = new WaveInEvent
-            {
-                DeviceNumber = DeviceIndex,
-                WaveFormat = new WaveFormat(SampleRate, _bitsPerSample, channels: 1),
-                BufferMilliseconds = BufferMs
-            };
+            _waveIn = AudioCaptureRegistry.Create(DeviceIndex, SampleRate, _bitsPerSample, BufferMs);
 
             //((Samples / 1 Second) * (Bits / 1 Sample) / 8) * (BufferMs / 1000) = bytes per second * seconds = bytes
             int bufferSize = SampleRate * _bitsPerSample / 8 * BufferMs / 1000;
 
             _currentBuffer = new byte[bufferSize];
             _waveIn.DataAvailable += WaveIn_DataAvailable;
-            _waveIn.StartRecording();
+            _waveIn.Start();
 
             //InputDevice.StartCapture();
             //RegisterTick(ETickGroup.Normal, ETickOrder.Input, CaptureSamples);
@@ -193,19 +182,19 @@ namespace XREngine.Components
                 return;
 
             _waveIn.DataAvailable -= WaveIn_DataAvailable;
-            _waveIn.StopRecording();
+            _waveIn.Stop();
             _waveIn.Dispose();
             _waveIn = null;
 
             //InputDevice.StopCapture();
         }
 
-        private void WaveIn_DataAvailable(object? sender, WaveInEventArgs e)
+        private void WaveIn_DataAvailable(byte[] samples, int bytesRecorded)
         {
             if (Muted)
                 return;
 
-            int remainingByteCount = e.BytesRecorded;
+            int remainingByteCount = bytesRecorded;
             int srcOffset = 0;
             while (remainingByteCount > 0)
             {
@@ -213,7 +202,7 @@ namespace XREngine.Components
                 if (endIndex <= _currentBuffer.Length)
                 {
                     //If the buffer has enough space, just copy the data and move on with our life
-                    Buffer.BlockCopy(e.Buffer, srcOffset, _currentBuffer, _currentBufferOffset, remainingByteCount);
+                    Buffer.BlockCopy(samples, srcOffset, _currentBuffer, _currentBufferOffset, remainingByteCount);
 
                     srcOffset += remainingByteCount;
                     _currentBufferOffset += remainingByteCount;
@@ -232,7 +221,7 @@ namespace XREngine.Components
                     //Consume remaining space from the available data
                     int remainingSpace = _currentBuffer.Length - _currentBufferOffset;
                     if (remainingSpace > 0)
-                        Buffer.BlockCopy(e.Buffer, srcOffset, _currentBuffer, _currentBufferOffset, remainingSpace);
+                        Buffer.BlockCopy(samples, srcOffset, _currentBuffer, _currentBufferOffset, remainingSpace);
 
                     srcOffset += remainingSpace;
                     remainingByteCount -= remainingSpace;
@@ -625,7 +614,7 @@ namespace XREngine.Components
             else
                 Debug.Audio($"Available audio input devices:{Environment.NewLine}{string.Join(Environment.NewLine, devices)}");
 
-            var asioNames = AsioOut.GetDriverNames();
+            var asioNames = AudioCaptureRegistry.GetAsioDriverNames();
             if (asioNames.Length > 0)
                 Debug.Audio($"Available ASIO devices:{Environment.NewLine}{string.Join(Environment.NewLine, asioNames)}");
 
