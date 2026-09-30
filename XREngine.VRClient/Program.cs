@@ -1,5 +1,5 @@
 using Newtonsoft.Json;
-using OpenVR.NET.Manifest;
+using XREngine.Input;
 using System.Diagnostics;
 using System.Management;
 using System.Reflection;
@@ -68,12 +68,12 @@ namespace XREngine.VRClient
             }
 
             // Initialize VR
-            if (settings.ActionManifest is not IActionManifest actionManifest)
+            if (settings.ActionManifest is not { } actionManifest)
             {
                 Debug.LogWarning("VR settings not initialized correctly; missing or invalid ActionManifest.");
                 Console.In.ReadLine();
             }
-            else if (settings.VRManifest is not VrManifest vrManifest)
+            else if (settings.VRManifest is not { } vrManifest)
             {
                 Debug.LogWarning("VR settings not initialized correctly; missing or invalid VRManifest.");
                 Console.In.ReadLine();
@@ -146,7 +146,7 @@ namespace XREngine.VRClient
                 [
                     (Environment.SpecialFolder.ProgramFiles, "MyGameFolder")
                 ],
-                VRManifest = new VrManifest()
+                VRManifest = new RuntimeOpenVrApplicationManifest()
                 {
                     AppKey = "XRE.VRClient.Test",
                     IsDashboardOverlay = false,
@@ -174,7 +174,7 @@ namespace XREngine.VRClient
                 },
                 TargetUpdatesPerSecond = update,
                 TargetFramesPerSecond = render,
-                ActionManifest = new ActionManifest<TActionCategory, TGameAction>()
+                ActionManifest = new RuntimeOpenVrActionManifest<TActionCategory, TGameAction>()
                 {
                     Actions = GetActions<TActionCategory, TGameAction>(),
                 },
@@ -188,7 +188,7 @@ namespace XREngine.VRClient
             return settings;
         }
 
-        private static List<OpenVR.NET.Manifest.Action<TActionCategory, TGameAction>> GetActions<TActionCategory, TGameAction>()
+        private static List<RuntimeOpenVrAction<TActionCategory, TGameAction>> GetActions<TActionCategory, TGameAction>()
             where TActionCategory : struct, Enum
             where TGameAction : struct, Enum
         {

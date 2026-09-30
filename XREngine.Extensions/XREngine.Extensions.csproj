@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -7,13 +6,6 @@
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
-
-  <PropertyGroup Condition="'$(XREnginePortableRuntime)' == 'true'">
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
-  </PropertyGroup>
-
-  <Import Project="..\Build\Portable\Extensions.items" Condition="'$(XREnginePortableRuntime)' == 'true'" />
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <IsTrimmable>True</IsTrimmable>
@@ -38,15 +30,5 @@
     <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
-
-  <PropertyGroup Condition="'$(XREnginePortableRuntime)' == 'true'">
-    <IsTrimmable>false</IsTrimmable>
-    <IsAotCompatible>false</IsAotCompatible>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(XREnginePortableRuntime)' != 'true'">
-    <PackageReference Include="MemoryPack" Version="1.21.4" />
-    <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
-  </ItemGroup>
 
 </Project>

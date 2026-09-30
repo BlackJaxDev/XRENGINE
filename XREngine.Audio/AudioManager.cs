@@ -84,16 +84,28 @@ namespace XREngine.Audio
             {
                 var (transportType, effectsType) = ValidateCombo(DefaultTransport, DefaultEffects);
 
-                IAudioTransport transport = transportType switch
+                IAudioTransport transport = AudioBackendRegistry.CreateTransport(transportType);
+                IAudioEffectsProcessor effects;
+                try
                 {
-                    EAudioTransport.OpenAL => new OpenALTransport(),
-                    EAudioTransport.NAudio => CreateNAudioTransport(),
-                    _ => CreateFallbackOpenAlTransport($"Unknown audio transport '{transportType}'. Falling back to OpenAL."),
-                };
+                    effects = CreateEffectsProcessor(effectsType, transport);
+                }
+                catch
+                {
+                    transport.Dispose();
+                    throw;
+                }
 
-                IAudioEffectsProcessor effects = CreateEffectsProcessor(effectsType, transport);
-
-                listener = new ListenerContext(transport, effects) { Name = name };
+                try
+                {
+                    listener = new ListenerContext(transport, effects) { Name = name };
+                }
+                catch
+                {
+                    effects.Dispose();
+                    transport.Dispose();
+                    throw;
+                }
             }
             else
             {
@@ -128,56 +140,12 @@ namespace XREngine.Audio
         {
             return effectsType switch
             {
-                EAudioEffects.OpenAL_EFX when transport is OpenALTransport openAl => new OpenALEfxProcessor(openAl),
-                EAudioEffects.OpenAL_EFX => CreatePassthroughFallback("OpenAL_EFX requires OpenALTransport but transport is incompatible. Falling back to Passthrough."),
+                EAudioEffects.OpenAL_EFX when transport is IAudioListenerBackend => AudioBackendRegistry.CreateEffects(effectsType, transport),
+                EAudioEffects.OpenAL_EFX => throw new InvalidOperationException("OpenAL EFX requires a spatial OpenAL transport."),
                 EAudioEffects.Passthrough => new PassthroughProcessor(),
-                EAudioEffects.SteamAudio => CreateSteamAudioProcessor(transport),
-                _ => CreatePassthroughFallback($"Unknown audio effects '{effectsType}'. Falling back to Passthrough."),
+                EAudioEffects.SteamAudio => AudioBackendRegistry.CreateEffects(effectsType, transport),
+                _ => throw new ArgumentOutOfRangeException(nameof(effectsType), effectsType, "Unknown audio effects processor."),
             };
-        }
-
-        private static PassthroughProcessor CreatePassthroughFallback(string reason)
-        {
-            Debug.WriteLine($"[AudioManager] {reason}");
-            return new PassthroughProcessor();
-        }
-
-        private static IAudioEffectsProcessor CreateSteamAudioProcessor(IAudioTransport transport)
-        {
-            try
-            {
-                return new Steam.SteamAudioProcessor();
-            }
-            catch (Exception ex)
-            {
-                string errorMessage = ex.Message.TrimEnd('.', ' ');
-                string installHint = ex is DllNotFoundException ||
-                                     errorMessage.Contains("phonon", StringComparison.OrdinalIgnoreCase)
-                    ? " Install Steam Audio by running 'pwsh Tools\\Dependencies\\Get-Phonon.ps1' from the repo root or the VS Code task 'Install-Phonon'."
-                    : string.Empty;
-                Debug.WriteLine($"[AudioManager] Failed to create SteamAudioProcessor: {errorMessage}. Falling back to Passthrough.{installHint}");
-                return new PassthroughProcessor();
-            }
-        }
-
-        private static OpenALTransport CreateFallbackOpenAlTransport(string reason)
-        {
-            Debug.WriteLine(reason);
-            return new OpenALTransport();
-        }
-
-        private static NAudioTransport CreateNAudioTransport()
-        {
-            var transport = new NAudioTransport();
-            try
-            {
-                transport.Open();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[AudioManager] NAudioTransport.Open() failed: {ex.Message}. Transport will work without output device.");
-            }
-            return transport;
         }
 
         public void FadeIn(float fadeSeconds, Action? onComplete = null)

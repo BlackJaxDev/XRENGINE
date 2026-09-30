@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using XREngine.Components;
 using XREngine.Input;
 using XREngine.Rendering;
@@ -51,7 +50,7 @@ namespace XREngine.Components.VR
             base.OnDestroying();
         }
 
-        private void DeviceDetected(VrDevice device)
+        private void DeviceDetected(RuntimeVrDeviceInfo device)
             => VerifyDevices();
 
         private void RenderModelsChanged()

@@ -2,11 +2,13 @@
 
 [← Docs index](../README.md)
 
-CoACD does not currently publish a NuGet package. The engine pulls the upstream repository, builds `_coacd` from source, and drops the produced native binary into `XREngine.Runtime.Core/runtimes/<rid>/native`. A fallback script is available when you simply want to extract the vendor-provided wheel.
+CoACD is an editor/cook-time collider authoring dependency. The native call and convex-hull disk cache live in `XREngine.Runtime.Physics.Authoring`; the authored parameter/result contract remains in `XREngine.Data.Tools.CoACD`, and runtime physics components call the neutral `IPhysicsColliderAuthoringService` in `XREngine.Runtime.Core`. The editor installs the authoring service and PhysX installs `IPhysicsConvexHullInstaller` for cooked shapes. Server and game distributions should use cooked collider geometry; an unregistered authoring service reports a named missing-service diagnostic.
+
+CoACD does not currently publish a NuGet package. The existing native supply path remains `XREngine.Runtime.Core/runtimes/<rid>/native` so the build and wheel scripts keep working; the Authoring project links the binary from that location into its own runtime output. A fallback script extracts the vendor-provided wheel.
 
 ## Building from source (default path)
 
-`XREngine.Runtime.Core/XREngine.Runtime.Core.csproj` invokes `Tools/Dependencies/Build-CoACD.ps1` before the managed build whenever the selected binary is missing (or when you pass `/p:ForceCoACDBuild=true`). The script:
+`XREngine.Runtime.Physics.Authoring/XREngine.Runtime.Physics.Authoring.csproj` invokes `Tools/Dependencies/Build-CoACD.ps1` before its managed build whenever the selected binary is missing (or when you pass `/p:ForceCoACDBuild=true`). The script:
 
 - clones or updates `https://github.com/SarahWeiii/CoACD.git` under `Build/Submodules/CoACD`
 - configures CMake with the same flags as the official wheels (`/MT`, OpenVDB static, `_coacd` target)
@@ -43,7 +45,7 @@ Each invocation downloads `coacd-<version>-cp39-abi3-<suffix>.whl` directly from
 
 ## Build output
 
-`XREngine.Runtime.Core.csproj` treats `lib_coacd.dll` as a native asset, so consumers automatically receive the dependency after either script runs. Repeat the step for other RIDs if you ship non-Windows builds.
+The Authoring project links `lib_coacd.dll` as a native asset for desktop authoring output. Building the lower Core project alone does not install or distribute CoACD. Repeat native preparation for other RIDs when an authoring host targets them.
 
 ## Runtime concurrency
 
@@ -59,6 +61,6 @@ The value is clamped to `1..Environment.ProcessorCount` and is read once when th
 
 ## Updating versions
 
-1. Update the default `CoACDRef` property in `XREngine.Runtime.Core/XREngine.Runtime.Core.csproj` (or pass `/p:CoACDRef=<new-tag>` when building).
+1. Update the default `CoACDRef` property in `XREngine.Runtime.Physics.Authoring/XREngine.Runtime.Physics.Authoring.csproj` (or pass `/p:CoACDRef=<new-tag>` when building).
 2. Re-run the build script (or the wheel extractor) for each RID you ship.
-3. If the upstream project renames the native binary, update `XREngine.Data/Tools/CoACD.cs`, `Build-CoACD.ps1`, and `Get-CoACD.ps1` to match.
+3. If the upstream project renames the native binary, update `XREngine.Runtime.Physics.Authoring/CoAcdNativeBackend.cs`, its project content item, `Build-CoACD.ps1`, and `Get-CoACD.ps1` to match.

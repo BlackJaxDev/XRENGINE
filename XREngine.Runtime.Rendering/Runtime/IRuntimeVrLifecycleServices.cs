@@ -9,11 +9,12 @@ public interface IRuntimeVrLifecycleServices
 {
     bool InitializeOpenXR(XRWindow? window);
     bool StopOpenXR();
-    Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window);
+    Task<bool> InitializeLocal(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest, XRWindow window);
     void InitRenderEmulated(XRWindow window);
-    Task<bool> InitializeClient(object actionManifest, object vrManifest);
+    Task<bool> InitializeClient(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest);
     bool InitializeServer();
     void StartInputClient();
     void StopInputServer();
     Task SendInputs();
 }
+

@@ -1,16 +1,11 @@
 using XREngine.Extensions;
-using Silk.NET.OpenAL;
-using Silk.NET.OpenAL.Extensions.Creative;
-using Silk.NET.OpenAL.Extensions.Enumeration;
-using Silk.NET.OpenAL.Extensions.EXT;
-using System.Diagnostics;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Data.Core;
 
 namespace XREngine.Audio
 {
-    public sealed unsafe class ListenerContext : XRBase, IDisposable
+    public sealed class ListenerContext : XRBase, IDisposable
     {
         //TODO: implement audio source priority
         //destroy sources with lower priority first to make room for higher priority sources.
@@ -21,42 +16,29 @@ namespace XREngine.Audio
         /// <summary>
         /// Whether this listener was created with the V2 transport/effects architecture.
         /// When true, delegates to <see cref="Transport"/> and <see cref="EffectsProcessor"/>.
-        /// When false, uses the legacy monolithic OpenAL code path.
+        /// When false, preserves legacy OpenAL behavior through the spatial listener backend.
         /// </summary>
         public bool IsV2 { get; }
 
         // --- V2 path: transport/effects composition ---
 
         /// <summary>
-        /// The audio output transport layer. Non-null only in V2 mode.
+        /// The public audio output transport for composed listener mode.
         /// </summary>
         public IAudioTransport? Transport { get; }
+
+        /// <summary>The device used by both listener architectures.</summary>
+        internal IAudioTransport ActiveTransport { get; }
+        private IAudioListenerBackend? ListenerBackend => ActiveTransport as IAudioListenerBackend;
+        private IAudioListenerBackend LegacyBackend => ListenerBackend
+            ?? throw new InvalidOperationException("The listener transport does not support legacy spatial controls.");
 
         /// <summary>
         /// The audio effects processor. Non-null only in V2 mode (may still be null if passthrough).
         /// </summary>
         public IAudioEffectsProcessor? EffectsProcessor { get; }
 
-        // --- Legacy path: direct OpenAL objects ---
-
-        public AL Api { get; }
-        public ALContext Context { get; }
-
-        internal Device* DeviceHandle { get; }
-        internal Context* ContextHandle { get; }
-
-        public EffectContext? Effects { get; }
-        public VorbisFormat? VorbisFormat { get; }
-        public MP3Format? MP3Format { get; }
-        public XRam? XRam { get; }
-        public MultiChannelBuffers? MultiChannel { get; }
-        public DoubleFormat? DoubleFormat { get; }
-        public MULAWFormat? MuLawFormat { get; }
-        public FloatFormat? FloatFormat { get; }
-        public MCFormats? MCFormats { get; }
-        public ALAWFormat? ALawFormat { get; }
-
-        public Capture? Capture { get; }
+        public IAudioSourceEffects? Effects { get; }
 
         public EventDictionary<uint, AudioSource> Sources { get; } = [];
         public EventDictionary<uint, AudioBuffer> Buffers { get; } = [];
@@ -74,48 +56,22 @@ namespace XREngine.Audio
         {
             IsV2 = true;
             Transport = transport ?? throw new ArgumentNullException(nameof(transport));
+            ActiveTransport = transport;
             EffectsProcessor = effectsProcessor;
 
-            // Bridge: expose OpenAL internals for code that still needs direct access
-            // (AudioSource EFX properties, AudioInputDevice capture, format extensions, etc.)
-            if (transport is OpenALTransport oalTransport)
+            if (transport is IAudioListenerBackend backend)
             {
-                Api = oalTransport.Api;
-                Context = oalTransport.Context;
-                DeviceHandle = oalTransport.DeviceHandle;
-                ContextHandle = oalTransport.ContextHandle;
-                VorbisFormat = oalTransport.VorbisFormat;
-                MP3Format = oalTransport.MP3Format;
-                MultiChannel = oalTransport.MultiChannel;
-                DoubleFormat = oalTransport.DoubleFormat;
-                MuLawFormat = oalTransport.MuLawFormat;
-                FloatFormat = oalTransport.FloatFormat;
-                MCFormats = oalTransport.MCFormats;
-                ALawFormat = oalTransport.ALawFormat;
-                XRam = oalTransport.XRam;
-                Capture = null; // Capture deferred to transport abstraction in later phase
-
-                // Wire up EFX processor's EffectContext
-                if (effectsProcessor is OpenALEfxProcessor efxProc)
-                {
-                    efxProc.SetListenerContext(this);
-                    Effects = efxProc.EffectContext;
-                }
-
-                _position = oalTransport.GetListenerPosition();
-                _velocity = oalTransport.GetListenerVelocity();
-                oalTransport.GetListenerOrientation(out _forward, out _up);
-            }
-            else
-            {
-                // Non-OpenAL transport: OpenAL fields are default/null
-                Api = AL.GetApi(); // Needed to avoid null; won't be used
-                Context = ALContext.GetApi(false);
-                DeviceHandle = null;
-                ContextHandle = null;
+                _position = backend.GetListenerPosition();
+                _velocity = backend.GetListenerVelocity();
+                backend.GetListenerOrientation(out _forward, out _up);
             }
 
-            _gain = transport is OpenALTransport oalt ? oalt.GetListenerGain() : 1.0f;
+            _gain = ListenerBackend?.GetListenerGain() ?? 1.0f;
+
+            if (transport is IAudioSourceEffectsProvider effectsProvider)
+                Effects = effectsProvider.CreateSourceEffects(this);
+            if (effectsProcessor is IAudioSourceEffectsConsumer effectsConsumer)
+                effectsConsumer.SetSourceEffects(Effects);
 
             SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
             BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
@@ -126,65 +82,32 @@ namespace XREngine.Audio
         }
 
         /// <summary>
-        /// Legacy constructor: monolithic OpenAL path (original behavior).
+        /// Legacy constructor: OpenAL listener semantics through the registered backend.
         /// Used when <see cref="AudioSettings.AudioArchitectureV2"/> is disabled (default).
         /// </summary>
         internal ListenerContext()
         {
             IsV2 = false;
-            Api = AL.GetApi();
-
-            if (Api.TryGetExtension<VorbisFormat>(out var vorbisFormat))
-                VorbisFormat = vorbisFormat;
-            if (Api.TryGetExtension<MP3Format>(out var mp3Format))
-                MP3Format = mp3Format;
-            if (Api.TryGetExtension<MultiChannelBuffers>(out var multiChannel))
-                MultiChannel = multiChannel;
-            if (Api.TryGetExtension<DoubleFormat>(out var doubleFormat))
-                DoubleFormat = doubleFormat;
-            if (Api.TryGetExtension<MULAWFormat>(out var mulawFormat))
-                MuLawFormat = mulawFormat;
-            if (Api.TryGetExtension<FloatFormat>(out var floatFormat))
-                FloatFormat = floatFormat;
-            if (Api.TryGetExtension<MCFormats>(out var mcFormats))
-                MCFormats = mcFormats;
-            if (Api.TryGetExtension<ALAWFormat>(out var alawFormat))
-                ALawFormat = alawFormat;
-
-            if (Api.TryGetExtension<EffectExtension>(out var effectExtension))
-                Effects = new EffectContext(this, effectExtension);
-            if (Api.TryGetExtension<XRam>(out var xram))
-                XRam = xram;
-
-            Context = ALContext.GetApi(false);
-
-            DeviceHandle = Context.OpenDevice(null);
-            if (DeviceHandle == null)
-                throw new InvalidOperationException(
-                    "OpenAL could not open the default playback device.");
-
-            ContextHandle = Context.CreateContext(DeviceHandle, null);
-            if (ContextHandle == null)
+            IAudioTransport transport = AudioBackendRegistry.CreateTransport(EAudioTransport.OpenAL);
+            if (transport is not IAudioListenerBackend backend)
             {
-                Context.CloseDevice(DeviceHandle);
-                throw new InvalidOperationException(
-                    "OpenAL could not create a context for the default playback device.");
+                transport.Dispose();
+                throw new InvalidOperationException("The registered OpenAL transport does not support legacy listener controls.");
             }
+
+            ActiveTransport = transport;
 
             try
             {
-                MakeCurrent();
+                if (transport is IAudioSourceEffectsProvider effectsProvider)
+                    Effects = effectsProvider.CreateSourceEffects(this);
+                _gain = backend.GetListenerGain();
             }
             catch
             {
-                Context.DestroyContext(ContextHandle);
-                Context.CloseDevice(DeviceHandle);
+                transport.Dispose();
                 throw;
             }
-
-            VerifyError();
-
-            _gain = GetGain();
 
             SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
             BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
@@ -196,45 +119,17 @@ namespace XREngine.Audio
 
         public void MakeCurrent()
         {
-            if (IsV2 && Transport is OpenALTransport oalTransport)
+            if (ActiveTransport is IAudioListenerBackend backend)
             {
-                oalTransport.MakeCurrent();
+                backend.MakeCurrent();
                 CurrentContext = this;
-                return;
             }
-
-            if (IsV2)
-                return;
-
-            if (CurrentContext == this)
-                return;
-
-            if (!Context.MakeContextCurrent(ContextHandle))
-                throw new InvalidOperationException("OpenAL could not make the listener context current.");
-
-            CurrentContext = this;
         }
 
         public void VerifyError()
         {
-            if (IsV2 && Transport is OpenALTransport oalTransport)
-            {
-                oalTransport.VerifyError();
-                return;
-            }
-
-            if (IsV2)
-                return;
-
-            if (CurrentContext != this)
-                return;
-
-            var error = Api.GetError();
-            if (error != AudioError.NoError)
-            {
-                Trace.WriteLine($"OpenAL Error: {error}");
-                AudioDiagnostics.RecordOpenALError($"{error}");
-            }
+            if (ActiveTransport is IAudioListenerBackend backend)
+                backend.VerifyError();
         }
 
         private ResourcePool<AudioSource> SourcePool { get; }
@@ -261,6 +156,8 @@ namespace XREngine.Audio
         {
             if (source is null)
                 return;
+            if (!ReferenceEquals(source.ParentListener, this))
+                throw new InvalidOperationException("A source must be released to its owning listener.");
             if (source.Handle != 0)
                 Sources.Remove(source.Handle);
             SourcePool.Release(source);
@@ -270,6 +167,8 @@ namespace XREngine.Audio
         {
             if (buffer is null)
                 return;
+            if (!ReferenceEquals(buffer.ParentListener, this))
+                throw new InvalidOperationException("A buffer must be released to its owning listener.");
             if (buffer.Handle != 0)
                 Buffers.Remove(buffer.Handle);
             BufferPool.Release(buffer);
@@ -288,44 +187,27 @@ namespace XREngine.Audio
 
         public bool IsExtensionPresent(string extension)
         {
-            if (IsV2 && Transport is not OpenALTransport)
-                return false;
-            return Api.IsExtensionPresent(extension);
+            return ListenerBackend?.IsExtensionPresent(extension) ?? false;
         }
 
         public bool HasDopplerFactorSet()
-            => IsV2 && Transport is not OpenALTransport
-                ? true
-                : Api.GetStateProperty(StateBoolean.HasDopplerFactor);
+            => ListenerBackend?.HasDopplerFactorSet() ?? true;
         public bool HasDopplerVelocitySet()
-            => IsV2 && Transport is not OpenALTransport
-                ? true
-                : Api.GetStateProperty(StateBoolean.HasDopplerVelocity);
+            => ListenerBackend?.HasDopplerVelocitySet() ?? true;
         public bool HasSpeedOfSoundSet()
-            => IsV2 && Transport is not OpenALTransport
-                ? true
-                : Api.GetStateProperty(StateBoolean.HasSpeedOfSound);
+            => ListenerBackend?.HasSpeedOfSoundSet() ?? true;
         public bool IsDistanceModelInverseDistanceClamped()
-            => IsV2 && Transport is not OpenALTransport
-                ? DistanceModel == EDistanceModel.InverseDistanceClamped
-                : Api.GetStateProperty(StateBoolean.IsDistanceModelInverseDistanceClamped);
+            => ListenerBackend?.IsDistanceModelInverseDistanceClamped()
+                ?? DistanceModel == EDistanceModel.InverseDistanceClamped;
 
         public string GetVendor()
-            => IsV2 && Transport is not OpenALTransport
-                ? Transport?.GetType().Name ?? "UnknownTransport"
-                : Api.GetStateProperty(StateString.Vendor);
+            => ListenerBackend?.GetVendor() ?? ActiveTransport.GetType().Name;
         public string GetRenderer()
-            => IsV2 && Transport is not OpenALTransport
-                ? Transport?.GetType().Name ?? "UnknownTransport"
-                : Api.GetStateProperty(StateString.Renderer);
+            => ListenerBackend?.GetRenderer() ?? ActiveTransport.GetType().Name;
         public string GetVersion()
-            => IsV2 && Transport is not OpenALTransport
-                ? "V2"
-                : Api.GetStateProperty(StateString.Version);
+            => ListenerBackend?.GetVersion() ?? "V2";
         public string[] GetExtensions()
-            => IsV2 && Transport is not OpenALTransport
-                ? []
-                : Api.GetStateProperty(StateString.Extensions).Split(' ');
+            => ListenerBackend?.GetExtensions() ?? [];
 
         private float _dopplerFactor = 1.0f;
         private float _speedOfSound = 343.3f;
@@ -335,16 +217,16 @@ namespace XREngine.Audio
         {
             get
             {
-                if (IsV2 && Transport is OpenALTransport oal)
-                    return _dopplerFactor = oal.GetDopplerFactor();
+                if (IsV2 && ListenerBackend is { } backend)
+                    return _dopplerFactor = backend.GetDopplerFactor();
                 if (IsV2)
                     return _dopplerFactor;
                 return GetDopplerFactor();
             }
             set
             {
-                if (IsV2 && Transport is OpenALTransport oal)
-                    oal.SetDopplerFactor(value);
+                if (IsV2 && ListenerBackend is { } backend)
+                    backend.SetDopplerFactor(value);
                 else if (IsV2)
                     _dopplerFactor = value;
                 else
@@ -355,16 +237,16 @@ namespace XREngine.Audio
         {
             get
             {
-                if (IsV2 && Transport is OpenALTransport oal)
-                    return _speedOfSound = oal.GetSpeedOfSound();
+                if (IsV2 && ListenerBackend is { } backend)
+                    return _speedOfSound = backend.GetSpeedOfSound();
                 if (IsV2)
                     return _speedOfSound;
                 return GetSpeedOfSound();
             }
             set
             {
-                if (IsV2 && Transport is OpenALTransport oal)
-                    oal.SetSpeedOfSound(value);
+                if (IsV2 && ListenerBackend is { } backend)
+                    backend.SetSpeedOfSound(value);
                 else if (IsV2)
                     _speedOfSound = value;
                 else
@@ -387,8 +269,8 @@ namespace XREngine.Audio
         {
             get
             {
-                if (IsV2 && Transport is OpenALTransport oal)
-                    return _position = oal.GetListenerPosition();
+                if (IsV2 && ListenerBackend is { } backend)
+                    return _position = backend.GetListenerPosition();
                 if (IsV2)
                     return _position;
                 return GetPosition();
@@ -406,8 +288,8 @@ namespace XREngine.Audio
         {
             get
             {
-                if (IsV2 && Transport is OpenALTransport oal)
-                    return _velocity = oal.GetListenerVelocity();
+                if (IsV2 && ListenerBackend is { } backend)
+                    return _velocity = backend.GetListenerVelocity();
                 if (IsV2)
                     return _velocity;
                 return GetVelocity();
@@ -426,9 +308,9 @@ namespace XREngine.Audio
         {
             get
             {
-                if (IsV2 && Transport is OpenALTransport oal)
+                if (IsV2 && ListenerBackend is { } backend)
                 {
-                    oal.GetListenerOrientation(out _, out Vector3 up);
+                    backend.GetListenerOrientation(out _, out Vector3 up);
                     _up = up;
                     return up;
                 }
@@ -444,9 +326,9 @@ namespace XREngine.Audio
         {
             get
             {
-                if (IsV2 && Transport is OpenALTransport oal)
+                if (IsV2 && ListenerBackend is { } backend)
                 {
-                    oal.GetListenerOrientation(out Vector3 forward, out _);
+                    backend.GetListenerOrientation(out Vector3 forward, out _);
                     _forward = forward;
                     return forward;
                 }
@@ -512,39 +394,21 @@ namespace XREngine.Audio
         }
 
         private void SetPosition(Vector3 position)
-        {
-            MakeCurrent();
-            Api.SetListenerProperty(ListenerVector3.Position, position);
-            VerifyError();
-        }
+            => LegacyBackend.SetListenerPosition(position);
         private void SetVelocity(Vector3 velocity)
-        {
-            MakeCurrent();
-            Api.SetListenerProperty(ListenerVector3.Velocity, velocity);
-            VerifyError();
-        }
+            => LegacyBackend.SetListenerVelocity(velocity);
 
         private Vector3 GetPosition()
-        {
-            MakeCurrent();
-            Api.GetListenerProperty(ListenerVector3.Position, out Vector3 position);
-            VerifyError();
-            return position;
-        }
+            => LegacyBackend.GetListenerPosition();
         private Vector3 GetVelocity()
-        {
-            MakeCurrent();
-            Api.GetListenerProperty(ListenerVector3.Velocity, out Vector3 velocity);
-            VerifyError();
-            return velocity;
-        }
+            => LegacyBackend.GetListenerVelocity();
 
         /// <summary>
         /// Gets both the forward and up vectors of the listener.
         /// </summary>
         /// <param name="forward"></param>
         /// <param name="up"></param>
-        public unsafe void SetOrientation(Vector3 forward, Vector3 up)
+        public void SetOrientation(Vector3 forward, Vector3 up)
         {
             if (IsV2)
             {
@@ -555,11 +419,7 @@ namespace XREngine.Audio
                 return;
             }
 
-            MakeCurrent();
-            float[] orientation = [forward.X, forward.Y, forward.Z, up.X, up.Y, up.Z];
-            fixed (float* pOrientation = orientation)
-                Api.SetListenerProperty(ListenerFloatArray.Orientation, pOrientation);
-            VerifyError();
+            LegacyBackend.SetListenerOrientation(forward, up);
         }
 
         /// <summary>
@@ -567,13 +427,13 @@ namespace XREngine.Audio
         /// </summary>
         /// <param name="forward"></param>
         /// <param name="up"></param>
-        public unsafe void GetOrientation(out Vector3 forward, out Vector3 up)
+        public void GetOrientation(out Vector3 forward, out Vector3 up)
         {
             if (IsV2)
             {
-                if (Transport is OpenALTransport oal)
+                if (ListenerBackend is { } backend)
                 {
-                    oal.GetListenerOrientation(out forward, out up);
+                    backend.GetListenerOrientation(out forward, out up);
                     _forward = forward;
                     _up = up;
                     return;
@@ -584,94 +444,25 @@ namespace XREngine.Audio
                 return;
             }
 
-            MakeCurrent();
-            float* orientation = stackalloc float[6];
-            Api.GetListenerProperty(ListenerFloatArray.Orientation, orientation);
-            VerifyError();
-            forward = new Vector3(orientation[0], orientation[1], orientation[2]);
-            up = new Vector3(orientation[3], orientation[4], orientation[5]);
+            LegacyBackend.GetListenerOrientation(out forward, out up);
         }
 
         private void SetGain(float gain)
-        {
-            MakeCurrent();
-            Api.SetListenerProperty(ListenerFloat.Gain, gain);
-            VerifyError();
-        }
+            => LegacyBackend.SetListenerGain(gain);
         private float GetGain()
-        {
-            MakeCurrent();
-            Api.GetListenerProperty(ListenerFloat.Gain, out float gain);
-            VerifyError();
-            return gain;
-        }
+            => LegacyBackend.GetListenerGain();
 
         private float GetDopplerFactor()
-        {
-            MakeCurrent();
-            var factor = Api.GetStateProperty(StateFloat.DopplerFactor);
-            VerifyError();
-            return factor;
-        }
+            => LegacyBackend.GetDopplerFactor();
         private float GetSpeedOfSound()
-        {
-            MakeCurrent();
-            var speed = Api.GetStateProperty(StateFloat.SpeedOfSound);
-            VerifyError();
-            return speed;
-        }
-        private Silk.NET.OpenAL.DistanceModel GetDistanceModel()
-        {
-            MakeCurrent();
-            var model = (Silk.NET.OpenAL.DistanceModel)Api.GetStateProperty(StateInteger.DistanceModel);
-            VerifyError();
-            return model;
-        }
+            => LegacyBackend.GetSpeedOfSound();
 
         private void SetDopplerFactor(float factor)
-        {
-            MakeCurrent();
-            Api.DopplerFactor(factor);
-            VerifyError();
-        }
+            => LegacyBackend.SetDopplerFactor(factor);
         private void SetSpeedOfSound(float speed)
+            => LegacyBackend.SetSpeedOfSound(speed);
+        private void UpdateDistanceGainCalculation(EDistanceModel model)
         {
-            MakeCurrent();
-            Api.SpeedOfSound(speed);
-            VerifyError();
-        }
-        private void SetDistanceModel(Silk.NET.OpenAL.DistanceModel model)
-        {
-            MakeCurrent();
-            Api.DistanceModel(model);
-            VerifyError();
-            _calcGainDistModelFunc = model switch
-            {
-                Silk.NET.OpenAL.DistanceModel.InverseDistance => CalcInvDistGain,
-                Silk.NET.OpenAL.DistanceModel.InverseDistanceClamped => CalcInvDistGainClamped,
-                Silk.NET.OpenAL.DistanceModel.LinearDistance => CalcLinearGain,
-                Silk.NET.OpenAL.DistanceModel.LinearDistanceClamped => CalcLinearGainClamped,
-                Silk.NET.OpenAL.DistanceModel.ExponentDistance => CalcExpDistGain,
-                Silk.NET.OpenAL.DistanceModel.ExponentDistanceClamped => CalcExpDistGainClamped,
-                _ => null,
-            };
-        }
-
-        // --- EDistanceModel adapter methods for V2 path ---
-
-        private EDistanceModel GetDistanceModelV2()
-        {
-            if (Transport is OpenALTransport oal)
-                return _distanceModel = (EDistanceModel)(int)oal.GetDistanceModel();
-            return _distanceModel;
-        }
-
-        private void SetDistanceModelV2(EDistanceModel model)
-        {
-            _distanceModel = model;
-            if (Transport is OpenALTransport oal)
-                oal.SetDistanceModel((DistanceModel)(int)model);
-
             _calcGainDistModelFunc = model switch
             {
                 EDistanceModel.InverseDistance => CalcInvDistGain,
@@ -684,11 +475,30 @@ namespace XREngine.Audio
             };
         }
 
+        // --- EDistanceModel adapter methods for V2 path ---
+
+        private EDistanceModel GetDistanceModelV2()
+        {
+            if (ListenerBackend is { } backend)
+                return _distanceModel = backend.GetDistanceModel();
+            return _distanceModel;
+        }
+
+        private void SetDistanceModelV2(EDistanceModel model)
+        {
+            _distanceModel = model;
+            ListenerBackend?.SetDistanceModel(model);
+            UpdateDistanceGainCalculation(model);
+        }
+
         private EDistanceModel GetDistanceModelLegacy()
-            => (EDistanceModel)(int)GetDistanceModel();
+            => LegacyBackend.GetDistanceModel();
 
         private void SetDistanceModelLegacy(EDistanceModel model)
-            => SetDistanceModel((DistanceModel)(int)model);
+        {
+            LegacyBackend.SetDistanceModel(model);
+            UpdateDistanceGainCalculation(model);
+        }
 
         public event Action<ListenerContext>? Disposed;
 
@@ -712,19 +522,10 @@ namespace XREngine.Audio
 
             // Dispose V2 resources
             EffectsProcessor?.Dispose();
-            Transport?.Dispose();
-
-            if (!IsV2)
-            {
-                if (CurrentContext == this)
-                {
-                    Context.MakeContextCurrent((Silk.NET.OpenAL.Context*)null);
-                    CurrentContext = null;
-                }
-
-                Context.DestroyContext(ContextHandle);
-                Context.CloseDevice(DeviceHandle);
-            }
+            Effects?.Dispose();
+            ActiveTransport.Dispose();
+            if (CurrentContext == this)
+                CurrentContext = null;
 
             AudioDiagnostics.RecordListenerDisposed(Name);
             Disposed?.Invoke(this);

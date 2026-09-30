@@ -29,7 +29,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         // but the CPU-side atlas must be built now so NewFrame() doesn't AV.
         var io = ImGui.GetIO();
         io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
-        if (!ImGuiFontAtlasUtilities.TryUseDefaultEditorFont(io, 18.0f))
+        if (!ImGuiFontAtlasUtilities.TryUseDefaultEditorFont((nint)io.NativePtr, 18.0f))
         {
             if (io.Fonts.Fonts.Size == 0)
                 io.Fonts.AddFontDefault();
@@ -47,7 +47,6 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
         VulkanImGuiClipboard.InstallCallbacks();
-        _input.TryAttachInputHandlers();
         _viewports = VulkanImGuiMultiViewportController.TryCreate(outputHost, _context);
         _viewports?.Install();
     }
@@ -72,8 +71,6 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         var io = ImGui.GetIO();
         io.DeltaTime = deltaSeconds > 0f ? deltaSeconds : 1f / 60f;
 
-        _input.TryAttachInputHandlers();
-        _input.PushModifierKeyState(io);
         _input.FlushPendingInputEvents(io);
         _viewports?.PrepareForNewFrame(io);
 

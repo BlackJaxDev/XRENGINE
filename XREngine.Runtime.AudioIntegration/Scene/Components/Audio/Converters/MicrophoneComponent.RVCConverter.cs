@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using System.Globalization;
+using XREngine.Data;
 
 namespace XREngine.Components
 {
@@ -21,7 +22,7 @@ namespace XREngine.Components
             private readonly object _queueLock = new();
             private bool _isProcessing = false;
             private readonly SemaphoreSlim _semaphore = new(1, 1);
-            private Process? _rvcProcess;
+            private CancellationTokenSource? _inferenceCancellation;
             private readonly string _rvcPythonPath;
             private readonly string _rvcScriptPath;
 
@@ -251,23 +252,27 @@ namespace XREngine.Components
 
             private async Task<bool> RunRVCInference(string inputFile, string outputFile)
             {
+                using CancellationTokenSource cancellation = new(TimeSpan.FromSeconds(30));
+                lock (_queueLock)
+                    _inferenceCancellation = cancellation;
                 try
                 {
                     // Build RVC command line arguments
                     var arguments = new List<string>
                     {
+                        "-m", _rvcScriptPath,
                         "infer",
                         "-m", _modelPath,
                         "-i", inputFile,
                         "-o", outputFile,
-                        "-s", _speakerId.ToString(),
-                        "-fu", _f0UpKey.ToString(),
+                        "-s", _speakerId.ToString(CultureInfo.InvariantCulture),
+                        "-fu", _f0UpKey.ToString(CultureInfo.InvariantCulture),
                         "-fm", _f0Method,
-                        "-ir", _indexRate.ToString("F2"),
-                        "-fr", _filterRadius.ToString(),
-                        "-rsr", _resampleSr.ToString(),
-                        "-rmr", _rmsMixRate.ToString("F2"),
-                        "-p", _protect.ToString("F2")
+                        "-ir", _indexRate.ToString("F2", CultureInfo.InvariantCulture),
+                        "-fr", _filterRadius.ToString(CultureInfo.InvariantCulture),
+                        "-rsr", _resampleSr.ToString(CultureInfo.InvariantCulture),
+                        "-rmr", _rmsMixRate.ToString("F2", CultureInfo.InvariantCulture),
+                        "-p", _protect.ToString("F2", CultureInfo.InvariantCulture)
                     };
 
                     // Add optional parameters
@@ -281,44 +286,31 @@ namespace XREngine.Components
                         arguments.AddRange(["-ff", _f0File]);
                     }
 
-                    // Create process start info
-                    var startInfo = new ProcessStartInfo
+                    RuntimeProcessResult result = await RuntimeProcessServices.Require().RunAsync(
+                        new RuntimeProcessRequest(_rvcPythonPath, arguments), cancellation.Token).ConfigureAwait(false);
+                    if (result.ExitCode != 0)
                     {
-                        FileName = _rvcPythonPath,
-                        Arguments = $"-m {_rvcScriptPath} {string.Join(" ", arguments)}",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true
-                    };
-
-                    // Run RVC process
-                    using var process = new Process { StartInfo = startInfo };
-                    process.Start();
-
-                    // Wait for completion with timeout
-                    bool completed = await Task.Run(() => process.WaitForExit(30000)); // 30 second timeout
-
-                    if (!completed)
-                    {
-                        process.Kill();
-                        Debug.Audio("RVC inference timed out");
-                        return false;
-                    }
-
-                    if (process.ExitCode != 0)
-                    {
-                        string error = await process.StandardError.ReadToEndAsync();
-                        Debug.Audio($"RVC inference failed with exit code {process.ExitCode}: {error}");
+                        Debug.Audio($"RVC inference failed with exit code {result.ExitCode}: {result.StandardError}");
                         return false;
                     }
 
                     return true;
                 }
+                catch (OperationCanceledException)
+                {
+                    Debug.Audio("RVC inference cancelled or timed out");
+                    return false;
+                }
                 catch (Exception ex)
                 {
                     Debug.Audio($"RVC inference error: {ex.Message}");
                     return false;
+                }
+                finally
+                {
+                    lock (_queueLock)
+                        if (ReferenceEquals(_inferenceCancellation, cancellation))
+                            _inferenceCancellation = null;
                 }
             }
 
@@ -326,12 +318,7 @@ namespace XREngine.Components
             {
                 try
                 {
-                    using var memoryStream = new MemoryStream();
-                    var waveFormat = new NAudio.Wave.WaveFormat(sampleRate, bitsPerSample, 1);
-                    
-                    using var waveWriter = new NAudio.Wave.WaveFileWriter(filePath, waveFormat);
-                    waveWriter.Write(audioData, 0, audioData.Length);
-                    waveWriter.Flush();
+                    XREngine.Audio.AudioCodecServices.Current.WriteWavPcm(filePath, audioData, bitsPerSample, sampleRate);
                 }
                 catch (Exception ex)
                 {
@@ -343,10 +330,7 @@ namespace XREngine.Components
             {
                 try
                 {
-                    using var waveReader = new NAudio.Wave.WaveFileReader(filePath);
-                    var audioData = new byte[waveReader.Length];
-                    waveReader.ReadExactly(audioData);
-                    return audioData;
+                    return XREngine.Audio.AudioCodecServices.Current.ReadWavPcm(filePath);
                 }
                 catch (Exception ex)
                 {
@@ -398,8 +382,8 @@ namespace XREngine.Components
             {
                 try
                 {
-                    _rvcProcess?.Kill();
-                    _rvcProcess = null;
+                    lock (_queueLock)
+                        _inferenceCancellation?.Cancel();
                 }
                 catch (Exception ex)
                 {
@@ -408,4 +392,4 @@ namespace XREngine.Components
             }
         }
     }
-} 
+}

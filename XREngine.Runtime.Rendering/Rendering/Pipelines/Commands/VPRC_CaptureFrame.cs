@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -208,11 +208,9 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
         if (!string.IsNullOrWhiteSpace(directory))
             Directory.CreateDirectory(directory);
 
-        using MagickImage image = CreateImage(rgbaFloats, width, height);
-        if (FlipVertically)
-            image.Flip();
-
-        image.Write(filePath);
+        using RuntimeImage image = CreateImage(rgbaFloats, width, height,
+            FlipVertically ? RuntimeImageOrigin.BottomLeft : RuntimeImageOrigin.TopLeft);
+        File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(image));
         using (FileStream captureStream = File.OpenRead(filePath))
             metrics.CaptureSha256 = Convert.ToHexString(SHA256.HashData(captureStream));
         metrics.CapturePath = filePath;
@@ -222,7 +220,7 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             JsonSerializer.Serialize(metrics, new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    private static MagickImage CreateImage(float[] rgbaFloats, int width, int height)
+    private static RuntimeImage CreateImage(float[] rgbaFloats, int width, int height, RuntimeImageOrigin origin)
     {
         byte[] rgba8 = new byte[rgbaFloats.Length];
         for (int i = 0; i < rgbaFloats.Length; i++)
@@ -231,12 +229,7 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             rgba8[i] = (byte)MathF.Round(value * 255.0f);
         }
 
-        return new MagickImage(rgba8, new MagickReadSettings
-        {
-            Width = (uint)width,
-            Height = (uint)height,
-            Format = MagickFormat.Rgba,
-            Depth = 8,
-        });
+        return new RuntimeImage((uint)width, (uint)height, XREngine.Data.Rendering.EPixelFormat.Rgba,
+            XREngine.Data.Rendering.EPixelType.UnsignedByte, rgba8, origin: origin);
     }
 }

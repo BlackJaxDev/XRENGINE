@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Net.Sockets;
 using System.Numerics;
 using XREngine.Networking;
 using XREngine.Input;
@@ -97,10 +96,9 @@ namespace XREngine
 
             protected void StartUdpReceiver(int udpPort, IPAddress bindAddress)
             {
-                UdpClient listener = new();
-                UdpSocketOptions.DisableConnectionReset(listener, "server UDP receiver");
-                //listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                listener.Client.Bind(new IPEndPoint(bindAddress, udpPort));
+                IDatagramTransport listener = NetworkTransportServices.Required.CreateDatagram("server UDP receiver");
+                //listener.ReuseAddress = true;
+                listener.Bind(new IPEndPoint(bindAddress, udpPort));
                 UdpReceiver = listener;
                 UdpMulticastSender = listener;
             }

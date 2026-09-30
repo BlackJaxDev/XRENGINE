@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using XREngine.Input;
@@ -308,7 +307,7 @@ public partial class ClientNetworkingManager
         byte[] envelope = ManagedUdpEnvelope.Create(new ManagedUdpEnvelopeHeader(kind, ManagedUdpDirection.ClientToServer,
             _managedIdentity.SessionId, _managedIdentity.Generation, associationId, _managedIdentity.CredentialEpoch, 0), payload, key);
         try { UdpSender.Send(envelope, envelope.Length, ServerIP); }
-        catch (SocketException) { }
+        catch (NetworkTransportException) { }
         finally { CryptographicOperations.ZeroMemory(envelope); }
         _managedLastHandshakeSendUtc = DateTime.UtcNow;
     }

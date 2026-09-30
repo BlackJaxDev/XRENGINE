@@ -8,6 +8,8 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        Runtime.Imaging.Magick.MagickImagingBackend.Register();
+        Rendering.Meshlets.MeshOptimizerBackend.Register();
         RenderBenchOptions options;
         try
         {

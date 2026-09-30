@@ -1,13 +1,12 @@
-using Silk.NET.Maths;
-using Silk.NET.Windowing;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Management;
+using XREngine.Data.Profiling;
 using System.Threading;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
+using XREngine.Data.Vectors;
 
 namespace XREngine
 {
@@ -25,6 +24,8 @@ namespace XREngine
                 private CancellationTokenSource? _cts;
                 private Thread? _thread;
                 private XRWindow? _headlessWindow;
+                private XRWindow? _templateWindow;
+                private int _releaseStarted;
                 private AbstractRenderer? _renderer;
 
                 public bool IsRunning => _thread is not null && _thread.IsAlive;
@@ -38,31 +39,52 @@ namespace XREngine
                     if (!RuntimeEngine.Rendering.Settings.EnableSecondaryGpuCompute)
                         return;
 
-                    bool streamlinePresentationRequested =
-                        RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
-                        || RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa
-                    || VendorUpscaleRuntime.IsDlssFrameGenerationRequested;
                     IRuntimeRendererHost? templateRenderer = templateWindow.Renderer;
-                    bool streamlineFrameGenerationProvisioned =
-                        templateRenderer is not null &&
-                        templateRenderer.TryGetBackendCapability(
-                            out IStreamlinePresentationBackendCapability? streamlineCapability) &&
-                        streamlineCapability is not null &&
-                        streamlineCapability.StreamlineFrameGenerationProvisioned;
-                    if (templateRenderer?.BackendId == RendererBackendId.Vulkan &&
-                        (streamlinePresentationRequested || streamlineFrameGenerationProvisioned))
+                    if (templateRenderer?.BackendId == RendererBackendId.Vulkan)
                     {
                         XREngine.Debug.RenderingWarning(
-                            "Secondary Vulkan GPU compute is disabled while NVIDIA DLSS/DLAA/DLSS-G is active or provisioned. " +
-                            "Streamline and presentation resources are process-global; secondary jobs will use the main renderer fallback.");
+                            "Secondary Vulkan GPU context is unavailable: its separate device and surface " +
+                            "ownership has not been established for the desktop window backend.");
                         return;
                     }
 
                     if (!HasMultipleGpus() && !RuntimeEngine.Rendering.Settings.AllowSecondaryContextSharingFallback)
                         return;
 
+                    if (templateWindow.DesktopGlContext is null)
+                    {
+                        XREngine.Debug.RenderingWarning(
+                            "Secondary GPU context requires a desktop OpenGL context with explicit owner transfer.");
+                        return;
+                    }
+
+                    if (Environment.CurrentManagedThreadId != templateWindow.NativeWindowThreadId)
+                    {
+                        XREngine.Debug.RenderingWarning(
+                            "Secondary GPU context creation must run on the native window owner thread.");
+                        return;
+                    }
+
+                    Interlocked.Exchange(ref _releaseStarted, 0);
                     _cts = new CancellationTokenSource();
-                    _thread = new Thread(() => RunContext(templateWindow, _cts.Token))
+                    _templateWindow = templateWindow;
+                    try
+                    {
+                        CreateHeadlessWindow(templateWindow);
+                    }
+                    catch (Exception ex)
+                    {
+                        XREngine.Debug.RenderingWarning($"Secondary GPU context creation failed: {ex.Message}");
+                        _headlessWindow?.Dispose();
+                        _headlessWindow = null;
+                        _templateWindow = null;
+                        _cts.Dispose();
+                        _cts = null;
+                        return;
+                    }
+
+                    CancellationToken token = _cts.Token;
+                    _thread = new Thread(() => RunContext(token))
                     {
                         IsBackground = true,
                         Name = "XR Secondary Render Context"
@@ -103,36 +125,30 @@ namespace XREngine
                         _cts?.Cancel();
                         _jobSignal.Set();
                         _thread?.Join(TimeSpan.FromSeconds(1));
-                        _cts?.Dispose();
                     }
                     catch
                     {
                         // ignored - best effort shutdown
                     }
 
-                    try
-                    {
-                        _headlessWindow?.Renderer.CleanUp();
-                        _headlessWindow?.Window.Dispose();
-                    }
-                    catch
-                    {
-                    }
+                    if (_thread is { IsAlive: true })
+                        return;
 
-                    _headlessWindow = null;
-                    _renderer = null;
-                    _thread = null;
-                    _cts = null;
+                    ReleaseStoppedResources();
                 }
 
-                private void RunContext(XRWindow templateWindow, CancellationToken token)
+                private void RunContext(CancellationToken token)
                 {
                     try
                     {
-                        CreateHeadlessWindow(templateWindow);
                         var renderer = _renderer;
                         if (renderer is null || _headlessWindow is null)
                             return;
+
+                        IRuntimeWindowGlContext context = _headlessWindow.DesktopGlContext
+                            ?? throw new InvalidOperationException("Secondary GPU window lost its GL context.");
+                        context.MakeCurrent();
+                        renderer.Initialize();
 
                         while (!token.IsCancellationRequested)
                         {
@@ -144,8 +160,6 @@ namespace XREngine
 
                             try
                             {
-                                _headlessWindow.Window.DoEvents();
-                                _headlessWindow.Window.MakeCurrent();
                                 renderer.Active = true;
                                 AbstractRenderer.Current = renderer;
                                 job(renderer);
@@ -161,60 +175,84 @@ namespace XREngine
                     {
                         XREngine.Debug.RenderingWarning($"Secondary render context terminated: {ex.Message}\n{ex.StackTrace}");
                     }
+                    finally
+                    {
+                        try
+                        {
+                            _renderer?.CleanUp();
+                            _headlessWindow?.DesktopGlContext?.ClearCurrent();
+                        }
+                        catch (Exception ex)
+                        {
+                            _renderer?.AbandonShutdownTeardown();
+                            XREngine.Debug.RenderingWarning($"Secondary GPU context teardown was abandoned: {ex.Message}");
+                        }
+
+                        ReleaseStoppedResources();
+                    }
                 }
 
                 private void CreateHeadlessWindow(XRWindow templateWindow)
                 {
-                    var options = WindowOptions.Default;
-                    options.Size = new Vector2D<int>(Math.Max(64, templateWindow.Window.Size.X / 8), Math.Max(64, templateWindow.Window.Size.Y / 8));
-                    options.Title = "XR Secondary GPU Context";
-                    options.API = templateWindow.Window.API;
-                    options.IsVisible = false;
-
-                    if (RuntimeEngine.Rendering.Settings.AllowSecondaryContextSharingFallback)
+                    var size = templateWindow.WindowSizeSnapshot;
+                    int width = Math.Max(64, size.X / 8);
+                    int height = Math.Max(64, size.Y / 8);
+                    var startup = WindowStartupValues.Default with
                     {
-                        var primaryCtx = templateWindow.Window.GLContext;
-                        if (primaryCtx is not null)
-                        {
-                            options.SharedContext = primaryCtx;
-                            XREngine.Debug.Rendering("Secondary context sharing enabled via Silk.NET SharedContext.");
-                        }
-                        else
-                        {
-                            XREngine.Debug.RenderingWarning("Secondary context sharing fallback requested, but primary window has no GL context.");
-                        }
-                    }
+                        Title = "XR Secondary GPU Context",
+                        Width = width,
+                        Height = height,
+                    };
+                    var request = new RuntimeWindowCreateOptions(
+                        startup,
+                        RuntimeGraphicsApiKind.OpenGL,
+                        EInteractiveWindowResizeStrategy.Default,
+                        RuntimeWindowPurpose.SecondaryGpuContext,
+                        IVector2.Zero,
+                        new IVector2(width, height),
+                        false, false, false, false, false,
+                        32, 24, 8, 4, 6, false, false, false,
+                        RuntimeEngine.Rendering.Settings.AllowSecondaryContextSharingFallback
+                            ? templateWindow.DesktopGlContext
+                            : null);
 
-                    var window = new XRWindow(
-                        options,
-                        templateWindow.UseNativeTitleBar,
-                        windowVSyncRequested: false,
-                        isSecondaryGpuContext: true);
+                    var window = new XRWindow(request);
                     _headlessWindow = window;
-                    window.Renderer.Initialize();
                     _renderer = window.Renderer;
+                    window.DesktopGlContext?.ClearCurrent();
+                    templateWindow.DesktopGlContext?.MakeCurrent();
+                }
+
+                private void ReleaseStoppedResources()
+                {
+                    if (Interlocked.Exchange(ref _releaseStarted, 1) != 0)
+                        return;
+
+                    XRWindow? headless = _headlessWindow;
+                    XRWindow? template = _templateWindow;
+                    if (headless is not null && template is not null)
+                        RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
+                            template,
+                            headless.Dispose,
+                            "SecondaryGpuContext.DestroyNativeWindow");
+
+                    _cts?.Dispose();
+                    _headlessWindow = null;
+                    _templateWindow = null;
+                    _renderer = null;
+                    _thread = null;
+                    _cts = null;
                 }
 
                 private static bool HasMultipleGpus()
                 {
-                    try
-                    {
-                        if (!OperatingSystem.IsWindows())
-                            return false;
-
-                        const string gpuQuery = "select Name from Win32_VideoController where Status='OK'";
-                        using var searcher = new ManagementObjectSearcher(gpuQuery);
-                        using var results = searcher.Get();
-                        int count = 0;
-                        foreach (var _ in results)
-                            count++;
-                        return count > 1;
-                    }
-                    catch (Exception ex)
-                    {
-                        XREngine.Debug.RenderingWarning($"Unable to query GPU inventory: {ex.Message}");
+                    IHardwareInventory? inventory = HardwareInventoryServices.Current;
+                    if (inventory is null)
                         return false;
-                    }
+                    if (inventory.TryGetActiveGpuCount(out int count, out string? diagnostic))
+                        return count > 1;
+                    XREngine.Debug.RenderingWarning($"Unable to query GPU inventory: {diagnostic}");
+                    return false;
                 }
             }
 

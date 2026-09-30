@@ -5,9 +5,9 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using ImageMagick;
 using XREngine;
 using XREngine.Data.Rendering;
+using XREngine.Imaging;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
@@ -296,11 +296,8 @@ internal static class RenderBenchScenarioLane
             ReadCount(scene.Host, in receipt, lateCountBuffer, "late-after-color", buffers, routes) != (uint)late.Length)
             throw new InvalidOperationException("The production receipt's buffer authority changed after color readback.");
         string imagePath = Path.Combine(options.OutputDirectory, $"frame-{step:D3}.png");
-        using (MagickImage image = new(rgba, new MagickReadSettings
-        {
-            Width = options.Width, Height = options.Height, Format = MagickFormat.Rgba, Depth = 8,
-        }))
-            image.Write(imagePath, MagickFormat.Png);
+        using (RuntimeImage image = new(options.Width, options.Height, RuntimePixelFormat.Rgba8, rgba))
+            File.WriteAllBytes(imagePath, RuntimeImageCodecs.Require().EncodePng(image));
         int[] visible = DecodeCandidateIds(rgba);
         (int maskedBorderPixels, int maskedHoleAdjacentTargetPixels) =
             MeasureMaskedCoveragePixels(rgba, options.Width, options.Height);

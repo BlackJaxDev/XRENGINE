@@ -1,5 +1,4 @@
-using ImageMagick;
-using ImageMagick.Drawing;
+using XREngine.Imaging;
 using MemoryPack;
 using System;
 using System.Collections;
@@ -91,7 +90,7 @@ namespace XREngine.Rendering
             try
             {
                 byte[] fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(filePath);
-                using var sourceImage = new MagickImage(fileBytes);
+                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes);
                 // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
                 Mipmaps = [new Mipmap2D(sourceImage)];
                 SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
@@ -129,7 +128,7 @@ namespace XREngine.Rendering
         {
             try
             {
-                using var sourceImage = new MagickImage(fileData);
+                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileData);
                 // Only upload the base mip; the GPU generates the rest via glGenerateMipmap.
                 Mipmaps = [new Mipmap2D(sourceImage)];
                 SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
@@ -872,7 +871,7 @@ namespace XREngine.Rendering
         {
             RuntimeRenderingHostServices.Diagnostics.RecordMissingAsset(filePath, nameof(XRTexture2D), $"{nameof(XRTexture2D)}.{nameof(Load3rdParty)}");
 
-            using MagickImage filler = (MagickImage)FillerImage.Clone();
+            using RuntimeImage filler = FillerImage;
             Mipmaps = [new Mipmap2D(filler)];
             SizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
             AutoGenerateMipmaps = true;
@@ -1003,14 +1002,14 @@ namespace XREngine.Rendering
         {
             try
             {
-                using MagickImage previewImage = new(filePath);
-                ResizePreviewIfNeeded(previewImage, maxPreviewSize);
+                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(filePath));
+                using RuntimeImage previewImage = ResizePreviewIfNeeded(sourceImage, maxPreviewSize);
                 target.Mipmaps = [new Mipmap2D(previewImage)];
                 target.AutoGenerateMipmaps = false;
                 target.Resizable = true;
                 target.SizedInternalFormat = DeriveESizedInternalFormat(target.Mipmaps[0].InternalFormat);
             }
-            catch (MagickException ex)
+            catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or NotSupportedException)
             {
                 Debug.TexturesWarning($"Failed to load preview image '{filePath}': {ex.Message}. Using placeholder preview instead.");
                 AssignPlaceholderPreview(target);
@@ -1067,12 +1066,12 @@ namespace XREngine.Rendering
 
             try
             {
-                using MagickImage baseImage = baseMipmap.GetImage();
-                ResizePreviewIfNeeded(baseImage, maxPreviewSize);
-                target.Mipmaps = [new Mipmap2D(baseImage)];
+                using RuntimeImage baseImage = baseMipmap.GetImage();
+                using RuntimeImage previewImage = ResizePreviewIfNeeded(baseImage, maxPreviewSize);
+                target.Mipmaps = [new Mipmap2D(previewImage)];
                 return true;
             }
-            catch (MagickException)
+            catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or NotSupportedException)
             {
                 return false;
             }
@@ -1101,7 +1100,7 @@ namespace XREngine.Rendering
 
         private static void AssignPlaceholderPreview(XRTexture2D target)
         {
-            using MagickImage filler = (MagickImage)FillerImage.Clone();
+            using RuntimeImage filler = FillerImage;
             target.Mipmaps = [new Mipmap2D(filler)];
             target.AutoGenerateMipmaps = false;
             target.Resizable = true;
@@ -1127,26 +1126,29 @@ namespace XREngine.Rendering
 
         private static bool IsTextureAssetLoadFailure(Exception ex)
             => ex is YamlException
-                or MagickException
+                or InvalidDataException
                 or InvalidOperationException
                 or IOException
                 or UnauthorizedAccessException;
 
-        private static void ResizePreviewIfNeeded(MagickImage previewImage, uint maxPreviewSize)
+        private static RuntimeImage ResizePreviewIfNeeded(RuntimeImage previewImage, uint maxPreviewSize)
         {
-            if (previewImage is null || maxPreviewSize == 0)
-                return;
+            ArgumentNullException.ThrowIfNull(previewImage);
+            if (maxPreviewSize == 0)
+                return new RuntimeImage(previewImage.Width, previewImage.Height, previewImage.Format, previewImage.Type,
+                    previewImage.Pixels.ToArray(), previewImage.RowStrideBytes, previewImage.Origin);
 
             uint width = previewImage.Width;
             uint height = previewImage.Height;
             uint largest = Math.Max(width, height);
             if (largest == 0 || largest <= maxPreviewSize)
-                return;
+                return new RuntimeImage(previewImage.Width, previewImage.Height, previewImage.Format, previewImage.Type,
+                    previewImage.Pixels.ToArray(), previewImage.RowStrideBytes, previewImage.Origin);
 
             double scale = maxPreviewSize / (double)largest;
             uint scaledWidth = Math.Max(1u, (uint)Math.Round(width * scale));
             uint scaledHeight = Math.Max(1u, (uint)Math.Round(height * scale));
-            previewImage.Resize(scaledWidth, scaledHeight);
+            return RuntimeImageCodecs.Require().Resize(previewImage, scaledWidth, scaledHeight, RuntimeImageResizeMode.Standard);
         }
 
         /// <summary>
@@ -1158,38 +1160,47 @@ namespace XREngine.Rendering
         /// <see cref="XRTexture.AutoGenerateMipmaps"/> to <c>true</c> and let the GPU generate mipmaps.
         /// </para>
         /// </summary>
-        public static Mipmap2D[] GetMipmapsFromImage(MagickImage image)
+        public static Mipmap2D[] GetMipmapsFromImage(RuntimeImage image)
         {
+            ArgumentNullException.ThrowIfNull(image);
             int mipCount = Math.Max(1, GetSmallestMipmapLevel(image.Width, image.Height) + 1);
             Mipmap2D[] mips = new Mipmap2D[mipCount];
             mips[0] = new Mipmap2D(image);
-            using MagickImage workingImage = (MagickImage)image.Clone();
-            for (int i = 1; i < mips.Length; ++i)
+            RuntimeImage workingImage = image;
+            try
             {
-                uint mipWidth = Math.Max(1u, image.Width >> i);
-                uint mipHeight = Math.Max(1u, image.Height >> i);
-                workingImage.Resize(mipWidth, mipHeight);
-                mips[i] = new Mipmap2D(workingImage);
+                for (int i = 1; i < mips.Length; ++i)
+                {
+                    uint mipWidth = Math.Max(1u, image.Width >> i);
+                    uint mipHeight = Math.Max(1u, image.Height >> i);
+                    RuntimeImage resized = RuntimeImageCodecs.Require().Resize(workingImage, mipWidth, mipHeight, RuntimeImageResizeMode.Standard);
+                    if (!ReferenceEquals(workingImage, image))
+                        workingImage.Dispose();
+                    workingImage = resized;
+                    mips[i] = new Mipmap2D(workingImage);
+                }
+            }
+            finally
+            {
+                if (!ReferenceEquals(workingImage, image))
+                    workingImage.Dispose();
             }
             return mips;
         }
 
-        private static MagickImage? _fillerImage = null;
-        public static MagickImage FillerImage => _fillerImage ??= GetFillerBitmap();
+        public static RuntimeImage FillerImage => GetFillerBitmap();
 
-        private static MagickImage? _normalMapFillerImage = null;
         /// <summary>
         /// A flat tangent-space "no perturbation" filler: RGB = (128, 128, 255) → (0, 0, 1) in tangent space.
         /// Use this for textures that will be sampled as normal maps to avoid the black-fallback
         /// inversion bug where (0,0,0)*2-1 = (-1,-1,-1) produces an inverted normal and zeroes all lighting.
         /// </summary>
-        public static MagickImage NormalMapFillerImage => _normalMapFillerImage ??= GetNormalMapFillerBitmap();
+        public static RuntimeImage NormalMapFillerImage => GetNormalMapFillerBitmap();
 
-        private static MagickImage GetNormalMapFillerBitmap()
+        private static RuntimeImage GetNormalMapFillerBitmap()
         {
-            // Flat tangent-space normal: (0.5, 0.5, 1.0) in [0,1] = (0, 0, 1) in [-1,1]
-            var flatNormal = new MagickColor(128 * 257, 128 * 257, 255 * 257); // MagickColor uses 16-bit channels
-            return new MagickImage(flatNormal, 1, 1);
+            return new RuntimeImage(1, 1, EPixelFormat.Rgba, EPixelType.UnsignedByte,
+                new byte[] { 128, 128, 255, 255 });
         }
 
         private static XRTexture2D? _fallbackAlbedoTexture;
@@ -1227,24 +1238,28 @@ namespace XREngine.Rendering
             return texture;
         }
 
-        private static MagickImage GetFillerBitmap()
+        private static RuntimeImage GetFillerBitmap()
         {
             string? path = RuntimeRenderingHostServices.Assets.TextureFallbackPath;
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                return new MagickImage(path);
-            else
-            {
-                const int squareExtent = 4;
-                const int dim = squareExtent * 2;
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && RuntimeImageCodecs.Current is { } codec)
+                return codec.Decode(File.ReadAllBytes(path));
 
-                // Create a checkerboard pattern image without using bitmap
-                MagickImage img = new(MagickColors.Blue, dim, dim);
-                img.Draw(new Drawables()
-                    .FillColor(MagickColors.Red)
-                    .Rectangle(0, 0, squareExtent, squareExtent)
-                    .Rectangle(squareExtent, squareExtent, dim, dim));
-                return img;
+            const int squareExtent = 4;
+            const int dim = squareExtent * 2;
+            byte[] pixels = new byte[dim * dim * 4];
+            for (int y = 0; y < dim; y++)
+            {
+                for (int x = 0; x < dim; x++)
+                {
+                    bool red = (x < squareExtent) == (y < squareExtent);
+                    int offset = (y * dim + x) * 4;
+                    pixels[offset] = red ? (byte)255 : (byte)0;
+                    pixels[offset + 1] = 0;
+                    pixels[offset + 2] = red ? (byte)0 : (byte)255;
+                    pixels[offset + 3] = 255;
+                }
             }
+            return new RuntimeImage(dim, dim, EPixelFormat.Rgba, EPixelType.UnsignedByte, pixels);
         }
 
         /// <summary>
@@ -1434,7 +1449,7 @@ namespace XREngine.Rendering
                     path = path[7..];
                 try
                 {
-                    using MagickImage image = new(path);
+                    using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(path));
                     mips.Add(new Mipmap2D(image));
                 }
                 catch (Exception e)
@@ -1464,12 +1479,12 @@ namespace XREngine.Rendering
                 Data = allocateData ? new DataSource(AllocateBytes(width, height, format, type)) : null
             }];
         }
-        public XRTexture2D(uint width, uint height, params MagickImage?[] mipmaps)
+        public XRTexture2D(uint width, uint height, params RuntimeImage?[] mipmaps)
         {
             Mipmap2D[] mips = new Mipmap2D[mipmaps.Length];
             for (int i = 0; i < mipmaps.Length; ++i)
             {
-                MagickImage? image = mipmaps[i];
+                RuntimeImage? image = mipmaps[i];
                 uint mipWidth = Math.Max(1u, width >> i);
                 uint mipHeight = Math.Max(1u, height >> i);
                 if (image is null || image.Width == mipWidth && image.Height == mipHeight)
@@ -1478,8 +1493,7 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                using MagickImage resizedImage = (MagickImage)image.Clone();
-                resizedImage.Resize(mipWidth, mipHeight);
+                using RuntimeImage resizedImage = RuntimeImageCodecs.Require().Resize(image, mipWidth, mipHeight, RuntimeImageResizeMode.Standard);
                 mips[i] = new Mipmap2D(resizedImage);
             }
             Mipmaps = mips;
@@ -1488,7 +1502,7 @@ namespace XREngine.Rendering
             if (Mipmaps.Length > 0)
                 _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
         }
-        public XRTexture2D(MagickImage? image)
+        public XRTexture2D(RuntimeImage? image)
         {
             Mipmaps = [new Mipmap2D(image)];
             // Derive the sized format from the mipmap's internal format so that

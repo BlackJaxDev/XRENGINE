@@ -1,5 +1,5 @@
 using System.Security.Cryptography;
-using ImageMagick;
+using XREngine.Imaging;
 
 namespace XREngine.Editor.Mcp;
 
@@ -24,10 +24,10 @@ internal static class ViewportSequenceCaptureImageAnalyzer
 
             frame.ContentSha256 = ComputeSha256(frame.Path);
 
-            using MagickImage image = new(frame.Path);
-            image.Depth = 8;
-            image.Resize(AnalysisWidth, AnalysisHeight);
-            byte[] pixels = image.ToByteArray(MagickFormat.Rgba);
+            IRuntimeImageCodec codec = RuntimeImageCodecs.Require();
+            using RuntimeImage image = codec.Decode(File.ReadAllBytes(frame.Path));
+            using RuntimeImage resized = codec.Resize(image, AnalysisWidth, AnalysisHeight, RuntimeImageResizeMode.Standard);
+            byte[] pixels = resized.CopyRgba8Pixels();
 
             PopulateImageStatistics(frame, pixels);
             if (previousPixels is not null && previousPixels.Length == pixels.Length)

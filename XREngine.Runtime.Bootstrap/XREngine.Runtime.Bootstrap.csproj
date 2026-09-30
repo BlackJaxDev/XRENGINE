@@ -24,7 +24,7 @@
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
-    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Data\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Animation\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AnimationIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AudioIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
+    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Data\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Animation\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AnimationIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AudioIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.ModelAssetPipeline\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.ModelingIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.UI.Skia\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.UI.Rive\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Audio.Audio2Face\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Audio.SteamAudio\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Physics.PhysX\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Net.Osc\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Net.Sockets\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
   </ItemGroup>
 
   <Target Name="InvalidateMissingAotFactoryRegistrationOutput" BeforeTargets="GenerateAotFactoryRegistrations" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">
@@ -38,6 +38,21 @@
   </Target>
 
   <ItemGroup>
+    <ProjectReference Include="..\XREngine.Audio.OpenAL\XREngine.Audio.OpenAL.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.OVRLipSync\XREngine.Audio.OVRLipSync.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.UI.Ultralight\XREngine.Runtime.UI.Ultralight.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Imaging.Magick\XREngine.Runtime.Imaging.Magick.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Text.FreeType\XREngine.Runtime.Text.FreeType.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Platform.Desktop\XREngine.Runtime.Platform.Desktop.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Net.Sockets\XREngine.Runtime.Net.Sockets.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Net.Osc\XREngine.Runtime.Net.Osc.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.MeshProcessing.Meshoptimizer\XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.XR.OpenVR\XREngine.Runtime.XR.OpenVR.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.XR.OpenXR\XREngine.Runtime.XR.OpenXR.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Media.FFmpeg\XREngine.Runtime.Media.FFmpeg.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.UI.Skia\XREngine.Runtime.UI.Skia.csproj" />
     <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
 
@@ -64,12 +79,19 @@
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.NAudio\XREngine.Audio.NAudio.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />
+    <ProjectReference Include="..\XREngine.Input.XInput\XREngine.Input.XInput.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.IO.DirectStorage\XREngine.Runtime.IO.DirectStorage.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Diagnostics.Desktop\XREngine.Runtime.Diagnostics.Desktop.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.Jolt\XREngine.Runtime.Physics.Jolt.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.PhysX\XREngine.Runtime.Physics.PhysX.csproj" />
     <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" Condition="'$(XREngineIncludeOpenGlBackend)' == 'true'" />
@@ -83,7 +105,6 @@
   </Target>
 
   <ItemGroup>
-    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
   </ItemGroup>
 
 </Project>

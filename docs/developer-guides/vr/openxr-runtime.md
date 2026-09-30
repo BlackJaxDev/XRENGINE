@@ -2,6 +2,8 @@
 
 XREngine includes an OpenXR runtime path alongside the older OpenVR path. OpenVR remains the currently tested day-to-day VR path, while OpenXR is implemented for engine integration, validation, and runtime portability work.
 
+The native API is owned by `XREngine.Runtime.XR.OpenXR`. Rendering and Bootstrap depend on `IOpenXrRuntime`, graphics-host contracts, and explicit backend registration; OpenGL and Vulkan keep their native graphics bindings in their renderer projects. This source organization has not itself qualified a headset/runtime combination.
+
 This feature doc promotes the implemented reference review from `docs/work/design/VR/openxr-implementation-comparison.md`.
 
 ## Startup Behavior
@@ -170,7 +172,7 @@ The OpenXR OpenGL path avoids forced WGL context switching from arbitrary thread
 Per-eye rendering uses:
 
 - acquire/wait/release discipline,
-- release in `finally` paths,
+- release after a successful image wait, including failure cleanup when release is legal,
 - GL flush before release,
 - viewport/scissor/mask sanitation,
 - and state restoration to avoid contaminating desktop rendering.
@@ -191,18 +193,21 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 
 - `XREngine.Input/RuntimeVrInputServices.cs`
 - `XREngine.Input/RuntimeVrStateServices.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RenderModels.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.FrameLifecycle.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.XrCalls.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.RenderModels.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs`
 - `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Pacing.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/IOpenXrRuntime.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/IOpenXrGraphicsHost.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.Pacing.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.RuntimeStateMachine.cs`
 - `XREngine.Runtime.Rendering/Runtime/RuntimeVrRenderingServices.cs`
-- `XREngine/Engine/Engine.VRState.cs`
-- `XREngine/Engine/Engine.RuntimeVrStateServices.cs`
-- `XREngine/Engine/Engine.RuntimeVrRenderingServices.cs`
+- `XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs`
+- `XREngine.Runtime.Bootstrap/SubsystemHost/Engine.RuntimeVrStateServices.cs`
+- `XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeVrRenderingServices.cs`
 - `XREngine.Runtime.Rendering/Rendering/Camera/XROpenXRFovCameraParameters.cs`
 - `XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs`
 - `XREngine.Runtime.InputIntegration/Scene/Components/VR/VRDeviceModelComponent.cs`

@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using MemoryPack;
 using System.Diagnostics;
 using System.IO;
@@ -261,12 +261,12 @@ public partial class XRTexture2D
                 residentMaxDimension);
         }
 
-        using MagickImage filler = (MagickImage)FillerImage.Clone();
+        using RuntimeImage filler = FillerImage;
         return BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
     }
 
     internal static TextureStreamingResidentData BuildResidentDataFromImage(
-        MagickImage image,
+        RuntimeImage image,
         uint maxResidentDimension,
         bool includeMipChain,
         string? timingLabel = null,
@@ -278,19 +278,20 @@ public partial class XRTexture2D
 
         cancellationToken.ThrowIfCancellationRequested();
         long cloneStartTimestamp = StartImportedTextureTiming();
-        using MagickImage residentImage = (MagickImage)image.Clone();
+        using RuntimeImage residentImage = new(image.Width, image.Height, image.Format, image.Type,
+            image.Pixels.ToArray(), image.RowStrideBytes, image.Origin);
         double cloneMilliseconds = CompleteImportedTextureTiming(cloneStartTimestamp);
 
         cancellationToken.ThrowIfCancellationRequested();
         long resizeStartTimestamp = StartImportedTextureTiming();
-        ResizePreviewIfNeeded(residentImage, Math.Max(1u, maxResidentDimension));
+        using RuntimeImage resizedImage = ResizePreviewIfNeeded(residentImage, Math.Max(1u, maxResidentDimension));
         double resizeMilliseconds = CompleteImportedTextureTiming(resizeStartTimestamp);
 
         cancellationToken.ThrowIfCancellationRequested();
         long mipBuildStartTimestamp = StartImportedTextureTiming();
         Mipmap2D[] mipmaps = includeMipChain
-            ? GetMipmapsFromImage(residentImage)
-            : [new Mipmap2D(residentImage)];
+            ? GetMipmapsFromImage(resizedImage)
+            : [new Mipmap2D(resizedImage)];
         double mipBuildMilliseconds = CompleteImportedTextureTiming(mipBuildStartTimestamp);
 
         cancellationToken.ThrowIfCancellationRequested();

@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Net.Security;
 
 namespace XREngine.Networking;
 
@@ -7,9 +6,9 @@ namespace XREngine.Networking;
 internal static class RealtimeTlsFraming
 {
     internal const int MaximumDatagramBytes = 65_507;
-    internal static readonly SslApplicationProtocol Protocol = new("xrengine-realtime/1");
+    internal const string ProtocolName = "xrengine-realtime/1";
 
-    internal static async ValueTask<int> ReadAsync(SslStream stream, Memory<byte> buffer, CancellationToken cancellationToken)
+    internal static async ValueTask<int> ReadAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
     {
         await stream.ReadExactlyAsync(buffer[..4], cancellationToken).ConfigureAwait(false);
         uint length = BinaryPrimitives.ReadUInt32BigEndian(buffer.Span);
@@ -19,7 +18,7 @@ internal static class RealtimeTlsFraming
         return (int)length;
     }
 
-    internal static async ValueTask WriteAsync(SslStream stream, ReadOnlyMemory<byte> datagram, Memory<byte> frame, CancellationToken cancellationToken)
+    internal static async ValueTask WriteAsync(Stream stream, ReadOnlyMemory<byte> datagram, Memory<byte> frame, CancellationToken cancellationToken)
     {
         if (datagram.Length is 0 or > MaximumDatagramBytes)
             throw new InvalidDataException("Invalid encrypted realtime datagram length.");

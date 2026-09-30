@@ -27,14 +27,14 @@ This document describes how the OpenGL 4.6 renderer is initialized, how it manag
 
 ## Overview
 
-`OpenGLRenderer` is a partial class that extends `AbstractRenderer<GL>` (where `GL` is Silk.NET's OpenGL 4.6 binding). It obtains an OpenGL context from the Silk.NET window's `GLContext` and wraps all engine render objects with GL-specific API wrappers.
+`OpenGLRenderer` is a partial class that extends `AbstractRenderer<GL>` (where `GL` is Silk.NET's OpenGL 4.6 binding). It borrows the desktop GL context through `XRWindow.DesktopGlContext` and wraps engine render objects with GL-specific API wrappers.
 
 ```csharp
 // XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs
 public partial class OpenGLRenderer : AbstractRenderer<GL>
 ```
 
-A key design decision: **OpenGL's `WindowRenderCallback` is empty**. Unlike Vulkan, which requires explicit acquire/submit/present, Silk.NET handles `SwapBuffers` automatically for OpenGL after the render event returns. All actual rendering happens through the viewport pipeline system invoked by `XRWindow.RenderCallback`.
+A key design decision: **OpenGL's `WindowRenderCallback` is empty**. Unlike Vulkan, which requires explicit acquire/submit/present, the installed desktop backend automatically swaps OpenGL buffers after its render callback returns. All actual rendering happens through the viewport pipeline system invoked by `XRWindow.RenderCallback`.
 
 ---
 
@@ -99,13 +99,15 @@ All OpenGL initialization happens in the constructor, triggered by the lazy `Api
 ```csharp
 protected override GL GetAPI()
 {
-    var api = GL.GetApi(Window.GLContext);
+    IRuntimeWindowGlContext desktopGl = XRWindow.DesktopGlContext
+        ?? throw new InvalidOperationException("OpenGL rendering requires a desktop GL context service.");
+    var api = GL.GetApi(desktopGl.GetProcAddress);
     InitGL(api);
     return api;
 }
 ```
 
-`GL.GetApi(Window.GLContext)` obtains the OpenGL 4.6 function pointers from the Silk.NET window's GL context. Then `InitGL()` performs all one-time setup:
+`GL.GetApi(desktopGl.GetProcAddress)` obtains OpenGL 4.6 function pointers through the borrowed, thread-affine desktop context service. Then `InitGL()` performs all one-time setup:
 
 ```csharp
 private static void InitGL(GL api)
@@ -215,8 +217,8 @@ OpenGL rendering follows this per-frame flow:
 ```
 Engine Timer fires RenderFrame
   └─ XRWindow.RenderFrame()
-       ├─ Window.DoEvents()                    // Process OS window events (input, resize, etc.)
-       └─ Window.DoRender()                    // Silk.NET fires the Render event
+       ├─ ConsumeLatestWindowSurfaceSnapshotForRenderFrame()
+       └─ DesktopWindowBackend.DispatchRender() // Native backend delivers render callback
             └─ XRWindow.RenderCallback(delta)
                  ├─ Stats.BeginFrame()          // Reset per-frame counters
                  ├─ Renderer.ProcessPendingUploads()
@@ -231,10 +233,10 @@ Engine Timer fires RenderFrame
                  ├─ WorldInstance.GlobalPostRender()
                  ├─ Renderer.RenderWindow(delta) // → WindowRenderCallback() → NO-OP
                  └─ PostRenderViewportsCallback()
-            [Silk.NET automatically calls SwapBuffers after Render event returns]
+            [Desktop backend automatically swaps OpenGL buffers after callback returns]
 ```
 
-Because `WindowRenderCallback()` is empty for OpenGL, the frame is complete once the render event handler returns. Silk.NET's window implementation calls `SwapBuffers` (or the equivalent `eglSwapBuffers` / `glfwSwapBuffers`) automatically.
+Because `WindowRenderCallback()` is empty for OpenGL, the frame is complete once the render callback returns. The installed desktop backend calls the native buffer-swap operation automatically. Its window owner pumps input and resize events separately and publishes snapshots for rendering.
 
 ### Viewport Rendering
 
@@ -421,21 +423,20 @@ warmup does not drain an unbounded backlog inside one frame.
 
 ## ImGui Integration
 
-OpenGL uses the `ImGuiController` from Silk.NET's ImGui extension:
+OpenGL uses its leaf-owned `OpenGLImGuiController` in `XREngine.Runtime.Rendering.OpenGL/Rendering/UI/`. Shared ImGui context and font services live in `XREngine.Runtime.Rendering.ImGui`.
 
 ```csharp
-private ImGuiController? GetImGuiController()
+private OpenGLImGuiController? GetImGuiController()
 {
-    // Creates controller on first use with the GL context,
-    // window handle, and input context.
-    // Registers with ImGuiContextTracker for multi-window support.
+    // Requires XRWindow.DesktopGlContext and creates the controller on first use.
+    // Registers its context with ImGuiContextTracker.
 }
 ```
 
 The `OpenGLImGuiBackend` implements `IImGuiRendererBackend`:
 - `MakeCurrent()` — Sets the ImGui context
-- `Update(deltaSeconds)` — Calls `ImGuiController.Update(delta)` to process input
-- `Render()` — Calls `ImGuiController.Render()` which issues GL draw calls for the ImGui draw data
+- `Update(deltaSeconds)` — Calls `OpenGLImGuiController.Update(...)` with the queued multi-viewport input callback
+- `Render()` — Calls `OpenGLImGuiController.Render()` to issue GL draw calls for ImGui data while applying the UI clip-space and framebuffer-sRGB policies
 
 ImGui rendering happens within the viewport render callback, managed by the base `AbstractRenderer.TryRenderImGui()` method which handles context switching and thread safety with a lock.
 

@@ -1,5 +1,3 @@
-using OpenVR.NET.Devices;
-using System.Linq;
 using XREngine.Input;
 using XREngine.Scene.Transforms;
 
@@ -13,14 +11,14 @@ namespace XREngine.Data.Components.Scene
         public VRTrackerTransform() { }
         public VRTrackerTransform(TransformBase parent) : base(parent) { }
 
-        private VrDevice? _tracker = null;
-        public VrDevice? Tracker
+        private RuntimeVrDeviceInfo? _tracker = null;
+        public RuntimeVrDeviceInfo? Tracker
         {
             get => _tracker;
             set => SetField(ref _tracker, value);
         }
 
-        public override VrDevice? Device => Tracker;
+        public override RuntimeVrDeviceInfo? Device => Tracker;
 
         private string? _openXrTrackerUserPath;
         /// <summary>
@@ -72,11 +70,14 @@ namespace XREngine.Data.Components.Scene
 
         public void SetTrackerByDeviceIndex(uint deviceIndex)
         {
-            VrDevice? device = RuntimeVrStateServices.TrackedDevices.FirstOrDefault(x => x.DeviceIndex == deviceIndex);
-            if (device is null || !RuntimeVrStateServices.IsGenericTracker(device.DeviceIndex))
-                return;
+            foreach (RuntimeVrDeviceInfo device in RuntimeVrStateServices.TrackedDevices)
+            {
+                if (device.DeviceIndex != deviceIndex || device.DeviceClass != RuntimeVrDeviceClass.GenericTracker)
+                    continue;
 
-            Tracker = device;
+                Tracker = device;
+                return;
+            }
         }
     }
 }

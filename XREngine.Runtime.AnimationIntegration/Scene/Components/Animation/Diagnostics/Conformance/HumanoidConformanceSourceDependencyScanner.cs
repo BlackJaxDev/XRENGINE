@@ -31,7 +31,7 @@ public static class HumanoidConformanceSourceDependencyScanner
         {
             try
             {
-                foreach (string path in Directory.EnumerateFiles(roots[rootIndex], "*", SearchOption.AllDirectories))
+                foreach (string path in XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(roots[rootIndex], "*", SearchOption.AllDirectories))
                 {
                     if (IsAllowed(path, allowed) || !IsTextCandidate(path))
                         continue;

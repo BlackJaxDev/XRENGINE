@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Animation;
@@ -732,7 +731,7 @@ namespace XREngine.Components.VR
 
             Vector3 bodyPosition = humanoidTransform.RenderTranslation;
             float closestDistance = float.MaxValue;
-            foreach ((VrDevice? _, VRTrackerTransform tracker) in trackerCollection.Trackers.Values)
+            foreach ((RuntimeVrDeviceInfo? _, VRTrackerTransform tracker) in trackerCollection.Trackers.Values)
             {
                 float distanceSquared = Vector3.DistanceSquared(bodyPosition, tracker.RenderTranslation);
                 if (distanceSquared < closestDistance && float.Sqrt(distanceSquared) < CalibrationRadius)

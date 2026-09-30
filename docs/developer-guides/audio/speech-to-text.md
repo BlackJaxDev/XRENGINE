@@ -1,6 +1,9 @@
 # Speech-to-Text Component
 
 A comprehensive speech-to-text component for XRENGINE that supports multiple cloud-based STT providers including Google, OpenAI, Azure, Deepgram, AssemblyAI, and Rev.ai.
+`SpeechToTextComponent` and `MicrophoneComponent` live in
+`XREngine.Runtime.AudioIntegration`. Desktop microphone capture is registered
+by `XREngine.Audio.NAudio`.
 
 ## Features
 

@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using XREngine.Components;
 using XREngine.Components.VR;
 using XREngine.Input;
@@ -30,10 +29,10 @@ namespace XREngine.Data.Components.Scene
             base.OnComponentDeactivated();
         }
 
-        public Dictionary<uint, (VrDevice?, VRTrackerTransform)> Trackers { get; } = [];
+        public Dictionary<uint, (RuntimeVrDeviceInfo?, VRTrackerTransform)> Trackers { get; } = [];
         public Dictionary<string, VRTrackerTransform> OpenXrTrackers { get; } = new(StringComparer.Ordinal);
 
-        private void OnDeviceDetected(VrDevice device)
+        private void OnDeviceDetected(RuntimeVrDeviceInfo device)
             => ReverifyTrackedDevices();
 
         private void ReverifyTrackedDevices()
@@ -44,9 +43,9 @@ namespace XREngine.Data.Components.Scene
                 return;
             }
 
-            foreach (VrDevice device in RuntimeVrStateServices.TrackedDevices)
+            foreach (RuntimeVrDeviceInfo device in RuntimeVrStateServices.TrackedDevices)
             {
-                if (!Trackers.ContainsKey(device.DeviceIndex) && RuntimeVrStateServices.IsGenericTracker(device.DeviceIndex))
+                if (!Trackers.ContainsKey(device.DeviceIndex) && device.DeviceClass == RuntimeVrDeviceClass.GenericTracker)
                     AddRealTracker(device);
             }
         }
@@ -84,7 +83,7 @@ namespace XREngine.Data.Components.Scene
         /// Adds a real VR tracker discovered from the VR API to the collection.
         /// </summary>
         /// <param name="device"></param>
-        private void AddRealTracker(VrDevice device)
+        private void AddRealTracker(RuntimeVrDeviceInfo device)
         {
             SceneNode trackerNode = SceneNode.NewChild();
             trackerNode.Name = $"Tracker {device.DeviceIndex}";

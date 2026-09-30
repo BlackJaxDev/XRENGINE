@@ -1,7 +1,7 @@
 using System;
 using System.Numerics;
 using System.Threading;
-using ImageMagick;
+using XREngine.Imaging;
 using Silk.NET.Vulkan;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -212,11 +212,7 @@ public sealed partial class VulkanRenderer :
             _frameTelemetry,
             targetDriver,
             this,
-            BackendGeneration,
-            hostContext.TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? windowHost) &&
-            windowHost is XRWindow desktopWindow
-                ? desktopWindow.Window
-                : null);
+            BackendGeneration);
         _commandRuntime.AdvancedVisibilityDiagnosticCopy =
             _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
         _commandRuntime.AdvancedCounterDiagnosticCopy =
@@ -458,7 +454,7 @@ public sealed partial class VulkanRenderer :
             callback,
             out failure);
     public override bool ScreenshotRequiresVerticalFlip => _frameLoop.ScreenshotRequiresVerticalFlip;
-    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback) => _frameLoop.GetScreenshotAsync(region, withTransparency, imageCallback);
+    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback) => _frameLoop.GetScreenshotAsync(region, withTransparency, imageCallback);
     public override bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow) => _frameLoop.CalcDotLuminance(texture, luminance, out dotLuminance, genMipmapsNow);
     public override bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow) => _frameLoop.CalcDotLuminance(texture, luminance, out dotLuminance, genMipmapsNow);
     public override bool TryReadTextureMipRgbaFloat(XRTexture texture, int mipLevel, int layerIndex, out float[]? rgbaFloats, out int width, out int height, out string failure) => _frameLoop.TryReadTextureMipRgbaFloat(texture, mipLevel, layerIndex, out rgbaFloats, out width, out height, out failure);

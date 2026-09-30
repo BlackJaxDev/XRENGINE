@@ -1,5 +1,7 @@
 - name: Overview
   href: README.md
+- name: Portable Project Rules
+  href: runtime/portable-projects.md
 
 - name: AI And MCP
   items:

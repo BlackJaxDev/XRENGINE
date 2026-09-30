@@ -1,5 +1,4 @@
 using System.Numerics;
-using OpenVR.NET.Devices;
 
 namespace XREngine.Input;
 
@@ -96,7 +95,7 @@ public interface IRuntimeVrStateServices
     /// <summary>
     /// Raised when OpenVR reports a newly detected tracked device.
     /// </summary>
-    event Action<VrDevice>? DeviceDetected;
+    event Action<RuntimeVrDeviceInfo>? DeviceDetected;
 
     /// <summary>
     /// Runtime currently providing VR state.
@@ -141,22 +140,22 @@ public interface IRuntimeVrStateServices
     /// <summary>
     /// OpenVR headset device when OpenVR tracking is available.
     /// </summary>
-    VrDevice? Headset { get; }
+    RuntimeVrDeviceInfo? Headset { get; }
 
     /// <summary>
     /// OpenVR left controller device when OpenVR tracking is available.
     /// </summary>
-    VrDevice? LeftController { get; }
+    RuntimeVrDeviceInfo? LeftController { get; }
 
     /// <summary>
     /// OpenVR right controller device when OpenVR tracking is available.
     /// </summary>
-    VrDevice? RightController { get; }
+    RuntimeVrDeviceInfo? RightController { get; }
 
     /// <summary>
     /// OpenVR tracked devices currently known to the runtime.
     /// </summary>
-    IEnumerable<VrDevice> TrackedDevices { get; }
+    IReadOnlyList<RuntimeVrDeviceInfo> TrackedDevices { get; }
 
     /// <summary>
     /// OpenXR tracker user paths currently known to the runtime.
@@ -173,6 +172,9 @@ public interface IRuntimeVrStateServices
     /// Returns true when the OpenVR tracked device index represents a generic tracker.
     /// </summary>
     bool IsGenericTracker(uint deviceIndex);
+
+    /// <summary>Copies the requested device pose from the runtime's selected pose cache.</summary>
+    bool TryGetDeviceLocalPose(uint deviceIndex, RuntimeVrPoseTiming timing, out Matrix4x4 pose);
 
     /// <summary>
     /// Attempts to resolve the headset local pose from the requested pose cache.
@@ -193,6 +195,9 @@ public interface IRuntimeVrStateServices
     /// Attempts to resolve the local eye offset relative to the headset pose.
     /// </summary>
     bool TryGetHeadToEyeLocalPose(bool leftEye, out Matrix4x4 pose);
+
+    /// <summary>Gets the runtime's asymmetric projection for an eye without initializing a runtime.</summary>
+    bool TryGetEyeProjectionMatrix(bool leftEye, float nearPlane, float farPlane, out Matrix4x4 projection);
 }
 
 /// <summary>
@@ -209,7 +214,8 @@ public static class RuntimeVrStateServices
     private static event Action<float>? StaticRealWorldHeightChanged;
     private static event Action<float>? StaticDesiredAvatarHeightChanged;
     private static event Action<float>? StaticModelHeightChanged;
-    private static event Action<VrDevice>? StaticDeviceDetected;
+    private static event Action<RuntimeVrDeviceInfo>? StaticDeviceDetected;
+    private static readonly object DeviceEventSync = new();
 
     static RuntimeVrStateServices()
     {
@@ -227,12 +233,15 @@ public static class RuntimeVrStateServices
         set
         {
             IRuntimeVrStateServices next = value ?? Default;
-            if (ReferenceEquals(_current, next))
-                return;
+            lock (DeviceEventSync)
+            {
+                if (ReferenceEquals(_current, next))
+                    return;
 
-            Detach(_current);
-            _current = next;
-            Attach(_current);
+                Detach(_current);
+                _current = next;
+                Attach(_current);
+            }
         }
     }
 
@@ -276,19 +285,19 @@ public static class RuntimeVrStateServices
     }
 
     /// <inheritdoc cref="IRuntimeVrStateServices.Headset"/>
-    public static VrDevice? Headset
+    public static RuntimeVrDeviceInfo? Headset
         => Current.Headset;
 
     /// <inheritdoc cref="IRuntimeVrStateServices.LeftController"/>
-    public static VrDevice? LeftController
+    public static RuntimeVrDeviceInfo? LeftController
         => Current.LeftController;
 
     /// <inheritdoc cref="IRuntimeVrStateServices.RightController"/>
-    public static VrDevice? RightController
+    public static RuntimeVrDeviceInfo? RightController
         => Current.RightController;
 
     /// <inheritdoc cref="IRuntimeVrStateServices.TrackedDevices"/>
-    public static IEnumerable<VrDevice> TrackedDevices
+    public static IReadOnlyList<RuntimeVrDeviceInfo> TrackedDevices
         => Current.TrackedDevices;
 
     /// <inheritdoc cref="IRuntimeVrStateServices.GetKnownOpenXrTrackerUserPaths"/>
@@ -346,10 +355,32 @@ public static class RuntimeVrStateServices
     }
 
     /// <inheritdoc cref="IRuntimeVrStateServices.DeviceDetected"/>
-    public static event Action<VrDevice>? DeviceDetected
+    public static event Action<RuntimeVrDeviceInfo>? DeviceDetected
     {
-        add => StaticDeviceDetected += value;
-        remove => StaticDeviceDetected -= value;
+        add
+        {
+            if (value is null)
+                return;
+
+            lock (DeviceEventSync)
+            {
+                if (StaticDeviceDetected is null)
+                    Current.DeviceDetected += ForwardDeviceDetected;
+                StaticDeviceDetected += value;
+            }
+        }
+        remove
+        {
+            if (value is null)
+                return;
+
+            lock (DeviceEventSync)
+            {
+                StaticDeviceDetected -= value;
+                if (StaticDeviceDetected is null)
+                    Current.DeviceDetected -= ForwardDeviceDetected;
+            }
+        }
     }
 
     #endregion
@@ -359,6 +390,10 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.IsGenericTracker"/>
     public static bool IsGenericTracker(uint deviceIndex)
         => Current.IsGenericTracker(deviceIndex);
+
+    /// <inheritdoc cref="IRuntimeVrStateServices.TryGetDeviceLocalPose"/>
+    public static bool TryGetDeviceLocalPose(uint deviceIndex, RuntimeVrPoseTiming timing, out Matrix4x4 pose)
+        => Current.TryGetDeviceLocalPose(deviceIndex, timing, out pose);
 
     /// <inheritdoc cref="IRuntimeVrStateServices.TryGetHeadLocalPose"/>
     public static bool TryGetHeadLocalPose(RuntimeVrPoseTiming timing, out Matrix4x4 pose)
@@ -376,6 +411,10 @@ public static class RuntimeVrStateServices
     public static bool TryGetHeadToEyeLocalPose(bool leftEye, out Matrix4x4 pose)
         => Current.TryGetHeadToEyeLocalPose(leftEye, out pose);
 
+    /// <inheritdoc cref="IRuntimeVrStateServices.TryGetEyeProjectionMatrix"/>
+    public static bool TryGetEyeProjectionMatrix(bool leftEye, float nearPlane, float farPlane, out Matrix4x4 projection)
+        => Current.TryGetEyeProjectionMatrix(leftEye, nearPlane, farPlane, out projection);
+
     #endregion
 
     #region Concrete service event forwarding
@@ -388,7 +427,8 @@ public static class RuntimeVrStateServices
         services.RealWorldHeightChanged += ForwardRealWorldHeightChanged;
         services.DesiredAvatarHeightChanged += ForwardDesiredAvatarHeightChanged;
         services.ModelHeightChanged += ForwardModelHeightChanged;
-        services.DeviceDetected += ForwardDeviceDetected;
+        if (StaticDeviceDetected is not null)
+            services.DeviceDetected += ForwardDeviceDetected;
     }
 
     private static void Detach(IRuntimeVrStateServices services)
@@ -399,7 +439,8 @@ public static class RuntimeVrStateServices
         services.RealWorldHeightChanged -= ForwardRealWorldHeightChanged;
         services.DesiredAvatarHeightChanged -= ForwardDesiredAvatarHeightChanged;
         services.ModelHeightChanged -= ForwardModelHeightChanged;
-        services.DeviceDetected -= ForwardDeviceDetected;
+        if (StaticDeviceDetected is not null)
+            services.DeviceDetected -= ForwardDeviceDetected;
     }
 
     private static void ForwardFrameAdvanced()
@@ -420,7 +461,7 @@ public static class RuntimeVrStateServices
     private static void ForwardModelHeightChanged(float value)
         => StaticModelHeightChanged?.Invoke(value);
 
-    private static void ForwardDeviceDetected(VrDevice device)
+    private static void ForwardDeviceDetected(RuntimeVrDeviceInfo device)
         => StaticDeviceDetected?.Invoke(device);
 
     #endregion
@@ -466,7 +507,7 @@ public static class RuntimeVrStateServices
             remove { }
         }
 
-        public event Action<VrDevice>? DeviceDetected
+        public event Action<RuntimeVrDeviceInfo>? DeviceDetected
         {
             add { }
             remove { }
@@ -480,10 +521,10 @@ public static class RuntimeVrStateServices
         public float ScaledIPD => 0.0f;
         public float ModelToRealWorldHeightRatio => 1.0f;
         public float ModelHeight { get; set; } = 1.0f;
-        public VrDevice? Headset => null;
-        public VrDevice? LeftController => null;
-        public VrDevice? RightController => null;
-        public IEnumerable<VrDevice> TrackedDevices => Array.Empty<VrDevice>();
+        public RuntimeVrDeviceInfo? Headset => null;
+        public RuntimeVrDeviceInfo? LeftController => null;
+        public RuntimeVrDeviceInfo? RightController => null;
+        public IReadOnlyList<RuntimeVrDeviceInfo> TrackedDevices => Array.Empty<RuntimeVrDeviceInfo>();
 
         public string[] GetKnownOpenXrTrackerUserPaths()
             => [];
@@ -493,6 +534,12 @@ public static class RuntimeVrStateServices
 
         public bool IsGenericTracker(uint deviceIndex)
             => false;
+
+        public bool TryGetDeviceLocalPose(uint deviceIndex, RuntimeVrPoseTiming timing, out Matrix4x4 pose)
+        {
+            pose = Matrix4x4.Identity;
+            return false;
+        }
 
         public bool TryGetHeadLocalPose(RuntimeVrPoseTiming timing, out Matrix4x4 pose)
         {
@@ -515,6 +562,12 @@ public static class RuntimeVrStateServices
         public bool TryGetHeadToEyeLocalPose(bool leftEye, out Matrix4x4 pose)
         {
             pose = Matrix4x4.Identity;
+            return false;
+        }
+
+        public bool TryGetEyeProjectionMatrix(bool leftEye, float nearPlane, float farPlane, out Matrix4x4 projection)
+        {
+            projection = Matrix4x4.Identity;
             return false;
         }
     }

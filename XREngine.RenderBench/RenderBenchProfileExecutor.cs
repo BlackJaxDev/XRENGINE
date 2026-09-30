@@ -4,8 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using ImageMagick;
 using XREngine.Data.Rendering;
+using XREngine.Imaging;
 using XREngine.Rendering;
 using XREngine.Rendering.Profiling;
 using XREngine.Rendering.Vulkan;
@@ -556,14 +556,8 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         if (rgba.Length < pixelCount * 4)
             throw new InvalidOperationException($"Output readback returned {rgba.Length} bytes; expected at least {pixelCount * 4}.");
         string path = Path.Combine(_runDirectory, "render-bench-output.png");
-        using MagickImage image = new(rgba, new MagickReadSettings
-        {
-            Width = recipe.ScaledWidth,
-            Height = recipe.ScaledHeight,
-            Format = MagickFormat.Rgba,
-            Depth = 8,
-        });
-        image.Write(path, MagickFormat.Png);
+        using RuntimeImage image = new(recipe.ScaledWidth, recipe.ScaledHeight, RuntimePixelFormat.Rgba8, rgba);
+        File.WriteAllBytes(path, RuntimeImageCodecs.Require().EncodePng(image));
         return path;
     }
 

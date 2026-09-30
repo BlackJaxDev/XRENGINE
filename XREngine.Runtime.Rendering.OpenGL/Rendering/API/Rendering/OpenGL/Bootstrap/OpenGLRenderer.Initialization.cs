@@ -1,9 +1,7 @@
 using XREngine.Extensions;
-using ImageMagick;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
-using Silk.NET.OpenGL.Extensions.ImGui;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
@@ -252,7 +250,7 @@ public partial class OpenGLRenderer
         bool windowClosing = XRWindow.IsDisposing || XRWindow.IsDisposed;
         try
         {
-            windowClosing |= Window.IsClosing;
+            windowClosing |= XRWindow.LatestWindowEventSnapshot.IsClosingOrDisposed;
         }
         catch
         {

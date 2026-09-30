@@ -22,6 +22,8 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Rendering](rendering/skinning.md)
 - [Rendering Buffer Writes](rendering/xrdatabuffer-write-model.md)
 - [Runtime](runtime/engine-api.md)
+- [Runtime Project Organization](../architecture/runtime/project-organization.md)
+- [Portable Project Rules](runtime/portable-projects.md)
 - [Runtime Environment Settings](runtime/runtime-environment-settings.md)
 - [AOT Final Game Builds](runtime/aot-final-game-builds.md)
 - [Hot-Path Memory Control](runtime/hot-path-memory.md)

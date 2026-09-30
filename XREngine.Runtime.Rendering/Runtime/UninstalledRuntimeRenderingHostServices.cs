@@ -1157,11 +1157,11 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public bool OpenXrPrepareFrameAfterDesktopRender => RuntimeRenderingHostServiceDefaults.OpenXrPrepareFrameAfterDesktopRender;
     public float OpenXrDeadlineSafetyMarginMs => RuntimeRenderingHostServiceDefaults.OpenXrDeadlineSafetyMarginMs;
     public float OpenXrPoseTimeOffsetMs => RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
-    public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+    public OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXrCollectVisiblePosePolicy.Predicted;
     public float OpenXrCollectVisibleFrustumPaddingDegrees => RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
-    public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
-    public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-    public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+    public OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXrTrackingLossPolicy.FreezeLastValid;
+    public OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXrActionSyncPolicy.PredictedOnly;
+    public OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
 
     public bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
     {

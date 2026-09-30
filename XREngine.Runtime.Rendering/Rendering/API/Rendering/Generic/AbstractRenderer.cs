@@ -1,7 +1,4 @@
-using ImageMagick;
-using ImGuiNET;
-using Silk.NET.Core.Native;
-using Silk.NET.Windowing;
+using XREngine.Imaging;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -240,12 +237,6 @@ namespace XREngine.Rendering
         /// </summary>
         public XRWindow XRWindow => RequireDesktopWindow<XRWindow>();
 
-        /// <summary>
-        /// Compatibility accessor for the native desktop window. Target-neutral
-        /// code should use <see cref="HostContext"/> instead.
-        /// </summary>
-        public IWindow Window => XRWindow.Window;
-
         /// <summary>Exact backend generation that owns wrappers created by this renderer.</summary>
         public virtual IRenderApiWrapperOwner ApiWrapperIdentityOwner => this;
 
@@ -256,7 +247,7 @@ namespace XREngine.Rendering
                 if (TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? window) &&
                     window is XRWindow desktopWindow)
                 {
-                    string? title = desktopWindow.Window?.Title;
+                    string? title = desktopWindow.WindowTitle;
                     if (!string.IsNullOrWhiteSpace(title))
                         return title;
                 }
@@ -480,7 +471,7 @@ namespace XREngine.Rendering
         public BoundingRectangle CurrentRenderArea
             => _renderAreaStack.Count > 0
             ? _renderAreaStack.Peek()
-            : new BoundingRectangle(0, 0, Window.Size.X, Window.Size.Y);
+            : new BoundingRectangle(0, 0, XRWindow.RenderWindowSize.X, XRWindow.RenderWindowSize.Y);
 
         public abstract void CropRenderArea(BoundingRectangle region);
         public abstract void SetRenderArea(BoundingRectangle region);
@@ -495,7 +486,7 @@ namespace XREngine.Rendering
 
         public virtual void ClearRenderArea()
         {
-            var size = Window.Size;
+            var size = XRWindow.RenderWindowSize;
             if (size.X > 0 && size.Y > 0)
                 SetRenderArea(new BoundingRectangle(0, 0, size.X, size.Y));
         }
@@ -549,7 +540,7 @@ namespace XREngine.Rendering
         protected virtual bool SupportsImGui => false;
 
         protected virtual bool ShouldRenderImGui(XRViewport? viewport)
-            => viewport?.Window is not null || XRWindow.Window is not null;
+            => viewport?.Window is not null || XRWindow.DesktopWindowBackend is not null;
 
         protected virtual IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
             => null;
@@ -627,8 +618,6 @@ namespace XREngine.Rendering
 
         protected static void ConfigureImGuiDisplay(IRuntimeScreenSpaceUserInterface? canvas, XRViewport? viewport, XRCamera? camera)
         {
-            var io = ImGui.GetIO();
-
             Vector2 displaySize;
             Vector2 displayPos = Vector2.Zero;
             Vector2 framebufferScale = Vector2.One;
@@ -641,14 +630,14 @@ namespace XREngine.Rendering
                 var region = viewport.Region;
                 displaySize = new Vector2(region.Width, region.Height);
 
-                var hostWindow = viewport.Window?.Window;
+                XRWindow? hostWindow = viewport.Window;
                 if (hostWindow is not null)
                 {
-                    var logicalSize = viewport.Window?.RenderWindowSize ?? hostWindow.Size;
-                    var framebufferSize = viewport.Window?.RenderFramebufferSize ?? hostWindow.FramebufferSize;
+                    var logicalSize = hostWindow.RenderWindowSize;
+                    var framebufferSize = hostWindow.RenderFramebufferSize;
                     var scaleSourceFramebufferSize = framebufferSize;
                     if (scaleSourceFramebufferSize.X <= 0 || scaleSourceFramebufferSize.Y <= 0)
-                        scaleSourceFramebufferSize = hostWindow.FramebufferSize;
+                        scaleSourceFramebufferSize = hostWindow.EffectiveFramebufferSize;
 
                     float scaleX = logicalSize.X > 0
                         ? (float)scaleSourceFramebufferSize.X / logicalSize.X
@@ -687,9 +676,7 @@ namespace XREngine.Rendering
             if (displaySize.X <= 0 || displaySize.Y <= 0)
                 displaySize = Vector2.One;
 
-            io.DisplaySize = displaySize;
-            //io.DisplayPos = displayPos;
-            io.DisplayFramebufferScale = framebufferScale;
+            ImGuiRuntimeServices.Required.ConfigureDisplay(displaySize, framebufferScale);
         }
 
         public bool TryRenderImGui(XRViewport? viewport, IRuntimeScreenSpaceUserInterface? canvas, XRCamera? camera, Action draw)
@@ -702,7 +689,7 @@ namespace XREngine.Rendering
             Action draw,
             bool allowMultipleInFrame)
         {
-            if (!SupportsImGui)
+            if (!SupportsImGui || ImGuiRuntimeServices.Current is not { } imgui)
                 return false;
 
             if (RuntimeRenderingHostServices.FrameTiming.IsShadowPass)
@@ -731,7 +718,7 @@ namespace XREngine.Rendering
             {
                 lock (_imguiRenderLock)
                 {
-                    var previousContext = ImGui.GetCurrentContext();
+                    var previousContext = imgui.CurrentContext;
                     backend.MakeCurrent();
                     bool frameStarted = false;
 
@@ -791,7 +778,7 @@ namespace XREngine.Rendering
                         {
                             try
                             {
-                                ImGui.EndFrame();
+                                imgui.EndFrame();
                             }
                             catch
                             {
@@ -804,11 +791,11 @@ namespace XREngine.Rendering
                     {
                         if (previousContext == IntPtr.Zero)
                         {
-                            ImGui.SetCurrentContext(IntPtr.Zero);
+                            imgui.CurrentContext = IntPtr.Zero;
                         }
                         else if (ImGuiContextTracker.IsAlive(previousContext))
                         {
-                            ImGui.SetCurrentContext(previousContext);
+                            imgui.CurrentContext = previousContext;
                         }
                     }
                 }
@@ -1206,13 +1193,12 @@ namespace XREngine.Rendering
             => ERendererComputeEnqueueStatus.Unsupported;
 
         /// <summary>
-        /// True when images returned by <see cref="GetScreenshotAsync"/> need a CPU-side
-        /// vertical flip before being written in normal top-left image-file order.
-        /// This is independent from framebuffer texture UV sampling direction.
+        /// Legacy orientation hint for presentation-space coordinates. Screenshot pixels
+        /// carry their own origin and exporters normalize it when encoding.
         /// </summary>
         public virtual bool ScreenshotRequiresVerticalFlip => true;
 
-        public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
+        public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback);
 
         /// <summary>
         /// Queues a screenshot readback and reports structured completion or failure diagnostics.
@@ -1241,7 +1227,7 @@ namespace XREngine.Rendering
 
                     callback(ScreenshotReadbackResult.Success(
                         image,
-                        pixelCount,
+                        checked((int)((long)image.Width * image.Height)),
                         checked((int)image.Width),
                         checked((int)image.Height),
                         GetType().Name));
@@ -2091,7 +2077,7 @@ namespace XREngine.Rendering
         #endregion
     }
     public abstract unsafe partial class AbstractRenderer<TAPI> : AbstractRenderer
-        where TAPI : NativeAPI
+        where TAPI : class, IDisposable
     {
         protected AbstractRenderer(RendererHostContext hostContext)
             : base(hostContext)

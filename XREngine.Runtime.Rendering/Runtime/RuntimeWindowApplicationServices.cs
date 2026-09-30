@@ -33,8 +33,45 @@ public static class RuntimeWindowApplicationServices
         public bool ShouldCreateWindowOnHost(WindowStartupValues window) => false;
         public XRWindow CreateWindow(Func<XRWindow> factory, string reason) => factory();
         public void UnregisterWindow(XRWindow window) { }
-        public void EnqueueWindowTask(IRuntimeRenderWindowHost window, Action task, string reason) => task();
-        public T InvokeWindowTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason) => task();
+        public void EnqueueWindowTask(IRuntimeRenderWindowHost window, Action task, string reason)
+        {
+            if (Environment.CurrentManagedThreadId == window.NativeWindowThreadId)
+            {
+                task();
+                return;
+            }
+
+            EnsureCollapsedOwner(window);
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(task, reason);
+        }
+
+        public T InvokeWindowTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason)
+        {
+            if (Environment.CurrentManagedThreadId == window.NativeWindowThreadId)
+                return task();
+
+            EnsureCollapsedOwner(window);
+            TaskCompletionSource<T> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(() =>
+            {
+                try
+                {
+                    completion.TrySetResult(task());
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }, reason);
+            return completion.Task.GetAwaiter().GetResult();
+        }
+
+        private static void EnsureCollapsedOwner(IRuntimeRenderWindowHost window)
+        {
+            if (window.NativeWindowThreadId != window.RenderOwnerThreadId)
+                throw new InvalidOperationException(
+                    "A desktop window has separate native and render owners but no native window mailbox is installed.");
+        }
         public void Stop() { }
     }
 }

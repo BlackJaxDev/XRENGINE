@@ -509,14 +509,14 @@ a documented warm-cache policy.
 | `XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.cs` | Renderer-facing RVC capability surface. |
 | `XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs` | Default renderer capability values for RVC. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs` | Vulkan RVC descriptor backend, material table, visibility target, mask stencil, and production-feature reporting. |
-| `XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs` | Engine settings that select RVC and configure quality, reuse, foveation, light aggregation, and debug behavior. |
-| `XREngine/Engine/Subclasses/Rendering/Engine.Rendering.cs` | Pipeline factory and RVC settings application. |
-| `XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Rvc.cs` | Engine stats sink for RVC counters and frame profile snapshots. |
+| `XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs` | Runtime render settings that select RVC and configure quality, reuse, foveation, light aggregation, and debug behavior. |
+| `XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs` and `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RvcRenderPipeline.cs` | Purpose-aware default pipeline selection and RVC pipeline settings application. |
+| `XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Rvc.cs` | Runtime stats sink for RVC counters and frame profile snapshots. |
 | `XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs` | Host-service surface for RVC settings, counters, frame profiles, and per-view GPU timing. |
-| `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.ViewConfiguration.cs` | Active OpenXR view configuration selection, quad probing, view setup, stereo/quad snapshots, visibility-mask function lookup, mesh fetch, and mask invalidation. |
-| `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs` | Per-view RVC frame-profile publication during submitted projection-view setup. |
-| `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/Extensions.cs` | Optional OpenXR extension list including `XR_KHR_visibility_mask` and runtime mask-support query. |
-| `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs` | View, swapchain, image, visibility-mask, and diagnostic storage sized by `RenderFrameViewSet.MaxViewCount`. |
+| `XREngine.Runtime.XR.OpenXR/OpenXRAPI.ViewConfiguration.cs` | Active OpenXR view configuration selection, quad probing, view setup, stereo/quad snapshots, visibility-mask function lookup, mesh fetch, and mask invalidation. |
+| `XREngine.Runtime.XR.OpenXR/OpenXRAPI.FrameLifecycle.cs` | Per-view RVC frame-profile publication during submitted projection-view setup. |
+| `XREngine.Runtime.XR.OpenXR/Extensions.cs` | Optional OpenXR extension list including `XR_KHR_visibility_mask` and runtime mask-support query. |
+| `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs` | View, swapchain, image, visibility-mask, and diagnostic storage sized by `RenderFrameViewSet.MaxViewCount`. |
 | `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs` | OpenGL swapchain setup and per-view Forward+ rendering path. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs` | Vulkan swapchain setup, per-view rendering path, and quad-safe storage/prewarm plumbing. |
 | `XREngine.UnitTests/Rendering/RvcRenderingContractTests.cs` | Source-contract tests for resolver behavior, resources, visibility payloads, shadelets, lighting, temporal hashing, OpenXR wiring, renderer hooks, and host-service reporting. |

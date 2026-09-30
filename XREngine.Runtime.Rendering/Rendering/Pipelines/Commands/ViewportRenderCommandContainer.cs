@@ -68,6 +68,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CommandFactories[commandType] = factory;
         }
 
+        /// <summary>Installs a built-in command without replacing a host-provided factory.</summary>
+        public static void RegisterBuiltInCommandFactory(Type commandType, Func<ViewportRenderCommand> factory)
+        {
+            ArgumentNullException.ThrowIfNull(commandType);
+            ArgumentNullException.ThrowIfNull(factory);
+            if (!typeof(ViewportRenderCommand).IsAssignableFrom(commandType))
+                throw new ArgumentException($"Type must derive from {nameof(ViewportRenderCommand)}.", nameof(commandType));
+
+            lock (FactorySync)
+                CommandFactories.TryAdd(commandType, factory);
+        }
+
         /// <summary>
         /// Attempts to create an instance of a registered viewport render command type using the registered factory method.
         /// </summary>

@@ -695,7 +695,7 @@ namespace XREngine
 
             string rewrittenTypeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
             concreteType = AotRuntimeMetadataStore.ResolveType(rewrittenTypeName);
-            if (concreteType is null && !XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (concreteType is null && !XRRuntimeEnvironment.IsPublishedBuild)
             {
                 foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
@@ -791,7 +791,7 @@ namespace XREngine
                 return true;
             }
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (XRRuntimeEnvironment.IsPublishedBuild)
                 return false;
 
             // XRAsset.SerializedAssetType writes FullName (no assembly qualifier). Resolve via loaded assemblies.

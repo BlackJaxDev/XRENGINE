@@ -1,10 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.Loader;
+using XREngine.Data;
 using XREngine.Core;
 using XREngine.Core.Files;
 using YamlDotNet.Core;
@@ -23,9 +22,6 @@ namespace XREngine
     /// </summary>
     public sealed class PolymorphicYamlNodeDeserializer : INodeDeserializer
     {
-        private static readonly object EngineAssemblyLoadLock = new();
-        private static bool _engineAssemblyLoadAttempted;
-
         public bool Deserialize(
             IParser reader,
             Type expectedType,
@@ -91,7 +87,10 @@ namespace XREngine
                 // CaptureNode already consumed the mapping events).
                 throw new YamlException(
                     $"Polymorphic YAML discriminator '__type: {typeName}' could not be resolved to a known CLR type " +
-                    $"(expected base type: '{expectedType.FullName}'). Ensure the type is loaded and the name is correct.");
+                    $"(expected base type: '{expectedType.FullName}'). Ensure the type is loaded and the name is correct." +
+                    (RuntimeAssemblyLoadingServices.Current is null && !XRRuntimeEnvironment.IsPublishedBuild
+                        ? " The host has not installed runtime assembly loading."
+                        : string.Empty));
             }
 
             // 2) Property-level default concrete type when __type is omitted.
@@ -157,14 +156,14 @@ namespace XREngine
             if (type is not null)
                 return true;
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (XRRuntimeEnvironment.IsPublishedBuild)
                 return false;
 
             type = ResolveTypeFromLoadedAssemblies(typeName);
             if (type is not null)
                 return true;
 
-            EnsureEngineRuntimeAssembliesLoaded();
+            RuntimeAssemblyLoadingServices.Current?.EnsureRuntimeAssembliesLoaded();
             type = ResolveTypeFromLoadedAssemblies(typeName);
             return type is not null;
         }
@@ -189,57 +188,6 @@ namespace XREngine
             }
 
             return null;
-        }
-
-        private static void EnsureEngineRuntimeAssembliesLoaded()
-        {
-            if (_engineAssemblyLoadAttempted)
-                return;
-
-            lock (EngineAssemblyLoadLock)
-            {
-                if (_engineAssemblyLoadAttempted)
-                    return;
-
-                _engineAssemblyLoadAttempted = true;
-
-                string baseDirectory = AppContext.BaseDirectory;
-                if (string.IsNullOrWhiteSpace(baseDirectory) || !Directory.Exists(baseDirectory))
-                    return;
-
-                HashSet<string> loadedAssemblyNames = [.. AppDomain.CurrentDomain.GetAssemblies()
-                    .Where(static assembly => !assembly.IsDynamic)
-                    .Select(static assembly => assembly.GetName().Name)
-                    .Where(static name => !string.IsNullOrWhiteSpace(name))
-                    .Cast<string>()];
-
-                foreach (string assemblyPath in Directory
-                    .EnumerateFiles(baseDirectory, "XREngine.Runtime*.dll", SearchOption.TopDirectoryOnly)
-                    .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
-                {
-                    AssemblyName assemblyName;
-                    try
-                    {
-                        assemblyName = AssemblyName.GetAssemblyName(assemblyPath);
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    string? simpleName = assemblyName.Name;
-                    if (string.IsNullOrWhiteSpace(simpleName) || !loadedAssemblyNames.Add(simpleName))
-                        continue;
-
-                    try
-                    {
-                        AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
         }
 
         private static IReadOnlyList<ParsingEvent> CaptureNode(IParser parser)

@@ -91,14 +91,7 @@ public unsafe partial class OpenGLRenderer
 
     private void LoadMeshTaskDispatchDelegates()
     {
-        if (Window.GLContext is not INativeContext nativeContext)
-            return;
-
-        if (_glMultiDrawMeshTasksIndirectCountExt == 0 &&
-            nativeContext.TryGetProcAddress("glMultiDrawMeshTasksIndirectCountEXT", out IntPtr indirectCountProc) &&
-            indirectCountProc != IntPtr.Zero)
-        {
-            _glMultiDrawMeshTasksIndirectCountExt = indirectCountProc;
-        }
+        if (_glMultiDrawMeshTasksIndirectCountExt == 0)
+            _glMultiDrawMeshTasksIndirectCountExt = ResolveWindowProcAddress("glMultiDrawMeshTasksIndirectCountEXT");
     }
 }

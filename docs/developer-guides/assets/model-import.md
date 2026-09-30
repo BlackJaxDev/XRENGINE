@@ -1,6 +1,6 @@
 # Model Import
 
-Model imports can route through a native format-specific importer or the older Assimp compatibility path.
+Model imports can route through a native format-specific importer or the older Assimp compatibility path. `XREngine.Runtime.ModelAssetPipeline` owns `ModelAssetImporter`, format adapters, and scene assembly; `XREngine.Fbx` owns native FBX parsing and writing. `XREngine.Runtime.Core` supplies the asset and scene contracts used by those implementations.
 
 Texture streaming cache warmup is enabled by default. Set
 `XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED=false` (or `0`/`off`) for short-lived
@@ -133,7 +133,7 @@ The unit-testing world exposes per-model `PostImportFlags` alongside Assimp `Imp
 - `GenerateIndividualSceneNodesPerSubmesh`: forwards to `ModelImportOptions.GenerateSceneNodesPerSubmesh` and implies split submesh components.
 - `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`: when CoACD generation is enabled, attaches all generated collider shapes to one static rigid body on the imported model root instead of creating one static rigid body per model component.
 
-Without `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`, `GenerateCoacdCollidersPerSubmesh` adds a `StaticRigidBodyComponent` sibling to each imported model component. After the submesh data is ready, each rigid body runs CoACD and attaches one PhysX convex shape per generated hull.
+Without `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`, `GenerateCoacdCollidersPerSubmesh` adds a `StaticRigidBodyComponent` sibling to each imported model component. After the submesh data is ready, the optional `XREngine.Runtime.Physics.Authoring` service runs CoACD and the PhysX backend installs one convex shape per generated hull. Hosts without that authoring service need cooked collider geometry; an authoring request reports the missing service.
 
 `BatchSubmeshAddsDuringAsyncImport = true` preserves the old behavior. Imported nodes appear in the scene quickly, but each node's submeshes are withheld until that node's async mesh work is complete, then published together.
 

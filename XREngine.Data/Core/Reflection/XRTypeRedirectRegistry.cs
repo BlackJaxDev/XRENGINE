@@ -51,7 +51,7 @@ namespace XREngine.Core
                 if (_initialized)
                     return;
 
-                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                if (XRRuntimeEnvironment.IsPublishedBuild)
                 {
                     InitializeFromAotMetadata();
                     _initialized = true;

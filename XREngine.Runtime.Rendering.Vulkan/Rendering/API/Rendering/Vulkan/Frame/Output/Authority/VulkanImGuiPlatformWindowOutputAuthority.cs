@@ -1,8 +1,6 @@
-using Silk.NET.Core;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
-using Silk.NET.Windowing;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -50,10 +48,10 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
             lifetime.WaitForPresentationReleaseAtShutdown(deviceLost);
     }
 
-    internal SurfaceKHR CreateSurface(VulkanDeviceContext device, IWindow window)
-        => window.VkSurface?.Create<AllocationCallbacks>(device.Instance.ToHandle(), null).ToSurface()
-            ?? throw new NotSupportedException(
-                "The detached ImGui window does not expose Vulkan surface services.");
+    internal SurfaceKHR CreateSurface(VulkanDeviceContext device, IRuntimeWindowBackend window)
+        => new((window.VulkanSurface
+            ?? throw new NotSupportedException("The detached ImGui window does not expose Vulkan surface services."))
+            .CreateSurface(device.Instance.Handle));
 
     internal void DestroySurface(
         VulkanDeviceContext device,

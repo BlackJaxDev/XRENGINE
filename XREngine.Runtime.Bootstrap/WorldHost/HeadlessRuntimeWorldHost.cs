@@ -1,6 +1,6 @@
 using XREngine.Data.Core;
 using XREngine.Scene;
-using XREngine.Scene.Physics.Jitter2;
+using XREngine.Scene.Physics.Jolt;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -13,7 +13,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
     private XRWorld? _subscribedWorld;
 
     public HeadlessRuntimeWorldHost()
-        => CoreWorld = new RuntimeWorld(new JitterScene());
+        => CoreWorld = new RuntimeWorld(new JoltScene());
 
     public RuntimeWorld CoreWorld { get; }
 

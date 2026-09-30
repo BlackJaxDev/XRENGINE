@@ -1,5 +1,5 @@
 using Silk.NET.Maths;
-using Silk.NET.Windowing;
+using XREngine.Data.Vectors;
 using System.Threading;
 using XREngine.Rendering;
 
@@ -64,8 +64,6 @@ namespace XREngine
 
             bool preferHdrOutput = windowSettings.OutputHDR ?? RuntimeEngine.Rendering.Settings.OutputHDR;
             EInteractiveWindowResizeStrategy interactiveResizeStrategy = ResolveInteractiveResizeStrategy(windowSettings);
-            bool useNativeTitleBar = windowSettings.UseNativeTitleBar &&
-                interactiveResizeStrategy != EInteractiveWindowResizeStrategy.EngineBorderlessResize;
             var options = GetWindowOptions(windowSettings, preferHdrOutput, interactiveResizeStrategy);
 
             Debug.Rendering(
@@ -76,7 +74,7 @@ namespace XREngine
                 windowSettings.Y,
                 windowSettings.Width,
                 windowSettings.Height,
-                options.API.API,
+                options.GraphicsApi,
                 windowSettings.TargetWorld?.Name ?? "<null>",
                 interactiveResizeStrategy,
                 Environment.CurrentManagedThreadId,
@@ -101,16 +99,10 @@ namespace XREngine
                 ? RuntimeWindowApplicationServices.Current.CreateWindow(
                     () => CreateWindowInstance(
                         options,
-                        useNativeTitleBar,
-                        windowSettings.VSync,
-                        interactiveResizeStrategy,
                         windowCreationFallbackPolicy),
                     $"CreateWindow[{windowSettings.WindowTitle ?? string.Empty}]")
                 : CreateWindowInstance(
                     options,
-                    useNativeTitleBar,
-                    windowSettings.VSync,
-                    interactiveResizeStrategy,
                     windowCreationFallbackPolicy);
 
             FinishWindowCreation(windowSettings, window, preferHdrOutput);
@@ -141,17 +133,14 @@ namespace XREngine
                 });
 
         private static XRWindow CreateWindowInstance(
-            WindowOptions options,
-            bool useNativeTitleBar,
-            bool windowVSyncRequested,
-            EInteractiveWindowResizeStrategy interactiveResizeStrategy,
+            RuntimeWindowCreateOptions options,
             RenderBackendFallbackPolicy fallbackPolicy)
         {
             try
             {
-                return new XRWindow(options, useNativeTitleBar, windowVSyncRequested, interactiveResizeStrategy);
+                return new XRWindow(options);
             }
-            catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
+            catch (Exception ex) when (options.GraphicsApi == RuntimeGraphicsApiKind.Vulkan)
             {
                 string exceptionSummary = SummarizeStartupException(ex);
                 if (!AllowsRenderBackendFallback(fallbackPolicy))
@@ -166,8 +155,8 @@ namespace XREngine
                     "Vulkan initialization failed; falling back to OpenGL. RequestedBackend=Vulkan; FallbackBackend=OpenGL; FallbackPolicy={0}; Exception={1}",
                     fallbackPolicy,
                     exceptionSummary);
-                options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6));
-                return new XRWindow(options, useNativeTitleBar, windowVSyncRequested, interactiveResizeStrategy);
+                options = options with { GraphicsApi = RuntimeGraphicsApiKind.OpenGL };
+                return new XRWindow(options);
             }
         }
 
@@ -323,94 +312,45 @@ namespace XREngine
             window.ResizeAllViewportsAccordingToPlayers();
         }
 
-        /// <summary>
-        /// Resolves the OpenGL context flags. Adds <see cref="ContextFlags.Debug"/>
-        /// when the <c>XRE_GL_DEBUG</c> environment variable is set to <c>1</c>, so
-        /// that the GL driver delivers low/medium-severity messages through the
-        /// existing <c>glDebugMessageCallback</c> handler. Without this flag,
-        /// NVIDIA's driver silently filters most diagnostics, which makes
-        /// driver-side faults (e.g. <c>FAST_FAIL_CORRUPT_LIST_ENTRY</c>) impossible
-        /// to trace from the GL callback.
-        /// </summary>
-        private static ContextFlags ResolveOpenGLContextFlags()
-        {
-            var flags = ContextFlags.ForwardCompatible;
-            if (EditorPreferences.Diagnostics.OpenGL.DebugContext)
-                flags |= ContextFlags.Debug;
-            return flags;
-        }
-
-        /// <summary>
-        /// Builds window options from startup settings.
-        /// </summary>
-        private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSettings, bool preferHdrOutput)
-            => GetWindowOptions(windowSettings, preferHdrOutput, EInteractiveWindowResizeStrategy.Default);
-
-        private static WindowOptions GetWindowOptions(
+        /// <summary>Builds a portable window request from authored desktop settings.</summary>
+        private static RuntimeWindowCreateOptions GetWindowOptions(
             GameWindowStartupSettings windowSettings,
             bool preferHdrOutput,
             EInteractiveWindowResizeStrategy interactiveResizeStrategy)
         {
-            WindowState windowState;
-            WindowBorder windowBorder;
-            Vector2D<int> position = new(windowSettings.X, windowSettings.Y);
-            Vector2D<int> size = new(windowSettings.Width, windowSettings.Height);
-
-            switch (windowSettings.WindowState)
+            IVector2 position = new(windowSettings.X, windowSettings.Y);
+            IVector2 size = new(windowSettings.Width, windowSettings.Height);
+            if (windowSettings.WindowState == EWindowState.Borderless)
             {
-                case EWindowState.Fullscreen:
-                    windowState = WindowState.Fullscreen;
-                    windowBorder = WindowBorder.Hidden;
-                    break;
-                default:
-                case EWindowState.Windowed:
-                    windowState = WindowState.Normal;
-                    windowBorder = WindowBorder.Resizable;
-                    break;
-                case EWindowState.Borderless:
-                    windowState = WindowState.Normal;
-                    windowBorder = WindowBorder.Hidden;
-                    position = new Vector2D<int>(0, 0);
-                    int primaryX = Native.NativeMethods.GetSystemMetrics(0);
-                    int primaryY = Native.NativeMethods.GetSystemMetrics(1);
-                    size = new Vector2D<int>(primaryX, primaryY);
-                    break;
+                position = new(0, 0);
+                size = Runtime.Platform.Desktop.DesktopPlatformBackend.GetPrimaryDisplaySize();
             }
-
-            if (!windowSettings.UseNativeTitleBar && windowState == WindowState.Normal)
-                windowBorder = WindowBorder.Hidden;
-            if (interactiveResizeStrategy == EInteractiveWindowResizeStrategy.EngineBorderlessResize && windowState == WindowState.Normal)
-                windowBorder = WindowBorder.Hidden;
 
             ERenderLibrary preferredRenderBackend = EffectiveSettings.PreferredRenderBackend;
             bool requestHdrSurface = preferHdrOutput && preferredRenderBackend != ERenderLibrary.Vulkan;
-            int preferredBitDepth = requestHdrSurface ? 64 : 24;
-
-            return new(
-                true,
-                position,
-                size,
-                0.0,
-                0.0,
-                preferredRenderBackend == ERenderLibrary.Vulkan
-                    ? new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(1, 1))
-                    : new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6)),
-                windowSettings.WindowTitle ?? string.Empty,
-                windowState,
-                windowBorder,
-                ResolveWindowVSyncEnabled(windowSettings.VSync, EffectiveSettings.VSync),
-                true,
-                VideoMode.Default,
-                preferredBitDepth,
-                8,
-                null,
-                windowSettings.TransparentFramebuffer,
-                false,
-                false,
-                null,
-                1);
+            return new RuntimeWindowCreateOptions(
+                Startup: ToRuntimeWindowValues(windowSettings, interactiveResizeStrategy),
+                GraphicsApi: preferredRenderBackend == ERenderLibrary.Vulkan
+                    ? RuntimeGraphicsApiKind.Vulkan
+                    : RuntimeGraphicsApiKind.OpenGL,
+                ResizeStrategy: interactiveResizeStrategy,
+                Purpose: RuntimeWindowPurpose.Presentation,
+                Position: position,
+                Size: size,
+                VSyncEnabled: ResolveWindowVSyncEnabled(windowSettings.VSync, EffectiveSettings.VSync),
+                Visible: true,
+                TopMost: false,
+                PreferHdrOutput: preferHdrOutput,
+                TransparentFramebuffer: windowSettings.TransparentFramebuffer,
+                ColorBits: requestHdrSurface ? 64 : 24,
+                DepthBits: 0,
+                StencilBits: 8,
+                OpenGlMajorVersion: 4,
+                OpenGlMinorVersion: 6,
+                OpenGlDebugContext: EditorPreferences.Diagnostics.OpenGL.DebugContext,
+                OpenGlForwardCompatible: true,
+                SwapAutomatically: true);
         }
-
         private static bool ResolveWindowVSyncEnabled(bool windowVSyncRequested, EVSyncMode globalVSyncMode)
             => windowVSyncRequested || globalVSyncMode != EVSyncMode.Off;
 

@@ -71,7 +71,7 @@ namespace XREngine.Runtime.InputIntegration
         protected override void SetFocusedInteractableCore(object? value) => FocusedUIComponent = value as IRuntimeFocusedInteractable;
         protected override ELocalPlayerIndex? GetLocalPlayerIndexCore() => _index;
 
-        private void OnActionsChanged(Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> dictionary)
+        private void OnActionsChanged()
             => UpdateViewportCamera();
 
         protected override bool OnPropertyChanging<T2>(string? propName, T2 field, T2 @new)
@@ -120,8 +120,7 @@ namespace XREngine.Runtime.InputIntegration
                 Input.UpdateDevices(
                     keyboard: null,
                     mouse: null,
-                    gamepad: _snapshotGamepad,
-                    RuntimeVrInputServices.Actions);
+                    gamepad: _snapshotGamepad);
             }
         }
 
@@ -133,8 +132,7 @@ namespace XREngine.Runtime.InputIntegration
                 Input.UpdateDevices(
                     keyboard: null,
                     mouse: null,
-                    gamepad: _snapshotGamepad,
-                    RuntimeVrInputServices.Actions);
+                    gamepad: _snapshotGamepad);
                 return;
             }
 
@@ -150,8 +148,7 @@ namespace XREngine.Runtime.InputIntegration
             Input.UpdateDevices(
                 keyboardAndMousePlayer ? _snapshotKeyboard : null,
                 keyboardAndMousePlayer ? _snapshotMouse : null,
-                gamepad: _snapshotGamepad,
-                RuntimeVrInputServices.Actions);
+                gamepad: _snapshotGamepad);
         }
 
         private void ConsumeLatestInputSnapshot()

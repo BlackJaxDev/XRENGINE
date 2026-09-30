@@ -10,7 +10,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Tools;
 using XREngine.Diagnostics;
-using XREngine.Scene.Physics.Jolt;
+using XREngine.Scene.Physics;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -472,7 +472,7 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             ImGui.TextUnformatted($"Linear Velocity: {RigidBodyEditorShared.FormatVector(rigidBody.LinearVelocity)}");
             ImGui.TextUnformatted($"Angular Velocity: {RigidBodyEditorShared.FormatVector(rigidBody.AngularVelocity)}");
 
-            if (rigidBody is JoltDynamicRigidBody)
+            if (rigidBody is IPhysicsDynamicBodySettings && rigidBody is not IPhysicsRuntimeBodyProperties)
             {
                 ImGui.SeparatorText("Jolt feature support");
                 ImGui.TextWrapped("Live: gravity, velocity, transform, damping, mass, axis locks, CCD/motion quality, and collision layers.");

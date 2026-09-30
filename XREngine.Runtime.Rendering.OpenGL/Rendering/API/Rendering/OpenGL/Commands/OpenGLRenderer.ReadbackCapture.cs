@@ -1,9 +1,9 @@
 using XREngine.Extensions;
-using ImageMagick;
+using XREngine.Imaging;
+using System.Buffers.Binary;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
-using Silk.NET.OpenGL.Extensions.ImGui;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
@@ -48,7 +48,7 @@ public partial class OpenGLRenderer
         }
     }
 
-    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
+    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback)
     {
         //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
 
@@ -61,13 +61,15 @@ public partial class OpenGLRenderer
         ReadBufferMode readBuffer = readFramebuffer == 0
             ? ReadBufferMode.Front
             : (ReadBufferMode)Api.GetInteger(GetPName.ReadBuffer);
-        CaptureFBOColorAttachment(region, withTransparency, imageCallback, readFramebuffer, readBuffer, -1, true);
+        CaptureFBOColorAttachment(region, withTransparency,
+            (image, _) => imageCallback(image, image is null ? 0 : checked((int)((long)image.Width * image.Height))),
+            readFramebuffer, readBuffer, -1, true);
     }
 
     public void CaptureFBOAttachment(
         BoundingRectangle region,
         bool withTransparency,
-        Action<MagickImage, int> imageCallback,
+        Action<RuntimeImage, int> imageCallback,
         uint readFBOBindingId,
         EFrameBufferAttachment attachment,
         int layer = -1,
@@ -125,7 +127,7 @@ public partial class OpenGLRenderer
     public void CaptureFBOColorAttachment(
         BoundingRectangle region,
         bool withTransparency,
-        Action<MagickImage, int> imageCallback,
+        Action<RuntimeImage, int> imageCallback,
         uint readFBOBindingId,
         ReadBufferMode readBuffer,
         int layer = -1,
@@ -146,7 +148,7 @@ public partial class OpenGLRenderer
 
     public void CaptureFBOAttachment(
         BoundingRectangle region,
-        Action<MagickImage, int> imageCallback,
+        Action<RuntimeImage, int> imageCallback,
         uint readFBOBindingId,
         ReadBufferMode readBuffer,
         EPixelFormat format,
@@ -154,16 +156,22 @@ public partial class OpenGLRenderer
         int layer = -1,
         bool async = true)
     {
-        //Specify which FBO to read from
-        Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, readFBOBindingId);
-
-        //Specify which attachment buffer to read from
-        Api.ReadBuffer(readBuffer);
-
-        CaptureCurrentlyBoundFBOAttachment(region, imageCallback, format, pixelType, async);
+        int previousReadFramebuffer = Api.GetInteger(GetPName.ReadFramebufferBinding);
+        int previousReadBuffer = Api.GetInteger(GetPName.ReadBuffer);
+        try
+        {
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, readFBOBindingId);
+            Api.ReadBuffer(readBuffer);
+            CaptureCurrentlyBoundFBOAttachment(region, imageCallback, format, pixelType, async);
+        }
+        finally
+        {
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, unchecked((uint)previousReadFramebuffer));
+            Api.ReadBuffer((ReadBufferMode)previousReadBuffer);
+        }
     }
 
-    public delegate void DelImageCallback(MagickImage image, int layer, int channelIndex);
+    public delegate void DelImageCallback(RuntimeImage image, int layer, int channelIndex);
 
     public unsafe void CaptureTexture(
         BoundingRectangle region,
@@ -202,15 +210,15 @@ public partial class OpenGLRenderer
         if (async)
         {
             uint size = (uint)data.Length;
-            uint pbo = ReadTextureToPBO(textureBindingId, region, layer, 1, pixelFormat, pixelType, size, out IntPtr sync);
+            uint pbo = ReadTextureToPBO(textureBindingId, mipLevel, region, layer, 1, pixelFormat, pixelType, size, out IntPtr sync);
             bool FenceCheck()
             {
-                if (!GetData(size, data, sync, pbo))
-                    return false;
-                else
+                bool complete = false;
+                try
                 {
-                    Api.DeleteSync(sync);
-                    Api.DeleteBuffer(pbo);
+                    if (!GetData(size, data, sync, pbo, terminalOnWaitFailed: true))
+                        return false;
+                    complete = true;
 
                     void MakeImage()
                     {
@@ -236,16 +244,41 @@ public partial class OpenGLRenderer
 
                     return true;
                 }
+                catch (Exception ex)
+                {
+                    complete = true;
+                    Debug.OpenGLWarning($"Texture readback failed: {ex.Message}");
+                    Task.Run(() => imageCallback(null!, layer, 0));
+                    return true;
+                }
+                finally
+                {
+                    if (complete)
+                    {
+                        Api.DeleteSync(sync);
+                        Api.DeleteBuffer(pbo);
+                    }
+                }
             }
             RuntimeEngine.AddMainThreadCoroutine(FenceCheck);
         }
         else
         {
-            fixed (byte* ptr = data)
+            int previousPackBuffer = Api.GetInteger(GLEnum.PixelPackBufferBinding);
+            int previousPackAlignment = Api.GetInteger(GetPName.PackAlignment);
+            try
             {
-                Api.GetTextureSubImage(textureBindingId, mipLevel, region.X, region.Y, layer, w, h, 1, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), (uint)data.Length, ptr);
+                Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+                Api.PixelStore(PixelStoreParameter.PackAlignment, 1);
+                fixed (byte* ptr = data)
+                    Api.GetTextureSubImage(textureBindingId, mipLevel, region.X, region.Y, layer, w, h, 1, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), (uint)data.Length, ptr);
             }
-            Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), layer, 0));
+            finally
+            {
+                Api.PixelStore(PixelStoreParameter.PackAlignment, previousPackAlignment);
+                Api.BindBuffer(GLEnum.PixelPackBuffer, unchecked((uint)previousPackBuffer));
+            }
+            Task.Run(() => imageCallback(MakeImage(pixelFormat, pixelType, w, h, data), layer, 0));
         }
     }
 
@@ -298,21 +331,22 @@ public partial class OpenGLRenderer
         }
 
         data = XRTexture.AllocateBytes(width, height, pixelFormat, pixelType);
-        fixed (byte* ptr = data)
+        int previousPackBuffer = Api.GetInteger(GLEnum.PixelPackBufferBinding);
+        int previousPackAlignment = Api.GetInteger(GetPName.PackAlignment);
+        try
         {
-            Api.GetTextureSubImage(
-                textureBindingId,
-                mipLevel,
-                0,
-                0,
-                layer,
-                width,
-                height,
-                1,
-                GLObjectBase.ToGLEnum(pixelFormat),
-                GLObjectBase.ToGLEnum(pixelType),
-                (uint)data.Length,
-                ptr);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+            Api.PixelStore(PixelStoreParameter.PackAlignment, 1);
+            fixed (byte* ptr = data)
+                Api.GetTextureSubImage(
+                    textureBindingId, mipLevel, 0, 0, layer, width, height, 1,
+                    GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType),
+                    (uint)data.Length, ptr);
+        }
+        finally
+        {
+            Api.PixelStore(PixelStoreParameter.PackAlignment, previousPackAlignment);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, unchecked((uint)previousPackBuffer));
         }
 
         return true;
@@ -328,7 +362,7 @@ public partial class OpenGLRenderer
 
     public unsafe void CaptureCurrentlyBoundFBOAttachment(
         BoundingRectangle region,
-        Action<MagickImage, int> imageCallback,
+        Action<RuntimeImage, int> imageCallback,
         EPixelFormat pixelFormat,
         EPixelType pixelType,
         bool async = true)
@@ -343,20 +377,32 @@ public partial class OpenGLRenderer
             uint pbo = ReadFBOToPBO(region, pixelFormat, pixelType, size, out IntPtr sync);
             bool FenceCheck()
             {
-                if (!GetData(size, data, sync, pbo))
-                    return false;
-                else
+                bool complete = false;
+                try
                 {
-                    Api.DeleteSync(sync);
-                    Api.DeleteBuffer(pbo);
+                    if (!GetData(size, data, sync, pbo, terminalOnWaitFailed: true))
+                        return false;
+                    complete = true;
 
                     void MakeImage()
                     {
                         if (pixelType == EPixelType.Float32UnsignedInt248Rev || pixelType == EPixelType.UnsignedInt248)
                         {
-                            MakeDepthStencilImages(pixelType, w, h, data, out MagickImage depth, out MagickImage stencil);
-                            imageCallback(depth, 0);
-                            imageCallback(stencil, 1);
+                            MakeDepthStencilImages(pixelType, w, h, data, out RuntimeImage depth, out RuntimeImage stencil);
+                            RuntimeImage? pendingDepth = depth;
+                            RuntimeImage? pendingStencil = stencil;
+                            try
+                            {
+                                pendingDepth = null;
+                                imageCallback(depth, 0);
+                                pendingStencil = null;
+                                imageCallback(stencil, 1);
+                            }
+                            finally
+                            {
+                                pendingDepth?.Dispose();
+                                pendingStencil?.Dispose();
+                            }
                         }
                         else
                             imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
@@ -365,85 +411,102 @@ public partial class OpenGLRenderer
 
                     return true;
                 }
+                catch (Exception ex)
+                {
+                    complete = true;
+                    Debug.OpenGLWarning($"Framebuffer readback failed: {ex.Message}");
+                    Task.Run(() => imageCallback(null!, 0));
+                    return true;
+                }
+                finally
+                {
+                    if (complete)
+                    {
+                        Api.DeleteSync(sync);
+                        Api.DeleteBuffer(pbo);
+                    }
+                }
             }
             RuntimeEngine.AddMainThreadCoroutine(FenceCheck);
         }
         else
         {
-            fixed (byte* ptr = data)
+            int previousPackBuffer = Api.GetInteger(GLEnum.PixelPackBufferBinding);
+            int previousPackAlignment = Api.GetInteger(GetPName.PackAlignment);
+            try
             {
-                Api.ReadPixels(region.X, region.Y, w, h, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), ptr);
+                Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+                Api.PixelStore(PixelStoreParameter.PackAlignment, 1);
+                fixed (byte* ptr = data)
+                    Api.ReadPixels(region.X, region.Y, w, h, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), ptr);
             }
-            Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), 0));
+            finally
+            {
+                Api.PixelStore(PixelStoreParameter.PackAlignment, previousPackAlignment);
+                Api.BindBuffer(GLEnum.PixelPackBuffer, unchecked((uint)previousPackBuffer));
+            }
+            Task.Run(() => imageCallback(MakeImage(pixelFormat, pixelType, w, h, data), 0));
         }
     }
 
-    private static unsafe MagickImage MakeImage(EPixelFormat format, EPixelType pixelType, uint w, uint h, byte[] data)
-        => XRTexture.NewImage(w, h, format, pixelType, data);
+    private static RuntimeImage MakeImage(EPixelFormat format, EPixelType pixelType, uint w, uint h, byte[] data)
+        => new(w, h, format, pixelType, data, origin: RuntimeImageOrigin.BottomLeft);
 
-    private unsafe void MakeDepthStencilImages(EPixelType pixelType, uint w, uint h, byte[] data, out MagickImage depth, out MagickImage stencil)
+    private static void MakeDepthStencilImages(EPixelType pixelType, uint w, uint h, byte[] data,
+        out RuntimeImage depth, out RuntimeImage stencil)
     {
-        bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
-        depth = XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractDepthData(floatType, data));
-        stencil = XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractStencilData(floatType, data));
-    }
-    private unsafe MagickImage MakeDepthImage(EPixelType pixelType, uint w, uint h, byte[] data)
-    {
-        bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
-        return XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractDepthData(floatType, data));
-    }
-    private unsafe MagickImage MakeStencilImage(EPixelType pixelType, uint w, uint h, byte[] data)
-    {
-        bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
-        return XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractStencilData(floatType, data));
-    }
-
-    private byte[] ExtractStencilData(bool floatingPoint, byte[] data)
-    {
-        //every 3 bytes is the depth, and the last byte is the stencil
-        //we're converting that last byte into grayscale rgb -> 3 bytes with same value
-        int bytesPerPixel = floatingPoint ? 8 : 4;
-        int stencilOffset = floatingPoint ? 4 : 3;
-        int pixelCount = data.Length / bytesPerPixel;
-        byte[] newData = new byte[pixelCount * 3];
-        Parallel.For(0, pixelCount, i =>
+        depth = MakeDepthImage(pixelType, w, h, data);
+        try
         {
-            int index = i * bytesPerPixel;
-            int newIndex = i * 3;
-            byte stencil = data[index + stencilOffset];
-            newData[newIndex] = stencil;
-            newData[newIndex + 1] = stencil;
-            newData[newIndex + 2] = stencil;
-        });
-        return newData;
+            stencil = MakeStencilImage(pixelType, w, h, data);
+        }
+        catch
+        {
+            depth.Dispose();
+            throw;
+        }
     }
 
-    private byte[] ExtractDepthData(bool floatingPoint, byte[] data)
+    private static RuntimeImage MakeDepthImage(EPixelType pixelType, uint w, uint h, byte[] data)
+        => new(w, h, EPixelFormat.DepthComponent, EPixelType.Float,
+            ExtractDepthData(pixelType == EPixelType.Float32UnsignedInt248Rev, data),
+            origin: RuntimeImageOrigin.BottomLeft);
+
+    private static RuntimeImage MakeStencilImage(EPixelType pixelType, uint w, uint h, byte[] data)
+        => new(w, h, EPixelFormat.StencilIndex, EPixelType.UnsignedByte,
+            ExtractStencilData(pixelType == EPixelType.Float32UnsignedInt248Rev, data),
+            origin: RuntimeImageOrigin.BottomLeft);
+
+    private static byte[] ExtractStencilData(bool floatingPoint, byte[] data)
     {
-        //every 3 bytes is the depth, and the last byte is the stencil
-        //if float, 4 bytes are used for the depth, a byte for stencil, and 3 bytes to align
-        //we're converting that depth value down into a byte and then into grayscale rgb -> 3 bytes with same value
         int bytesPerPixel = floatingPoint ? 8 : 4;
         int pixelCount = data.Length / bytesPerPixel;
-        byte[] newData = new byte[pixelCount * 3];
-        Parallel.For(0, pixelCount, i =>
+        byte[] stencil = new byte[pixelCount];
+        for (int i = 0; i < pixelCount; i++)
         {
-            int index = i * bytesPerPixel;
-            int newIndex = i * 3;
-
-            float depth = floatingPoint
-                ? BitConverter.Int32BitsToSingle((data[index] << 24) | (data[index + 1] << 16) | data[index + 2] << 8 | data[index + 3])
-                : ((data[index] << 16) | (data[index + 1] << 8) | data[index + 2]) / (float)0xFFFFFF;
-
-            byte compressedDepth = (byte)(depth * 255.0f);
-
-            newData[newIndex] = compressedDepth;
-            newData[newIndex + 1] = compressedDepth;
-            newData[newIndex + 2] = compressedDepth;
-        });
-        return newData;
+            ReadOnlySpan<byte> word = data.AsSpan(i * bytesPerPixel + (floatingPoint ? 4 : 0), 4);
+            stencil[i] = (byte)(BinaryPrimitives.ReadUInt32LittleEndian(word) & 0xFF);
+        }
+        return stencil;
     }
 
+    private static byte[] ExtractDepthData(bool floatingPoint, byte[] data)
+    {
+        int bytesPerPixel = floatingPoint ? 8 : 4;
+        int pixelCount = data.Length / bytesPerPixel;
+        byte[] depth = new byte[checked(pixelCount * sizeof(float))];
+        for (int i = 0; i < pixelCount; i++)
+        {
+            ReadOnlySpan<byte> word = data.AsSpan(i * bytesPerPixel, 4);
+            float value = floatingPoint
+                ? BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(word))
+                : (BinaryPrimitives.ReadUInt32LittleEndian(word) >> 8) / 16777215.0f;
+            BinaryPrimitives.WriteInt32LittleEndian(
+                depth.AsSpan(i * sizeof(float), sizeof(float)),
+                BitConverter.SingleToInt32Bits(value));
+        }
+        return depth;
+    }
     public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> pixelCallback)
     {
         //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
@@ -463,16 +526,33 @@ public partial class OpenGLRenderer
         uint pbo = ReadFBOToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
         void FenceCheck()
         {
-            if (GetData(size, data, sync, pbo))
+            bool complete = false;
+            try
             {
-                Api.DeleteSync(sync);
-                Api.DeleteBuffer(pbo);
-                ColorF4 color = new(data[0] / 255.0f, data[1] / 255.0f, data[2] / 255.0f, data[3] / 255.0f);
-                Task.Run(() => pixelCallback(color));
+                if (GetData(size, data, sync, pbo, terminalOnWaitFailed: true))
+                {
+                    complete = true;
+                    ColorF4 color = new(data[2] / 255.0f, data[1] / 255.0f, data[0] / 255.0f,
+                        withTransparency ? data[3] / 255.0f : 1.0f);
+                    Task.Run(() => pixelCallback(color));
+                }
+                else
+                {
+                    RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
+                }
             }
-            else
+            catch
             {
-                RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
+                complete = true;
+                throw;
+            }
+            finally
+            {
+                if (complete)
+                {
+                    Api.DeleteSync(sync);
+                    Api.DeleteBuffer(pbo);
+                }
             }
         }
         RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
@@ -496,19 +576,35 @@ public partial class OpenGLRenderer
         uint pbo = ReadFBOToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
         void FenceCheck()
         {
-            if (GetData(size, data, sync, pbo))
+            bool complete = false;
+            try
             {
-                Api.DeleteSync(sync);
-                Api.DeleteBuffer(pbo);
-                fixed (byte* ptr = data)
+                if (GetData(size, data, sync, pbo, terminalOnWaitFailed: true))
                 {
-                    float depth = *(float*)ptr;
-                    Task.Run(() => depthCallback(depth));
+                    complete = true;
+                    fixed (byte* ptr = data)
+                    {
+                        float depth = *(float*)ptr;
+                        Task.Run(() => depthCallback(depth));
+                    }
+                }
+                else
+                {
+                    RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
                 }
             }
-            else
+            catch
             {
-                RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
+                complete = true;
+                throw;
+            }
+            finally
+            {
+                if (complete)
+                {
+                    Api.DeleteSync(sync);
+                    Api.DeleteBuffer(pbo);
+                }
             }
         }
         RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
@@ -665,38 +761,79 @@ public partial class OpenGLRenderer
 
     private unsafe uint ReadFBOToPBO(BoundingRectangle region, EPixelFormat format, EPixelType type, nuint size, out IntPtr sync)
     {
+        int previousPackBuffer = Api.GetInteger(GLEnum.PixelPackBufferBinding);
+        int previousPackAlignment = Api.GetInteger(GetPName.PackAlignment);
         uint pbo = Api.GenBuffer();
-        Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-        Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
-        Api.ReadPixels(region.X, region.Y, (uint)region.Width, (uint)region.Height, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), null);
-        sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
-        Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
-        return pbo;
+        try
+        {
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.PixelStore(PixelStoreParameter.PackAlignment, 1);
+            Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
+            Api.ReadPixels(region.X, region.Y, (uint)region.Width, (uint)region.Height, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), null);
+            sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            if (sync == IntPtr.Zero)
+                throw new InvalidOperationException("OpenGL failed to create the framebuffer readback fence.");
+            return pbo;
+        }
+        catch
+        {
+            Api.DeleteBuffer(pbo);
+            throw;
+        }
+        finally
+        {
+            Api.PixelStore(PixelStoreParameter.PackAlignment, previousPackAlignment);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, unchecked((uint)previousPackBuffer));
+        }
     }
 
-    private unsafe uint ReadTextureToPBO(uint textureId, BoundingRectangle region, int layerOffset, uint layerCount, EPixelFormat format, EPixelType type, uint size, out IntPtr sync)
+    private unsafe uint ReadTextureToPBO(uint textureId, int mipLevel, BoundingRectangle region, int layerOffset, uint layerCount, EPixelFormat format, EPixelType type, uint size, out IntPtr sync)
     {
+        int previousPackBuffer = Api.GetInteger(GLEnum.PixelPackBufferBinding);
+        int previousPackAlignment = Api.GetInteger(GetPName.PackAlignment);
         uint pbo = Api.GenBuffer();
-        Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-        Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
-        Api.GetTextureSubImage(textureId, 0, region.X, region.Y, layerOffset, (uint)region.Width, (uint)region.Height, layerCount, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), size, null);
-        sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
-        Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
-        return pbo;
+        try
+        {
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.PixelStore(PixelStoreParameter.PackAlignment, 1);
+            Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
+            Api.GetTextureSubImage(textureId, mipLevel, region.X, region.Y, layerOffset, (uint)region.Width, (uint)region.Height, layerCount, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), size, null);
+            sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            if (sync == IntPtr.Zero)
+                throw new InvalidOperationException("OpenGL failed to create the texture readback fence.");
+            return pbo;
+        }
+        catch
+        {
+            Api.DeleteBuffer(pbo);
+            throw;
+        }
+        finally
+        {
+            Api.PixelStore(PixelStoreParameter.PackAlignment, previousPackAlignment);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, unchecked((uint)previousPackBuffer));
+        }
     }
 
-    private unsafe bool GetData(nuint size, byte[] data, IntPtr sync, uint pbo)
+    private unsafe bool GetData(nuint size, byte[] data, IntPtr sync, uint pbo, bool terminalOnWaitFailed = false)
     {
         var result = Api.ClientWaitSync(sync, 0u, 0u);
+        if (result == GLEnum.WaitFailed && terminalOnWaitFailed)
+            throw new InvalidOperationException("OpenGL readback fence wait failed.");
         if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
             return false;
 
-        Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-        fixed (byte* ptr = data)
+        int previousPackBuffer = Api.GetInteger(GLEnum.PixelPackBufferBinding);
+        try
         {
-            Api.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, size, ptr);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            fixed (byte* ptr = data)
+                Api.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, size, ptr);
         }
-        Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+        finally
+        {
+            Api.BindBuffer(GLEnum.PixelPackBuffer, unchecked((uint)previousPackBuffer));
+        }
         RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)size);
 
         return true;

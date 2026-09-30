@@ -1,6 +1,9 @@
 # Voice MCP Bridge
 
 The `VoiceMcpBridgeComponent` enables voice-controlled interaction with the XREngine MCP server. Speak commands into your microphone, and the engine will execute them.
+The bridge, speech-to-text, and microphone scene components reside in
+`XREngine.Runtime.AudioIntegration`; desktop capture comes from the registered
+`XREngine.Audio.NAudio` backend.
 
 ## Architecture
 

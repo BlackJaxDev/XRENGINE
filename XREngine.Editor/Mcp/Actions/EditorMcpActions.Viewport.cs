@@ -5,7 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine;
 using XREngine.Core;
 using XREngine.Components;
@@ -131,7 +131,7 @@ namespace XREngine.Editor.Mcp
                         return;
                     }
 
-                    MagickImage img = result.Image;
+                    RuntimeImage img = result.Image;
                     if (tcs.Task.IsCompleted)
                     {
                         img.Dispose();
@@ -142,10 +142,7 @@ namespace XREngine.Editor.Mcp
                     {
                         using (img)
                         {
-                            if (renderer.ScreenshotRequiresVerticalFlip)
-                                img.Flip();
-                            using FileStream output = File.Create(path);
-                            img.Write(output, MagickFormat.Png);
+                            File.WriteAllBytes(path, RuntimeImageCodecs.Require().EncodePng(img));
                         }
                         tcs.TrySetResult((path, result));
                     }

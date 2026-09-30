@@ -136,7 +136,8 @@ public static partial class EditorImGuiUI
 
                 try
                 {
-                    using var img = new ImageMagick.MagickImage(result.SelectedPath);
+                    using XREngine.Imaging.RuntimeImage img = XREngine.Imaging.RuntimeImageCodecs.Require()
+                        .Decode(File.ReadAllBytes(result.SelectedPath));
                     mip.SetFromImage(img);
                     mip.Invalidate();
                 }

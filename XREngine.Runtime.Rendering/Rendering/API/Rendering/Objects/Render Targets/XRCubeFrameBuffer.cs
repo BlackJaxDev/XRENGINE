@@ -1,4 +1,3 @@
-using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;

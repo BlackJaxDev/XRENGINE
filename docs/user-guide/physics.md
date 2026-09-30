@@ -6,7 +6,7 @@ Use this page when you want to enable physics, pick a backend, add physics compo
 
 ## Backend Choice
 
-PhysX is the primary physics backend. Jolt and Jitter2 integrations exist for experimentation and parity work, but PhysX is the path to use for current editor and gameplay work.
+PhysX remains the default physics backend for existing and new desktop projects. Jolt is installed in desktop applications for parity work; changing the default awaits full desktop parity and browser qualification. Jitter is an experimental module that must be installed explicitly. If a saved selection names a backend absent from the application, startup reports that missing module by name.
 
 When GPU PhysX features are enabled, make missing GPU support visible during development. Do not assume a silent CPU fallback unless a task explicitly requests fallback behavior.
 
@@ -21,6 +21,8 @@ Attach physics behavior through scene components:
 - physics chain collider components for sphere, box, capsule, and plane constraints.
 
 Most rigid body components expect a compatible transform and automatically register or unregister their backend actor as the node is activated, deactivated, or removed.
+
+Convex decomposition from model meshes is an editor/cook operation. The editor installs the CoACD authoring module and its disk cache before a scene loads. Server and game outputs should include cooked collider geometry; requesting new convex decomposition without the authoring module reports a missing-authoring diagnostic. Height fields loaded directly from image files likewise require an installed imaging decoder.
 
 ## Play-Mode Fall Reset
 

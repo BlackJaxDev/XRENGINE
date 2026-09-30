@@ -4,6 +4,13 @@ Last Updated: 2026-04-24
 
 XRENGINE's networking layer owns the low-latency realtime data plane. It does not own public room browsing, matchmaking, host placement, admission-token issuance, world package downloads, chunk caches, or lifecycle orchestration. Those systems should hand the engine concrete endpoint, session, token, and world-identity data after any external workflow has completed.
 
+`XREngine.Runtime.Core` owns the realtime protocol, admission, replication, and
+reliability policy. `XREngine.Runtime.Net.Sockets` implements UDP/TCP/TLS
+transport behind `NetworkTransportServices` and is explicitly registered by
+Bootstrap. `XREngine.Runtime.Net.Osc` owns OSC/VMC transport components. Type
+namespaces remain stable even when implementation files live in these separate
+projects. See [Runtime Project Organization](../../architecture/runtime/project-organization.md).
+
 Current runtime support is direct client/server UDP. Peer-to-peer networking with dynamic connection-host switching is a planned feature tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).
 
 For local-dev orchestration and tests, `XREngine.ControlPlane` provides an in-process control-plane DLL that can create/list/join instances, issue opaque session tokens, track basic host capacity, verify local world package manifests, and generate server/client launch environment variables. See [XRENGINE Control Plane](control-plane.md).
@@ -88,7 +95,7 @@ Game projects can register additional ids during startup through `GameModeBootst
 
 ## Transport
 
-Native realtime traffic uses the existing UDP data plane:
+Native realtime traffic uses the UDP data plane through the registered socket backend:
 
 - Servers bind one UDP socket for inbound client packets and outbound replies.
 - Clients bind `UdpClientRecievePort` and use that socket for both outbound client-to-server packets and inbound server-to-client replies.

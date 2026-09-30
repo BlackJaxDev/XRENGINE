@@ -1,14 +1,11 @@
 using XREngine.Extensions;
-using MagicPhysX;
 using System.ComponentModel;
-using System.Drawing.Drawing2D;
 using System.Numerics;
 using System.Threading;
 using XREngine.Components.Movement.Modules;
 using XREngine.Components.Physics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
-using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
@@ -47,7 +44,6 @@ namespace XREngine.Components.Movement
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
         private bool _constrainedClimbing = false;
         private IAbstractCharacterController? _controller;
-        private PhysxCapsuleController? _physxController;
         private int _controllerInitVersion;
 
         private AbstractPhysicsScene? _subscribedPhysicsScene;
@@ -557,48 +553,8 @@ namespace XREngine.Components.Movement
         public PhysicsCharacterControllerCapabilities BackendCapabilities
             => ActiveController?.Capabilities ?? PhysicsCharacterControllerCapabilities.None;
 
-        public IAbstractDynamicRigidBody? RigidBodyReference => _physxController?.Actor;
-
-        [Category("Physics / PhysX Extensions")]
-        [Description("PhysX-only raw capsule controller. Prefer CharacterController for backend-neutral gameplay code.")]
-        public PhysxCapsuleController? PhysxControllerExtension => _physxController;
-        
-        [Category("Physics / PhysX Extensions")]
-        [Description("PhysX-only controller state details. Backend-neutral movement should use CharacterController collision properties/events.")]
-        public void GetPhysxStateExtension(
-            out Vector3 deltaXP,
-            out PhysxShape? touchedShape,
-            out PhysxRigidActor? touchedActor,
-            out uint touchedObstacleHandle,
-            out PxControllerCollisionFlags collisionFlags,
-            out bool standOnAnotherCCT,
-            out bool standOnObstacle,
-            out bool isMovingUp)
-        {
-            if (_physxController is null)
-            {
-                deltaXP = Vector3.Zero;
-                touchedShape = null;
-                touchedActor = null;
-                touchedObstacleHandle = 0;
-                collisionFlags = 0;
-                standOnAnotherCCT = false;
-                standOnObstacle = false;
-                isMovingUp = false;
-                return;
-            }
-
-            var state = _physxController.State;
-            deltaXP = state.deltaXP;
-            touchedShape = state.touchedShape;
-            touchedActor = state.touchedActor;
-            touchedObstacleHandle = state.touchedObstacleHandle;
-            collisionFlags = state.collisionFlags;
-            standOnAnotherCCT = state.standOnAnotherCCT;
-            standOnObstacle = state.standOnObstacle;
-            isMovingUp = state.isMovingUp;
-            return;
-        }
+        public IAbstractDynamicRigidBody? RigidBodyReference
+            => (ActiveController as IPhysicsControllerBodySource)?.Actor;
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -713,14 +669,12 @@ namespace XREngine.Components.Movement
             {
                 ActiveController = null;
                 _controllerActorProxy = null;
-                _physxController = null;
             }
         }
 
         private void BindExternalController(IAbstractCharacterController controller)
         {
             _ownsActiveController = false;
-            _physxController = (controller as IPhysxCharacterControllerExtension)?.NativeController;
             ApplyControllerSettings(controller);
             ActiveController = controller;
             _controllerActorProxy = controller;
@@ -847,7 +801,6 @@ namespace XREngine.Components.Movement
             }
 
             _ownsActiveController = true;
-            _physxController = (controller as IPhysxCharacterControllerExtension)?.NativeController;
             ApplyControllerSettings(controller);
             ActiveController = controller;
 
@@ -903,7 +856,6 @@ namespace XREngine.Components.Movement
 
             if (_ownsActiveController)
                 ActiveController?.RequestRelease();
-            _physxController = null;
             _ownsActiveController = false;
 
             ActiveController = null;
@@ -1046,7 +998,7 @@ namespace XREngine.Components.Movement
         public void AddForce(Vector3 force)
         {
             //Calculate acceleration from force
-            float mass = RigidBodyReference is PhysxRigidBody body ? body.Mass : 0.0f;
+            float mass = RigidBodyReference is IPhysicsRuntimeBodyProperties body ? body.Mass : 0.0f;
             if (mass > 0.0f)
                 Velocity += force / mass;
         }

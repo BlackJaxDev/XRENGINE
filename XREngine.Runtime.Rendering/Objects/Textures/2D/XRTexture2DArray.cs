@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using MemoryPack;
 using System.Numerics;
 using XREngine.Data;
@@ -259,11 +259,18 @@ namespace XREngine.Rendering
             => Load3rdParty(path);
         public override bool Load3rdParty(string filePath)
         {
-            using MagickImageCollection collection = new(filePath);
-            Textures = new XRTexture2D[collection.Count];
-            for (int i = 0; i < collection.Count; i++)
-                if (collection[i] is MagickImage mi)
-                    Textures[i] = new(mi);
+            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(File.ReadAllBytes(filePath));
+            Textures = new XRTexture2D[frames.Count];
+            try
+            {
+                for (int i = 0; i < frames.Count; i++)
+                    Textures[i] = new(frames[i]);
+            }
+            finally
+            {
+                for (int i = 0; i < frames.Count; i++)
+                    frames[i].Dispose();
+            }
             AutoGenerateMipmaps = true;
             return true;
         }

@@ -1,7 +1,6 @@
 using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
-using Silk.NET.Windowing;
 using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -13,7 +12,7 @@ namespace XREngine.Rendering.OpenGL;
 /// </summary>
 internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBinding
 {
-    private OpenXRAPI? _host;
+    private IOpenXrGraphicsHost? _host;
     private GL? _gl;
     private readonly SwapchainImageOpenGLKHR*[] _swapchainImagesGL =
         new SwapchainImageOpenGLKHR*[RenderFrameViewSet.MaxViewCount];
@@ -41,11 +40,11 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
     private ulong _previewLeftEyeFrameId;
     private ulong _previewRightEyeFrameId;
 
-    private OpenXRAPI Host
+    private IOpenXrGraphicsHost Host
         => _host ?? throw new InvalidOperationException("The OpenGL OpenXR binding is not attached to an API host.");
 
-    private void Attach(OpenXRAPI api)
-        => _host = api;
+    private void Attach(IOpenXrGraphicsHost host)
+        => _host = host;
 
     public RendererBackendId BackendId => RendererBackendId.OpenGL;
     public string BackendName => "OpenGL";
@@ -77,22 +76,22 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
             Volatile.Write(ref _previewRightEyeFrameId, renderFrameId);
     }
 
-    public bool TryCreateSession(OpenXRAPI api, AbstractRenderer renderer)
+    public bool TryCreateSession(IOpenXrGraphicsHost host, AbstractRenderer renderer)
     {
-        Attach(api);
+        Attach(host);
         CreateOpenGLSession((OpenGLRenderer)renderer);
         return true;
     }
 
-    public void CreateSwapchains(OpenXRAPI api, AbstractRenderer renderer)
+    public void CreateSwapchains(IOpenXrGraphicsHost host, AbstractRenderer renderer)
     {
-        Attach(api);
+        Attach(host);
         InitializeOpenGLSwapchains((OpenGLRenderer)renderer);
     }
 
-    public void CleanupSwapchains(OpenXRAPI api)
+    public void CleanupSwapchains(IOpenXrGraphicsHost host)
     {
-        Attach(api);
+        Attach(host);
         EnsureCurrentContextForResourceDeletion();
 
         for (int i = 0; i < _swapchainFramebuffers.Length; i++)
@@ -123,57 +122,43 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
         }
     }
 
-    public bool WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer)
+    public bool WaitForGpuIdle(IOpenXrGraphicsHost host, AbstractRenderer renderer)
     {
-        Attach(api);
+        Attach(host);
         _gl?.Finish();
         return true;
     }
 
-    public Result AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex)
+    public int AcquireSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain, out uint imageIndex)
     {
-        SwapchainImageAcquireInfo acquireInfo = new()
-        {
-            Type = StructureType.SwapchainImageAcquireInfo
-        };
-        imageIndex = 0;
-        return api.Api.AcquireSwapchainImage(swapchain, in acquireInfo, ref imageIndex);
+        Attach(host);
+        return host.GraphicsCalls.AcquireSwapchainImage(swapchain, out imageIndex);
     }
 
-    public Result WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs)
+    public int WaitSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain, long timeoutNs)
     {
-        SwapchainImageWaitInfo waitInfo = new()
-        {
-            Type = StructureType.SwapchainImageWaitInfo,
-            Timeout = timeoutNs
-        };
-        return api.Api.WaitSwapchainImage(swapchain, in waitInfo);
+        Attach(host);
+        return host.GraphicsCalls.WaitSwapchainImage(swapchain, timeoutNs);
     }
 
-    public Result ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain)
+    public int ReleaseSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain)
     {
-        SwapchainImageReleaseInfo releaseInfo = new()
-        {
-            Type = StructureType.SwapchainImageReleaseInfo
-        };
-        return api.Api.ReleaseSwapchainImage(swapchain, in releaseInfo);
+        Attach(host);
+        return host.GraphicsCalls.ReleaseSwapchainImage(swapchain);
     }
 
-    public void RenderViews(
-        OpenXRAPI api,
-        in CompositionLayerProjectionView projectionView,
-        uint viewIndex)
+    public void RenderViews(IOpenXrGraphicsHost host, uint viewIndex)
     {
         // Rendering remains coordinated by the backend-neutral frame lifecycle.
     }
 
     public bool TryRenderEye(
-        OpenXRAPI api,
+        IOpenXrGraphicsHost host,
         uint viewIndex,
         uint imageIndex,
-        OpenXRAPI.DelRenderToFBO? renderCallback)
+        OpenXrRenderToEyeCallback? renderCallback)
     {
-        Attach(api);
+        Attach(host);
         if (_gl is null)
             return false;
 
@@ -198,6 +183,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
             _gl.ColorMask(true, true, true, true);
             _gl.DepthMask(true);
             (renderCallback ?? RenderViewportsToSwapchain)(swapchainImages[imageIndex].Image, viewIndex);
+            host.StageProjectionView(viewIndex);
             return true;
         }
         finally
@@ -207,24 +193,24 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
         }
     }
 
-    public void Flush(OpenXRAPI api)
+    public void Flush(IOpenXrGraphicsHost host)
     {
-        Attach(api);
+        Attach(host);
         _gl?.Flush();
     }
 
     public bool TryRenderDesktopMirrorComposition(
-        OpenXRAPI api,
+        IOpenXrGraphicsHost host,
         uint targetWidth,
         uint targetHeight)
     {
-        Attach(api);
+        Attach(host);
         return TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
     }
 
-    public void DestroyBackendResources(OpenXRAPI api)
+    public void DestroyBackendResources(IOpenXrGraphicsHost host)
     {
-        Attach(api);
+        Attach(host);
         EnsureCurrentContextForResourceDeletion();
 
         if (_gl is not null)
@@ -248,12 +234,13 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
 
     private void EnsureCurrentContextForResourceDeletion()
     {
-        if (wglGetCurrentContext() != 0 || Window is null)
+        if (wglGetCurrentContext() != 0 || Window?.DesktopGlContext is not { } desktopGlContext)
             return;
 
         try
         {
-            Window.Window.MakeCurrent();
+            desktopGlContext.AssertOwnerThread();
+            desktopGlContext.MakeCurrent();
         }
         catch
         {

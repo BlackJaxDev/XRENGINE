@@ -11,7 +11,9 @@ This is the local orchestration milestone. Full replicated world bootstrap, auth
 | ControlPlane library | Versioned contracts, host reservations, lifecycle, admission grants, roster reconciliation, package verification |
 | ControlPlane.Service | Authenticated loopback API, local catalog, Windows jobs, ports, private worker directories, deadlines and process exit |
 | Server | Verified world/game startup, cached admission, hard player limit, asynchronous management reports and shutdown |
-| Runtime Core/Bootstrap | UDP, player/pawn lifecycle, identity handoffs, verified client world loading |
+| Runtime.Core | Realtime protocol, admission, replication, player/pawn lifecycle, and neutral transport contracts |
+| Net.Sockets | UDP/TCP/TLS implementation and socket lifetime |
+| Bootstrap | Backend registration, identity handoffs, and verified client world loading |
 | Website/game launcher | API identity, stable client ID, create/join progress, client staging, handoff launch and cancellation |
 
 ```mermaid
@@ -45,6 +47,10 @@ sequenceDiagram
 ```
 
 HTTP and filesystem work stay off packet/simulation paths. Admission reads a cached complete grant snapshot. Every report has a worker generation and increasing sequence. Full snapshots repair lost responses; stale reports cannot revive an exited worker.
+
+The control-plane service remains separate from the realtime socket module.
+See [Runtime Project Organization](project-organization.md) for assembly ownership;
+public namespaces do not necessarily match physical project names.
 
 ## Contracts and identity
 

@@ -128,6 +128,7 @@ public static class RuntimeAdapterBootstrap
         private readonly IDisposable _worldHostLease;
         private readonly IDisposable _worldRegistryLease;
         private readonly EngineRuntimeVrInputServices? _installedVrInput;
+        private readonly EngineRuntimeVrStateServices? _installedVrState;
         private readonly EngineRuntimePawnHostServices? _installedPawn;
         private readonly IDisposable _installedPlayerController;
         private readonly RuntimeAdapterProfile _profile;
@@ -173,7 +174,7 @@ public static class RuntimeAdapterBootstrap
                 RuntimeInputServices.Current = new EngineRuntimeInputServices();
                 RuntimeInputCaptureServices.Current = new RuntimeInputCaptureState();
                 RuntimeVrInputServices.Current = _installedVrInput = new EngineRuntimeVrInputServices();
-                RuntimeVrStateServices.Current = new EngineRuntimeVrStateServices();
+                RuntimeVrStateServices.Current = _installedVrState = new EngineRuntimeVrStateServices();
                 RuntimeGameModeHostServices.Current = new EngineRuntimeGameModeHostServices();
                 RuntimePawnHostServices.Current = _installedPawn = new EngineRuntimePawnHostServices();
                 EngineRuntimePlayerControllerServices playerControllers = new();
@@ -226,6 +227,7 @@ public static class RuntimeAdapterBootstrap
                     RuntimeInputCaptureServices.Current = _previousInputCapture;
                     RuntimeVrInputServices.Current = _previousVrInput;
                     RuntimeVrStateServices.Current = _previousVrState;
+                    _installedVrState?.Dispose();
                     RuntimeEngine.VRState.LifecycleServices = _previousVrLifecycle;
                     RuntimeGameModeHostServices.Current = _previousGameMode;
                     RuntimePawnHostServices.Current = _previousPawn;

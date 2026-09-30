@@ -4,7 +4,6 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
-using Valve.VR;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Colors;

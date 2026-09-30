@@ -1,10 +1,13 @@
 # Shared lexical policy for the MSBuild source guard and optional dependency reports.
 # Columns: deny/category/regex; reflection/regex; allow/repository path/symbol/review reason.
 deny	native interop	\b(?:DllImport|LibraryImport|NativeLibrary|Marshal\.GetDelegateForFunctionPointer)\b
-deny	desktop UI or graphics	\b(?:System\.Windows|System\.Drawing|Microsoft\.Win32|Silk\.NET\.(?:GLFW|SDL|OpenGL|Direct3D|OpenXR|Windowing)|ImGuiNET|UltralightNet|SkiaSharp)\b
-deny	native dependency	\b(?:FFmpeg|NAudio|OpenAL|DirectStorage|MagicPhysX|JoltPhysics|CUDA|CoACD|RiveSharp)\b
+deny	unmanaged function calls	\b(?:delegate\s*\*\s*unmanaged|UnmanagedCallersOnly|SuppressUnmanagedCodeSecurity)\b
+deny	desktop UI or graphics	\b(?:System\.Windows|System\.Drawing\.(?!(?:Color|KnownColor|Point|PointF|Rectangle|RectangleF|Size|SizeF)\b)[A-Za-z_]\w*|Microsoft\.Win32|Silk\.NET\.(?:GLFW|SDL|OpenGL|Direct3D|OpenXR|Windowing)|ImGuiNET|UltralightNet|SkiaSharp)\b
+deny	vendor runtime API	\b(?:Silk\.NET\.(?!Maths\b)[A-Za-z_]\w*|SharpFont\b|ImageMagick\b|OpenVR\b|OpenTK\b|OpenCvSharp\b)\b
+deny	native dependency API	\b(?:FFmpeg\.AutoGen|NAudio\.|OpenAL\.|Silk\.NET\.OpenAL|MagicPhysX\.|JoltPhysics\.|RiveSharp\.|NVIDIA\.CUDA|CoACD\.Native)\b
 deny	runtime code or assembly loading	\b(?:Assembly\.(?:Load|LoadFrom|LoadFile|LoadWithPartialName)|AssemblyLoadContext|Reflection\.Emit|DynamicMethod|Expression\.Compile|Activator\.CreateInstanceFrom)\b
-deny	process or desktop services	\b(?:Process\.Start|Environment\.GetFolderPath|Registry(?:Key)?\.|System\.Management)\b
+deny	process or desktop services	\b(?:System\.Diagnostics\.Process\b|ProcessStartInfo\b|new\s+Process\b|Process\.(?:Start|GetCurrentProcess|GetProcesses|GetProcessById)\b|(?<!\.)Process\b(?!\s*\()|Environment\.GetFolderPath|Registry(?:Key)?\.|System\.Management)\b
+deny	sockets and filesystem watching	\b(?:System\.Net\.Sockets|Socket(?:AsyncEventArgs|Exception)?\b|TcpClient\b|TcpListener\b|UdpClient\b|FileSystemWatcher\b)\b
 reflection	\b(?:Type\.GetType|GetTypes|GetExportedTypes|GetMethods|GetMethod|GetConstructor|GetCustomAttributes|GetCustomAttribute|GetProperties|GetProperty|GetAssemblies|GetUninitializedObject|Activator\.CreateInstance|MakeGenericType|MakeGenericMethod)\b
 allow	XREngine.Browser/BrowserSceneEnvelope.cs	GetProperty	JsonElement wire-field access, not System.Type reflection
 allow	XREngine.Data/Core/Events/XRPersistentCall.cs	Type.GetType	Serialized event parameter identity resolution
@@ -14,7 +17,7 @@ allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetExportedTypes	Ca
 allow	XREngine.Data/Core/Objects/XRBase.cs	GetMethod	MemoryPack clone helper lookup
 allow	XREngine.Data/Core/Objects/XRBase.cs	MakeGenericMethod	Closed clone helper specialization in interpreter
 allow	XREngine.Data/Serialization/AotRuntimeMetadataStore.cs	Type.GetType	Persisted type identity resolver in interpreter
-allow	XREngine.Data/Serialization/AotRuntimeMetadataStore.cs	GetAssemblies	Loaded-assembly fallback in untrimmed interpreter
+allow	XREngine.Data/Serialization/AotRuntimeMetadataStore.cs	GetAssemblies	Development-only loaded-assembly fallback; published resolution requires metadata
 allow	XREngine.Extensions/Enum.cs	GetCustomAttributes	Enum display metadata lookup
 allow	XREngine.Extensions/Object.cs	GetMethod	Managed private method helper; browser composition does not call it
 allow	XREngine.Extensions/Reflection/Type.cs	Activator.CreateInstance	Explicit managed instance helper; not used by browser composition
@@ -27,9 +30,116 @@ allow	XREngine.Runtime.Core/Scene/Components/XRComponent.cs	GetConstructor	Legac
 allow	XREngine.Runtime.Core/Scene/Components/XRComponent.cs	GetUninitializedObject	Legacy component factory; requires browser lifecycle exercise
 allow	XREngine.Runtime.Core/Scene/SceneNode.Components.cs	GetCustomAttributes	Component requirement attributes
 allow	XREngine.Runtime.Core/Scene/Transforms/TransformBase.cs	GetCustomAttribute	Transform display metadata
-allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetAssemblies	Untrimmed replication metadata scan from static initializer
-allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetTypes	Loaded-assembly replication candidate inspection
-allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperties	Replicable property discovery
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetAssemblies	Development-only replication metadata scan; published runtime uses persisted table
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetTypes	Development-only loaded-assembly replication candidate inspection
+allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperties	Development-only replicable property discovery
 allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperty	Registered replication property resolution
 allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetCustomAttribute	Replication attribute inspection
 allow	XREngine.Runtime.Rendering/Runtime/RendererModules/RendererBackendModuleIdentity.cs	GetCustomAttribute	Target framework identity of registered module assembly
+allow	XREngine.Runtime.Rendering/VideoStreaming/TwitchHlsStreamResolver.cs	GetProperty	JsonElement Twitch response field extraction
+allow	XREngine.Runtime.InputIntegration/Input/InputIntegrationPlayerControllerServices.cs	GetConstructor	Configured pawn controller constructor lookup
+allow	XREngine.Runtime.InputIntegration/Input/InputIntegrationPlayerControllerServices.cs	Activator.CreateInstance	Configured managed pawn controller creation
+allow	XREngine.Runtime.InputIntegration/BootstrapFlyableCameraFactory.Builders.cs	Type.GetType	Optional named flyable camera pawn lookup in loaded assemblies
+allow	XREngine.Animation/Serialization/AnimStateMachineSerialization.cs	GetProperty	Serialized state machine asset ID property metadata
+allow	XREngine.Animation/Serialization/AnimationPropertySerialization.cs	Activator.CreateInstance	Managed keyframe collection construction for serialized animation
+allow	XREngine.Animation/Serialization/AnimationPropertySerialization.cs	GetProperty	Named Keyframes property on authored animation type
+allow	XREngine.Animation/Serialization/AnimationPropertySerialization.cs	Type.GetType	Persisted animation property type identity lookup
+allow	XREngine.Animation/Serialization/AnimationCurveYamlTypeConverter.cs	GetProperty	Known asset ID property metadata for curve YAML
+allow	XREngine.Animation/Serialization/AnimationClipSerialization.cs	GetProperty	Known clip and animation member properties for serialization
+allow	XREngine.Runtime.Rendering.WebGPU/WebGpuRendererHost.Capabilities.cs	GetProperty	JsonElement browser capability manifest field lookup
+allow	XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs	GetProperty	Known mesh asset ID property metadata
+allow	XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs	Type.GetType	Persisted mesh type identity lookup
+allow	XREngine.Runtime.Rendering/Serialization/ViewportRenderCommandContainerYamlNodeDeserializer.cs	Activator.CreateInstance	Managed concrete render command container from YAML type
+allow	XREngine.Runtime.Rendering/Serialization/ShaderVarYamlTypeConverter.cs	Activator.CreateInstance	Managed shader variable type construction from YAML
+allow	XREngine.Runtime.Rendering/Serialization/ShaderVarYamlTypeConverter.cs	GetProperty	Known shader variable Value property metadata
+allow	XREngine.Runtime.Rendering/Serialization/ShaderVarYamlTypeConverter.cs	GetConstructor	String constructor lookup for shader variable value conversion
+allow	XREngine.Runtime.AnimationIntegration/Scene/Components/Animation/ImportedAnimationBindingRuntime.cs	GetMethods	Imported animation member binding against managed asset type
+allow	XREngine.Runtime.AnimationIntegration/Scene/Components/Animation/ImportedAnimationBindingRuntime.cs	GetConstructor	Managed imported animation asset default constructor check
+allow	XREngine.Runtime.AnimationIntegration/Scene/Components/Animation/ImportedAnimationBindingRuntime.cs	MakeGenericMethod	Closed generic imported animation load method specialization
+allow	XREngine.Runtime.AnimationIntegration/Scene/Components/Animation/ImportedAnimationBindingRuntime.cs	GetProperty	Imported animation member property binding
+allow	XREngine.Data/Serialization/Yaml/YamlDefaultTypeInspector.cs	GetProperties	YamlDotNet descriptor interface implementation, not direct runtime scan
+allow	XREngine.Data/Serialization/Yaml/YamlDefaultTypeInspector.cs	GetProperty	YamlDotNet descriptor interface implementation
+allow	XREngine.Data/Serialization/Yaml/YamlDefaultTypeInspector.cs	GetCustomAttribute	YAML default value attribute on descriptor
+allow	XREngine.Data/Serialization/Yaml/PolymorphicYamlNodeDeserializer.cs	Type.GetType	Persisted YAML type identity lookup in loaded assemblies
+allow	XREngine.Data/Serialization/Yaml/PolymorphicYamlNodeDeserializer.cs	GetAssemblies	Loaded managed assembly fallback for legacy YAML type names; optional desktop loading is separate
+allow	XREngine.Data/Serialization/Yaml/InterfaceCollectionYamlNodeDeserializer.cs	MakeGenericType	Closed HashSet type for serialized interface collection
+allow	XREngine.Data/Serialization/ThirdPartyAssetTypeRegistry.cs	GetCustomAttribute	Asset extension attribute for explicitly registered asset type
+allow	XREngine.Animation/Property/Core/AnimationMember.cs	GetMethod	Authored animation target method binding
+allow	XREngine.Animation/Property/Core/AnimationMember.cs	GetProperty	ImmediateReflection authored animation property binding
+allow	XREngine.Data/Core/Type Converters/OverrideableSettingYamlTypeConverter.cs	Activator.CreateInstance	Managed overrideable setting from YAML type
+allow	XREngine.Data/Core/SessionSettingsOverlay.cs	GetProperty	Named settings overlay property traversal
+allow	XREngine.Data/Core/SessionSettingsOverlay.cs	Activator.CreateInstance	Nested managed settings object construction
+allow	XREngine.Data/Core/Reflection/XRTypeRedirectRegistry.cs	GetAssemblies	Development-only type redirect discovery; published runtime uses persisted table
+allow	XREngine.Data/Core/Reflection/XRTypeRedirectRegistry.cs	GetTypes	Development-only type redirect candidate inspection
+allow	XREngine.Data/Core/Reflection/XRTypeRedirectRegistry.cs	GetCustomAttributes	Type redirect attribute metadata
+allow	XREngine.Data/Core/Objects/XRBase.cs	GetProperties	Clone property metadata in managed object graph
+allow	XREngine.Data/Core/Objects/OverrideableSettingsTracker.cs	GetProperties	Managed settings property snapshot
+allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetProperty	Known asset ID property in cooked serializer
+allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	Type.GetType	Persisted cooked type identity resolution
+allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetAssemblies	Loaded assembly fallback for legacy cooked types; no dynamic assembly load
+allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetUninitializedObject	Legacy managed cooked object materialization
+allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetConstructor	Managed cooked object constructor lookup
+allow	XREngine.Runtime.Rendering/Scene/Components/Capture/EditorSelectionAccessor.cs	Type.GetType	Optional loaded editor Selection type lookup
+allow	XREngine.Runtime.Rendering/Scene/Components/Capture/EditorSelectionAccessor.cs	GetProperty	Optional editor SceneNodes static property lookup
+allow	XREngine.Data/Core/Files/CookedBinary/Modules/Core/XREvent.cs	GetProperty	Known persistent event calls property in cooked payload
+allow	XREngine.Data/Core/Files/CookedBinary/Modules/Core/Registry.cs	Type.GetType	Cooked type identity fallback in loaded assemblies
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetCustomAttribute	StructLayout and serialization member attribute metadata
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetProperty	Known event and collection property metadata
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	MakeGenericType	Closed ValueTuple, event, and HashSet types for legacy cooked values
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	Activator.CreateInstance	Managed event, collection, tuple, and cooked object materialization
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetMethod	Closed HashSet Add method lookup during cooked decode
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetUninitializedObject	Legacy cooked object materialization without constructor
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetConstructor	Managed cooked object constructor lookup
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetAssemblies	Loaded assembly fallback for persisted cooked type identities
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetProperties	Member selection for cooked reflection serializer
+allow	XREngine.Data/Core/Files/CookedAssetTypeReference.cs	GetAssemblies	Loaded assembly lookup for persisted cooked asset type reference
+allow	XREngine.Runtime.Core/Input/RuntimePlayerControllerServices.cs	Type.GetType	Configured controller type identity lookup
+allow	XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.StreamingPayload.cs	GetAssemblies	Loaded asset type resolver for legacy imported texture payloads
+allow	XREngine.Runtime.Core/Assets/RuntimeThirdPartyAssetLoadingServices.cs	GetCustomAttribute	Registered third-party asset extension attribute lookup
+allow	XREngine.Runtime.Core/Assets/RuntimeThirdPartyAssetLoadingServices.cs	GetMethod	Registered managed asset loader method lookup
+allow	XREngine.Runtime.Core/Assets/RuntimeThirdPartyAssetLoadingServices.cs	Activator.CreateInstance	Registered managed asset type construction
+allow	XREngine.Runtime.Core/Components/Animation/RuntimeVRIKCalibrator.cs	GetMethod	Optional installed VR IK calibrator method lookup
+allow	XREngine.Runtime.Core/Components/Animation/RuntimeVRIKCalibrator.cs	Type.GetType	Optional installed animation calibrator type lookup
+allow	XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs	GetAssemblies	Loaded assembly lookup for persisted asset names
+allow	XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs	Type.GetType	Persisted asset type identity resolution
+allow	XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs	Activator.CreateInstance	Managed asset type construction for serialized payload
+allow	XREngine.Runtime.Core/Core/Tools/ExpressionParser.cs	GetMethods	Managed expression provider method lookup
+allow	XREngine.Runtime.Core/Core/Tools/ExpressionParser.cs	GetProperties	Managed expression property enumeration
+allow	XREngine.Runtime.Core/Core/Tools/DelegateBuilder.cs	GetMethod	Delegate Invoke signature inspection
+allow	XREngine.Runtime.Core/Core/Tools/DelegateBuilder.cs	Activator.CreateInstance	Default managed value type argument creation
+allow	XREngine.Runtime.Core/Core/Serialization/TransformYamlTypeInspector.cs	GetProperties	YamlDotNet descriptor interface implementation
+allow	XREngine.Runtime.Core/Core/Serialization/TransformYamlTypeInspector.cs	GetProperty	YamlDotNet descriptor interface implementation
+allow	XREngine.Runtime.Core/Core/Serialization/TransformYamlTypeInspector.cs	GetCustomAttribute	YAML transform reference attribute on descriptor
+allow	XREngine.Runtime.Core/Assets/AssetManager.Serialization.cs	Activator.CreateInstance	Registered managed YAML converter construction
+allow	XREngine.Runtime.Core/Assets/AssetManager.Serialization.cs	GetTypes	Development-only YAML converter discovery; published runtime rejects YAML assets
+allow	XREngine.Runtime.Core/Assets/AssetManager.Serialization.cs	GetCustomAttribute	YAML converter registration attribute
+allow	XREngine.Runtime.Core/Assets/AssetManager.Serialization.cs	GetAssemblies	Development-only YAML converter scan; published runtime rejects YAML assets
+allow	XREngine.Runtime.Core/Core/Files/AssetLoading.Contexts.cs	Activator.CreateInstance	Managed placeholder asset construction
+allow	XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.Uber.cs	GetProperty	Uber material authored property state lookup, not System.Type reflection
+allow	XREngine.Runtime.Core/Scene/Transforms/TransformBase.cs	GetAssemblies	Development-only transform selector scan; published runtime uses persisted table
+allow	XREngine.Runtime.Core/Scene/Transforms/TransformBase.cs	GetExportedTypes	Development-only exported transform type scan via catalog
+allow	XREngine.Runtime.Core/Serialization/XRAssetYamlTypeConverter.cs	Activator.CreateInstance	Managed text and XRAsset type construction from YAML
+allow	XREngine.Runtime.Core/Serialization/XRAssetYamlTypeConverter.cs	GetProperty	Known XRAsset ID property metadata and descriptor interface
+allow	XREngine.Runtime.Core/Serialization/XRAssetYamlTypeConverter.cs	GetAssemblies	Development-only loaded assembly lookup for persisted YAML asset type names
+allow	XREngine.Runtime.Core/Serialization/XRAssetYamlTypeConverter.cs	Type.GetType	Persisted YAML asset type identity resolution
+allow	XREngine.Runtime.Core/Serialization/XRAssetYamlTypeConverter.cs	GetProperties	YamlDotNet descriptor interface implementation
+allow	XREngine.Runtime.Core/Scene/Prefabs/SceneNodePrefabUtility.cs	GetProperties	TypeDescriptor prefab property path lookup
+allow	XREngine.Runtime.Core/Scene/Prefabs/SceneNodePrefabUtility.cs	Type.GetType	Serialized prefab member type hint resolution
+allow	XREngine.Runtime.Rendering/Rendering/PostProcessing/CameraPostProcessStateCollection.cs	Activator.CreateInstance	Registered postprocess backing type construction
+allow	XREngine.Runtime.Rendering/Rendering/PostProcessing/CameraPostProcessStateCollection.cs	GetProperty	Named postprocess state property traversal
+allow	XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiMarshalVerifier.cs	GetCustomAttribute	InlineArray attribute metadata for managed shader ABI checks
+allow	XREngine.Runtime.Rendering/Rendering/Camera/XRCameraParameters.cs	Activator.CreateInstance	Registered managed camera parameter subtype construction
+allow	XREngine.Runtime.Rendering/Rendering/Camera/XRCameraParameters.cs	GetConstructor	Known camera parameter subtype constructors
+allow	XREngine.Runtime.Rendering/Rendering/Camera/ICameraParameterCustomEditor.cs	GetCustomAttributes	Editor customization attribute inspection on parameter type
+allow	XREngine.Runtime.Rendering/Rendering/Camera/ICameraParameterCustomEditor.cs	Activator.CreateInstance	Optional managed custom editor construction
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs	GetProperty	Optional owning component property on engine physics object
+allow	XREngine.Runtime.Rendering/Resources/Shaders/UberShaderVariantBuilder.cs	GetProperty	Uber material authored state lookup, not System.Type reflection
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs	Activator.CreateInstance	Development-only authored command construction; published commands require factories
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	GetCustomAttribute	Development-only custom command attribute metadata; built-ins register statically
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	Activator.CreateInstance	Development-only authored render command construction
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	GetProperty	Named script command property assignment
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	MakeGenericType	Closed List type construction for script command values
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScript.cs	GetProperties	Authored script command property enumeration
+allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs	GetProperty	Optional owning component property on engine physics object
+allow	XREngine.Runtime.Rendering/Objects/Materials/UberMaterialState.cs	GetProperty	Engine authored material lookup method, not System.Type reflection
+allow	XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs	Activator.CreateInstance	Managed mesh generator type construction with authored mesh input

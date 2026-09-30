@@ -1,11 +1,7 @@
 using System.ComponentModel;
 using System.Numerics;
-using JoltPhysicsSharp;
-using MagicPhysX;
 using XREngine.Core.Attributes;
-using XREngine.Scene.Physics.Physx;
 using XREngine.Scene;
-using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
 using XREngine;
 using XREngine.Networking;
@@ -97,7 +93,7 @@ namespace XREngine.Components.Physics
             set => SetField(ref _rigidBody, value);
         }
 
-        internal void SetRigidBodyFromRigidBodyOwner(IAbstractDynamicRigidBody? body)
+        public void SetRigidBodyFromRigidBodyOwner(IAbstractDynamicRigidBody? body)
         {
             try
             {
@@ -224,13 +220,13 @@ namespace XREngine.Components.Physics
         [Description("Whether the physics simulation is enabled.")]
         public bool SimulationEnabled
         {
-            get => RigidBody is PhysxActor actor ? actor.SimulationEnabled : _simulationEnabled;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.SimulationEnabled : _simulationEnabled;
             set
             {
                 if (!SetField(ref _simulationEnabled, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.SimulationEnabled = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.SimulationEnabled = value;
             }
         }
 
@@ -239,13 +235,13 @@ namespace XREngine.Components.Physics
         [Description("Show physics debug visualization.")]
         public bool DebugVisualization
         {
-            get => RigidBody is PhysxActor actor ? actor.DebugVisualize : _debugVisualization;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.DebugVisualize : _debugVisualization;
             set
             {
                 if (!SetField(ref _debugVisualization, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.DebugVisualize = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.DebugVisualize = value;
             }
         }
 
@@ -254,13 +250,13 @@ namespace XREngine.Components.Physics
         [Description("Whether to notify when sleep state changes.")]
         public bool SendSleepNotifies
         {
-            get => RigidBody is PhysxActor actor ? actor.SendSleepNotifies : _sendSleepNotifies;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.SendSleepNotifies : _sendSleepNotifies;
             set
             {
                 if (!SetField(ref _sendSleepNotifies, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.SendSleepNotifies = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.SendSleepNotifies = value;
             }
         }
 
@@ -269,13 +265,13 @@ namespace XREngine.Components.Physics
         [Description("The collision group this body belongs to.")]
         public ushort CollisionGroup
         {
-            get => RigidBody is PhysxActor actor ? actor.CollisionGroup : _collisionGroup;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.CollisionGroup : _collisionGroup;
             set
             {
                 if (!SetField(ref _collisionGroup, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.CollisionGroup = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.CollisionGroup = value;
             }
         }
 
@@ -284,13 +280,13 @@ namespace XREngine.Components.Physics
         [Description("Collision filter mask for collision filtering.")]
         public PhysicsGroupsMask GroupsMask
         {
-            get => RigidBody is PhysxActor actor ? FromPhysxGroupsMask(actor.GroupsMask) : _groupsMask;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.GroupsMask : _groupsMask;
             set
             {
                 if (!SetField(ref _groupsMask, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.GroupsMask = ToPhysxGroupsMask(value);
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.GroupsMask = value;
             }
         }
 
@@ -299,13 +295,13 @@ namespace XREngine.Components.Physics
         [Description("Collision resolution dominance (higher wins).")]
         public byte DominanceGroup
         {
-            get => RigidBody is PhysxActor actor ? actor.DominanceGroup : _dominanceGroup;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.DominanceGroup : _dominanceGroup;
             set
             {
                 if (!SetField(ref _dominanceGroup, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.DominanceGroup = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.DominanceGroup = value;
             }
         }
 
@@ -314,16 +310,16 @@ namespace XREngine.Components.Physics
         [Description("Legacy PhysX owner-client byte. Network authority uses OwnerClientId and OwnerServerPlayerIndex.")]
         public byte PhysxOwnerClient
         {
-            get => RigidBody is PhysxActor actor ? actor.OwnerClient : _physxOwnerClient;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.OwnerClient : _physxOwnerClient;
             set
             {
                 if (!SetField(ref _physxOwnerClient, value))
                     return;
-                if (RigidBody is PhysxActor physx)
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
                 {
                     // PhysX disallows changing ownerClient while the actor is already in a scene.
-                    if (physx.Scene is null)
-                        physx.OwnerClient = value;
+                    if (!properties.IsInScene)
+                        properties.OwnerClient = value;
                 }
             }
         }
@@ -343,13 +339,13 @@ namespace XREngine.Components.Physics
         [Description("Debug name for the physics actor.")]
         public string? ActorName
         {
-            get => RigidBody is PhysxActor actor ? actor.Name : _actorName;
+            get => RigidBody is IPhysicsRuntimeBodyProperties actor ? actor.Name : _actorName;
             set
             {
                 if (!SetField(ref _actorName, value))
                     return;
-                if (RigidBody is PhysxActor physx)
-                    physx.Name = value ?? string.Empty;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.Name = value ?? string.Empty;
             }
         }
 
@@ -358,17 +354,13 @@ namespace XREngine.Components.Physics
         [Description("Rigid body behavior flags (kinematic, CCD, etc).")]
         public PhysicsRigidBodyFlags BodyFlags
         {
-            get => RigidBody switch
-            {
-                PhysxDynamicRigidBody physx => FromPhysxRigidBodyFlags(physx.Flags),
-                _ => _bodyFlags
-            };
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.BodyFlags : _bodyFlags;
             set
             {
                 if (!SetField(ref _bodyFlags, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.Flags = ToPhysxRigidBodyFlags(value);
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.BodyFlags = value;
             }
         }
 
@@ -377,17 +369,13 @@ namespace XREngine.Components.Physics
         [Description("Axis lock flags for constrained motion.")]
         public PhysicsLockFlags LockFlags
         {
-            get => RigidBody switch
-            {
-                PhysxDynamicRigidBody physx => FromPhysxLockFlags(physx.LockFlags),
-                _ => _lockFlags
-            };
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.LockFlags : _lockFlags;
             set
             {
                 if (!SetField(ref _lockFlags, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.LockFlags = ToPhysxLockFlags(value);
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.LockFlags = value;
             }
         }
 
@@ -396,13 +384,13 @@ namespace XREngine.Components.Physics
         [Description("Damping factor for linear velocity.")]
         public float LinearDamping
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.LinearDamping : _linearDamping;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.LinearDamping : _linearDamping;
             set
             {
                 if (!SetField(ref _linearDamping, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.LinearDamping = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.LinearDamping = value;
             }
         }
 
@@ -411,13 +399,13 @@ namespace XREngine.Components.Physics
         [Description("Damping factor for angular velocity.")]
         public float AngularDamping
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.AngularDamping : _angularDamping;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.AngularDamping : _angularDamping;
             set
             {
                 if (!SetField(ref _angularDamping, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.AngularDamping = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.AngularDamping = value;
             }
         }
 
@@ -426,13 +414,13 @@ namespace XREngine.Components.Physics
         [Description("Maximum linear velocity clamp.")]
         public float MaxLinearVelocity
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.MaxLinearVelocity : _maxLinearVelocity;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.MaxLinearVelocity : _maxLinearVelocity;
             set
             {
                 if (!SetField(ref _maxLinearVelocity, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.MaxLinearVelocity = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.MaxLinearVelocity = value;
             }
         }
 
@@ -441,13 +429,13 @@ namespace XREngine.Components.Physics
         [Description("Maximum angular velocity clamp.")]
         public float MaxAngularVelocity
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.MaxAngularVelocity : _maxAngularVelocity;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.MaxAngularVelocity : _maxAngularVelocity;
             set
             {
                 if (!SetField(ref _maxAngularVelocity, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.MaxAngularVelocity = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.MaxAngularVelocity = value;
             }
         }
 
@@ -456,13 +444,13 @@ namespace XREngine.Components.Physics
         [Description("The mass of the rigid body in kg.")]
         public float Mass
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.Mass : _mass;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.Mass : _mass;
             set
             {
                 if (!SetField(ref _mass, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.Mass = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.Mass = value;
             }
         }
 
@@ -471,13 +459,13 @@ namespace XREngine.Components.Physics
         [Description("Mass-space inertia tensor diagonal.")]
         public Vector3 MassSpaceInertiaTensor
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.MassSpaceInertiaTensor : _massSpaceInertiaTensor;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.MassSpaceInertiaTensor : _massSpaceInertiaTensor;
             set
             {
                 if (!SetField(ref _massSpaceInertiaTensor, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.MassSpaceInertiaTensor = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.MassSpaceInertiaTensor = value;
             }
         }
 
@@ -486,13 +474,13 @@ namespace XREngine.Components.Physics
         [Description("Local pose of the center of mass.")]
         public PhysicsMassFrame CenterOfMassLocalPose
         {
-            get => RigidBody is PhysxRigidBody physx ? new PhysicsMassFrame(physx.CMassLocalPose.Item2, physx.CMassLocalPose.Item1) : _centerOfMassPose;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.CenterOfMassLocalPose : _centerOfMassPose;
             set
             {
                 if (!SetField(ref _centerOfMassPose, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.CMassLocalPose = (value.Rotation, value.Translation);
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.CenterOfMassLocalPose = value;
             }
         }
 
@@ -501,13 +489,13 @@ namespace XREngine.Components.Physics
         [Description("Minimum CCD advance coefficient.")]
         public float MinCcdAdvanceCoefficient
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.MinCCDAdvanceCoefficient : _minCcdAdvanceCoefficient;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.MinCcdAdvanceCoefficient : _minCcdAdvanceCoefficient;
             set
             {
                 if (!SetField(ref _minCcdAdvanceCoefficient, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.MinCCDAdvanceCoefficient = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.MinCcdAdvanceCoefficient = value;
             }
         }
 
@@ -516,13 +504,13 @@ namespace XREngine.Components.Physics
         [Description("Maximum velocity for depenetration.")]
         public float MaxDepenetrationVelocity
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.MaxDepenetrationVelocity : _maxDepenetrationVelocity;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.MaxDepenetrationVelocity : _maxDepenetrationVelocity;
             set
             {
                 if (!SetField(ref _maxDepenetrationVelocity, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.MaxDepenetrationVelocity = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.MaxDepenetrationVelocity = value;
             }
         }
 
@@ -531,13 +519,13 @@ namespace XREngine.Components.Physics
         [Description("Maximum contact impulse applied.")]
         public float MaxContactImpulse
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.MaxContactImpulse : _maxContactImpulse;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.MaxContactImpulse : _maxContactImpulse;
             set
             {
                 if (!SetField(ref _maxContactImpulse, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.MaxContactImpulse = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.MaxContactImpulse = value;
             }
         }
 
@@ -546,13 +534,13 @@ namespace XREngine.Components.Physics
         [Description("Contact slop coefficient for solver.")]
         public float ContactSlopCoefficient
         {
-            get => RigidBody is PhysxRigidBody physx ? physx.ContactSlopCoefficient : _contactSlopCoefficient;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.ContactSlopCoefficient : _contactSlopCoefficient;
             set
             {
                 if (!SetField(ref _contactSlopCoefficient, value))
                     return;
-                if (RigidBody is PhysxRigidBody physx)
-                    physx.ContactSlopCoefficient = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.ContactSlopCoefficient = value;
             }
         }
 
@@ -561,13 +549,13 @@ namespace XREngine.Components.Physics
         [Description("Threshold for solver stabilization.")]
         public float StabilizationThreshold
         {
-            get => RigidBody is PhysxDynamicRigidBody physx ? physx.StabilizationThreshold : _stabilizationThreshold;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.StabilizationThreshold : _stabilizationThreshold;
             set
             {
                 if (!SetField(ref _stabilizationThreshold, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.StabilizationThreshold = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.StabilizationThreshold = value;
             }
         }
 
@@ -576,13 +564,13 @@ namespace XREngine.Components.Physics
         [Description("Energy threshold to enter sleep state.")]
         public float SleepThreshold
         {
-            get => RigidBody is PhysxDynamicRigidBody physx ? physx.SleepThreshold : _sleepThreshold;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.SleepThreshold : _sleepThreshold;
             set
             {
                 if (!SetField(ref _sleepThreshold, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.SleepThreshold = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.SleepThreshold = value;
             }
         }
 
@@ -591,13 +579,13 @@ namespace XREngine.Components.Physics
         [Description("Impulse threshold to trigger contact reports.")]
         public float ContactReportThreshold
         {
-            get => RigidBody is PhysxDynamicRigidBody physx ? physx.ContactReportThreshold : _contactReportThreshold;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.ContactReportThreshold : _contactReportThreshold;
             set
             {
                 if (!SetField(ref _contactReportThreshold, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.ContactReportThreshold = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.ContactReportThreshold = value;
             }
         }
 
@@ -606,13 +594,13 @@ namespace XREngine.Components.Physics
         [Description("Time before body goes to sleep when inactive.")]
         public float WakeCounter
         {
-            get => RigidBody is PhysxDynamicRigidBody physx ? physx.WakeCounter : _wakeCounter;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.WakeCounter : _wakeCounter;
             set
             {
                 if (!SetField(ref _wakeCounter, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.WakeCounter = value;
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.WakeCounter = value;
             }
         }
 
@@ -621,13 +609,13 @@ namespace XREngine.Components.Physics
         [Description("Position and velocity solver iteration counts. PhysX updates live; Jolt applies these overrides when the body is created or rebuilt.")]
         public PhysicsSolverIterations SolverIterations
         {
-            get => RigidBody is PhysxDynamicRigidBody physx ? new PhysicsSolverIterations(physx.SolverIterationCounts.minPositionIters, physx.SolverIterationCounts.minVelocityIters) : _solverIterations;
+            get => RigidBody is IPhysicsRuntimeBodyProperties properties ? properties.SolverIterations : _solverIterations;
             set
             {
                 if (!SetField(ref _solverIterations, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.SolverIterationCounts = (value.MinPositionIterations, value.MinVelocityIterations);
+                if (RigidBody is IPhysicsRuntimeBodyProperties properties)
+                    properties.SolverIterations = value;
             }
         }
 
@@ -636,13 +624,13 @@ namespace XREngine.Components.Physics
         [Description("Target pose for kinematic bodies.")]
         public (Vector3 position, Quaternion rotation)? KinematicTarget
         {
-            get => RigidBody is PhysxDynamicRigidBody physx ? physx.KinematicTarget : _kinematicTarget;
+            get => RigidBody?.KinematicTarget ?? _kinematicTarget;
             set
             {
                 if (!SetField(ref _kinematicTarget, value))
                     return;
-                if (RigidBody is PhysxDynamicRigidBody physx)
-                    physx.KinematicTarget = value;
+                if (RigidBody is not null)
+                    RigidBody.KinematicTarget = value;
             }
         }
 
@@ -651,24 +639,11 @@ namespace XREngine.Components.Physics
         [Description("Current linear velocity.")]
         public Vector3 LinearVelocity
         {
-            get => RigidBody switch
-            {
-                PhysxRigidBody physx => physx.LinearVelocity,
-                JoltDynamicRigidBody jolt => jolt.LinearVelocity,
-                _ => _cachedLinearVelocity
-            };
+            get => RigidBody?.LinearVelocity ?? _cachedLinearVelocity;
             set
             {
                 SetField(ref _cachedLinearVelocity, value);
-                switch (RigidBody)
-                {
-                    case PhysxDynamicRigidBody physx:
-                        physx.SetLinearVelocity(value);
-                        break;
-                    case JoltDynamicRigidBody jolt when jolt.Scene?.PhysicsSystem is not null:
-                        jolt.SetLinearVelocity(value);
-                        break;
-                }
+                RigidBody?.SetLinearVelocity(value);
             }
         }
 
@@ -677,24 +652,11 @@ namespace XREngine.Components.Physics
         [Description("Current angular velocity.")]
         public Vector3 AngularVelocity
         {
-            get => RigidBody switch
-            {
-                PhysxRigidBody physx => physx.AngularVelocity,
-                JoltDynamicRigidBody jolt => jolt.AngularVelocity,
-                _ => _cachedAngularVelocity
-            };
+            get => RigidBody?.AngularVelocity ?? _cachedAngularVelocity;
             set
             {
                 SetField(ref _cachedAngularVelocity, value);
-                switch (RigidBody)
-                {
-                    case PhysxDynamicRigidBody physx:
-                        physx.SetAngularVelocity(value);
-                        break;
-                    case JoltDynamicRigidBody jolt when jolt.Scene?.PhysicsSystem is not null:
-                        jolt.SetAngularVelocity(value);
-                        break;
-                }
+                RigidBody?.SetAngularVelocity(value);
             }
         }
 
@@ -737,22 +699,11 @@ namespace XREngine.Components.Physics
                 return;
 
             var (position, rotation) = GetSpawnPose();
-            switch (RigidBody)
-            {
-                case PhysxDynamicRigidBody physx:
-                    physx.SetTransform(position, rotation);
-                    physx.SetLinearVelocity(Vector3.Zero);
-                    physx.SetAngularVelocity(Vector3.Zero);
-                    // Wake the body so it can respond to physics immediately
-                    if (!physx.Flags.HasFlag(PxRigidBodyFlags.Kinematic))
-                        physx.WakeUp();
-                    break;
-                case JoltDynamicRigidBody jolt when jolt.Scene?.PhysicsSystem is not null:
-                    jolt.SetTransform(position, rotation);
-                    jolt.SetLinearVelocity(Vector3.Zero);
-                    jolt.SetAngularVelocity(Vector3.Zero);
-                    break;
-            }
+            RigidBody.SetTransform(position, rotation);
+            RigidBody.SetLinearVelocity(Vector3.Zero);
+            RigidBody.SetAngularVelocity(Vector3.Zero);
+            if ((_bodyFlags & PhysicsRigidBodyFlags.Kinematic) == 0)
+                RigidBody.WakeUp();
         }
 
         protected override void OnComponentDeactivated()
@@ -927,7 +878,7 @@ namespace XREngine.Components.Physics
             ApplyActorProperties(body);
             ApplyDynamicBodyProperties(body);
             ApplyShapeOffsets(body);
-            if (body is PhysxActor actor)
+            if (body is IPhysicsRuntimeBodyProperties actor)
             {
                 Debug.Physics(
                     "[DynamicRigidBodyComponent] Applied cached props to {0} actorType={1} group={2} mask={3}",
@@ -941,23 +892,23 @@ namespace XREngine.Components.Physics
         private void ApplyActorProperties(IAbstractDynamicRigidBody body)
         {
             body.GravityEnabled = _gravityEnabled;
-            if (body is PhysxActor actor)
+            if (body is IPhysicsRuntimeBodyProperties actor)
             {
                 actor.SimulationEnabled = _simulationEnabled;
                 actor.DebugVisualize = _debugVisualization;
                 actor.SendSleepNotifies = _sendSleepNotifies;
                 actor.CollisionGroup = _collisionGroup;
-                actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
+                actor.GroupsMask = _groupsMask;
                 actor.DominanceGroup = _dominanceGroup;
                 // PhysX disallows setting ownerClient once the actor is inserted into a scene.
-                if (actor.Scene is null)
+                if (!actor.IsInScene)
                     actor.OwnerClient = _physxOwnerClient;
                 if (_actorName is not null)
                     actor.Name = _actorName;
             }
-            else if (body is JoltDynamicRigidBody jolt)
+            else if (body is IPhysicsDynamicBodySettings settings)
             {
-                jolt.SetObjectLayer(_collisionGroup, _groupsMask.Word0);
+                settings.SetCollisionFiltering(_collisionGroup, _groupsMask);
 
                 if (!_simulationEnabled)
                 {
@@ -968,38 +919,38 @@ namespace XREngine.Components.Physics
 
         private void ApplyDynamicBodyProperties(IAbstractDynamicRigidBody body)
         {
-            if (body is PhysxDynamicRigidBody physx)
+            if (body is IPhysicsRuntimeBodyProperties properties)
             {
-                physx.Flags = ToPhysxRigidBodyFlags(_bodyFlags);
-                physx.LockFlags = ToPhysxLockFlags(_lockFlags);
-                physx.LinearDamping = _linearDamping;
-                physx.AngularDamping = _angularDamping;
-                physx.MaxLinearVelocity = _maxLinearVelocity;
-                physx.MaxAngularVelocity = _maxAngularVelocity;
-                physx.Mass = _mass;
-                physx.MassSpaceInertiaTensor = _massSpaceInertiaTensor;
-                physx.CMassLocalPose = (_centerOfMassPose.Rotation, _centerOfMassPose.Translation);
-                physx.MinCCDAdvanceCoefficient = _minCcdAdvanceCoefficient;
-                physx.MaxDepenetrationVelocity = _maxDepenetrationVelocity;
-                physx.MaxContactImpulse = _maxContactImpulse;
-                physx.ContactSlopCoefficient = _contactSlopCoefficient;
-                physx.StabilizationThreshold = _stabilizationThreshold;
-                physx.SleepThreshold = _sleepThreshold;
-                physx.ContactReportThreshold = _contactReportThreshold;
-                physx.WakeCounter = _wakeCounter;
-                physx.SolverIterationCounts = (_solverIterations.MinPositionIterations, _solverIterations.MinVelocityIterations);
+                properties.BodyFlags = _bodyFlags;
+                properties.LockFlags = _lockFlags;
+                properties.LinearDamping = _linearDamping;
+                properties.AngularDamping = _angularDamping;
+                properties.MaxLinearVelocity = _maxLinearVelocity;
+                properties.MaxAngularVelocity = _maxAngularVelocity;
+                properties.Mass = _mass;
+                properties.MassSpaceInertiaTensor = _massSpaceInertiaTensor;
+                properties.CenterOfMassLocalPose = _centerOfMassPose;
+                properties.MinCcdAdvanceCoefficient = _minCcdAdvanceCoefficient;
+                properties.MaxDepenetrationVelocity = _maxDepenetrationVelocity;
+                properties.MaxContactImpulse = _maxContactImpulse;
+                properties.ContactSlopCoefficient = _contactSlopCoefficient;
+                properties.StabilizationThreshold = _stabilizationThreshold;
+                properties.SleepThreshold = _sleepThreshold;
+                properties.ContactReportThreshold = _contactReportThreshold;
+                properties.WakeCounter = _wakeCounter;
+                properties.SolverIterations = _solverIterations;
                 if (_kinematicTarget.HasValue)
-                    physx.KinematicTarget = _kinematicTarget;
+                    properties.KinematicTarget = _kinematicTarget;
             }
-            else if (body is JoltDynamicRigidBody jolt)
+            else if (body is IPhysicsDynamicBodySettings settings)
             {
-                jolt.SetMotionQualityFromFlags(_bodyFlags);
-                jolt.SetLockFlags(_lockFlags);
-                jolt.SetLinearAndAngularDamping(_linearDamping, _angularDamping);
-                jolt.SetMass(_mass);
+                settings.SetMotionQuality(_bodyFlags);
+                settings.SetLockFlags(_lockFlags);
+                settings.SetDamping(_linearDamping, _angularDamping);
+                settings.SetMass(_mass);
 
                 if (_kinematicTarget.HasValue)
-                    jolt.SetTransform(_kinematicTarget.Value.position, _kinematicTarget.Value.rotation, Activation.Activate);
+                    body.SetTransform(_kinematicTarget.Value.position, _kinematicTarget.Value.rotation);
 
                 Debug.Physics("[DynamicRigidBodyComponent] Jolt applies max velocities and solver-step overrides at body creation; unsupported PhysX-only contact, sleep, COM/inertia, and advanced CCD fields remain authored data only.");
             }
@@ -1007,105 +958,8 @@ namespace XREngine.Components.Physics
 
         private void ApplyShapeOffsets(IAbstractDynamicRigidBody body)
         {
-            if (body is not PhysxRigidActor physxActor)
-                return;
-
-            var shapes = physxActor.GetShapes();
-            if (shapes.Length == 0)
-                return;
-
-            var pose = (ShapeOffsetTranslation, ShapeOffsetRotation);
-            foreach (var shape in shapes)
-            {
-                if (shape is null)
-                    continue;
-                shape.LocalPose = pose;
-            }
-        }
-
-        private static PhysicsGroupsMask FromPhysxGroupsMask(PxGroupsMask mask)
-            => new(mask.bits0, mask.bits1, mask.bits2, mask.bits3);
-
-        private static PxGroupsMask ToPhysxGroupsMask(PhysicsGroupsMask mask)
-        {
-            PxGroupsMask m;
-            m.bits0 = (ushort)mask.Word0;
-            m.bits1 = (ushort)mask.Word1;
-            m.bits2 = (ushort)mask.Word2;
-            m.bits3 = (ushort)mask.Word3;
-            return m;
-        }
-
-        private static PhysicsRigidBodyFlags FromPhysxRigidBodyFlags(PxRigidBodyFlags flags)
-        {
-            PhysicsRigidBodyFlags converted = PhysicsRigidBodyFlags.None;
-            if (flags.HasFlag(PxRigidBodyFlags.Kinematic))
-                converted |= PhysicsRigidBodyFlags.Kinematic;
-            if (flags.HasFlag(PxRigidBodyFlags.UseKinematicTargetForSceneQueries))
-                converted |= PhysicsRigidBodyFlags.UseKinematicTargetForQueries;
-            if (flags.HasFlag(PxRigidBodyFlags.EnableCcd))
-                converted |= PhysicsRigidBodyFlags.EnableCcd;
-            if (flags.HasFlag(PxRigidBodyFlags.EnableSpeculativeCcd))
-                converted |= PhysicsRigidBodyFlags.EnableSpeculativeCcd;
-            if (flags.HasFlag(PxRigidBodyFlags.EnableCcdMaxContactImpulse))
-                converted |= PhysicsRigidBodyFlags.EnableCcdMaxContactImpulse;
-            if (flags.HasFlag(PxRigidBodyFlags.EnableCcdFriction))
-                converted |= PhysicsRigidBodyFlags.EnableCcdFriction;
-            return converted;
-        }
-
-        private static PxRigidBodyFlags ToPhysxRigidBodyFlags(PhysicsRigidBodyFlags flags)
-        {
-            PxRigidBodyFlags converted = 0;
-            if (flags.HasFlag(PhysicsRigidBodyFlags.Kinematic))
-                converted |= PxRigidBodyFlags.Kinematic;
-            if (flags.HasFlag(PhysicsRigidBodyFlags.UseKinematicTargetForQueries))
-                converted |= PxRigidBodyFlags.UseKinematicTargetForSceneQueries;
-            if (flags.HasFlag(PhysicsRigidBodyFlags.EnableCcd))
-                converted |= PxRigidBodyFlags.EnableCcd;
-            if (flags.HasFlag(PhysicsRigidBodyFlags.EnableSpeculativeCcd))
-                converted |= PxRigidBodyFlags.EnableSpeculativeCcd;
-            if (flags.HasFlag(PhysicsRigidBodyFlags.EnableCcdMaxContactImpulse))
-                converted |= PxRigidBodyFlags.EnableCcdMaxContactImpulse;
-            if (flags.HasFlag(PhysicsRigidBodyFlags.EnableCcdFriction))
-                converted |= PxRigidBodyFlags.EnableCcdFriction;
-            return converted;
-        }
-
-        private static PhysicsLockFlags FromPhysxLockFlags(PxRigidDynamicLockFlags flags)
-        {
-            PhysicsLockFlags converted = PhysicsLockFlags.None;
-            if (flags.HasFlag(PxRigidDynamicLockFlags.LockLinearX))
-                converted |= PhysicsLockFlags.LinearX;
-            if (flags.HasFlag(PxRigidDynamicLockFlags.LockLinearY))
-                converted |= PhysicsLockFlags.LinearY;
-            if (flags.HasFlag(PxRigidDynamicLockFlags.LockLinearZ))
-                converted |= PhysicsLockFlags.LinearZ;
-            if (flags.HasFlag(PxRigidDynamicLockFlags.LockAngularX))
-                converted |= PhysicsLockFlags.AngularX;
-            if (flags.HasFlag(PxRigidDynamicLockFlags.LockAngularY))
-                converted |= PhysicsLockFlags.AngularY;
-            if (flags.HasFlag(PxRigidDynamicLockFlags.LockAngularZ))
-                converted |= PhysicsLockFlags.AngularZ;
-            return converted;
-        }
-
-        private static PxRigidDynamicLockFlags ToPhysxLockFlags(PhysicsLockFlags flags)
-        {
-            PxRigidDynamicLockFlags converted = 0;
-            if (flags.HasFlag(PhysicsLockFlags.LinearX))
-                converted |= PxRigidDynamicLockFlags.LockLinearX;
-            if (flags.HasFlag(PhysicsLockFlags.LinearY))
-                converted |= PxRigidDynamicLockFlags.LockLinearY;
-            if (flags.HasFlag(PhysicsLockFlags.LinearZ))
-                converted |= PxRigidDynamicLockFlags.LockLinearZ;
-            if (flags.HasFlag(PhysicsLockFlags.AngularX))
-                converted |= PxRigidDynamicLockFlags.LockAngularX;
-            if (flags.HasFlag(PhysicsLockFlags.AngularY))
-                converted |= PxRigidDynamicLockFlags.LockAngularY;
-            if (flags.HasFlag(PhysicsLockFlags.AngularZ))
-                converted |= PxRigidDynamicLockFlags.LockAngularZ;
-            return converted;
+            if (body is IPhysicsRuntimeBodyProperties properties)
+                properties.ApplyShapeOffset(ShapeOffsetTranslation, ShapeOffsetRotation);
         }
 
         private void TryRegisterRigidBodyWithScene()
@@ -1117,30 +971,30 @@ namespace XREngine.Components.Physics
             if (scene is null)
                 return;
 
-            if (scene is PhysxScene physxScene && RigidBody is PhysxActor physxActor)
+            if (RigidBody is IPhysicsSceneAttachedActor attachedActor)
             {
                 // Character controllers (CCT) create a hidden rigid actor that is already attached to the PhysX scene
                 // by the controller manager. Attempting to add it again can assert/crash in PhysX.
-                if (physxActor.Scene is not null)
+                if (attachedActor.AttachedScene is not null)
                 {
-                    if (physxActor.Scene == physxScene)
+                    if (attachedActor.AttachedScene == scene)
                     {
                         Debug.Physics(
                             "[DynamicRigidBodyComponent] Actor already registered with PhysxScene; skipping add actorType={0}",
-                            physxActor.GetType().Name);
+                            RigidBody.GetType().Name);
                         return;
                     }
 
                     Debug.Physics(
                         "[DynamicRigidBodyComponent] Actor belongs to a different PhysxScene; skipping add actorType={0}",
-                        physxActor.GetType().Name);
+                        RigidBody.GetType().Name);
                     return;
                 }
             }
 
             scene.AddActor(RigidBody);
 
-            if (RigidBody is PhysxActor actor)
+            if (RigidBody is IPhysicsRuntimeBodyProperties actor)
             {
                 Debug.Physics(
                     "[DynamicRigidBodyComponent] Registered actorType={0} with scene {1} (group={2}, mask={3})",
@@ -1160,26 +1014,26 @@ namespace XREngine.Components.Physics
             if (scene is null)
                 return;
 
-            if (scene is PhysxScene physxScene && RigidBody is PhysxActor physxActor)
+            if (RigidBody is IPhysicsSceneAttachedActor attachedActor)
             {
                 // If the actor is attached to another PhysX scene, remove it from that scene instead of blindly
                 // calling remove on the current scene.
-                if (physxActor.Scene is not null && physxActor.Scene != physxScene)
+                if (attachedActor.AttachedScene is { } owningScene && owningScene != scene)
                 {
-                    physxActor.Scene.RemoveActor(physxActor);
+                    owningScene.RemoveActor(RigidBody);
                     Debug.Physics(
                         "[DynamicRigidBodyComponent] Removed actorType={0} from foreign PhysxScene",
-                        physxActor.GetType().Name);
+                        RigidBody.GetType().Name);
                     return;
                 }
 
                 // If the actor isn't in any scene, there's nothing to remove.
-                if (physxActor.Scene is null)
+                if (attachedActor.AttachedScene is null)
                     return;
             }
 
             scene.RemoveActor(RigidBody);
-            if (RigidBody is PhysxActor actor)
+            if (RigidBody is IPhysicsRuntimeBodyProperties actor)
             {
                 Debug.Physics(
                     "[DynamicRigidBodyComponent] Removed actorType={0} from scene {1}",
@@ -1188,7 +1042,7 @@ namespace XREngine.Components.Physics
             }
         }
 
-        private static string FormatGroupsMask(PxGroupsMask mask)
-            => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
+        private static string FormatGroupsMask(PhysicsGroupsMask mask)
+            => $"{mask.Word0:X4}:{mask.Word1:X4}:{mask.Word2:X4}:{mask.Word3:X4}";
     }
 }

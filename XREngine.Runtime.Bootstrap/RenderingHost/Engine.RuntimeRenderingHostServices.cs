@@ -24,9 +24,6 @@ using XREngine.Rendering.Vulkan;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
-using XREngine.Scene.Physics.Jitter2;
-using XREngine.Scene.Physics.Jolt;
-using XREngine.Scene.Physics.Physx;
 
 namespace XREngine;
 
@@ -38,6 +35,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private const int RenderOutputCapacity = 512;
 
     private readonly RendererBackendCatalog _rendererBackends = new();
+    private readonly PhysicsBackendCatalog _physicsBackends = new();
     private IDisposable? _assetServices;
     private IDisposable? _rendererBackendRegistrations;
     private readonly object _vrDesktopPressureLock = new();
@@ -60,6 +58,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
 
         try
         {
+            BuiltInPhysicsBackendModules.RegisterDesktop(_physicsBackends);
             if (registerRendererBackends)
                 _rendererBackendRegistrations = BuiltInRendererBackendModules.RegisterAll(_rendererBackends);
         }
@@ -756,12 +755,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => new();
 
     public AbstractPhysicsScene CreatePhysicsScene()
-        => Engine.EffectiveSettings.PhysicsLibrary switch
-        {
-            EPhysicsLibrary.Jitter => new JitterScene(),
-            EPhysicsLibrary.Jolt => new JoltScene(),
-            _ => new PhysxScene(),
-        };
+        => _physicsBackends.CreateRequired(Engine.EffectiveSettings.PhysicsLibrary);
 
     public IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind)
         => _rendererBackends.CreateRequired(apiKind, new RendererBackendCreateContext(window));
@@ -1859,11 +1853,11 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool OpenXrPrepareFrameAfterDesktopRender => RuntimeEngine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
     public float OpenXrDeadlineSafetyMarginMs => RuntimeEngine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
     public float OpenXrPoseTimeOffsetMs => RuntimeEngine.Rendering.Settings.OpenXrPoseTimeOffsetMs;
-    public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => RuntimeEngine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
+    public OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => RuntimeEngine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
     public float OpenXrCollectVisibleFrustumPaddingDegrees => RuntimeEngine.Rendering.Settings.OpenXrCollectVisibleFrustumPaddingDegrees;
-    public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => RuntimeEngine.Rendering.Settings.OpenXrTrackingLossPolicy;
-    public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => RuntimeEngine.Rendering.Settings.OpenXrActionSyncPolicy;
-    public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode;
+    public OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => RuntimeEngine.Rendering.Settings.OpenXrTrackingLossPolicy;
+    public OpenXrActionSyncPolicy OpenXrActionSyncPolicy => RuntimeEngine.Rendering.Settings.OpenXrActionSyncPolicy;
+    public OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode;
 
     public bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         => RuntimeEngine.VRState.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);

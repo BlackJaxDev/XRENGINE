@@ -78,9 +78,9 @@ public class VPRC_DispatchRays : ViewportRenderCommand
         if (!TryResolveDispatchDimensions(out width, out height, out depth, out failure))
             return false;
 
-        if (!RuntimeEngine.Rendering.State.IsVulkan)
+        if (AbstractRenderer.Current?.BackendId != RendererBackendId.OpenGL)
         {
-            failure = "Ray dispatch currently requires the Vulkan renderer.";
+            failure = "The installed ReSTIR native ray tracing bridge requires the OpenGL renderer.";
             return false;
         }
 
@@ -95,7 +95,7 @@ public class VPRC_DispatchRays : ViewportRenderCommand
 
         if (!RestirGI.TryInit())
         {
-            failure = "Failed to initialize the native ray-tracing bridge.";
+            failure = RestirGI.LastFailure ?? "Failed to initialize the native ray-tracing bridge.";
             return false;
         }
 

@@ -1,5 +1,7 @@
 # Portable browser scene boot
 
+> Historical source-profile checkpoint. The subset manifests, alternate outputs, and portable build switch described below have been removed. Current whole-project ownership and rules are documented in [Runtime Project Organization](../../../architecture/runtime/project-organization.md) and [Portable Project Rules](../../../developer-guides/runtime/portable-projects.md). These earlier observations do not validate the expanded project closure.
+
 **Date:** 2026-09-28. **Base:** `fe2b45b4a51084f22d071216b7e1ac8222299411`.
 **Result:** A published WebAssembly application runs the real engine scene
 lifecycle. WebGPU rendering and mobile-device qualification remain unimplemented.

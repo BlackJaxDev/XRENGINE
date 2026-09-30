@@ -1,5 +1,5 @@
 using System.Numerics;
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -422,7 +422,7 @@ public static partial class SerializedMaterialImporter
         ValidateRequiredSerializedTexture(texturePath, resolver.ImportContext);
         try
         {
-            using MagickImage source = new(texturePath);
+            using RuntimeImage source = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(texturePath));
             var baseMipmap = new CubeMipmap();
             bool isEquirectangular = source.Width == source.Height * 2;
             bool converted = isEquirectangular
@@ -487,9 +487,9 @@ public static partial class SerializedMaterialImporter
             Mipmap2D[] sides = new Mipmap2D[6];
             for (int side = 0; side < sides.Length; ++side)
             {
-                using MagickImage image = baseMipmap.Sides[side].GetImage();
-                image.Resize(extent, extent);
-                sides[side] = new Mipmap2D(image);
+                using RuntimeImage image = baseMipmap.Sides[side].GetImage();
+                using RuntimeImage resized = RuntimeImageCodecs.Require().Resize(image, extent, extent, RuntimeImageResizeMode.Standard);
+                sides[side] = new Mipmap2D(resized);
             }
 
             mipmaps.Add(new CubeMipmap(

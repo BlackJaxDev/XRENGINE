@@ -23,10 +23,10 @@ namespace XREngine
 
             PruneStaleMetadataEntries(assetsRoot, metadataRoot);
 
-            foreach (string directory in Directory.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
+            foreach (string directory in AssetFileSystemServices.Required.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
                 EnsureMetadataForAssetPath(directory, true);
 
-            foreach (string file in Directory.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
+            foreach (string file in AssetFileSystemServices.Required.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
                 EnsureMetadataForAssetPath(file, false);
         }
 
@@ -40,7 +40,7 @@ namespace XREngine
         {
             lock (_metadataLock)
             {
-                foreach (string metaFile in Directory.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
+                foreach (string metaFile in AssetFileSystemServices.Required.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
                 {
                     if (!ShouldDeleteMetadataFile(metaFile, assetsRoot))
                         continue;
@@ -243,7 +243,7 @@ namespace XREngine
                 }
                 catch (DirectoryNotFoundException) when (!AssetPathExists(assetPath, isDirectory))
                 {
-                    // A delayed FileSystemWatcher create/change callback can race the
+                    // A delayed AssetChangeMonitor create/change callback can race the
                     // corresponding delete callback. The delete owns final metadata state.
                 }
                 catch (IOException) when (!AssetPathExists(assetPath, isDirectory))
@@ -278,7 +278,7 @@ namespace XREngine
 
         /// <summary>
         /// Deletes a metadata file without allowing transient Windows file locks to escape
-        /// a <see cref="FileSystemWatcher"/> callback and terminate the process.
+        /// a <see cref="AssetChangeMonitor"/> callback and terminate the process.
         /// </summary>
         private static bool TryDeleteMetadataFile(string metaPath)
         {
@@ -526,7 +526,7 @@ namespace XREngine
                 bool hasEntries;
                 try
                 {
-                    using var enumerator = Directory.EnumerateFileSystemEntries(current).GetEnumerator();
+                    using var enumerator = AssetFileSystemServices.Required.EnumerateFileSystemEntries(current).GetEnumerator();
                     hasEntries = enumerator.MoveNext();
                 }
                 catch (DirectoryNotFoundException)

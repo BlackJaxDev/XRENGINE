@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -372,9 +372,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             BoundingRectangle region = new(0, 0, (int)whd.X, (int)whd.Y);
             for (int i = 0; i < whd.Z; i++)
             {
-                void ProcessImage(MagickImage image, int layer, int channelIndex)
+                void ProcessImage(RuntimeImage image, int layer, int channelIndex)
                 {
-                    using MagickImage ownedImage = image;
+                    if (image is null)
+                        throw new InvalidOperationException("Texture capture returned no image.");
+                    using RuntimeImage ownedImage = image;
                     string name = tex.Name ?? tex.GetDescribingName();
                     if (whd.Z > 1)
                         name += $" [Layer {layer + 1}]";
@@ -383,8 +385,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     string fileName = $"{name}.png";
                     string filePath = Path.Combine(exportDirPath, fileName);
                     Utility.EnsureDirPathExists(exportDirPath);
-                    ownedImage.Flip();
-                    ownedImage.Write(filePath);
+                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 _ = capture.TryCaptureTexture(tex, region, ProcessImage, 0, i);
@@ -411,9 +412,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
             foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Targets)
             {
-                void ProcessImage(MagickImage image, int index)
+                void ProcessImage(RuntimeImage image, int index)
                 {
-                    using MagickImage ownedImage = image;
+                    if (image is null)
+                        throw new InvalidOperationException("Framebuffer capture returned no image.");
+                    using RuntimeImage ownedImage = image;
                     string name = $"{fbo.GetDescribingName()}_{Attachment}";
                     if (index > 0)
                         name += $"_img{index + 1}";
@@ -424,8 +427,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     string fileName = $"{name}.png";
                     string filePath = Path.Combine(exportDirPath, fileName);
                     Utility.EnsureDirPathExists(exportDirPath);
-                    ownedImage.Flip();
-                    ownedImage.Write(filePath);
+                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 switch (Target)

@@ -14,7 +14,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void WindowPumpHost_VoidWindowTasksPostWithoutBlockingCaller()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/RuntimeWindowPumpHost.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/RuntimeWindowPumpHost.cs");
         int enqueueStart = source.IndexOf("public void EnqueueWindowTask", StringComparison.Ordinal);
         enqueueStart.ShouldBeGreaterThanOrEqualTo(0);
         int invokeStart = source.IndexOf("public T InvokeWindowTask", StringComparison.Ordinal);
@@ -27,20 +27,20 @@ public sealed class WindowOwnershipContractTests
     }
 
     [Test]
-    public void XRWindow_InputSnapshotPublishesThreadOwnedKeyMouseTextAndScrollEvents()
+    public void DesktopWindowBackend_PublishesThreadOwnedKeyMouseTextAndScrollEvents()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopSilkWindowBackend.cs");
         string ownership = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/WindowOwnership/RuntimeWindowOwnership.cs");
 
-        source.ShouldContain("keyboard.KeyDown += InputSnapshot_KeyDown;");
-        source.ShouldContain("keyboard.KeyUp += InputSnapshot_KeyUp;");
-        source.ShouldContain("keyboard.KeyChar += InputSnapshot_KeyChar;");
-        source.ShouldContain("mouse.MouseDown += InputSnapshot_MouseDown;");
-        source.ShouldContain("mouse.MouseUp += InputSnapshot_MouseUp;");
-        source.ShouldContain("mouse.MouseMove += InputSnapshot_MouseMove;");
-        source.ShouldContain("mouse.Scroll += InputSnapshot_Scroll;");
-        source.ShouldContain("_inputSnapshotAccumulator.RecordPointerPosition");
-        source.ShouldContain("_inputSnapshotAccumulator.RecordScroll");
+        source.ShouldContain("keyboard.KeyDown += OnKeyDown;");
+        source.ShouldContain("keyboard.KeyUp += OnKeyUp;");
+        source.ShouldContain("keyboard.KeyChar += OnKeyChar;");
+        source.ShouldContain("mouse.MouseDown += OnMouseDown;");
+        source.ShouldContain("mouse.MouseUp += OnMouseUp;");
+        source.ShouldContain("mouse.MouseMove += OnMouseMove;");
+        source.ShouldContain("mouse.Scroll += OnScroll;");
+        source.ShouldContain("_inputAccumulator.RecordPointerPosition");
+        source.ShouldContain("_inputAccumulator.RecordScroll");
         ownership.ShouldContain("PointerDeltaX");
         ownership.ShouldContain("ScrollDeltaY");
         ownership.ShouldContain("TextInputCount");
@@ -65,9 +65,9 @@ public sealed class WindowOwnershipContractTests
         int nextPumpMethod = source.IndexOf("private void ApplyVSyncModeOnRenderThread", pumpStart, StringComparison.Ordinal);
         nextPumpMethod.ShouldBeGreaterThan(pumpStart);
         string pumpBody = source[pumpStart..nextPumpMethod];
-        pumpBody.ShouldContain("Window.DoEvents();");
+        pumpBody.ShouldContain("_desktopBackend?.PumpEvents();");
         pumpBody.ShouldContain("PublishWindowSurfaceSnapshot(");
-        pumpBody.ShouldContain("PublishWindowInputSnapshot();");
+        pumpBody.ShouldNotContain("Window.DoEvents();");
 
         int collapsedLoopStart = host.IndexOf("private void BlockForCollapsedWindowRendering", StringComparison.Ordinal);
         collapsedLoopStart.ShouldBeGreaterThanOrEqualTo(0);
@@ -118,11 +118,12 @@ public sealed class WindowOwnershipContractTests
         string renderBody = source[renderStart..nextMethod];
 
         renderBody.ShouldContain("bool isRenderOwnerThread = currentThreadId == RenderOwnerThreadId;");
-        renderBody.ShouldContain("Window.API.API == ContextAPI.OpenGL || isRenderOwnerThread");
+        renderBody.ShouldContain("bool canRenderOnCurrentThread = isRenderOwnerThread &&");
+        renderBody.ShouldNotContain("Window.API.API == ContextAPI.OpenGL || isRenderOwnerThread");
         renderBody.ShouldNotContain("Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0 ||");
-        renderBody.ShouldContain("InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":interactive-active\");");
-        renderBody.ShouldContain("Volatile.Write(ref _interactiveResizeRenderActive, 0);\n                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":normal-render-active\");");
-        renderBody.ShouldContain("RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame()");
+        renderBody.ShouldContain("InteractiveResizeDiagnostics.RecordSuppressedRender(\"interactive-active\");");
+        renderBody.ShouldContain("Volatile.Write(ref _interactiveResizeRenderActive, 0);\n                InteractiveResizeDiagnostics.RecordSuppressedRender(\"normal-render-active\");");
+        renderBody.ShouldContain("RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame(presentationPackageId)");
         renderBody.ShouldNotContain("Window.DoRender()");
         renderBody.ShouldNotContain("ProcessPendingInteractivePresentationResize()");
     }
@@ -131,40 +132,39 @@ public sealed class WindowOwnershipContractTests
     public void EngineTimer_InteractiveResizeDispatchUsesNormalFrameAndCollectPublication()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs");
-        int dispatchStart = source.IndexOf("public bool TryDispatchInteractiveResizeFrame()", StringComparison.Ordinal);
+        int dispatchStart = source.IndexOf("public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(", StringComparison.Ordinal);
         dispatchStart.ShouldBeGreaterThanOrEqualTo(0);
         int normalDispatchStart = source.IndexOf("public bool DispatchRender()", dispatchStart, StringComparison.Ordinal);
         normalDispatchStart.ShouldBeGreaterThan(dispatchStart);
 
         string interactiveDispatch = source[dispatchStart..normalDispatchStart];
         interactiveDispatch.ShouldContain("Engine.IsDispatchingRenderFrame");
-        interactiveDispatch.ShouldContain("WaitToRender()");
+        interactiveDispatch.ShouldContain("IsRenderDispatchDue()");
+        interactiveDispatch.ShouldContain("DispatchRender(processMainThreadTasks: false, out dispatchReason)");
         interactiveDispatch.ShouldContain("PresentFrameId != previousPresentFrameId");
-        interactiveDispatch.ShouldNotContain("DispatchRender()");
+        interactiveDispatch.ShouldNotContain("DispatchRender(processMainThreadTasks: true");
         interactiveDispatch.ShouldNotContain("_visibilityGenerationGate");
     }
 
     [Test]
     public void InteractiveResizeStrategies_UseHostRenderCadenceInsteadOfFixedSixtyHertz()
     {
-        string win32 = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/Win32ModalLoopTimerInteractiveResizeStrategy.cs");
-        string glfw = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/GlfwResizeCallbackInteractiveResizeStrategy.cs");
+        string win32 = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopWin32ModalResizeHook.cs");
+        string glfw = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopGlfwResizeHook.cs");
+        string backend = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/DesktopSilkWindowBackend.cs");
 
-        win32.ShouldContain("case WM_PAINT:");
-        win32.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-paint\")");
-        win32.ShouldContain("RequestInteractiveResizePaint()");
-        win32.ShouldContain("case WM_SIZING:");
-        win32.ShouldContain("ApplyCoalescedClientPresentationResize(\"win32-sizing-live\")");
-        win32.ShouldContain("RecordCallbackAndRenderImmediate(\"win32-sizing-live\")");
-        win32.ShouldContain("EngineTimer.WaitToRender remains");
-        win32.ShouldNotContain("RecordCallbackAndRenderImmediate(\"win32-timer\")");
-        win32.ShouldNotContain("RecordCallbackAndRenderImmediate(\"win32-windowposchanged-live\")");
+        win32.ShouldContain("case WmPaint when _inSizeMove:");
+        win32.ShouldContain("case WmSizing:");
+        win32.ShouldContain("case WmTimer when wParam == TimerId:");
+        win32.ShouldContain("_window?.UpdateNativeResize();");
+        win32.ShouldContain("RequestPaint();");
+        win32.ShouldContain("_window?.BeginNativeResize();");
+        win32.ShouldContain("_window?.EndNativeResize();");
+        backend.ShouldContain("_sink?.RepaintRequested();");
         win32.ShouldNotContain("ActiveSizingRenderHz");
-        win32.ShouldNotContain("ShouldRenderByRateLimit");
+        glfw.ShouldContain("window.NativeWindow.Resize += OnResize;");
+        glfw.ShouldContain("_window?.UpdateNativeResize()");
         glfw.ShouldNotContain("TargetRenderHz");
-        glfw.ShouldNotContain("ShouldRenderByRateLimit");
     }
 
     [Test]
@@ -410,7 +410,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void WindowPumpHost_StopFlushesMailboxBeforeCompletingQueue()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/RuntimeWindowPumpHost.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Platform.Desktop/Windowing/RuntimeWindowPumpHost.cs");
         int stopStart = source.IndexOf("public void Stop()", StringComparison.Ordinal);
         stopStart.ShouldBeGreaterThanOrEqualTo(0);
         int flushStart = source.IndexOf("public bool Flush", stopStart, StringComparison.Ordinal);
@@ -452,10 +452,11 @@ public sealed class WindowOwnershipContractTests
         string editorPlayMode = ReadWorkspaceFile("XREngine.Editor/EditorPlayModeController.cs");
         string inspectorPanel = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.InspectorPanel.cs");
 
-        xrWindow.ShouldContain("public IWindow ThreadAffinedNativeWindow { get; }");
-        xrWindow.ShouldContain("[EditorBrowsable(EditorBrowsableState.Never)]");
-        xrWindow.ShouldContain("public IWindow Window => ThreadAffinedNativeWindow;");
-        xrWindow.ShouldContain("public IInputContext? Input { get; private set; }");
+        xrWindow.ShouldContain("public IRuntimeWindowBackend? DesktopWindowBackend => _desktopBackend;");
+        xrWindow.ShouldContain("public IRuntimeWindowGlContext? DesktopGlContext => _desktopBackend?.GlContext;");
+        xrWindow.ShouldContain("public IRuntimeWindowVulkanSurface? DesktopVulkanSurface => _desktopBackend?.VulkanSurface;");
+        xrWindow.ShouldNotContain("public IWindow ThreadAffinedNativeWindow");
+        xrWindow.ShouldNotContain("public IInputContext? Input");
         contract.ShouldContain("WindowInputSnapshot ConsumeInputSnapshot();");
         contract.ShouldContain("void RequestMouseCapture(bool captured);");
         contract.ShouldNotContain("GetThreadAffinedDeviceSourceForBinding");

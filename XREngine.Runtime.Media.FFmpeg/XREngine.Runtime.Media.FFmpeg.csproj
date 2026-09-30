@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
+    <None Include="..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll" Condition="Exists('..\Build\Dependencies\FFmpeg\HlsReference\win-x64')">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt" Condition="Exists('..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt')">
+      <Link>licenses\FFmpeg.AutoGen-LGPL-3.0.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+  <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <HlsReferenceFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\HlsReference\win-x64</HlsReferenceFfmpegDir>
+      <FfmpegSeedDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\Seed\win-x64</FfmpegSeedDir>
+    </PropertyGroup>
+    <ItemGroup Condition="Exists('$(FfmpegSeedDir)') and !Exists('$(HlsReferenceFfmpegDir)\avformat-62.dll') and !Exists('$(HlsReferenceFfmpegDir)\avformat-61.dll')">
+      <FfmpegSeedDll Include="$(FfmpegSeedDir)\*.dll" />
+    </ItemGroup>
+    <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Copy SourceFiles="@(FfmpegSeedDll)" DestinationFolder="$(HlsReferenceFfmpegDir)" SkipUnchangedFiles="true" Condition="'@(FfmpegSeedDll)' != ''" />
+  </Target>
+</Project>

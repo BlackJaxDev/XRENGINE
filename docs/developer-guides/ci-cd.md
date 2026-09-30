@@ -10,6 +10,8 @@ Pull requests authored by Codex, Claude, or Copilot are intentionally skipped by
 
 `dependency-review.yml` rejects pull requests that introduce dependencies with known vulnerabilities at moderate severity or higher. GitHub's dependency graph must be enabled. Private repositories also require the applicable GitHub Code Security entitlement.
 
+`portable-browser-compile.yml` is a separate compile-only workflow for pull requests, pushes to `master`, and manual dispatch. It installs the .NET 10 WebAssembly workload on an Ubuntu runner and runs `Tools/Test-PortableBrowserCompile.ps1` over the complete portable project manifest. It does not launch a browser or qualify gameplay, trimming, or browser AOT. See [Portable Project Rules](runtime/portable-projects.md) for the enforced boundaries.
+
 ## Deploy Gate
 
 Push a candidate commit to `deploy` to run the full promotion gate:

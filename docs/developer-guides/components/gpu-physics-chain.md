@@ -1,5 +1,7 @@
 # GPU Physics Chain Component
 
+> API/source note: the current implementation is the `PhysicsChainComponent` partial in `XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs`, with dispatch services in Runtime.Rendering. There is no separate `GPUPhysicsChainComponent` type. The examples below retain the earlier proposed API; use the [current authoring and runtime modes guide](../physics/physics-chain-authoring-and-runtime-modes.md) for supported configuration and behavior.
+
 ## Overview
 
 The `GPUPhysicsChainComponent` is a high-performance, GPU-accelerated alternative to the CPU-based `PhysicsChainComponent`. It provides identical physics behavior while leveraging compute shaders for massive parallelization, making it ideal for scenes with many physics chains (hair, cloth, tails, chains, etc.).
@@ -491,7 +493,7 @@ smoothedVelocity = lerp(smoothedVelocity, rawVelocity, 1 - smoothing * 0.9)
 
 | File | Description |
 |------|-------------|
-| `XRENGINE/Scene/Components/Physics/GPUPhysicsChainComponent.cs` | Main component |
+| `XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs` | GPU partial of the current `PhysicsChainComponent` |
 | `XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs` | Batched dispatcher |
 | `Build/CommonAssets/Shaders/Compute/PhysicsChain.comp` | Main physics shader |
 | `Build/CommonAssets/Shaders/Compute/PhysicsChain/SkipUpdateParticles.comp` | Skip-update shader |
@@ -500,5 +502,5 @@ smoothedVelocity = lerp(smoothedVelocity, rawVelocity, 1 - smoothing * 0.9)
 
 ## See Also
 
-- [PhysicsChainComponent](../../../XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs) - CPU version
+- [PhysicsChainComponent](../../../XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs) - CPU version
 - [BvhRaycastDispatcher](../../../XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs) - Similar batched dispatch pattern

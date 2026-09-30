@@ -64,7 +64,7 @@ for the current design.
 | `AotRuntimeMetadata` | `Core/Engine/AotRuntimeMetadata.cs` | MemoryPack-serializable table of all known types, redirects, replication info |
 | `AotRuntimeMetadataStore` | `Core/Engine/AotRuntimeMetadataStore.cs` | Lazy-loaded singleton that reads `AotRuntimeMetadata.bin` from the config archive |
 | `CookedBinarySerializer` | `Core/Files/CookedBinary/CookedBinarySerializer.cs` | Module-dispatched binary serializer for the engine's general native wire format |
-| `RuntimeCookedBinarySerializer` | `XREngine.Runtime.Rendering/Core/Files/RuntimeCookedBinarySerializer.cs` | Explicit runtime serializer used by registered published asset types |
+| `RuntimeCookedBinarySerializer` | `XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs` | Explicit runtime serializer used by registered published asset types |
 | `AssetPacker` | `Core/Files/AssetPacker/AssetPacker.cs` | Archive pack/repack/compact/read for cooked content and config |
 | `DirectStorageIO` | `Core/Files/DirectStorageIO.cs` | Windows DirectStorage abstraction for CPU and GPU I/O |
 

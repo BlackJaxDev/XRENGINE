@@ -1,8 +1,6 @@
-using Silk.NET.Core.Native;
-
 namespace XREngine.Rendering
 {
-    public abstract unsafe partial class AbstractRenderer<TAPI> where TAPI : NativeAPI
+    public abstract unsafe partial class AbstractRenderer<TAPI> where TAPI : class, IDisposable
     {
         /// <summary>
         /// Base class for objects allocated by render apis.

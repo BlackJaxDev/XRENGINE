@@ -314,13 +314,25 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
     }
 
-    private static readonly Dictionary<Type, (string[] Names, Array Values)> _inspectorEnumCache = new();
+    private static readonly Dictionary<Type, (string[] Names, string[] Labels, Array Values)> _inspectorEnumCache = new();
     private static readonly Dictionary<(Type Type, ulong Bits), string> _inspectorFlagPreviewCache = new();
 
-    private static (string[] Names, Array Values) GetInspectorEnum(Type type)
+    private static (string[] Names, string[] Labels, Array Values) GetInspectorEnum(Type type)
     {
         if (!_inspectorEnumCache.TryGetValue(type, out var values))
-            _inspectorEnumCache.Add(type, values = (Enum.GetNames(type), Enum.GetValues(type)));
+        {
+            string[] names = Enum.GetNames(type);
+            string[] labels = names;
+            if (type == typeof(EPhysicsLibrary))
+            {
+                labels = (string[])names.Clone();
+                int jitterIndex = Array.IndexOf(names, nameof(EPhysicsLibrary.Jitter));
+                if (jitterIndex >= 0)
+                    labels[jitterIndex] = "Jitter (experimental; install module to select)";
+            }
+
+            _inspectorEnumCache.Add(type, values = (names, labels, Enum.GetValues(type)));
+        }
         return values;
     }
 

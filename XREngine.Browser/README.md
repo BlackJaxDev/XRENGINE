@@ -21,15 +21,17 @@ source guard runs as a C# MSBuild task using the SDK; no Python process is invok
 
 ```sh
 dotnet workload install wasm-tools
-dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -p:XREnginePortableRuntime=true -m:1
+dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1
 ```
 
-Use the portable property on restore and build commands as well. It selects the
-same source profile throughout the graph. The browser project remains outside
-the default desktop solution, so desktop builds do not require the WASM workload.
-Trimming and AOT remain unqualified and are rejected by the portable build guard.
+`Directory.Build.props` marks the browser and its shared project closure with
+`XREnginePortableProject=true`; they compile their complete source sets. No
+separate portable build property or source profile is needed on restore or build.
+The browser project remains outside the default desktop solution, so desktop
+builds do not require the WASM workload. Trimming and AOT remain unqualified and
+are rejected by the portable build guard. See [portable project rules](../docs/developer-guides/runtime/portable-projects.md).
 
-Serve `XREngine.Browser/bin/portable/Release/net10.0/publish/wwwroot` through HTTPS
+Serve the `wwwroot` directory in the publish output reported by the SDK through HTTPS
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
 Publish the entire `wwwroot/webgpu` directory with the application. Revalidate
 `webgpu/shaders/manifest.json`; hash-named `.shader.json` and `.wgsl` files may be cached
@@ -142,8 +144,8 @@ The original `SceneBoot` exports remain available as a separate lifecycle fixtur
 The default page runs the continuous mesh scene. The packet is explicitly copied
 from transient .NET memory into reusable JavaScript storage; it is not zero-copy.
 
-The portable source allowlists retain engine assembly/type identities and isolate
-outputs under `bin/portable` and `obj/portable`. Desktop bootstrap/native
+The portable project allowlists retain engine assembly/type identities while the
+browser publish uses the SDK's normal output directories. Desktop bootstrap/native
 integrations remain outside this graph. The existing portability guard continues
 to check project/package/native-asset boundaries; it is not a forbidden-API proof.
 

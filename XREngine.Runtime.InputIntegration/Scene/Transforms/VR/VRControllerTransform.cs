@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using XREngine.Input;
 using XREngine.Scene.Transforms;
 
@@ -20,10 +19,10 @@ namespace XREngine.Data.Components.Scene
             set => SetField(ref _leftHand, value);
         }
 
-        public Controller? Controller => LeftHand
-            ? RuntimeVrStateServices.LeftController as Controller
-            : RuntimeVrStateServices.RightController as Controller;
+        public RuntimeVrDeviceInfo? Controller => LeftHand
+            ? RuntimeVrStateServices.LeftController
+            : RuntimeVrStateServices.RightController;
 
-        public override VrDevice? Device => Controller;
+        public override RuntimeVrDeviceInfo? Device => Controller;
     }
 }

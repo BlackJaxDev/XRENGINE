@@ -5,18 +5,19 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <XREnginePortableRuntimeSupported>true</XREnginePortableRuntimeSupported>
     <IsPackable>false</IsPackable>
     <!-- Qualify the interpreter first. Trimming and AOT require their own
          registration/serialization validation rather than inheriting desktop assumptions. -->
     <PublishTrimmed>false</PublishTrimmed>
     <RunAOTCompilation>false</RunAOTCompilation>
   </PropertyGroup>
+
   <ItemGroup>
-    <Compile Include="../XREngine.Animation/AuthoredCadence.cs" Link="Shared/AuthoredCadence.cs" />
-    <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
-    <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
-    <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" AdditionalProperties="XREnginePortableRuntime=true" />
+    <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+    <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" />
+    <ProjectReference Include="../XREngine.Animation/XREngine.Animation.csproj" />
   </ItemGroup>
+
   <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
 </Project>

@@ -266,6 +266,25 @@ namespace XREngine
         /// </summary>
         static Engine()
         {
+            XREngine.Audio.NAudioBackend.Register();
+            XREngine.Audio.OpenALBackend.Register();
+            XREngine.Audio.SteamAudioBackend.Register();
+            XREngine.Components.OVRLipSyncBackend.Register();
+            XREngine.Components.Audio2Face3DNativeBackend.Register();
+            XREngine.OpenVrRuntimeBackend.Register();
+            XREngine.OpenXrRuntimeBackend.Register();
+            XREngine.Rendering.Meshlets.MeshOptimizerBackend.Register();
+            XREngine.Networking.SocketNetworkBackend.Register();
+            XREngine.Networking.OscNetworkBackend.Register();
+            XREngine.Input.XInputBackend.Register();
+            XREngine.Core.Files.DirectStorageBackend.Register();
+            XREngine.Rendering.DesktopDiagnosticsBackend.Register();
+            XREngine.Runtime.Media.FFmpeg.FfmpegMediaBackend.Register();
+            XREngine.Runtime.Platform.Desktop.DesktopPlatformBackend.Register();
+            XREngine.Runtime.Imaging.Magick.MagickImagingBackend.Register();
+            XREngine.Runtime.Text.FreeType.FreeTypeFontBackend.Register();
+            XREngine.Runtime.UI.Skia.SkiaFontBackend.Register();
+            XREngine.Runtime.UI.Ultralight.UltralightUiBackend.Register();
             // Claim the current thread as the render thread immediately so that
             // InvokeOnRenderThread executes inline during static init instead of
             // queuing to the not-yet-created job system.  Without this,
@@ -436,9 +455,11 @@ namespace XREngine
         /// <remarks>
         /// Use this to load, cache, and manage the lifecycle of game assets.
         /// </remarks>
-        public static AssetManager Assets { get; } = new(
+        public static AssetManager Assets => _assets.Value;
+
+        private static readonly Lazy<AssetManager> _assets = new(static () => new AssetManager(
             jobManagerProvider: static () => Jobs,
-            remoteAssetDownloadAllowedProvider: static () => Networking is ClientNetworkingManager);
+            remoteAssetDownloadAllowedProvider: static () => Networking is ClientNetworkingManager));
 
         /// <summary>
         /// Thread-safe random number generator for general use.

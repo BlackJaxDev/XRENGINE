@@ -2,6 +2,11 @@
 
 This guide is the canonical setup path for using NVIDIA Audio2Face-3D live inference inside XRENGINE.
 
+The managed CSV/live component resides in `XREngine.Runtime.AudioIntegration`.
+The native session and bridge component reside in `XREngine.Audio.Audio2Face`,
+which copies available bridge DLLs to build and publish output. Public component
+namespaces remain unchanged.
+
 The goal is to end with all of the following working together:
 
 - CUDA installed on the machine.

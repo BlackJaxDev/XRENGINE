@@ -80,6 +80,9 @@ namespace XREngine.Scene
             => throw new NotSupportedException(
                 $"Physics scene '{GetType().FullName}' does not provide an {nameof(IPhysicsBackendService)}.");
 
+        /// <summary>Whether native scene state is available for live inspection.</summary>
+        public virtual bool IsReadyForInspection => true;
+
         protected virtual void NotifySimulationStepped()
             => OnSimulationStep?.Invoke();
 

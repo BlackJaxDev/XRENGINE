@@ -99,6 +99,18 @@ namespace XREngine.Rendering.UI
         private bool _loggedBackendInit;
         private bool _loggedTargetFramebuffer;
         private bool _loggedSoftwareFrame;
+        private bool _allowSoftwareFallback;
+        private string? _lastBackendFailure;
+
+        /// <summary>Allows an accelerated backend failure to switch to the explicitly installed software backend.</summary>
+        public bool AllowSoftwareFallback
+        {
+            get => _allowSoftwareFallback;
+            set => SetField(ref _allowSoftwareFallback, value);
+        }
+
+        /// <summary>Describes the most recent web backend initialization failure.</summary>
+        public string? LastBackendFailure => _lastBackendFailure;
 
         private string? _url;
         public string? Url
@@ -355,17 +367,16 @@ namespace XREngine.Rendering.UI
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"UIWebViewComponent backend init failed ({ex.Message}). Falling back to software backend.");
+                SetField(ref _lastBackendFailure, ex.Message, nameof(LastBackendFailure));
+                Debug.LogWarning($"UIWebViewComponent backend '{_backend.GetType().Name}' failed: {ex.Message}");
                 _pendingReinitialize = false;
                 _pendingLoadUrl = false;
                 _pendingResize = false;
 
-                // Auto-fallback: if the current backend is not already the software renderer, swap and retry once.
-                if (_backend is not UltralightWebRendererBackend)
+                if (AllowSoftwareFallback && _backend.SupportsFramebuffer)
                 {
-                    _backend.Dispose();
-                    _backend = new UltralightWebRendererBackend();
-                    _pendingReinitialize = true;
+                    Backend = WebRendererBackendRegistry.CreateSoftware();
+                    Debug.UIWarning("UIWebViewComponent is switching to its explicitly permitted software web backend.");
                 }
             }
         }

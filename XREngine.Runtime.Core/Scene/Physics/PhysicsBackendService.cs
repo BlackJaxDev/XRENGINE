@@ -55,7 +55,7 @@ public readonly record struct PhysicsCharacterControllerCreateInfo(
     public bool ConstrainedClimbing { get; init; }
 }
 
-internal static class PhysicsCharacterControllerCreateInfoValidator
+public static class PhysicsCharacterControllerCreateInfoValidator
 {
     public static void Validate(in PhysicsCharacterControllerCreateInfo createInfo)
     {

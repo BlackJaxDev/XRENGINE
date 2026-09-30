@@ -9,10 +9,13 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
   information, contribution terms, and release guidance.
 - [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
+[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in the [native subsystem debugging and validation TODO](work/todo/platform/native-subsystem-project-split-todo.md).
+
 ## Architecture
 
 - [Architecture Overview](architecture/README.md)
 - [Getting Started In The Codebase](architecture/getting-started-in-codebase.md)
+- [Runtime Project Organization](architecture/runtime/project-organization.md)
 - [Rendering Architecture](architecture/rendering/README.md)
 - [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
 - [Advanced TSR Sampling, History, And Diagnostics](architecture/rendering/default-render-pipeline-notes.md#advanced-tsr-sample-and-history-contract)
@@ -49,6 +52,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics API](developer-guides/physics/physics-api.md)
 - [Scene Graph Developer Guide](developer-guides/scene/scene-graph.md)
 - [Engine API](developer-guides/runtime/engine-api.md)
+- [Portable Project Rules](developer-guides/runtime/portable-projects.md)
 - [Runtime Environment Settings](developer-guides/runtime/runtime-environment-settings.md)
 - [Hot-Path Memory Control](developer-guides/runtime/hot-path-memory.md)
 - [Job System](developer-guides/runtime/job-system.md)
