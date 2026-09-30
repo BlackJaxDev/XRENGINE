@@ -591,7 +591,7 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
     /// <returns>A string describing the current viewport.</returns>
     private string DescribeViewport()
     {
-        string windowTitle = _viewport.Window?.Window?.Title ?? "Viewport";
+        string windowTitle = _viewport.Window?.WindowTitle ?? "Viewport";
         return $"{windowTitle}#{_viewport.Index}:{_viewport.Width}x{_viewport.Height}/{_viewport.InternalWidth}x{_viewport.InternalHeight}";
     }
 

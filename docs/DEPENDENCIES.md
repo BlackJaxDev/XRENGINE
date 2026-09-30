@@ -1,7 +1,7 @@
 # Dependency Inventory
 
-Generated: 2026-09-29T15:59:36-07:00
-Commit: e76de02cc339e2853b0a2702c39360c587584bf7
+Generated: 2026-09-30T10:36:41-07:00
+Commit: 870987cfc62ea0275e82e2d003e871d6b911784c
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
@@ -78,7 +78,7 @@ Notes:
 | Silk.NET.Input.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Common-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Input.Extensions | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Extensions-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Input.Glfw | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Glfw-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Input.Silk.csproj |
-| Silk.NET.Input.Sdl | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Sdl-2.23.0-MIT.txt) | XREngine.Editor.csproj |
+| Silk.NET.Input.Sdl | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Sdl-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Platform.Desktop.csproj |
 | Silk.NET.Maths | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Maths-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.OpenAL | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenAL-2.23.0-MIT.txt) | XREngine.Audio.OpenAL.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.OpenAL.Extensions.Creative | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.OpenAL.Extensions.Creative-2.23.0-MIT.txt) | XREngine.Audio.OpenAL.csproj |
@@ -124,7 +124,7 @@ Notes:
 | Silk.NET.Windowing.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Common-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Windowing.Extensions | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Extensions-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Windowing.Glfw | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Glfw-2.23.0-MIT.txt) | XREngine.Editor.csproj |
-| Silk.NET.Windowing.Sdl | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Sdl-2.23.0-MIT.txt) | XREngine.Editor.csproj |
+| Silk.NET.Windowing.Sdl | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Windowing.Sdl-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Platform.Desktop.csproj |
 | Silk.NET.XInput | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.XInput-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | SkiaSharp | 4.151.0 | Microsoft | [MIT](licenses/nuget/SkiaSharp-4.151.0-MIT.txt) | XREngine.Runtime.UI.Rive.csproj, XREngine.Runtime.UI.Skia.csproj |
 | SPIRVCross.NET | 1.1.3 | FaberSanZ | [MIT](licenses/nuget/SPIRVCross.NET-1.1.3-MIT.txt) | XREngine.Editor.csproj |
@@ -132,7 +132,7 @@ Notes:
 | Svg.Skia | 5.1.1 | wieslawsoltes | [MIT](licenses/nuget/Svg.Skia-5.1.1-MIT.txt) | XREngine.Runtime.UI.Skia.csproj |
 | System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj |
 | System.Management | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Management-10.0.10-MIT.txt) | XREngine.Runtime.Diagnostics.Desktop.csproj |
-| System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.Editor.csproj |
+| System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.ControlPlane.Service.csproj, XREngine.Editor.csproj |
 | UltralightNet | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.UI.Ultralight.csproj |
 | UltralightNet.AppCore | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet.AppCore-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.UI.Ultralight.csproj |
 | YamlDotNet | 18.1.0 | aaubry | [MIT](licenses/nuget/YamlDotNet-18.1.0-MIT.txt) | XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj |

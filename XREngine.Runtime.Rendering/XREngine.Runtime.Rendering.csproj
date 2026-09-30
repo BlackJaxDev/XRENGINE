@@ -8,6 +8,9 @@
     <RenderCommandRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</RenderCommandRegistrationGenerator>
     <GeneratedRenderCommandRegistrations>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\RenderCommandRegistrations.g.cs</GeneratedRenderCommandRegistrations>
     <RenderCommandRegistrationStamp>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\RenderCommandRegistrations.stamp</RenderCommandRegistrationStamp>
+    <!-- Windows builds use the inbox PowerShell host, like the other desktop build steps; other hosts need PowerShell 7. -->
+    <RenderCommandRegistrationHost Condition="'$(OS)' == 'Windows_NT'">powershell -NoProfile -ExecutionPolicy Bypass</RenderCommandRegistrationHost>
+    <RenderCommandRegistrationHost Condition="'$(OS)' != 'Windows_NT'">pwsh -NoProfile</RenderCommandRegistrationHost>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -45,7 +48,7 @@
 
   <Target Name="GenerateRenderCommandRegistrations" BeforeTargets="ValidateXREnginePortableProject;CoreCompile" Inputs="$(RenderCommandRegistrationGenerator);$(MSBuildProjectFullPath);@(RenderCommandRegistrationInput)" Outputs="$(RenderCommandRegistrationStamp)" Condition="'$(DesignTimeBuild)' != 'true'">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedRenderCommandRegistrations)'))" />
-    <Exec Command="pwsh -NoProfile -File &quot;$(RenderCommandRegistrationGenerator)&quot; -CommandsOnly -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedRenderCommandRegistrations)&quot;" />
+    <Exec Command="$(RenderCommandRegistrationHost) -File &quot;$(RenderCommandRegistrationGenerator)&quot; -CommandsOnly -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedRenderCommandRegistrations)&quot;" />
     <Touch Files="$(RenderCommandRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
   </Target>
   <ItemGroup>

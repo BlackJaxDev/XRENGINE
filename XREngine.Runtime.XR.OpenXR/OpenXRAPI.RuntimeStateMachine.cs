@@ -662,7 +662,7 @@ public unsafe partial class OpenXRAPI
         if (exception is not OpenXrGraphicsSessionException { Result: var result })
             return false;
 
-        return TryMarkRuntimeLossForResult(result, operation);
+        return TryMarkRuntimeLossForResult((Result)result, operation);
     }
 
     private bool TryMarkRuntimeLossForResult(Result result, string operation)
@@ -800,11 +800,8 @@ public unsafe partial class OpenXRAPI
     }
 
     private TimeSpan GetSessionFailureRetryDelay(Exception ex)
-        => ex is OpenXrGraphicsSessionException
-            {
-                Result: Result.ErrorGraphicsDeviceInvalid
-                    or Result.ErrorValidationFailure
-            }
+        => ex is OpenXrGraphicsSessionException { Result: var result } &&
+           (Result)result is Result.ErrorGraphicsDeviceInvalid or Result.ErrorValidationFailure
             ? GetGraphicsDeviceFailureProbeDelay()
             : _probeInterval;
 

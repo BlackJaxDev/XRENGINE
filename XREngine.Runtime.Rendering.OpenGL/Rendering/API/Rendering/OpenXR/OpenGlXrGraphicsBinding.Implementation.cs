@@ -173,7 +173,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
                 HDC = candidateHdc,
                 HGlrc = candidateHglrc
             };
-            int r = CheckResult(Host.GraphicsCalls.CreateSession((nint)&glBinding, out ulong createdSession), "xrCreateSession");
+            int r = CheckResult(Host.GraphicsCalls.CreateSession((nint)(&glBinding), out ulong createdSession), "xrCreateSession");
             attemptResults.Add($"{tag}: {r} (HDC=0x{(nuint)candidateHdc:X}, HGLRC=0x{(nuint)candidateHglrc:X})");
             lastResult = r;
             if (r == 0)

@@ -296,7 +296,7 @@ public sealed class VrViewRenderModeContractTests
     [Test]
     public void OpenXrEyeResolutionResolver_UsesPresetsScaleAndClampsRuntimeMaxMismatch()
     {
-        OpenXRAPI.OpenXrEyeSwapchainExtent valveIndex =
+        OpenXrEyeSwapchainExtent valveIndex =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.ValveIndex,
                 1.25f,
@@ -312,7 +312,7 @@ public sealed class VrViewRenderModeContractTests
         valveIndex.Source.ShouldContain("Valve");
         valveIndex.ExceedsRuntimeMax.ShouldBeFalse();
 
-        OpenXRAPI.OpenXrEyeSwapchainExtent questPro =
+        OpenXrEyeSwapchainExtent questPro =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.QuestPro,
                 0.5f,
@@ -326,7 +326,7 @@ public sealed class VrViewRenderModeContractTests
         questPro.Width.ShouldBe(900u);
         questPro.Height.ShouldBe(960u);
 
-        OpenXRAPI.OpenXrEyeSwapchainExtent beyond2 =
+        OpenXrEyeSwapchainExtent beyond2 =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.BigscreenBeyond2,
                 2.0f,
@@ -343,7 +343,7 @@ public sealed class VrViewRenderModeContractTests
         beyond2.Height.ShouldBe(2800u);
         beyond2.ExceedsRuntimeMax.ShouldBeTrue();
 
-        OpenXRAPI.OpenXrEyeSwapchainExtent custom =
+        OpenXrEyeSwapchainExtent custom =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.Custom,
                 0.5f,

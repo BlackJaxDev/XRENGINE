@@ -1,33 +1,40 @@
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Collections.Concurrent;
 
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Owns unmanaged callback entry points that must outlive any collectible renderer generation.
+/// Routes native callbacks to managed handlers that can belong to a collectible renderer
+/// generation. The native-callable addresses come from the host through
+/// <see cref="EntryPoints"/>, so they outlive every renderer generation.
 /// </summary>
-public static unsafe class RendererNativeCallbackBridge
+public static class RendererNativeCallbackBridge
 {
     private static readonly object StreamlineSync = new();
     private static Action<int, nint>? _streamlineLogHandler;
     private static StreamlineLogRegistration? _streamlineLogOwner;
-    private static nint _clipboardReturnBuffer;
     private static readonly ConcurrentDictionary<nint, Func<uint, uint, nint, nint, uint>>
         VulkanDebugHandlers = new();
     private static long _nextVulkanDebugHandlerId;
+    private static IRendererNativeCallbackEntryPoints? _entryPoints;
 
-    public static nint StreamlineLogCallbackPointer
-        => (nint)(delegate* unmanaged[Cdecl]<int, nint, void>)&OnStreamlineLogMessage;
+    /// <summary>The host-installed native-callable addresses, or null when no native host is composed.</summary>
+    public static IRendererNativeCallbackEntryPoints? EntryPoints
+    {
+        get => Volatile.Read(ref _entryPoints);
+        set => Volatile.Write(ref _entryPoints, value);
+    }
 
-    public static nint GetClipboardTextCallbackPointer
-        => (nint)(delegate* unmanaged[Cdecl]<void*, byte*>)&GetClipboardText;
+    private static IRendererNativeCallbackEntryPoints RequiredEntryPoints => EntryPoints ??
+        throw new InvalidOperationException(
+            "Renderer native callback entry points are not installed. Install a desktop platform backend before creating a native renderer.");
 
-    public static nint SetClipboardTextCallbackPointer
-        => (nint)(delegate* unmanaged[Cdecl]<void*, byte*, void>)&SetClipboardText;
+    public static nint StreamlineLogCallbackPointer => RequiredEntryPoints.StreamlineLog;
 
-    public static nint VulkanDebugCallbackPointer
-        => (nint)(delegate* unmanaged[Stdcall]<uint, uint, nint, nint, uint>)&OnVulkanDebugMessage;
+    public static nint GetClipboardTextCallbackPointer => RequiredEntryPoints.GetClipboardText;
+
+    public static nint SetClipboardTextCallbackPointer => RequiredEntryPoints.SetClipboardText;
+
+    public static nint VulkanDebugCallbackPointer => RequiredEntryPoints.VulkanDebug;
 
     public static IDisposable RegisterStreamlineLogHandler(Action<int, nint> handler)
     {
@@ -52,8 +59,11 @@ public static unsafe class RendererNativeCallbackBridge
         return new(id);
     }
 
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static void OnStreamlineLogMessage(int type, nint message)
+    /// <summary>
+    /// Forwards a Streamline log message to the registered handler. Called from the host's
+    /// native entry point, so it never lets an exception escape.
+    /// </summary>
+    public static void DispatchStreamlineLog(int type, nint message)
     {
         Action<int, nint>? handler;
         lock (StreamlineSync)
@@ -68,8 +78,11 @@ public static unsafe class RendererNativeCallbackBridge
         }
     }
 
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
-    private static uint OnVulkanDebugMessage(
+    /// <summary>
+    /// Forwards a Vulkan debug message to the handler registered under <paramref name="userData"/>.
+    /// Called from the host's native entry point, so it never lets an exception escape.
+    /// </summary>
+    public static uint DispatchVulkanDebug(
         uint messageSeverity,
         uint messageTypes,
         nint callbackData,
@@ -85,45 +98,6 @@ public static unsafe class RendererNativeCallbackBridge
         catch
         {
             return 0;
-        }
-    }
-
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static byte* GetClipboardText(void* userData)
-    {
-        if (_clipboardReturnBuffer != 0)
-        {
-            Marshal.FreeHGlobal(_clipboardReturnBuffer);
-            _clipboardReturnBuffer = 0;
-        }
-
-        try
-        {
-            string? text = RuntimeClipboardServices.Current?.GetText();
-            if (text is null)
-                return null;
-            byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(text);
-            _clipboardReturnBuffer = Marshal.AllocHGlobal(utf8.Length + 1);
-            Marshal.Copy(utf8, 0, _clipboardReturnBuffer, utf8.Length);
-            Marshal.WriteByte(_clipboardReturnBuffer, utf8.Length, 0);
-            return (byte*)_clipboardReturnBuffer;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static void SetClipboardText(void* userData, byte* text)
-    {
-        try
-        {
-            if (text is not null)
-                RuntimeClipboardServices.Current?.SetText(Marshal.PtrToStringUTF8((nint)text) ?? string.Empty);
-        }
-        catch
-        {
         }
     }
 

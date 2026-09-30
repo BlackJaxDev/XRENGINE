@@ -23,4 +23,7 @@ internal sealed class OpenVrStateProvider : IRuntimeOpenVrStateProvider
                 ref error);
         }
     }
+
+    public bool TryGetEyeProjectionMatrix(bool leftEye, float nearPlane, float farPlane, out System.Numerics.Matrix4x4 projection)
+        => OpenVrDeviceBackend.TryGetEyeProjectionMatrix(leftEye, nearPlane, farPlane, out projection);
 }

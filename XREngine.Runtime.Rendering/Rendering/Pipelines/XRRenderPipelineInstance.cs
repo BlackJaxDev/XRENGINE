@@ -333,7 +333,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     private static string DescribeViewport(XRViewport viewport)
     {
-        string? baseName = viewport.Window?.Window?.Title;
+        string? baseName = viewport.Window?.WindowTitle;
         if (string.IsNullOrWhiteSpace(baseName))
             baseName = "Viewport";
         return $"Viewport={baseName}#{viewport.Index} ({viewport.Width}x{viewport.Height})";

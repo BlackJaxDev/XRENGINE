@@ -1,4 +1,5 @@
 using XREngine.Core.Engine;
+using XREngine.Core.Files;
 using XREngine.Data;
 
 namespace XREngine

@@ -34,6 +34,9 @@
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" />
+    <!-- Shared-context benchmarks reuse the test adapter that presents a hidden Silk window as a window backend. -->
+    <Compile Include="..\XREngine.UnitTests\Rendering\SilkGlContextTestAdapter.cs" Link="Support\SilkGlContextTestAdapter.cs" />
+    <Compile Include="..\XREngine.UnitTests\Rendering\SilkSharedWindowTestBackend.cs" Link="Support\SilkSharedWindowTestBackend.cs" />
   </ItemGroup>
 
 </Project>

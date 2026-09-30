@@ -16,6 +16,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace XREngine
 {

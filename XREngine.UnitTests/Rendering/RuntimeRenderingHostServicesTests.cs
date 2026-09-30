@@ -898,11 +898,11 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool OpenXrPrepareFrameAfterDesktopRender => true;
         public float OpenXrDeadlineSafetyMarginMs => 1.0f;
         public float OpenXrPoseTimeOffsetMs => RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
-        public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+        public OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXrCollectVisiblePosePolicy.Predicted;
         public float OpenXrCollectVisibleFrustumPaddingDegrees => 2.0f;
-        public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
-        public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-        public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+        public OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXrTrackingLossPolicy.FreezeLastValid;
+        public OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXrActionSyncPolicy.PredictedOnly;
+        public OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
         public bool ShouldForceDebugOpaquePipeline => false;
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)

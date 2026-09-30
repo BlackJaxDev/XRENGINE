@@ -1,9 +1,11 @@
 using Silk.NET.OpenXR;
 using System;
 using System.Diagnostics;
+using System.Numerics;
 using System.Threading;
 using XREngine;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;

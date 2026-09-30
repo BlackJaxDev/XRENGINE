@@ -10,6 +10,7 @@ using System.Xml.Linq;
 using XREngine;
 using XREngine.Components.Scripting;
 using XREngine.Core;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 
 internal partial class CodeManager : XRSingleton<CodeManager>

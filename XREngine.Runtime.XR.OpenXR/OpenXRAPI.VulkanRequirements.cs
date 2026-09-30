@@ -52,7 +52,7 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
     private sealed class BootstrapGraphicsBorrow(OpenXrVulkanEnable2BootstrapContext owner) : IOpenXrNativeGraphicsBorrow
     {
         private int _released;
-        public ulong InstanceHandle => owner.xrInstance.Handle;
+        public ulong InstanceHandle => owner.XrInstance.Handle;
 
         public nint GetInstanceProcAddress(string name)
         {
@@ -61,7 +61,7 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
                 if (_released != 0)
                     throw new ObjectDisposedException(nameof(BootstrapGraphicsBorrow));
                 PfnVoidFunction function = default;
-                Result result = owner.api.GetInstanceProcAddr(owner.xrInstance, name, ref function);
+                Result result = owner.Api.GetInstanceProcAddr(owner.XrInstance, name, ref function);
                 if (result != Result.Success || (nint)function == 0)
                     throw new InvalidOperationException($"OpenXR could not resolve {name}: {result}.");
                 return (nint)function;
@@ -85,7 +85,7 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
         out nint instanceHandle, out uint vulkanResult, out string? failureReason)
     {
         using IOpenXrNativeGraphicsBorrow borrow = BorrowNativeGraphicsDispatch();
-        return TryCreateVulkanInstance((void*)createInfo, (PfnVoidFunction)getInstanceProcAddr,
+        return TryCreateVulkanInstance((void*)createInfo, ToPfnVoidFunction(getInstanceProcAddr),
             out instanceHandle, out vulkanResult, out failureReason);
     }
 
@@ -101,9 +101,12 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
         out nint deviceHandle, out uint vulkanResult, out string? failureReason)
     {
         using IOpenXrNativeGraphicsBorrow borrow = BorrowNativeGraphicsDispatch();
-        return TryCreateVulkanDevice(physicalDeviceHandle, (void*)createInfo, (PfnVoidFunction)getInstanceProcAddr,
+        return TryCreateVulkanDevice(physicalDeviceHandle, (void*)createInfo, ToPfnVoidFunction(getInstanceProcAddr),
             out deviceHandle, out vulkanResult, out failureReason);
     }
+
+    private static PfnVoidFunction ToPfnVoidFunction(nint function)
+        => new((delegate* unmanaged[Cdecl]<void>)function);
 
     public bool Invalidate(string reason)
     {

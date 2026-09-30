@@ -7,6 +7,13 @@
     <XREnginePortableProject>true</XREnginePortableProject>
   </PropertyGroup>
 
+  <!-- The browser lane qualifies the untrimmed interpreter. Without this, the SDK defaults
+       browser-wasm builds to trimmed publishing, which the portability guard rejects until
+       trimming has its own metadata and serializer review. -->
+  <PropertyGroup Condition="'$(XREnginePortableProject)' == 'true' and '$(RuntimeIdentifier)' == 'browser-wasm'">
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">false</PublishTrimmed>
+  </PropertyGroup>
+
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

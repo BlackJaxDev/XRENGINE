@@ -1217,7 +1217,7 @@ public static partial class EditorImGuiUI
             var window = _closePromptWindow;
             ResetClosePromptState();
 
-            if (window?.Window is null)
+            if (window?.DesktopWindowBackend is null)
                 return;
 
             Engine.EnqueueMainThreadTask(
@@ -1227,7 +1227,7 @@ public static partial class EditorImGuiUI
 
         private static void CloseWindowBypassingUnsavedPrompt(XRWindow? window)
         {
-            if (window?.Window is null)
+            if (window?.DesktopWindowBackend is null)
                 return;
 
             FlushImGuiLayoutImmediate();

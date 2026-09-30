@@ -8,7 +8,7 @@ versioned binary packet bridge with one managed-to-JavaScript submission per fra
 The focused CPU-direct pipeline adds unlit/flat Lambert shading, directional
 shadows, sky/ambient lighting, HDR tonemapping and GPU-composed UI rectangles.
 
-**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented but have not been built or run.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented. The host compiles and publishes as of 2026-09-30 ([build record](../docs/work/progress/platform/unified-runtime-build-stabilization.md)) but has not been run in a browser.
 Validation was explicitly deferred for this change. Earlier scene-only results
 in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
 do not qualify this renderer.

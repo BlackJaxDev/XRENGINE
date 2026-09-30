@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using XREngine.Input;
 using BooleanAction = OpenVR.NET.Input.BooleanAction;
@@ -150,7 +151,7 @@ public static class OpenVrActionBackend
         => TryGetAction(category, name, out HapticAction? action) &&
             action.TriggerVibration(duration, frequency, amplitude, delay);
 
-    private static bool TryGetAction<TAction>(string category, string name, out TAction? action)
+    private static bool TryGetAction<TAction>(string category, string name, [NotNullWhen(true)] out TAction? action)
         where TAction : OpenVRAction
     {
         action = null;

@@ -94,14 +94,22 @@ public sealed class DesktopSilkWindowBackendFactory : IRuntimeWindowBackendFacto
         options.IsVisible = request.Visible;
         options.ShouldSwapAutomatically = request.SwapAutomatically;
         options.TransparentFramebuffer = request.TransparentFramebuffer;
-        options.PreferredBitDepth = request.ColorBits > 0
+        options.PreferredBitDepth = ResolveChannelBits(request.ColorBits > 0
             ? request.ColorBits
-            : request.PreferHdrOutput ? 64 : 24;
+            : request.PreferHdrOutput ? 64 : 24);
         options.PreferredDepthBufferBits = request.DepthBits > 0 ? request.DepthBits : null;
         options.PreferredStencilBufferBits = request.StencilBits > 0 ? request.StencilBits : 8;
         options.SharedContext = (request.SharedContext as DesktopSilkGlContext)?.SilkContext;
         return new DesktopSilkWindowBackend(Window.Create(options), request);
     }
+
+    /// <summary>
+    /// Converts a total color depth into Silk's per-channel request. 24- and 32-bit requests both
+    /// resolve to 8-bit channels with alpha, the platform default; deeper requests split evenly
+    /// across the four channels. The windowing layer treats these as preferences, not requirements.
+    /// </summary>
+    private static Vector4D<int> ResolveChannelBits(int colorBits)
+        => new(colorBits > 32 ? colorBits / 4 : 8);
 
     private static ContextFlags ResolveOpenGlFlags(in RuntimeWindowCreateOptions request)
     {

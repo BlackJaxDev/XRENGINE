@@ -1,5 +1,4 @@
 using XREngine.Extensions;
-using MathNet.Numerics;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Animation.IK;
@@ -304,7 +303,7 @@ namespace XREngine.Components.Animation
                 // Anatomic Arm
                 case ELimbBendModifier.Arm:
                     {
-                        if (_bone1._transform == null || _bone1._transform.Parent == null || weight.AlmostEqual(0.0f))
+                        if (_bone1._transform == null || _bone1._transform.Parent == null || weight.EqualTo(0.0f))
                             return BendNormal;
 
                         if (_goal == ELimbEndEffector.LeftFoot ||
@@ -381,7 +380,7 @@ namespace XREngine.Components.Animation
                             RuntimeAnimationHostServices.Current.RenderPoint(origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
                         }
 
-                        if (weight.AlmostEqual(1.0f))
+                        if (weight.EqualTo(1.0f))
                             return armBendNormal;
 
                         return Vector3.Lerp(BendNormal, armBendNormal, weight);

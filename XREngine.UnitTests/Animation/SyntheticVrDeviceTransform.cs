@@ -1,5 +1,5 @@
 using System.Numerics;
-using OpenVR.NET.Devices;
+using XREngine.Input;
 using XREngine.Data.Components.Scene;
 
 namespace XREngine.UnitTests.Animation;
@@ -69,7 +69,7 @@ public sealed class SyntheticVrDeviceTransform : VRDeviceTransformBase
     /// <summary>Whether this sample is suitable for role assignment; the flags do not alter its matrix.</summary>
     public bool PoseCurrentlyUsable => Connected && PositionValid && OrientationValid;
 
-    public override VrDevice? Device => null;
+    public override RuntimeVrDeviceInfo? Device => null;
 
     public void SetPose(Vector3 position, Quaternion orientation, long timestamp = 0)
     {
