@@ -18,6 +18,7 @@ These projects target `net10.0` and compile their full source set for desktop an
 | `XREngine.Modeling` | Managed mesh editing and modeling operations. |
 | `XREngine.Runtime.Core` | Worlds, scenes, transforms, components, physics contracts/catalog, replication, and runtime services. |
 | `XREngine.Runtime.Rendering` | Backend-neutral render objects, pipelines, windows/viewports, capture, text/UI, and renderer contracts. |
+| `XREngine.Runtime.Host` | Shared `Engine` facade, `EngineTimer`, world hosting, startup settings, snapshots, and managed host-service implementations. Platform startup policy, backend catalogs, and default pipeline creation are supplied by application composition. |
 | `XREngine.Runtime.AnimationIntegration` | Scene/component integration for animation. |
 | `XREngine.Runtime.AudioIntegration` | Scene/component integration for portable audio services. |
 | `XREngine.Runtime.InputIntegration` | Player, pawn, and scene integration for input. |
@@ -66,6 +67,8 @@ Physics selection uses the backend catalog and preserves serialized `EPhysicsLib
 
 `XRWindow` is a neutral facade in Rendering. Desktop owns the native window backend and event pump. Renderer modules borrow desktop GL-context or Vulkan-surface services through `IRendererDesktopWindowServices`; shared libraries do not expose Silk window/input objects. OpenXR graphics resources and API dispatch remain renderer-owned, with neutral graphics-host and lifetime contracts connecting them to the XR module.
 
+Engine-owned presentation windows poll native events. Frame pacing belongs to the engine timer; blocking in a native event wait would suspend resource convergence, rendering and asynchronous readback while the window is idle. Borrowed GL function lookup returns zero for an unavailable optional symbol and retains owner-thread/lifetime checks. OpenGL capability admission is cached from each context's extension list and numeric version.
+
 Native libraries call back into renderers through entry points that must outlive collectible renderer generations. Rendering keeps the managed registrations (`RendererNativeCallbackBridge`, `RendererImGuiViewportCallbackBridge`); the desktop platform module supplies the native-callable addresses when it registers. A native renderer created without them fails with a named error.
 
 Image consumers exchange neutral buffers with dimensions, format, stride, origin, and mip data. GPU readback stays in renderer modules; encoding stays in the imaging module. Cooked raw textures need no ImageMagick decoder. Font and UI services similarly expose neutral data to Rendering. See [image, media, and font boundaries](../rendering/image-media-font-boundaries.md).
@@ -74,7 +77,7 @@ Image consumers exchange neutral buffers with dimensions, format, stride, origin
 
 | Project | Role |
 | --- | --- |
-| `XREngine.Runtime.Bootstrap` | Windows desktop composition root. Its `Engine` facade installs platform services, physics/audio/XR/network/storage/image/media/text backends, settings, timers, and application lifecycle hooks. |
+| `XREngine.Runtime.Bootstrap` | Windows desktop composition root. Installs platform, renderer, physics/audio/XR/network/storage/image/media/text providers, desktop startup policy, native window pumping, VR service lifetimes, and desktop launch profiles. References the shared Host facade and timer. |
 | `XREngine.Editor` | Editor executable, authoring services, ImGui integration, model import, tooling, and unit-world bootstrap. |
 | `XREngine.Server` | Dedicated server executable using desktop bootstrap with headless renderer selection. |
 | `XREngine.VRClient` | OpenVR companion executable with its own runtime lifetime and interprocess frame/input exchange. |
@@ -90,7 +93,11 @@ Image consumers exchange neutral buffers with dimensions, format, stride, origin
 
 Composition is explicit. Referencing a module does not necessarily activate its feature or supply optional vendor binaries. Bootstrap's renderer references are controlled by `XREngineRendererBackends` (`All`, `OpenGL`, `Vulkan`, or headless `None`). Jitter requires explicit installation. The editor installs collider authoring, model import, and ImGui services in addition to the desktop services.
 
-Shipping registration uses generated/static factories and cooked type metadata. Rendering owns its generated built-in render-command registry; desktop Bootstrap owns its application factory generation. Development authoring can discover loaded managed types and use Desktop's optional assembly loader. See [AOT final game builds](../../developer-guides/runtime/aot-final-game-builds.md).
+`XREngine.Server` and `XREngine.VRClient` directly reference `XREngine.Runtime.ModelAssetPipeline` at their application composition roots. Desktop Bootstrap includes that module's sources in its generated application factory inputs without taking a direct project reference. Shared `XREngine.Runtime.Core` and `XREngine.Runtime.Rendering` remain free of model-authoring project dependencies; authoring and import implementation stays in the aggregate adapter.
+
+Shipping registration uses generated/static factories and cooked type metadata. Rendering owns its generated built-in render-command registry. Host owns factories from its portable managed closure; desktop Bootstrap resolves that closure for inheritance and emits factories only for its desktop inputs. Browser generates its bridge-module registrations from an explicit manifest. All three use `Tools/Generate-AotFactoryRegistrations.ps1` through `Build/Registration/FactoryRegistrations.targets`; generated files live under intermediate output. Development authoring can discover loaded managed types and use Desktop's optional assembly loader. See [AOT final game builds](../../developer-guides/runtime/aot-final-game-builds.md).
+
+Application roots install desktop composition before accessing `Engine.Assets`. The shared facade's static constructor initializes managed defaults and hooks without registering native leaves. Explicit engine initialization requires `IRuntimeEngineStartupPolicy`; it applies host settings before resource creation and host launch ingress before shared networking admission checks. Headless world composition takes an explicit physics scene factory. Desktop dedicated servers retain their Jolt factory, independently of the desktop rendered-world physics default.
 
 ## Native assets and source identity
 

@@ -99,6 +99,7 @@ internal partial class Program
         XREnvironment.Initialize();
         using IDisposable editorWorldHostCompositionServices =
             RuntimeWorldHostCompositionServices.Install(new EditorRuntimeWorldHostCompositionServices());
+        RuntimeApplicationBootstrap.PrepareDesktopServices();
         using IDisposable modelAssetPipelineRegistration =
             ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
         using IDisposable applicationServices =

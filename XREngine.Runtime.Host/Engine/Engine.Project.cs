@@ -1,0 +1,1139 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using XREngine.Core.Files;
+using XREngine.Diagnostics;
+using static XREngine.RuntimeEngine.Rendering;
+
+namespace XREngine
+{
+    public static partial class Engine
+    {
+        private const string SandboxFolderName = "Sandbox";
+        private const string SandboxConfigFolderName = "Config";
+        /// <summary>
+        /// The currently loaded project, if any.
+        /// </summary>
+        public static XRProject? CurrentProject { get; private set; }
+
+        /// <summary>
+        /// Event fired when a project is loaded.
+        /// </summary>
+        public static event Action<XRProject>? ProjectLoaded;
+
+        /// <summary>
+        /// Event fired when a project is unloaded.
+        /// </summary>
+        public static event Action? ProjectUnloaded;
+
+        /// <summary>
+        /// Loads a project from the specified .xrproj file path.
+        /// This will also load the project's engine and user settings.
+        /// </summary>
+        /// <param name="projectFilePath">The path to the .xrproj file.</param>
+        /// <returns>True if the project was loaded successfully.</returns>
+        public static bool LoadProject(string projectFilePath)
+        {
+            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            {
+                Debug.LogWarning($"Project file not found: {projectFilePath}");
+                return false;
+            }
+
+            var project = XRProject.Load(projectFilePath, Assets);
+            if (project is null)
+            {
+                Debug.LogWarning($"Failed to load project from: {projectFilePath}");
+                return false;
+            }
+
+            return LoadProject(project);
+        }
+
+        /// <summary>
+        /// Loads a project and its associated settings.
+        /// </summary>
+        /// <param name="project">The project to load.</param>
+        /// <returns>True if the project was loaded successfully.</returns>
+        public static bool LoadProject(XRProject project)
+        {
+            if (project is null)
+                return false;
+
+            project.EnsureStructure();
+            LogUnexpectedProjectEntries(project);
+
+            // Unload any existing project
+            UnloadProject();
+
+            CurrentProject = project;
+
+            ConfigureProjectDirectories(project);
+            Assets.SyncMetadataWithAssets();
+
+            using (SuppressSettingsCascades())
+            {
+                // Load global engine defaults first, then project-local defaults that can replace them.
+                LoadGlobalEngineDefaults();
+                LoadProjectEngineDefaults();
+
+                // Load global editor preferences + project overrides
+                LoadGlobalEditorPreferences();
+                LoadProjectEditorPreferencesOverrides();
+
+                // Load project-specific game settings before user/build layers that further specialize them.
+                LoadProjectGameSettings();
+
+                // Load project-specific user settings
+                LoadProjectUserSettings();
+
+                // Load project-specific build settings
+                LoadProjectBuildSettings();
+
+                // Clear any dirty state that accumulated during loading
+                ClearSettingsDirtyState();
+            }
+
+            Debug.Out($"Project loaded: {project.ProjectName}");
+            ProjectLoaded?.Invoke(project);
+            return true;
+        }
+
+        /// <summary>
+        /// Unloads the current project.
+        /// </summary>
+        public static void UnloadProject()
+        {
+            RuntimeEngine.Rendering.ProjectDefaultSettings = null;
+
+            if (CurrentProject is null)
+                return;
+
+            Debug.Out($"Project unloaded: {CurrentProject.ProjectName}");
+            CurrentProject = null;
+            ProjectUnloaded?.Invoke();
+        }
+
+        /// <summary>
+        /// Loads global settings when running without a project (sandbox mode).
+        /// </summary>
+        public static void LoadSandboxSettings()
+        {
+            if (Assets is null)
+                return;
+
+            using (SuppressSettingsCascades())
+            {
+                LoadGlobalEngineDefaults();
+                LoadGlobalEditorPreferences();
+                LoadSandboxEditorPreferencesOverrides();
+                LoadSandboxGameSettings();
+                LoadSandboxUserSettings();
+                LoadSandboxBuildSettings();
+
+                // Clear any dirty state that accumulated during initialization.
+                // Settings created during startup (e.g., VRGameStartupSettings with DefaultUserSettings)
+                // may have been marked dirty before the actual saved settings were loaded.
+                ClearSettingsDirtyState();
+            }
+        }
+
+        /// <summary>
+        /// Clears dirty state on all engine settings objects.
+        /// Called after loading settings to ensure a clean starting state.
+        /// </summary>
+        private static void ClearSettingsDirtyState()
+        {
+            _globalEditorPreferences?.ClearDirty();
+            _editorPreferencesOverrides?.ClearDirty();
+            RuntimeEngine.Rendering.GlobalDefaultSettings.ClearDirty();
+            RuntimeEngine.Rendering.ProjectDefaultSettings?.ClearDirty();
+            _userSettings?.ClearDirty();
+            _gameSettings?.ClearDirty();
+            _gameSettings?.BuildSettings?.ClearDirty();
+            _gameSettings?.DefaultUserSettings?.ClearDirty();
+        }
+
+        private static string? GetSandboxConfigDirectory()
+        {
+            string? userDataRoot = GetEditorUserDataRoot();
+            if (string.IsNullOrWhiteSpace(userDataRoot))
+                return null;
+
+            return Path.Combine(userDataRoot, SandboxFolderName, SandboxConfigFolderName);
+        }
+
+        /// <summary>
+        /// Resolves the writable editor settings root. Isolated editor sessions keep their
+        /// settings below the session root instead of sharing the user's global profile.
+        /// </summary>
+        private static string? GetEditorUserDataRoot()
+        {
+            string? sessionRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
+            if (!string.IsNullOrWhiteSpace(sessionRoot))
+                return Path.Combine(Path.GetFullPath(sessionRoot), "user-data");
+
+            string? localApplicationData = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return string.IsNullOrWhiteSpace(localApplicationData)
+                ? null
+                : Path.Combine(localApplicationData, "XREngine");
+        }
+
+        private static string? GetSandboxEditorPreferencesOverridesPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.EditorPreferencesOverridesFileName);
+        }
+
+        private static string? GetLegacySandboxEditorPreferencesOverridesPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.LegacyEngineSettingsFileName);
+        }
+
+        private static string? GetGlobalEditorPreferencesPath()
+        {
+            string? userDataRoot = GetEditorUserDataRoot();
+            if (string.IsNullOrWhiteSpace(userDataRoot))
+                return null;
+
+            string configDir = Path.Combine(userDataRoot, "Global", SandboxConfigFolderName);
+            return Path.Combine(configDir, "editor_preferences_global.asset");
+        }
+
+        private static string? GetGlobalEngineDefaultsPath()
+        {
+            string? userDataRoot = GetEditorUserDataRoot();
+            if (string.IsNullOrWhiteSpace(userDataRoot))
+                return null;
+
+            string configDir = Path.Combine(userDataRoot, "Global", SandboxConfigFolderName);
+            return Path.Combine(configDir, XRProject.EngineDefaultsFileName);
+        }
+
+        private static string? GetSandboxUserSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.UserSettingsFileName);
+        }
+
+        private static string? GetSandboxGameSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.GameSettingsFileName);
+        }
+
+        private static string? GetSandboxBuildSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.BuildSettingsFileName);
+        }
+
+        private static T? LoadFreshSettingsAsset<T>(string settingsPath) where T : XRAsset, new()
+        {
+            if (Assets is null || string.IsNullOrWhiteSpace(settingsPath))
+                return null;
+
+            settingsPath = Path.GetFullPath(settingsPath);
+
+            ClearSettingsAssetCaches(settingsPath);
+
+            try
+            {
+                // Settings load during Engine.Initialize, before the startup JobManager is
+                // configured. Run inline so startup does not block on an implicit worker pool.
+                return Assets.LoadImmediate<T>(settingsPath);
+            }
+            catch (Exception ex)
+            {
+                ClearSettingsAssetCaches(settingsPath);
+                string? quarantinedPath = QuarantineInvalidSettingsAsset(settingsPath);
+
+                Debug.LogWarning(
+                    $"Failed to load settings asset '{settingsPath}'. " +
+                    $"Using a fresh {typeof(T).Name} instance instead. " +
+                    (quarantinedPath is null
+                        ? "The invalid file could not be quarantined."
+                        : $"The invalid file was moved to '{quarantinedPath}'.") +
+                    Environment.NewLine +
+                    ex);
+
+                var fallback = new T
+                {
+                    FilePath = settingsPath,
+                    Name = typeof(T).Name,
+                };
+
+                Assets.EnsureTracked(fallback);
+                fallback.MarkDirty();
+                return fallback;
+            }
+        }
+
+        private static void ClearSettingsAssetCaches(string settingsPath)
+        {
+            if (Assets is null)
+                return;
+
+            if (Assets.LoadedAssetsByPathInternal.TryRemove(settingsPath, out XRAsset? existing))
+            {
+                if (existing.ID != Guid.Empty)
+                {
+                    Assets.LoadedAssetsByIDInternal.TryRemove(existing.ID, out _);
+                    Assets.DirtyAssets.TryRemove(existing.ID, out _);
+                }
+
+                if (!string.IsNullOrWhiteSpace(existing.OriginalPath))
+                    Assets.LoadedAssetsByOriginalPathInternal.TryRemove(existing.OriginalPath, out _);
+            }
+        }
+
+        private static string? QuarantineInvalidSettingsAsset(string settingsPath)
+        {
+            try
+            {
+                if (!File.Exists(settingsPath))
+                    return null;
+
+                string directory = Path.GetDirectoryName(settingsPath) ?? string.Empty;
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(settingsPath);
+                string extension = Path.GetExtension(settingsPath);
+                string quarantinedPath = Path.Combine(
+                    directory,
+                    $"{fileNameWithoutExtension}.invalid_{DateTimeOffset.Now:yyyyMMdd_HHmmssfff}{extension}");
+
+                File.Move(settingsPath, quarantinedPath, overwrite: false);
+                return quarantinedPath;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to quarantine invalid settings asset '{settingsPath}': {ex}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Loads the globally persisted engine defaults from the user profile.
+        /// </summary>
+        private static void LoadGlobalEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            string? settingsPath = GetGlobalEngineDefaultsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<EngineSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Global Engine Defaults";
+                    Assets.EnsureTracked(settings);
+                    RuntimeEngine.Rendering.GlobalDefaultSettings = settings;
+                    Debug.Out("Loaded global engine defaults.");
+                }
+                return;
+            }
+
+            var created = RuntimeEngine.Rendering.GlobalDefaultSettings;
+            created.FilePath = settingsPath;
+            created.Name = "Global Engine Defaults";
+            Assets.EnsureTracked(created);
+            RuntimeEngine.Rendering.GlobalDefaultSettings = created;
+        }
+
+        /// <summary>
+        /// Loads project-local engine defaults that override the globally persisted defaults.
+        /// </summary>
+        private static void LoadProjectEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.EngineDefaultsPath is null)
+            {
+                RuntimeEngine.Rendering.ProjectDefaultSettings = null;
+                return;
+            }
+
+            string settingsPath = CurrentProject.EngineDefaultsPath;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<EngineSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Project Engine Defaults";
+                    Assets.EnsureTracked(settings);
+                    RuntimeEngine.Rendering.ProjectDefaultSettings = settings;
+                    Debug.Out("Loaded project engine defaults.");
+                }
+                return;
+            }
+
+            var created = CloneEngineSettings(RuntimeEngine.Rendering.GlobalDefaultSettings);
+            created.FilePath = settingsPath;
+            created.Name = "Project Engine Defaults";
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            RuntimeEngine.Rendering.ProjectDefaultSettings = created;
+        }
+
+        private static EngineSettings CloneEngineSettings(EngineSettings source)
+        {
+            try
+            {
+                XRAssetGraphUtility.RefreshAssetGraph(source);
+                string yaml = AssetManager.Serializer.Serialize(source);
+                var clone = AssetManager.Deserializer.Deserialize<EngineSettings>(yaml) ?? new EngineSettings();
+                RegenerateAssetIds(clone);
+                clone.FilePath = null;
+                clone.Name = null;
+                clone.ClearDirty();
+                return clone;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to clone global engine defaults for project overrides. Using built-in defaults instead.{Environment.NewLine}{ex}");
+                return new EngineSettings();
+            }
+        }
+
+        private static void RegenerateAssetIds(XRAsset root)
+        {
+            XRAssetGraphUtility.RefreshAssetGraph(root);
+            root.Generate();
+            root.ClearDirty();
+
+            foreach (XRAsset embedded in root.EmbeddedAssets)
+            {
+                embedded.Generate();
+                embedded.ClearDirty();
+            }
+        }
+
+        /// <summary>
+        /// Loads the global editor preferences from the user profile.
+        /// </summary>
+        private static void LoadGlobalEditorPreferences()
+        {
+            if (Assets is null)
+                return;
+
+            string? settingsPath = GetGlobalEditorPreferencesPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<EditorPreferences>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Global Editor Preferences";
+                    Assets.EnsureTracked(settings);
+                    GlobalEditorPreferences = settings;
+                    Debug.Out("Loaded global editor preferences.");
+                }
+                return;
+            }
+
+            var created = GlobalEditorPreferences ?? new EditorPreferences();
+            created.FilePath = settingsPath;
+            created.Name = "Global Editor Preferences";
+            Assets.EnsureTracked(created);
+            GlobalEditorPreferences = created;
+        }
+
+        /// <summary>
+        /// Loads the editor preference overrides from the current project directory.
+        /// </summary>
+        private static void LoadProjectEditorPreferencesOverrides()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.EditorPreferencesOverridesPath is null)
+            {
+                LoadSandboxEditorPreferencesOverrides();
+                return;
+            }
+
+            string settingsPath = CurrentProject.EditorPreferencesOverridesPath;
+            string loadPath = File.Exists(settingsPath)
+                ? settingsPath
+                : CurrentProject.LegacyEngineSettingsPath is string legacyPath && File.Exists(legacyPath)
+                    ? legacyPath
+                    : settingsPath;
+
+            if (File.Exists(loadPath))
+            {
+                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(loadPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Editor Preferences Overrides";
+                    Assets.EnsureTracked(settings);
+                    EditorPreferencesOverrides = settings;
+                    Debug.Out("Loaded project editor preference overrides.");
+                }
+                return;
+            }
+
+            var created = EditorPreferencesOverrides ?? new EditorPreferencesOverrides();
+            created.FilePath = settingsPath;
+            created.Name = "Editor Preferences Overrides";
+            Assets.EnsureTracked(created);
+            EditorPreferencesOverrides = created;
+        }
+
+        private static void LoadSandboxEditorPreferencesOverrides()
+        {
+            string? settingsPath = GetSandboxEditorPreferencesOverridesPath();
+            if (string.IsNullOrWhiteSpace(settingsPath) || Assets is null)
+                return;
+
+            string? legacySettingsPath = GetLegacySandboxEditorPreferencesOverridesPath();
+            string loadPath = File.Exists(settingsPath)
+                ? settingsPath
+                : !string.IsNullOrWhiteSpace(legacySettingsPath) && File.Exists(legacySettingsPath)
+                    ? legacySettingsPath
+                    : settingsPath;
+
+            if (File.Exists(loadPath))
+            {
+                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(loadPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Editor Preferences Overrides";
+                    Assets.EnsureTracked(settings);
+                    EditorPreferencesOverrides = settings;
+                    Debug.Out("Loaded sandbox editor preference overrides.");
+                }
+                return;
+            }
+
+            var created = EditorPreferencesOverrides ?? new EditorPreferencesOverrides();
+            created.FilePath = settingsPath;
+            created.Name = "Editor Preferences Overrides";
+            Assets.EnsureTracked(created);
+            EditorPreferencesOverrides = created;
+        }
+
+        /// <summary>
+        /// Loads the game settings from the current project directory.
+        /// </summary>
+        private static void LoadProjectGameSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.GameSettingsPath is null)
+            {
+                LoadSandboxGameSettings();
+                return;
+            }
+
+            string settingsPath = CurrentProject.GameSettingsPath;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<GameStartupSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Game Settings";
+                    Assets.EnsureTracked(settings);
+                    GameSettings = settings;
+                    Debug.Out("Loaded project game settings.");
+                }
+                return;
+            }
+
+            var created = _gameSettings ?? new GameStartupSettings();
+            created.FilePath = settingsPath;
+            created.Name = "Game Settings";
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            GameSettings = created;
+        }
+
+        private static void LoadSandboxGameSettings()
+        {
+            string? settingsPath = GetSandboxGameSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<GameStartupSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Game Settings";
+                    Assets.EnsureTracked(settings);
+                    GameSettings = settings;
+                    Debug.Out("Loaded sandbox game settings.");
+                }
+                return;
+            }
+
+            var created = _gameSettings ?? new GameStartupSettings();
+            created.FilePath = settingsPath;
+            created.Name = "Game Settings";
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            GameSettings = created;
+        }
+
+        /// <summary>
+        /// Loads the user settings from the current project directory.
+        /// </summary>
+        private static void LoadProjectUserSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.UserSettingsPath is null)
+            {
+                LoadSandboxUserSettings();
+                return;
+            }
+
+            string userSettingsPath = CurrentProject.UserSettingsPath;
+
+            if (File.Exists(userSettingsPath))
+            {
+                var loadedSettings = LoadFreshSettingsAsset<UserSettings>(userSettingsPath);
+                if (loadedSettings is not null)
+                {
+                    loadedSettings.Name = "User Settings";
+                    UserSettings = loadedSettings;
+                    Debug.Out("Loaded project user settings.");
+                }
+                return;
+            }
+
+            // No file yet: ensure UserSettings is tracked so changes show up in Save/Save All
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
+
+            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(UserSettings);
+            UserSettings.MarkDirty();
+        }
+
+        private static void LoadSandboxUserSettings()
+        {
+            string? userSettingsPath = GetSandboxUserSettingsPath();
+            if (string.IsNullOrWhiteSpace(userSettingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(userSettingsPath))
+            {
+                var loadedSettings = LoadFreshSettingsAsset<UserSettings>(userSettingsPath);
+                if (loadedSettings is not null)
+                {
+                    loadedSettings.Name = "User Settings";
+                    UserSettings = loadedSettings;
+                    Debug.Out("Loaded sandbox user settings.");
+                }
+                return;
+            }
+
+            // No file yet: ensure UserSettings is tracked so changes show up in Save/Save All
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
+
+            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(UserSettings);
+            UserSettings.MarkDirty();
+        }
+
+        /// <summary>
+        /// Loads the build settings from the current project directory.
+        /// </summary>
+        private static void LoadProjectBuildSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.BuildSettingsPath is null)
+            {
+                LoadSandboxBuildSettings();
+                return;
+            }
+
+            if (File.Exists(CurrentProject.BuildSettingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<BuildSettings>(CurrentProject.BuildSettingsPath);
+                if (settings is not null)
+                {
+                    BuildSettings = settings;
+                    if (_gameSettings is not null)
+                        _gameSettings.BuildSettings = BuildSettings;
+                    Debug.Out("Loaded project build settings.");
+                }
+            }
+        }
+
+        private static void LoadSandboxBuildSettings()
+        {
+            string? buildSettingsPath = GetSandboxBuildSettingsPath();
+            if (string.IsNullOrWhiteSpace(buildSettingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(buildSettingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<BuildSettings>(buildSettingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = buildSettingsPath;
+                    settings.Name = "Build Settings";
+                    Assets.EnsureTracked(settings);
+                    BuildSettings = settings;
+                    if (_gameSettings is not null)
+                        _gameSettings.BuildSettings = BuildSettings;
+                    Debug.Out("Loaded sandbox build settings.");
+                }
+                return;
+            }
+
+            var created = BuildSettings ?? new BuildSettings();
+            created.FilePath = buildSettingsPath;
+            created.Name = "Build Settings";
+            Assets.EnsureTracked(created);
+            BuildSettings = created;
+            if (_gameSettings is not null)
+                _gameSettings.BuildSettings = BuildSettings;
+        }
+
+        /// <summary>
+        /// Saves the global editor preferences to the user profile.
+        /// </summary>
+        public static void SaveGlobalEditorPreferences()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = GlobalEditorPreferences;
+            if (settings is null)
+                return;
+
+            string? settingsPath = GetGlobalEditorPreferencesPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Global Editor Preferences";
+            Assets.Save(settings);
+            Debug.Out("Saved global editor preferences.");
+        }
+
+        /// <summary>
+        /// Saves the global engine defaults to the user profile.
+        /// </summary>
+        public static void SaveGlobalEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = RuntimeEngine.Rendering.GlobalDefaultSettings;
+            if (settings is null)
+                return;
+
+            string? settingsPath = GetGlobalEngineDefaultsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Global Engine Defaults";
+            Assets.EnsureTracked(settings);
+            Assets.Save(settings);
+            Debug.Out("Saved global engine defaults.");
+        }
+
+        /// <summary>
+        /// Saves project-local engine defaults, or the global defaults when no project is loaded.
+        /// </summary>
+        public static void SaveProjectEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveGlobalEngineDefaults();
+                return;
+            }
+
+            if (CurrentProject.EngineDefaultsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.EngineDefaultsPath;
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            var settings = RuntimeEngine.Rendering.ProjectDefaultSettings ?? CloneEngineSettings(RuntimeEngine.Rendering.GlobalDefaultSettings);
+            settings.FilePath = settingsPath;
+            settings.Name = "Project Engine Defaults";
+            Assets.EnsureTracked(settings);
+            RuntimeEngine.Rendering.ProjectDefaultSettings = settings;
+
+            Assets.Save(settings);
+            Debug.Out("Saved project engine defaults.");
+        }
+
+        /// <summary>
+        /// Saves the editor preference overrides to the current project directory.
+        /// </summary>
+        public static void SaveProjectEditorPreferencesOverrides()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxEditorPreferencesOverrides();
+                return;
+            }
+
+            var settings = EditorPreferencesOverrides;
+            if (settings is null)
+                return;
+
+            if (CurrentProject.EditorPreferencesOverridesPath is null)
+                return;
+
+            string settingsPath = CurrentProject.EditorPreferencesOverridesPath;
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Editor Preferences Overrides";
+            Assets.Save(settings);
+            Debug.Out("Saved project editor preference overrides.");
+        }
+
+        public static void SaveSandboxEditorPreferencesOverrides()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = EditorPreferencesOverrides;
+            if (settings is null)
+                return;
+
+            string? settingsPath = GetSandboxEditorPreferencesOverridesPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Editor Preferences Overrides";
+            Assets.Save(settings);
+            Debug.Out("Saved sandbox editor preference overrides.");
+        }
+
+        /// <summary>
+        /// Saves the user settings to the current project directory.
+        /// </summary>
+        public static void SaveProjectUserSettings()
+            => SaveProjectUserSettingsAsync().GetAwaiter().GetResult();
+
+        /// <summary>
+        /// Saves the user settings to the current project directory without blocking the caller.
+        /// </summary>
+        public static async Task SaveProjectUserSettingsAsync()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                await SaveSandboxUserSettingsAsync().ConfigureAwait(false);
+                return;
+            }
+
+            if (CurrentProject.UserSettingsPath is null)
+                return;
+
+            string userSettingsPath = CurrentProject.UserSettingsPath;
+
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
+            Assets.EnsureTracked(UserSettings);
+            
+            await Assets.SaveAsync(UserSettings).ConfigureAwait(false);
+            Debug.Out("Saved project user settings.");
+        }
+
+        public static void SaveSandboxUserSettings()
+            => SaveSandboxUserSettingsAsync().GetAwaiter().GetResult();
+
+        public static async Task SaveSandboxUserSettingsAsync()
+        {
+            if (Assets is null)
+                return;
+
+            string? userSettingsPath = GetSandboxUserSettingsPath();
+            if (string.IsNullOrWhiteSpace(userSettingsPath))
+                return;
+
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
+            Assets.EnsureTracked(UserSettings);
+
+            await Assets.SaveAsync(UserSettings).ConfigureAwait(false);
+            Debug.Out("Saved sandbox user settings.");
+        }
+
+        /// <summary>
+        /// Saves the game settings to the current project directory.
+        /// </summary>
+        public static void SaveProjectGameSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxGameSettings();
+                return;
+            }
+
+            if (CurrentProject.GameSettingsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.GameSettingsPath;
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            _gameSettings.FilePath = settingsPath;
+            _gameSettings.Name = "Game Settings";
+            Assets.EnsureTracked(_gameSettings);
+
+            Assets.Save(_gameSettings);
+            Debug.Out("Saved project game settings.");
+        }
+
+        public static void SaveSandboxGameSettings()
+        {
+            if (Assets is null)
+                return;
+
+            string? settingsPath = GetSandboxGameSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            _gameSettings.FilePath = settingsPath;
+            _gameSettings.Name = "Game Settings";
+            Assets.EnsureTracked(_gameSettings);
+
+            Assets.Save(_gameSettings);
+            Debug.Out("Saved sandbox game settings.");
+        }
+
+        /// <summary>
+        /// Saves both engine and user settings to the current project directory.
+        /// </summary>
+        public static void SaveProjectSettings()
+        {
+            SaveProjectEngineDefaults();
+            SaveProjectEditorPreferencesOverrides();
+            SaveProjectGameSettings();
+            SaveProjectUserSettings();
+            SaveProjectBuildSettings();
+        }
+
+        /// <summary>
+        /// Saves the build settings to the current project directory.
+        /// </summary>
+        public static void SaveProjectBuildSettings()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxBuildSettings();
+                return;
+            }
+
+            if (CurrentProject.BuildSettingsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.BuildSettingsPath;
+            string? directory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            var settings = BuildSettings ?? new BuildSettings();
+            settings.FilePath = settingsPath;
+            settings.Name = "Build Settings";
+
+            Assets.Save(settings);
+            Debug.Out("Saved project build settings.");
+        }
+
+        public static void SaveSandboxBuildSettings()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = BuildSettings ?? new BuildSettings();
+
+            string? settingsPath = GetSandboxBuildSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? directory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Build Settings";
+
+            Assets.Save(settings);
+            Debug.Out("Saved sandbox build settings.");
+        }
+
+        /// <summary>
+        /// Creates a new project at the specified directory.
+        /// </summary>
+        /// <param name="projectDirectoryPath">The directory where the project will be created.</param>
+        /// <param name="projectName">The name of the project.</param>
+        /// <returns>The created project, or null if creation failed.</returns>
+        public static XRProject? CreateProject(string projectDirectoryPath, string projectName)
+        {
+            if (string.IsNullOrWhiteSpace(projectDirectoryPath) || string.IsNullOrWhiteSpace(projectName))
+                return null;
+
+            try
+            {
+                var project = XRProject.CreateNew(projectDirectoryPath, projectName, Assets);
+                
+                // Save the project file
+                if (Assets is not null && !string.IsNullOrWhiteSpace(project.FilePath))
+                {
+                    Assets.Save(project);
+                }
+
+                return project;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to create project at: {projectDirectoryPath}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Creates a new project and loads it.
+        /// </summary>
+        /// <param name="projectDirectoryPath">The directory where the project will be created.</param>
+        /// <param name="projectName">The name of the project.</param>
+        /// <returns>True if the project was created and loaded successfully.</returns>
+        public static bool CreateAndLoadProject(string projectDirectoryPath, string projectName)
+        {
+            var project = CreateProject(projectDirectoryPath, projectName);
+            if (project is null)
+                return false;
+
+            return LoadProject(project);
+        }
+
+        private static void ConfigureProjectDirectories(XRProject project)
+        {
+            if (Assets is null)
+                return;
+
+            static void EnsureDirectory(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    return;
+
+                Directory.CreateDirectory(path);
+            }
+
+            EnsureDirectory(project.AssetsDirectory);
+            string? metadataDirectoryOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameMetadataPath);
+            string? cacheDirectoryOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameCachePath);
+            string? effectiveMetadataDirectory = string.IsNullOrWhiteSpace(metadataDirectoryOverride)
+                ? project.MetadataDirectory
+                : Path.GetFullPath(metadataDirectoryOverride);
+            string? effectiveCacheDirectory = string.IsNullOrWhiteSpace(cacheDirectoryOverride)
+                ? project.CacheDirectory
+                : Path.GetFullPath(cacheDirectoryOverride);
+
+            EnsureDirectory(effectiveMetadataDirectory);
+            EnsureDirectory(project.PackagesDirectory);
+            EnsureDirectory(project.IntermediateDirectory);
+            EnsureDirectory(project.BuildDirectory);
+            EnsureDirectory(project.ConfigDirectory);
+            EnsureDirectory(effectiveCacheDirectory);
+
+            if (project.AssetsDirectory is not null)
+                Assets.GameAssetsPath = project.AssetsDirectory;
+            if (effectiveMetadataDirectory is not null)
+                Assets.GameMetadataPath = effectiveMetadataDirectory;
+            if (project.PackagesDirectory is not null)
+                Assets.PackagesPath = project.PackagesDirectory;
+            if (project.IntermediateDirectory is not null)
+                Assets.LibrariesPath = project.IntermediateDirectory;
+            Assets.GameCachePath = effectiveCacheDirectory;
+        }
+
+        private static void LogUnexpectedProjectEntries(XRProject project)
+        {
+            var unexpectedEntries = project.GetUnexpectedRootEntries();
+            if (unexpectedEntries.Count == 0)
+                return;
+
+            string message = string.Join(Environment.NewLine, unexpectedEntries.Select(entry => $" - {entry}"));
+            Debug.LogWarning($"Unexpected items found in project root '{project.ProjectDirectory}':{Environment.NewLine}{message}");
+        }
+    }
+}

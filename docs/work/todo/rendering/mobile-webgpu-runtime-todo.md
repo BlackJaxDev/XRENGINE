@@ -2,9 +2,9 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-> **Direction update (2026-09-29):** the [unified desktop and browser runtime design](../../design/platform/unified-desktop-browser-runtime-design.md) replaces this tracker's separate browser runtime (same-identity portable source profiles, browser-only scene/component/pipeline types, and the flattening world exporter) with the real engine running on both platforms. Bridge, WebGPU resource, delivery, recovery, budget, hosting, and device-validation items remain valid; see the [carry-over table](../platform/unified-desktop-browser-runtime-todo.md#mobile-todo-carry-over). The earlier audit found a `System.Drawing` source-guard failure. The policy correction and replacement of subset profiles with full `net10.0` projects are now implemented; fresh build results remain pending. See [current project organization](../../../architecture/runtime/project-organization.md) and [integration validation](../platform/native-subsystem-project-split-todo.md). Checked source rows below do not certify compilation or runtime behavior.
+> **Direction update (2026-09-30):** the [unified desktop and browser runtime design](../../design/platform/unified-desktop-browser-runtime-design.md) replaces this tracker's separate browser runtime (same-identity portable source profiles, browser-only scene/component/pipeline types, and the flattening world exporter) with the real engine running on both platforms. Bridge, WebGPU resource, delivery, recovery, budget, hosting, and device-validation items remain valid; see the [carry-over table](../platform/unified-desktop-browser-runtime-todo.md#mobile-todo-carry-over). The earlier `System.Drawing` source-guard failure is repaired, full `net10.0` projects pass the desktop/browser build gate, and local reference/published-world browser smokes are recorded. See [current project organization](../../../architecture/runtime/project-organization.md), [harness findings](../../investigations/rendering/desktop-browser-reference-harness.md) and [integration validation](../platform/native-subsystem-project-split-todo.md). Checked source rows below do not certify every runtime or device requirement.
 
-**Status:** Code deliverables through the selected portable kernel, browser host and focused forward pipeline are implemented. The WebGPU leaf supports opaque/masked/transparent indexed instances, bounded materials, directional shadows, sky/ambient light, HDR/SDR composition, engine UI rectangles and mobile quality settings. Builds, restored-graph evidence and browser/device qualification remain pending; broader engine rendering and cooked-world integration follow.
+**Status:** The separate browser runtime is frozen as a reference harness; fixes may keep it running, while new functionality belongs to the unified engine path. Code deliverables through the selected portable kernel, browser host and focused forward pipeline are implemented. The desktop and browser project build gate passed on 2026-09-30; browser/device qualification and the unified engine integration remain open. See the [build record](../../progress/platform/unified-runtime-build-stabilization.md) and [harness investigation](../../investigations/rendering/desktop-browser-reference-harness.md).
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -35,6 +35,18 @@ The first local rendering milestone does not require multiplayer, voice chat, th
 - Validate a live feature slice before adding its regression coverage, following the repository's applicable contribution/test policy.
 
 ### Code completion through the browser host
+
+The September 30 build record supersedes earlier "no build performed" notes at
+the project level: all 14 portable projects compile for `browser-wasm`, the
+browser app publishes, and the desktop applications and test project build.
+This compiles the host, bridge, WebGPU executor, focused pipeline, delivery and
+service sources included by those projects; it does not individually qualify
+every source checklist row. The isolated C# shader cooker also builds without
+warnings. Shader recipe execution, Slang, GPU reference cases, authored-project
+delivery, recovery, networking and physical-device results require separate
+evidence. Historical source-completion checkboxes retain that meaning. No row
+is marked "never compiled" without an evaluated source-inclusion check proving
+it was excluded.
 
 The selected profile is the minimum engine scene plus indexed unlit WebGPU canvas,
 using the untrimmed interpreter on one caller thread. These source rows cover all

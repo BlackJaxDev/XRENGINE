@@ -2,7 +2,7 @@
 
 NativeAOT support is scoped to cooked final game launchers. The editor, hot-reload, runtime C# plugin loading, and authoring-time YAML workflows remain CoreCLR development surfaces.
 
-Desktop launchers compose shared `net10.0` projects with explicit backend modules through Bootstrap; see [Runtime Project Organization](../../architecture/runtime/project-organization.md). Bootstrap generates application factories from the included component projects, while Rendering generates its built-in render-command registry. Moved namespaces/type names still need cooked metadata and factories in the launcher closure. Browser compilation has separate qualification and does not certify this publish path.
+Desktop launchers compose shared `net10.0` projects with explicit backend modules through Bootstrap; see [Runtime Project Organization](../../architecture/runtime/project-organization.md). Host generates the portable application factories, Bootstrap generates factories for its desktop inputs, and Rendering generates its built-in render-command registry. All use the shared PowerShell generator. Moved namespaces/type names still need cooked metadata and factories in the launcher closure. Browser compilation has separate qualification and does not certify this publish path.
 
 ## Canonical Validation
 

@@ -33,6 +33,10 @@ namespace XREngine.Build
 
         public string GeneratedRenderCommandRegistrations { get; set; } = string.Empty;
 
+        public string GeneratedAotFactoryRegistrations { get; set; } = string.Empty;
+
+        public string GeneratedBrowserStaticRegistrations { get; set; } = string.Empty;
+
         public ITaskItem[] ProjectReferences { get; set; } = Array.Empty<ITaskItem>();
 
         public ITaskItem[] Packages { get; set; } = Array.Empty<ITaskItem>();
@@ -147,6 +151,10 @@ namespace XREngine.Build
         private void ValidateWholeProjectSourceSet()
         {
             string project = File.ReadAllText(ProjectFile);
+            if (ProjectName == "XREngine.Runtime.Host")
+                ValidateGeneratedSource(GeneratedAotFactoryRegistrations, "AotFactoryRegistrations.g.cs");
+            if (ProjectName == "XREngine.Browser")
+                ValidateGeneratedSource(GeneratedBrowserStaticRegistrations, "BrowserStaticRegistrations.g.cs");
             if (ProjectName == "XREngine.Runtime.Rendering")
             {
                 const string generatedItem = "<Compile Include=\"$(GeneratedRenderCommandRegistrations)\" />";
@@ -187,6 +195,35 @@ namespace XREngine.Build
             {
                 Log.LogError("Portable project {0} filters or replaces its default Compile source set.", ProjectName);
             }
+        }
+
+        private void ValidateGeneratedSource(string generatedPath, string expectedFileName)
+        {
+            if (string.IsNullOrWhiteSpace(generatedPath))
+            {
+                Log.LogError("Portable project {0} has no evaluated {1} path.", ProjectName, expectedFileName);
+                return;
+            }
+
+            string candidate = Path.IsPathRooted(generatedPath)
+                ? generatedPath
+                : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ProjectFile)) ?? string.Empty, generatedPath);
+            string expectedPath = Path.GetFullPath(candidate);
+            StringComparison comparison = Path.DirectorySeparatorChar == '\\'
+                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!Path.GetFileName(expectedPath).Equals(expectedFileName, StringComparison.Ordinal))
+            {
+                Log.LogError("Portable project {0} generated source must be named {1}.", ProjectName, expectedFileName);
+                return;
+            }
+
+            foreach (ITaskItem source in Sources)
+            {
+                string path = Path.GetFullPath(source.GetMetadata("FullPath"));
+                if (path.Equals(expectedPath, comparison))
+                    return;
+            }
+            Log.LogError("Portable project {0} omits its generated {1} source from Compile.", ProjectName, expectedFileName);
         }
 
         private void ValidatePackages()

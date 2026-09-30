@@ -54,6 +54,7 @@ public static class Program
 
     private static int MainCore(string[] args)
     {
+        RuntimeApplicationBootstrap.PrepareDesktopServices();
         using IDisposable modelAssetPipelineRegistration =
             ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
         using IDisposable applicationServices =
@@ -64,8 +65,18 @@ public static class Program
             return 0;
 
         ManagedWorker = ManagedServerWorker.TryLoadFromEnvironment();
-        if (ManagedWorker is null && (args.Length != 1 || !string.Equals(args[0], "--development", StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException("Dedicated server startup requires XRE_MANAGED_WORKER_CONFIG_FILE or the explicit --development profile.");
+        bool unitTestingWorld = false;
+        if (ManagedWorker is null)
+        {
+            bool development = args.Length > 0 && string.Equals(args[0], "--development", StringComparison.OrdinalIgnoreCase);
+            unitTestingWorld = args.Length == 2 && string.Equals(args[1], "--unit-testing", StringComparison.OrdinalIgnoreCase);
+            if (!development || (args.Length != 1 && !(args.Length == 2 && unitTestingWorld)))
+                throw new ArgumentException("Dedicated server startup requires XRE_MANAGED_WORKER_CONFIG_FILE or --development [--unit-testing].");
+        }
+        else if (args.Any(static arg => string.Equals(arg, "--unit-testing", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ArgumentException("--unit-testing is available only with local --development startup, not a managed worker.");
+        }
         if (ManagedWorker is not null)
         {
             Engine.ServerMaximumPlayers = ManagedWorker.MaxPlayers;
@@ -84,7 +95,10 @@ public static class Program
         if (unitTestSettings is not null)
             UnitTestingWorldSettingsStore.ApplyWorldKindOverride(unitTestSettings);
         ConfigureFbxTraceLogging(unitTestSettings);
-        XRWorld targetWorld = ManagedWorker?.LoadVerifiedWorld() ?? BootstrapWorldFactory.CreateServerDefaultWorld();
+        XRWorld targetWorld = ManagedWorker?.LoadVerifiedWorld()
+            ?? (unitTestingWorld
+                ? BootstrapWorldFactory.CreateSelectedWorld(setUI: false, isServer: true)
+                : BootstrapWorldFactory.CreateServerDefaultWorld());
         Action<GameStartupSettings, GameState> initializeServerWorld = (_, _) =>
             Engine.GetOrCreateWorld(targetWorld);
         ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>

@@ -17,5 +17,9 @@ public partial class OpenGLRenderer : IMeshTaskDrawBackendCapability
 
     /// <inheritdoc />
     public void DrawMeshTasks(uint firstTask, uint taskCount)
-        => NVMeshShader?.DrawMeshTask(firstTask, taskCount);
+    {
+        if (NVMeshShader is null)
+            throw new NotSupportedException("OpenGL.MeshTasks.DirectUnavailable: GL_NV_mesh_shader is not available on the active context.");
+        NVMeshShader.DrawMeshTask(firstTask, taskCount);
+    }
 }

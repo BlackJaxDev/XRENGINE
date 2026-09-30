@@ -8,6 +8,7 @@ using XREngine.Rendering.Models.Caching;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Bootstrap.Builders;
 
 namespace XREngine.VRClient
 {
@@ -41,6 +42,7 @@ namespace XREngine.VRClient
 
         static void Main(string[] args)
         {
+            RuntimeApplicationBootstrap.PrepareDesktopServices();
             using IDisposable modelAssetPipelineRegistration =
                 ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
             using IDisposable applicationServices =
@@ -48,6 +50,15 @@ namespace XREngine.VRClient
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
             if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ManagedClientConfigFile)))
                 throw new NotSupportedException("Managed realtime launch must be handled by the paired main game process; the VR input/render proxy cannot load or join a managed world.");
+            if (args.Length != 0)
+            {
+                if (args.Length != 1 || !string.Equals(args[0], "--unit-testing", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Usage: XREngine.VRClient [--unit-testing]");
+
+                RunUnitTestingWorld();
+                return;
+            }
+
             IVRGameStartupSettings settings = GenerateSettings();
 
             // Check if this is already running
@@ -84,6 +95,46 @@ namespace XREngine.VRClient
             // Run the game
             // We don't need to load a game state because this app only sends inputs to the game and receives renders
             Engine.Run((GameStartupSettings)settings, new GameState());
+        }
+
+        private static void RunUnitTestingWorld()
+        {
+            string settingsPath = UnitTestingWorldSettingsStore.ResolveSettingsFilePath();
+            if (!File.Exists(settingsPath))
+                throw new FileNotFoundException(
+                    "VRClient unit-testing mode requires an existing unit-testing world settings file. Set XRE_UNIT_TEST_WORLD_SETTINGS_PATH to select one.",
+                    settingsPath);
+
+            UnitTestingWorldSettings unitSettings = UnitTestingWorldSettingsStore.Load(false);
+            UnitTestingWorldSettingsStore.ApplyWorldKindOverride(unitSettings);
+
+            GameStartupSettings settings = new()
+            {
+                StartupWindows =
+                [
+                    new GameWindowStartupSettings
+                    {
+                        WindowTitle = "XREngine VRClient Unit Testing (Desktop)",
+                        WindowState = EWindowState.Windowed,
+                        Width = 1280,
+                        Height = 720,
+                        TargetWorld = BootstrapWorldFactory.CreateSelectedWorld(setUI: false, isServer: false),
+                    }
+                ],
+                DefaultUserSettings = new UserSettings { VSync = EVSyncMode.Off },
+                RunVRInPlace = false,
+            };
+            UnitTestingWorldSettingsStore.ApplyUserSettingsSessionValues(unitSettings);
+            UnitTestingWorldSettingsStore.ApplyGameSettingsSessionValues(unitSettings);
+            UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitSettings);
+            settings.DefaultUserSettings.PreferredRenderBackend = unitSettings.Rendering.RenderBackend;
+            settings.DefaultUserSettings.RenderBackendFallbackPolicyOverride = new(unitSettings.Rendering.BackendFallbackPolicy, true);
+            settings.RenderBackendFallbackPolicyOverride = new(unitSettings.Rendering.BackendFallbackPolicy, true);
+            settings.TargetUpdatesPerSecond = 90.0f;
+            settings.TargetFramesPerSecond = 90.0f;
+            settings.FixedFramesPerSecond = 45.0f;
+
+            Engine.Run(settings, new GameState());
         }
 
         private static IVRGameStartupSettings GenerateSettings()

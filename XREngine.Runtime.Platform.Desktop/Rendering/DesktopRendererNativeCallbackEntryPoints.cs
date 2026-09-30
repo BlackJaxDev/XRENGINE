@@ -12,7 +12,13 @@ namespace XREngine.Runtime.Platform.Desktop.Rendering;
 /// </summary>
 internal sealed unsafe class DesktopRendererNativeCallbackEntryPoints : IRendererNativeCallbackEntryPoints
 {
+    // ImGui's managed bindings require a non-null string pointer, including on provider failure.
+    // This NUL byte shares the process lifetime of the native entry point addresses.
+    private static readonly nint EmptyClipboardText;
     private static nint _clipboardReturnBuffer;
+
+    static DesktopRendererNativeCallbackEntryPoints()
+        => EmptyClipboardText = Marshal.StringToHGlobalAnsi(string.Empty);
 
     public nint StreamlineLog
         => (nint)(delegate* unmanaged[Cdecl]<int, nint, void>)&OnStreamlineLogMessage;
@@ -51,9 +57,7 @@ internal sealed unsafe class DesktopRendererNativeCallbackEntryPoints : IRendere
 
         try
         {
-            string? text = RuntimeClipboardServices.Current?.GetText();
-            if (text is null)
-                return null;
+            string text = RuntimeClipboardServices.Current?.GetText() ?? string.Empty;
             byte[] utf8 = Encoding.UTF8.GetBytes(text);
             _clipboardReturnBuffer = Marshal.AllocHGlobal(utf8.Length + 1);
             Marshal.Copy(utf8, 0, _clipboardReturnBuffer, utf8.Length);
@@ -62,7 +66,7 @@ internal sealed unsafe class DesktopRendererNativeCallbackEntryPoints : IRendere
         }
         catch
         {
-            return null;
+            return (byte*)EmptyClipboardText;
         }
     }
 
