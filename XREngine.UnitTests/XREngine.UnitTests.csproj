@@ -68,6 +68,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Headless/**/*.cs;SoftwareVulkan/**/*.cs" />
     <!-- Unity reference-exporter sources are fixture inputs compiled by Unity. -->
     <Compile Remove="TestData\HumanoidConformance\unity-project\**\*.cs" />
     <!-- Untracked WIP test file using xUnit (Fact) instead of NUnit; excluded until ready -->

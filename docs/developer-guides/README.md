@@ -29,6 +29,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Hot-Path Memory Control](runtime/hot-path-memory.md)
 - [Scene](scene/scene-graph.md)
 - [Testing](testing/unit-testing-world.md)
+- [Software Vulkan Correctness Validation](testing/software-vulkan-validation.md)
 - [UI](ui/native-hierarchy-panel.md)
 - [VR](vr/openxr-runtime.md)
 

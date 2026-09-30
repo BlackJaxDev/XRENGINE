@@ -2,6 +2,9 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Animation;
+using XREngine.Core;
+using XREngine.Data.Core;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Animation;
@@ -47,7 +50,7 @@ public sealed class VRIKCalibrationTests
     }
 
     [Test]
-    public void Calibration_WithRawDeviceSlots_ReproducesTargetLossDuringSolverUpdates()
+    public void Calibration_WithRawDeviceSlots_PreservesTargetsDuringSolverUpdates()
     {
         using var rig = new SyntheticVrCalibrationRig();
         rig.Solver.Solver.Initialized.ShouldBeTrue();
@@ -76,7 +79,7 @@ public sealed class VRIKCalibrationTests
             TransformBase?[] actual = rig.GetSolverTargets();
             for (int i = 0; i < Slots.Length; i++)
             {
-                actual[i].ShouldBeNull($"Current raw-device synchronization clears {Slots[i]} on tick {tick}.");
+                actual[i].ShouldBeSameAs(calibrated[i], $"Calibration must preserve {Slots[i]} on tick {tick}.");
                 rig.Humanoid.GetIKTargetTransform(Slots[i]).ShouldBeSameAs(rig.Devices[i]);
                 calibrated[i]!.Parent.ShouldBeSameAs(rig.Devices[i]);
             }
@@ -99,7 +102,7 @@ public sealed class VRIKCalibrationTests
         AssertCalibratedTargets(rig, calibrated);
 
         // Positive control for the harness: publish the targets into the store read by the solver.
-        // Production calibration does not yet perform this publication.
+        // Direct concrete-target bindings remain supported alongside raw tracking sources.
         for (int i = 0; i < Slots.Length; i++)
             rig.Humanoid.SetIKTarget(Slots[i], calibrated[i], Matrix4x4.Identity);
 
@@ -125,7 +128,6 @@ public sealed class VRIKCalibrationTests
     }
 
     [Test]
-    [Explicit("Known target-ownership defect: run explicitly to verify the required calibration contract before and after its repair.")]
     public void Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates()
     {
         using var rig = new SyntheticVrCalibrationRig();
@@ -153,6 +155,157 @@ public sealed class VRIKCalibrationTests
             Assert.That(rig.Calibrate(), Is.Not.Null);
             Assert.That(rig.CountTargetNodes(), Is.EqualTo(6), "Recalibration must not leak the previous six target nodes.");
         }
+    }
+
+    [Test]
+    public void Calibration_WithRawSources_SolvesMovedController()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Calibrate().ShouldNotBeNull();
+        rig.Tick();
+        Vector3 before = rig.Humanoid.Left.Wrist.Node!.Transform.WorldTranslation;
+        Matrix4x4 moved = rig.LeftHand.Pose;
+        moved.Translation += new Vector3(0.0f, 0.05f, -0.08f);
+        rig.LeftHand.Pose = moved;
+        for (int tick = 0; tick < 5; tick++)
+            rig.Tick();
+        rig.Humanoid.GetIKTargetTransform(EHumanoidIKTarget.LeftHand).ShouldBeSameAs(rig.LeftHand);
+        float distance = Vector3.Distance(before, rig.Humanoid.Left.Wrist.Node.Transform.WorldTranslation);
+        float.IsFinite(distance).ShouldBeTrue();
+        distance.ShouldBeGreaterThan(0.001f);
+    }
+
+    [Test]
+    public void Calibration_AfterClearingAndRestoringSources_ReusesChildrenAndPreservesOffsets()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        Matrix4x4 offset = Matrix4x4.CreateRotationY(0.2f) * Matrix4x4.CreateTranslation(0.1f, 0.2f, 0.3f);
+        rig.Humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, rig.LeftHand, offset);
+        rig.Calibrate().ShouldNotBeNull();
+        TransformBase?[] targets = rig.GetSolverTargets();
+        Matrix4x4 local = targets[2]!.LocalMatrix;
+
+        rig.Solver.IsActive = false;
+        rig.Humanoid.ClearIKTargets();
+        rig.Solver.IsActive = true;
+        rig.Tick();
+        rig.GetSolverTargets().ShouldAllBe(target => target == null);
+        for (int i = 0; i < Slots.Length; i++)
+            rig.Humanoid.SetIKTarget(Slots[i], rig.Devices[i], i == 2 ? offset : Matrix4x4.Identity);
+
+        rig.Calibrate().ShouldNotBeNull();
+        rig.Tick();
+        AssertSameTargets(targets, rig.GetSolverTargets());
+        rig.CountTargetNodes().ShouldBe(6);
+        rig.Humanoid.GetIKTarget(EHumanoidIKTarget.LeftHand).offset.ShouldBe(offset);
+        targets[2]!.LocalMatrix.ShouldBe(local);
+    }
+
+    [Test]
+    public void Calibration_RebindingControllers_ReparentsOwnedTargetsWithoutDuplicates()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Calibrate().ShouldNotBeNull();
+        TransformBase?[] targets = rig.GetSolverTargets();
+        RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, rig.Head, rig.Hips,
+            rig.RightHand, rig.LeftHand, rig.LeftFoot, rig.RightFoot).ShouldNotBeNull();
+        rig.Tick();
+        AssertSameTargets(targets, rig.GetSolverTargets());
+        targets[2]!.Parent.ShouldBeSameAs(rig.RightHand);
+        targets[3]!.Parent.ShouldBeSameAs(rig.LeftHand);
+        rig.Humanoid.GetIKTargetTransform(EHumanoidIKTarget.LeftHand).ShouldBeSameAs(rig.RightHand);
+        rig.CountTargetNodes().ShouldBe(6);
+    }
+
+    [Test]
+    public void Calibration_WithCalibratedChildrenAsInputs_UsesOriginalSources()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Calibrate().ShouldNotBeNull();
+        TransformBase?[] targets = rig.GetSolverTargets();
+        RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, targets[0], targets[1],
+            targets[2], targets[3], targets[4], targets[5]).ShouldNotBeNull();
+        rig.Tick();
+        AssertSameTargets(targets, rig.GetSolverTargets());
+        AssertCalibratedTargets(rig, targets);
+        rig.CountTargetNodes().ShouldBe(6);
+    }
+
+    [Test]
+    public void Calibration_RemovingOptionalSources_ReleasesNodesAndZerosWeights()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Calibrate().ShouldNotBeNull();
+        RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, rig.Head).ShouldNotBeNull();
+        rig.Tick();
+        rig.CountTargetNodes().ShouldBe(1);
+        rig.GetSolverTargets().Skip(1).ShouldAllBe(target => target == null);
+        rig.Solver.Solver.Spine.HipsPositionWeight.ShouldBe(0.0f);
+        rig.Solver.Solver.Spine.HipsRotationWeight.ShouldBe(0.0f);
+        rig.Solver.Solver.LeftArm.Settings.PositionWeight.ShouldBe(0.0f);
+        rig.Solver.Solver.RightArm.Settings.RotationWeight.ShouldBe(0.0f);
+        rig.Solver.Solver.LeftLeg.PositionWeight.ShouldBe(0.0f);
+        rig.Solver.Solver.RightLeg.RotationWeight.ShouldBe(0.0f);
+        rig.Calibrate().ShouldNotBeNull();
+        rig.Tick();
+        AssertCalibratedTargets(rig, rig.GetSolverTargets());
+        rig.CountTargetNodes().ShouldBe(6);
+    }
+
+    [Test]
+    public void ClearTargets_DestroysOwnedChildrenButPreservesDevicesAndExternalTargets()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        var externalNode = new SceneNode(rig.Playspace, "External hand target", new Transform());
+        rig.Solver.Solver.LeftArm.Target = (Transform)externalNode.Transform;
+        rig.Calibrate().ShouldNotBeNull();
+        TransformBase?[] targets = rig.GetSolverTargets();
+        targets[2].ShouldNotBeSameAs(externalNode.Transform);
+        rig.Solver.ClearTargets();
+        rig.GetSolverTargets().ShouldAllBe(target => target == null);
+        rig.CountTargetNodes().ShouldBe(0);
+        foreach (var target in targets)
+        {
+            target!.SceneNode!.IsDestroyed.ShouldBeTrue();
+            target.IsDestroyQueued.ShouldBeTrue();
+        }
+        // SceneNode teardown intentionally defers its transform destruction.
+        XRObjectBase.ProcessPendingDestructions();
+        foreach (var target in targets)
+            target!.IsDestroyed.ShouldBeTrue();
+        foreach (var device in rig.Devices)
+            device.IsDestroyed.ShouldBeFalse();
+        externalNode.IsDestroyed.ShouldBeFalse();
+    }
+
+    [Test]
+    public void DestroyingSolver_DestroysOwnedChildrenWhilePlayspaceSurvives()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Calibrate().ShouldNotBeNull();
+        rig.Solver.Destroy(true);
+        rig.CountTargetNodes().ShouldBe(0);
+        rig.Playspace.IsDestroyed.ShouldBeFalse();
+        foreach (var device in rig.Devices)
+            device.IsDestroyed.ShouldBeFalse();
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Calibration_DestroyedChildIsNotResolvedAndCanBeRecreated(bool immediate)
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Calibrate().ShouldNotBeNull();
+        TransformBase previous = rig.GetSolverTargets()[2]!;
+        previous.SceneNode!.Destroy(immediate);
+        rig.Tick();
+        rig.GetSolverTargets()[2].ShouldBeNull();
+        rig.Calibrate().ShouldNotBeNull();
+        rig.Tick();
+        TransformBase?[] current = rig.GetSolverTargets();
+        AssertCalibratedTargets(rig, current);
+        current[2].ShouldNotBeSameAs(previous);
+        rig.CountTargetNodes().ShouldBe(6);
     }
 
     private static void AssertCalibratedTargets(SyntheticVrCalibrationRig rig, TransformBase?[] targets)

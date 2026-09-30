@@ -38,7 +38,7 @@ Run repository PowerShell tools with PowerShell 7. Under Windows PowerShell 5.1,
 Not established by these results:
 
 - No application, editor session, or browser page was launched.
-- The Linux CI compile lane was not run. It cannot pass until the Core project's directory casing is normalized (UR00.08).
+- The Linux CI compile lane was not run in this original pass. The later focused Linux validation below normalizes Core casing; the full CI lane remains unqualified.
 - Unit tests were not run as a suite. A filtered run of boundary and source-contract tests had 61 failures of 233, and every failure predates this work: source-text contracts that still name pre-refactor paths or moved types, file lookups made ambiguous by moved or duplicated names, native Vulkan tests that need a device, and boundary tests that flag existing references (Server and VRClient reference `XREngine.Runtime.ModelAssetPipeline`; Bootstrap's generator input globs it). The one contract broken by this work, `CollectibleBackends_DoNotCreateUnmanagedDelegateThunks`, was updated and passes. Triage belongs to the native subsystem integration checklist.
 
 ## Fixes
@@ -92,6 +92,16 @@ Not established by these results:
 ## Open
 
 - UR00.03 and UR00.04: run the published site and the editor's browser build target, and record captures.
-- UR00.08: normalize the Core directory casing, then run the Linux compile lane.
+- Run the full Linux compile lane after the Core casing normalization recorded below.
 - Decision D5: pin the SDK and workload.
 - Native subsystem checklist: execute and triage the unit test suite, inspect publish layouts, and run the live smokes.
+
+## Focused Linux validation (2026-09-30)
+
+The Core directory is now normalized in the git index to `XREngine.Runtime.Core/`: 244 tracked entries (243 C# files and the existing CoACD binary) move without content changes. The CoACD build script uses the same canonical path, so it does not recreate the differently cased directory. Existing project references and reflection allowlists already use this spelling and need no exceptions. This preserves the effective layout on case-insensitive Windows checkouts while making the same source set visible on Linux.
+
+The first-class `XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj` compiles its complete production dependency projects on Linux with .NET SDK 10.0.401 and PowerShell 7.6.6, with zero warnings or errors. It links the existing calibration/solver tests unchanged. Six baseline/control tests pass; the explicitly selected persistence contract fails with cleared targets and duplicate calibration nodes, confirming the known calibration defect. See the [calibration rerun](../../investigations/avatar/vr-calibration-baseline-2026-09-24.md#linux-headless-rerun-2026-09-30).
+
+This focused local result does not qualify the complete Linux CI/browser publish lane, the full desktop test suite, native rendering, or a headset. Those checks remain separate.
+
+The subsequent six-slot calibration ownership repair promotes the persistence contract into the default headless suite. The updated focused build remains warning-free and all 16 headless tests pass. The earlier six-pass/one-known-failure result above records the pre-repair reproduction, not the current suite outcome.
