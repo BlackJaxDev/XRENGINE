@@ -184,6 +184,7 @@ namespace XREngine.Components.Animation
                     bones,
                     first,
                     second,
+                    third,
                     targetPosition,
                     bendNormal);
 
@@ -209,6 +210,7 @@ namespace XREngine.Components.Animation
                 VirtualBone[] bones,
                 int first,
                 int second,
+                int third,
                 Vector3 targetPosition,
                 Vector3 bendNormal)
             {
@@ -222,15 +224,18 @@ namespace XREngine.Components.Animation
                     return Vector3.Zero;
 
                 float dirMag = MathF.Sqrt(sqrMag);
-                float sqrMag1 = bones[first].LengthSquared;
-                float sqrMag2 = bones[second].LengthSquared;
+                // Some callers solve across omitted joints (shoulder/elbow/hand,
+                // spine/chest/head). Length fields describe adjacent bones only.
+                float sqrMag1 = Vector3.DistanceSquared(bones[first].SolverPosition, bones[second].SolverPosition);
+                float sqrMag2 = Vector3.DistanceSquared(bones[second].SolverPosition, bones[third].SolverPosition);
 
                 float x = ((dirMag * dirMag) + (sqrMag1 - sqrMag2)) / 2.0f / dirMag;
                 float y = (float)Math.Sqrt((sqrMag1 - x * x).ClampMin(0.0f));
 
                 //Vector3 yDirection = Vector3.Cross(bendNormal, dir / dirMag);
                 Vector3 lookRot = Vector3.Cross(bendNormal, dir);
-                return XRMath.LookRotation(dir, lookRot).Rotate(new Vector3(0.0f, y, -x));
+                // LookRotation maps local +Z onto dir; the analytic reach must point toward the target.
+                return XRMath.LookRotation(dir, lookRot).Rotate(new Vector3(0.0f, y, x));
             }
 
             // TODO Move to IKSolverFABRIK

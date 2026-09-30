@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
 using System.Threading;
+using XREngine.Input;
 using Debug = XREngine.Debug;
 
 using XrAction = Silk.NET.OpenXR.Action;
@@ -23,14 +24,32 @@ public unsafe partial class OpenXRAPI
     private readonly Dictionary<string, XrPath> _trackerSubactionPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Space> _trackerSpaces = new(StringComparer.Ordinal);
 
+    private bool _controllerProfilesDirty = true;
+    private string? _leftControllerInteractionProfile, _rightControllerInteractionProfile;
+    public string? GetControllerInteractionProfile(bool leftHand)
+        => leftHand ? Volatile.Read(ref _leftControllerInteractionProfile) : Volatile.Read(ref _rightControllerInteractionProfile);
+
+    private void RefreshControllerInteractionProfiles()
+    {
+        var profile = new InteractionProfileState { Type = StructureType.InteractionProfileState };
+        if (Api.GetCurrentInteractionProfile(_session, _leftHandPath, ref profile) == Result.Success)
+            Volatile.Write(ref _leftControllerInteractionProfile, PathToString(profile.InteractionProfile));
+        profile = new InteractionProfileState { Type = StructureType.InteractionProfileState };
+        if (Api.GetCurrentInteractionProfile(_session, _rightHandPath, ref profile) == Result.Success)
+            Volatile.Write(ref _rightControllerInteractionProfile, PathToString(profile.InteractionProfile));
+        _controllerProfilesDirty = false;
+    }
+
     private XrPath _leftHandPath;
     private XrPath _rightHandPath;
 
     private bool _inputAttached;
     private bool _inputCreated;
+    private uint _viveTrackerExtensionRevision;
 
     private static readonly string[] DefaultViveTrackerRoleUserPaths =
     [
+        "/user/vive_tracker_htcx/role/handheld_object",
         "/user/vive_tracker_htcx/role/waist",
         "/user/vive_tracker_htcx/role/chest",
         "/user/vive_tracker_htcx/role/left_foot",
@@ -43,6 +62,10 @@ public unsafe partial class OpenXRAPI
         "/user/vive_tracker_htcx/role/right_knee",
         "/user/vive_tracker_htcx/role/camera",
         "/user/vive_tracker_htcx/role/keyboard",
+        "/user/vive_tracker_htcx/role/left_wrist",
+        "/user/vive_tracker_htcx/role/right_wrist",
+        "/user/vive_tracker_htcx/role/left_ankle",
+        "/user/vive_tracker_htcx/role/right_ankle",
     ];
 
     private void EnsureInputCreated()
@@ -60,32 +83,24 @@ public unsafe partial class OpenXRAPI
             CreateActionSpaces();
             SuggestDefaultBindings();
             AttachActionSets();
-            _inputCreated = true;
+            _inputCreated = _inputAttached;
         }
         catch (Exception ex)
         {
             Debug.LogWarning($"OpenXR input init failed: {ex.Message}");
+            DestroyInput();
         }
     }
 
     private void CreateCorePaths()
     {
+        _controllerProfilesDirty = true;
         _leftHandPath = StringToPathOrThrow("/user/hand/left");
         _rightHandPath = StringToPathOrThrow("/user/hand/right");
 
         _trackerSubactionPaths.Clear();
-        foreach (var rolePath in DefaultViveTrackerRoleUserPaths)
-        {
-            try
-            {
-                _trackerSubactionPaths[rolePath] = StringToPathOrThrow(rolePath);
-            }
-            catch
-            {
-                // Ignore unsupported role paths.
-            }
-        }
-
+        _openXrTrackingSessionGeneration = Interlocked.Increment(ref _nextTrackingSessionGeneration);
+        _openXrLastTrackerDiagnostics = [];
         InitializeViveTrackerExtension();
     }
 
@@ -167,24 +182,12 @@ public unsafe partial class OpenXRAPI
                 var trackerResult = Api.CreateAction(_inputActionSet, in trackerPoseInfo, ref _trackerPoseAction);
                 if (trackerResult == Result.ErrorPathUnsupported)
                 {
-                    Debug.Out("OpenXR: optional Vive tracker role paths are not supported by this runtime; tracker pose input is disabled for this session.");
-                    lock (_openXrPoseLock)
-                    {
-                        foreach (var rolePath in _trackerSubactionPaths.Keys)
-                            _openXrKnownTrackerPaths.Remove(rolePath);
-                    }
-                    _trackerSubactionPaths.Clear();
+                    Debug.Out("OpenXR: persistent tracker subaction paths are unsupported; tracker pose input is unavailable for this session. No alternate provider has been enabled.");
                     _trackerPoseAction = default;
                 }
                 else if (trackerResult != Result.Success)
                 {
                     Debug.LogWarning($"xrCreateAction(tracker_pose) failed: {trackerResult}");
-                    lock (_openXrPoseLock)
-                    {
-                        foreach (var rolePath in _trackerSubactionPaths.Keys)
-                            _openXrKnownTrackerPaths.Remove(rolePath);
-                    }
-                    _trackerSubactionPaths.Clear();
                     _trackerPoseAction = default;
                 }
             }
@@ -264,8 +267,7 @@ public unsafe partial class OpenXRAPI
         var attachRes = Api.AttachSessionActionSets(_session, in attachInfo);
         if (attachRes != Result.Success)
         {
-            Debug.LogWarning($"xrAttachSessionActionSets failed: {attachRes}");
-            return;
+            throw new InvalidOperationException($"xrAttachSessionActionSets failed: {attachRes}");
         }
 
         _inputAttached = true;
@@ -283,10 +285,13 @@ public unsafe partial class OpenXRAPI
 
             if (_trackerPoseAction.Handle != 0 && _trackerSubactionPaths.Count > 0)
             {
-                // Bind each tracker role to its grip pose.
-                var trackerBindings = new List<ActionSuggestedBinding>(_trackerSubactionPaths.Count);
-                foreach (var role in _trackerSubactionPaths.Keys)
+                // The interaction profile only accepts role component paths. Persistent
+                // physical paths are subaction selectors, never suggested component bindings.
+                var trackerBindings = new List<ActionSuggestedBinding>(DefaultViveTrackerRoleUserPaths.Length);
+                foreach (var role in DefaultViveTrackerRoleUserPaths)
                 {
+                    if (_viveTrackerExtensionRevision < 3 && (role.EndsWith("_wrist", StringComparison.Ordinal) || role.EndsWith("_ankle", StringComparison.Ordinal)))
+                        continue;
                     try
                     {
                         XrPath binding = StringToPathOrThrow(role + "/input/grip/pose");
@@ -327,6 +332,8 @@ public unsafe partial class OpenXRAPI
             };
 
             var res = Api.SuggestInteractionProfileBinding(_instance, in suggested);
+            if (profilePath == "/interaction_profiles/htc/vive_tracker_htcx")
+                Debug.Out($"OpenXR tracker bindings: revision={_viveTrackerExtensionRevision}, roleBindingCount={bindings.Length}, persistentSubactionCount={_trackerSubactionPaths.Count}, result={res}");
             if (res != Result.Success)
                 Debug.Out($"OpenXR: SuggestBindings for '{profilePath}' => {res}");
         }
@@ -359,6 +366,8 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        if (_controllerProfilesDirty)
+            RefreshControllerInteractionProfiles();
         return true;
     }
 
@@ -389,7 +398,12 @@ public unsafe partial class OpenXRAPI
     }
 
     private bool TryLocateSpace(Space space, long displayTime, out Matrix4x4 localMatrix)
+        => TryLocateSpace(space, displayTime, out localMatrix, out _, out _);
+
+    private bool TryLocateSpace(Space space, long displayTime, out Matrix4x4 localMatrix, out bool positionValid, out bool orientationValid)
     {
+        positionValid = false;
+        orientationValid = false;
         AssertOpenXrRenderThread(nameof(TryLocateSpace));
         localMatrix = Matrix4x4.Identity;
         if (space.Handle == 0)
@@ -400,16 +414,31 @@ public unsafe partial class OpenXRAPI
         if (res != Result.Success)
             return false;
 
-        const SpaceLocationFlags need = SpaceLocationFlags.PositionValidBit | SpaceLocationFlags.OrientationValidBit;
-        if ((location.LocationFlags & need) != need)
+        positionValid = (location.LocationFlags & SpaceLocationFlags.PositionValidBit) != 0;
+        orientationValid = (location.LocationFlags & SpaceLocationFlags.OrientationValidBit) != 0;
+        if (!positionValid || !orientationValid)
             return false;
 
         var p = location.Pose;
         var pos = new Vector3(p.Position.X, p.Position.Y, p.Position.Z);
-        var rot = Quaternion.Normalize(new Quaternion(p.Orientation.X, p.Orientation.Y, p.Orientation.Z, p.Orientation.W));
+        var rotation = new Quaternion(p.Orientation.X, p.Orientation.Y, p.Orientation.Z, p.Orientation.W);
+        if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z) ||
+            !float.IsFinite(rotation.LengthSquared()) || rotation.LengthSquared() < 1e-12f)
+        {
+            positionValid = false;
+            orientationValid = false;
+            return false;
+        }
+        var rot = Quaternion.Normalize(rotation);
         localMatrix = Matrix4x4.CreateFromQuaternion(rot);
         localMatrix.Translation = pos;
         return true;
+    }
+
+    private bool IsTrackerInteractionProfileBound(XrPath path)
+    {
+        var profile = new InteractionProfileState { Type = StructureType.InteractionProfileState };
+        return Api.GetCurrentInteractionProfile(_session, path, ref profile) == Result.Success && profile.InteractionProfile != 0;
     }
 
     private void UpdateActionPoseCaches(OpenXrPoseTiming timing)
@@ -424,6 +453,11 @@ public unsafe partial class OpenXRAPI
 
         // Poses are located at the frame display time plus the optional app-level prediction bias.
         long displayTime = ResolveOpenXrPoseDisplayTime(timing);
+        if (timing == OpenXrPoseTiming.Predicted && _openXrPendingReferenceSpaceChangeTime != 0 && displayTime >= _openXrPendingReferenceSpaceChangeTime)
+        {
+            _openXrPendingReferenceSpaceChangeTime = 0;
+            _openXrTrackingReferenceSpaceVersion++;
+        }
 
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         bool shouldSyncActions = timing == OpenXrPoseTiming.Predicted
@@ -431,19 +465,22 @@ public unsafe partial class OpenXRAPI
             || Volatile.Read(ref _openXrActionsSyncedFrameNumber) != frameNo;
         if (shouldSyncActions)
         {
-            if (SyncActionsForFrame())
-                Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);
+            Volatile.Write(ref _openXrActionsSyncedFrameNumber, SyncActionsForFrame() ? frameNo : -1);
         }
 
-        bool leftActive = false;
-        bool rightActive = false;
-        _ = TryGetActivePoseState(_handGripPoseAction, _leftHandPath, out leftActive);
-        _ = TryGetActivePoseState(_handGripPoseAction, _rightHandPath, out rightActive);
-
+        bool synchronized = Volatile.Read(ref _openXrActionsSyncedFrameNumber) == frameNo;
+        bool leftActive = synchronized && TryGetActivePoseState(_handGripPoseAction, _leftHandPath, out bool leftActionActive) && leftActionActive;
+        bool rightActive = synchronized && TryGetActivePoseState(_handGripPoseAction, _rightHandPath, out bool rightActionActive) && rightActionActive;
         Matrix4x4 leftLocal = Matrix4x4.Identity;
         Matrix4x4 rightLocal = Matrix4x4.Identity;
         bool leftValid = leftActive && TryLocateSpace(_leftHandGripSpace, displayTime, out leftLocal);
         bool rightValid = rightActive && TryLocateSpace(_rightHandGripSpace, displayTime, out rightLocal);
+
+        if (timing == OpenXrPoseTiming.Predicted && System.Diagnostics.Stopwatch.GetTimestamp() >= _nextTrackerEnumerationTimestamp)
+        {
+            _nextTrackerEnumerationTimestamp = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency;
+            EnumerateViveTrackerPaths();
+        }
 
         lock (_openXrPoseLock)
         {
@@ -451,44 +488,74 @@ public unsafe partial class OpenXRAPI
             {
                 _openXrLateLeftControllerValid = leftValid ? 1 : 0;
                 _openXrLateRightControllerValid = rightValid ? 1 : 0;
-                if (leftValid)
-                    _openXrLateLeftControllerLocalPose = leftLocal;
-                if (rightValid)
-                    _openXrLateRightControllerLocalPose = rightLocal;
+                if (leftValid) _openXrLateLeftControllerLocalPose = leftLocal;
+                if (rightValid) _openXrLateRightControllerLocalPose = rightLocal;
             }
             else
             {
                 _openXrPredLeftControllerValid = leftValid ? 1 : 0;
                 _openXrPredRightControllerValid = rightValid ? 1 : 0;
-                if (leftValid)
-                    _openXrPredLeftControllerLocalPose = leftLocal;
-                if (rightValid)
-                    _openXrPredRightControllerLocalPose = rightLocal;
+                if (leftValid) _openXrPredLeftControllerLocalPose = leftLocal;
+                if (rightValid) _openXrPredRightControllerLocalPose = rightLocal;
             }
-        }
 
-        if (_trackerPoseAction.Handle != 0 && _trackerSpaces.Count > 0)
-        {
-            lock (_openXrPoseLock)
+            var poses = timing == OpenXrPoseTiming.Late ? _openXrLateTrackerLocalPose : _openXrPredTrackerLocalPose;
+            poses.Clear();
+            long snapshotId = timing == OpenXrPoseTiming.Predicted ? ++_openXrTrackingSnapshotId : _openXrTrackingSnapshotId;
+            foreach (var entry in _openXrKnownTrackers)
             {
-                var dict = timing == OpenXrPoseTiming.Late ? _openXrLateTrackerLocalPose : _openXrPredTrackerLocalPose;
-                dict.Clear();
+                RuntimeVrTrackerInfo previous = entry.Value;
+                bool hasSpace = _trackerSpaces.TryGetValue(entry.Key, out Space space) && _trackerSubactionPaths.TryGetValue(entry.Key, out _);
+                bool active = synchronized && hasSpace && TryGetActivePoseState(_trackerPoseAction, _trackerSubactionPaths[entry.Key], out bool actionActive) && actionActive;
+                bool bound = hasSpace && (active || IsTrackerInteractionProfileBound(_trackerSubactionPaths[entry.Key]));
+                bool positionValid = false;
+                bool orientationValid = false;
+                Matrix4x4 pose = previous.LastValidPose;
+                bool valid = previous.Connected && active && TryLocateSpace(space, displayTime, out pose, out positionValid, out orientationValid);
+                if (valid)
+                    poses[entry.Key] = pose;
 
-                foreach (var (userPath, space) in _trackerSpaces)
+                if (timing == OpenXrPoseTiming.Predicted)
                 {
-                    if (TryLocateSpace(space, displayTime, out var mtx))
+                    RuntimeVrTrackerInfo current = previous with
                     {
-                        dict[userPath] = mtx;
-                        string canonicalPath = ResolveCanonicalTrackerUserPath(userPath);
-                        if (!string.Equals(canonicalPath, userPath, StringComparison.Ordinal))
-                            dict[canonicalPath] = mtx;
-                        MarkTrackerPoseAvailableLocked(userPath, canonicalPath);
-                    }
+                        PoseAvailable = valid,
+                        Bound = bound,
+                        ActionActive = active,
+                        PositionValid = positionValid,
+                        OrientationValid = orientationValid,
+                        SnapshotId = snapshotId,
+                        SampleTime = displayTime,
+                        EverTracked = previous.EverTracked || valid,
+                        LastValidSampleTime = valid ? displayTime : previous.LastValidSampleTime,
+                        LastValidPose = valid ? pose : previous.LastValidPose,
+                    };
+                    _openXrKnownTrackers[entry.Key] = current;
+                    if (current.PoseCurrentlyUsable != previous.PoseCurrentlyUsable || current.ActionActive != previous.ActionActive)
+                        Debug.Out($"OpenXR tracker sample: identity={entry.Key}, snapshot={snapshotId}, time={displayTime}, state={current.DiagnosticState}, positionValid={positionValid}, orientationValid={orientationValid}");
                 }
             }
+            if (timing == OpenXrPoseTiming.Predicted)
+                PublishTrackingSnapshotLocked(displayTime);
+            else
+                _openXrLateActionSampleTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         }
 
-        UpdateRuntimeNeutralInputStateCaches(displayTime, timing);
+        if (synchronized)
+            UpdateRuntimeNeutralInputStateCaches(displayTime, timing);
+        else
+        {
+            foreach (OpenXrRuntimeInputAction action in _runtimeInputActionList)
+                action.Active = false;
+            lock (_openXrPoseLock)
+            {
+                if (timing == OpenXrPoseTiming.Late)
+                    _openXrLateLeftControllerAimValid = _openXrLateRightControllerAimValid = 0;
+                else
+                    _openXrPredLeftControllerAimValid = _openXrPredRightControllerAimValid = 0;
+                _leftHandJointsActive = _rightHandJointsActive = 0;
+            }
+        }
         RecordSmokeActionPoseCache(timing);
     }
 
@@ -527,13 +594,23 @@ public unsafe partial class OpenXRAPI
             _handGripPoseAction = default;
             _trackerPoseAction = default;
             _inputActionSet = default;
-            _viveTrackerPersistentToRolePaths.Clear();
+            _enumeratedTrackerPaths.Clear();
+            _trackerSubactionPaths.Clear();
             lock (_openXrPoseLock)
             {
+                if (_openXrKnownTrackers.Count > 0)
+                    _openXrLastTrackerDiagnostics = [.. _openXrKnownTrackers.Values];
                 _openXrKnownTrackerPaths.Clear();
                 _openXrKnownTrackers.Clear();
                 _openXrPredTrackerLocalPose.Clear();
                 _openXrLateTrackerLocalPose.Clear();
+                _openXrPublishedTrackerPoses.Clear();
+                _openXrPublishedTrackingSnapshot = default;
+                _openXrPredHeadValid = _openXrLateHeadValid = false;
+                _openXrPredLeftControllerValid = _openXrPredRightControllerValid = 0;
+                _openXrLateLeftControllerValid = _openXrLateRightControllerValid = 0;
+                _openXrTrackingPublicationTimestamp = _openXrLateActionSampleTimestamp = 0;
+                _openXrPendingReferenceSpaceChangeTime = 0;
             }
             _inputAttached = false;
             _inputCreated = false;

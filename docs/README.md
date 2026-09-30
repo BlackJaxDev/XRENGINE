@@ -66,6 +66,10 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)
+- [Full-Body VR Calibration](developer-guides/vr/full-body-calibration.md)
+- [VR Body Measurements](developer-guides/vr/body-measurements.md)
+- [VR Spectator Camera](developer-guides/vr/spectator-camera.md)
+- [VR Calibration Session Continuity](developer-guides/vr/calibration-session-continuity.md)
 - [VR Developer Guide](developer-guides/vr/vr-development.md)
 
 ## User Guide
@@ -89,6 +93,10 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Work Docs Index](work/README.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
+- [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)
+- [Animation and IK Stability](work/investigations/avatar/animation-ik-stability-2026-09-30.md)
+- [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)
+- [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
 - [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)

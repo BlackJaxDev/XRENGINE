@@ -25,6 +25,8 @@ namespace XREngine.Components.Movement
         //public Transform ControllerTransform
         //    => SceneNode.GetTransformAs<Transform>(true)!;
 
+        public event Action? Teleported;
+
         private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
         private ECrouchState _crouchState = ECrouchState.Standing;
@@ -895,6 +897,7 @@ namespace XREngine.Components.Movement
 
             controller.Teleport(_spawnPosition, clearMotion: true);
             ResetManagedMovementAfterTeleport();
+            Teleported?.Invoke();
         }
 
         private void ResetManagedMovementAfterTeleport()

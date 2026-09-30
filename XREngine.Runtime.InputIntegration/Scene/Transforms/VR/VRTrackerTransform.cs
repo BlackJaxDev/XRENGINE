@@ -22,8 +22,7 @@ namespace XREngine.Data.Components.Scene
 
         private string? _openXrTrackerUserPath;
         /// <summary>
-        /// OpenXR tracker user path (e.g. "/user/vive_tracker_htcx/role/waist").
-        /// When OpenXR is the active runtime, this is used to resolve tracker poses.
+        /// Opaque physical tracker path used to resolve OpenXR poses. Never a body role.
         /// </summary>
         public string? OpenXrTrackerUserPath
         {
@@ -65,7 +64,15 @@ namespace XREngine.Data.Components.Scene
             OpenXrTrackerPersistentPath = tracker.PersistentPath;
             OpenXrTrackerRolePath = tracker.RolePath;
             OpenXrTrackerRoleName = tracker.RoleName;
-            OpenXrTrackerPoseAvailable = tracker.PoseAvailable;
+            OpenXrTrackerPoseAvailable = tracker.PoseCurrentlyUsable;
+            OpenXrTrackerInfo = tracker;
+        }
+
+        private RuntimeVrTrackerInfo _openXrTrackerInfo;
+        public RuntimeVrTrackerInfo OpenXrTrackerInfo
+        {
+            get => _openXrTrackerInfo;
+            private set => SetField(ref _openXrTrackerInfo, value);
         }
 
         public void SetTrackerByDeviceIndex(uint deviceIndex)

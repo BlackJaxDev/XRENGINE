@@ -412,7 +412,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         RenderOutputRequest request = RenderOutputRequest.CreateDefault(
             EVrOutputViewKind.Secondary, CaptureOutputKind,
             RuntimeEngine.Rendering.State.RenderFrameId);
-        return request with
+        return ConfigureOutputRequest(request with
         {
             OutputId = _outputIdentity,
             ViewFamilyId = _outputIdentity,
@@ -438,8 +438,11 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
                 ViewMask = 1u,
                 ExternalImageSlot = -1,
             },
-        };
+        });
     }
+
+    /// <summary>Allows optional outputs to request budget deferral without weakening writer-completion ownership.</summary>
+    protected virtual RenderOutputRequest ConfigureOutputRequest(RenderOutputRequest request) => request;
 
     private void QuarantineResources()
     {

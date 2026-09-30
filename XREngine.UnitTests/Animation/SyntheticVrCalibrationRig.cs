@@ -123,7 +123,7 @@ public sealed class SyntheticVrCalibrationRig : IDisposable
     public VRIKCalibrator.CalibrationData? Calibrate()
     {
         UpdateMatrices(SceneRoot.Transform);
-        var result = RuntimeVRIKCalibrator.Calibrate(Solver, Settings, Head, Hips, LeftHand, RightHand, LeftFoot, RightFoot)
+        var result = RuntimeVRIKCalibrator.Calibrate(Solver, Settings, Head, Hips, LeftHand, RightHand, LeftFoot, RightFoot).Data
             as VRIKCalibrator.CalibrationData;
         UpdateMatrices(SceneRoot.Transform);
         return result;

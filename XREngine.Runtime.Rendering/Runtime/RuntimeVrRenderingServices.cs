@@ -9,6 +9,8 @@ public interface IRuntimeVrEyeCamera
 {
     float Near { get; set; }
     float Far { get; set; }
+    /// <summary>View-specific visibility; changing an eye mask never disables scene meshes.</summary>
+    int CullingMask { get => -1; set => throw new NotSupportedException("This eye camera does not expose visibility masking."); }
 }
 
 public interface IRuntimeVrRenderModelHandle : IDisposable

@@ -583,8 +583,34 @@ namespace XREngine.Components
                 transform?.WorldTranslation ?? Vector3.Zero,
                 transform?.WorldRotation ?? Quaternion.Identity);
 
+        private bool _snapTurningEnabled;
+        public bool SnapTurningEnabled { get => _snapTurningEnabled; set => SetField(ref _snapTurningEnabled, value); }
+        private float _snapTurnDegrees = 45;
+        public float SnapTurnDegrees
+        {
+            get => _snapTurnDegrees;
+            set => SetField(ref _snapTurnDegrees, float.IsFinite(value) ? Math.Clamp(value, 1, 180) : 45);
+        }
+        private bool _snapTurnLatched;
+
         private void Turn(Vector2 oldValue, Vector2 newValue)
-            => CharacterPawn.LookRight(newValue.X);
+        {
+            if (GetSiblingComponent<XREngine.Components.VR.VRPlayerCharacterComponent>(false)?.IsCalibrating == true)
+                return;
+            if (!SnapTurningEnabled)
+            {
+                CharacterPawn.LookRight(newValue.X);
+                return;
+            }
+            float magnitude = MathF.Abs(newValue.X);
+            if (magnitude < 0.2f)
+                _snapTurnLatched = false;
+            else if (magnitude >= 0.7f && !_snapTurnLatched)
+            {
+                _snapTurnLatched = true;
+                CharacterPawn.SnapTurn(-MathF.Sign(newValue.X) * SnapTurnDegrees);
+            }
+        }
 
         private void Locomote(Vector2 oldValue, Vector2 newValue)
         {
