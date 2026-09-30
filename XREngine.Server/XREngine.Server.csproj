@@ -12,9 +12,14 @@
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     <XREngineRendererBackends>None</XREngineRendererBackends>
     <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+    <HeadlessBootstrapProjectFile>$(MSBuildThisFileDirectory)..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj</HeadlessBootstrapProjectFile>
     <HeadlessBootstrapAssetsFile>$(MSBuildThisFileDirectory)..\XREngine.Runtime.Bootstrap\obj\renderer-None\project.assets.json</HeadlessBootstrapAssetsFile>
-    <HeadlessBootstrapBuildTargets Condition="Exists('$(HeadlessBootstrapAssetsFile)')">Build</HeadlessBootstrapBuildTargets>
-    <HeadlessBootstrapBuildTargets Condition="!Exists('$(HeadlessBootstrapAssetsFile)')">Restore;Build</HeadlessBootstrapBuildTargets>
+    <!-- Restore the headless variant again when Bootstrap's project file is newer than its
+         isolated assets file; otherwise a changed dependency graph compiles against stale references. -->
+    <HeadlessBootstrapAssetsCurrent>false</HeadlessBootstrapAssetsCurrent>
+    <HeadlessBootstrapAssetsCurrent Condition="Exists('$(HeadlessBootstrapAssetsFile)') and $([System.IO.File]::GetLastWriteTime('$(HeadlessBootstrapAssetsFile)').Ticks) &gt;= $([System.IO.File]::GetLastWriteTime('$(HeadlessBootstrapProjectFile)').Ticks)">true</HeadlessBootstrapAssetsCurrent>
+    <HeadlessBootstrapBuildTargets Condition="'$(HeadlessBootstrapAssetsCurrent)' == 'true'">Build</HeadlessBootstrapBuildTargets>
+    <HeadlessBootstrapBuildTargets Condition="'$(HeadlessBootstrapAssetsCurrent)' != 'true'">Restore;Build</HeadlessBootstrapBuildTargets>
     <XREngineHeadlessExcludedPublishPattern>(?i)(openvr_api\.dll|actionmanifest\.json|bindings_.*\.json|ovrlipsync\.dll|naudio\.sdl2\.dll|(?:lib)?sdl2(?:-2\.0)?\.(dll|so|dylib|a)|glfw3\.dll|libglfw(?:\.so\.3|\.3\.dylib)|vulkanmemoryallocator.*\.(dll|so|dylib)|soft_oal\.dll|libopenal\.(so|dylib)|av(codec|device|filter|format|util)-[0-9]+\.dll|postproc-[0-9]+\.dll|swresample-[0-9]+\.dll|swscale-[0-9]+\.dll|libmp3lame\.(32|64)\.dll|cimgui\.(dll|so|dylib)|ultralight(core)?\.(dll|so|dylib)|appcore\.(dll|so|dylib)|webcore\.(dll|so|dylib)|dstorage(core)?\.dll|openal-soft)</XREngineHeadlessExcludedPublishPattern>
   </PropertyGroup>
 

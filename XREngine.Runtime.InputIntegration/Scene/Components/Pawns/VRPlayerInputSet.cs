@@ -5,6 +5,7 @@ using XREngine.Components.Physics;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Imaging;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -167,9 +168,12 @@ namespace XREngine.Components
             BoundingRectangle vp = new BoundingRectangle();
             AbstractRenderer.Current?.GetScreenshotAsync(vp, false, (img, index) =>
             {
+                if (img is null)
+                    return;
                 Utility.EnsureDirPathExists(capturePath);
-                img?.Flip();
-                img?.Write(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"));
+                using (img)
+                    File.WriteAllBytes(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"),
+                        RuntimeImageCodecs.Require().EncodePng(img));
             });
         }
 

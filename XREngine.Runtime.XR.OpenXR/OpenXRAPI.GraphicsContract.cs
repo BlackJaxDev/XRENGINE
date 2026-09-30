@@ -33,7 +33,7 @@ public unsafe partial class OpenXRAPI
     internal bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         => Window?.Renderer is AbstractRenderer renderer &&
            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
-           binding.TryRenderDesktopMirrorComposition(this, targetWidth, targetHeight);
+           binding.TryRenderDesktopMirrorComposition(GraphicsBindingHost, targetWidth, targetHeight);
 
     public OpenXrSmokeCaptureLedgerEntry[] GetStrictSpsBoundaryCaptureLedger()
         => _graphicsBinding?.GetStrictSpsBoundaryCaptureLedger() ?? [];
@@ -88,7 +88,7 @@ public unsafe partial class OpenXRAPI
         if (Window?.Renderer is AbstractRenderer renderer &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
         {
-            binding.ResetBackendDiagnostics(this);
+            binding.ResetBackendDiagnostics(GraphicsBindingHost);
         }
     }
 
@@ -97,7 +97,7 @@ public unsafe partial class OpenXRAPI
         if (Window?.Renderer is AbstractRenderer renderer &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
         {
-            binding.DestroyBackendResources(this);
+            binding.DestroyBackendResources(GraphicsBindingHost);
         }
     }
 }

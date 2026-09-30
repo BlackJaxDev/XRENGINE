@@ -1,5 +1,4 @@
 using XREngine.Extensions;
-using Microsoft.DotNet.PlatformAbstractions;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -124,7 +123,7 @@ namespace XREngine
             }
             else
             {
-                string? basePath = ApplicationEnvironment.ApplicationBasePath;
+                string? basePath = AppContext.BaseDirectory;
                 //Iterate up the directory tree until we find a Build directory that contains CommonAssets
                 while (basePath is not null)
                 {
@@ -137,7 +136,7 @@ namespace XREngine
                     basePath = Path.GetDirectoryName(basePath);
                 }
 
-                resolvedEngineAssetsPath ??= Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Build", "CommonAssets");
+                resolvedEngineAssetsPath ??= Path.Combine(AppContext.BaseDirectory, "Build", "CommonAssets");
             }
 
             EngineAssetsPath = resolvedEngineAssetsPath;
@@ -338,7 +337,7 @@ namespace XREngine
         /// </summary>
         public string EngineAssetsPath { get; }
 
-        private string _gameAssetsPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Assets");
+        private string _gameAssetsPath = Path.Combine(AppContext.BaseDirectory, "Assets");
         public string GameAssetsPath
         {
             get => _gameAssetsPath;
@@ -359,14 +358,14 @@ namespace XREngine
             set => _gameCachePath = NormalizeOptionalDirectoryPath(value, nameof(GameCachePath));
         }
 
-        private string _packagesPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Packages");
+        private string _packagesPath = Path.Combine(AppContext.BaseDirectory, "Packages");
         public string PackagesPath
         {
             get => _packagesPath;
             set => _packagesPath = NormalizeDirectoryPath(value, nameof(PackagesPath));
         }
 
-        private string _librariesPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Libraries");
+        private string _librariesPath = Path.Combine(AppContext.BaseDirectory, "Libraries");
         public string LibrariesPath
         {
             get => _librariesPath;

@@ -1,6 +1,7 @@
 using Silk.NET.Vulkan;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
+using SwapchainImageVulkan2KHR = Silk.NET.OpenXR.SwapchainImageVulkan2KHR;
 
 namespace XREngine.Rendering.Vulkan;
 

@@ -123,8 +123,9 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
         _gl.BindTexture(GLEnum.Texture2D, _fontTexture);
         _gl.TexImage2D(GLEnum.Texture2D, 0, (int)InternalFormat.Rgba, (uint)width, (uint)height,
             0, PixelFormat.Rgba, PixelType.UnsignedByte, (void*)pixels);
-        _gl.TexParameterI(GLEnum.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-        _gl.TexParameterI(GLEnum.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        int linear = (int)GLEnum.Linear;
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, linear);
         ImGui.GetIO().Fonts.SetTexID((nint)_fontTexture);
         _gl.BindTexture(GLEnum.Texture2D, (uint)previousTexture);
     }

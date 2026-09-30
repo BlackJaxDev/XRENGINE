@@ -424,7 +424,7 @@ namespace XREngine
             {
                 foreach (var w in RuntimeEngine.Windows)
                 {
-                    if (w == null || w.Window == null)
+                    if (w == null || w.DesktopWindowBackend == null)
                         continue; // Skip if the window is null or has been disposed
 
                     if (w.IsFocused)

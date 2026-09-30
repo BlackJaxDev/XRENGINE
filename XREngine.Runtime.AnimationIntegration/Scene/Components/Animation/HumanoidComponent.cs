@@ -15,7 +15,6 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using XREngine.Rendering.Models.Caching;
 using System.Threading;
 
 namespace XREngine.Components.Animation
@@ -153,7 +152,7 @@ namespace XREngine.Components.Animation
             _sourceModelUnitsPerMeter = 0.0f;
             for (SceneNode? node = SceneNode; node is not null; node = node.Parent)
             {
-                float? units = node.GetProducerReport()?.ModelUnitsPerMeter;
+                float? units = node.GetImportedModelUnitsPerMeter();
                 if (units is not float value || !float.IsFinite(value) || value <= 0.0f)
                     continue;
                 _sourceModelUnitsPerMeter = value;

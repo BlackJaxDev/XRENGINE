@@ -44,7 +44,7 @@ Most desktop modules currently use Windows-targeted project configurations. Some
 | `XREngine.Audio.Audio2Face` | Audio2Face native integration and optional bridge. |
 | `XREngine.Input.Silk` | Silk input device wrappers. |
 | `XREngine.Input.XInput` | Windows XInput devices. |
-| `XREngine.Runtime.Platform.Desktop` | Window creation/event pumping, native handles, input acquisition, filesystem discovery/watching/mapping, platform paths, clipboard, processes, and development assembly loading. |
+| `XREngine.Runtime.Platform.Desktop` | Window creation/event pumping, native handles, input acquisition, filesystem discovery/watching/mapping, platform paths, clipboard, processes, development assembly loading, and the native-callable renderer and ImGui viewport callback entry points. |
 | `XREngine.Runtime.XR.OpenVR` | OpenVR devices, actions, compositor, and render models. |
 | `XREngine.Runtime.XR.OpenXR` | Renderer-neutral OpenXR instance/session, action, pose, swapchain, and frame lifecycle. |
 | `XREngine.Runtime.Rendering.OpenGL` | OpenGL objects, renderer-specific UI/XR bridges, and native ReSTIR execution. |
@@ -65,6 +65,8 @@ Most desktop modules currently use Windows-targeted project configurations. Some
 Physics selection uses the backend catalog and preserves serialized `EPhysicsLibrary` values. PhysX remains the desktop default; Jolt is installed as an alternative. An unregistered selection reports the missing backend. Jolt browser execution and default promotion require the outstanding owner and parity decisions; there is no implemented Box3D module. See [physics architecture](../physics/overview.md).
 
 `XRWindow` is a neutral facade in Rendering. Desktop owns the native window backend and event pump. Renderer modules borrow desktop GL-context or Vulkan-surface services through `IRendererDesktopWindowServices`; shared libraries do not expose Silk window/input objects. OpenXR graphics resources and API dispatch remain renderer-owned, with neutral graphics-host and lifetime contracts connecting them to the XR module.
+
+Native libraries call back into renderers through entry points that must outlive collectible renderer generations. Rendering keeps the managed registrations (`RendererNativeCallbackBridge`, `RendererImGuiViewportCallbackBridge`); the desktop platform module supplies the native-callable addresses when it registers. A native renderer created without them fails with a named error.
 
 Image consumers exchange neutral buffers with dimensions, format, stride, origin, and mip data. GPU readback stays in renderer modules; encoding stays in the imaging module. Cooked raw textures need no ImageMagick decoder. Font and UI services similarly expose neutral data to Rendering. See [image, media, and font boundaries](../rendering/image-media-font-boundaries.md).
 

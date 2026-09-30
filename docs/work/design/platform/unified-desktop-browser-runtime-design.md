@@ -218,7 +218,7 @@ Decision:
 ### Audio
 
 - **Split:** `XREngine.Audio` keeps the contracts (`IAudioScene`, `IAudioTransport`, effects/capture abstractions) and managed logic. OpenAL, Steam Audio, NAudio device output, and FFmpeg decoding move to desktop leaves. The Google Cloud speech packages and the MathNet CUDA provider have no source references and are removed rather than moved; if speech services return, they belong in a server or tool leaf that the browser client never requires.
-- **Browser:** `XREngine.Runtime.Audio.WebAudio` implements the same contracts over Web Audio. It reuses the branch's `browser-audio.js`: gesture-driven activation, suspension, positional sources, listener.
+- **Browser:** `XREngine.Audio.WebAudio`, named like the existing audio leaves, implements the same contracts over Web Audio. It reuses the branch's `browser-audio.js`: gesture-driven activation, suspension, positional sources, listener.
 - **Codecs:** audio assets cook to formats the declared browser matrix decodes. Safari support is verified before choosing Opus-only delivery.
 - **Components:** `AudioSourceComponent`, listener components, and their serialized data are unchanged.
 

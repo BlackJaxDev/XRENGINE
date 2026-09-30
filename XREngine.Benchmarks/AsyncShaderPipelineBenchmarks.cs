@@ -5,6 +5,7 @@ using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
 using XREngine.Rendering.OpenGL;
+using XREngine.UnitTests.Rendering;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 /// <summary>
@@ -137,7 +138,7 @@ public unsafe class AsyncShaderPipelineBenchmarks
         _primaryWindow.MakeCurrent();
 
         _sharedContext = new GLSharedContext();
-        if (!_sharedContext.Initialize(_sharedWindow))
+        if (!_sharedContext.Initialize(new SilkSharedWindowTestBackend(_sharedWindow)))
             throw new InvalidOperationException("Failed to start shared GL context background thread.");
 
         _uploadQueue = new GLProgramBinaryUploadQueue(_sharedContext);

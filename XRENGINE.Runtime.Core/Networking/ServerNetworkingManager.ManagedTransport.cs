@@ -324,7 +324,7 @@ public partial class ServerNetworkingManager
     private void SendManagedEnvelope(IPEndPoint target, ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, ReadOnlySpan<byte> key)
     {
         byte[] bytes = ManagedUdpEnvelope.Create(header, payload, key);
-        _ = UdpMulticastSender?.SendAsync(bytes, target);
+        _ = UdpMulticastSender?.SendAsync(bytes, bytes.Length, target);
     }
 
     private static bool IsStructurallyValidClientFrame(ReadOnlySpan<byte> payload)
@@ -496,7 +496,7 @@ public partial class ServerNetworkingManager
     private void ResendManagedAccept_NoLock(Guid associationId, IPEndPoint target)
     {
         if (_managedAcceptEnvelopes.TryGetValue(associationId, out byte[]? accept))
-            _ = UdpMulticastSender?.SendAsync(accept, target);
+            _ = UdpMulticastSender?.SendAsync(accept, accept.Length, target);
     }
 
     private void SendManagedClose_NoLock(ManagedUdpAssociation association)
@@ -509,7 +509,7 @@ public partial class ServerNetworkingManager
             ManagedUdpMessageKind.Close, ManagedUdpDirection.ServerToClient,
             association.Identity.SessionId, association.Identity.Generation, association.AssociationId,
             association.Identity.CredentialEpoch, counter), payload, association.SendKey);
-        _ = UdpMulticastSender?.SendAsync(close, association.Endpoint);
+        _ = UdpMulticastSender?.SendAsync(close, close.Length, association.Endpoint);
     }
 
     private void PruneAcceptedIdentityBindings_NoLock(DateTimeOffset now)

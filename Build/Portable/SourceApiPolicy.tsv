@@ -3,17 +3,20 @@
 deny	native interop	\b(?:DllImport|LibraryImport|NativeLibrary|Marshal\.GetDelegateForFunctionPointer)\b
 deny	unmanaged function calls	\b(?:delegate\s*\*\s*unmanaged|UnmanagedCallersOnly|SuppressUnmanagedCodeSecurity)\b
 deny	desktop UI or graphics	\b(?:System\.Windows|System\.Drawing\.(?!(?:Color|KnownColor|Point|PointF|Rectangle|RectangleF|Size|SizeF)\b)[A-Za-z_]\w*|Microsoft\.Win32|Silk\.NET\.(?:GLFW|SDL|OpenGL|Direct3D|OpenXR|Windowing)|ImGuiNET|UltralightNet|SkiaSharp)\b
-deny	vendor runtime API	\b(?:Silk\.NET\.(?!Maths\b)[A-Za-z_]\w*|SharpFont\b|ImageMagick\b|OpenVR\b|OpenTK\b|OpenCvSharp\b)\b
+deny	vendor runtime API	\b(?:Silk\.NET\.(?!Maths\b)[A-Za-z_]\w*|SharpFont\b|ImageMagick\b|OpenVR\.NET\b|Valve\.VR\b|OpenTK\b|OpenCvSharp\b)\b
 deny	native dependency API	\b(?:FFmpeg\.AutoGen|NAudio\.|OpenAL\.|Silk\.NET\.OpenAL|MagicPhysX\.|JoltPhysics\.|RiveSharp\.|NVIDIA\.CUDA|CoACD\.Native)\b
 deny	runtime code or assembly loading	\b(?:Assembly\.(?:Load|LoadFrom|LoadFile|LoadWithPartialName)|AssemblyLoadContext|Reflection\.Emit|DynamicMethod|Expression\.Compile|Activator\.CreateInstanceFrom)\b
-deny	process or desktop services	\b(?:System\.Diagnostics\.Process\b|ProcessStartInfo\b|new\s+Process\b|Process\.(?:Start|GetCurrentProcess|GetProcesses|GetProcessById)\b|(?<!\.)Process\b(?!\s*\()|Environment\.GetFolderPath|Registry(?:Key)?\.|System\.Management)\b
-deny	sockets and filesystem watching	\b(?:System\.Net\.Sockets|Socket(?:AsyncEventArgs|Exception)?\b|TcpClient\b|TcpListener\b|UdpClient\b|FileSystemWatcher\b)\b
+deny	process or desktop services	\b(?:System\.Diagnostics\.Process\b|ProcessStartInfo\b|new\s+Process\b|Process\.(?:Start|GetCurrentProcess|GetProcesses|GetProcessById)\b|(?<!\.)Process\b(?!\s*\()|Environment\.GetFolderPath|RegistryKey\b|(?<!\.)Registry\.(?:ClassesRoot|CurrentConfig|CurrentUser|LocalMachine|PerformanceData|Users|GetValue|SetValue)|System\.Management)\b
+deny	sockets and filesystem watching	\b(?:System\.Net\.Sockets|(?<!\.)Socket(?:AsyncEventArgs|Exception)?\b(?!\s*[,=}])|TcpClient\b|TcpListener\b|UdpClient\b|FileSystemWatcher\b)\b
 reflection	\b(?:Type\.GetType|GetTypes|GetExportedTypes|GetMethods|GetMethod|GetConstructor|GetCustomAttributes|GetCustomAttribute|GetProperties|GetProperty|GetAssemblies|GetUninitializedObject|Activator\.CreateInstance|MakeGenericType|MakeGenericMethod)\b
 allow	XREngine.Browser/BrowserSceneEnvelope.cs	GetProperty	JsonElement wire-field access, not System.Type reflection
 allow	XREngine.Data/Core/Events/XRPersistentCall.cs	Type.GetType	Serialized event parameter identity resolution
 allow	XREngine.Data/Core/Events/XRPersistentCall.cs	GetMethods	Serialized event target overload resolution
 allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetTypes	Cached loaded-assembly type inspection
 allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetExportedTypes	Cached public type inspection
+allow	XREngine.Data/Core/Assets/XRAssetGraphUtility.cs	GetProperty	Declared member lookup for embedded-asset graph serialization-ignore checks
+allow	XREngine.Data/Core/Assets/XRAssetGraphUtility.cs	GetMethod	PropertyInfo.GetMethod static-accessor test during the asset graph walk, not a method lookup
+allow	XREngine.Data/Core/Assets/XRAssetGraphUtility.cs	GetCustomAttribute	Persistence-ignore and runtime-only attribute metadata on asset graph members; untrimmed metadata only
 allow	XREngine.Data/Core/Objects/XRBase.cs	GetMethod	MemoryPack clone helper lookup
 allow	XREngine.Data/Core/Objects/XRBase.cs	MakeGenericMethod	Closed clone helper specialization in interpreter
 allow	XREngine.Data/Serialization/AotRuntimeMetadataStore.cs	Type.GetType	Persisted type identity resolver in interpreter

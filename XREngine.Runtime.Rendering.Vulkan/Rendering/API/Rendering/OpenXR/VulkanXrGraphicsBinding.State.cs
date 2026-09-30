@@ -1,5 +1,6 @@
 using XREngine.Rendering.API.Rendering.OpenXR;
 using VkFormat = Silk.NET.Vulkan.Format;
+using SwapchainImageVulkan2KHR = Silk.NET.OpenXR.SwapchainImageVulkan2KHR;
 
 namespace XREngine.Rendering.Vulkan;
 

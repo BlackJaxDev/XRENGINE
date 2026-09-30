@@ -1,3 +1,5 @@
+using Valve.VR;
+
 namespace XREngine;
 
 /// <summary>Exposes the initialized OpenVR system owned by the native backend.</summary>

@@ -104,10 +104,12 @@ public unsafe partial class OpenXRAPI : IOpenXrGraphicsCalls
     int IOpenXrGraphicsCalls.EnumerateSwapchainImages(
         ulong swapchainHandle, uint capacity, nint pinnedRendererStorage, out uint count)
     {
-        count = 0;
-        return (int)Api.EnumerateSwapchainImages(
-            new Swapchain(swapchainHandle), capacity, &count,
+        uint enumerated = 0;
+        int result = (int)Api.EnumerateSwapchainImages(
+            new Swapchain(swapchainHandle), capacity, &enumerated,
             (SwapchainImageBaseHeader*)pinnedRendererStorage);
+        count = enumerated;
+        return result;
     }
 
     int IOpenXrGraphicsCalls.DestroySwapchain(ulong swapchainHandle)

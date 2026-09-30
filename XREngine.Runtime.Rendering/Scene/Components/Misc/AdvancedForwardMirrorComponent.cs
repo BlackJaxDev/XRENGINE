@@ -1,5 +1,4 @@
 using XREngine.Extensions;
-using MathNet.Numerics;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Core;
@@ -70,7 +69,7 @@ namespace XREngine.Scene.Components.Misc
 
         private static uint GetMaxMirrorBitMask()
         {
-            int maxMirrors = ((int)RuntimeEngine.GameSettings.MaxMirrorRecursionCount).CeilingToPowerOfTwo().Clamp(0, 16);
+            int maxMirrors = XRMath.NextPowerOfTwo((int)RuntimeEngine.GameSettings.MaxMirrorRecursionCount).Clamp(0, 16);
             int initialShift = 0;
             uint mask = 0;
             for (int i = 0; i < maxMirrors; i++)

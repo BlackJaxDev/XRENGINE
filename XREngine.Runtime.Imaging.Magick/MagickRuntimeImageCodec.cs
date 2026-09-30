@@ -334,7 +334,7 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
                 var b = inPixels.GetPixel(x1, y0);
                 var c = inPixels.GetPixel(x0, y1);
                 var d = inPixels.GetPixel(x1, y1);
-                for (int channel = 0; channel < 3; channel++)
+                for (uint channel = 0; channel < 3; channel++)
                 {
                     double value = a.GetChannel(channel) * (1 - mu) * (1 - nu)
                         + b.GetChannel(channel) * mu * (1 - nu)

@@ -1,10 +1,44 @@
 using System.Text.Json;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.WebGPU;
 
 public sealed partial class WebGpuRendererHost
 {
+    private const string MeshletUnsupportedReason =
+        "WebGPU has no task or mesh shader stages.";
+
     public BrowserDeviceCapabilities? DeviceCapabilities { get; private set; }
+
+    // WebGPU exposes neither a GPU-written draw count nor task/mesh shader stages, so every
+    // count-driven and meshlet submission path reports unavailable instead of being emulated.
+    public bool SupportsIndirectCountDraw() => false;
+
+    public EMeshShaderDialect MeshShaderDialect => EMeshShaderDialect.None;
+
+    public bool SupportsDirectMeshTaskDispatch() => false;
+
+    public bool SupportsIndirectCountMeshTaskDispatch() => false;
+
+    public bool SupportsProductionMeshletShaders() => false;
+
+    public bool SupportsMeshletDispatch() => false;
+
+    public string MeshletDispatchUnsupportedReason => MeshletUnsupportedReason;
+
+    public bool TryDrawMeshTasksIndirectCount(
+        XRRenderProgram program,
+        XRDataBuffer indirectBuffer,
+        XRDataBuffer countBuffer,
+        uint maxDrawCount,
+        uint stride,
+        out string failureReason,
+        nuint byteOffset = 0,
+        nuint countByteOffset = 0)
+    {
+        failureReason = MeshletUnsupportedReason;
+        return false;
+    }
 
     private static BrowserDeviceCapabilities ReadCapabilities(int session)
     {

@@ -44,7 +44,7 @@ public unsafe partial class OpenXRAPI
 
             if (_graphicsBinding is IXrGraphicsBinding binding && binding.IsCompatible(renderer))
             {
-                OpenXrDeviceLossBindingAbandonment abandoned = binding.AbandonAfterDeviceLoss(this, renderer, reason);
+                OpenXrDeviceLossBindingAbandonment abandoned = binding.AbandonAfterDeviceLoss(GraphicsBindingHost, renderer, reason);
                 _deviceLossAbandonment.AbandonedGenerationCount = abandoned.AbandonedGenerationCount;
                 _deviceLossAbandonment.AbandonedSwapchainCount = abandoned.AbandonedSwapchainCount;
                 _deviceLossAbandonment.AbandonedAcquiredSwapchainCount = abandoned.AbandonedAcquiredSwapchainCount;

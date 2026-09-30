@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using OpenVR.NET;
 using OpenVR.NET.Devices;
@@ -106,7 +107,7 @@ public sealed class OpenVrModelCatalog
     public bool HasSystem(bool activeOpenVr, bool allowUtilityRuntime)
         => TryGetSystem(activeOpenVr, allowUtilityRuntime, out _);
 
-    private bool TryGetSystem(bool activeOpenVr, bool allowUtilityRuntime, out CVRSystem? cvr)
+    private bool TryGetSystem(bool activeOpenVr, bool allowUtilityRuntime, [NotNullWhen(true)] out CVRSystem? cvr)
     {
         cvr = null;
         if (activeOpenVr &&

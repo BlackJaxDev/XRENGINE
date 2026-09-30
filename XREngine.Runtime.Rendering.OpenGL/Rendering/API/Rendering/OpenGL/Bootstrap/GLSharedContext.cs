@@ -191,8 +191,10 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Initializes a pre-created backend whose native window is owned by the caller's window thread.
+            /// With an <paramref name="ownerWindow"/>, disposal destroys the native window on that window's
+            /// thread; without one, the caller keeps ownership and destroys the native window itself.
             /// </summary>
-            public bool Initialize(IRuntimeWindowBackend preCreatedSharedWindow, XRWindow ownerWindow)
+            public bool Initialize(IRuntimeWindowBackend preCreatedSharedWindow, XRWindow? ownerWindow = null)
             {
                 if (_running)
                     return true;

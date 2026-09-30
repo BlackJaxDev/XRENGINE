@@ -638,7 +638,7 @@ void main()
 
         foreach (XRWindow window in RuntimeEngine.Windows)
         {
-            string? title = window.Window?.Title;
+            string title = window.WindowTitle;
             if (string.Equals(title, WindowTitle, StringComparison.OrdinalIgnoreCase))
                 return window;
         }

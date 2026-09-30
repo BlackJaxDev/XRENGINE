@@ -150,7 +150,9 @@ namespace XREngine.Build
             if (ProjectName == "XREngine.Runtime.Rendering")
             {
                 const string generatedItem = "<Compile Include=\"$(GeneratedRenderCommandRegistrations)\" />";
-                if (project.Contains(generatedItem, StringComparison.Ordinal))
+                // Inline build tasks compile against netstandard2.0, which lacks the
+                // StringComparison overloads of Contains and Replace.
+                if (project.IndexOf(generatedItem, StringComparison.Ordinal) >= 0)
                 {
                     bool generatedSourcePresent = false;
                     if (string.IsNullOrWhiteSpace(GeneratedRenderCommandRegistrations))
@@ -177,7 +179,7 @@ namespace XREngine.Build
                     }
                     if (!generatedSourcePresent)
                         Log.LogError("Portable project {0} omits its generated render command source from Compile.", ProjectName);
-                    project = project.Replace(generatedItem, string.Empty, StringComparison.Ordinal);
+                    project = project.Replace(generatedItem, string.Empty);
                 }
             }
             if (CreateRegex(@"<Compile\s+[^>]*(?:Include|Remove)\s*=").IsMatch(project) ||
@@ -205,6 +207,13 @@ namespace XREngine.Build
                 // dependency; the resolved native-runtime check handles SDK assets.
                 if (ProjectName == "XREngine.Browser" &&
                     package.ItemSpec.Equals("Microsoft.NET.Sdk.WebAssembly.Pack", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // The SDK injects its trim/AOT analysis tasks into any project that declares
+                // IsTrimmable or IsAotCompatible. The version follows the installed SDK, and
+                // the package contributes build tasks only, never a runtime asset.
+                if (package.ItemSpec.Equals("Microsoft.NET.ILLink.Tasks", StringComparison.OrdinalIgnoreCase) &&
+                    package.GetMetadata("IsImplicitlyDefined").Equals("true", StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 string version = package.GetMetadata("Version");

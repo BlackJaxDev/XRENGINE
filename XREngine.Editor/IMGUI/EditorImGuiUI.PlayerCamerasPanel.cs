@@ -352,7 +352,7 @@ public static partial class EditorImGuiUI
         if (viewport.AssociatedPlayer?.LocalPlayerIndex is ELocalPlayerIndex playerIndex)
             return $"Player {(int)playerIndex + 1} Viewport {viewport.Index}";
 
-        string? windowTitle = viewport.Window?.Window?.Title;
+        string? windowTitle = viewport.Window?.WindowTitle;
         if (!string.IsNullOrWhiteSpace(windowTitle))
             return $"{windowTitle} Viewport {viewport.Index}";
 

@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Rendering;
 
 namespace XREngine.Browser;
 

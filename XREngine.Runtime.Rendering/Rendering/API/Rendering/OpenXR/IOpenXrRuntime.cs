@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using XREngine.Input;
 
@@ -40,7 +41,7 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     bool TryGetSkeletonSummary(bool leftHand, out RuntimeVrSkeletonSummary summary);
     bool ApplyHapticAction(string category, string name, double duration, double frequency, double amplitude, double delay);
     bool StopHapticAction(string category, string name);
-    bool TryGetControllerRenderModel(bool leftHand, out RuntimeVrRenderModelDescriptor? renderModel);
+    bool TryGetControllerRenderModel(bool leftHand, [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel);
     string DescribeControllerRenderModelAvailability();
     OpenXrSmokeSummary CreateSmokeSummary(string? logDirectory = null);
     void RequestSmokeSessionExit();
@@ -53,4 +54,12 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     int SmokeLastEndFrameResult { get; }
     uint SmokeLastEndFrameLayerCount { get; }
     ulong SmokeLastRenderedFrameId { get; }
+    float? SmokeEffectiveTsrRenderScale { get; }
+    long StrictSinglePassStereoSequentialFallbackAttemptCount { get; }
+    long GetSmokeEyeAcquireCount(uint viewIndex);
+    long GetSmokeEyeWaitCount(uint viewIndex);
+    long GetSmokeEyePublishCount(uint viewIndex);
+    long GetSmokeEyeReleaseCount(uint viewIndex);
+    int GetSmokeEyeLastImageSlot(uint viewIndex);
+    OpenXrSmokeCaptureLedgerEntry[] GetStrictSpsBoundaryCaptureLedger();
 }

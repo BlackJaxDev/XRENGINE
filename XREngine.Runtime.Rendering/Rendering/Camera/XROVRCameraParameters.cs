@@ -1,7 +1,6 @@
 using XREngine.Extensions;
 using System;
 using System.Numerics;
-using XREngine.Input;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
@@ -67,8 +66,12 @@ namespace XREngine.Rendering
                 }
             }
 
-            if (RuntimeVrStateServices.TryGetEyeProjectionMatrix(LeftEye, NearZ, FarZ, out Matrix4x4 projection))
+            if (RuntimeEngine.VRState.IsOpenVRActive &&
+                RuntimeOpenVrStateServices.Current is { } openVr &&
+                openVr.TryGetEyeProjectionMatrix(LeftEye, NearZ, FarZ, out Matrix4x4 projection))
+            {
                 return projection;
+            }
 
             return Matrix4x4.CreatePerspectiveFieldOfView(float.DegreesToRadians(90.0f), 1.0f, NearZ, FarZ);
         }
