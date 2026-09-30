@@ -176,17 +176,17 @@ Run W20.01 on hardware as early as possible; its result decides whether this mil
 - [x] **W00.05** Record target counts, avatar/root scale, tracking origin, and component activation state before and after calibration. Add assertions for leaked or duplicated target nodes.
 - [x] **W00.06** Audit both pawn-construction paths. Decide which shared runtime factory/service owns the new integration so editor and runtime behavior do not drift.
 
-Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceTransform`, and [`VRIKCalibrationTests`][calibration-tests]; results are in the [baseline evidence][baseline-evidence]. The persistence regression `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` is marked `Explicit` and fails by design until W10 lands. W00.06 predates the editor pawn switcher (F15); W10.07 extends its decision to that path.
+Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceTransform`, and [`VRIKCalibrationTests`][calibration-tests]; results are in the [baseline evidence][baseline-evidence]. The persistence regression `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` now runs in the default headless suite and passes after the six-slot ownership repair. W00.06 predates the editor pawn switcher (F15); W10.07 extends its decision to that path.
 
 ## 7. W10 — Rig ownership and slot contract
 
 **Primary files:** [player component][player], [humanoid component][humanoid], [humanoid IK base][ik-base], [VRIK solver][vr-solver], [calibrator][calibrator], [runtime calibrator bridge][runtime-calibrator], [runtime pawn factory][bootstrap-pawns], [editor pawn switcher][pawn-switcher].
 
 - [ ] **W10.01** Introduce one rig owner that holds a stable concrete target for the head, both hands, and each of the eight tracker slots. Store raw device references separately; never install a raw pose source where the solver expects a calibrated target.
-- [ ] **W10.02** Make `SyncSolverTargets` consume the rig owner's targets, or have calibration publish them into `HumanoidComponent`, so one store is authoritative. Then remove `Explicit` from `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` and replace the loss characterization with the corrected contract.
+- [x] **W10.02** Make `SyncSolverTargets` consume solver-owned calibrated targets while retaining raw humanoid source tuples. The six-slot persistence regression runs without `Explicit`; the loss characterization now asserts preserved identity and non-null state.
 - [ ] **W10.03** Give each target exactly one offset representation (3.2) and remove the duplicate humanoid tuple offsets.
 - [ ] **W10.04** Define the per-slot source contract used by W50 and the estimator: bound tracker, estimator, or none, each with a crossfade weight. A slot with no source contributes zero weight.
-- [ ] **W10.05** Rebuild or re-parent a target when its slot binds to a different tracker, so no target stays under the previous tracker. Destroy owned targets on teardown; repeated calibration must not accumulate nodes.
+- [ ] **W10.05** Rebuild or re-parent a target when its slot binds to a different tracker, so no target stays under the previous tracker. Destroy owned targets on teardown; repeated calibration must not accumulate nodes. The six calibrated slots now reuse, re-parent, and release owned children; extension to the remaining full-body slots is still open.
 - [ ] **W10.06** Return a typed success or failure result with the calibrated data through the runtime bridge; a non-null reflection result or an enabled component is not success. Supply calibration settings in production (F09) and fail explicitly when they are missing.
 - [ ] **W10.07** Build the avatar rig and calibration in one shared runtime service used by `BootstrapPawnFactory.CreatePlayerPawn`, `BootstrapPawnFactory.CreateVrPawn`, and the unit-testing world. The editor supplies only UI and synthetic inputs.
 - [ ] **W10.08** Validate matrices and rotations before committing them; reject non-finite values, singular transforms, and zero-length quaternions.
@@ -354,7 +354,7 @@ The IK base schedules normal and late animation work, while VR device transforms
 
 Each work package's acceptance defines its own tests. Keep these guards in `XREngine.UnitTests/`:
 
-- [ ] **W80.01** Target persistence: the W00 regression passes without `Explicit`.
+- [x] **W80.01** Target persistence: the six-slot regression passes without `Explicit` in the Linux headless suite.
 - [ ] **W80.02** Binding invariance: every enumeration order produces the same one-to-one binding, and distant trackers stay unassigned.
 - [ ] **W80.03** Transactional rollback: failure and cancel restore the previous rig exactly.
 - [ ] **W80.04** Capture math: the W15.09 perturbations reproduce the displayed pose at capture.

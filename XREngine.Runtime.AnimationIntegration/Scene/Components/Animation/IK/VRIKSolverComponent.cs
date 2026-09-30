@@ -12,7 +12,7 @@ namespace XREngine.Components.Animation
     /// Component that uses the VRIK solver to solve IK for a humanoid character controlled by a VR headset, controllers, and optional trackers.
     /// </summary>
     [RequireComponents(typeof(HumanoidComponent))]
-    public class VRIKSolverComponent : IKSolverComponent, IVRIKSolverHandle
+    public partial class VRIKSolverComponent : IKSolverComponent, IVRIKSolverHandle
     {
         private const double BaselineIntervalSeconds = 1.0;
         private static readonly long BaselineIntervalTicks = Math.Max(1L, (long)Math.Round(BaselineIntervalSeconds * System.Diagnostics.Stopwatch.Frequency));
@@ -159,6 +159,8 @@ namespace XREngine.Components.Animation
             Humanoid.ClearIKTarget(EHumanoidIKTarget.RightElbow);
             Humanoid.ClearIKTarget(EHumanoidIKTarget.LeftKnee);
             Humanoid.ClearIKTarget(EHumanoidIKTarget.RightKnee);
+            ReleaseCalibrationTargets();
+            SyncSolverTargets();
         }
 
         /// <summary>
@@ -197,6 +199,7 @@ namespace XREngine.Components.Animation
 
         protected override void OnDestroying()
         {
+            ReleaseCalibrationTargets();
             UnsubscribeNetworking();
             ClearReceivedPoseState();
             BoundPoseSessionId = Guid.Empty;
@@ -356,12 +359,12 @@ namespace XREngine.Components.Animation
 
         private void SyncSolverTargets()
         {
-            Solver.Spine.HeadTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.Head);
-            Solver.Spine.HipsTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.Hips);
-            Solver.LeftArm.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftHand);
-            Solver.RightArm.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.RightHand);
-            Solver.LeftLeg.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftFoot);
-            Solver.RightLeg.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.RightFoot);
+            Solver.Spine.HeadTarget = ResolveCalibrationTarget(EHumanoidIKTarget.Head);
+            Solver.Spine.HipsTarget = ResolveCalibrationTarget(EHumanoidIKTarget.Hips);
+            Solver.LeftArm.Target = ResolveCalibrationTarget(EHumanoidIKTarget.LeftHand);
+            Solver.RightArm.Target = ResolveCalibrationTarget(EHumanoidIKTarget.RightHand);
+            Solver.LeftLeg.Target = ResolveCalibrationTarget(EHumanoidIKTarget.LeftFoot);
+            Solver.RightLeg.Target = ResolveCalibrationTarget(EHumanoidIKTarget.RightFoot);
             Solver.LeftArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftElbow);
             Solver.RightArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.RightElbow);
             Solver.LeftLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftKnee);
