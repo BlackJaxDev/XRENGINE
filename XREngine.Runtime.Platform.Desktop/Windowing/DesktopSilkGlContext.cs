@@ -21,8 +21,9 @@ internal sealed class DesktopSilkGlContext(IWindow window, int windowOwnerThread
     public nint GetProcAddress(string name)
     {
         AssertOwnerThread();
-        return window.GLContext is INativeContext nativeContext
-            ? nativeContext.GetProcAddress(name)
+        return window.GLContext is INativeContext nativeContext &&
+            nativeContext.TryGetProcAddress(name, out nint address)
+            ? address
             : 0;
     }
 

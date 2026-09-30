@@ -2,6 +2,8 @@ using XREngine.Components.Physics;
 using XREngine.Components.Movement;
 using XREngine.Rendering;
 using XREngine.Rendering.VideoStreaming;
+using XREngine.Data;
+using XREngine.Scene.Physics;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -31,63 +33,91 @@ public static class RuntimeRenderingBootstrap
     {
         ArgumentNullException.ThrowIfNull(profile);
 
-        EngineRuntimeRenderingHostServices renderingHost = new(
-            registerRendererBackends: profile.RegisterRendererBackends,
-            installAssetServices: true);
+        // Retire old worlds while their rendering, input and VR providers are still installed.
+        RuntimeAdapterBootstrap.UninstallEngineHostServices();
+
+        EngineRuntimeRenderingHostServices renderingHost = CreateRenderingHost(
+            profile.RegisterRendererBackends, installAssetServices: true);
 
         IRuntimeRenderObjectServices? previousRenderObjects = RuntimeRenderObjectServices.Current;
-        IRuntimeShaderServices? previousShaders = RuntimeShaderServices.Current;
-        IRuntimeVrRenderingServices previousVrRendering = RuntimeVrRenderingServices.Current;
         IRuntimeVideoStreamingServices? previousVideo = RuntimeVideoStreamingServices.Current;
         IRuntimeCharacterMovementVisualizationServices? previousCharacterMovementVisualization = RuntimeCharacterMovementVisualizationServices.Current;
         IRuntimeWindowApplicationServices previousWindowApplication = RuntimeWindowApplicationServices.Current;
         string? previousGameCachePath = RuntimeRenderingHostServices.GameCachePath;
         IDisposable? renderingHostLease = null;
         IDisposable? adapterLease = null;
+        IDisposable? vrLease = null;
+        IDisposable? shaderLease = null;
+        EngineRuntimeWindowApplicationServices? installedWindowApplication = null;
 
         try
         {
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
-            RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
+            shaderLease = EngineRuntimeShaderServices.Install();
             renderingHostLease = RuntimeRenderingHostServices.Install(renderingHost);
             RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
             RuntimeCharacterMovementVisualizationServices.Current = new RenderingCharacterMovementVisualizationServices();
-            RuntimeWindowApplicationServices.Current = new EngineRuntimeWindowApplicationServices();
+            installedWindowApplication = new EngineRuntimeWindowApplicationServices();
+            RuntimeWindowApplicationServices.Current = installedWindowApplication;
 
-            if (profile.AllowsVr)
-                RuntimeVrRenderingServices.Current = new EngineRuntimeVrRenderingServices();
             if (profile.AllowsWindows)
                 RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
 
-            adapterLease = RuntimeAdapterBootstrap.InstallEngineHostServices(profile.AdapterProfile);
+            vrLease = new DesktopVrServicesLease(profile);
+            adapterLease = RuntimeAdapterBootstrap.InstallEngineHostServices(
+                profile.AdapterProfile,
+                static () => new Scene.Physics.Jolt.JoltScene(),
+                composeRenderedWorlds: profile.AdapterProfile != RuntimeApplicationProfile.HeadlessServer.AdapterProfile);
             return new InstallationLease(
                 renderingHost,
                 renderingHostLease,
                 adapterLease,
+                vrLease,
                 previousRenderObjects,
-                previousShaders,
-                previousVrRendering,
+                shaderLease,
                 previousVideo,
                 previousCharacterMovementVisualization,
                 previousWindowApplication,
                 previousGameCachePath,
                 profile);
         }
-        catch
+        catch (Exception installationFailure)
         {
-            adapterLease?.Dispose();
-            RuntimeVideoStreamingServices.Current = previousVideo;
-            RuntimeVrRenderingServices.Current = previousVrRendering;
-            RuntimeCharacterMovementVisualizationServices.Current = previousCharacterMovementVisualization;
-            if (RuntimeWindowApplicationServices.Current is IDisposable windowApplication)
-                windowApplication.Dispose();
-            RuntimeWindowApplicationServices.Current = previousWindowApplication;
-            RuntimeRenderingHostServices.GameCachePath = previousGameCachePath;
-            renderingHostLease?.Dispose();
-            RuntimeShaderServices.Current = previousShaders;
-            RuntimeRenderObjectServices.Current = previousRenderObjects;
-            renderingHost.Dispose();
+            List<Exception>? failures = null;
+            if (adapterLease is not null)
+                AttemptCleanup(adapterLease.Dispose, ref failures);
+            if (vrLease is not null)
+                AttemptCleanup(vrLease.Dispose, ref failures);
+            AttemptCleanup(() => RuntimeVideoStreamingServices.Current = previousVideo, ref failures);
+            AttemptCleanup(() => RuntimeCharacterMovementVisualizationServices.Current = previousCharacterMovementVisualization, ref failures);
+            if (installedWindowApplication is not null)
+                AttemptCleanup(installedWindowApplication.Dispose, ref failures);
+            AttemptCleanup(() => RuntimeWindowApplicationServices.Current = previousWindowApplication, ref failures);
+            AttemptCleanup(() => RuntimeRenderingHostServices.GameCachePath = previousGameCachePath, ref failures);
+            if (renderingHostLease is not null)
+                AttemptCleanup(renderingHostLease.Dispose, ref failures);
+            if (shaderLease is not null)
+                AttemptCleanup(shaderLease.Dispose, ref failures);
+            AttemptCleanup(() => RuntimeRenderObjectServices.Current = previousRenderObjects, ref failures);
+            AttemptCleanup(renderingHost.Dispose, ref failures);
+            if (failures is not null)
+            {
+                failures.Insert(0, installationFailure);
+                throw new AggregateException("Runtime rendering host installation and rollback failed.", failures);
+            }
             throw;
+        }
+    }
+
+    private static void AttemptCleanup(Action cleanup, ref List<Exception>? failures)
+    {
+        try
+        {
+            cleanup();
+        }
+        catch (Exception failure)
+        {
+            (failures ??= []).Add(failure);
         }
     }
 
@@ -96,15 +126,44 @@ public static class RuntimeRenderingBootstrap
     /// modules and asset services remain explicit caller choices.
     /// </summary>
     public static IRuntimeRenderingHostServices CreateEngineHostServices(bool registerRendererBackends = false)
-        => new EngineRuntimeRenderingHostServices(registerRendererBackends, installAssetServices: false);
+        => CreateRenderingHost(registerRendererBackends, installAssetServices: false);
+
+    private static EngineRuntimeRenderingHostServices CreateRenderingHost(bool registerRendererBackends, bool installAssetServices)
+    {
+        DesktopRuntimeBackendBootstrap.EnsureRegistered();
+        RendererBackendCatalog renderers = new();
+        PhysicsBackendCatalog physics = new();
+        IDisposable resources = RegistrationLeaseGroup.Create(leases =>
+        {
+            if (installAssetServices)
+            {
+                leases.Add(RuntimeEngineStartupPolicyServices.Install(DesktopEngineStartupPolicy.Instance));
+                leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
+            }
+            leases.Add(renderers);
+            BuiltInPhysicsBackendModules.RegisterDesktop(physics);
+            if (registerRendererBackends)
+                leases.Add(BuiltInRendererBackendModules.RegisterAll(renderers));
+        });
+        try
+        {
+            return new EngineRuntimeRenderingHostServices(
+                renderers, physics, static () => BootstrapRenderSettings.CreateSceneRenderPipeline(), resources);
+        }
+        catch
+        {
+            resources.Dispose();
+            throw;
+        }
+    }
 
     private sealed class InstallationLease(
         EngineRuntimeRenderingHostServices renderingHost,
         IDisposable renderingHostLease,
         IDisposable adapterLease,
+        IDisposable vrLease,
         IRuntimeRenderObjectServices? previousRenderObjects,
-        IRuntimeShaderServices? previousShaders,
-        IRuntimeVrRenderingServices previousVrRendering,
+        IDisposable shaderLease,
         IRuntimeVideoStreamingServices? previousVideo,
         IRuntimeCharacterMovementVisualizationServices? previousCharacterMovementVisualization,
         IRuntimeWindowApplicationServices previousWindowApplication,
@@ -120,6 +179,7 @@ public static class RuntimeRenderingBootstrap
 
             List<Exception>? failures = null;
             DisposeStep(adapterLease, ref failures);
+            DisposeStep(vrLease, ref failures);
 
             RuntimeCharacterMovementVisualizationServices.Current = previousCharacterMovementVisualization;
             if (RuntimeWindowApplicationServices.Current is IDisposable windowApplication)
@@ -128,14 +188,11 @@ public static class RuntimeRenderingBootstrap
 
             if (profile.AllowsWindows && RuntimeVideoStreamingServices.Current is EngineRuntimeVideoStreamingServices)
                 RuntimeVideoStreamingServices.Current = previousVideo;
-            if (profile.AllowsVr && RuntimeVrRenderingServices.Current is EngineRuntimeVrRenderingServices)
-                RuntimeVrRenderingServices.Current = previousVrRendering;
 
             RuntimeRenderingHostServices.GameCachePath = previousGameCachePath;
             DisposeStep(renderingHostLease, ref failures);
 
-            if (RuntimeShaderServices.Current is EngineRuntimeShaderServices)
-                RuntimeShaderServices.Current = previousShaders;
+            DisposeStep(shaderLease, ref failures);
             if (RuntimeRenderObjectServices.Current is EngineRuntimeRenderObjectServices)
                 RuntimeRenderObjectServices.Current = previousRenderObjects;
 

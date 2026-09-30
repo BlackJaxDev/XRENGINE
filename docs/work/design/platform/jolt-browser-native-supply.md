@@ -1,6 +1,6 @@
 # Browser Jolt native supply proposal
 
-Status: source prepared for owner decision; native build and browser execution are unvalidated.
+Status: owner approved the recorded browser-only native supply on 2026-09-30. Both pinned static archives build with the installed Emscripten toolchain. Browser execution is blocked by a managed binding signature conflict; a separate supply decision is required. Implementation paused at the owner's request after recording the failure.
 
 Related: [native subsystem debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md).
 
@@ -14,9 +14,27 @@ The reviewed managed binding uses static native callback targets and unmanaged f
 
 The reviewed `joltc` thread-pool factory maps a non-positive thread count to `-1`, which requests the native default worker count. Passing zero does not establish a single-threaded browser path. An [owned C ABI wrapper](../../../../Tools/Dependencies/JoltBrowser/jolt-browser-single-thread.cpp) constructs `JobSystemSingleThreaded`; the existing `JPH_JobSystem_Destroy` deletes through its base class. The [throwaway browser harness](../../../../Tools/Dependencies/JoltBrowser/Spike/JoltBrowserSpike.csproj) uses the repository's WebAssembly SDK pattern, subclasses the public managed `JobSystem(nint)` constructor, and links both static archives through `NativeFileReference`. Its minimal browser host runs managed `Main` and displays success or failure. The managed source creates a world, drops a box for 120 fixed steps while checking each update result, casts a ray, and destroys any bodies that were created even after partial initialization. None of these source-level steps proves archive linkage, browser execution, callback compatibility, or absence of pthread worker creation.
 
-The execution prerequisites are the owner's native-source approval, a reserved validation run, the pinned .NET 10 browser workload/tool packs, the exact clean upstream checkouts, successful static archives, and a browser runner. The initial browser pass must inspect the produced WebAssembly linkage and runtime for any pthread creation, then verify managed callback registration and the full loop before treating the unchanged binding as compatible. A failed managed ABI or callback signature must produce a named failure and a separate thin-binding decision; the current harness does not silently replace JoltPhysicsSharp.
+The execution prerequisites are a reserved validation run, the pinned .NET 10 browser workload/tool packs, the exact clean upstream checkouts, successful static archives, and a browser runner. The owner approved acquiring and building the recorded sources on 2026-09-30; default promotion and cross-platform determinism remain separate decisions. The initial browser pass must inspect the produced WebAssembly linkage and runtime for any pthread creation, then verify managed callback registration and the full loop before treating the unchanged binding as compatible. A failed managed ABI or callback signature must produce a named failure and a separate thin-binding decision; the current harness does not silently replace JoltPhysicsSharp.
 
 Cross-platform deterministic replay is not claimed. The desktop binary supply is not rebuilt with the same deterministic flags. That would require a separate approved all-platform native supply decision and matching validation.
+
+## Native build evidence
+
+The approved build completed on 2026-09-30 using clean checkouts of both exact source pins and Emscripten 3.1.56 from the installed SDK pack 10.0.2. It produced `libJolt.a` (4,771,436 bytes) and `libjoltc.a` (473,360 bytes), copied both MIT license notices, and recorded `native-build-pin.json`. The build preserves the desktop NuGet supply and does not install or modify workload packs.
+
+Two build-script corrections were required on Windows: CMake source definitions use forward slashes, and the frozen cache points to the installed `emscripten/cache` directory containing `sysroot_install.stamp`. Evidence is under `Build/_AgentValidation/20260930-105523-unified-browser-runtime/temp-build/jolt-browser-native/`, with the successful command output in `logs/portable-jolt-native-build-3.log`. Archive creation alone does not qualify the managed ABI or prove absence of browser worker creation.
+
+## Managed linkage findings
+
+The initial untrimmed interpreter spike publish completed with no warnings/errors, but live `Foundation.Init` failed with `JPH_Init`. The generated native table admitted archive basename `libjoltc`, while the unchanged managed package requests `joltc`; its `libjoltc` table was empty. The SDK derives module admission from native archive basenames. The spike now stages a byte-identical `joltc.a` in its intermediate output and references that alias instead, preserving the original pinned archive and the desktop supply. Adding a second module alongside the empty `libjoltc` table is insufficient because the binding's resolver can select the empty table first.
+
+The corrected module admission exposes a genuine conflict in the exact `JoltPhysicsSharp` 2.22.0 package. Its single-precision `JPH_ContactListener_SetProcs` import returns `void`; its double-precision overload returns `IntPtr`. Both target the same C symbol. The pinned native header and implementation define only a void-returning function. The SDK consequently emits both `void JPH_ContactListener_SetProcs(void *)` and `void * JPH_ContactListener_SetProcs(void *)`, and compiling the generated P/Invoke table fails. Selecting single precision at runtime cannot remove the conflicting import metadata from this untrimmed static-link build.
+
+Read-only metadata/archive comparison found all 1,147 unique managed import names defined in the pinned native archives; this was the only conflicting managed return type found. Symbol presence does not prove the remaining ABI, callbacks or struct layouts. The conflict is not evidence of unsupported function-pointer parameters, and no generated-table edits, signature suppression, trimming workaround or alternate physics fallback were applied.
+
+The next owner decision is either a browser-only reviewed source build correcting the erroneous managed overload to `void`, or the already described narrow owned spike binding with exact C signatures, pointer-sized callback tokens, static unmanaged targets and explicit storage lifetimes. The first changes managed dependency supply; the second proves only the selected spike operations and does not implement the complete engine physics leaf. Neither route is approved or implemented. Default promotion and determinism remain undecided.
+
+Evidence is under `Build/_AgentValidation/20260930-105523-unified-browser-runtime/`: `logs/portable-jolt-spike-publish.log` records the initial publish; `logs/portable-jolt-spike-publish-2.log` records the conflicting declarations after admission is corrected; `reports/portable-host/jolt-native-archive-audit.md` contains archive provenance and symbol evidence. Browser callbacks, stepping, raycast, teardown and absence of worker creation remain unqualified.
 
 ## Acceptance before default promotion
 

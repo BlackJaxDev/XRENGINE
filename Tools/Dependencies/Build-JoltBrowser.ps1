@@ -23,7 +23,7 @@ $packSuffix = "$($nativePin.emscriptenVersion).{0}.win-x64/$($nativePin.sdkPackV
 $sdkRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Sdk'))
 $pythonRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Python'))
 $nodeRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Node'))
-$cacheRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Cache'))
+$cacheRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Cache') + '/emscripten/cache')
 $python = Join-Path $pythonRoot 'python.exe'
 $emcmake = Join-Path $sdkRoot 'emscripten/emcmake.py'
 $node = Join-Path $nodeRoot 'bin/node.exe'
@@ -31,6 +31,9 @@ foreach ($requiredTool in @($python, $emcmake, $node)) {
     if (-not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
         throw "Required .NET-pinned WebAssembly tool is absent: $requiredTool. Install the matching supported workload separately."
     }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $cacheRoot 'sysroot_install.stamp') -PathType Leaf)) {
+    throw 'The pinned Emscripten cache is incomplete; its sysroot installation stamp is absent.'
 }
 $null = Get-Command cmake, ninja, git -ErrorAction Stop
 
@@ -86,8 +89,10 @@ try {
     [Environment]::SetEnvironmentVariable('FROZEN_CACHE', 'True', 'Process')
     $buildRoot = Join-Path $outputRoot 'cmake'
     $ownedCMakeRoot = Join-Path $PSScriptRoot 'JoltBrowser'
+    $joltCSourceCMake = $joltCSource.Replace('\', '/')
+    $joltSourceCMake = $joltSource.Replace('\', '/')
     $configure = @($emcmake, 'cmake', '-S', $ownedCMakeRoot, '-B', $buildRoot, '-G', 'Ninja',
-        '-DCMAKE_BUILD_TYPE=Release', "-DXRE_JOLTC_SOURCE=$joltCSource", "-DJOLT_PHYSICS_ROOT=$joltSource", '-DJPH_BUILD_SHARED=OFF',
+        '-DCMAKE_BUILD_TYPE=Release', "-DXRE_JOLTC_SOURCE=$joltCSourceCMake", "-DJOLT_PHYSICS_ROOT=$joltSourceCMake", '-DJPH_BUILD_SHARED=OFF',
         '-DJPH_SAMPLES=OFF', '-DJPH_INSTALL=OFF', '-DJPH_USE_DX12=OFF', '-DJPH_USE_VK=OFF',
         '-DJPH_USE_MTL=OFF', '-DJPH_USE_CPU_COMPUTE=OFF', '-DCROSS_PLATFORM_DETERMINISTIC=OFF',
         '-DUSE_WASM_SIMD=ON', '-DINTERPROCEDURAL_OPTIMIZATION=OFF')

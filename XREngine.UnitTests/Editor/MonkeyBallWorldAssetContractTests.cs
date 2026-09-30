@@ -204,7 +204,7 @@ public sealed class MonkeyBallWorldAssetContractTests
     {
         string game = ReadMonkeyBallScript("MonkeyBallGameComponent.cs");
         string physx = ReadRepoFile(
-            "XREngine.Runtime.Core",
+            "XREngine.Runtime.Physics.PhysX",
             "Scene",
             "Physics",
             "Physx",

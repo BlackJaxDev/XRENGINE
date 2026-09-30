@@ -104,8 +104,14 @@ public sealed class NativeSubsystemDependencyBoundaryTests
                 "XREngine.Runtime.Physics.Authoring", "XREngine.Runtime.Rendering.ImGui",
                 "XREngine.Runtime.ModelAssetPipeline",
             },
-            ["XREngine.Server"] = new(bootstrapModules, StringComparer.Ordinal),
-            ["XREngine.VRClient"] = new(bootstrapModules, StringComparer.Ordinal),
+            ["XREngine.Server"] = new(bootstrapModules, StringComparer.Ordinal)
+            {
+                "XREngine.Runtime.ModelAssetPipeline",
+            },
+            ["XREngine.VRClient"] = new(bootstrapModules, StringComparer.Ordinal)
+            {
+                "XREngine.Runtime.ModelAssetPipeline",
+            },
             ["XREngine.RenderBench"] = new(StringComparer.Ordinal)
             {
                 "XREngine.Runtime.Rendering.Vulkan", "XREngine.Runtime.Imaging.Magick",

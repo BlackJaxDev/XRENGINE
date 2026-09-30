@@ -162,7 +162,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     }
 
     [Test]
-    public void BootstrapOwnsHostCompositionAndCoreAdapterAotRoots()
+    public void BootstrapOwnsHostCompositionAndApprovedFactoryInputs()
     {
         string root = ResolveWorkspaceRoot();
         string bootstrapRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap");
@@ -197,7 +197,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         adapterBootstrap.ShouldContain("DisposeWithoutLock()");
         foreach (string adapterName in BootstrapAotAdapterNames)
             bootstrapProject.ShouldContain($"..\\{adapterName}\\**\\*.cs");
-        bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
+        bootstrapProject.ShouldContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
         bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
         File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }

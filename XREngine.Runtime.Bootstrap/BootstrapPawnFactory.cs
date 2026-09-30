@@ -32,6 +32,10 @@ public static class BootstrapPawnFactory
 
     public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
     {
+        // Dedicated worlds obtain remote pawns through networking, without local controllers or devices.
+        if (isServer)
+            return null;
+
         var settings = RuntimeBootstrapState.Settings;
 
         SceneNode? characterPawnModelParentNode = null;

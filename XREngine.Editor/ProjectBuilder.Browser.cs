@@ -82,6 +82,7 @@ internal static partial class ProjectBuilder
             {
                 Cancellation.ThrowIfCancellationRequested();
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
+                InstallPlayerShell(site);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     schema = 1,
@@ -97,6 +98,42 @@ internal static partial class ProjectBuilder
                 Cleanup();
                 throw;
             }
+        }
+
+        private void InstallPlayerShell(string site)
+        {
+            string expectedSite = Path.GetFullPath(Path.Combine(PublishRoot, "wwwroot"));
+            if (!string.Equals(Path.GetFullPath(site), expectedSite, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Browser publish returned an unexpected site directory.");
+            DirectoryInfo siteDirectory = new(expectedSite);
+            if (!siteDirectory.Exists || siteDirectory.LinkTarget is not null ||
+                (siteDirectory.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Browser publish site must be a regular directory.");
+
+            string PlayerFile(string name)
+            {
+                string path = Path.GetFullPath(Path.Combine(expectedSite, name));
+                if (!string.Equals(Path.GetDirectoryName(path), expectedSite, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Browser shell file resolved outside the published site.");
+                FileInfo file = new(path);
+                if (file.LinkTarget is not null || (file.Exists && (file.Attributes & FileAttributes.ReparsePoint) != 0))
+                    throw new InvalidOperationException("Browser shell files cannot be linked.");
+                return path;
+            }
+
+            string player = PlayerFile("player.html");
+            if (!File.Exists(player) || !File.Exists(PlayerFile("player.js")) ||
+                !File.Exists(PlayerFile("browser-runtime.js")))
+                throw new InvalidOperationException("Browser publish did not include the player shell.");
+
+            // Static hosts may prefer stale precompressed variants over the replaced HTML.
+            foreach (string name in new[]
+            {
+                "index.html.br", "index.html.gz", "main.js", "main.js.br", "main.js.gz",
+                "browser-publish.json.br", "browser-publish.json.gz"
+            })
+                File.Delete(PlayerFile(name));
+            File.Copy(player, PlayerFile("index.html"), overwrite: true);
         }
 
         internal void Commit()

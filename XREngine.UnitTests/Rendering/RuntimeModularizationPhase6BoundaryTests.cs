@@ -23,6 +23,8 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         "XREngine.Runtime.InputIntegration",
         "XREngine.Runtime.ModelAssetPipeline",
         "XREngine.Runtime.ModelingIntegration",
+        "XREngine.Runtime.Physics.PhysX",
+        "XREngine.Runtime.Platform.Desktop",
         "XREngine.Runtime.Rendering",
     };
 
@@ -45,7 +47,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             ["XREngine.Runtime.Rendering.Vulkan"] =
                 ["XREngine.Runtime.Rendering", "XREngine.Runtime.Core", "XREngine.Data", "XREngine.Extensions"],
             ["XREngine.Runtime.AnimationIntegration"] =
-                ["OscCore", "XREngine.Animation", "XREngine.Data", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
+                ["XREngine.Animation", "XREngine.Data", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
             ["XREngine.Runtime.AudioIntegration"] =
                 ["XREngine.Audio", "XREngine.Data", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
             ["XREngine.Runtime.InputIntegration"] =
@@ -58,19 +60,42 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             [
                 "XREngine.Animation",
                 "XREngine.Audio",
+                "XREngine.Audio.Audio2Face",
+                "XREngine.Audio.NAudio",
+                "XREngine.Audio.OpenAL",
+                "XREngine.Audio.OVRLipSync",
+                "XREngine.Audio.SteamAudio",
+                "XREngine.ControlPlane",
                 "XREngine.Data",
                 "XREngine.Extensions",
                 "XREngine.Fbx",
                 "XREngine.Gltf",
                 "XREngine.Input",
+                "XREngine.Input.XInput",
                 "XREngine.Modeling",
                 "XREngine.Runtime.AnimationIntegration",
                 "XREngine.Runtime.AudioIntegration",
                 "XREngine.Runtime.Core",
+                "XREngine.Runtime.Diagnostics.Desktop",
+                "XREngine.Runtime.Imaging.Magick",
                 "XREngine.Runtime.InputIntegration",
+                "XREngine.Runtime.IO.DirectStorage",
+                "XREngine.Runtime.Media.FFmpeg",
+                "XREngine.Runtime.MeshProcessing.Meshoptimizer",
+                "XREngine.Runtime.Net.Osc",
+                "XREngine.Runtime.Net.Sockets",
+                "XREngine.Runtime.Physics.Jolt",
+                "XREngine.Runtime.Physics.PhysX",
+                "XREngine.Runtime.Platform.Desktop",
                 "XREngine.Runtime.Rendering",
                 "XREngine.Runtime.Rendering.OpenGL",
                 "XREngine.Runtime.Rendering.Vulkan",
+                "XREngine.Runtime.Text.FreeType",
+                "XREngine.Runtime.UI.Rive",
+                "XREngine.Runtime.UI.Skia",
+                "XREngine.Runtime.UI.Ultralight",
+                "XREngine.Runtime.XR.OpenVR",
+                "XREngine.Runtime.XR.OpenXR",
             ],
         };
 
@@ -208,7 +233,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
     }
 
     [Test]
-    public void P65A_ModelAuthoringAssetIoAndRuntimeConsumptionStaySeparated()
+    public void ModelAuthoringAssetIoAndRuntimeConsumptionRespectCompositionBoundary()
     {
         string root = ResolveWorkspaceRoot();
         const string assetPipeline = "XREngine.Runtime.ModelAssetPipeline";
@@ -286,6 +311,17 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             Assert.That(references, Does.Not.Contain(modelingIntegration));
             Assert.That(references, Does.Not.Contain("XREngine.Modeling"));
         }
+
+        foreach (string applicationProject in new[] { "XREngine.Server", "XREngine.VRClient" })
+        {
+            HashSet<string> references = ReadProjectReferenceNames(Path.Combine(
+                root,
+                applicationProject,
+                $"{applicationProject}.csproj"));
+            Assert.That(references, Does.Contain(assetPipeline));
+            Assert.That(references, Does.Not.Contain(modelingIntegration));
+            Assert.That(references, Does.Not.Contain("XREngine.Modeling"));
+        }
     }
 
     [Test]
@@ -314,7 +350,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
     }
 
     [Test]
-    public void P67_RemovedFacadeCargo_HasFinalModuleOwners()
+    public void RemovedFacadeCargo_HasNativeModuleOwners()
     {
         string root = ResolveWorkspaceRoot();
         string facadeProject = Path.Combine(root, "XRENGINE", "XREngine.csproj");
@@ -323,10 +359,10 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         Assert.That(File.Exists(Path.Combine(root, "XREngine.Runtime.Core", "runtimes", "win-x64", "native", "lib_coacd.dll")), Is.True);
         Assert.That(File.Exists(Path.Combine(root, "ThirdParty", "NVIDIA", "SDK", "win-x64", "nis.license.txt")), Is.True);
 
-        string coreProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Core", "XREngine.Runtime.Core.csproj"));
-        string renderingProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Rendering", "XREngine.Runtime.Rendering.csproj"));
-        Assert.That(coreProject, Does.Contain("<Target Name=\"EnsureCoACD\""));
-        Assert.That(renderingProject, Does.Contain("<Target Name=\"CopyRestirNative\""));
+        string authoringProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Physics.Authoring", "XREngine.Runtime.Physics.Authoring.csproj"));
+        string openGlProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Rendering.OpenGL", "XREngine.Runtime.Rendering.OpenGL.csproj"));
+        Assert.That(authoringProject, Does.Contain("<Target Name=\"EnsureCoACD\""));
+        Assert.That(openGlProject, Does.Contain("<Target Name=\"CopyRestirNative\""));
     }
 
     [Test]

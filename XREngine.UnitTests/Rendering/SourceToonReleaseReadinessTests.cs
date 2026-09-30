@@ -94,7 +94,7 @@ public sealed class SourceToonReleaseReadinessTests
     public void ConversionChecklistIsFullyClosed()
     {
         string checklist = File.ReadAllText(FindRepositoryFile(
-            "docs", "work", "todo", "rendering", "poiyomi-toon-93-parity-checklist.md"));
+            "docs", "work", "todo", "COMPLETED", "poiyomi-toon-93-parity-checklist.md"));
         checklist.ShouldContain("- Status: Complete");
         checklist.ShouldNotContain("- [ ]");
     }

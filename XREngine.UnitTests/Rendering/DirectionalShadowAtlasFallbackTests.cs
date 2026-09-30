@@ -334,7 +334,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
     public void VulkanDynamicFramebufferTransitions_UseOrderedAttachmentTargets()
     {
         string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs");
 
         framebufferSource.ShouldContain("private AttachmentTargetInfo[]? _attachmentTargets;");
         framebufferSource.ShouldContain("internal bool TryGetAttachmentTarget(");
@@ -348,7 +348,8 @@ public sealed class DirectionalShadowAtlasFallbackTests
     public void VulkanLayeredFramebuffer_UsesAttachmentLayerCountForTextureArrays()
     {
         string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.RenderScopes.cs")
+            + ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Recording/VulkanRenderer.ClearAndPublishRecording.cs");
 
         framebufferSource.ShouldContain("public uint FramebufferLayers { get; private set; } = 1u;");
         framebufferSource.ShouldContain("uint framebufferLayers = ResolveFramebufferLayers(attachments);");
@@ -366,7 +367,8 @@ public sealed class DirectionalShadowAtlasFallbackTests
     {
         string meshRendererSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string drawingSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
-        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
+        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.RenderStateApi.cs")
+            + ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.MeshMaterialOperations.cs");
         string resolverSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
         string shadowStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/LayeredShadowUniformState.cs");
 

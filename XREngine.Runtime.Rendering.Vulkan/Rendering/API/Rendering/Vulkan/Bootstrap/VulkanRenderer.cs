@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Text.Json.Nodes;
 using System.Threading;
 using XREngine.Imaging;
 using Silk.NET.Vulkan;
@@ -583,6 +584,215 @@ public sealed partial class VulkanRenderer :
         // unlike OpenGL there is no thread-local error queue to drain here.
     }
     object IRenderBackendDiagnosticsCapability.GetLiveImageAllocationDiagnostics(int limit) => _resourceRuntime.GetLiveImageAllocationDiagnostics(limit);
+    object IRenderBackendDiagnosticsCapability.GetLiveResourceOwnerDiagnostics(int top, bool collapseOwnerSuffix, out int groupCount)
+    {
+        IReadOnlyList<VulkanLiveResourceOwnerCount> groups = CaptureLiveResourceOwners(top, collapseOwnerSuffix);
+        groupCount = groups.Count;
+        int live = 0;
+        JsonArray ownerGroups = new();
+        for (int index = 0; index < groups.Count; index++)
+        {
+            live += groups[index].Live;
+            VulkanLiveResourceOwnerCount group = groups[index];
+            ownerGroups.Add(new JsonObject
+            {
+                ["type"] = group.Type,
+                ["owner"] = group.Owner,
+                ["live"] = group.Live,
+                ["pendingRetirement"] = group.PendingRetirement,
+            });
+        }
+        return new JsonObject { ["returned_live"] = live, ["groups"] = ownerGroups };
+    }
+    object? IRenderBackendDiagnosticsCapability.GetPresentNowTerminalDiagnostics()
+    {
+        VulkanPresentNowTerminalDiagnostic diagnostic = CapturePresentNowTerminalDiagnostic();
+        if (!diagnostic.IsValid)
+            return null;
+
+        return new JsonObject
+        {
+            ["transition_id"] = diagnostic.TransitionId,
+            ["frame_id"] = diagnostic.FrameId,
+            ["frame_slot"] = diagnostic.FrameSlot,
+            ["accepted_scene_epoch"] = diagnostic.AcceptedSceneEpoch,
+            ["output_generation"] = diagnostic.OutputGeneration,
+            ["readiness_stage"] = diagnostic.ReadinessStage,
+            ["active_ticket"] = diagnostic.ActiveTicket,
+            ["dependency_chain"] = diagnostic.DependencyChain,
+            ["disposition"] = diagnostic.Disposition,
+            ["elapsed_ms"] = diagnostic.ElapsedMilliseconds,
+            ["since_last_progress_ms"] = diagnostic.SinceLastProgressMilliseconds,
+            ["mesh_request_count"] = diagnostic.MeshRequestCount,
+            ["failure_type"] = diagnostic.FailureType,
+            ["detail"] = diagnostic.Detail,
+        };
+    }
+    object? IRenderBackendDiagnosticsCapability.GetPresentNowFailureDiagnostics()
+    {
+        VulkanPresentNowFailureDiagnostic diagnostic = CapturePresentNowFailureDiagnostic();
+        if (!diagnostic.IsValid)
+            return null;
+
+        return new JsonObject
+        {
+            ["sequence"] = diagnostic.Sequence,
+            ["frame_id"] = diagnostic.FrameId,
+            ["frame_slot"] = diagnostic.FrameSlot,
+            ["accepted_scene_epoch"] = diagnostic.AcceptedSceneEpoch,
+            ["output_generation"] = diagnostic.OutputGeneration,
+            ["readiness_stage"] = diagnostic.ReadinessStage,
+            ["active_ticket"] = diagnostic.ActiveTicket,
+            ["dependency_chain"] = diagnostic.DependencyChain,
+            ["disposition"] = diagnostic.Disposition,
+            ["elapsed_ms"] = diagnostic.ElapsedMilliseconds,
+            ["since_last_progress_ms"] = diagnostic.SinceLastProgressMilliseconds,
+            ["mesh_request_count"] = diagnostic.MeshRequestCount,
+            ["failure_type"] = diagnostic.FailureType,
+            ["detail"] = diagnostic.Detail,
+        };
+    }
+    object? IRenderBackendDiagnosticsCapability.GetDesktopFrameTerminalDiagnostics()
+    {
+        VulkanDesktopFrameTerminalDiagnostic diagnostic = CaptureDesktopFrameTerminalDiagnostic();
+        if (!diagnostic.IsValid)
+            return null;
+
+        return new JsonObject
+        {
+            ["sequence"] = diagnostic.Sequence,
+            ["frame_id"] = diagnostic.FrameId,
+            ["frame_slot"] = diagnostic.FrameSlot,
+            ["outcome"] = diagnostic.Outcome,
+            ["reason"] = diagnostic.Reason,
+            ["failure_kind"] = diagnostic.FailureKind,
+            ["failure_stage"] = diagnostic.FailureStage,
+            ["native_result"] = diagnostic.NativeResult,
+            ["exception_type"] = diagnostic.ExceptionType,
+            ["detail"] = diagnostic.Detail,
+            ["ownership_settled"] = diagnostic.OwnershipSettled,
+        };
+    }
+    object IRenderBackendDiagnosticsCapability.GetRetirementDiagnostics()
+    {
+        VulkanRetirementDiagnostic diagnostic = CaptureRetirementDiagnostics();
+        JsonArray classes = new();
+        foreach (VulkanRetirementClassDiagnostic item in diagnostic.Classes)
+        {
+            classes.Add(new JsonObject
+            {
+                ["class"] = item.Class,
+                ["ordinaryCap"] = item.OrdinaryCap,
+                ["highWaterMark"] = item.HighWaterMark,
+                ["admitted"] = item.Admitted,
+                ["completed"] = item.Completed,
+                ["deferred"] = item.Deferred,
+                ["backlog"] = item.Backlog,
+                ["oldestPendingAgeMilliseconds"] = item.OldestPendingAgeMilliseconds,
+                ["uncappedSafetyDrain"] = item.UncappedSafetyDrain,
+                ["uncappedSafetyDrainActivations"] = item.UncappedSafetyDrainActivations,
+            });
+        }
+
+        return new JsonObject
+        {
+            ["frameSerial"] = diagnostic.FrameSerial,
+            ["drainElapsedMilliseconds"] = diagnostic.DrainElapsedMilliseconds,
+            ["drainDurationSampleCount"] = diagnostic.DrainDurationSampleCount,
+            ["drainDurationOverflowCount"] = diagnostic.DrainDurationOverflowCount,
+            ["maximumPublishedDrainDurationMilliseconds"] = diagnostic.MaximumPublishedDrainDurationMilliseconds,
+            ["drainDurationP50Milliseconds"] = diagnostic.DrainDurationP50Milliseconds,
+            ["drainDurationP95Milliseconds"] = diagnostic.DrainDurationP95Milliseconds,
+            ["drainDurationP99Milliseconds"] = diagnostic.DrainDurationP99Milliseconds,
+            ["classes"] = classes,
+            ["quarantinedFailures"] = diagnostic.QuarantinedFailures,
+            ["presentationMaintenanceEnabled"] = diagnostic.PresentationMaintenanceEnabled,
+            ["desktopGeneration"] = diagnostic.DesktopGeneration,
+            ["currentGenerationPresentsSubmitted"] = diagnostic.CurrentGenerationPresentsSubmitted,
+            ["currentGenerationPresentsCompleted"] = diagnostic.CurrentGenerationPresentsCompleted,
+            ["currentGenerationCapacityDeferrals"] = diagnostic.CurrentGenerationCapacityDeferrals,
+            ["hasUnprovenLegacyPresent"] = diagnostic.HasUnprovenLegacyPresent,
+            ["deviceWaitIdleCalls"] = diagnostic.DeviceWaitIdleCalls,
+            ["liveResourceCount"] = diagnostic.LiveResourceCount,
+            ["trackedDescriptorSetCount"] = diagnostic.TrackedDescriptorSetCount,
+            ["pendingRetirementCount"] = diagnostic.PendingRetirementCount,
+            ["oldestPendingRetirementAgeMilliseconds"] = diagnostic.OldestPendingRetirementAgeMilliseconds,
+        };
+    }
+    object IRenderBackendDiagnosticsCapability.GetValidationDiagnostics()
+    {
+        VulkanValidationDiagnosticSnapshot diagnostic = CaptureValidationDiagnostics();
+        JsonArray messages = new();
+        foreach (VulkanValidationDiagnosticMessage item in diagnostic.Messages)
+        {
+            messages.Add(new JsonObject
+            {
+                ["identity"] = item.Identity,
+                ["count"] = item.Count,
+                ["errorCount"] = item.ErrorCount,
+                ["warningCount"] = item.WarningCount,
+                ["firstFrameId"] = item.FirstFrameId,
+                ["lastFrameId"] = item.LastFrameId,
+                ["firstSample"] = item.FirstSample,
+                ["lastSample"] = item.LastSample,
+            });
+        }
+
+        return new JsonObject
+        {
+            ["standardValidationEnabled"] = diagnostic.StandardValidationEnabled,
+            ["synchronizationValidationEnabled"] = diagnostic.SynchronizationValidationEnabled,
+            ["debugMessengerActive"] = diagnostic.DebugMessengerActive,
+            ["errorCount"] = diagnostic.ErrorCount,
+            ["warningCount"] = diagnostic.WarningCount,
+            ["suppressedWarningCount"] = diagnostic.SuppressedWarningCount,
+            ["overflowCount"] = diagnostic.OverflowCount,
+            ["messages"] = messages,
+        };
+    }
+    bool IRenderBackendDiagnosticsCapability.TryCapturePresentNowFailureForFrame(
+        long frameAuthorityId,
+        out RenderBackendPresentNowFailureSnapshot diagnostic)
+    {
+        diagnostic = default;
+        if (!TryCapturePresentNowFailureDiagnostic(frameAuthorityId, out VulkanPresentNowFailureDiagnostic native))
+            return false;
+
+        diagnostic = new(
+            native.Sequence,
+            native.FrameId,
+            native.FrameSlot,
+            native.AcceptedSceneEpoch,
+            native.OutputGeneration,
+            native.ReadinessStage,
+            native.ActiveTicket,
+            native.DependencyChain,
+            native.Disposition,
+            native.FailureType,
+            native.Detail);
+        return true;
+    }
+    bool IRenderBackendDiagnosticsCapability.TryCaptureMaterialTableDiagnosticsForFrame(
+        long frameAuthorityId,
+        out RenderBackendMaterialTableDiagnosticsSnapshot diagnostic)
+    {
+        diagnostic = default;
+        if (!TryCaptureMaterialTableDiagnostics(frameAuthorityId, out VulkanMaterialTableDiagnosticCounters native))
+            return false;
+
+        diagnostic = new(
+            native.NativeAllocations,
+            native.GrowthPending,
+            native.Banks,
+            native.PendingAllocations,
+            native.StandbyAllocationsQueued,
+            native.StandbyAllocationsReady,
+            native.StandbyClaims,
+            native.StandbyReplenishmentFailures,
+            native.StandbyBanks,
+            native.StandbyPendingAllocations);
+        return true;
+    }
     object IRenderBackendDiagnosticsCapability.GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains, int? pipelineIdentity) => _commandRuntime.GetLastFrameOpTraceDiagnostics(limit, targetContains, pipelineIdentity);
     object IRenderBackendDiagnosticsCapability.GetFinalPresentationLedgerDiagnostics(int limit) => _frameLoop.GetFinalPresentationLedgerDiagnostics(limit);
     object IRenderBackendDiagnosticsCapability.ConfigureFinalPresentationLedgerDiagnostics(bool enabled, bool frozen, bool clear) => _frameLoop.ConfigureFinalPresentationLedgerDiagnostics(enabled, frozen, clear);
