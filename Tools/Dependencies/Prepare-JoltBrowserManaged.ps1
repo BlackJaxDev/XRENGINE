@@ -68,6 +68,8 @@ Assert-FileHash $licensePath $pin.managedLicenseSha256
 Assert-FileHash (Join-Path $SourceDirectory $apiRelativePath) $pin.managedApiSha256
 $lifetimePatch = Join-Path $PSScriptRoot 'JoltBrowser/managed-lifetime.patch'
 Assert-FileHash $lifetimePatch $pin.managedLifetimePatchSha256
+$callbackAbiPatch = Join-Path $PSScriptRoot 'JoltBrowser/managed-callback-abi.patch'
+Assert-FileHash $callbackAbiPatch $pin.managedCallbackAbiPatchSha256
 foreach ($sourcePin in $pin.managedLifetimeSources) {
     Assert-FileHash (Join-Path $SourceDirectory $sourcePin.path) $sourcePin.originalSha256
 }
@@ -92,11 +94,16 @@ if ([regex]::Matches($api, [regex]::Escape($incorrectSignature)).Count -ne 1) {
     throw 'The reviewed contact-listener return-type patch does not match exactly one source declaration.'
 }
 [IO.File]::WriteAllText($stagedApi, $api.Replace($incorrectSignature, $correctSignature), [Text.UTF8Encoding]::new($false))
+Assert-FileHash $stagedApi $pin.managedContactListenerPatchedApiSha256
+
+# Preserve typed callbacks while passing pointer-sized tokens across the browser native ABI.
+$stagedRelative = [IO.Path]::GetRelativePath($repositoryRoot, $stagedRoot).Replace('\', '/')
+Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $callbackAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $callbackAbiPatch)
 Assert-FileHash $stagedApi $pin.managedPatchedApiSha256
 
 # Apply only the separately reviewed lifetime correction to the staged tree.
 # The pristine source checkout and the desktop NuGet supply remain untouched.
-$stagedRelative = [IO.Path]::GetRelativePath($repositoryRoot, $stagedRoot).Replace('\', '/')
 Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $lifetimePatch)
 Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $lifetimePatch)
 foreach ($sourcePin in $pin.managedLifetimeSources) {
@@ -115,6 +122,7 @@ $manifest = [ordered]@{
     LicenseSha256 = $pin.managedLicenseSha256
     Patch = $pin.managedPatch
     PatchedApiSha256 = $pin.managedPatchedApiSha256
+    CallbackAbiPatchSha256 = $pin.managedCallbackAbiPatchSha256
     LifetimePatchSha256 = $pin.managedLifetimePatchSha256
     SourceFiles = @($stagedSources | Sort-Object FullName | ForEach-Object {
         [ordered]@{

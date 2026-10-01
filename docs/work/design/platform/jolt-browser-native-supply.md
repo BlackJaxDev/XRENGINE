@@ -1,6 +1,6 @@
 # Browser Jolt native supply proposal
 
-Status: the recorded browser-only native supply was approved on 2026-09-30, and a browser-only managed source build correcting reviewed ABI and ownership errors was approved on 2026-10-01. The corrected managed source and current pinned native archives compile and statically relink successfully. Browser execution remains blocked by the validation environment; desktop package supply and defaults remain unchanged.
+Status: the recorded browser-only native supply was approved on 2026-09-30, and a browser-only managed source build correcting reviewed ABI and ownership errors was approved on 2026-10-01. The corrected managed source and current pinned native archives compile and statically relink successfully. The published WebAssembly module now passes native simulation, managed callbacks, raycast, teardown and foundation reinitialization under Node; the corrected Chromium run remains required. Desktop package supply and defaults remain unchanged.
 
 Related: [native subsystem debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md).
 
@@ -40,7 +40,7 @@ Evidence is under `Build/_AgentValidation/20260930-105523-unified-browser-runtim
 
 ## Browser managed source supply
 
-[Prepare-JoltBrowserManaged.ps1](../../../../Tools/Dependencies/Prepare-JoltBrowserManaged.ps1) verifies a clean checkout of JoltPhysicsSharp commit `77a5be2dd30d587c1981dfcaf15851f18041b39c` (version 2.22.0), checks the exact MIT license and original source SHA-256 hashes from the lock, and stages every managed source file beneath a reserved validation output. The ABI correction changes the double-precision `JPH_ContactListener_SetProcs` overload from `nint` to `void`. A separately reviewed three-file ownership correction is described below. The pristine checkout is never patched. Exact original, patch, and corrected-source hashes and a per-file provenance manifest accompany the staged license.
+[Prepare-JoltBrowserManaged.ps1](../../../../Tools/Dependencies/Prepare-JoltBrowserManaged.ps1) verifies a clean checkout of JoltPhysicsSharp commit `77a5be2dd30d587c1981dfcaf15851f18041b39c` (version 2.22.0), checks the exact MIT license and original source SHA-256 hashes from the lock, and stages every managed source file beneath a reserved validation output. The return-type correction changes the double-precision `JPH_ContactListener_SetProcs` overload from `nint` to `void`. The separately pinned callback ABI patch preserves typed managed APIs while passing pointer-sized tokens across native import boundaries. A separately reviewed three-file ownership correction is described below. The pristine checkout is never patched. Exact original, patch, and corrected-source hashes and a per-file provenance manifest accompany the staged license.
 
 The [owned managed-only project](../../../../Tools/Dependencies/JoltBrowser/Managed/JoltPhysicsSharp.Browser.csproj) compiles this staged source into the original JoltPhysicsSharp assembly identity without importing the upstream project, whose project references would bring desktop native packages. It checks the corrected interop, ownership files, license and every inventoried source hash before compilation. Its only warning exclusions cover existing upstream native-filled-field and nullable diagnostics. The Spike consumes this project and still stages the byte-identical `joltc.a` alias. The production desktop leaf continues using its original NuGet package.
 
@@ -74,6 +74,26 @@ The untrimmed interpreter spike published successfully on 2026-10-01 with no com
 Evidence is under `Build/_AgentValidation/20261001-163800-webgpu-baseline/`: `logs/jolt-spike-publish-3.log`, `logs/jolt-spike-publish-4.log`, and `reports/jolt-wasm-linkage.json`. This environment's SDK out-of-process task hosts cannot create their IPC sockets, so local qualification used ignored MSBuild `UsingTask Override="true"` declarations to run the same pinned SDK tasks in-process; SDK files and permissions were unchanged. Normal CI does not depend on this local workaround.
 
 Playwright with installed Chromium 151.0.7922.173 failed before loading the spike page because Chromium's process-singleton socket creation returned `EPERM`, including the reviewed escalation attempt. Evidence: `logs/jolt-spike-browser-2.log`. Create-world, 120 steps, managed contact callbacks, raycast, and teardown have not run in that browser environment. The spike now checks contact-added and contact-persisted callbacks as well as the original stepping/raycast loop.
+
+### Callback Import ABI And Native Execution
+
+Chromium CI run `36912281747` at checkpoint `36c4bde` reached the actual engine world lifecycle, but its standalone native spike aborted with Mono `aot-runtime-wasm.c:90` and `:188`. The initial spike emitted its first result only after the raycast, so that empty console did not establish an initialization failure. Loading the same published `wwwroot/_framework/dotnet.js` directly in Node 24.19.0 reproduced the identical WebAssembly function IDs and offsets without a browser or socket. Added stage output established that native foundation/world creation, 120 fixed steps, and managed contact callbacks succeeded; the failure occurred on entering the all-hit raycast.
+
+The interpreter could not translate the direct function-pointer parameter in `JPH_NarrowPhaseQuery_CastRay3`. The browser-only [callback ABI patch](../../../../Tools/Dependencies/JoltBrowser/managed-callback-abi.patch) retains the original typed managed methods and unmanaged callback targets, but redirects each affected native call to an explicitly named private import taking `nint` for the callback. The cast preserves the native WebAssembly function-table token; the entry point, return marshalling, parameter order, pointer/reference arguments and calling convention stay unchanged. No delegate allocation, generated P/Invoke-table edit, native assertion suppression, trimming workaround or alternate solver is introduced.
+
+The exact source mapping is confined to `JoltApi.cs` at managed commit `77a5be2dd30d587c1981dfcaf15851f18041b39c`:
+
+- Two foundation trace/assert callback imports
+- Two shape query result-callback imports
+- Four broad-phase query collector imports
+- Sixteen narrow-phase query imports: both precision overloads of raycast collector/result, point collector/result, shape-overlap collector/result and shape-cast collector/result
+- One vehicle tire-impulse callback import
+
+The 25 typed wrapper signatures remain available. Callback fields passed inside native procedure structs are untouched. The patch hash is `184291897af5e9949b32b7b2c45a682d24e7efcc9a866b487f0f8b65a2766afa`; the final corrected interop source hash is `cfd9c4fafc12ab609461c863e5ade61f833ddc9f16909471af10c863d84626ef`. Preparation verifies the original source, intermediate return-type correction, separate callback patch, final source, and existing lifetime patch before producing its per-file manifest. The native source/compiler pins and the lifetime patch remain unchanged. Re-running the native build performed no compile work and reproduced both previously recorded archive hashes.
+
+The corrected published WebAssembly module completed 16 native world lifecycles across two calls to managed Main in one Node runtime. Each call initialized and shut down the native foundation. Every lifecycle completed 120 fixed steps, reported box Y=0.47999975, two ray hits, one contact-added callback and 31 contact-persisted callbacks, rejected reuse of transferred filters, and passed world/filter disposal checks. This establishes executed native stepping, raycast callbacks, teardown and reinitialization; it is not a browser GPU qualification or an allocation/leak measurement. A reflection audit found zero direct function-pointer parameters among 1,198 native import declarations and retained all 25 typed callback wrappers.
+
+Evidence under `Build/_AgentValidation/20261001-163800-webgpu-baseline/`: `logs/jolt-spike-node-stages.log` records the failure immediately before the raycast; `logs/jolt-callback-node-after.log` records the successful repeated native execution; `logs/jolt-callback-spike-publish-final.log` records the final publish; `reports/jolt-callback-import-metadata.json` records the assembly audit. The ignored `scratch/run-jolt-spike-node.mjs` runner takes the published framework loader path and runs two complete init/shutdown passes. The corrected Chromium CI lifecycle gate remains required.
 
 ### Reviewed Managed Ownership Correction
 
