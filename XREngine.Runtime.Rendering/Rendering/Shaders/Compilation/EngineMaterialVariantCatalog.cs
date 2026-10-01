@@ -1,0 +1,40 @@
+using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
+
+namespace XREngine.Rendering.Shaders.Compilation;
+
+/// <summary>
+/// Immutable, content-verified catalog of complete engine material variants.
+/// Missing variants are unsupported rather than replaced by a guessed shader.
+/// </summary>
+public sealed class EngineMaterialVariantCatalog
+{
+    private readonly ImmutableDictionary<EngineMaterialVariantKey, ShaderProgramArtifact> _variants;
+
+    public EngineMaterialVariantCatalog(IEnumerable<EngineMaterialVariantEntry> entries, ShaderProgramArtifactCatalog artifacts)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(artifacts);
+        ImmutableDictionary<EngineMaterialVariantKey, ShaderProgramArtifact>.Builder builder =
+            ImmutableDictionary.CreateBuilder<EngineMaterialVariantKey, ShaderProgramArtifact>();
+        foreach (EngineMaterialVariantEntry entry in entries)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+            entry.Key.Validate();
+            string identity = ShaderProgramArtifactCatalog.ValidateIdentity(entry.DescriptorIdentity)
+                ?? throw new ArgumentException("A cooked material variant requires a descriptor identity.", nameof(entries));
+            if (!artifacts.TryResolve(identity, entry.Key.Target, out ShaderProgramArtifact? artifact))
+                throw new InvalidDataException($"MaterialVariant.ArtifactMissing: '{identity}' is not a validated {entry.Key.Target} artifact.");
+            if (!string.Equals(artifact.Pass, entry.Key.Pass, StringComparison.Ordinal))
+                throw new InvalidDataException($"MaterialVariant.PassMismatch: '{identity}' declares pass '{artifact.Pass}', not '{entry.Key.Pass}'.");
+            if (!builder.TryAdd(entry.Key, artifact))
+                throw new InvalidDataException($"MaterialVariant.DuplicateKey: '{entry.Key}'.");
+        }
+        _variants = builder.ToImmutable();
+    }
+
+    public int Count => _variants.Count;
+
+    public bool TryResolve(EngineMaterialVariantKey key, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+        => _variants.TryGetValue(key, out artifact);
+}

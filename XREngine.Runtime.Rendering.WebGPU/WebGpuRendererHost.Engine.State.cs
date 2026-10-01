@@ -6,7 +6,14 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuRendererHost
 {
     private WebGpuRasterState _rasterState = WebGpuRasterState.Default;
+    private WebGpuFrameBuffer? _boundEngineFrameBuffer;
     internal WebGpuRasterState RasterState => _rasterState;
+
+    internal WebGpuFrameBuffer? GetBoundEngineFrameBuffer()
+    {
+        _boundEngineFrameBuffer?.EnsureCurrent();
+        return _boundEngineFrameBuffer;
+    }
 
     public override void EnableDepthTest(bool enable)
         => SetField(ref _rasterState, _rasterState with { DepthEnabled = enable }, publishNotifications: false);

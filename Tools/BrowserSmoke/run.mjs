@@ -129,7 +129,8 @@ async function capturePixels(page, png, samples) {
 async function depthCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-depth', config);
     try {
-        const url = `${origin}/diagnostics/engine-mesh.html?manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}`;
+        const url = `${origin}/diagnostics/engine-mesh.html?manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
+            `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`;
         await page.goto(url, { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
         const adapter = await page.evaluate(async () => {
@@ -170,7 +171,7 @@ async function depthCheck(browser, origin, report, config) {
         report.rendererStatistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
         assert(report.rendererStatistics?.draws >= 3 && report.rendererStatistics.frameSubmitCalls > 0,
             'BrowserSmoke.EngineSubmissionMissing: no real engine mesh submissions were recorded.');
-        assert(report.rendererStatistics.packets === 0 && report.rendererStatistics.focusedPipeline?.frames === 0,
+        assert(report.rendererStatistics.packets === 0 && report.rendererStatistics.focusedPipeline === null,
             'BrowserSmoke.ReferencePipelineUsed: the diagnostic submitted reference-scene packets instead of engine commands.');
         await page.screenshot({ path: path.join(config.output, 'engine-depth-page.png'), fullPage: true });
         await page.locator('#stop').click();
@@ -324,7 +325,8 @@ async function main() {
         report.launchArguments = browserLaunchOptions(config).args;
         browser = await chromium.launch(browserLaunchOptions(config));
         report.browser = browser.version();
-        await check('engine-depth', () => depthCheck(browser, hosted.origin, report, config));
+        if (config.engineManifest) await check('engine-depth', () => depthCheck(browser, hosted.origin, report, config));
+        else report.checks.push({ name: 'engine-depth', status: 'skipped', reason: '--engine-manifest was not supplied' });
         await check(config.requireWorldPlay ? 'engine-world-play-stop' : 'engine-diagnostic-export-boot',
             () => enginePageCheck(browser, hosted.origin, report, config));
         let launchDescriptor;

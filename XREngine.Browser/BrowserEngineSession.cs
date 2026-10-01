@@ -4,6 +4,12 @@ using XREngine.Audio;
 using XREngine.Input;
 using XREngine.Networking;
 using System.Runtime.ExceptionServices;
+using XREngine.Rendering;
+using XREngine.Rendering.WebGPU;
+using XREngine.Scene.Physics;
+using XREngine.Components;
+using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Browser;
 
@@ -20,6 +26,16 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
     private IDisposable? _startupPolicy;
     private IDisposable? _assets;
     private IDisposable? _adapters;
+    private IDisposable? _renderingServices;
+    private BrowserCanvasRenderTarget? _canvas;
+    private WebGpuRendererHost? _renderer;
+    private XRViewport? _renderViewport;
+    private int _rendererSession;
+    private static int _nextRendererSession = 0x40000000;
+    private EAdvancedRenderPipelineMode _previousPipelineMode;
+    private bool _pipelineModeChanged;
+    private bool _previousDebugOpaquePipeline;
+    private bool _debugOpaquePipelineChanged;
     private INetworkTransportBackend? _previousNetworkTransport;
     private INetworkTransportBackend? _installedNetworkTransport;
     private bool _networkTransportInstalled;
@@ -44,10 +60,13 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
     public bool HasEngineOwnership => _engineInitialized;
     public int CanvasWidth => _canvasWidth;
     public int CanvasHeight => _canvasHeight;
+    public int RendererSession => _rendererSession;
+    public bool HasPresentedCanvasFrame => _renderer?.IsBackendReplacementFrameReady ?? false;
 
     /// <summary>Composes a fetched XRWorld through the shared world host and begins gameplay.</summary>
     public async Task StartAsync(XRWorld world, GameStartupSettings authoredSettings, GameState initialState,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? canvasId = null,
+        IShaderProgramArtifactResolver? shaderArtifacts = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(authoredSettings);
@@ -73,7 +92,7 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
                 AllowsWindows: false,
                 AllowsAudio: true,
                 AllowsVr: false,
-                AllowsRendererBackends: false));
+                AllowsRendererBackends: canvasId is not null));
             _startupPolicy = RuntimeEngineStartupPolicyServices.Install(BrowserEngineStartupPolicy.Instance);
             _previousNetworkTransport = NetworkTransportServices.Current;
             _installedNetworkTransport = new WebSocketNetworkTransportBackend();
@@ -81,6 +100,26 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _networkTransportInstalled = true;
             Engine.InitializeForCallerThread(settings);
             _engineInitialized = true;
+            if (canvasId is not null)
+            {
+                _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(
+                    BrowserRendererComposition.BackendCatalog, new PhysicsBackendCatalog(),
+                    static () => new DefaultRenderPipeline());
+                _canvas = new BrowserCanvasRenderTarget(canvasId);
+                _renderer = BrowserRendererComposition.CreateRequired(_canvas) as WebGpuRendererHost
+                    ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
+                _renderer.BindShaderArtifacts(shaderArtifacts);
+                _rendererSession = Interlocked.Increment(ref _nextRendererSession);
+                _previousPipelineMode = RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode;
+                RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode = EAdvancedRenderPipelineMode.Disabled;
+                _pipelineModeChanged = true;
+                if (Engine.EditorPreferences?.Debug is { } debugOptions)
+                {
+                    _previousDebugOpaquePipeline = debugOptions.UseDebugOpaquePipeline;
+                    debugOptions.UseDebugOpaquePipeline = false;
+                    _debugOpaquePipelineChanged = true;
+                }
+            }
             if (Engine.EffectiveSettings.GPURenderDispatch ||
                 Engine.EffectiveSettings.ForceMeshSubmissionStrategy is { } forced &&
                 forced != XREngine.Data.Rendering.EMeshSubmissionStrategy.CpuDirect)
@@ -100,7 +139,7 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _adapters = RuntimeAdapterBootstrap.InstallEngineHostServices(
                 RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.Input,
                 _createPhysicsScene,
-                composeRenderedWorlds: false);
+                composeRenderedWorlds: canvasId is not null);
             _world = world;
             _runtimeWorld = Engine.GetOrCreateWorld(world);
             _gameState = initialState;
@@ -118,6 +157,16 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _localPlayer = RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)
                 ?? throw new InvalidOperationException("Browser local-player controller services are not installed.");
             _localPlayer.Viewport = _inputViewport;
+            if (_renderer is not null)
+            {
+                _renderViewport = new XRViewport(null, checked((uint)_canvasWidth), checked((uint)_canvasHeight))
+                {
+                    WorldInstanceOverride = _runtimeWorld.GetRenderWorld(),
+                };
+                RefreshCamera();
+                _renderer.BindEngineViewport(_renderViewport);
+                Engine.Time.Timer.RenderFrame += RenderCanvasFrame;
+            }
             _running = true;
         }
         catch (Exception startupError)
@@ -144,8 +193,50 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
     {
         if (!_running)
             return false;
+        RefreshCamera();
         return Engine.Time.Timer.StepFrame(elapsedSeconds);
     }
+
+    private void RefreshCamera()
+    {
+        if (_renderViewport is null)
+            return;
+        CameraComponent? camera = (_localPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)
+            ?.RuntimeCameraComponent as CameraComponent;
+        if (camera is not null && !ReferenceEquals(_renderViewport.CameraComponent, camera))
+            _renderViewport.CameraComponent = camera;
+    }
+
+    private void RenderCanvasFrame()
+    {
+        if (_canvas?.Surface.CanRender == true)
+            _renderer?.RenderFrame(Engine.Time.Timer.Render.Delta);
+    }
+
+    public void InitializeGraphics(string colorFormat)
+    {
+        if (_renderer is null || _canvas is null || _rendererSession == 0)
+            throw new InvalidOperationException("WebGPU.EngineCanvas.Required: start a canvas world first.");
+        _canvas.SetColorFormat(colorFormat);
+        _renderer.MarkReady(_rendererSession);
+        _renderer.Initialize();
+    }
+
+    public void UpdateSurface(RuntimeSurfaceState surface)
+    {
+        if (_canvas is null || _renderViewport is null)
+            throw new InvalidOperationException("WebGPU.EngineCanvas.Required: start a canvas world first.");
+        bool replaced = surface.Generation != _canvas.Surface.Generation;
+        _canvas.UpdateSurface(surface);
+        if (replaced)
+            _renderViewport.RenderPipelineInstance.InvalidatePhysicalResources();
+        if (surface.CanRender)
+            _renderViewport.Resize(checked((uint)surface.PhysicalWidth), checked((uint)surface.PhysicalHeight));
+        else
+            ResetFrameTiming();
+    }
+
+    public void RendererFailed(bool deviceLost) => _renderer?.MarkFailed(deviceLost);
 
     public bool CaptureDesired => _inputViewport?.CaptureDesired ?? false;
     public void InputKey(int key, bool down) => _inputViewport?.Key(key, down);
@@ -201,6 +292,13 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
         }
 
         _running = false;
+        if (_renderer is not null)
+            Engine.Time.Timer.RenderFrame -= RenderCanvasFrame;
+        if (_renderer is not null)
+            Capture(errors, () => _renderer.BindEngineViewport(null));
+        if (_renderViewport is not null)
+            Capture(errors, _renderViewport.Destroy);
+        _renderViewport = null;
         if (_inputViewport is not null)
             Capture(errors, _inputViewport.Reset);
         if (_localPlayer is not null && ReferenceEquals(_localPlayer.Viewport, _inputViewport))
@@ -231,6 +329,11 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _engineInitialized = false;
         }
 
+        if (_renderer is not null)
+            Capture(errors, _renderer.Dispose);
+        _renderer = null;
+        _canvas = null;
+        _rendererSession = 0;
         if (_gameState?.Worlds is { } worlds)
             Capture(errors, () => worlds.RemoveAll(candidate => ReferenceEquals(candidate, _runtimeWorld)));
         _runtimeWorld = null;
@@ -249,6 +352,19 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
         if (_adapters is { } adapters)
             Capture(errors, adapters.Dispose);
         _adapters = null;
+        if (_renderingServices is not null)
+            Capture(errors, _renderingServices.Dispose);
+        _renderingServices = null;
+        if (_pipelineModeChanged)
+        {
+            Capture(errors, () => RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode = _previousPipelineMode);
+            _pipelineModeChanged = false;
+        }
+        if (_debugOpaquePipelineChanged)
+        {
+            Capture(errors, () => Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = _previousDebugOpaquePipeline);
+            _debugOpaquePipelineChanged = false;
+        }
         if (_networkTransportInstalled)
         {
             if (ReferenceEquals(NetworkTransportServices.Current, _installedNetworkTransport))

@@ -5,6 +5,7 @@ using System.Runtime.InteropServices.JavaScript;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Scene;
+using XREngine.Rendering;
 
 namespace XREngine.Browser;
 
@@ -31,8 +32,19 @@ public static partial class BrowserEngineExports
 
     internal static ShaderProgramArtifactCatalog? ShaderArtifacts => _shaderArtifacts;
 
+    /// <summary>Starts a headless engine world for explicit world-start diagnostics.</summary>
     [JSExport]
-    public static async Task<string> StartAsync(string manifestUrl)
+    public static Task<string> StartAsync(string manifestUrl) => StartCoreAsync(manifestUrl, null);
+
+    /// <summary>Starts the authored world with one production canvas output.</summary>
+    [JSExport]
+    public static Task<string> StartCanvasAsync(string manifestUrl, string canvasId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(canvasId);
+        return StartCoreAsync(manifestUrl, canvasId);
+    }
+
+    private static async Task<string> StartCoreAsync(string manifestUrl, string? canvasId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(manifestUrl);
         int requestedEpoch = Interlocked.Increment(ref _epoch);
@@ -86,7 +98,7 @@ public static partial class BrowserEngineExports
                 throw new OperationCanceledException("Browser world startup was superseded.");
 
             _session = new BrowserEngineSession(physicsFactory);
-            await _session.StartAsync(world, configuredSettings, initialState, token);
+            await _session.StartAsync(world, configuredSettings, initialState, token, canvasId, _shaderArtifacts);
             token.ThrowIfCancellationRequested();
             return $"{world.Name ?? "<unnamed>"}: {_session.World?.RootNodes.Count ?? 0} root nodes playing; " +
                 $"Jolt physics; fixed rate {configuredSettings.FixedFramesPerSecond:F0} Hz; " +
@@ -118,6 +130,27 @@ public static partial class BrowserEngineExports
     [JSExport]
     public static bool Step(double elapsedSeconds)
         => _loading?.IsCancellationRequested == true ? false : _session?.Step(elapsedSeconds) ?? false;
+
+    [JSExport]
+    public static int GetRendererSession() => _session?.RendererSession ?? 0;
+
+    [JSExport]
+    public static bool HasPresentedCanvasFrame() => _session?.HasPresentedCanvasFrame ?? false;
+
+    [JSExport]
+    public static void InitializeCanvasGraphics(string colorFormat)
+        => (_session ?? throw new InvalidOperationException("WebGPU.EngineCanvas.Required: no active engine world."))
+            .InitializeGraphics(colorFormat);
+
+    [JSExport]
+    public static void UpdateCanvasSurface(double logicalWidth, double logicalHeight, int physicalWidth,
+        int physicalHeight, double pixelRatio, int generation, bool visible, bool focused, bool attached)
+        => (_session ?? throw new InvalidOperationException("WebGPU.EngineCanvas.Required: no active engine world."))
+            .UpdateSurface(new RuntimeSurfaceState(logicalWidth, logicalHeight, physicalWidth,
+                physicalHeight, pixelRatio, generation, visible, focused, attached));
+
+    [JSExport]
+    public static void CanvasRendererFailed(bool deviceLost) => _session?.RendererFailed(deviceLost);
 
     /// <summary>Call directly from a trusted page gesture to resume browser output.</summary>
     [JSExport]

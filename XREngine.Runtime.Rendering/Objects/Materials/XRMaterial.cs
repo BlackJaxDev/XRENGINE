@@ -545,6 +545,7 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Shaders):
+                    InvalidateEngineSemantic();
                     PostShadersSet();
                     break;
                 case nameof(Name):
@@ -798,9 +799,11 @@ namespace XREngine.Rendering
 
         private void PreShadersSet()
         {
-            _shaders.PostModified -= ShadersChanged;
+            _shaders.PostModified -= ShadersModified;
             _shaders.PostAnythingAdded -= ShaderAdded;
             _shaders.PostAnythingRemoved -= ShaderRemoved;
+            foreach (XRShader shader in _shaders)
+                ShaderRemoved(shader);
         }
 
         private IReadOnlyList<XRShader> GetShaderList(EShaderType shaderType)
@@ -819,7 +822,7 @@ namespace XREngine.Rendering
 
         private void PostShadersSet()
         {
-            _shaders.PostModified += ShadersChanged;
+            _shaders.PostModified += ShadersModified;
             _shaders.PostAnythingAdded += ShaderAdded;
             _shaders.PostAnythingRemoved += ShaderRemoved;
 
@@ -828,11 +831,18 @@ namespace XREngine.Rendering
             ShadersChanged();
         }
 
+        private void ShadersModified()
+        {
+            InvalidateEngineSemantic();
+            ShadersChanged();
+        }
+
         private void ShaderRemoved(XRShader item)
         {
             if (item is null)
                 return;
             item.Reloaded -= ShaderReloaded;
+            item.SourceChanged -= AuthoredShaderSourceChanged;
         }
 
         private void ShaderAdded(XRShader item)
@@ -840,10 +850,14 @@ namespace XREngine.Rendering
             if (item is null)
                 return;
             item.Reloaded += ShaderReloaded;
+            item.SourceChanged += AuthoredShaderSourceChanged;
         }
 
         private void ShaderReloaded(XRAsset asset)
-            => ShadersChanged();
+        {
+            InvalidateEngineSemantic();
+            ShadersChanged();
+        }
 
         //[TPostDeserialize]
         internal void ShadersChanged()
@@ -1635,6 +1649,8 @@ namespace XREngine.Rendering
                 RenderPass = (int)EDefaultRenderPass.OpaqueDeferred
             };
 
+            material.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitColorV1;
+
             return material;
         }
 
@@ -1737,6 +1753,8 @@ namespace XREngine.Rendering
             material.RenderPass = deferred
                 ? (int)EDefaultRenderPass.OpaqueDeferred
                 : (int)EDefaultRenderPass.OpaqueForward;
+
+            material.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitColorV1;
 
             return material;
         }

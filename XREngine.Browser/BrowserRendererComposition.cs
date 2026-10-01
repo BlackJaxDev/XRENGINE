@@ -15,6 +15,8 @@ internal static class BrowserRendererComposition
         _ = Registration;
     }
 
+    internal static IRendererBackendCatalog BackendCatalog => Catalog;
+
     /// <summary>Creates a canvas renderer through the shared backend catalog.</summary>
     internal static IBrowserRendererHost CreateRequired(BrowserCanvasRenderTarget target)
     {
