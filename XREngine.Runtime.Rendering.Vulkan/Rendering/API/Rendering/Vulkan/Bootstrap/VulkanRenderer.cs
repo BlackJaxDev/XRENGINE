@@ -59,7 +59,7 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanCommandRuntime _commandRuntime = new();
     internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
-    private int _explicitProductionPreparationStarted;
+    private int _explicitProductionPreparationCompleted;
 
     /// <summary>
     /// Captures the exactly-once diagnostic recorded when PresentNow readiness
@@ -546,7 +546,18 @@ public sealed partial class VulkanRenderer :
     public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version) => _commandRuntime.BindIndirectMesh(version is null ? null : GenericToAPI<VkMeshRenderer>(version));
     public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version) => _commandRuntime.ValidateIndirectIndexedMesh(version is null ? null : GenericToAPI<VkMeshRenderer>(version));
     public override bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount) => _commandRuntime.TryGetIndirectIndexBufferInfo(version is null ? null : GenericToAPI<VkMeshRenderer>(version), out indexElementSize, out indexCount);
-    public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize) => _commandRuntime.TrySyncIndirectIndexBuffer(meshRenderer, indexBuffer, elementSize);
+    public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
+    {
+        if (meshRenderer is null || indexBuffer is null)
+            return false;
+
+        // Atlas index buffers can be first used by raster submission. Resolve their
+        // cold wrappers here; command-runtime lookup deliberately cannot create them.
+        indexBuffer.EnsureOwnerFirstConstructionCompleted();
+        return GenericToAPI<VkMeshRenderer>(meshRenderer.GetDefaultVersion()) is { } mesh &&
+            GenericToAPI<VkDataBuffer>(indexBuffer) is { } buffer &&
+            _commandRuntime.TrySyncIndirectIndexBuffer(mesh, buffer, elementSize);
+    }
     public override void BindDrawIndirectBuffer(XRDataBuffer buffer) => _commandRuntime.BindIndirectBuffer(GenericToAPI<VkDataBuffer>(buffer));
     public override void UnbindDrawIndirectBuffer() => _commandRuntime.BindIndirectBuffer(null);
     public override void BindParameterBuffer(XRDataBuffer buffer) => _commandRuntime.BindIndirectCountBuffer(GenericToAPI<VkDataBuffer>(buffer));
@@ -1052,13 +1063,15 @@ public sealed partial class VulkanRenderer :
         // than silently turning every recording into a synchronous shader link.
         using var programPreparation = new VulkanProgramLinkPreparationScope(
             _resourceRuntime,
-            Interlocked.CompareExchange(ref _explicitProductionPreparationStarted, 1, 0) == 0);
+            Volatile.Read(ref _explicitProductionPreparationCompleted) == 0);
         using var currentRenderer = AbstractRenderer.PushThreadCurrent(this);
         bool previousActive = Active;
         Active = true;
         try
         {
-            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame, backgroundCapture);
+            VulkanExplicitProductionSubmissionReceipt receipt = _frameLoop.ExecuteExplicitProductionFrame(buildFrame, backgroundCapture);
+            Volatile.Write(ref _explicitProductionPreparationCompleted, 1);
+            return receipt;
         }
         finally
         {
@@ -1074,13 +1087,15 @@ public sealed partial class VulkanRenderer :
         using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(this);
         using var programPreparation = new VulkanProgramLinkPreparationScope(
             _resourceRuntime,
-            Interlocked.CompareExchange(ref _explicitProductionPreparationStarted, 1, 0) == 0);
+            Volatile.Read(ref _explicitProductionPreparationCompleted) == 0);
         using var currentRenderer = AbstractRenderer.PushThreadCurrent(this);
         bool previousActive = Active;
         Active = true;
         try
         {
-            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame, probeRequest);
+            VulkanExplicitProductionSubmissionReceipt receipt = _frameLoop.ExecuteExplicitProductionFrame(buildFrame, probeRequest);
+            Volatile.Write(ref _explicitProductionPreparationCompleted, 1);
+            return receipt;
         }
         finally
         {

@@ -406,13 +406,9 @@ namespace XREngine.Rendering.Commands
 
         private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
         {
-            // Generate() -> PostGenerated() already allocates GL storage and runs the initial
-            // initial upload for resizable buffers, so an explicit dirty-byte publication here is redundant
-            // second upload. MapBufferData() is lazy-called by SyncLodTransitionBufferFromGpu()
-            // the first time a CPU read is needed, so eager mapping just forces a driver sync on
-            // the persistent-coherent allocation. Both were responsible for the multi-second
-            // render-thread stall recovered as `MainThreadJobs.Normal.Invoke:GPUScene.LodTransitionBuffer.Initialize`
-            // (see render-submission-perf-debug-plan.md Â§5.8 I1).
+            // Publish the fully constructed owner-first buffer before Generate enters the object cache.
+            // Generate performs the initial backend upload where a wrapper exists. Mapping remains
+            // lazy until a CPU read needs it, avoiding an eager driver synchronization.
             if (RuntimeEngine.IsRenderThread)
                 buffer.Generate();
             else

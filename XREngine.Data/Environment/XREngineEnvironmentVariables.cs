@@ -7,6 +7,8 @@ namespace XREngine;
 public static class XREngineEnvironmentVariables
 {
     public const string VulkanAdvancedValidationForceUnavailable = "XRE_VK_ADVANCED_FORCE_UNAVAILABLE";
+    public const string VulkanRenderBenchGpuCalibration = "XRE_VK_RENDER_BENCH_GPU_CALIBRATION";
+    public const string VulkanRenderBenchPerformanceQuery = "XRE_VK_RENDER_BENCH_PERFORMANCE_QUERY";
     public const string Path = "PATH";
     public const string ContinuousIntegration = "CI";
     public const string MsBuildSdksPath = "MSBuildSDKsPath";

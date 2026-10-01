@@ -37,6 +37,12 @@
     "label_policy": { "enum": ["disabled", "stable_fixture_labels", "detailed_diagnostic_labels"] },
     "hardware_counter_policy": { "enum": ["disabled", "optional", "required"] },
     "cpu_sampling_policy": { "enum": ["disabled", "aggregate_only", "targeted_spans", "external_sampler_optional", "external_sampler_required"] },
+    "profile_mode": { "enum": ["diagnostics", "development_profile", "clean_profile", "release_benchmark"] },
+    "enable_validation": { "type": "boolean", "default": false },
+    "enable_synchronization_validation": { "type": "boolean", "default": false },
+    "cpu_profiling": { "$ref": "#/$defs/cpuProfiling" },
+    "gpu_profiling": { "$ref": "#/$defs/gpuProfiling" },
+    "external_capture": { "$ref": "#/$defs/externalCapture" },
     "scene": { "$ref": "#/$defs/scene" },
     "mutation": { "$ref": "#/$defs/mutation" },
     "workload": { "$ref": "#/$defs/workload" },
@@ -55,6 +61,37 @@
     "positiveInteger": { "type": "integer", "minimum": 1 },
     "nonNegativeInteger": { "type": "integer", "minimum": 0 },
     "stringArray": { "type": "array", "items": { "$ref": "#/$defs/nonEmptyString" } },
+    "cpuProfiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stages": { "$ref": "#/$defs/stringArray" },
+        "capacity_per_thread": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 65536 },
+        "emit_markers": { "type": "boolean", "default": false },
+        "sampler_identity": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "gpuProfiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets": { "$ref": "#/$defs/stringArray" },
+        "maximum_scope_depth": { "type": "integer", "minimum": 1, "maximum": 64, "default": 1 },
+        "maximum_queries_per_frame": { "type": "integer", "minimum": 2, "maximum": 1024, "multipleOf": 2, "default": 128 },
+        "calibrated_timestamps": { "type": "boolean", "default": false },
+        "require_calibration": { "type": "boolean", "default": false },
+        "hardware_counter_indices": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }
+      }
+    },
+    "externalCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_identity": { "$ref": "#/$defs/nonEmptyString" },
+        "artifact_paths": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/nonEmptyString" } },
+        "require_artifacts": { "type": "boolean", "default": false }
+      }
+    },
     "scene": {
       "type": "object",
       "additionalProperties": false,

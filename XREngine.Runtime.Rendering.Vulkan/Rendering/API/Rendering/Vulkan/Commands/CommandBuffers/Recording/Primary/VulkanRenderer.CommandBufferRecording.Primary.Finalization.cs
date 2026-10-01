@@ -22,6 +22,7 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FinalOverlayAndDiagnostics"))
             {
+                EndSelectedGpuPass(ref recordingState);
                 if (recordingState.PassIndexLabelActive)
                 {
                     _deviceContext.CmdEndLabel(recordingState.CommandBuffer);

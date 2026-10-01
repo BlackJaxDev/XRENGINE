@@ -23,10 +23,12 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
     private readonly int _passIterations;
     private readonly int _workerCount;
     private readonly bool _useUnifiedImageLayouts;
+    private readonly bool _captureCpuSpans;
     private readonly ulong[] _immutableChains;
     private readonly ulong[] _loweredPackets;
     private VulkanExplicitTargetRendererHost _host = null!;
     private RenderBenchFullscreenPipeline? _pipeline;
+    private RenderBenchGpuDiagnostic? _gpuDiagnostic;
     private Buffer _fixtureBuffer;
     private DeviceMemory _fixtureMemory;
     private Buffer _uploadStagingBuffer;
@@ -40,7 +42,11 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
     private RenderBenchSecondaryRecorderWorker[] _secondaryWorkers = [];
     private CommandBuffer[] _activeSecondaries = [];
     private CountdownEvent? _secondaryCompletion;
+    private WaitHandle? _secondaryCompletionWaitHandle;
+    private long _capturedWorkerAllocatedBytes;
     private RenderBenchWorkCounters _counters;
+    private long _secondaryRecords;
+    private long _secondaryReuses;
     private ulong _blackhole;
     private int _frameOrdinal;
     private bool _measuring;
@@ -54,6 +60,8 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
         Definition = definition;
         _recipe = recipe;
         _useUnifiedImageLayouts = useUnifiedImageLayouts;
+        _captureCpuSpans = recipe.Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedCpuSpans) ||
+            recipe.CpuSamplingPolicy == RenderProfileCpuSamplingPolicy.TargetedSpans;
         _chainCount = recipe.Workload.ChainCount ?? definition.DefaultChainCount;
         _drawCount = recipe.Workload.DrawCount ?? definition.DefaultDrawCount;
         _descriptorCount = recipe.Workload.DescriptorCount ?? definition.DefaultDescriptorCount;
@@ -76,13 +84,23 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
             ResolveContract(recipe.Contract.Exclusions, definition.Exclusions),
             _chainCount, _drawCount, _descriptorCount, _barrierCount, _uploadBytes,
             _passIterations, _workerCount, recipe.Mutation.Policy.ToString(),
-            string.Join("+", recipe.Scene.OutputIdentities));
+            string.Join("+", recipe.Scene.OutputIdentities))
+        {
+            EvidenceScope = definition.Kind == RenderBenchFixtureKind.FullPresentationless ? "syntheticProxy" : "component",
+        };
     }
 
     public RenderBenchFixtureDefinition Definition { get; }
     public RenderBenchFixtureManifest Manifest { get; }
     public RenderBenchWorkCounters Counters => _counters;
-    public long WorkerAllocatedBytes => _secondaryWorkers.Sum(static worker => worker.AllocatedBytes);
+    public RenderBenchCommandBufferActivity CommandBufferActivity
+        => new(_counters.Submissions, 0, _secondaryRecords, _secondaryReuses, _gpuDiagnostic?.Enabled == true);
+    public long CurrentFrameOrdinal => _frameOrdinal;
+    public long WorkerAllocatedBytes => _capturedWorkerAllocatedBytes;
+
+    /// <summary>Attaches optional GPU query capture before fixture preparation.</summary>
+    public void SetGpuDiagnostic(RenderBenchGpuDiagnostic diagnostic)
+        => _gpuDiagnostic = diagnostic;
 
     public void Prepare(VulkanExplicitTargetRendererHost host, RenderProfileRecipe recipe)
     {
@@ -106,7 +124,8 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
                     recipe,
                     Definition.Name,
                     _passIterations,
-                    _useUnifiedImageLayouts);
+                    _useUnifiedImageLayouts,
+                    _gpuDiagnostic);
                 break;
         }
     }
@@ -114,32 +133,62 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
     public void BeginCapture()
     {
         _counters = default;
+        _secondaryRecords = 0;
+        _secondaryReuses = 0;
+        _capturedWorkerAllocatedBytes = 0;
         if (_secondaryWorkers.Length > 0)
         {
             _secondaryCompletion!.Reset(_secondaryWorkers.Length);
             for (int index = 0; index < _secondaryWorkers.Length; index++)
-                _secondaryWorkers[index].RequestCaptureBaseline(_secondaryCompletion);
-            _secondaryCompletion.Wait();
+                _secondaryWorkers[index].RequestCaptureBaseline(_secondaryCompletion, _captureCpuSpans);
+            WaitForSecondaryWorkers();
+            for (int index = 0; index < _secondaryWorkers.Length; index++)
+                _secondaryWorkers[index].ThrowIfFailed();
         }
         _measuring = true;
     }
 
-    public void EndCapture() => _measuring = false;
+    public void EndCapture()
+    {
+        if (!_measuring)
+            return;
+        _measuring = false;
+        if (_secondaryWorkers.Length > 0)
+        {
+            _secondaryCompletion!.Reset(_secondaryWorkers.Length);
+            for (int index = 0; index < _secondaryWorkers.Length; index++)
+                _secondaryWorkers[index].RequestCaptureEnd(_secondaryCompletion);
+            WaitForSecondaryWorkers();
+        }
+        long allocatedBytes = 0;
+        for (int index = 0; index < _secondaryWorkers.Length; index++)
+        {
+            _secondaryWorkers[index].ThrowIfFailed();
+            allocatedBytes += _secondaryWorkers[index].AllocatedBytes;
+        }
+        _capturedWorkerAllocatedBytes = allocatedBytes;
+    }
 
     public void RecordFrame(Vk api, CommandBuffer commandBuffer, VulkanRenderFrameTarget target)
     {
+        VulkanCpuSpanProfiler.SetFrameContext(_frameOrdinal);
+        using VulkanCpuSpanScope fixtureScope = new(EVulkanCpuStage.ComponentFrame);
         RenderBenchWorkCounters frame = default;
         ApplyRequestedChurn(api);
         switch (Definition.Kind)
         {
             case RenderBenchFixtureKind.CommandChainSignature:
+                using (VulkanCpuSpanScope stage = new(EVulkanCpuStage.CommandChainFastSignature))
                 ConsumeCommandChainSignatures();
                 break;
             case RenderBenchFixtureKind.PacketLowering:
+                using (VulkanCpuSpanScope stage = new(EVulkanCpuStage.CommandChainPacketLowering))
                 ConsumeLoweredPackets();
                 break;
             case RenderBenchFixtureKind.PrimaryCommandEncoding:
             case RenderBenchFixtureKind.ResourcePlanning:
+                using (VulkanCpuSpanScope stage = new(Definition.Kind == RenderBenchFixtureKind.ResourcePlanning
+                    ? EVulkanCpuStage.ResourcePlanning : EVulkanCpuStage.PrimaryCommandEncoding))
                 RecordGlobalBarriers(api, commandBuffer, Math.Max(0, _barrierCount - 2));
                 frame = frame with { Barriers = Math.Max(0, _barrierCount - 2) };
                 break;
@@ -148,6 +197,7 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
                 frame += RecordAndExecuteSecondaries(api, commandBuffer, target.FrameSlotIndex);
                 break;
             case RenderBenchFixtureKind.DescriptorPublication:
+                using (VulkanCpuSpanScope stage = new(EVulkanCpuStage.DescriptorPublication))
                 PublishDescriptors(api);
                 frame = frame with
                 {
@@ -162,6 +212,7 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
                 break;
             case RenderBenchFixtureKind.GpuPass:
             case RenderBenchFixtureKind.FullPresentationless:
+                _gpuDiagnostic?.BeginFrame(commandBuffer, target.FrameSlotIndex, unchecked((ulong)_frameOrdinal));
                 int gpuBarriers = _pipeline!.Record(api, commandBuffer, target, _passIterations, _drawCount, unchecked((uint)_recipe.Scene.RandomSeed));
                 frame = frame with { Draws = _drawCount, Barriers = gpuBarriers, PassIterations = _passIterations };
                 CompleteFrame(frame);
@@ -315,9 +366,20 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
         _secondaryWorkers = new RenderBenchSecondaryRecorderWorker[_workerCount];
         _activeSecondaries = new CommandBuffer[_workerCount];
         _secondaryCompletion = new CountdownEvent(_workerCount);
+        // Create and warm the blocking primitive before capture; a rare slow worker must not
+        // trigger ManualResetEventSlim's lazy lock allocation on the measured thread.
+        _secondaryCompletionWaitHandle = _secondaryCompletion.WaitHandle;
+        _secondaryCompletionWaitHandle.WaitOne(0);
         for (int worker = 0; worker < _workerCount; worker++)
             _secondaryWorkers[worker] = new RenderBenchSecondaryRecorderWorker(
                 _host, _recipe.FrameSlots, BarrierShare(worker), worker);
+    }
+
+    private void WaitForSecondaryWorkers()
+    {
+        // The countdown reaches zero before Signal sets its event. Wait on that event
+        // before Reset so a prior signal cannot release the next batch prematurely.
+        _secondaryCompletionWaitHandle!.WaitOne();
     }
 
     private RenderBenchWorkCounters RecordAndExecuteSecondaries(Vk api, CommandBuffer primary, uint frameSlot)
@@ -327,13 +389,25 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
             _recipe.Mutation.Policy == RenderProfileMutationPolicy.ForcedDirtyEveryFrame ||
             (_recipe.Mutation.Policy == RenderProfileMutationPolicy.DirtyEveryNFrames && _frameOrdinal % _recipe.Mutation.DirtyEveryNFrames == 0);
         int totalSecondaryBarriers = 0;
+        if (_measuring)
+        {
+            if (dirty)
+                _secondaryRecords += _workerCount;
+            else
+                _secondaryReuses += _workerCount;
+        }
         if (dirty)
         {
-            _secondaryCompletion!.Reset(_workerCount);
-            for (int worker = 0; worker < _workerCount; worker++)
-                _secondaryWorkers[worker].RequestRecord(frameSlot, _secondaryCompletion);
-            _secondaryCompletion.Wait();
+            using (VulkanCpuSpanScope planning = new(EVulkanCpuStage.FrameOpScheduling))
+            {
+                _secondaryCompletion!.Reset(_workerCount);
+                for (int worker = 0; worker < _workerCount; worker++)
+                    _secondaryWorkers[worker].RequestRecord(frameSlot, _frameOrdinal, _secondaryCompletion);
+            }
+            using (VulkanCpuSpanScope wait = new(EVulkanCpuStage.WorkerWait))
+                WaitForSecondaryWorkers();
         }
+        using VulkanCpuSpanScope merge = new(EVulkanCpuStage.SecondaryMerge);
         for (int worker = 0; worker < _workerCount; worker++)
         {
             if (dirty)
@@ -342,7 +416,10 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
             totalSecondaryBarriers += BarrierShare(worker);
         }
         fixed (CommandBuffer* buffers = _activeSecondaries)
+        {
+            using VulkanCpuSpanScope execution = new(EVulkanCpuStage.SecondaryExecution);
             api.CmdExecuteCommands(primary, unchecked((uint)_activeSecondaries.Length), buffers);
+        }
         return new RenderBenchWorkCounters(
             0, 0, 0, _workerCount + 1, 0, totalSecondaryBarriers, 0, 0, 1);
     }

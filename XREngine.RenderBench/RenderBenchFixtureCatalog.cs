@@ -3,7 +3,7 @@ using XREngine.Rendering.Profiling;
 
 namespace XREngine.RenderBench;
 
-/// <summary>Phase 4 deterministic fixture catalog. Names are stable recipe API.</summary>
+/// <summary>Deterministic fixture catalog. Names are stable recipe API.</summary>
 public static class RenderBenchFixtureCatalog
 {
     private static readonly RenderExecutionMode[] s_component = [RenderExecutionMode.Component];
@@ -73,6 +73,9 @@ public static class RenderBenchFixtureCatalog
         new("presentationless-uber", "UberFrame", RenderBenchFixtureKind.FullPresentationless, s_presentationless,
             ["canonical Uber pass sequence", "native Vulkan draws", "queue submission", "GPU execution", "presentationless output"],
             ["window/swapchain presentation", "editor UI", "scene streaming"], DefaultDrawCount: 6, DefaultBarrierCount: 12, DefaultPassIterations: 6),
+        new("production-default-static", "ProductionFullFrame", RenderBenchFixtureKind.ProductionFullFrame, s_presentationless,
+            ["production world and viewport collection", "DefaultRenderPipeline", "GPU indirect opaque submission", "presentationless Vulkan output"],
+            ["window/swapchain presentation", "editor UI", "per-frame diagnostic readback"], DefaultBarrierCount: 0),
     ];
 
     public static RenderBenchFixtureDefinition Get(string name, string component, RenderExecutionMode mode)
@@ -83,10 +86,20 @@ public static class RenderBenchFixtureCatalog
            ?? throw new NotSupportedException($"No deterministic fixture '{name}' targets component '{component}' in mode '{mode}'.");
 
     public static IRenderBenchFixture Create(RenderProfileRecipe recipe, bool useUnifiedImageLayouts)
-        => new SyntheticRenderBenchFixture(
-            Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode),
-            recipe,
-            useUnifiedImageLayouts);
+    {
+        RenderBenchFixtureDefinition definition = Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode);
+        if (definition.Kind == RenderBenchFixtureKind.ProductionFullFrame)
+            throw new InvalidOperationException("Production full-frame profiling requires a scene-owned host; use CreateProduction.");
+        return new SyntheticRenderBenchFixture(definition, recipe, useUnifiedImageLayouts);
+    }
+
+    internal static RenderBenchProductionProfileFixture CreateProduction(RenderProfileRecipe recipe, RenderBenchOptions options)
+    {
+        RenderBenchFixtureDefinition definition = Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode);
+        if (definition.Kind != RenderBenchFixtureKind.ProductionFullFrame)
+            throw new InvalidOperationException($"Fixture '{definition.Name}' does not own a production scene.");
+        return new RenderBenchProductionProfileFixture(definition, recipe, options);
+    }
 
     private static RenderBenchFixtureDefinition GpuPass(string name, string component)
         => new(name, component, RenderBenchFixtureKind.GpuPass, s_both,

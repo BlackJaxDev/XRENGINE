@@ -75,6 +75,11 @@
     <Compile Remove="Rendering\RenderPipelineScriptCompilerTests.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\XREngine.RenderBench\RenderBenchMetricStatistics.cs" Link="Rendering\RenderBenchMetricStatistics.cs" />
+    <Compile Include="..\XREngine.RenderBench\RenderBenchPromotionEvidence.cs" Link="Rendering\RenderBenchPromotionEvidence.cs" />
+    <Compile Include="..\XREngine.RenderBench\RenderBenchPromotionReport.cs" Link="Rendering\RenderBenchPromotionReport.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Compile the sample's real gameplay types into the test assembly so
          cooked-world and input regressions do not depend on generated build output. -->
     <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\IMonkeyBallGameInputTarget.cs" Link="Games\MonkeyBallVR\IMonkeyBallGameInputTarget.cs" />

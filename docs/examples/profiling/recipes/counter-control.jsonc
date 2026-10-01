@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../../.vscode/schemas/render-profile-recipe.schema.json",
+  "schema_version": 1,
+  "name": "counter-control",
+  "component": "HarnessSubmission",
+  "execution_mode": "component",
+  "backend": "vulkan",
+  "fixture": "noop-control",
+  "width": 640,
+  "height": 360,
+  "frame_slots": 3,
+  "warmup_frames": 100,
+  "stability_frames": 30,
+  "capture_frames": 180,
+  "repetitions": 1,
+  "timeout_seconds": 180,
+  "instrumentation": "aggregate_cpu, coarse_gpu, hardware_counters",
+  "profile_mode": "diagnostics",
+  "validation_mode": "counters_and_hash",
+  "hardware_counter_policy": "required",
+  "gpu_profiling": { "hardware_counter_indices": [0] },
+  "scene": {
+    "scene_identity": "synthetic:no-world",
+    "camera_identity": "synthetic:none",
+    "animation_identity": "frozen",
+    "output_identities": ["control-color"]
+  },
+  "mutation": { "policy": "stable_reuse" },
+  "worker_counts": [1],
+  "budgets": { "max_capture_thread_allocated_bytes": 0, "require_output_hash": true }
+}

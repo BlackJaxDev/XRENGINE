@@ -609,7 +609,11 @@ function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
             else {
                 $null
             }
-            if ($null -ne $manifest -and [string]$manifest.name -ceq $ProtectedSessionName) {
+            # Other tools share this registry but own their session lifetime.
+            if ($null -eq $manifest -or $null -eq $manifest.PSObject.Properties['editorPath']) {
+                continue
+            }
+            if ([string]$manifest.name -ceq $ProtectedSessionName) {
                 continue
             }
             # A build has no editor PID yet, but its live launcher still owns
@@ -991,7 +995,7 @@ function Get-SessionList {
         else {
             $null
         }
-        if ($null -ne $manifest) {
+        if ($null -ne $manifest -and $null -ne $manifest.PSObject.Properties['editorPath']) {
             $views += New-SessionView $manifest -ProbeMcp
         }
     }

@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using XREngine;
 using XREngine.Components.Lights;
@@ -68,9 +69,12 @@ public sealed class RenderBenchProductionScene : IDisposable
     private bool _fixtureMaterialTexturesPrepared;
     private bool _disposed;
     private readonly bool _useAdvancedPipeline;
+    private readonly Action<RenderFrameOutputDescription> _submitProductionFrame;
+    private EngineTimer.ExplicitFrameScope? _activeExplicitFrame;
 
     public RenderBenchProductionScene(uint width, uint height, bool reverseDepth, EOcclusionCullingMode occlusionMode)
     {
+        _submitProductionFrame = SubmitProductionFrame;
         _viewportWidth = width;
         _viewportHeight = height;
         _servicesLease = RuntimeRenderingBootstrap.InstallEngineHostServices(new RuntimeApplicationProfile(
@@ -318,17 +322,32 @@ public sealed class RenderBenchProductionScene : IDisposable
         AddCandidate(id, position, scale, CreateCandidateMaterial(id));
     }
 
-    /// <summary>Runs one complete real collect/swap/render lifecycle within one production submission.</summary>
+    /// <summary>
+    /// Runs one complete real collect/swap/render lifecycle. Cold callers may retry pending
+    /// resource admission; measured callers disable retries so no wait enters the capture interval.
+    /// </summary>
     public VulkanExplicitProductionSubmissionReceipt SubmitStep(
         double fixedDelta,
         VulkanExplicitProductionBufferStressProbeRequest? probeRequest = null,
-        bool backgroundCapture = false)
+        bool backgroundCapture = false,
+        bool allowAdmissionRetry = true,
+        CancellationToken cancellationToken = default,
+        double admissionRetryTimeoutSeconds = 5.0)
     {
         if (backgroundCapture && probeRequest is not null)
             throw new ArgumentException("The foreground buffer-stress probe cannot be combined with a background capture.", nameof(probeRequest));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!allowAdmissionRetry)
+            return SubmitStepAttempt(fixedDelta, probeRequest, backgroundCapture);
+        if (!double.IsFinite(admissionRetryTimeoutSeconds) || admissionRetryTimeoutSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(admissionRetryTimeoutSeconds));
+        TimeSpan totalRetryBudget = TimeSpan.FromSeconds(admissionRetryTimeoutSeconds);
         long retryStart = 0;
+        long stageStart = 0;
+        string? lastPendingStage = null;
         for (int attempt = 0; ; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 VulkanExplicitProductionSubmissionReceipt receipt = SubmitStepAttempt(fixedDelta, probeRequest, backgroundCapture);
@@ -336,12 +355,21 @@ public sealed class RenderBenchProductionScene : IDisposable
                     PipelineAdmissionRetryMilliseconds += Stopwatch.GetElapsedTime(retryStart).TotalMilliseconds;
                 return receipt;
             }
-            catch (VulkanExplicitProductionAdmissionPendingException) when (attempt < 4096)
+            catch (VulkanExplicitProductionAdmissionPendingException pending) when (attempt < 4096)
             {
                 retryStart = retryStart == 0 ? Stopwatch.GetTimestamp() : retryStart;
                 PipelineAdmissionRetryCount++;
-                if (Stopwatch.GetElapsedTime(retryStart) > TimeSpan.FromSeconds(5))
+                if (lastPendingStage != pending.AdmissionStage)
+                {
+                    lastPendingStage = pending.AdmissionStage;
+                    stageStart = Stopwatch.GetTimestamp();
+                }
+                // Each readiness stage gets a bounded stall window. Earlier resource
+                // generation must not consume the material worker's entire window.
+                if (Stopwatch.GetElapsedTime(retryStart) > totalRetryBudget ||
+                    Stopwatch.GetElapsedTime(stageStart) > TimeSpan.FromSeconds(5))
                     throw;
+                cancellationToken.ThrowIfCancellationRequested();
                 // This is the cold harness coordinator, outside production
                 // admission. Give the real background compiler time to finish,
                 // then rebuild a fresh plan instead of losing its dispatch.
@@ -365,83 +393,17 @@ public sealed class RenderBenchProductionScene : IDisposable
                 "RenderBench production submission must remain on the explicit render-lane owner thread.");
         }
         VulkanExplicitTargetRendererHost host = Host;
+        if (_activeExplicitFrame is not null)
+            throw new InvalidOperationException("Production frame submission cannot be nested.");
         EngineTimer.ExplicitFrameScope frame = Engine.Time.Timer.BeginExplicitFrame((float)fixedDelta);
+        _activeExplicitFrame = frame;
         try
         {
-            Action<RenderFrameOutputDescription> submitProductionFrame = output =>
-            {
-                // A window normally drives this boundary. Explicit production
-                // owns it here so worker-prepared uploads and other scheduled
-                // render work advance before collection captures dependencies.
-                RuntimeEngine.ProcessMainThreadTasks();
-                if (_useAdvancedPipeline && Camera.RenderPipeline is not AdvancedRenderPipeline)
-                    Camera.RenderPipeline = new AdvancedRenderPipeline(stereo: false);
-                XRViewport viewport = EnsureViewport();
-                viewport.PipelineRequest = _useAdvancedPipeline
-                    ? RenderPipelineRequest.AdvancedOffscreenCapture(
-                        new(ERenderPipelineOffscreenViewIntent.SceneCapture, ERenderPipelineOffscreenOutput.HdrColor),
-                        outputId: output.SchedulingRequest.OutputId)
-                    : RenderPipelineRequest.OffscreenCapture(outputId: output.SchedulingRequest.OutputId);
-                WorldHost.CoreWorld.Update();
-                WorldHost.CoreWorld.ProcessDirtyTransforms(ELoopType.Sequential);
-                if (!viewport.RenderPipelineInstance.TryPrepareExplicitFrameResources(
-                    WorldHost.RenderWorld.VisualScene,
-                    Camera,
-                    viewport))
-                {
-                    string detail = "The explicit production frame could not commit its resource generation before collection. " +
-                        CreateRenderDeclinedDiagnostic(viewport);
-                    // Replacement generations materialize incrementally. Retry through the
-                    // bounded cold coordinator before collection or target acquisition;
-                    // an actual failed/discarded generation remains a terminal error.
-                    if (viewport.RenderPipelineInstance.PendingGeneration is
-                        { Status: RenderResourceGenerationStatus.Created or RenderResourceGenerationStatus.Building or RenderResourceGenerationStatus.Ready })
-                    {
-                        throw new VulkanExplicitProductionAdmissionPendingException(
-                            "explicit-resource-generation", detail);
-                    }
-                    throw new InvalidOperationException(detail);
-                }
-                PrepareFixtureMaterialTexturesForFirstProductionFrame();
-                if (!_useAdvancedPipeline)
-                    PrepareExplicitHiZCoarseTiles(viewport);
-                LastCollectGeneration = frame.RequestCollect();
-                WorldHost.RenderWorld.GlobalPreCollectVisible();
-                WorldHost.RenderWorld.GlobalCollectVisible();
-                // Collection precedes BeginRenderFrame. Carry the host's exact
-                // output cohort through both collection and authoring instead
-                // of freezing history under the previous engine frame ID.
-                RenderOutputRequest outputRequest = output.SchedulingRequest;
-                FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
-                    outputRequest.ViewKind, outputRequest.OutputKind, outputRequest.FrameId)
-                    with { Request = outputRequest };
-                viewport.CollectVisible(frameOutputPacing: pacing);
-                frame.CompleteCollect();
-                if (_useAdvancedPipeline)
-                    WorldHost.RenderWorld.GlobalSwapBuffers(output.SchedulingRequest.FrameId);
-                else
-                    WorldHost.RenderWorld.GlobalSwapBuffers();
-                if (_useAdvancedPipeline &&
-                    !viewport.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap())
-                {
-                    throw new InvalidOperationException(
-                        "The Advanced RenderBench frame has no published canonical backend view package after the world swap. " +
-                        CreateRenderDeclinedDiagnostic(viewport));
-                }
-                viewport.SwapBuffers();
-                frame.PublishCollect();
-                frame.ConsumePublishedCollect();
-                if (!_useAdvancedPipeline)
-                    PrepareOpaquePass(viewport);
-                bool recorded = RenderViewportFrame(frame, viewport);
-                if (!recorded)
-                    throw new InvalidOperationException(CreateRenderDeclinedDiagnostic(viewport));
-            };
             VulkanExplicitProductionSubmissionReceipt receipt = backgroundCapture
-                ? host.SubmitBackgroundProductionFrame(submitProductionFrame)
+                ? host.SubmitBackgroundProductionFrame(_submitProductionFrame)
                 : probeRequest is { } request
-                ? host.SubmitProductionFrame(submitProductionFrame, request)
-                : host.SubmitProductionFrame(submitProductionFrame);
+                ? host.SubmitProductionFrame(_submitProductionFrame, request)
+                : host.SubmitProductionFrame(_submitProductionFrame);
             // Completion is intentionally outside the native submission callback: it must cover
             // the accepted frame's real production recording/submission lifetime.
             frame.CompleteRenderFrame();
@@ -456,8 +418,76 @@ public sealed class RenderBenchProductionScene : IDisposable
         }
         finally
         {
+            _activeExplicitFrame = null;
             frame.Dispose();
         }
+    }
+
+    private void SubmitProductionFrame(RenderFrameOutputDescription output)
+    {
+        EngineTimer.ExplicitFrameScope frame = _activeExplicitFrame ??
+            throw new InvalidOperationException("The production frame callback has no active explicit frame.");
+        // A window normally drives this boundary. Explicit production owns it here so
+        // worker-prepared uploads advance before collection captures dependencies.
+        RuntimeEngine.ProcessMainThreadTasks();
+        if (_useAdvancedPipeline && Camera.RenderPipeline is not AdvancedRenderPipeline)
+            Camera.RenderPipeline = new AdvancedRenderPipeline(stereo: false);
+        XRViewport viewport = EnsureViewport();
+        viewport.PipelineRequest = _useAdvancedPipeline
+            ? RenderPipelineRequest.AdvancedOffscreenCapture(
+                new(ERenderPipelineOffscreenViewIntent.SceneCapture, ERenderPipelineOffscreenOutput.HdrColor),
+                outputId: output.SchedulingRequest.OutputId)
+            : RenderPipelineRequest.OffscreenCapture(outputId: output.SchedulingRequest.OutputId);
+        WorldHost.CoreWorld.Update();
+        WorldHost.CoreWorld.ProcessDirtyTransforms(ELoopType.Sequential);
+        if (!viewport.RenderPipelineInstance.TryPrepareExplicitFrameResources(
+            WorldHost.RenderWorld.VisualScene, Camera, viewport))
+        {
+            string detail = "The explicit production frame could not commit its resource generation before collection. " +
+                CreateRenderDeclinedDiagnostic(viewport);
+            // Replacement generations materialize incrementally. Retry through the bounded cold
+            // coordinator before collection or target acquisition; a failed generation is terminal.
+            if (viewport.RenderPipelineInstance.PendingGeneration is
+                { Status: RenderResourceGenerationStatus.Created or RenderResourceGenerationStatus.Building or RenderResourceGenerationStatus.Ready })
+            {
+                throw new VulkanExplicitProductionAdmissionPendingException(
+                    "explicit-resource-generation", detail);
+            }
+            throw new InvalidOperationException(detail);
+        }
+        PrepareFixtureMaterialTexturesForFirstProductionFrame();
+        if (!_useAdvancedPipeline)
+            PrepareExplicitHiZCoarseTiles(viewport);
+        LastCollectGeneration = frame.RequestCollect();
+        WorldHost.RenderWorld.GlobalPreCollectVisible();
+        WorldHost.RenderWorld.GlobalCollectVisible();
+        // Collection precedes BeginRenderFrame. Carry the host's exact output cohort
+        // through collection and authoring instead of freezing prior frame history.
+        RenderOutputRequest outputRequest = output.SchedulingRequest;
+        FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
+            outputRequest.ViewKind, outputRequest.OutputKind, outputRequest.FrameId)
+            with { Request = outputRequest };
+        viewport.CollectVisible(frameOutputPacing: pacing);
+        frame.CompleteCollect();
+        if (_useAdvancedPipeline)
+            WorldHost.RenderWorld.GlobalSwapBuffers(output.SchedulingRequest.FrameId);
+        else
+            WorldHost.RenderWorld.GlobalSwapBuffers();
+        if (_useAdvancedPipeline &&
+            !viewport.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap())
+        {
+            throw new InvalidOperationException(
+                "The Advanced RenderBench frame has no published canonical backend view package after the world swap. " +
+                CreateRenderDeclinedDiagnostic(viewport));
+        }
+        viewport.SwapBuffers();
+        frame.PublishCollect();
+        frame.ConsumePublishedCollect();
+        if (!_useAdvancedPipeline)
+            PrepareOpaquePass(viewport);
+        bool recorded = RenderViewportFrame(frame, viewport);
+        if (!recorded)
+            throw new InvalidOperationException(CreateRenderDeclinedDiagnostic(viewport));
     }
 
     private void PrepareOpaquePass(XRViewport viewport)
@@ -468,7 +498,9 @@ public sealed class RenderBenchProductionScene : IDisposable
         pass.MeshSubmissionStrategy = EMeshSubmissionStrategy.GpuIndirectZeroReadback;
         pass.MeshPrimitivePathPreference = EMeshPrimitivePathPreference.TraditionalOnly;
         if (!pass.TryPrepareResources(GPUScene, allowAsyncBackendCompile: false))
-            throw new InvalidOperationException("The opaque GPU pass could not prepare its production programs before recording.");
+            throw new VulkanExplicitProductionAdmissionPendingException("opaque-program-preparation",
+                "The opaque GPU pass has not prepared its production programs before recording. " +
+                CreateRenderDeclinedDiagnostic(viewport));
     }
 
     /// <summary>
@@ -544,6 +576,7 @@ public sealed class RenderBenchProductionScene : IDisposable
     private bool RenderViewportFrame(EngineTimer.ExplicitFrameScope frame, XRViewport viewport)
     {
         frame.BeginRenderFrame();
+        RuntimeEngine.Rendering.Stats.BeginFrame();
         Exception? frameFailure = null;
         bool recorded = false;
         try
@@ -586,6 +619,7 @@ public sealed class RenderBenchProductionScene : IDisposable
             AllowUIRender = false,
             MeshSubmissionStrategyOverride = EMeshSubmissionStrategy.GpuIndirectZeroReadback,
         };
+        _viewport.RenderPipelineInstance.PropagateCommandExceptions = true;
         return _viewport;
     }
 
@@ -602,10 +636,11 @@ public sealed class RenderBenchProductionScene : IDisposable
             .Append("; ActiveGeneration=")
             .Append(pipeline.ActiveGeneration?.Key.ToString() ?? "<none>")
             .Append("; PendingGeneration=")
-            .Append(pipeline.PendingGeneration?.Key.ToString() ?? "<none>")
-            .Append("; AdvancedAdmission=")
-            .Append(AbstractRenderer.Current?.GetAdvancedVisibilityFamilyAdmission().ToString() ?? "<no renderer>")
-            .Append("; recentDebug=[");
+            .Append(pipeline.PendingGeneration?.Key.ToString() ?? "<none>");
+        if (viewport.Camera?.RenderPipeline is AdvancedRenderPipeline)
+            summary.Append("; AdvancedAdmission=")
+                .Append(AbstractRenderer.Current?.CaptureAdvancedVisibilityPreparationDiagnostics()?.ToString() ?? "<no preparation snapshot>");
+        summary.Append("; recentDebug=[");
         for (int index = firstRecentEntry; index < entries.Count; index++)
         {
             if (index != firstRecentEntry)
@@ -821,24 +856,25 @@ public sealed class RenderBenchProductionScene : IDisposable
                 "RenderBench production resources must be disposed by their explicit render-lane owner thread.");
         }
         _disposed = true;
-        try
-        {
-            WorldHost.Dispose();
-            _host?.Dispose();
-            _explicitBackendRegistration?.Dispose();
-            _servicesLease.Dispose();
-        }
-        finally
-        {
-            try
-            {
-                _workSchedulerScope.Dispose();
-            }
-            finally
-            {
-                RuntimeEngine.AssignRenderThread(_previousRenderThreadId);
-            }
-        }
+        List<Exception> failures = [];
+        DisposeOwned(WorldHost, failures);
+        DisposeOwned(_host, failures);
+        DisposeOwned(_explicitBackendRegistration, failures);
+        DisposeOwned(_servicesLease, failures);
+        DisposeOwned(_workSchedulerScope, failures);
+        try { RuntimeEngine.AssignRenderThread(_previousRenderThreadId); }
+        catch (Exception exception) { failures.Add(exception); }
+
+        if (failures.Count == 1)
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1)
+            throw new AggregateException("Production scene cleanup failed.", failures);
+    }
+
+    private static void DisposeOwned(IDisposable? resource, List<Exception> failures)
+    {
+        try { resource?.Dispose(); }
+        catch (Exception exception) { failures.Add(exception); }
     }
 
 }

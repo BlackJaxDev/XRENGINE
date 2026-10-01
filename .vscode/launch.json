@@ -2,6 +2,20 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "RenderBench (Component Diagnostics)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "Build-RenderBench",
+            "program": "${workspaceFolder}/Build/RenderBench/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.RenderBench.dll",
+            "args": [
+                "--recipe-file", "${workspaceFolder}/docs/examples/profiling/recipes/targeted-secondary.jsonc",
+                "--output-dir", "${workspaceFolder}/Build/_AgentValidation/00000000-000000-shared/reports/renderbench-debug"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
             "name": "Editor (Default World)",
             "type": "coreclr",
             "request": "launch",

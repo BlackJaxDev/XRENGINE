@@ -1098,7 +1098,6 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanOomFallbackCount, ref first);
             VulkanFrameTelemetryPublication vulkanFrame = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
-#if XRENGINE_STATIC_VULKAN
             RenderBackendPresentNowFailureSnapshot presentNowFailure = default;
             IRenderBackendDiagnosticsCapability? diagnostics = null;
             AbstractRenderer? currentRenderer = AbstractRenderer.Current;
@@ -1166,7 +1165,6 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_replenishment_failures", materialTableCounters.StandbyReplenishmentFailures, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_banks", materialTableCounters.StandbyBanks, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_pending_allocations", materialTableCounters.StandbyPendingAllocations, ref first);
-#endif
             AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
             VulkanGpuCommandBufferTimingSnapshot gpuCommandBufferTiming = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferTimingSnapshot;

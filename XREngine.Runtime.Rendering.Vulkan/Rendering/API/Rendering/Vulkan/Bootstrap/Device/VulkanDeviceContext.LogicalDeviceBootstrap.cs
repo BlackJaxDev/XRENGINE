@@ -23,6 +23,8 @@ internal sealed unsafe partial class VulkanDeviceContext
     private const string UnifiedImageLayoutsExtensionName = "VK_KHR_unified_image_layouts";
     private const string DeviceAddressCommandsExtensionName = "VK_KHR_device_address_commands";
     private const string RenderBenchUnifiedLayoutsEnvironmentVariable = "XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS";
+    private const string RenderBenchGpuCalibrationEnvironmentVariable = XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration;
+    private const string RenderBenchPerformanceQueryEnvironmentVariable = XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery;
     internal static readonly string[] DefaultOptionalDeviceExtensions =
     [
         "VK_KHR_multiview",
@@ -357,6 +359,14 @@ internal sealed unsafe partial class VulkanDeviceContext
             Environment.GetEnvironmentVariable(RenderBenchUnifiedLayoutsEnvironmentVariable),
             "1",
             StringComparison.Ordinal);
+        bool gpuCalibrationRequested = string.Equals(
+            Environment.GetEnvironmentVariable(RenderBenchGpuCalibrationEnvironmentVariable),
+            "1",
+            StringComparison.Ordinal);
+        bool performanceQueryRequested = string.Equals(
+            Environment.GetEnvironmentVariable(RenderBenchPerformanceQueryEnvironmentVariable),
+            "1",
+            StringComparison.Ordinal);
         bool meshShaderExtensionAdvertised = availableExtensionSet.Contains(ExtMeshShader.ExtensionName);
         bool meshShaderExtensionRequested = _deviceContext.Configuration.OptionalDeviceExtensions.Contains(
             ExtMeshShader.ExtensionName,
@@ -435,6 +445,10 @@ internal sealed unsafe partial class VulkanDeviceContext
         // paired correctness and timing result is retained.
         if (unifiedImageLayoutsRequested)
             AddDiagnosticDeviceExtensionIfRequested(UnifiedImageLayoutsExtensionName, true);
+        if (gpuCalibrationRequested)
+            AddDiagnosticDeviceExtensionIfRequested("VK_EXT_calibrated_timestamps", true);
+        if (performanceQueryRequested)
+            AddDiagnosticDeviceExtensionIfRequested("VK_KHR_performance_query", true);
 
         foreach (string optionalExt in _deviceContext.Configuration.OptionalDeviceExtensions)
         {
@@ -979,6 +993,23 @@ internal sealed unsafe partial class VulkanDeviceContext
             primitivesGeneratedExtensionEnabled &&
             primitivesGeneratedFeatures.PrimitivesGeneratedQuery;
 
+        bool performanceQueryExtensionEnabled = extensionsArray.Contains("VK_KHR_performance_query");
+        PhysicalDevicePerformanceQueryFeaturesKHR supportedPerformanceQuery = new()
+        {
+            SType = (StructureType)1000116000,
+        };
+        if (performanceQueryExtensionEnabled)
+        {
+            PhysicalDeviceFeatures2 performanceQueryFeatures2 = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &supportedPerformanceQuery,
+            };
+            Api.GetPhysicalDeviceFeatures2(_deviceContext.PhysicalDevice, &performanceQueryFeatures2);
+        }
+        bool enablePerformanceQuery = performanceQueryExtensionEnabled &&
+            supportedPerformanceQuery.PerformanceCounterQueryPools;
+
         bool fragmentShadingRateExtensionEnabled = extensionsArray.Contains("VK_KHR_fragment_shading_rate");
         _deviceContext.QueryFragmentShadingRateCapabilities(
             fragmentShadingRateExtensionEnabled,
@@ -1205,6 +1236,12 @@ internal sealed unsafe partial class VulkanDeviceContext
             PrimitivesGeneratedQuery = enablePrimitivesGeneratedQuery,
             PrimitivesGeneratedQueryWithRasterizerDiscard = enablePrimitivesGeneratedQuery && primitivesGeneratedFeatures.PrimitivesGeneratedQueryWithRasterizerDiscard,
             PrimitivesGeneratedQueryWithNonZeroStreams = enablePrimitivesGeneratedQuery && primitivesGeneratedFeatures.PrimitivesGeneratedQueryWithNonZeroStreams,
+        };
+        PhysicalDevicePerformanceQueryFeaturesKHR performanceQueryFeatureEnable = new()
+        {
+            SType = (StructureType)1000116000,
+            PerformanceCounterQueryPools = enablePerformanceQuery,
+            PerformanceCounterMultipleQueryPools = enablePerformanceQuery && supportedPerformanceQuery.PerformanceCounterMultipleQueryPools,
         };
 
         PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatureEnable = new()
@@ -1435,6 +1472,7 @@ internal sealed unsafe partial class VulkanDeviceContext
         featureChainBuilder.Prepend(ref depthClipControlFeatureEnable, enableDepthClipControlFeature);
         featureChainBuilder.Prepend(ref meshShaderFeatureEnable, enableMeshShaderFeature);
         featureChainBuilder.Prepend(ref primitivesGeneratedFeatureEnable, enablePrimitivesGeneratedQuery);
+        featureChainBuilder.Prepend(ref performanceQueryFeatureEnable, enablePerformanceQuery);
         featureChainBuilder.Prepend(
             ref graphicsPipelineLibraryFeatureEnable,
             enableGraphicsPipelineLibraryFeature);

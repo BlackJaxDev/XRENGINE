@@ -4,7 +4,7 @@ namespace XREngine.RenderBench;
 
 public sealed record RenderBenchResult
 {
-    public int SchemaVersion { get; init; } = 1;
+    public int SchemaVersion { get; init; } = 2;
     public required string RunId { get; init; }
     public required DateTimeOffset StartedUtc { get; init; }
     public required DateTimeOffset CompletedUtc { get; init; }
@@ -40,8 +40,21 @@ public sealed record RenderBenchResult
     public required long[] CpuFrameNanoseconds { get; init; }
     public required double[] GpuFrameNanoseconds { get; init; }
     public required long AllocatedBytesOnCaptureThread { get; init; }
-    public required long AllocatedBytesOnFixtureWorkers { get; init; }
+    public required long? AllocatedBytesOnFixtureWorkers { get; init; }
     public string? OutputSha256 { get; init; }
     public string? OutputImagePath { get; init; }
     public required IReadOnlyList<RenderBenchGateResult> StabilityGates { get; init; }
+    /// <summary>Exact source and process identity. Missing values make clean comparison ineligible.</summary>
+    public RenderBenchSourceIdentity? Source { get; init; }
+    public RenderBenchEnvironment? Environment { get; init; }
+    public RenderBenchPhaseIntervals? Intervals { get; init; }
+    public RenderBenchMetricStatistics? CpuFrameStatistics { get; init; }
+    public RenderBenchMetricStatistics? GpuFrameStatistics { get; init; }
+    public RenderBenchArtifactManifest? ArtifactManifest { get; init; }
+    public RenderBenchPromotionEvidence? PromotionEvidence { get; init; }
+    public string? RecipeSha256 { get; init; }
+    public bool IsIntrusive { get; init; }
+    public RenderBenchTargetManifest? TargetManifest { get; init; }
+    public double? OperationsPerSecond { get; init; }
+    public RenderBenchCommandBufferActivity? CommandBufferActivity { get; init; }
 }
