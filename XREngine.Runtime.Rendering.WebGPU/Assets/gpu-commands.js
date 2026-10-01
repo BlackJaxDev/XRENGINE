@@ -80,11 +80,12 @@ export class GpuCommands {
         catch (error) { value.release(); throw error; }
     }
 
-    async operation(action) {
+    async operation(action, stage, label) {
         const r = this.renderer;
         r._requireOwner();
         if (this.pending.size >= 64) throw new Error('Too many GPU resources are being prepared concurrently.');
         const device = r.device, owner = r._owner;
+        r._setOperation(stage, label);
         device.pushErrorScope('out-of-memory');
         device.pushErrorScope('validation');
         let pending;
@@ -107,6 +108,7 @@ export class GpuCommands {
             }
             return result[0].value;
         } catch (error) {
+            r._recordError(error, stage, label);
             r.pipelineCache?.clear();
             throw error;
         } finally { clearTimeout(timer); this.pending.delete(cancel); }
@@ -122,7 +124,7 @@ export class GpuCommands {
             const errors = info.messages.filter(message => message.type === 'error');
             if (errors.length) throw new Error(errors.map(message => `${name}:${message.lineNum}:${message.linePos}: ${message.message}`).join('\n'));
             return module;
-        });
+        }, 'create-shader-module', name);
         return this.publish('shader', { native, label: name, size: wgsl.length });
     }
 
@@ -156,6 +158,7 @@ export class GpuCommands {
         }
         entries.sort((a, b) => a.binding - b.binding);
         const descriptor = { label: label(d.label), entries };
+        r._setOperation('create-binding-layout', descriptor.label);
         return this.publish('binding-layout', { native: r.pipelineCache.getBindGroupLayout(descriptor), descriptor, label: descriptor.label });
     }
 
@@ -201,6 +204,7 @@ export class GpuCommands {
             }
             dynamic.sort((a, b) => a.binding - b.binding);
             const name = label(d.label);
+            r._setOperation('create-binding-group', name);
             const native = r.device.createBindGroup({ label: name, layout: layout.native, entries });
             return this.publish('binding-group', { native, layout, dynamic, resources, label: name }, dependencies);
         } catch (error) { release(dependencies); throw error; }
@@ -297,7 +301,8 @@ export class GpuCommands {
                 integer(d.multisample.mask ?? 0xffffffff, 0, 0xffffffff, 'sample mask');
                 if (d.multisample.alphaToCoverageEnabled !== undefined && typeof d.multisample.alphaToCoverageEnabled !== 'boolean') throw new TypeError('Alpha-to-coverage must be boolean.');
             }
-            const native = await this.operation(() => compute ? r.pipelineCache.getComputePipelineAsync(descriptor) : r.pipelineCache.getRenderPipelineAsync(descriptor));
+            const native = await this.operation(() => compute ? r.pipelineCache.getComputePipelineAsync(descriptor) : r.pipelineCache.getRenderPipelineAsync(descriptor),
+                compute ? 'create-compute-pipeline' : 'create-render-pipeline', descriptor.label);
             return this.publish(compute ? 'compute-pipeline' : 'render-pipeline', { native, descriptor, layouts, workgroup, label: descriptor.label }, dependencies);
         } catch (error) { release(dependencies); throw error; }
     }
@@ -329,6 +334,7 @@ export class GpuCommands {
         const r = this.renderer;
         r._requireOwner();
         const d = parse(json, ['label', 'commands']);
+        r._setOperation('prepare-commands', label(d.label));
         const input = array(d.commands, maxCommands, 'commands');
         if (!input.length) throw new Error('Command sequences must not be empty.');
         const dependencies = [], operations = [];
@@ -481,18 +487,22 @@ export class GpuCommands {
         r._executing = true;
         try {
             if (commands.hasCanvas) {
+                r._setOperation('acquire-canvas', commands.label);
                 this.canvasColor.view = r.context.getCurrentTexture().createView();
                 this.canvasColor.width = this.canvasDepth.width = r._width;
                 this.canvasColor.height = this.canvasDepth.height = r._height;
                 this.canvasColor.format = r.format;
                 this.canvasDepth.view = r.depthView;
             }
+            r._setOperation('create-command-encoder', commands.label);
             const encoder = r.device.createCommandEncoder();
             for (let i = 0; i < operations.length; i++) {
                 const operation = operations[i];
-                this.encodeOperation(encoder, operation);
+                this.encodeOperation(encoder, operation, null, 0, i);
             }
+            r._setOperation('finish-command-encoder', commands.label);
             r._submission[0] = encoder.finish();
+            r._setOperation('submit-commands', commands.label);
             r.device.queue.submit(r._submission);
             r._stats.draws += commands.draws;
             r._stats.frameSubmitCalls++;
@@ -506,7 +516,9 @@ export class GpuCommands {
         }
     }
 
-    encodeOperation(encoder, operation, packet = null, offsetBase = 0) {
+    encodeOperation(encoder, operation, packet = null, offsetBase = 0, commandIndex = -1) {
+        const r = this.renderer;
+        r._setOperation('encode-operation', operation.type, commandIndex);
         if (operation.type === 'copyBuffer') {
             encoder.copyBufferToBuffer(operation.source, operation.sourceOffset, operation.destination, operation.destinationOffset, operation.size);
             return;
@@ -515,11 +527,14 @@ export class GpuCommands {
             encoder.copyTextureToTexture(operation.source, operation.destination, operation.size);
             return;
         }
+        r._setOperation('begin-pass', operation.type, commandIndex);
         const pass = operation.type === 'compute' ? encoder.beginComputePass() : encoder.beginRenderPass(operation.plan.prepare(this.canvasColor, this.canvasDepth));
         if (operation.type === 'clear') {
+            r._setOperation('end-pass', operation.type, commandIndex);
             pass.end();
             return;
         }
+        r._setOperation('set-pipeline', operation.type, commandIndex);
         pass.setPipeline(operation.pipeline);
         for (let binding = 0; binding < operation.bindings.length; binding++) {
             const group = operation.bindings[binding];
@@ -530,24 +545,35 @@ export class GpuCommands {
                     offsetBase += 4;
                 }
             }
+            r._setOperation('set-bind-group', operation.type, commandIndex);
             pass.setBindGroup(binding, group.native, offsets);
         }
-        if (operation.type === 'compute') pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
+        if (operation.type === 'compute') {
+            r._setOperation('dispatch-workgroups', operation.type, commandIndex);
+            pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
+        }
         else {
+            r._setOperation('set-stencil-reference', operation.type, commandIndex);
             pass.setStencilReference(operation.stencilReference);
             for (let slot = 0; slot < operation.vertexBuffers.length; slot++) {
                 const buffer = operation.vertexBuffers[slot];
+                r._setOperation('set-vertex-buffer', operation.type, commandIndex);
                 pass.setVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.size);
             }
-            if (operation.indexBuffer) pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
+            if (operation.indexBuffer) {
+                r._setOperation('set-index-buffer', operation.type, commandIndex);
+                pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
+            }
             for (let draw = 0; draw < operation.draws.length; draw++) {
                 const value = operation.draws[draw];
+                r._setOperation('draw', value.type, commandIndex, draw);
                 if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
                 else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
                 else if (value.type === 'draw') pass.draw(value.vertexCount, value.instanceCount, value.firstVertex, value.firstInstance);
                 else pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
             }
         }
+        r._setOperation('end-pass', operation.type, commandIndex);
         pass.end();
     }
 

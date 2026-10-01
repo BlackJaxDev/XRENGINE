@@ -57,6 +57,7 @@ export class GpuResources {
         // WebGPU guarantees zero initialization before any read, including indirect
         // argument consumption. Untouched argument records are therefore empty draws;
         // compute producers must rewrite every record they make active on each replay.
+        r._setOperation('create-buffer', label);
         const buffer = r.device.createBuffer({ size, usage, label });
         try { return r._resources.add('buffer', { buffer, size, usage, label, state: 'ready', references: 0 }, r._owner); }
         catch (error) { r._retire(buffer); throw error; }
@@ -71,6 +72,7 @@ export class GpuResources {
         if (!(entry.usage & GPUBufferUsage.COPY_DST) || offset % 4 || length % 4)
             throw new RangeError('Buffer writes require COPY_DST and four-byte aligned offsets and lengths.');
         this._bytes(memory);
+        r._setOperation('write-buffer', entry.label);
         r.device.queue.writeBuffer(entry.buffer, offset, this.staging, 0, length);
         r._stats.uploadedBytes += length;
     }
@@ -126,6 +128,7 @@ export class GpuResources {
             estimatedBytes += Math.max(1, Math.floor(width / 2 ** mip)) * Math.max(1, Math.floor(height / 2 ** mip)) * 8 * sampleCount;
         if (estimatedBytes > maximumTextureBytes) throw new RangeError('Texture exceeds the bounded allocation budget.');
         debugLabel(label);
+        r._setOperation('create-texture', label);
         const texture = r.device.createTexture({ label, size: { width, height, depthOrArrayLayers: 1 },
             dimension: '2d', format, usage, mipLevelCount, sampleCount });
         try {
@@ -167,6 +170,7 @@ export class GpuResources {
             (aspect === 'stencil-only' && texture.format !== 'depth24plus-stencil8'))
             throw new RangeError('Texture view aspect is incompatible with its format.');
         debugLabel(label);
+        r._setOperation('create-texture-view', label);
         const view = texture.texture.createView({ label, dimension: '2d', baseMipLevel: baseMip, mipLevelCount: mipCount,
             baseArrayLayer: 0, arrayLayerCount: 1, aspect });
         const handle = r._resources.add('texture-view', { view, texture, textureHandle, baseMip, mipCount, aspect,
@@ -186,6 +190,7 @@ export class GpuResources {
             (maxAnisotropy > 1 && [minFilter, magFilter, mipmapFilter].some(value => value !== 'linear')))
             throw new RangeError('Sampler address, filtering, LOD or anisotropy mode is unsupported.');
         debugLabel(label);
+        r._setOperation('create-sampler', label);
         const sampler = r.device.createSampler({ label, addressModeU: addressU, addressModeV: addressV,
             addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, lodMaxClamp, maxAnisotropy });
         return r._resources.add('sampler', { sampler, label, state: 'ready', references: 0,

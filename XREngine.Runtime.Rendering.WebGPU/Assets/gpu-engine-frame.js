@@ -15,6 +15,7 @@ export class GpuEngineFrame {
 
     submit(memory, uniforms) {
         const c = this.commands, r = c.renderer;
+        r._setOperation('validate-engine-frame');
         r._requireOwner();
         const length = memory?.byteLength;
         if (!Number.isInteger(length) || length < headerBytes || length > this.bytes.length)
@@ -79,18 +80,22 @@ export class GpuEngineFrame {
         if (uniformLength) r.resources.writeBuffer(uniformHandle, 0, uniforms);
         r._executing = true;
         try {
+            r._setOperation('acquire-canvas');
             c.canvasColor.view = r.context.getCurrentTexture().createView();
             c.canvasColor.width = c.canvasDepth.width = r._width;
             c.canvasColor.height = c.canvasDepth.height = r._height;
             c.canvasColor.format = r.format;
             c.canvasDepth.view = r.depthView;
+            r._setOperation('create-command-encoder');
             const encoder = r.device.createCommandEncoder();
             for (let record = 0; record < count; record++) {
                 const base = headerBytes + record * recordBytes;
                 const operation = this.operations[record];
-                c.encodeOperation(encoder, operation, data, base + 8);
+                c.encodeOperation(encoder, operation, data, base + 8, record);
             }
+            r._setOperation('finish-command-encoder');
             r._submission[0] = encoder.finish();
+            r._setOperation('submit-engine-frame');
             r.device.queue.submit(r._submission);
             r._stats.draws += drawCount;
             r._stats.frameSubmitCalls++;
