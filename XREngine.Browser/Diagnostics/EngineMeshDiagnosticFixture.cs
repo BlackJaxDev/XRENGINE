@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
@@ -76,8 +75,9 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         SceneNode cameraNode = new("Engine depth diagnostic camera");
         Transform cameraTransform = cameraNode.SetTransform<Transform>();
         _scene.RootNodes.Add(cameraNode);
-        XRCamera camera = new(cameraTransform,
-            new XROrthographicCameraParameters(2, 2, 0, 4) { InheritAspectRatio = false })
+        XROrthographicCameraParameters parameters = new(2, 2, 0, 4) { InheritAspectRatio = false };
+        parameters.SetOriginCentered();
+        XRCamera camera = new(cameraTransform, parameters)
         {
             RenderPipeline = _pipeline,
         };
@@ -92,6 +92,26 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         _renderer.ClearDepth(1);
         _renderer.BindEngineViewport(_viewport);
         _scene.SwapBuffers();
+        // Register world publication before the viewport's standard collect/swap
+        // callbacks so this static scene follows the production frame contract.
+        Engine.Time.Timer.CollectVisible += CollectFrame;
+        Engine.Time.Timer.SwapBuffers += SwapFrame;
+        Engine.Time.Timer.RenderFrame += RenderFrame;
+        try
+        {
+            _viewport.AutomaticallyCollectVisible = true;
+            _viewport.AutomaticallySwapBuffers = true;
+            Engine.Time.Timer.StartCallerThreadLoop();
+        }
+        catch
+        {
+            Engine.Time.Timer.CollectVisible -= CollectFrame;
+            Engine.Time.Timer.SwapBuffers -= SwapFrame;
+            Engine.Time.Timer.RenderFrame -= RenderFrame;
+            _viewport.AutomaticallyCollectVisible = false;
+            _viewport.AutomaticallySwapBuffers = false;
+            throw;
+        }
     }
 
     private void AddModel(string name, Vector3 translation)
@@ -111,30 +131,38 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
     public bool Frame()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        RuntimeWorkScheduler.Jobs.ProcessCallerThreadJobs(maxJobs: 64, budgetMilliseconds: 2);
+        // Step the real caller-thread clock without beginning world play or physics.
+        return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
+            _renderer.IsBackendReplacementFrameReady && _renderer.LastEngineMeshDrawCount == 3;
+    }
+
+    private void CollectFrame()
+    {
         _scene.SwapBuffers();
-        ulong frame = RuntimeEngine.Rendering.BeginRenderFrame();
-        long start = Stopwatch.GetTimestamp();
-        try
-        {
-            _renderWorld.GlobalPreCollectVisible();
-            _renderWorld.GlobalCollectVisible();
-            _viewport.CollectVisible(collectMirrors: false, allowScreenSpaceUICollectVisible: false);
-            _renderWorld.GlobalSwapBuffers(frame);
-            _viewport.SwapBuffers();
-            _renderer.RenderFrame(0);
-            return _renderer.IsBackendReplacementFrameReady && _renderer.LastEngineMeshDrawCount == 3;
-        }
-        finally
-        {
-            RuntimeEngine.Rendering.CompleteRenderFrame(frame, Stopwatch.GetTimestamp() - start);
-        }
+        _renderWorld.GlobalPreCollectVisible();
+        _renderWorld.GlobalCollectVisible();
+    }
+
+    private void SwapFrame() => _renderWorld.GlobalSwapBuffers();
+
+    private void RenderFrame() => _renderer.RenderFrame(Engine.Time.Timer.Render.Delta);
+
+    public string GetFrameStatus()
+    {
+        XRRenderPipelineInstance pipeline = _viewport.RenderPipelineInstance;
+        return $"Draws={_renderer.LastEngineMeshDrawCount}; " +
+            $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
+            $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        Engine.Time.Timer.Stop();
+        Engine.Time.Timer.CollectVisible -= CollectFrame;
+        Engine.Time.Timer.SwapBuffers -= SwapFrame;
+        Engine.Time.Timer.RenderFrame -= RenderFrame;
         _renderer.BindEngineViewport(null);
         _viewport.Destroy();
         _renderWorld.Dispose();

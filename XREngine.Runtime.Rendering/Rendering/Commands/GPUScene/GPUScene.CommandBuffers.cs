@@ -400,23 +400,10 @@ namespace XREngine.Rendering.Commands
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
             };
-            InitializeLodTransitionBuffer(buffer);
+            // Scene mirroring prepares CPU state even for CPU-only draw submission.
+            // The caller commits initialized rows through the owner-first write contract;
+            // only an actual backend binding should create and allocate its API wrapper.
             return buffer;
-        }
-
-        private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
-        {
-            // Generate() -> PostGenerated() already allocates GL storage and runs the initial
-            // initial upload for resizable buffers, so an explicit dirty-byte publication here is redundant
-            // second upload. MapBufferData() is lazy-called by SyncLodTransitionBufferFromGpu()
-            // the first time a CPU read is needed, so eager mapping just forces a driver sync on
-            // the persistent-coherent allocation. Both were responsible for the multi-second
-            // render-thread stall recovered as `MainThreadJobs.Normal.Invoke:GPUScene.LodTransitionBuffer.Initialize`
-            // (see render-submission-perf-debug-plan.md Â§5.8 I1).
-            if (RuntimeEngine.IsRenderThread)
-                buffer.Generate();
-            else
-                RuntimeEngine.EnqueueMainThreadTask(buffer.Generate, "GPUScene.LodTransitionBuffer.Initialize");
         }
 
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)

@@ -115,7 +115,7 @@ namespace XREngine.Rendering.Commands
             {
             if (MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly)
             {
-                bool meshletPipelineReady = _renderManager.TrySealMeshletMaterialTablePipeline(
+                bool meshletPipelineReady = RenderManager.TrySealMeshletMaterialTablePipeline(
                     this,
                     camera,
                     scene,
@@ -295,7 +295,7 @@ namespace XREngine.Rendering.Commands
                 AdvancedVisibilitySynchronizationContract.ApplyOpenGl(synchronizationBoundary.Value);
 
             Stopwatch drawStopwatch = Stopwatch.StartNew();
-            _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
+            RenderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
             drawStopwatch.Stop();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Draw,

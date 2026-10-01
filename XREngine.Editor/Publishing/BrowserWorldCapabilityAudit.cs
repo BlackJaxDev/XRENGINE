@@ -1,5 +1,6 @@
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Components.Mesh.Shapes;
 using XREngine.Components.VR;
 using XREngine.Data.Components.Scene;
 using XREngine.Rendering;
@@ -39,31 +40,35 @@ internal static class BrowserWorldCapabilityAudit
                     or "XREngine.Runtime.VR" or "XREngine.Runtime.UI.Skia" or "XREngine.Runtime.UI.Rive"
                     or "XREngine.Audio.SteamAudio" or "XREngine.Audio.Audio2Face")
                     throw new NotSupportedException($"BrowserCook.ComponentUnsupported: '{path}' component '{component.GetType().FullName}' requires desktop service '{assembly}'.");
-                if (component is not ModelComponent { Model: { } model })
-                    continue;
-                foreach (var mesh in model.Meshes)
-                    foreach (var lod in mesh.LODs)
-                    {
-                        XRMaterial material = lod.Material
-                            ?? throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{mesh.Name}'.");
-                        if (material.Shaders.Count == 0)
-                            throw new NotSupportedException($"BrowserCook.ShaderMissing: '{path}' material '{material.Name}' has no selected cooked WebGPU stages.");
-                        foreach (XRShader shader in material.Shaders)
-                        {
-                            if (!shader.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver, out ShaderProgramArtifact? artifact))
-                                throw new NotSupportedException($"BrowserCook.ShaderUnsupported: '{path}' material '{material.Name}', shader '{shader.Name ?? shader.Source?.FilePath}' has no cooked WebGPU companion. Cook the authored material's web target and configure BrowserShaderArtifactManifestPath before publishing.");
-                            if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.DescriptorBytes.IsDefaultOrEmpty)
-                                throw new NotSupportedException($"BrowserCook.ShaderArtifactUnsupported: '{path}' material '{material.Name}', pass '{artifact.Pass}', source '{artifact.SourcePath}' has no verified WGSL descriptor.");
-                            ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
-                            if (verified.Identity != artifact.Identity || shader.CookedArtifactIdentity != artifact.Identity)
-                                throw new InvalidDataException($"BrowserCook.ShaderIdentityMismatch: '{path}' material '{material.Name}', source '{artifact.SourcePath}'.");
-                            artifacts.TryAdd(verified.Identity, verified);
-                        }
-                    }
+                if (component is ModelComponent { Model: { } model })
+                    foreach (var mesh in model.Meshes)
+                        foreach (var lod in mesh.LODs)
+                            InspectMaterial(lod.Material, path, mesh.Name);
+                else if (component is ShapeMeshComponent shape)
+                    InspectMaterial(shape.Material, path, shape.GetType().Name);
             }
             foreach (var transform in node.Transform.Children)
                 if (transform.SceneNode is SceneNode child)
                     Visit(child, depth + 1);
+        }
+
+        void InspectMaterial(XRMaterial? material, string path, string? meshName)
+        {
+            if (material is null)
+                throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
+            if (material.Shaders.Count == 0)
+                throw new NotSupportedException($"BrowserCook.ShaderMissing: '{path}' material '{material.Name}' has no selected cooked WebGPU stages.");
+            foreach (XRShader shader in material.Shaders)
+            {
+                if (!shader.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver, out ShaderProgramArtifact? artifact))
+                    throw new NotSupportedException($"BrowserCook.ShaderUnsupported: '{path}' material '{material.Name}', shader '{shader.Name ?? shader.Source?.FilePath}' has no cooked WebGPU companion. Cook the authored material's web target and configure BrowserShaderArtifactManifestPath before publishing.");
+                if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.DescriptorBytes.IsDefaultOrEmpty)
+                    throw new NotSupportedException($"BrowserCook.ShaderArtifactUnsupported: '{path}' material '{material.Name}', pass '{artifact.Pass}', source '{artifact.SourcePath}' has no verified WGSL descriptor.");
+                ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
+                if (verified.Identity != artifact.Identity || shader.CookedArtifactIdentity != artifact.Identity)
+                    throw new InvalidDataException($"BrowserCook.ShaderIdentityMismatch: '{path}' material '{material.Name}', source '{artifact.SourcePath}'.");
+                artifacts.TryAdd(verified.Identity, verified);
+            }
         }
     }
 

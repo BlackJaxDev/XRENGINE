@@ -777,12 +777,30 @@ namespace XREngine.Rendering.Commands
                 ? layout
                 : null;
 
-        // Hybrid rendering manager (meshlets vs traditional indirect)
-        private readonly HybridRenderingManager _renderManager = new() { UseMeshletPipeline = false };
+        // CPU-direct passes retain GPU scene bookkeeping without loading indirect shader assets.
+        // The render owner materializes the optional manager only for GPU submission.
+        private HybridRenderingManager? _renderManager;
+        private bool _useMeshletPipeline;
+        private HybridRenderingManager RenderManager
+        {
+            get
+            {
+                if (_renderManager is { } manager)
+                    return manager;
+                manager = new() { UseMeshletPipeline = _useMeshletPipeline };
+                SetField(ref _renderManager, manager);
+                return manager;
+            }
+        }
+
         public bool UseMeshletPipeline
         {
-            get => _renderManager.UseMeshletPipeline;
-            set => _renderManager.UseMeshletPipeline = value;
+            get => _useMeshletPipeline;
+            set
+            {
+                if (SetField(ref _useMeshletPipeline, value) && _renderManager is { } manager)
+                    manager.UseMeshletPipeline = value;
+            }
         }
 
         public GPURenderPassCollection(int renderPass)

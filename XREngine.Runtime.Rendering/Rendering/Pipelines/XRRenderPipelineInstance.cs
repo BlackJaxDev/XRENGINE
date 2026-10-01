@@ -616,7 +616,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             SetField(ref _lastRenderDeclineReason, null, nameof(LastRenderDeclineReason));
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
         if (!ApplyLatestRequestedPipelineIfNeeded())
-            return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The requested pipeline transition has not completed.");
+            return ReportExactOutputPreconditionFailure(in outputCompletionRequest,
+                LastRenderDeclineReason ?? "The requested pipeline transition has not completed.");
 
         if (Pipeline is null)
         {

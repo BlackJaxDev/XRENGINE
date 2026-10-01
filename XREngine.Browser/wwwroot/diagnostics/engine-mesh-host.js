@@ -76,7 +76,7 @@ export class EngineMeshDiagnosticHost {
             const ready = this.exports.Frame(this.session);
             if (ready) this.onState('Engine mesh depth diagnostic rendered; RuntimeWorld play and physics are unverified');
             else if (performance.now() - this.startedAt > 45000)
-                throw new Error('Engine mesh depth diagnostic did not submit all three expected mesh draws within 45 seconds.');
+                throw new Error(`Engine mesh depth diagnostic did not submit all three expected mesh draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
             this.request = requestAnimationFrame(this.frame);
         } catch (error) { this.fail(error); }
     }

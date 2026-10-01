@@ -268,7 +268,7 @@ public sealed partial class XRRenderPipelineInstance
                     requestedPipeline?.DebugName ?? "<none>",
                     requestSerial,
                     ex.Message);
-                return false;
+                return DeclineRender($"The requested pipeline transition failed: {ex}");
             }
 
             lock (_pipelineTransitionSync)

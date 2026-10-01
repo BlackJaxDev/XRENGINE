@@ -111,6 +111,39 @@ Source review found that the engine's Jolt target setter immediately changed pos
 
 The desktop Jolt leaf Release build passed with zero warnings and errors on 2026-10-01 after this correction. Evidence: `Build/_AgentValidation/20261001-163800-webgpu-baseline/logs/jolt-kinematic-leaf-build.log`. This is compile evidence only; live contact/friction comparison, browser physics execution, and solver parity remain unverified.
 
+## Matched Native And WebAssembly Measurement
+
+On 2026-10-01, the repaired spike passed real Chromium startup, stepping,
+contacts, ray queries, and repeated teardown in
+[Actions run 36918408996](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36918408996)
+at `fe3a11974100a7946b6d9f768eb28646dadc1621`. Its browser worker list remained
+empty. This supersedes the earlier runtime-unverified notes for that bounded
+spike, not the engine/gameplay parity gates.
+
+A separate matched-source measurement compared the unchanged desktop
+`JoltPhysicsSharp` 2.22.0 / `JoltPhysics.Native` 1.1.0 Linux library with the
+pinned, corrected browser build. A dynamic box with half-extents 0.5 m fell
+from (0, 5, 0) onto a static floor with half-extents (10, 1, 10), centered at
+(0, -1, 0). Both ran 120 steps of 1/60 s with gravity (0, -9.81, 0), one
+collision step, and single-worker execution. The freshly published WebAssembly
+ran under Node twice with fresh foundation initialization and shutdown.
+
+Every sampled step's XYZ position, linear velocity, and cumulative contact
+counts matched exactly in both WebAssembly repetitions. Maximum position and
+velocity deltas were zero; contact-added began at step 59 and contact-persisted
+at step 60. Final counts were one added and 31 persisted contacts. The downward
+ray from (0, 10, 0), with displacement (0, -20, 0), hit the box at fraction
+0.45100003 and the floor at 0.5 in each execution.
+
+The disposable measurement source hash was
+`4ac77de9ad29ee7121dac65356d9796872af3dbc81dc812be46ee9ee4d7baa85`.
+Evidence lives under `Build/_AgentValidation/20261001-163800-webgpu-baseline/`:
+`reports/jolt-native-wasm-parity.json`, `scratch/jolt-parity/Program.cs`, and
+`logs/jolt-parity-{native,wasm-node,browser-publish}.log`. This establishes a
+small matched-scene result, not universal determinism, Chromium state-stream
+comparison, moving-platform/contact-friction parity, or RollingBall gameplay
+acceptance. The desktop default remains unchanged.
+
 ## Acceptance before default promotion
 
 Confirm Jolt as primary after the desktop parity gates and browser create-world, drop-box, 120 fixed steps, raycast, and destruction loop pass. Preserve saved backend selections. Keep PhysX desktop-only and Jitter experimental/opt-in. Box3D comparison remains optional and adds no dependency unless separately approved.
