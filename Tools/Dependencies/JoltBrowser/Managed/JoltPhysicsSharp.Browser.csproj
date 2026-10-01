@@ -48,7 +48,7 @@
     <GetFileHash Files="$(JoltBrowserManagedSourceRoot)LICENSE" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="JoltBrowserVerifiedLicense" />
     </GetFileHash>
-    <Error Condition="'%(JoltBrowserVerifiedApi.FileHash)' != '406b0fb642ed59f403557b50712b369fac4fb49ca043dad17177e4e8dc85d01b'" Text="The browser managed interop source does not match the reviewed source pin and contact-listener correction." />
+    <Error Condition="'%(JoltBrowserVerifiedApi.FileHash)' != 'cfd9c4fafc12ab609461c863e5ade61f833ddc9f16909471af10c863d84626ef'" Text="The browser managed interop source does not match the reviewed source pin and contact-listener and callback ABI corrections." />
     <Error Condition="'%(JoltBrowserVerifiedLicense.FileHash)' != 'afdd2e799fae375a71ce7ff6addb35b77f064c19321593aa869a662c2dc213b1'" Text="The browser managed-source license notice does not match the reviewed pin." />
     <GetFileHash Files="@(JoltBrowserReviewedSource)" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="JoltBrowserVerifiedLifetimeSource" />

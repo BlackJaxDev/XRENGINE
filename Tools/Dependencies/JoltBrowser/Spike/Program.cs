@@ -2,13 +2,17 @@ using System.Numerics;
 using JoltPhysicsSharp;
 using Ray = JoltPhysicsSharp.Ray;
 
+Console.WriteLine("Jolt browser spike: initializing the native foundation.");
 if (!Foundation.Init(doublePrecision: false))
     throw new InvalidOperationException("Jolt initialization failed in the browser spike.");
 
 try
 {
     for (int iteration = 0; iteration < 8; iteration++)
+    {
+        Console.WriteLine($"Jolt browser spike: beginning lifecycle {iteration + 1}/8.");
         RunWorldLifecycle();
+    }
 }
 finally
 {
@@ -37,6 +41,7 @@ static void RunWorldLifecycle()
         ObjectVsBroadPhaseLayerFilter = objectVsBroadPhase,
     };
     using PhysicsSystem world = new(settings);
+    Console.WriteLine("Jolt browser spike: native world and managed listeners created.");
     bool rejectedReusedFilters = false;
     try
     {
@@ -84,6 +89,7 @@ static void RunWorldLifecycle()
         if (contactAddedCount == 0 || contactPersistedCount == 0)
             throw new InvalidOperationException("The browser Jolt world did not invoke its managed contact callbacks.");
 
+        Console.WriteLine($"Jolt browser spike: 120 steps passed, contacts added={contactAddedCount}, persisted={contactPersistedCount}; beginning all-hit raycast.");
         List<RayCastResult> hits = [];
         world.NarrowPhaseQuery.CastRay(
             new Ray(new Vector3(0, 10, 0), new Vector3(0, -20, 0)),

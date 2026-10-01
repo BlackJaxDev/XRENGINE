@@ -81,5 +81,6 @@
 *.riv filter=lfs diff=lfs merge=lfs -text
 # Offline shader identities must be stable across checkout platforms.
 /Build/CommonAssets/Shaders/WebGPU/** text eol=lf
-# Preserve the reviewed patch's mandatory blank context-line prefixes.
-/Tools/Dependencies/JoltBrowser/managed-lifetime.patch -whitespace
+# Keep hash-pinned patches byte-stable and preserve mandatory blank context-line prefixes.
+/Tools/Dependencies/JoltBrowser/managed-lifetime.patch text eol=lf -whitespace
+/Tools/Dependencies/JoltBrowser/managed-callback-abi.patch text eol=lf -whitespace
