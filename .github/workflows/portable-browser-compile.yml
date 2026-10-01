@@ -94,7 +94,11 @@ jobs:
           if ($nativeLeaves) { throw "Desktop-only assemblies leaked into the browser output: $($nativeLeaves.Name -join ', ')" }
 
       - name: Qualify browser engine pixels and native physics
-        run: node Tools/BrowserSmoke/run.mjs --browser-publish "$VALIDATION_ROOT/browser/wwwroot" --shader-artifacts "$VALIDATION_ROOT/depth-shaders" --jolt-spike "$VALIDATION_ROOT/jolt-spike/wwwroot" --engine-manifest /diagnostics/content/manifest.json --require-world-play --gpu-mode software --output "$VALIDATION_ROOT/evidence"
+        env:
+          DEBUG: pw:browser
+        run: |
+          mkdir -p "$VALIDATION_ROOT/evidence"
+          node Tools/BrowserSmoke/run.mjs --browser-publish "$VALIDATION_ROOT/browser/wwwroot" --shader-artifacts "$VALIDATION_ROOT/depth-shaders" --jolt-spike "$VALIDATION_ROOT/jolt-spike/wwwroot" --engine-manifest /diagnostics/content/manifest.json --require-world-play --gpu-mode software --gpu-diagnostics --output "$VALIDATION_ROOT/evidence" > >(tee "$VALIDATION_ROOT/evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/evidence/browser-process-stderr.log" >&2)
 
       - name: Preserve qualification evidence
         if: always()

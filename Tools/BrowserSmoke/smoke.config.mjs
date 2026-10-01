@@ -9,6 +9,7 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         'require-world-play': { type: 'boolean', default: false },
         output: { type: 'string' },
         'gpu-mode': { type: 'string', default: 'native' },
+        'gpu-diagnostics': { type: 'boolean', default: false },
         'timeout-ms': { type: 'string', default: '180000' },
         headed: { type: 'boolean', default: false },
         help: { type: 'boolean', default: false },
@@ -31,6 +32,7 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         browserPublish: values['browser-publish'], shaderArtifacts: values['shader-artifacts'],
         joltSpike: values['jolt-spike'], output: values.output, engineManifest,
         requireWorldPlay: values['require-world-play'], gpuMode: values['gpu-mode'],
+        gpuDiagnostics: values['gpu-diagnostics'],
         timeout, headed: values.headed, executablePath: env.XRE_BROWSER_EXECUTABLE || undefined,
     };
 }
@@ -41,6 +43,7 @@ export function browserLaunchOptions(config) {
     // These developer switches are used only with the harness's trusted loopback roots.
     if (config.gpuMode === 'software') args.push(
         '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--use-vulkan=swiftshader');
+    if (config.gpuDiagnostics) args.push('--enable-logging=stderr', '--vmodule=gpu*=1,webgpu*=1,dawn*=1');
     return {
         headless: !config.headed,
         ...(config.executablePath ? { executablePath: config.executablePath } : { channel: 'chromium' }),
@@ -63,7 +66,7 @@ export const help = `Usage: node Tools/BrowserSmoke/run.mjs
   --output <evidence-directory>
   [--jolt-spike <published-spike-wwwroot>]
   [--engine-manifest /relative/engine-assets/manifest.json]
-  [--require-world-play] [--gpu-mode native|software] [--headed]
+  [--require-world-play] [--gpu-mode native|software] [--gpu-diagnostics] [--headed]
   [--timeout-ms 180000]
 
 XRE_BROWSER_EXECUTABLE may select an already-installed Chromium executable.
