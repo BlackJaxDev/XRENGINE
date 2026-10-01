@@ -103,6 +103,28 @@ Nonzero exit status means failure, including browser launch, unsupported GPU,
 missing files, timeouts, validation errors, or wrong pixels. Always inspect the
 saved screenshot when accepting rendering evidence.
 
+### Native GPU loss diagnostics
+
+Opt-in `--gpu-diagnostics` adds Chromium's stderr logging switches, CDP GPU and
+process snapshots before/after the unchanged engine-depth check, and the retained
+first engine failure to the report. With `DEBUG=pw:browser`, Playwright forwards
+native Chromium process stdout/stderr to the runner. The CI lane captures both
+streams from process startup in the qualification artifact. These streams may
+contain the local qualification URLs and should be reviewed before external sharing.
+
+After engine-depth, a separate page runs independent raw WebGPU clear and tiny
+triangle submissions, checks their actual canvas pixels, and compiles the same
+hash-verified cooked depth-probe WGSL and its known pipeline ABI without loading
+the engine or .NET runtime. `gpuCanary`, `gpuCanaryPixels`, and the explicitly named
+diagnostic-only check distinguish these stages. The canary uses the same browser
+process and exact launch settings; it cannot satisfy, skip, replace, or change the
+engine-depth pixel/submission requirements. CDP GPU-process IDs can be compared
+with the native log to identify process replacement; a missing CDP snapshot is
+reported as diagnostic evidence failure, never a successful rendering claim.
+
+Diagnostic flags only enable logging; they do not select another GPU backend or
+relax WebGPU validation. See [Chromium logging](https://www.chromium.org/for-testers/enable-logging/).
+
 Agent runs must place `--output` under the active `Build/_AgentValidation/<run>`
 root and honor `Tools/Limit-AgentValidation.ps1`. CI may supply its own artifact
 directory. No completed run is claimed by adding this harness.

@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { readConfig, browserLaunchOptions, depthSamples, help } from './smoke.config.mjs';
+import { captureGpuProcessState, initializeGpuCanary } from './gpu-diagnostics.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -40,6 +41,12 @@ async function startServer(config, requests) {
             if (!['GET', 'HEAD'].includes(request.method)) { status = 405; throw new Error('Read-only server'); }
             pathname = decodeURIComponent(new URL(request.url, `http://${authority}`).pathname);
             if (pathname === '/favicon.ico') { status = 204; response.writeHead(status); response.end(); return; }
+            if (config.gpuDiagnostics && pathname === '/__gpu-canary/') {
+                status = 200;
+                response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+                response.end('<!doctype html><title>Independent WebGPU diagnostic</title><canvas width="128" height="128"></canvas>');
+                return;
+            }
             if (pathname.includes('\0') || pathname.includes('\\') || pathname.split('/').some(part => part.startsWith('.'))) {
                 status = 403; throw new Error('Invalid path');
             }
@@ -94,6 +101,7 @@ async function instrumentedPage(browser, origin, report, name, config) {
     const append = entry => { if (events.length < 2000) events.push({ time: Date.now(), ...entry }); };
     page.on('console', event => append({ type: event.type(), text: event.text().slice(0, 8192) }));
     page.on('pageerror', error => append({ type: 'pageerror', text: String(error).slice(0, 8192) }));
+    page.on('crash', () => append({ type: 'crash', text: 'Browser page process crashed.' }));
     page.on('requestfailed', request => append({ type: 'requestfailed', url: request.url(), error: request.failure()?.errorText }));
     report.browserLogs[name] = events;
     return { page, context, events };
@@ -179,9 +187,40 @@ async function depthCheck(browser, origin, report, config) {
             'BrowserSmoke.EngineTeardownFailed: the diagnostic renderer session survived stop.');
         assertNoBrowserErrors(events);
     } catch (error) {
+        if (config.gpuDiagnostics)
+            report.engineFailure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
         await page.screenshot({ path: path.join(config.output, 'engine-depth-failure.png'), fullPage: true }).catch(() => {});
         throw error;
     } finally { await context.close(); }
+}
+
+async function gpuCanaryCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'independent-gpu-canary', config);
+    try {
+        await page.goto(`${origin}/__gpu-canary/`, { waitUntil: 'domcontentloaded' });
+        report.gpuCanary = await page.evaluate(initializeGpuCanary,
+            { manifestUrl: `${origin}/__shaders/manifest.json`, budgetMs: Math.min(config.timeout, 45000) });
+        for (const stage of ['clear', 'triangle', 'cooked-wgsl']) {
+            report.gpuCanary = await page.evaluate(stage => window.gpuCanary.runStage(stage), stage);
+            if (stage === 'cooked-wgsl') continue;
+            const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `gpu-canary-${stage}.png`) });
+            const expected = stage === 'clear' ? [51, 77, 102, 255] : [64, 128, 191, 255];
+            const pixels = await capturePixels(page, png, [{ name: stage, x: 64, y: 64, expected, tolerance: 3 }]);
+            (report.gpuCanaryPixels ??= []).push({ stage, ...pixels });
+            for (const sample of pixels.samples)
+                for (let channel = 0; channel < 4; channel++)
+                    assert(sample.min[channel] >= expected[channel] - sample.tolerance && sample.max[channel] <= expected[channel] + sample.tolerance,
+                        `BrowserSmoke.GpuCanaryPixels: ${stage} channel ${channel} expected ${expected[channel]}, got ${sample.min[channel]}..${sample.max[channel]}.`);
+        }
+        assertNoBrowserErrors(events);
+    } catch (error) {
+        report.gpuCanary = await page.evaluate(() => window.gpuCanary?.snapshot() ?? null).catch(() => report.gpuCanary);
+        await page.screenshot({ path: path.join(config.output, 'gpu-canary-failure.png') }).catch(() => {});
+        throw error;
+    } finally {
+        await page.evaluate(() => window.gpuCanary?.dispose()).catch(() => {});
+        await context.close();
+    }
 }
 
 async function enginePageCheck(browser, origin, report, config) {
@@ -307,6 +346,7 @@ async function main() {
     const report = { schemaVersion: 1, passed: false, startedUtc: new Date().toISOString(),
         node: process.version, platform: process.platform, architecture: process.arch,
         playwright: require('playwright/package.json').version, gpuMode: config.gpuMode,
+        gpuDiagnostics: config.gpuDiagnostics,
         executable: config.executablePath ? path.basename(config.executablePath) : 'playwright-managed-chromium',
         browserLogs: {}, externalRequests: [], requests: [], checks: [],
         scope: 'Renderer diagnostic correctness and selected runtime smoke checks; not full browser, desktop, physical-device or performance acceptance.' };
@@ -325,8 +365,16 @@ async function main() {
         report.launchArguments = browserLaunchOptions(config).args;
         browser = await chromium.launch(browserLaunchOptions(config));
         report.browser = browser.version();
+        browser.on('disconnected', () => { report.browserDisconnected = {
+            time: new Date().toISOString(), closeRequested: report.browserCloseRequested === true }; });
+        if (config.gpuDiagnostics) await captureGpuProcessState(browser, report, 'before-engine-depth');
         if (config.engineManifest) await check('engine-depth', () => depthCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-depth', status: 'skipped', reason: '--engine-manifest was not supplied' });
+        if (config.gpuDiagnostics) {
+            await captureGpuProcessState(browser, report, 'after-engine-depth');
+            await check('independent-gpu-canary-diagnostic-only', () => gpuCanaryCheck(browser, hosted.origin, report, config));
+            await captureGpuProcessState(browser, report, 'after-independent-gpu-canary');
+        }
         await check(config.requireWorldPlay ? 'engine-world-play-stop' : 'engine-diagnostic-export-boot',
             () => enginePageCheck(browser, hosted.origin, report, config));
         let launchDescriptor;
@@ -360,7 +408,10 @@ async function main() {
         report.stack = error.stack;
         console.error(error);
     } finally {
-        if (browser) await browser.close().catch(error => { report.cleanupError = String(error); report.passed = false; });
+        if (browser) {
+            report.browserCloseRequested = true;
+            await browser.close().catch(error => { report.cleanupError = String(error); report.passed = false; });
+        }
         if (server) await new Promise(resolve => server.close(resolve));
         report.finishedUtc = new Date().toISOString();
         await fs.writeFile(path.join(config.output, 'smoke-report.json'), JSON.stringify(report, null, 2));
