@@ -133,18 +133,43 @@ public static partial class EngineMeshDiagnosticExports
         RequireSession(session);
         if (_fixture is not null)
             throw new InvalidOperationException("EngineMeshDiagnostic.GraphicsActive: the fixture is already initialized.");
-        _target!.SetColorFormat(colorFormat);
-        _target.UpdateSurface(new RuntimeSurfaceState(width, height, width, height, 1, generation, true, true, true));
-        _renderer!.MarkReady(session);
-        _renderer.Initialize();
-        _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height));
+        string stage = "configure surface";
+        try
+        {
+            _target!.SetColorFormat(colorFormat);
+            _target.UpdateSurface(new RuntimeSurfaceState(width, height, width, height, 1, generation, true, true, true));
+            stage = "bind device capabilities";
+            _renderer!.MarkReady(session);
+            stage = "initialize renderer";
+            _renderer.Initialize();
+            stage = "construct engine fixture";
+            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height));
+        }
+        catch (Exception error)
+        {
+            throw new InvalidOperationException($"EngineMeshDiagnostic.InitializeGraphicsFailed [{stage}]: {error}", error);
+        }
     }
 
     [JSExport]
     public static bool Frame(int session)
     {
         RequireSession(session);
-        return _fixture?.Frame() ?? false;
+        try
+        {
+            return _fixture?.Frame() ?? false;
+        }
+        catch (Exception error)
+        {
+            throw new InvalidOperationException($"EngineMeshDiagnostic.FrameFailed: {error}", error);
+        }
+    }
+
+    [JSExport]
+    public static string GetFrameStatus(int session)
+    {
+        RequireSession(session);
+        return _fixture?.GetFrameStatus() ?? "The engine fixture is not initialized.";
     }
 
     [JSExport]

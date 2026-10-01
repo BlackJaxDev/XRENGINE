@@ -99,8 +99,8 @@ create/stop, overlapping-start supersession, cancellation, and restart. Node's
 content fetch was mapped to the actual cooked files for this managed-boot check;
 it is not browser transport or rendering evidence.
 
-The next resource/canvas slice adds exact-format engine texture/framebuffer
-wrappers and a real-world canvas owner. It remains unqualified by this run.
+The resource/canvas slice adds exact-format engine texture/framebuffer
+wrappers and a real-world canvas owner. It remains unqualified by that run.
 The production pipeline gate stays closed until its lighting, materials,
 attachments, and presentation route are genuinely available.
 
@@ -108,6 +108,42 @@ An explicit built-in material semantic and immutable exact-hash variant catalog
 also compile. They do not yet make desktop-GLSL material factories browser-ready;
 target-aware construction and real lit shader variants remain required. The
 RollingBall binary format is unchanged.
+
+The combined checkpoint `fe3a11974100a7946b6d9f768eb28646dadc1621`
+([Actions run 36918408996](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36918408996))
+completed clean Linux build/publish, all 18 portable compile rows, native Jolt
+build/publish, Slang cooking, and canonical asset packaging. Chromium passed
+the two real-world start/stop cycles, asset delivery/lifetime, native Jolt
+startup/queries/callbacks/teardown, and local delivery. This is the first
+Chromium acceptance of the repaired native callback ABI. No worker threads
+were created by the Jolt check.
+
+The depth render remained the only failed check. It reached the shared frame
+loop, where GPU-scene mirroring eagerly generated its LOD-transition buffer
+before the buffer's construction was published. The cache publication guard
+correctly rejected it. A focused repair removes the premature generation and
+leaves native allocation to the existing backend-binding lifecycle; the guard
+is unchanged. The same frame path also eagerly constructed an unused indirect
+manager and loaded desktop GLSL for CpuDirect submission; that manager is now
+created at its actual GPU-use boundary. The static diagnostic now steps the
+real caller-thread timer and standard viewport collection/swap callbacks,
+preserving output and visibility generations rather than inventing them.
+
+The repaired published WebAssembly reaches clear, shader-module, vertex/index
+buffer, pipeline, and mesh-command imports in two start/stop cycles under Node.
+Eight frames per cycle complete without a publication, asset catalog, pipeline,
+or generation-decline error. The fixture's orthographic camera now explicitly
+uses the centered origin its three test triangles require. Both cycles prepare
+and submit all three draw commands by frame three. This is boundary evidence
+only: the Node imports do not execute WebGPU. Actual depth pixels, production
+lit rendering, and RollingBall browser play remain unqualified.
+
+The run used Google SwiftShader software WebGPU. Its screenshots, console,
+adapter metadata, and smoke outcomes are in the
+[qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36918408996/artifacts/11190823487).
+The bare host's published-player auto-start remains explicitly skipped until
+an authored startup-world descriptor is supplied. Physical hardware budgets
+and the broader recovery matrix remain open.
 
 See the [browser smoke instructions](../../../../Tools/BrowserSmoke/README.md),
 [shader integration record](../rendering/unified-webgpu-shader-cooking.md), and

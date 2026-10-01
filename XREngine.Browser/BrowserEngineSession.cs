@@ -32,8 +32,6 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
     private XRViewport? _renderViewport;
     private int _rendererSession;
     private static int _nextRendererSession = 0x40000000;
-    private EAdvancedRenderPipelineMode _previousPipelineMode;
-    private bool _pipelineModeChanged;
     private bool _previousDebugOpaquePipeline;
     private bool _debugOpaquePipelineChanged;
     private INetworkTransportBackend? _previousNetworkTransport;
@@ -110,9 +108,10 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
                     ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
                 _renderer.BindShaderArtifacts(shaderArtifacts);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
-                _previousPipelineMode = RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode;
-                RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode = EAdvancedRenderPipelineMode.Disabled;
-                _pipelineModeChanged = true;
+                if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
+                    throw new AdvancedRenderPipelineNotSupportedException(
+                        AdvancedRenderPipelineSelectionResolver.Resolve(EAdvancedRenderPipelineMode.Required,
+                            _renderer.GetAdvancedRenderPipelineCapabilities(), stereo: false));
                 if (Engine.EditorPreferences?.Debug is { } debugOptions)
                 {
                     _previousDebugOpaquePipeline = debugOptions.UseDebugOpaquePipeline;
@@ -355,11 +354,6 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
         if (_renderingServices is not null)
             Capture(errors, _renderingServices.Dispose);
         _renderingServices = null;
-        if (_pipelineModeChanged)
-        {
-            Capture(errors, () => RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode = _previousPipelineMode);
-            _pipelineModeChanged = false;
-        }
         if (_debugOpaquePipelineChanged)
         {
             Capture(errors, () => Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = _previousDebugOpaquePipeline);
