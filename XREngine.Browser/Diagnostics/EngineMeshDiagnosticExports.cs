@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices.JavaScript;
 using System.Text;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.WebGPU;
@@ -22,43 +23,108 @@ public static partial class EngineMeshDiagnosticExports
     private static IDisposable? _renderingServices;
     private static IDisposable? _startupPolicy;
     private static IDisposable? _capabilities;
+    private static BrowserEngineAssetSource? _assetSource;
+    private static IRuntimeAssetSource? _previousStorageSource;
+    private static IAssetFileSystem? _previousFileSystem;
+    private static bool _assetOwnerBound;
+    private static bool _storageSourceInstalled;
+    private static bool _fileSystemInstalled;
     private static bool _engineInitialized;
+    private static readonly SemaphoreSlim CreateGate = new(1, 1);
+    private static CancellationTokenSource? _creationCancellation;
+    private static int _creationEpoch;
 
     [JSExport]
-    public static int Create(string canvasId, string descriptorJson, string wgsl)
+    public static async Task<int> CreateAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
-        ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(
-            Encoding.UTF8.GetBytes(descriptorJson), Encoding.UTF8.GetBytes(wgsl));
-        if (artifact.Pass != "depth-probe")
-            throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select the cooked depth-probe artifact.");
+        int requestedEpoch = Interlocked.Increment(ref _creationEpoch);
+        using CancellationTokenSource cancellation = new();
+        Interlocked.Exchange(ref _creationCancellation, cancellation)?.Cancel();
+        await CreateGate.WaitAsync();
+        bool ownsStartup = false;
+        string stage = "read shader artifact";
         try
         {
+            if (_session != 0)
+                throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
+            EnsureCurrentCreation(requestedEpoch, cancellation.Token);
+            ownsStartup = true;
+            ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(
+                Encoding.UTF8.GetBytes(descriptorJson), Encoding.UTF8.GetBytes(wgsl));
+            if (artifact.Pass != "depth-probe")
+                throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select the cooked depth-probe artifact.");
+            stage = "open asset catalog";
+            _assetSource = await BrowserEngineAssetSource.OpenAsync(assetManifestUrl, cancellation.Token);
+            EnsureCurrentCreation(requestedEpoch, cancellation.Token);
+            _previousStorageSource = DirectStorageIO.Source;
+            DirectStorageIO.Source = _assetSource;
+            _storageSourceInstalled = true;
+            _previousFileSystem = AssetFileSystemServices.Current;
+            AssetFileSystemServices.Current = _assetSource.FileSystem;
+            _fileSystemInstalled = true;
+            stage = "install capabilities";
             _capabilities = RuntimeApplicationCapabilityServices.Install(new RuntimeApplicationCapabilities(
                 IsConfigured: true, AllowsLocalInput: false, AllowsWindows: false,
                 AllowsAudio: false, AllowsVr: false, AllowsRendererBackends: true));
+            stage = "install startup policy";
             _startupPolicy = RuntimeEngineStartupPolicyServices.Install(BrowserEngineStartupPolicy.Instance);
+            stage = "initialize engine";
             Engine.InitializeForCallerThread(BrowserEngineStartupPolicy.Instance.CreateDefaultGameSettings());
             _engineInitialized = true;
+            Engine.Assets.BindRuntimeSource(_assetSource);
+            _assetOwnerBound = true;
+            stage = "register renderer";
             _catalog = new RendererBackendCatalog();
             _registration = _catalog.Register(new WebGpuRendererBackendModule());
+            stage = "install rendering services";
             _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(_catalog,
                 new PhysicsBackendCatalog(), static () => throw new NotSupportedException(
                     "EngineMeshDiagnostic.PipelineRequired: every diagnostic camera must use its explicit engine pipeline."));
+            stage = "create renderer";
             _target = new BrowserCanvasRenderTarget(canvasId);
             _renderer = (WebGpuRendererHost)_catalog.CreateRequired(RuntimeGraphicsApiKind.WebGPU,
                 new RendererBackendCreateContext(_target));
+            stage = "bind shader artifact";
             _renderer.BindShaderArtifacts(new ShaderProgramArtifactCatalog([artifact]));
             _artifact = artifact;
             _session = checked(++_nextSession);
             return _session;
         }
-        catch
+        catch (Exception error)
         {
-            StopCore();
-            throw;
+            Exception? cleanupError = null;
+            if (ownsStartup)
+                try { StopCore(); }
+                catch (Exception exception) { cleanupError = exception; }
+            string detail = cleanupError is null
+                ? error.ToString()
+                : $"{error}{Environment.NewLine}Rollback failure: {cleanupError}";
+            throw new InvalidOperationException($"EngineMeshDiagnostic.CreateFailed [{stage}]: {detail}", error);
         }
+        finally
+        {
+            Interlocked.CompareExchange(ref _creationCancellation, null, cancellation);
+            CreateGate.Release();
+        }
+    }
+
+    private static void EnsureCurrentCreation(int requestedEpoch, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (requestedEpoch != Volatile.Read(ref _creationEpoch))
+            throw new OperationCanceledException("EngineMeshDiagnostic.ObsoleteCreation: a newer start or stop superseded this request.");
+    }
+
+    [JSExport]
+    public static void CancelPendingCreate()
+    {
+        CancellationTokenSource? cancellation = Volatile.Read(ref _creationCancellation);
+        if (cancellation is null)
+            return;
+        Interlocked.Increment(ref _creationEpoch);
+        cancellation.Cancel();
     }
 
     [JSExport]
@@ -84,8 +150,11 @@ public static partial class EngineMeshDiagnosticExports
     [JSExport]
     public static void Stop(int session)
     {
-        if (_session == 0) return;
-        RequireSession(session);
+        if (_session != 0 && session != 0)
+            RequireSession(session);
+        CancelPendingCreate();
+        if (_session == 0 || session == 0)
+            return;
         StopCore();
     }
 
@@ -111,10 +180,23 @@ public static partial class EngineMeshDiagnosticExports
         if (_engineInitialized)
             Attempt(Engine.StopCallerThreadSession, ref failures);
         _engineInitialized = false;
+        if (_assetOwnerBound && _assetSource is { } source)
+            Attempt(() => Engine.Assets.UnbindRuntimeSource(source), ref failures);
+        _assetOwnerBound = false;
         Attempt(() => _startupPolicy?.Dispose(), ref failures);
         _startupPolicy = null;
         Attempt(() => _capabilities?.Dispose(), ref failures);
         _capabilities = null;
+        if (_storageSourceInstalled && ReferenceEquals(DirectStorageIO.Source, _assetSource))
+            DirectStorageIO.Source = _previousStorageSource;
+        _previousStorageSource = null;
+        _storageSourceInstalled = false;
+        if (_fileSystemInstalled && ReferenceEquals(AssetFileSystemServices.Current, _assetSource?.FileSystem))
+            AssetFileSystemServices.Current = _previousFileSystem;
+        _previousFileSystem = null;
+        _fileSystemInstalled = false;
+        Attempt(() => _assetSource?.Dispose(), ref failures);
+        _assetSource = null;
         _target = null;
         _artifact = null;
         _session = 0;

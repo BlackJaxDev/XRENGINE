@@ -72,7 +72,10 @@ is exposed on a LAN interface.
   Its running status is world-play evidence only; it reports rendering unavailable
   until the production web-tier pipeline passes its own gate
 
-Optional `--engine-manifest /relative/path/manifest.json` reads a payload through
+Optional `--engine-manifest /relative/path/manifest.json` supplies the real browser
+asset catalog required by the engine-depth diagnostic; without it, that check is
+skipped. The diagnostic page's manual controls require both the schema 3 shader
+manifest and this cooked engine asset manifest. It reads a payload through
 the real `engineAssetImports` source twice, verifies its size/hash, and checks
 released, canceled and disposed owner/ticket behavior. The manifest and payloads
 must be inside the supplied browser publish root. This byte-delivery check does

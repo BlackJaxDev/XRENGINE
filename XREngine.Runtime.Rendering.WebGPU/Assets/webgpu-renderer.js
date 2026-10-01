@@ -123,7 +123,7 @@ export class WebGpuCanvasRenderer {
         this.resources = new GpuResources(this);
         this.readback = new GpuReadback(this);
         this.commands = new GpuCommands(this);
-        this.focusedPipeline = new BrowserRenderPipeline(this);
+        this.focusedPipeline = null;
         this._retired = new Set();
         this._packetBytes = new Uint8Array(packetHeaderBytes);
         this._packetView = new DataView(this._packetBytes.buffer);
@@ -147,6 +147,8 @@ export class WebGpuCanvasRenderer {
         this._lastPacketFailure = null;
         this._shaderArtifact = undefined;
         this._capabilities = undefined;
+        this._engineOnly = false;
+        this._ready = false;
         this._startupAbort = undefined;
         this._startupToken = undefined;
         this._startup = { stage: 'idle', budgetsMs: { shaderCompilation: shaderCompilationBudgetMs, pipelineCreation: pipelineCreationBudgetMs },
@@ -198,14 +200,14 @@ export class WebGpuCanvasRenderer {
     }
 
     _requireOwner() {
-        if (!this.device || !this.pipeline || this._disposed || this._failed || !this._owner)
+        if (!this.device || !this._ready || this._disposed || this._failed || !this._owner)
             throw new Error('WebGPU renderer has no active session owner.');
         if (this._executing) throw new Error('Resources cannot change during packet execution.');
     }
 
     setOwner(session) {
         this._stats.controlCalls++;
-        if (!this.pipeline || this._disposed || this._owner || !Number.isInteger(session)
+        if (!this._ready || this._disposed || this._owner || !Number.isInteger(session)
             || session <= 0 || session > 0x7fffffff)
             throw new Error('A ready renderer can be assigned one positive session owner.');
         this._owner = session;
@@ -228,6 +230,7 @@ export class WebGpuCanvasRenderer {
         if (this._disposed || this._failed || this.device || this._initializing)
             throw new Error('WebGPU renderer cannot be initialized again.');
         this._initializing = true;
+        this.focusedPipeline = new BrowserRenderPipeline(this);
         const startupToken = {};
         const startupStart = performance.now();
         this._startupToken = startupToken;
@@ -347,6 +350,7 @@ export class WebGpuCanvasRenderer {
             this._assertStartup(signal, startupToken, device);
             this._capabilities = capabilities;
             this._startup.stage = 'ready';
+            this._ready = true;
             this.onState('ready');
         } catch (error) {
             if (this._startup.stage !== 'ready') this._startup.stage = error?.name === 'AbortError' ? 'canceled' : 'failed';
@@ -357,6 +361,57 @@ export class WebGpuCanvasRenderer {
             this._startup.timingsMs.total = performance.now() - startupStart;
             this._initializing = false;
             if (this._startupToken === startupToken) this._startupToken = undefined;
+        }
+    }
+
+    /** Initializes only the canvas/device executor used by authored engine command plans. */
+    async initializeEngine(signal) {
+        if (this._disposed || this._failed || this.device || this._initializing)
+            throw new Error('WebGPU renderer cannot be initialized again.');
+        this._initializing = true;
+        this._engineOnly = true;
+        const startedAt = performance.now();
+        const token = {};
+        this._startupToken = token;
+        this._startupAbort = new AbortController();
+        try {
+            this._assertActive(signal);
+            if (!globalThis.isSecureContext || !navigator.gpu)
+                throw new Error('WebGPU requires a secure context and navigator.gpu.');
+            this.onState('requesting-adapter');
+            const adapter = await navigator.gpu.requestAdapter();
+            this._assertActive(signal);
+            if (!adapter) throw new Error('No WebGPU adapter is available.');
+            const requirements = { requiredFeatures: [], requiredLimits: {} };
+            this.onState('requesting-device');
+            const device = await adapter.requestDevice(requirements);
+            this._assertActive(signal, device);
+            this.device = device;
+            this.pipelineCache = new GpuPipelineCache(device);
+            device.addEventListener('uncapturederror', this._onUncapturedError);
+            device.lost.then(info => {
+                if (this._disposed || this.device !== device) return;
+                this._deviceLost = true;
+                this._fail(new Error(`WebGPU device lost (${info.reason}): ${info.message}`));
+            }, error => { if (!this._disposed && this.device === device) this._fail(error); });
+            this.context = this.canvas.getContext('webgpu');
+            if (!this.context) throw new Error('WebGPU canvas context is unavailable.');
+            this.format = navigator.gpu.getPreferredCanvasFormat();
+            if (this.format !== 'rgba8unorm' && this.format !== 'bgra8unorm')
+                throw new Error(`WebGPU.EngineCanvas.FormatUnsupported: ${this.format}`);
+            this._capabilities = captureDeviceCapabilities(device, requirements);
+            this._ready = true;
+            this._startup.stage = 'ready';
+            this.onState('ready');
+        } catch (error) {
+            this._startup.stage = error?.name === 'AbortError' ? 'canceled' : 'failed';
+            if (error?.name === 'AbortError' && (signal?.aborted || this._disposed)) this.dispose();
+            else this._fail(error);
+            throw error;
+        } finally {
+            this._startup.timingsMs.total = performance.now() - startedAt;
+            this._initializing = false;
+            if (this._startupToken === token) this._startupToken = undefined;
         }
     }
 
@@ -378,7 +433,7 @@ export class WebGpuCanvasRenderer {
 
     resize(width, height) {
         this._stats.controlCalls++;
-        if (!this.pipeline || this._disposed) throw new Error('WebGPU renderer is not ready.');
+        if (!this._ready || this._disposed) throw new Error('WebGPU renderer is not ready.');
         if (this._executing) throw new Error('The surface cannot resize during packet execution.');
         const limit = this.maxDimension;
         if (!Number.isInteger(width) || !Number.isInteger(height) || width < 0 || height < 0 || width > limit || height > limit)
@@ -402,7 +457,7 @@ export class WebGpuCanvasRenderer {
                 this.depthView = this.depthTexture.createView();
                 this._configured = true;
             }
-            this.focusedPipeline.resize(width, height);
+            if (!this._engineOnly) this.focusedPipeline.resize(width, height);
             this._generation++;
             return this._generation;
         } catch (error) {
@@ -864,7 +919,7 @@ export class WebGpuCanvasRenderer {
 
     getStatistics() {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
-            focusedPipeline: this.focusedPipeline.getStatistics(),
+            focusedPipeline: this.focusedPipeline?.getStatistics() ?? null,
             deformation: { mode: this.skinningMode, ...this.skinning.stats },
             resources: { live: this._resources.slots.reduce((count, entry) => count + (entry ? 1 : 0), 0),
                 retiring: this._retired.size, pipelineCacheEntries: this.pipelineCache?.entries.size ?? 0,
@@ -889,7 +944,7 @@ export class WebGpuCanvasRenderer {
         }
         this._configured = false;
         this.commands.dispose();
-        this.focusedPipeline.dispose();
+        this.focusedPipeline?.dispose();
         this.skinning.dispose();
         this.readback.dispose();
         this._resources.clear(entry => this._destroyEntry(entry, true));

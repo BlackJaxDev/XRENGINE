@@ -94,11 +94,13 @@ without URL-entry controls or diagnostic query overrides. It shows loading,
 errors and gesture-driven audio activation. `engine-diagnostic.html` retains the
 manual development flow separately.
 
-**Current rendering limit:** production browser world startup still owns a
-headless engine world. The shipping page reports rendered output unavailable;
-a blank input canvas is not success. The separate engine-mesh diagnostic uses
+**Current rendering limit:** production browser startup now connects the real
+world to an engine viewport and canvas renderer, but the required web-tier
+pipeline still fails by name until its lighting/material/presentation route is
+available. A blank input canvas is not success. The separate engine-mesh diagnostic uses
 real engine scene/camera/model objects to qualify depth and per-draw uniforms.
-It does not substitute for the web tier of `DefaultRenderPipeline`. Textures,
+It does not substitute for the web tier of `DefaultRenderPipeline`. Exact-format
+2D texture/framebuffer wrappers are compiled but still need live qualification;
 lighting, shadows, skinning, UI and full authored-world rendering remain open.
 
 The [browser smoke harness](../../../../Tools/BrowserSmoke/README.md) records

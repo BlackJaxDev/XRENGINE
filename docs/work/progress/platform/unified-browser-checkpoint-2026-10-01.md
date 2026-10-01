@@ -68,6 +68,47 @@ Local Chromium execution is blocked by the current host's Unix-socket policy;
 no local browser execution pass is claimed. The CI result must be attached to
 the exact published commit before accepting its live checks.
 
+The first real Chromium run for commit
+`36c4bde1b7575c6b9887d61aab1b9e27c0c1bf09`
+([Actions run 36912281747](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36912281747))
+completed clean build/publish, Slang cooking, and local delivery. Its production
+engine-world check completed two start/stop cycles with twelve caller-thread
+frames each; the asset delivery/lifetime check also passed. This is a minimal
+world with one scene/root transform, not RollingBall gameplay acceptance.
+
+The same run failed the engine depth diagnostic at `Engine` static
+initialization and the standalone Jolt query diagnostic in the Mono runtime.
+No rendered pixel or full native-query acceptance is claimed. The bare runtime
+bundle has no authored launch descriptor, so published-player auto-start was
+explicitly skipped. The failures are being repaired using the preserved console
+logs, screenshots, and exact published WebAssembly module.
+
+The Jolt repair preserves typed managed APIs while moving callback import
+parameters to pointer-sized ABI tokens supported by the interpreter. Its exact
+published module now completes sixteen native world lifecycles, 1,920 steps,
+two foundation initialization/shutdown passes, contact callbacks, raycast hits,
+and disposal checks under Node. This is native WASM evidence; Chromium remains
+the browser gate. The correction is published as
+`2fc658ca641aad91fd419268bdabb77a91bb2352`.
+
+The engine initializer failure was a missing catalog in diagnostic composition:
+settings tracking reached the asset manager before a browser asset source was
+installed. The corrected diagnostic uses the same genuine fetch-backed catalog
+as production before first engine access. Published WASM checks now pass repeated
+create/stop, overlapping-start supersession, cancellation, and restart. Node's
+content fetch was mapped to the actual cooked files for this managed-boot check;
+it is not browser transport or rendering evidence.
+
+The next resource/canvas slice adds exact-format engine texture/framebuffer
+wrappers and a real-world canvas owner. It remains unqualified by this run.
+The production pipeline gate stays closed until its lighting, materials,
+attachments, and presentation route are genuinely available.
+
+An explicit built-in material semantic and immutable exact-hash variant catalog
+also compile. They do not yet make desktop-GLSL material factories browser-ready;
+target-aware construction and real lit shader variants remain required. The
+RollingBall binary format is unchanged.
+
 See the [browser smoke instructions](../../../../Tools/BrowserSmoke/README.md),
 [shader integration record](../rendering/unified-webgpu-shader-cooking.md), and
 [caller-thread validation](caller-thread-frame-stepping.md) for reproducible

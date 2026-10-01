@@ -101,6 +101,16 @@ public sealed partial class WebGpuRendererHost
     public override void Clear(bool color, bool depth, bool stencil)
     {
         RequireReady();
+        if (_boundEngineFrameBuffer is { } framebuffer)
+        {
+            if (stencil)
+                throw UnsupportedEngineOperation(nameof(Clear), "stencil clears are not admitted by the engine framebuffer profile");
+            if (!_engineRecording)
+                throw new InvalidOperationException("WebGPU.FrameBuffer.ClearOutsideFrame: framebuffer clears require an active engine frame.");
+            int command = framebuffer.GetClearCommand(color, depth, _engineClearColor, _engineClearDepth);
+            RecordEngineCommands(command, []);
+            return;
+        }
         if (!color || !depth || stencil)
             throw UnsupportedEngineOperation(nameof(Clear), "only a full color/depth canvas clear is admitted");
         if (_engineRecording && CurrentFrameOutput is { } output)
@@ -113,17 +123,35 @@ public sealed partial class WebGpuRendererHost
     public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
     {
         RequireReady();
-        if (fbo is not null)
-            throw UnsupportedEngineOperation(nameof(BindFrameBuffer), "engine framebuffer wrappers are not available");
+        if (fboTarget == EFramebufferTarget.ReadFramebuffer)
+            throw UnsupportedEngineOperation(nameof(BindFrameBuffer), "synchronous framebuffer reads are unavailable");
+        if (fboTarget is not (EFramebufferTarget.DrawFramebuffer or EFramebufferTarget.Framebuffer))
+            throw UnsupportedEngineOperation(nameof(BindFrameBuffer), "the framebuffer target is unsupported");
+        WebGpuFrameBuffer? wrapper = fbo is null ? null :
+            (WebGpuFrameBuffer)GetOrCreateAPIRenderObject(fbo, generateNow: true)!;
+        wrapper?.EnsureCurrent();
+        SetField(ref _boundEngineFrameBuffer, wrapper, publishNotifications: false);
     }
 
     public override void SetRenderArea(BoundingRectangle region)
     {
         RequireReady();
-        if (!_target.TryDescribeFrameOutput(out RenderFrameOutputDescription output) ||
-            region.X != 0 || region.Y != 0 ||
-            region.Width != output.Properties.Width || region.Height != output.Properties.Height)
-            throw UnsupportedEngineOperation(nameof(SetRenderArea), "only the complete drawable canvas is admitted");
+        WebGpuFrameBuffer? framebuffer = GetBoundEngineFrameBuffer();
+        uint width, height;
+        if (framebuffer is not null)
+        {
+            width = framebuffer.Width;
+            height = framebuffer.Height;
+        }
+        else if (_target.TryDescribeFrameOutput(out RenderFrameOutputDescription output))
+        {
+            width = output.Properties.Width;
+            height = output.Properties.Height;
+        }
+        else
+            throw UnsupportedEngineOperation(nameof(SetRenderArea), "no drawable output is available");
+        if (region.X != 0 || region.Y != 0 || region.Width != width || region.Height != height)
+            throw UnsupportedEngineOperation(nameof(SetRenderArea), "only the complete bound attachment extent is admitted");
     }
 
     public override void CropRenderArea(BoundingRectangle region) => SetRenderArea(region);
@@ -138,6 +166,8 @@ public sealed partial class WebGpuRendererHost
         => renderObject switch
         {
             XRDataBuffer buffer => new WebGpuDataBuffer(this, buffer),
+            XRTexture2D texture => new WebGpuTexture2D(this, texture),
+            XRFrameBuffer framebuffer => new WebGpuFrameBuffer(this, framebuffer),
             XRRenderProgram program => new WebGpuRenderProgram(this, program),
             XRMaterial material => new WebGpuMaterial(this, material),
             XRMeshRenderer.BaseVersion mesh => new WebGpuMeshRenderer(this, mesh),
@@ -175,6 +205,14 @@ public sealed partial class WebGpuRendererHost
         if (State == BrowserRendererState.Ready)
             WebGpuImports.RetireResource(_session, handle);
         _resources.Remove(handle);
+    }
+
+    /// <summary>Keeps handles referenced by an already recorded frame alive through submission.</summary>
+    internal void RetireEngineResourceAfterFrame(int handle)
+    {
+        if (handle == 0) return;
+        if (_engineRecording) _engineDeferredReleases.Add(handle);
+        else RetireEngineResource(handle);
     }
 
     internal void ReleaseEngineDrawDependencies(AbstractRenderAPIObject resource)

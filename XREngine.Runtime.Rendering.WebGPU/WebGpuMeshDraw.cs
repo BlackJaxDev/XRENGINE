@@ -19,18 +19,21 @@ internal sealed class WebGpuMeshDraw : IDisposable
     private readonly uint _indexCount;
     private readonly WebGpuRasterState _state;
     private readonly RenderFrameOutputDescription _output;
+    private readonly WebGpuFrameBuffer? _frameBuffer;
     private readonly Task _preparation;
     private int _pipeline;
     private int _commands;
     private bool _disposed;
 
     public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
-        XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output)
+        XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output,
+        WebGpuFrameBuffer? frameBuffer)
     {
         _renderer = renderer;
         _program = program;
         _state = state;
         _output = output;
+        _frameBuffer = frameBuffer;
         _indexSize = indexSize;
         if (indexSize is not (IndexSize.TwoBytes or IndexSize.FourBytes))
             throw Unsupported("only unsigned 16-bit and 32-bit indices are admitted");
@@ -63,6 +66,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
     internal bool DependsOn(AbstractRenderAPIObject resource)
     {
         if (ReferenceEquals(_program, resource) || ReferenceEquals(_indices, resource))
+            return true;
+        if (_frameBuffer?.DependsOn(resource) == true)
             return true;
         foreach (WebGpuVertexStream stream in _streams)
             if (ReferenceEquals(stream.Buffer, resource)) return true;
@@ -186,32 +191,35 @@ internal sealed class WebGpuMeshDraw : IDisposable
                 writer.WriteNumber("shader", _program.ShaderHandle);
                 writer.WriteString("entryPoint", fragment);
                 writer.WriteStartArray("targets");
-                writer.WriteStartObject();
-                writer.WriteString("format", _output.Properties.ColorEncoding);
-                writer.WriteNumber("writeMask", _state.ColorWriteMask);
-                if (_state.BlendEnabled)
+                if (_frameBuffer is { } framebuffer)
                 {
-                    writer.WriteStartObject("blend");
-                    WriteBlend(writer, "color", _state.SourceRgb, _state.DestinationRgb, _state.RgbEquation);
-                    WriteBlend(writer, "alpha", _state.SourceAlpha, _state.DestinationAlpha, _state.AlphaEquation);
-                    writer.WriteEndObject();
+                    foreach (string? format in framebuffer.ColorFormats)
+                        WriteColorTarget(writer, format);
                 }
-                writer.WriteEndObject();
+                else WriteColorTarget(writer, _output.Properties.ColorEncoding);
                 writer.WriteEndArray();
                 writer.WriteEndObject();
             }
+            else if (_frameBuffer?.HasColor == true)
+                throw Unsupported("a color framebuffer requires a fragment-stage output");
             writer.WriteStartObject("primitive");
             writer.WriteString("topology", "triangle-list");
             writer.WriteString("frontFace", _state.Winding == EWinding.CounterClockwise ? "ccw" : "cw");
             writer.WriteString("cullMode", _state.CullMode switch { ECullMode.Back => "back", ECullMode.Front => "front", _ => "none" });
             writer.WriteEndObject();
-            writer.WriteStartObject("depthStencil");
-            writer.WriteString("format", _output.Properties.DepthEncoding);
-            writer.WriteBoolean("depthWriteEnabled", _state.DepthEnabled && _state.DepthWrite);
-            writer.WriteString("depthCompare", _state.DepthEnabled ? Compare(_state.DepthComparison) : "always");
-            writer.WriteEndObject();
+            string? depthFormat = _frameBuffer is { } depthTarget ? depthTarget.DepthFormat : _output.Properties.DepthEncoding;
+            if (depthFormat is not null)
+            {
+                writer.WriteStartObject("depthStencil");
+                writer.WriteString("format", depthFormat);
+                writer.WriteBoolean("depthWriteEnabled", _state.DepthEnabled && _state.DepthWrite);
+                writer.WriteString("depthCompare", _state.DepthEnabled ? Compare(_state.DepthComparison) : "always");
+                writer.WriteEndObject();
+            }
+            else if (_state.DepthEnabled)
+                throw Unsupported("depth testing requires a bound depth attachment");
             writer.WriteStartObject("multisample");
-            writer.WriteNumber("count", _output.Properties.SampleCount);
+            writer.WriteNumber("count", _frameBuffer?.SampleCount ?? _output.Properties.SampleCount);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -228,10 +236,14 @@ internal sealed class WebGpuMeshDraw : IDisposable
             writer.WriteStartObject();
             writer.WriteString("type", "render");
             writer.WritePropertyName("pass");
-            BrowserColorAttachmentPlan?[] colors = _program.Artifact.FragmentEntryPoint is null
-                ? [] : [new BrowserColorAttachmentPlan(0, false, true, default)];
-            new BrowserFrameBufferPlan(colors,
-                new BrowserDepthStencilAttachmentPlan(-1, clearDepth: false)).WriteTo(writer);
+            if (_frameBuffer is { } framebuffer) framebuffer.Plan.WriteTo(writer);
+            else
+            {
+                BrowserColorAttachmentPlan?[] colors = _program.Artifact.FragmentEntryPoint is null
+                    ? [] : [new BrowserColorAttachmentPlan(0, false, true, default)];
+                new BrowserFrameBufferPlan(colors,
+                    new BrowserDepthStencilAttachmentPlan(-1, clearDepth: false)).WriteTo(writer);
+            }
             writer.WriteNumber("pipeline", _pipeline);
             writer.WriteStartArray("bindings");
             for (int group = 0; group < _program.GroupHandles.Length; group++)
@@ -269,6 +281,26 @@ internal sealed class WebGpuMeshDraw : IDisposable
             writer.WriteEndObject();
         }
         return Encoding.UTF8.GetString(bytes.WrittenSpan);
+    }
+
+    private void WriteColorTarget(Utf8JsonWriter writer, string? format)
+    {
+        if (format is null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+        writer.WriteStartObject();
+        writer.WriteString("format", format);
+        writer.WriteNumber("writeMask", _state.ColorWriteMask);
+        if (_state.BlendEnabled)
+        {
+            writer.WriteStartObject("blend");
+            WriteBlend(writer, "color", _state.SourceRgb, _state.DestinationRgb, _state.RgbEquation);
+            WriteBlend(writer, "alpha", _state.SourceAlpha, _state.DestinationAlpha, _state.AlphaEquation);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndObject();
     }
 
     private static void WriteBlend(Utf8JsonWriter writer, string name, EBlendingFactor source, EBlendingFactor destination, EBlendEquationMode equation)
@@ -310,8 +342,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
         _disposed = true;
         if (_renderer.State != BrowserRendererState.Disposed)
         {
-            if (_commands != 0) _renderer.RetireEngineResource(_commands);
-            if (_pipeline != 0) _renderer.RetireEngineResource(_pipeline);
+            if (_commands != 0) _renderer.RetireEngineResourceAfterFrame(_commands);
+            if (_pipeline != 0) _renderer.RetireEngineResourceAfterFrame(_pipeline);
         }
         _commands = 0;
         _pipeline = 0;

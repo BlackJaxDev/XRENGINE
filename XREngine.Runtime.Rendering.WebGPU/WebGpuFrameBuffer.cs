@@ -1,0 +1,233 @@
+using System.Numerics;
+using XREngine.Data.Core;
+using XREngine.Data.Rendering;
+
+namespace XREngine.Rendering.WebGPU;
+
+/// <summary>Retains an engine framebuffer's exact texture-view plan for one renderer generation.</summary>
+public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
+{
+    private readonly int[] _clearCommands = new int[4];
+    private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[] _targets = [];
+    private WebGpuTexture2D[] _textures = [];
+    private int[] _views = [];
+    private int _validationCommand;
+    private BrowserFrameBufferPlan? _plan;
+    private string?[] _colorFormats = [];
+    private string? _depthFormat;
+    private uint _width;
+    private uint _height;
+    private uint _sampleCount;
+    private Vector4 _clearColor;
+    private float _clearDepth;
+    private bool _invalidated = true;
+    private ulong _revision;
+
+    public WebGpuFrameBuffer(WebGpuRendererHost renderer, XRFrameBuffer data) : base(renderer, data)
+    {
+        data.Resized += Invalidate;
+        data.PropertyChanged += OnDataChanged;
+    }
+
+    public override bool IsGenerated => _plan is not null;
+    public ulong Revision => _revision;
+    public BrowserFrameBufferPlan Plan => _plan ?? throw new InvalidOperationException("WebGPU.FrameBuffer.PlanPending: generate the framebuffer first.");
+    public ReadOnlySpan<string?> ColorFormats => _colorFormats;
+    public string? DepthFormat => _depthFormat;
+    public uint Width => _width;
+    public uint Height => _height;
+    public uint SampleCount => _sampleCount;
+    public bool HasColor => _colorFormats.Length != 0;
+    public bool HasDepth => _depthFormat is not null;
+    public override nint GetHandle() => 0;
+
+    private void Invalidate() => _invalidated = true;
+
+    private void OnDataChanged(object? sender, IXRPropertyChangedEventArgs change)
+    {
+        if (change.PropertyName is nameof(XRFrameBuffer.Targets) or nameof(XRFrameBuffer.DrawBuffers))
+            Invalidate();
+    }
+
+    public override void Generate() => EnsureCurrent();
+
+    public void EnsureCurrent()
+    {
+        ValidateOwnerGeneration();
+        if (IsRetired || Data.IsDestroyed)
+            throw new InvalidOperationException("WebGPU.FrameBuffer.Retired: a destroyed framebuffer cannot be rebound.");
+        var targets = Data.Targets;
+        if (targets is null || targets.Length == 0)
+            throw Unsupported("Create", "the framebuffer has no declared render attachments");
+        bool current = !_invalidated && _plan is not null && targets.Length == _targets.Length;
+        if (current)
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (targets[i] != _targets[i] || _textures[i].GetRenderView(targets[i].MipLevel, targets[i].LayerIndex) != _views[i])
+                {
+                    current = false;
+                    break;
+                }
+            }
+        if (current) return;
+
+        Destroy();
+        try
+        {
+            WebGpuTexture2D[] textures = new WebGpuTexture2D[targets.Length];
+            int[] views = new int[targets.Length];
+            var snapshot = new (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[targets.Length];
+            string?[] formats = new string?[8];
+            string? depthFormat = null;
+            uint width = 0, height = 0, samples = 0;
+            int colorCount = 0;
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var target = targets[i];
+                if (target.Target is not XRTexture2D texture)
+                    throw Unsupported("Create", $"attachment type '{target.Target.GetType().Name}' is outside the 2D texture profile");
+                WebGpuTexture2D api = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!;
+                int view = api.GetRenderView(target.MipLevel, target.LayerIndex);
+                uint mipWidth = Math.Max(1u, api.Width >> target.MipLevel);
+                uint mipHeight = Math.Max(1u, api.Height >> target.MipLevel);
+                if (width != 0 && (width != mipWidth || height != mipHeight || samples != api.SampleCount))
+                    throw Unsupported("Create", "all attachments must have identical extents and sample counts");
+                width = mipWidth;
+                height = mipHeight;
+                samples = api.SampleCount;
+                int slot = ColorSlot(target.Attachment);
+                if (slot >= 0)
+                {
+                    if (api.Format is not ("rgba8unorm" or "rgba8unorm-srgb") || formats[slot] is not null)
+                        throw Unsupported("Create", "color slots require distinct exact RGBA8 texture views");
+                    formats[slot] = api.Format;
+                    colorCount = Math.Max(colorCount, slot + 1);
+                }
+                else
+                {
+                    if (depthFormat is not null || target.Attachment is not (EFrameBufferAttachment.DepthAttachment or EFrameBufferAttachment.DepthStencilAttachment))
+                        throw Unsupported("Create", "one depth or combined depth/stencil attachment is admitted");
+                    if (target.Attachment == EFrameBufferAttachment.DepthStencilAttachment && api.Format != "depth24plus-stencil8" ||
+                        target.Attachment == EFrameBufferAttachment.DepthAttachment && api.Format is not ("depth16unorm" or "depth24plus" or "depth32float"))
+                        throw Unsupported("Create", "the depth attachment kind does not match its exact texture format");
+                    depthFormat = api.Format;
+                }
+                textures[i] = api;
+                views[i] = view;
+                snapshot[i] = target;
+            }
+            BrowserFrameBufferPlan plan = CreatePlan(false, false, default, 1);
+            int validationCommand = Renderer.PrepareCommands(
+                "{\"label\":\"Engine framebuffer validation\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+            _targets = snapshot;
+            _textures = textures;
+            _views = views;
+            _colorFormats = formats.AsSpan(0, colorCount).ToArray();
+            _depthFormat = depthFormat;
+            _width = width;
+            _height = height;
+            _sampleCount = samples;
+            _plan = plan;
+            _validationCommand = validationCommand;
+            _revision++;
+            _invalidated = false;
+            Data.IsLastCheckComplete = true;
+        }
+        catch
+        {
+            Data.IsLastCheckComplete = false;
+            Destroy();
+            throw;
+        }
+    }
+
+    private BrowserFrameBufferPlan CreatePlan(bool clearColor, bool clearDepth, Vector4 color, float depth)
+        => BrowserFrameBufferAdapter.FromXRFrameBuffer(Data, ResolveView,
+            (slot, view) => new BrowserColorAttachmentPlan(view, clearColor, true, color),
+            (view, attachment) => new BrowserDepthStencilAttachmentPlan(view,
+                hasDepth: true, hasStencil: attachment == EFrameBufferAttachment.DepthStencilAttachment,
+                clearDepth: clearDepth, depthClearValue: depth, clearStencil: false));
+
+    private int ResolveView(IFrameBufferAttachement attachment, int mip, int layer)
+    {
+        if (attachment is not XRTexture2D texture)
+            throw Unsupported("View", "only 2D texture attachments are admitted");
+        WebGpuTexture2D api = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!;
+        return api.GetRenderView(mip, layer);
+    }
+
+    public bool DependsOn(AbstractRenderAPIObject resource)
+    {
+        if (ReferenceEquals(this, resource)) return true;
+        foreach (WebGpuTexture2D texture in _textures)
+            if (ReferenceEquals(texture, resource)) return true;
+        return false;
+    }
+
+    public int GetClearCommand(bool color, bool depth, Vector4 clearColor, float clearDepth)
+    {
+        EnsureCurrent();
+        if ((!color && !depth) || color && !HasColor || depth && !HasDepth)
+            throw Unsupported("Clear", "clear flags must select an attached color or depth aspect");
+        if (_clearColor != clearColor || _clearDepth != clearDepth)
+        {
+            RetireClearCommands();
+            _clearColor = clearColor;
+            _clearDepth = clearDepth;
+        }
+        int index = (color ? 1 : 0) | (depth ? 2 : 0);
+        if (_clearCommands[index] != 0) return _clearCommands[index];
+        BrowserFrameBufferPlan plan = CreatePlan(color, depth, clearColor, clearDepth);
+        _clearCommands[index] = Renderer.PrepareCommands(
+            "{\"label\":\"Engine framebuffer clear\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+        return _clearCommands[index];
+    }
+
+    private void RetireClearCommands()
+    {
+        for (int i = 0; i < _clearCommands.Length; i++)
+        {
+            if (_clearCommands[i] != 0) Renderer.RetireEngineResourceAfterFrame(_clearCommands[i]);
+            _clearCommands[i] = 0;
+        }
+    }
+
+    public override void Destroy()
+    {
+        if (_plan is not null) Renderer.ReleaseEngineDrawDependencies(this);
+        RetireClearCommands();
+        if (_validationCommand != 0) Renderer.RetireEngineResourceAfterFrame(_validationCommand);
+        _validationCommand = 0;
+        _plan = null;
+        _targets = [];
+        _textures = [];
+        _views = [];
+        _colorFormats = [];
+        _depthFormat = null;
+        _width = _height = _sampleCount = 0;
+        _invalidated = true;
+    }
+
+    protected override void OnRetiring()
+    {
+        Data.Resized -= Invalidate;
+        Data.PropertyChanged -= OnDataChanged;
+        base.OnRetiring();
+    }
+
+    private static int ColorSlot(EFrameBufferAttachment attachment) => attachment switch
+    {
+        EFrameBufferAttachment.ColorAttachment0 => 0,
+        EFrameBufferAttachment.ColorAttachment1 => 1,
+        EFrameBufferAttachment.ColorAttachment2 => 2,
+        EFrameBufferAttachment.ColorAttachment3 => 3,
+        EFrameBufferAttachment.ColorAttachment4 => 4,
+        EFrameBufferAttachment.ColorAttachment5 => 5,
+        EFrameBufferAttachment.ColorAttachment6 => 6,
+        EFrameBufferAttachment.ColorAttachment7 => 7,
+        _ => -1,
+    };
+
+    private static NotSupportedException Unsupported(string operation, string reason)
+        => new($"WebGPU.FrameBuffer.OperationUnsupported: {operation}: {reason}.");
+}

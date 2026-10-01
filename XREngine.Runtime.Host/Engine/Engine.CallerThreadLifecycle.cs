@@ -78,7 +78,8 @@ public static partial class Engine
 
         UninstallRuntimeTimingServices();
         UninstallRuntimePhysicsServices();
-        Assets.Dispose();
+        if (_assets.IsValueCreated)
+            _assets.Value.Dispose();
         _sessionSettings.ClearAll();
         RuntimeLifecycleState.Current.TryBeginShutdown();
         _callerThreadSession = false;

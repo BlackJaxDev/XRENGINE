@@ -9,7 +9,8 @@ namespace XREngine.Rendering.WebGPU;
 public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRenderer.BaseVersion data)
     : WebGpuObject<XRMeshRenderer.BaseVersion>(renderer, data), IApiMeshRenderer, IRenderPreparationState
 {
-    private readonly record struct DrawKey(WebGpuMaterial Material, WebGpuRasterState State);
+    private readonly record struct DrawKey(WebGpuMaterial Material, WebGpuRasterState State,
+        WebGpuFrameBuffer? FrameBuffer, ulong AttachmentRevision);
     private readonly Dictionary<DrawKey, WebGpuMeshDraw> _draws = [];
     private XRMesh? _mesh;
     private long _geometryRevision;
@@ -45,6 +46,8 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             throw Unsupported("the current engine vertex profile admits rigid indexed triangles only");
         if (Renderer.CurrentFrameOutput is not { } output)
             return Pending("OutputPending");
+        WebGpuFrameBuffer? frameBuffer = Renderer.GetBoundEngineFrameBuffer();
+        ulong attachmentRevision = frameBuffer?.Revision ?? 0;
         if (!ReferenceEquals(_mesh, mesh) || _geometryRevision != mesh.GeometryRevision ||
             _bufferRevision != mesh.Buffers.MutationRevision || _surfaceGeneration != output.TargetGeneration)
         {
@@ -60,12 +63,12 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         XRDataBuffer? indices = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out var indexSize);
         if (indices is null)
             return Pending("IndicesPending");
-        DrawKey key = new(apiMaterial, Renderer.RasterState);
+        DrawKey key = new(apiMaterial, Renderer.RasterState, frameBuffer, attachmentRevision);
         if (!_draws.TryGetValue(key, out draw))
         {
             if (_draws.Count >= 32)
                 throw Unsupported("the mesh exceeds the bounded 32 material/raster variants for its current resource generation");
-            draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State, output);
+            draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State, output, frameBuffer);
             _draws.Add(key, draw);
         }
         if (!draw.IsReady)
@@ -105,10 +108,25 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             throw Unsupported("the model transform is singular");
         program.SetMatrix("NormalMatrix", Matrix4x4.Transpose(inverseModel));
         Renderer.SetMaterialUniforms(resolved.Material, program.Data);
-        resolved.Material.OnSettingVertexUniforms(program.Data);
+        Data.Parent.OnSettingUniforms(program.Data, program.Data);
+        if (!ReferenceEquals(resolved.Material, Data.Parent.Material))
+            resolved.Material.OnSettingVertexUniforms(program.Data);
         if (resolved.IsShadowVariant)
             MeshRenderMaterialResolver.ApplyShadowUniforms(program.Data, resolved.Material);
+        PublishNumericBindings(resolved.Material.BindingPublishers, program.Data);
+        PublishNumericBindings(Data.Parent.BindingPublishers, program.Data);
         draw!.Record();
+    }
+
+    private static void PublishNumericBindings(RenderBindingPublisherCollection publishers, XRRenderProgram program)
+    {
+        for (int i = 0; i < publishers.Count; i++)
+        {
+            IRenderBindingPublisher publisher = publishers[i];
+            if (publisher is IRenderResourceBindingPublisher)
+                throw Unsupported("typed resource binding publishers require retained WebGPU descriptor publication");
+            publisher.PublishUniforms(program, program);
+        }
     }
 
     private bool Pending(string reason)
