@@ -36,9 +36,9 @@ public sealed class PhysicsDebugRendererSourceContractTests
     public void PhysxAndJolt_PublishFramesWithoutPerPrimitiveRuntimeServiceCalls()
     {
         string physx = ReadWorkspaceFile(
-            "XREngine.Runtime.Core/Scene/Physics/Physx/PhysxScene.cs");
+            "XREngine.Runtime.Physics.PhysX/Scene/Physics/Physx/PhysxScene.cs");
         string joltRenderer = ReadWorkspaceFile(
-            "XREngine.Runtime.Core/Scene/Physics/Jolt/JoltEngineDebugRenderer.cs");
+            "XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltEngineDebugRenderer.cs");
 
         physx.ShouldContain("PhysxDebugFrameAdapter.Copy(");
         physx.ShouldNotContain("services.RenderPoint");

@@ -182,7 +182,7 @@ Mesh-shader dialect availability today:
 
 - `VulkanEXT` (`VK_EXT_mesh_shader`): production. `vkCmdDrawMeshTasksIndirectCountEXT` is wired; `SupportsMeshletDispatch()` returns true.
 - `OpenGLEXT` (`GL_EXT_mesh_shader`): production shader variants exist (`MeshletCullingExt.task`, `MeshletRenderExt.mesh`, `MeshletRenderSkinnedExt.mesh`), but the `glMultiDrawMeshTasksIndirectCountEXT` C# delegate isn't wired and current driver coverage is thin. `SupportsMeshletDispatch()` returns false.
-- `OpenGLNV` (`GL_NV_mesh_shader`): NVIDIA-only, no indirect-count entrypoint exists in the spec; diagnostic / bring-up only.
+- `OpenGLNV` (`GL_NV_mesh_shader`): NVIDIA-only; this engine implements direct task dispatch for diagnostics, while the extension's indirect-count entrypoint is not implemented in the production path.
 - `None`: resolver downgrades any forced meshlet strategy.
 
 ## Production Closeout Status

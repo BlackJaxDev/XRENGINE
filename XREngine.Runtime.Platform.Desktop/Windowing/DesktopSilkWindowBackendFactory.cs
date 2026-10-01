@@ -56,7 +56,8 @@ public sealed class DesktopSilkWindowBackendFactory : IRuntimeWindowBackendFacto
         WindowOptions options = WindowOptions.Default;
         if (request.Purpose == RuntimeWindowPurpose.Presentation)
         {
-            options.IsEventDriven = true;
+            // The engine owns frame pacing; a native event wait would also block rendering and readback.
+            options.IsEventDriven = false;
             options.FramesPerSecond = 0.0;
             options.UpdatesPerSecond = 0.0;
             options.VideoMode = VideoMode.Default;

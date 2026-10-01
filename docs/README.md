@@ -9,7 +9,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
   information, contribution terms, and release guidance.
 - [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
-[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in the [native subsystem debugging and validation TODO](work/todo/platform/native-subsystem-project-split-todo.md).
+[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in the [native subsystem debugging and validation TODO](work/todo/platform/native-subsystem-project-split-todo.md); completed local browser, desktop and native callback smokes, full test execution and qualification limits are recorded in the [reference harness investigation](work/investigations/rendering/desktop-browser-reference-harness.md).
 
 ## Architecture
 
@@ -129,6 +129,10 @@ dotnet docfx docs/docfx/docfx.json --serve --port 8080
 Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
+
+[Portable engine host ownership](work/progress/platform/portable-engine-host-ownership.md) records the shared facade, timer, services and desktop composition boundary. The [host validation record](work/investigations/platform/portable-engine-host-validation.md) contains the desktop/browser build gate, Editor camera/UI restore and Server/VRClient startup evidence, including current limitations. Real browser-world startup remains active in the [unified runtime checklist](work/todo/platform/unified-desktop-browser-runtime-todo.md).
+
+[Portable browser engine boot qualification](work/progress/platform/portable-browser-engine-boot.md) records partial real asset round-trips and the external asset/native binding boundaries. The unified runtime effort is paused at the owner's request, with its resume order recorded in the checklist.
 
 [Browser project publishing](work/progress/rendering/browser-project-publishing.md) connects the existing editor/CLI build flow to saved-world export, a shared content packager and a complete static browser bundle. It documents admitted native asset coverage and the remaining authoring and validation gaps.
 

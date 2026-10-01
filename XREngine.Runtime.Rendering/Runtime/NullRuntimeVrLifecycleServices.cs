@@ -6,14 +6,19 @@ internal sealed class NullRuntimeVrLifecycleServices : IRuntimeVrLifecycleServic
 {
     public static NullRuntimeVrLifecycleServices Instance { get; } = new();
 
-    public bool InitializeOpenXR(XRWindow? window) => false;
-    public bool StopOpenXR() => false;
-    public Task<bool> InitializeLocal(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest, XRWindow window) => Task.FromResult(false);
-    public void InitRenderEmulated(XRWindow window) { }
-    public Task<bool> InitializeClient(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest) => Task.FromResult(false);
-    public bool InitializeServer() => false;
-    public void StartInputClient() { }
-    public void StopInputServer() { }
+    public bool InitializeOpenXR(XRWindow? window) => throw MissingService(nameof(InitializeOpenXR));
+    public bool StopOpenXR() => throw MissingService(nameof(StopOpenXR));
+    public Task<bool> InitializeLocal(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest, XRWindow window)
+        => throw MissingService(nameof(InitializeLocal));
+    public void InitRenderEmulated(XRWindow window) => throw MissingService(nameof(InitRenderEmulated));
+    public Task<bool> InitializeClient(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest)
+        => throw MissingService(nameof(InitializeClient));
+    public bool InitializeServer() => throw MissingService(nameof(InitializeServer));
+    public void StartInputClient() => throw MissingService(nameof(StartInputClient));
+    public void StopInputServer() => throw MissingService(nameof(StopInputServer));
     public Task SendInputs() => Task.CompletedTask;
+
+    private static InvalidOperationException MissingService(string operation)
+        => new($"VR lifecycle service is not installed; {operation} requires desktop VR composition.");
 }
 

@@ -1,6 +1,6 @@
 # Unified Runtime Build Stabilization
 
-Status: the build gate passes locally. Runtime, browser, and test-execution qualification remain open.
+Status: the build gate, local reference checks and portable-host checks pass with recorded limits. Browser, editor-published world and OpenGL/Vulkan smokes have viewed captures. Native callbacks and complete test execution/triage are recorded; broader integration acceptance remains open. Current findings are in the [harness investigation](../../investigations/rendering/desktop-browser-reference-harness.md) and [host validation record](../../investigations/platform/portable-engine-host-validation.md).
 
 Tracks: [unified runtime UR00](../../todo/platform/unified-desktop-browser-runtime-todo.md#ur00--stabilize-the-branch-as-a-reference-harness) and the build items of the [native subsystem integration checklist](../../todo/platform/native-subsystem-project-split-todo.md#build-dependency-and-publish-boundaries).
 
@@ -12,7 +12,7 @@ The first build attempt after the organizational refactor stopped at `XREngine.E
 
 | Component | Version |
 | --- | --- |
-| .NET SDK | 10.0.401 (no `global.json` pin; decision D5) |
+| .NET SDK | 10.0.401, pinned with workload set 10.0.401.1 in `global.json` after owner approval |
 | `wasm-tools` workload | manifest 10.0.112/10.0.100, workload set 10.0.401.1 |
 | WebAssembly SDK pack and browser runtime pack | 10.0.12 |
 | Emscripten packs | 3.1.56 (matches the [Jolt browser supply pin](../../design/platform/jolt-browser-native-supply.md)) |
@@ -31,15 +31,17 @@ Run repository PowerShell tools with PowerShell 7. Under Windows PowerShell 5.1,
 | `XREngine.Server`, `XREngine.VRClient` | Build, 0 warnings |
 | `XREngine.UnitTests` | Builds, 0 warnings |
 | `XRENGINE.slnx` | Builds, 0 warnings |
-| `Tools/Test-PortableBrowserCompile.ps1 -Configuration Release` | All 14 portable projects compile for `browser-wasm` |
-| `dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1` | Succeeds. `_framework` holds 200 files: 43.9 MiB uncompressed, 13.8 MiB Brotli, 17.4 MiB gzip, untrimmed interpreter |
+| `Tools/Test-PortableBrowserCompile.ps1 -Configuration Release` | All 15 portable projects compile for `browser-wasm`, including Host |
+| `dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1` | Fresh output succeeds after Host extraction. `_framework` holds 207 payloads, each with raw/Brotli/gzip variants: 48.1 MiB raw, 15.1 MiB Brotli, 19.1 MiB gzip; untrimmed interpreter |
+| `Samples/MonkeyBallVR`, Development Debug | Builds against shared OpenVR contract manifests; native VMA configuration mapping builds with zero warnings/errors |
 | Dependency inventory | Regenerated with PowerShell 7; only the three moved package rows changed |
 
 Not established by these results:
 
-- No application, editor session, or browser page was launched.
-- The Linux CI compile lane was not run in this original pass. The later focused Linux validation below normalizes Core casing; the full CI lane remains unqualified.
-- Unit tests were not run as a suite. A filtered run of boundary and source-contract tests had 61 failures of 233, and every failure predates this work: source-text contracts that still name pre-refactor paths or moved types, file lookups made ambiguous by moved or duplicated names, native Vulkan tests that need a device, and boundary tests that flag existing references (Server and VRClient reference `XREngine.Runtime.ModelAssetPipeline`; Bootstrap's generator input globs it). The one contract broken by this work, `CollectibleBackends_DoNotCreateUnmanagedDelegateThunks`, was updated and passes. Triage belongs to the native subsystem integration checklist.
+- These build results alone do not establish application behavior. Subsequent browser and desktop attempts are recorded in the harness investigation.
+- The full Linux CI compile lane remains unqualified. Core casing is now normalized in the Git index: 244 case-only renames preserve file blobs and modes, and all 759 paths use `XREngine.Runtime.Core`. The focused Linux calibration closure builds, as recorded below.
+- The subsequent full unit-test baseline executed 4,022 of 4,071 cases before a Vulkan finalizer abort: 3,737 passed and 285 failed. The null-data cleanup crash is repaired and forced-GC reproduction passes. Existing stale source/path contracts, dependency-graph checks and unrelated behavioral failures still require integration triage; they are not all device-only failures. Server/VRClient model-pipeline links and Bootstrap's model-pipeline factory scan were approved and their checks updated. The separate ModelingIntegration scan decision remains pending.
+- The repeat suite completes without abort: 4,804 passed, 669 failed and seven runner skips. No baseline-passing test name regresses; 1,451 additional cases execute. Failure families and the TRX skip-accounting discrepancy are recorded in the investigation; broader unit-suite acceptance remains unqualified.
 
 ## Fixes
 
@@ -89,12 +91,15 @@ Not established by these results:
   The pre-created shared-GL-context path takes a window backend again, with an optional owner window as on master. `SilkSharedWindowTestBackend` presents a hidden test window as that backend and is linked into the benchmarks.
 - The generated browser registration file declares its nullable context. The generator emits the same directive.
 
-## Open
+## Reference harness follow-up
 
-- UR00.03 and UR00.04: run the published site and the editor's browser build target, and record captures.
-- Run the full Linux compile lane after the Core casing normalization recorded below.
-- Decision D5: pin the SDK and workload.
-- Native subsystem checklist: execute and triage the unit test suite, inspect publish layouts, and run the live smokes.
+The reference fixture and actual editor browser publish command now run locally, with viewed WebGPU canvas captures. Editor-published output installs a player shell that requires the cooked startup world and omits fixture controls/overlay. LF checkout rules preserve hash-addressed shader bytes. These smokes do not establish unified engine gameplay, physical-device readiness or performance.
+
+The optional OpenGL mesh-task lookup now respects capability admission and unavailable symbols return zero. Presentation windows poll events, because a native event wait blocked the engine's render owner and queued readback when input was idle. Fresh minimal OpenGL and Vulkan runs render from two confirmed camera transforms and return viewed captures. Relocated clipboard callbacks return safe empty text for null or failing providers; detached ImGui, Vulkan debug-utils, Streamline logging and missing-entrypoint host checks pass. Shared diagnostics keep concrete renderer types out of application code and do not cache collectible CLR payload types.
+
+The final portable-host gate repeats the full solution, WebGPU closure, Release browser compile lane, browser publish and MonkeyBall sample build with zero warnings/errors. Logs are `Build/_AgentValidation/20260930-105523-unified-browser-runtime/logs/portable-host-qualified-*.log`. Fresh output under `temp-build/qualified-browser-publish/` has 257 raw site files totaling 50,851,045 bytes; including compressed variants, 751 files total 86,915,676 bytes. Prior incremental output retained obsolete hash-named Rendering/WebGPU payloads, so its 107,376,300 raw bytes do not describe the fresh publish. These size measurements establish the current untrimmed package, not the production performance budget.
+
+Remaining qualification includes the full Linux CI lane, broader test/contract acceptance, application publish layouts and native integration smokes. D1 approved `XREngine.Runtime.Host`; D6 approved the existing shared PowerShell generator. The [portable host ownership record](portable-engine-host-ownership.md) and host validation record contain the completed extraction, live startup/play evidence and limits. Browser-world execution remains active.
 
 ## Focused Linux validation (2026-09-30)
 
