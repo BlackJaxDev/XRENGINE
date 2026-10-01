@@ -1,3 +1,5 @@
+import { WebAudioStream } from './web-audio-stream.js';
+
 const contexts = new Map();
 let nextContext = 0;
 let audioGeneration = 0;
@@ -52,6 +54,14 @@ function applyRate(owner, source) {
     source.started = owner.context.currentTime;
     source.rate = Math.max(0.01, Math.min(4, source.pitch * doppler));
     if (source.node) source.node.playbackRate.value = source.rate;
+    source.stream.setRate(source.rate);
+}
+function bufferInUse(owner, id) {
+    for (let index = 0; index < owner.sourceList.length; index++) {
+        const source = owner.sourceList[index];
+        if (source.bufferId === id || source.stream.contains(id)) return true;
+    }
+    return false;
 }
 function detachNode(source) {
     if (!source.node) return;
@@ -72,7 +82,8 @@ function createSource(owner) {
     gain.connect(owner.master);
     const source = { bufferId: 0, buffer: null, panner, gain, node: null,
         offset: 0, started: 0, pitch: 1, rate: 1, loop: false, playing: false,
-        position: [0, 0, 0], velocity: [0, 0, 0] };
+        position: [0, 0, 0], velocity: [0, 0, 0],
+        stream: new WebAudioStream(owner.context, panner), transfer: new Int32Array(32) };
     owner.sources.set(id, source);
     owner.sourceList.push(source);
     return id;
@@ -98,6 +109,7 @@ export const engineAudioImports = {
         contexts.delete(id);
         audioGeneration++;
         for (const source of owner.sources.values()) {
+            source.stream.dispose();
             detachNode(source);
             source.panner.disconnect();
             source.gain.disconnect();
@@ -145,6 +157,7 @@ export const engineAudioImports = {
     createSource(id) { return createSource(requireContext(id)); },
     destroySource(id, sourceId) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
+        source.stream.dispose();
         detachNode(source); source.panner.disconnect(); source.gain.disconnect(); owner.sources.delete(sourceId);
         owner.sourceList.splice(owner.sourceList.indexOf(source), 1);
     },
@@ -157,13 +170,15 @@ export const engineAudioImports = {
     },
     destroyBuffer(id, bufferId) {
         const owner = requireContext(id), entry = requireBuffer(owner, bufferId);
-        if (Array.from(owner.sources.values()).some(source => source.bufferId === bufferId))
+        if (bufferInUse(owner, bufferId))
             throw new Error('WebAudio.BufferInUse: detach sources before destroying this buffer.');
         owner.pcmBytes -= entry.bytes;
         owner.buffers.delete(bufferId);
     },
     uploadBuffer(id, bufferId, pcm, frequency, channels, format) {
         const owner = requireContext(id), entry = requireBuffer(owner, bufferId);
+        if (bufferInUse(owner, bufferId))
+            throw new Error('WebAudio.BufferInUse: detach or unqueue a buffer before replacing its PCM.');
         if (!Number.isInteger(frequency) || frequency < 8000 || frequency > 192000
             || ![1, 2].includes(channels) || ![0, 1, 2].includes(format))
             throw new Error('WebAudio.PcmFormatUnsupported: only mono/stereo 8-bit, 16-bit or float PCM is supported.');
@@ -192,6 +207,7 @@ export const engineAudioImports = {
     },
     play(id, sourceId) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
+        if (source.stream.count) { source.stream.play(source.rate); return; }
         if (!source.buffer) throw new Error('WebAudio.BufferMissing: attach PCM before playback.');
         if (source.playing) return;
         if (source.offset >= source.buffer.duration) source.offset = 0;
@@ -214,23 +230,51 @@ export const engineAudioImports = {
     },
     stop(id, sourceId) {
         const source = requireSource(requireContext(id), sourceId);
+        source.stream.stop();
         detachNode(source); source.playing = false; source.offset = 0;
     },
     pause(id, sourceId) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
+        source.stream.pause();
         source.offset = playbackOffset(owner, source);
         detachNode(source); source.playing = false;
     },
     rewind(id, sourceId) {
         const source = requireSource(requireContext(id), sourceId);
+        source.stream.rewind();
         detachNode(source); source.playing = false; source.offset = 0;
     },
     setSourceBuffer(id, sourceId, bufferId) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
         const buffer = bufferId ? requireBuffer(owner, bufferId).audio : null;
         if (bufferId && !buffer) throw new Error('WebAudio.BufferEmpty: upload PCM before attaching.');
+        source.stream.clear();
         detachNode(source); source.playing = false; source.offset = 0;
         source.bufferId = bufferId; source.buffer = buffer;
+    },
+    queueBuffers(id, sourceId, buffers) {
+        const owner = requireContext(id), source = requireSource(owner, sourceId);
+        if (source.bufferId) throw new Error('WebAudio.StaticSource: detach the static buffer before queuing.');
+        if (source.loop) throw new Error('WebAudio.StreamLoopUnsupported: stream producers must explicitly repeat queued content.');
+        // The borrowed managed view cannot survive this call. Copy only at a queue boundary.
+        source.stream.enqueue(buffers.slice(), bufferId => requireBuffer(owner, bufferId).audio);
+    },
+    unqueueProcessedBuffers(id, sourceId, output, maximum) {
+        const source = requireSource(requireContext(id), sourceId);
+        if (!Number.isInteger(maximum) || maximum < 0 || maximum > 32)
+            throw new Error('WebAudio.StreamUnqueueLimit: at most 32 buffers per call.');
+        const count = source.stream.unqueue(source.transfer, maximum);
+        output.set(source.transfer);
+        return count;
+    },
+    buffersProcessed(id, sourceId) {
+        const source = requireSource(requireContext(id), sourceId);
+        source.stream.refresh();
+        return source.stream.processed;
+    },
+    buffersQueued(id, sourceId) {
+        const source = requireSource(requireContext(id), sourceId);
+        return source.bufferId ? 1 : source.stream.count;
     },
     sourcePosition(id, sourceId, x, y, z) {
         const owner = requireContext(id), source = requireSource(owner, sourceId), panner = source.panner;
@@ -257,12 +301,19 @@ export const engineAudioImports = {
     },
     sourceLooping(id, sourceId, loop) {
         const source = requireSource(requireContext(id), sourceId);
+        if (loop && source.stream.count)
+            throw new Error('WebAudio.StreamLoopUnsupported: stream producers must explicitly repeat queued content.');
         source.loop = Boolean(loop);
         if (source.node) source.node.loop = source.loop;
     },
-    isSourcePlaying(id, sourceId) { return requireSource(requireContext(id), sourceId).playing; },
+    isSourcePlaying(id, sourceId) {
+        const source = requireSource(requireContext(id), sourceId);
+        source.stream.refresh();
+        return source.stream.count ? source.stream.playing : source.playing;
+    },
     sampleOffset(id, sourceId) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
+        if (source.stream.count) return source.stream.sampleOffset();
         return source.buffer ? Math.floor(playbackOffset(owner, source) * source.buffer.sampleRate) : 0;
     },
 };

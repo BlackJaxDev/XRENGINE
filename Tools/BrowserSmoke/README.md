@@ -5,6 +5,13 @@ browser application and cooked shader artifacts, launches real Chromium, and
 checks the actual engine-rendered pixels. It neither mocks WebGPU nor replaces
 physics or engine scene objects. A source/build success is not a smoke pass.
 
+The audio check imports the published Web Audio streaming scheduler and renders
+two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
+sample at rates 1 and 2, processed-buffer order, and disposal. It requires no
+microphone or output-device permission. This establishes scheduling/sample
+correctness only, not audible playback, gesture unlock, spatialization, or codec
+support across the device matrix.
+
 ## Prerequisites and execution
 
 Use Node 20 or newer, the repository's pinned .NET/browser toolchain, and the
@@ -124,6 +131,17 @@ reported as diagnostic evidence failure, never a successful rendering claim.
 
 Diagnostic flags only enable logging; they do not select another GPU backend or
 relax WebGPU validation. See [Chromium logging](https://www.chromium.org/for-testers/enable-logging/).
+
+The software lane enables the Vulkan feature as well as selecting the SwiftShader
+Vulkan driver. In [run 36931696715](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36931696715),
+the driver switches alone left Skia on GaneshGL: both engine-depth and the separate
+raw canary lost their device while creating the canvas shared image, with no
+shader draws and no GPU-process restart. Native stderr identified the missing
+WebGPU swapchain backing factory. Chromium's [shared-image factory selection](https://chromium.googlesource.com/chromium/src/+/ae6b8f6dca19521b784f8695c9d5203e977aee54/gpu/command_buffer/service/shared_image/shared_image_factory.cc)
+requires a Vulkan context or enabled GL/Vulkan interop for its Linux Vulkan backing.
+The single feature switch is a software-runner configuration correction to qualify
+through the unchanged raw-canary and engine-depth checks; it is not itself evidence
+of successful rendering. Native GPU mode is unchanged.
 
 Agent runs must place `--output` under the active `Build/_AgentValidation/<run>`
 root and honor `Tools/Limit-AgentValidation.ps1`. CI may supply its own artifact
