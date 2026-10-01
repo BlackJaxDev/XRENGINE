@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 
 namespace XREngine.Rendering.Shaders.Compilation;
 
@@ -27,6 +28,10 @@ public sealed class EngineMaterialVariantCatalog
                 throw new InvalidDataException($"MaterialVariant.ArtifactMissing: '{identity}' is not a validated {entry.Key.Target} artifact.");
             if (!string.Equals(artifact.Pass, entry.Key.Pass, StringComparison.Ordinal))
                 throw new InvalidDataException($"MaterialVariant.PassMismatch: '{identity}' declares pass '{artifact.Pass}', not '{entry.Key.Pass}'.");
+            using JsonDocument descriptor = JsonDocument.Parse(artifact.DescriptorBytes.ToArray());
+            if (!descriptor.RootElement.TryGetProperty("materialVariant", out JsonElement declaration)
+                || ShaderProgramArtifactReader.ReadMaterialVariantKey(declaration, artifact.Pass, artifact.Target) != entry.Key)
+                throw new InvalidDataException($"MaterialVariant.DescriptorMismatch: '{identity}'.");
             if (!builder.TryAdd(entry.Key, artifact))
                 throw new InvalidDataException($"MaterialVariant.DuplicateKey: '{entry.Key}'.");
         }

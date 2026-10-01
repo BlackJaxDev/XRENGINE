@@ -1,4 +1,34 @@
-# Browser canvas host
+# Browser runtime entry points
+
+## Authored engine player
+
+The editor's `BrowserWebGPU` target installs `engine-player.html` as the site
+entry point. It loads the canonical cooked `XRWorld` and statically linked game
+assembly through the shared runtime. This path is still under qualification;
+the production `DefaultRenderPipeline` WebGPU output remains explicitly gated
+until its required lit material and pass routes are available. See the
+[current checkpoint](../docs/work/progress/platform/unified-browser-checkpoint-2026-10-01.md)
+for exact build/runtime evidence and remaining work.
+
+Browser composition installs its built-in material target before deserializing
+the world. Material semantics and parameters are retained without loading
+desktop GLSL. Hash-owned `materialVariants` metadata is validated before play;
+it does not make an absent renderer variant available.
+
+A rendered local player owns the same `XRViewport` used for camera and UI
+coordinates. `XRViewport.BindInputSource` accepts the externally owned browser
+snapshot source, and `BindLocalPlayer` maintains player/view ownership.
+Unbound desktop viewports still read their window's input. Browser pointer
+publication converts CSS coordinates to canvas backing pixels.
+
+Startup failures include their managed stage and full exception. An initial
+resource-generation failure is reported immediately. If a visible canvas
+otherwise cannot present its first frame after 45 seconds of active frame time,
+the shell reports the renderer, pipeline-decline, and resource-failure state
+instead of waiting indefinitely. Restart creates a fresh owner; unsupported
+passes do not select a substitute renderer or simplified game runtime.
+
+## Frozen reference harness
 
 This standalone application composes the engine's shared scene/component/transform
 runtime with a browser-owned WebGPU canvas. A ticking `XRComponent` rotates and
@@ -35,12 +65,17 @@ Serve the `wwwroot` directory in the publish output reported by the SDK through 
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
 This direct browser publish is the developer harness (`index.html` and `main.js`),
 including the interactive demo and diagnostic controls. An editor **Build Project**
-publish with the `BrowserWebGPU` target instead installs `player.html` as
+publish with the `BrowserWebGPU` target instead installs `engine-player.html` as
 `index.html` and removes `main.js` from its staged site. The player requires the
 generated `browser-publish.json` to name a cooked startup world and reports an
 error if the world is absent. It shows load progress and failures, supports gesture
 audio activation and explicit restart, and hides the current fixture overlay.
 No demo scene or diagnostic controls are included in that published entrypoint.
+Back/forward-cache page suspension keeps the authored world, stops frame
+submission, resets input and elapsed timing, and resumes through the same surface
+lifecycle on `pageshow`. A discarded page instead requests engine teardown.
+The focused page-state probe passes; real browser history/cache behavior remains
+part of lifecycle qualification.
 The separate browser scene, animation, collision and focused pipeline are a
 frozen reference harness. Changes may fix harness defects; new engine features
 follow the [unified runtime design](../docs/work/design/platform/unified-desktop-browser-runtime-design.md).
@@ -52,6 +87,13 @@ usable adapter. `?renderer=WebGPU` and `?renderer=Auto` select the packaged WebG
 path; `WebGL2` and unknown renderer names produce a diagnostic. No fallback
 renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
+
+An editor-published engine-asset manifest may carry `materialVariants` entries
+for exact semantic, target, pass, vertex-profile, and output-profile keys. Each
+entry refers to one hash-verified shader descriptor containing the same explicit
+declaration. Browser startup rejects duplicate keys, missing hashes, and
+mismatched descriptors before activating the world. A missing catalog entry
+does not trigger a shader-name or authored-source fallback.
 
 Keep hash-addressed cooked shader payloads under `Assets/shaders/` as LF bytes.
 Line-ending conversion changes their hashes and causes the loader to reject them.

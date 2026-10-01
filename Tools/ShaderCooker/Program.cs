@@ -90,6 +90,8 @@ internal static class Program
             Directory.CreateDirectory(output);
             CheckAncestry(output);
             JsonArray artifacts = [];
+            JsonArray materialVariants = [];
+            HashSet<string> variantKeys = new(StringComparer.Ordinal);
             foreach (PreparedShader item in prepared.OrderBy(item => item.Name, StringComparer.Ordinal))
             {
                 cancellation.Token.ThrowIfCancellationRequested();
@@ -98,9 +100,20 @@ internal static class Program
                 WriteAtomic(Path.Combine(output, Hash(item.Source) + ".wgsl"), item.Source, true);
                 WriteAtomic(Path.Combine(output, descriptorName), item.Descriptor, true);
                 artifacts.Add(new JsonObject { ["name"] = item.Name, ["descriptor"] = descriptorName, ["sha256"] = descriptorHash });
+                if (item.MaterialVariant is { } variant)
+                {
+                    JsonObject reference = (JsonObject)variant.DeepClone();
+                    reference["descriptorIdentity"] = descriptorHash;
+                    string key = string.Join('\u001f', reference["semantic"], reference["semanticVersion"], reference["target"],
+                        reference["pass"], reference["vertexProfile"], reference["outputProfile"]);
+                    Require(variantKeys.Add(key), $"Duplicate material variant key for '{item.Name}'.");
+                    materialVariants.Add(reference);
+                }
             }
             int schema = ParseJson(prepared[0].Descriptor)["schemaVersion"]!.GetValue<int>();
-            byte[] manifest = Canonical(new JsonObject { ["schemaVersion"] = schema, ["backend"] = "WebGPU", ["packetVersion"] = 2, ["artifacts"] = artifacts });
+            JsonObject manifestDocument = new() { ["schemaVersion"] = schema, ["backend"] = "WebGPU", ["packetVersion"] = 2, ["artifacts"] = artifacts };
+            if (materialVariants.Count > 0) manifestDocument["materialVariants"] = materialVariants;
+            byte[] manifest = Canonical(manifestDocument);
             Require(manifest.Length <= MaxJsonBytes, "Manifest exceeds the JSON byte limit.");
             cancellation.Token.ThrowIfCancellationRequested();
             WriteAtomic(Path.Combine(output, "manifest.json"), manifest, false);
@@ -130,6 +143,7 @@ internal static class Program
         HashSet<string> keys = new(RecipeKeys, StringComparer.Ordinal);
         if (schema >= 2) keys.Add("coordinates");
         if (schema == 3) keys.Add("pass");
+        if (schema == 3 && recipe.ContainsKey("materialVariant")) keys.Add("materialVariant");
         Require(recipe.Count == keys.Count && recipe.All(item => keys.Contains(item.Key)), "Recipe properties must match the shader recipe schema.");
         string name = String(recipe, "name");
         Require(Regex.IsMatch(name, "^[a-z][a-z0-9-]{0,63}$", RegexOptions.CultureInvariant), "Name must be a lowercase shader identifier.");
@@ -139,12 +153,28 @@ internal static class Program
         Require(schema >= 2 || language == "WGSL", $"{stageContext}: schema 1 supports explicit WGSL only.");
         Require(String(recipe, "target") == "WebGPUWgsl", $"{stageContext}: target must be WebGPUWgsl.");
         ShaderProgramArtifact? engineLayout = null;
+        JsonObject? materialVariant = null;
         if (schema == 3)
         {
             Require(language is "Slang" or "WGSL", $"{stageContext}: engine recipes require authored Slang or explicit WGSL; the frozen browser material generator is not an engine frontend.");
             using JsonDocument layoutDocument = JsonDocument.Parse(recipeBytes);
             try { engineLayout = ShaderProgramArtifactReader.ReadLayout(layoutDocument.RootElement, ShaderArtifact.FromWgsl(""), "recipe"); }
             catch (InvalidDataException error) { throw new InvalidDataException($"{stageContext}: {error.Message}", error); }
+            if (recipe.TryGetPropertyValue("materialVariant", out JsonNode? variantNode))
+            {
+                JsonObject variant = Object(variantNode, "materialVariant");
+                Require(variant.Count == 4 && variant.ContainsKey("semantic") && variant.ContainsKey("semanticVersion")
+                    && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
+                Require(String(variant, "semantic") == "StandardLitColor" && Integer(variant, "semanticVersion") == 1,
+                    $"{stageContext}: unsupported engine material semantic.");
+                string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
+                Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
+                    && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
+                    $"{stageContext}: invalid material variant profile.");
+                materialVariant = new JsonObject { ["semantic"] = "StandardLitColor", ["semanticVersion"] = 1,
+                    ["target"] = "WebGPUWgsl", ["pass"] = String(recipe, "pass"),
+                    ["vertexProfile"] = vertexProfile, ["outputProfile"] = outputProfile };
+            }
         }
         else
         {
@@ -225,6 +255,7 @@ internal static class Program
         foreach (string key in new[] { "schemaVersion", "name", "sourceLanguage", "target", "entryPoints", "defines", "specialization", "requiredLimits", "matrixLayout", "semanticSchemaIdentity", "layout", "pipeline" })
             descriptor[key] = recipe[key]!.DeepClone();
         if (schema == 3) descriptor["pass"] = recipe["pass"]!.DeepClone();
+        if (materialVariant is not null) descriptor["materialVariant"] = recipe["materialVariant"]!.DeepClone();
         descriptor["requiredFeatures"] = new JsonArray();
         descriptor["compilerIdentity"] = schema == 1 ? "xrengine-wgsl-packager/1" : compilerIdentity;
         string emittedPath = language == "WGSL" ? (schema == 1 ? sourceRelative : sourceDependency) : name + ".wgsl";
@@ -246,7 +277,7 @@ internal static class Program
         Require(dependencies.Count <= 512, $"{stageContext}: dependency count exceeds 512.");
         Require(encoded.Length <= MaxJsonBytes, $"{stageContext}: descriptor exceeds the JSON byte limit.");
         if (schema == 3) _ = ShaderProgramArtifactReader.Read(encoded, source);
-        return new PreparedShader(name, encoded, source);
+        return new PreparedShader(name, encoded, source, materialVariant);
     }
 
     private static byte[] GenerateMaterial(byte[] source, string name, string context)

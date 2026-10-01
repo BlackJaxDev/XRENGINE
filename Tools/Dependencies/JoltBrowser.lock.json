@@ -15,9 +15,9 @@
   "managedLicenseSha256": "afdd2e799fae375a71ce7ff6addb35b77f064c19321593aa869a662c2dc213b1",
   "managedApiSha256": "e07dc18e8f3a312c37a5f5ebe26f37c7757b567379b6a20e15aede46c3d2dd3d",
   "managedContactListenerPatchedApiSha256": "406b0fb642ed59f403557b50712b369fac4fb49ca043dad17177e4e8dc85d01b",
-  "managedPatchedApiSha256": "cfd9c4fafc12ab609461c863e5ade61f833ddc9f16909471af10c863d84626ef",
+  "managedPatchedApiSha256": "30098aba4ea2879271d3427a392452e2420b72703f259a0a6cfe8862a84a6dd5",
   "managedCallbackAbiPatchSha256": "184291897af5e9949b32b7b2c45a682d24e7efcc9a866b487f0f8b65a2766afa",
-  "managedPatch": "contact-listener-double-return-void; pointer-sized-callback-imports; explicit-world-filter-ownership",
+  "managedPatch": "contact-listener-double-return-void; pointer-sized-callback-imports; explicit-world-filter-ownership; scalar-motion-quality; void-mass-properties-return; scalar-object-layer; void-body-area-activation-return; scalar-buoyancy-body-id",
   "managedLifetimePatchSha256": "b35fb8fee9489983d65885b3bdf168ed745ec17eb934a5e046475b19c1edf5c4",
   "managedLifetimeSources": [
     {
@@ -35,5 +35,9 @@
       "originalSha256": "f183bb54e2e727bfc28f653b35f44042585eefe1d9165b0fefac9063f7795696",
       "patchedSha256": "dceb3f72b92018d5b351a7500b6bf374ec984978bfecbe3fdd9556af77957b0e"
     }
-  ]
+  ],
+  "managedCallbackPatchedApiSha256": "cfd9c4fafc12ab609461c863e5ade61f833ddc9f16909471af10c863d84626ef",
+  "managedBodyPropertiesAbiPatchSha256": "8e70684c260476a72f88e705f8c7e1521dba704d0769495dd26189ec448e0809",
+  "managedBodyPropertiesPatchedApiSha256": "457ddcebf815a0d3f10a81d0c484a39ce1cba62d5b873ed734c478da002e4cae",
+  "managedBodyQueryAbiPatchSha256": "95ca8de8f346f89aea6549b48a4b8dd77b08cd7a463e0f4dfbe418ed9ea92f3c"
 }

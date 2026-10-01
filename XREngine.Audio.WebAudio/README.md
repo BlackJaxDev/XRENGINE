@@ -29,4 +29,6 @@ The browser smoke harness renders known queued samples through a real
 `OfflineAudioContext` at rates 1 and 2. That check does not establish audible
 device output, user-gesture activation, spatial quality, or the browser codec
 matrix. Local deterministic scheduling/teardown probes and an actual .NET WASM
-PCM/Int32-memory-view probe pass; the browser sample check awaits CI acceptance.
+PCM/Int32-memory-view probe pass. The real Chromium sample check passed at both
+rates with maximum sample error zero in
+[run 36933343571](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36933343571).

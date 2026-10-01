@@ -1644,14 +1644,7 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateColorMaterialDeferred(ColorF4 color)
         {
-            XRMaterial material = new(CreateDeferredLitDefaults(color), ShaderHelper.LitColorFragDeferred()!)
-            {
-                RenderPass = (int)EDefaultRenderPass.OpaqueDeferred
-            };
-
-            material.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitColorV1;
-
-            return material;
+            return CreateStandardLitColorMaterial(CreateDeferredLitDefaults(color), deferred: true);
         }
 
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
@@ -1733,7 +1726,6 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public static XRMaterial CreateLitColorMaterial(ColorF4 color, bool deferred = true)
         {
-            XRShader? frag = deferred ? ShaderHelper.LitColorFragDeferred() : ShaderHelper.LitColorFragForward();
             ShaderVar[] parameters = deferred ?
             [
                 new ShaderVector3((ColorF3)color, "BaseColor"),
@@ -1749,7 +1741,20 @@ namespace XREngine.Rendering
                 new ShaderFloat(32.0f, "MatShininess"),
             ];
 
-            XRMaterial material = new(parameters, frag!);
+            return CreateStandardLitColorMaterial(parameters, deferred);
+        }
+
+        private static XRMaterial CreateStandardLitColorMaterial(ShaderVar[] parameters, bool deferred)
+        {
+            // Cooked targets resolve the explicit semantic at draw time. No desktop shader
+            // source is loaded, and no substitute shader is attached to the material.
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl => new(parameters,
+                    (deferred ? ShaderHelper.LitColorFragDeferred() : ShaderHelper.LitColorFragForward())!),
+                EngineMaterialConstructionTarget.WebGpuCooked => new(parameters),
+                _ => throw new InvalidOperationException("Unsupported built-in material construction target."),
+            };
             material.RenderPass = deferred
                 ? (int)EDefaultRenderPass.OpaqueDeferred
                 : (int)EDefaultRenderPass.OpaqueForward;

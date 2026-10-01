@@ -45,6 +45,10 @@ namespace XREngine
         private int _runtimeSourceEpoch;
         private readonly object _runtimePublicationGate = new();
         private bool _runtimeSourceTeardown;
+        private bool _runtimeSourceDisposing;
+        private bool _runtimeSourceUnbinding;
+        private readonly List<ObjectCacheOwnership> _runtimeSourceObjects = [];
+        private readonly HashSet<XRAsset> _runtimeSourceAssets = new(ReferenceEqualityComparer.Instance);
         private readonly ConcurrentDictionary<string, byte> _pendingFeatureCacheImports =
             new(StringComparer.OrdinalIgnoreCase);
 
@@ -758,7 +762,8 @@ namespace XREngine
         public void NotifyExternalAssetPathWritten(string path)
             => MarkRecentlySaved(path);
 
-        private void PostLoaded<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, T? file) where T : XRAsset
+        private void PostLoaded<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, T? file,
+            ObjectCacheOwnership? ownership = null) where T : XRAsset
         {
             if (file is null)
                 return;
@@ -766,8 +771,23 @@ namespace XREngine
             file.Name = Path.GetFileNameWithoutExtension(filePath);
             file.FilePath = filePath;
 
-            // Refresh asset graph to populate SourceAsset/EmbeddedAssets relationships
-            XRAssetGraphUtility.RefreshAssetGraph(file);
+            if (ownership is null)
+                XRAssetGraphUtility.RefreshAssetGraph(file);
+            else
+            {
+                // Runtime catalogs already know which allocations belong to this payload.
+                // An authoring traversal would claim virtual-path dependencies and lazy
+                // process resources, attaching them back to an otherwise stopped world.
+                List<XRAsset> ownedAssets = [];
+                file.SourceAsset = file;
+                foreach (XRObjectBase value in ownership.Objects)
+                    if (value is XRAsset embedded && !embedded.IsDestroyed && !ReferenceEquals(embedded, file))
+                    {
+                        embedded.SourceAsset = file;
+                        ownedAssets.Add(embedded);
+                    }
+                file.EmbeddedAssets.Set(ownedAssets, reportRemoved: false, reportAdded: false, reportModified: false);
+            }
 
             CacheAsset(file);
 
@@ -829,6 +849,18 @@ namespace XREngine
 
         public void Dispose()
         {
+            if (_runtimeAssetSource is IRuntimeAssetCatalog && _runtimeAssetSource is { } source)
+            {
+                UnbindRuntimeSource(source);
+                return;
+            }
+            if (_runtimeSourceObjects.Count != 0)
+            {
+                lock (_runtimePublicationGate)
+                    DisposeRuntimeSourceObjects();
+                return;
+            }
+
             HashSet<XRAsset> assets = new(ReferenceEqualityComparer.Instance);
             foreach (XRAsset asset in LoadedAssetsByIDInternal.Values) assets.Add(asset);
             foreach (XRAsset asset in LoadedAssetsByPathInternal.Values) assets.Add(asset);

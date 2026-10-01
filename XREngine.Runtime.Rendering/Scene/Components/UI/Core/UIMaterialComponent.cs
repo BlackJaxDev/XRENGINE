@@ -2,6 +2,7 @@ using XREngine.Extensions;
 using System.Drawing;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
@@ -32,11 +33,18 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _flipVerticalUVCoord, value);
         }
 
-        private static readonly Lazy<XRMesh> SharedQuadMesh = new(static () =>
-            XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)));
+        private static readonly Lazy<XRMesh> SharedQuadMesh = new(static () => CreateSharedQuadMesh(false));
+        private static readonly Lazy<XRMesh> SharedFlippedQuadMesh = new(static () => CreateSharedQuadMesh(true));
 
-        private static readonly Lazy<XRMesh> SharedFlippedQuadMesh = new(static () =>
-            XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, true)));
+        private static XRMesh CreateSharedQuadMesh(bool flipVerticalUVCoord)
+        {
+            // Lazy shared geometry belongs to the process, not the first catalog/component
+            // whose construction happens to request it.
+            using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+            XRMesh mesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, flipVerticalUVCoord));
+            publication.Complete();
+            return mesh;
+        }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {

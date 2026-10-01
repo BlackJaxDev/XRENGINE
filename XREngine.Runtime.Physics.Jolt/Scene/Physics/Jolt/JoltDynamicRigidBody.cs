@@ -14,13 +14,13 @@ namespace XREngine.Scene.Physics.Jolt
         private bool _kinematicMoveActive;
         private bool _gravityEnabled;
 
-        internal JoltDynamicRigidBody(BodyID bodyId, bool gravityEnabled = true)
+        internal JoltDynamicRigidBody(JoltScene allocationOwner, BodyID bodyId, bool gravityEnabled = true)
+            : base(allocationOwner, bodyId)
         {
-            BodyID = bodyId;
             _gravityEnabled = gravityEnabled;
         }
 
-        public XRComponent? OwningComponent { get; set; }
+        public override XRComponent? OwningComponent { get; set; }
 
         AbstractPhysicsScene? IPhysicsSceneAttachedActor.AttachedScene => Scene;
 

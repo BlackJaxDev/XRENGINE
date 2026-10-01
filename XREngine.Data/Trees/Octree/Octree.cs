@@ -12,7 +12,7 @@ namespace XREngine.Data.Trees
     /// A 3D space partitioning tree that recursively divides aabbs into 8 smaller aabbs depending on the items they contain.
     /// </summary>
     /// <typeparam name="T">The item type to use. Must be a class deriving from I3DBoundable.</typeparam>
-    public class Octree<T> : OctreeBase, I3DRenderTree<T> where T : class, IOctreeItem
+    public class Octree<T> : OctreeBase, I3DRenderTree<T>, IDisposable where T : class, IOctreeItem
     {
         internal OctreeNode<T> _head;
 
@@ -37,6 +37,7 @@ namespace XREngine.Data.Trees
         {
             List<T> renderables = [];
             _head.CollectAll(renderables);
+            _head.Destroy();
             _head = new OctreeNode<T>(newBounds, 0, 0, null, this);
 
             for (int i = 0; i < renderables.Count; i++)
@@ -47,6 +48,16 @@ namespace XREngine.Data.Trees
             }
         }
         
+        /// <summary>Releases owned tree nodes and queued references without destroying the items.</summary>
+        public void Dispose()
+        {
+            _head.Destroy();
+            SwapCommands.Clear();
+            RaycastCommands.Clear();
+            _swapCommandBuffer.Clear();
+            _swapCommandIndices.Clear();
+        }
+
         internal enum ETreeCommand
         {
             Move,

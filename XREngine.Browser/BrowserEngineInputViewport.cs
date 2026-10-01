@@ -5,7 +5,7 @@ using XREngine.Rendering;
 namespace XREngine.Browser;
 
 /// <summary>Publishes browser device snapshots to the engine's existing local-player input path.</summary>
-internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport
+internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, IRuntimeLocalPlayerInputSource
 {
     private readonly WindowInputSnapshotAccumulator _snapshots = new();
     private readonly bool[] _keys = new bool[(int)EKey.LastKey + 1];

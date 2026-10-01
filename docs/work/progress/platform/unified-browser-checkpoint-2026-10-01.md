@@ -145,7 +145,101 @@ The bare host's published-player auto-start remains explicitly skipped until
 an authored startup-world descriptor is supplied. Physical hardware budgets
 and the broader recovery matrix remain open.
 
+The depth repair was published as `52a0a0331b5f8ec139e67a1444b1249b3ece3763`
+([Actions run 36924823536](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36924823536)).
+Build, publish, shader cook, world lifecycle, asset lifetime, Jolt, and delivery
+checks passed again. Actual Chromium depth rendering failed after approximately
+three seconds with a destroyed-device notification. The console artifact did
+not retain an earlier GPU error, so the original cause remains under diagnosis;
+the Node boundary result does not establish GPU execution. The
+[qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36924823536/artifacts/11194011923)
+preserves the failure screenshot and smoke outcomes.
+
+The next source slice adds serializer-owned external dependency declarations
+and recursive canonical cooking, plus hash-owned material-variant metadata
+from cooker to browser catalog. Local Editor/Rendering/Browser/cooker builds
+and focused runtime probes pass. Built-in lit-color construction now retains
+the shared semantic/parameters without trying to load desktop GLSL in the
+browser. The actual lit shaders and render-profile integration remain required.
+
+Browser input now binds its snapshot source to the player's real `XRViewport`
+instead of substituting an input-only object for rendered sessions. Focus,
+capture lifetime and CSS-to-backing-pixel conversion have focused probe
+evidence; rendered UI/hit-testing acceptance remains open.
+
 See the [browser smoke instructions](../../../../Tools/BrowserSmoke/README.md),
 [shader integration record](../rendering/unified-webgpu-shader-cooking.md), and
 [caller-thread validation](caller-thread-frame-stepping.md) for reproducible
 commands and detailed boundaries.
+
+## Canonical game lifecycle and browser qualification updates
+
+The authored `RollingBallWorld.asset`, its version-5 cooked world serializer, and
+statically linked portable gameplay assembly now run through the real browser
+`RuntimeWorld`/Jolt lifecycle under published .NET WebAssembly. Repeated headless
+and canvas-composed runs each execute 120 warm frames and 600 measured frames,
+with 600 variable and 1,200 fixed callbacks per measured cycle. The canvas run
+in this local probe does not initialize WebGPU and is not a pixel, playable
+browser, or device-performance acceptance claim.
+
+The runtime proof exposed and repaired browser-native body ABI mismatches and
+native lifetime defects. Physics initialization now precedes scene attachment;
+settings are applied after initialization. Five canonical cycles release all
+native bodies, clear component body links, invalidate retained actor IDs, and
+release the physics system. Removing and re-adding an actor preserves its ID;
+destroying a detached actor releases it and rejects subsequent re-add. Exact
+browser-only patch hashes and native API evidence are recorded in the
+[Jolt supply record](../../design/platform/jolt-browser-native-supply.md).
+
+Repeated game runs also exposed strong-registry retention. Source-owned cooked
+allocation batches and explicit session ownership now release all authored
+nodes, components, and worlds after each of five headless and canvas-composed
+cycles. Failed manifest loading and a separately injected failure after world
+hydration both permit a later successful retry. Smaller session-container and
+lazy default-resource ownership defects remain under repair and shared-runtime
+review; these observations do not yet establish leak-free lifecycle acceptance.
+
+The final reviewed ownership slice makes the headless registry flat at 35 objects
+after each of five cycles. Canvas-composed teardown still retains eight objects
+per cycle, traced to a 128-byte LOD-transition buffer and a generated empty
+fallback material with their owned containers. Forced-GC heap growth remains
+unqualified. A separate live probe injects a component failure during actual
+`OnBeginPlay`, after native world activation: startup reports the intended error,
+rollback leaves zero authored graph objects, and an immediate clean retry plays
+and stops successfully. Ownership commits may omit fully destroyed temporary
+allocations; ordinary construction publication remains strict, and destruction
+exceptions abort the owning transaction even if the caller catches them.
+
+[Run 36928282822](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36928282822)
+retained the first GPU failure: the external Dawn Instance reference ceased to
+exist before explicit renderer destruction, with no preceding validation error.
+The subsequent diagnostic checkpoint `e8ef0ceafac6196b0c237bfbcaac9e73c0c01370`
+([run 36931696715](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36931696715))
+proved that a separate raw WebGPU page also failed on its first canvas clear,
+before any engine, managed runtime, or shader pipeline. Native Chromium stderr
+reported a missing shared-image backing factory; its GPU process did not crash.
+This narrows the failure to the runner's canvas presentation configuration.
+
+Checkpoint `e787fa4dddad043e5f0403fbe4eef357b9bbdb45`
+([run 36933343571](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36933343571))
+adds one explicit software-mode Vulkan feature switch, preserving native mode,
+validation, and depth assertions. The run completed successfully. Every sampled
+5×5 engine pixel patch exactly matched its expected bytes: left `(64,0,191)`,
+right `(191,0,64)`, and background `(13,13,13)`. It recorded 30 real engine mesh
+draws, 16 submissions, zero reference-scene packets, and no focused reference
+pipeline. The raw clear, triangle, and identical cooked-WGSL checks also passed;
+there were no device losses or browser console errors. CDP changed from
+GaneshGL to GaneshVulkan while retaining SwiftShader, with no GPU-process crash.
+This is software-WebGPU correctness evidence for the admitted depth profile,
+not the complete production render pipeline or physical hardware qualification.
+
+The same checkpoint implements bounded Web Audio PCM queues, ordered processed
+buffer retrieval, clock-based scheduling, pause/resume, stop/rewind, rate changes,
+and source/context teardown. Local schedule/ownership probes and actual .NET
+WASM memory-view queue/unqueue calls pass; the leaf build has zero warnings and
+errors. The same CI run rendered known PCM samples with a real
+`OfflineAudioContext` at both playback rates with maximum sample error zero.
+Audible output, gesture activation, spatialization, codecs, and device budgets
+remain separate acceptance. Whole-stream automatic looping is explicitly
+unsupported; static looping remains supported. See the
+[audio leaf contract](../../../../XREngine.Audio.WebAudio/README.md).

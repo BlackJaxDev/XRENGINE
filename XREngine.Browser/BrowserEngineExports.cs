@@ -1,10 +1,12 @@
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Audio.WebAudio;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices.JavaScript;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Rendering;
 
 namespace XREngine.Browser;
@@ -13,24 +15,28 @@ namespace XREngine.Browser;
 public static partial class BrowserEngineExports
 {
     private static readonly SemaphoreSlim Lifecycle = new(1, 1);
-    private static Func<AbstractPhysicsScene>? _physicsSceneFactory;
+    private static readonly PhysicsBackendCatalog PhysicsBackends = new();
     private static CancellationTokenSource? _loading;
     private static BrowserEngineAssetSource? _source;
     private static IDisposable? _assetRegistrations;
+    private static IDisposable? _materialConstruction;
     private static BrowserEngineSession? _session;
     private static bool _assetOwnerBound;
     private static ShaderProgramArtifactCatalog? _shaderArtifacts;
+    private static EngineMaterialVariantCatalog? _materialVariants;
     private static IRuntimeAssetSource? _previousStorageSource;
     private static bool _storageSourceInstalled;
     private static IAssetFileSystem? _previousFileSystem;
     private static bool _fileSystemInstalled;
     private static int _epoch;
+    private static readonly List<ObjectCacheOwnership> StartupObjects = [];
 
     /// <summary>Installed only by a browser-compatible physics leaf before page startup.</summary>
-    internal static void InstallPhysicsSceneFactory(Func<AbstractPhysicsScene> factory)
-        => _physicsSceneFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+    internal static void InstallPhysicsBackend(IPhysicsBackendModule module)
+        => PhysicsBackends.Register(module);
 
     internal static ShaderProgramArtifactCatalog? ShaderArtifacts => _shaderArtifacts;
+    internal static EngineMaterialVariantCatalog? MaterialVariants => _materialVariants;
 
     /// <summary>Starts a headless engine world for explicit world-start diagnostics.</summary>
     [JSExport]
@@ -50,6 +56,7 @@ public static partial class BrowserEngineExports
         int requestedEpoch = Interlocked.Increment(ref _epoch);
         await Lifecycle.WaitAsync();
         bool ownsStartup = false;
+        string stage = "admit startup";
         try
         {
             if (requestedEpoch != Volatile.Read(ref _epoch))
@@ -57,15 +64,17 @@ public static partial class BrowserEngineExports
             if (_session is not null || _source is not null)
                 throw new InvalidOperationException("Stop the active browser engine world before starting another.");
 
-            Func<AbstractPhysicsScene> physicsFactory = _physicsSceneFactory
-                ?? throw new NotSupportedException(
+            if (!PhysicsBackends.TryGet(EPhysicsLibrary.Jolt, out _))
+                throw new NotSupportedException(
                     "Browser Jolt physics is not installed. A real XRWorld cannot begin play without its selected physics backend.");
 
             ownsStartup = true;
             _loading = new CancellationTokenSource();
             CancellationToken token = _loading.Token;
+            stage = "open asset catalog";
             _source = await BrowserEngineAssetSource.OpenAsync(manifestUrl, token);
             token.ThrowIfCancellationRequested();
+            stage = "install runtime asset services";
             _previousStorageSource = DirectStorageIO.Source;
             DirectStorageIO.Source = _source;
             _storageSourceInstalled = true;
@@ -75,29 +84,49 @@ public static partial class BrowserEngineExports
             Engine.Assets.BindRuntimeSource(_source);
             _assetOwnerBound = true;
             _assetRegistrations = RuntimeAssetBootstrap.InstallEngineAssetServices();
+            _materialConstruction = BrowserEngineMaterialConstruction.Install();
+            stage = "initialize game registrations";
             BrowserGameComposition.Initialize();
             IGameLaunchBootstrap? bootstrap = BrowserGameComposition.CreateBootstrap();
             if (bootstrap?.ApplicationProfile.AllowsVr == true)
                 throw new NotSupportedException("Browser VR application profiles require desktop OpenXR/OpenVR leaves.");
             bootstrap?.InitializeRegistrations();
+            stage = "load shader catalog";
             _shaderArtifacts = await _source.LoadShaderArtifactsAsync(token);
+            _materialVariants = _source.LoadEngineMaterialVariants(_shaderArtifacts);
+            stage = "load startup world";
             XRWorld world = await Engine.Assets.LoadFromRuntimeSourceAsync(
                 _source.StartupWorldPath, typeof(XRWorld), cancellationToken: token) as XRWorld
                 ?? throw new InvalidDataException("The cooked startup asset did not deserialize to XRWorld.");
-            GameStartupSettings cookedSettings = _source.StartupSettingsPath is { } settingsPath
-                ? await Engine.Assets.LoadFromRuntimeSourceAsync(
+            stage = "load startup settings";
+            GameStartupSettings cookedSettings;
+            if (_source.StartupSettingsPath is { } settingsPath)
+                cookedSettings = await Engine.Assets.LoadFromRuntimeSourceAsync(
                     settingsPath, typeof(GameStartupSettings), cancellationToken: token) as GameStartupSettings
-                    ?? throw new InvalidDataException("The cooked startup settings asset did not deserialize to GameStartupSettings.")
-                : BrowserEngineStartupPolicy.Instance.CreateDefaultGameSettings();
-            GameStartupSettings browserCookedSettings = cookedSettings.DeepClone();
-            browserCookedSettings.DefaultUserSettings.PhysicsLibrary = EPhysicsLibrary.Jolt;
-            GameStartupSettings configuredSettings = bootstrap?.ConfigureStartup(browserCookedSettings) ?? browserCookedSettings;
-            GameState initialState = bootstrap?.CreateInitialGameState() ?? new GameState();
+                    ?? throw new InvalidDataException("The cooked startup settings asset did not deserialize to GameStartupSettings.");
+            else
+            {
+                using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+                cookedSettings = BrowserEngineStartupPolicy.Instance.CreateDefaultGameSettings();
+                StartupObjects.Add(publication.CompleteWithOwnership());
+            }
+            stage = "configure game bootstrap";
+            GameStartupSettings configuredSettings;
+            GameState initialState;
+            using (ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication())
+            {
+                GameStartupSettings browserCookedSettings = cookedSettings.DeepClone();
+                browserCookedSettings.DefaultUserSettings.PhysicsLibrary = EPhysicsLibrary.Jolt;
+                configuredSettings = bootstrap?.ConfigureStartup(browserCookedSettings) ?? browserCookedSettings;
+                initialState = bootstrap?.CreateInitialGameState() ?? new GameState();
+                StartupObjects.Add(publication.CompleteWithOwnership());
+            }
             token.ThrowIfCancellationRequested();
             if (requestedEpoch != Volatile.Read(ref _epoch))
                 throw new OperationCanceledException("Browser world startup was superseded.");
 
-            _session = new BrowserEngineSession(physicsFactory);
+            _session = new BrowserEngineSession(PhysicsBackends);
+            stage = "start engine world";
             await _session.StartAsync(world, configuredSettings, initialState, token, canvasId, _shaderArtifacts);
             token.ThrowIfCancellationRequested();
             return $"{world.Name ?? "<unnamed>"}: {_session.World?.RootNodes.Count ?? 0} root nodes playing; " +
@@ -116,10 +145,13 @@ public static partial class BrowserEngineExports
             }
             catch (Exception cleanupError)
             {
-                throw new AggregateException("Browser engine startup and rollback both failed.",
+                throw new AggregateException($"Browser engine startup [{stage}] and rollback both failed. " +
+                    $"Startup: {startupError}; rollback: {cleanupError}",
                     startupError, cleanupError);
             }
-            throw;
+            if (startupError is OperationCanceledException)
+                throw;
+            throw new InvalidOperationException($"BrowserEngine.StartupFailed [{stage}]: {startupError}", startupError);
         }
         finally
         {
@@ -136,6 +168,14 @@ public static partial class BrowserEngineExports
 
     [JSExport]
     public static bool HasPresentedCanvasFrame() => _session?.HasPresentedCanvasFrame ?? false;
+
+    /// <summary>Returns zero while preparing, one after presentation, and minus one after a resource failure.</summary>
+    [JSExport]
+    public static int GetCanvasPreparationState() => _session?.CanvasPreparationState ?? -1;
+
+    [JSExport]
+    public static string GetCanvasRenderingStatus()
+        => _session?.GetRenderingStatus() ?? "No active engine canvas session.";
 
     [JSExport]
     public static void InitializeCanvasGraphics(string colorFormat)
@@ -233,14 +273,35 @@ public static partial class BrowserEngineExports
         BrowserEngineAssetSource? source = _source;
         if (_assetOwnerBound && source is not null)
         {
-            Capture(errors, () => Engine.Assets.UnbindRuntimeSource(source));
-            _assetOwnerBound = false;
+            try
+            {
+                Engine.Assets.UnbindRuntimeSource(source);
+                _assetOwnerBound = false;
+            }
+            catch (Exception error)
+            {
+                // The source still owns objects whose cleanup failed. Preserve its
+                // services and catalog so a later stop can retry their destruction.
+                errors.Add(error);
+                throw new AggregateException("Browser asset ownership release is incomplete.", errors);
+            }
         }
+        for (int index = StartupObjects.Count - 1; index >= 0; index--)
+        {
+            StartupObjects[index].Dispose();
+            StartupObjects.RemoveAt(index);
+        }
+        XRObjectBase.ProcessPendingDestructions();
         IDisposable? registrations = _assetRegistrations;
         _assetRegistrations = null;
         if (registrations is not null)
             Capture(errors, registrations.Dispose);
+        IDisposable? materialConstruction = _materialConstruction;
+        _materialConstruction = null;
+        if (materialConstruction is not null)
+            Capture(errors, materialConstruction.Dispose);
         _shaderArtifacts = null;
+        _materialVariants = null;
         Capture(errors, () =>
         {
             if (_storageSourceInstalled && ReferenceEquals(DirectStorageIO.Source, source))

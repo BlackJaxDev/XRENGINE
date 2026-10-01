@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using XREngine.Rendering;
 
 namespace XREngine.Rendering.Shaders.Compilation;
 
@@ -28,9 +29,12 @@ public static class ShaderProgramArtifactReader
         using JsonDocument document = JsonDocument.Parse(descriptorBytes.ToArray(), new JsonDocumentOptions { MaxDepth = 32 });
         CheckUnique(document.RootElement);
         JsonElement descriptor = document.RootElement;
-        ExactKeys(descriptor, "schemaVersion", "name", "pass", "sourceLanguage", "target", "entryPoints", "defines", "includes",
+        string[] keys = ["schemaVersion", "name", "pass", "sourceLanguage", "target", "entryPoints", "defines", "includes",
             "specialization", "requiredFeatures", "requiredLimits", "matrixLayout", "semanticSchemaIdentity", "layout", "pipeline",
-            "coordinates", "compilerIdentity", "source", "sourceMap", "dependencies");
+            "coordinates", "compilerIdentity", "source", "sourceMap", "dependencies"];
+        ExactKeys(descriptor, descriptor.TryGetProperty("materialVariant", out _) ? [.. keys, "materialVariant"] : keys);
+        if (descriptor.TryGetProperty("materialVariant", out JsonElement variant))
+            _ = ReadMaterialVariantKey(variant, Text(descriptor, "pass"), ShaderCompileTarget.WebGPUWgsl);
         string language = Text(descriptor, "sourceLanguage"), compiler = Text(descriptor, "compilerIdentity");
         Require(language is "Slang" or "WGSL", "engine artifacts require Slang or WGSL sources");
         Require(language == "Slang"
@@ -71,7 +75,11 @@ public static class ShaderProgramArtifactReader
         string schema = Text(descriptor, "semanticSchemaIdentity");
         Require(Regex.IsMatch(schema, "^xrengine\\.engine\\.[a-z][a-z0-9.-]*\\.v[1-9][0-9]*$", RegexOptions.CultureInvariant), "semantic schema must identify a versioned engine ABI");
         string name = Text(descriptor, "name"), pass = Text(descriptor, "pass");
-        Require(Identifier(name, allowDash: true) && Identifier(pass, allowDash: true), "material and pass names must be bounded identifiers");
+        if (descriptor.TryGetProperty("materialVariant", out JsonElement variant))
+            _ = ReadMaterialVariantKey(variant, pass, artifact.Target);
+        Require(Identifier(name, allowDash: true) && (Identifier(pass, allowDash: true)
+            || Regex.IsMatch(pass, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)),
+            "material and pass names must be bounded identifiers");
         JsonElement entries = Property(descriptor, "entryPoints", JsonValueKind.Object);
         string? vertex = null, fragment = null, compute = null;
         ShaderStageVisibility stages = ShaderStageVisibility.None;
@@ -236,6 +244,31 @@ public static class ShaderProgramArtifactReader
         return result;
     }
     private static string Text(JsonElement value, string key) => Property(value, key, JsonValueKind.String).GetString()!;
+    /// <summary>Reads an explicit semantic/profile declaration from a hash-owned descriptor.</summary>
+    public static EngineMaterialVariantKey ReadMaterialVariantKey(JsonElement value, string pass, ShaderCompileTarget target)
+    {
+        ExactKeys(value, "semantic", "semanticVersion", "vertexProfile", "outputProfile");
+        return BuildMaterialVariantKey(value, pass, target);
+    }
+
+    /// <summary>Reads a complete manifest reference without deriving selectors from names or paths.</summary>
+    public static EngineMaterialVariantKey ReadMaterialVariantReferenceKey(JsonElement value)
+    {
+        ExactKeys(value, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
+        Require(Text(value, "target") == nameof(ShaderCompileTarget.WebGPUWgsl), "unsupported material variant target");
+        return BuildMaterialVariantKey(value, Text(value, "pass"), ShaderCompileTarget.WebGPUWgsl);
+    }
+
+    private static EngineMaterialVariantKey BuildMaterialVariantKey(JsonElement value, string pass, ShaderCompileTarget target)
+    {
+        string semanticName = Text(value, "semantic");
+        Require(semanticName == nameof(EngineMaterialSemantic.StandardLitColor), "unsupported material semantic");
+        EngineMaterialVariantKey key = new(new EngineMaterialSemanticIdentity(EngineMaterialSemantic.StandardLitColor,
+            Property(value, "semanticVersion", JsonValueKind.Number).GetInt32()), target, pass,
+            Text(value, "vertexProfile"), Text(value, "outputProfile"));
+        key.Validate();
+        return key;
+    }
     private static JsonElement Property(JsonElement value, string key, JsonValueKind? kind = null)
     {
         if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(key, out JsonElement result))

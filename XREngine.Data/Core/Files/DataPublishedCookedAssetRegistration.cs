@@ -7,6 +7,8 @@ namespace XREngine.Core.Files;
 /// <summary>Installs published serializers for Data-owned settings assets.</summary>
 public static class DataPublishedCookedAssetRegistration
 {
+    // User/build settings serialize scalar configuration and embedded override values;
+    // their file and folder settings are configuration, not XRAsset load references.
     public static IDisposable Install()
         => RegistrationLeaseGroup.Create(static leases =>
         {
@@ -19,6 +21,7 @@ public static class DataPublishedCookedAssetRegistration
             typeof(T),
             static asset => MemoryPackSerializer.Serialize((T)asset),
             static (payload, _) => MemoryPackSerializer.Deserialize<T>(payload),
-            "XREngine.Data");
+            "XREngine.Data",
+            static _ => Array.Empty<PublishedCookedAssetDependency>());
 
 }

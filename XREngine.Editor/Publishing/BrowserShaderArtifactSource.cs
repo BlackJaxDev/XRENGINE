@@ -10,7 +10,10 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
     private readonly string _directory;
     private readonly Dictionary<string, string> _descriptors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ShaderProgramArtifact> _loaded = new(StringComparer.Ordinal);
+    private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
     private long _loadedBytes;
+
+    internal IReadOnlyList<EngineMaterialVariantEntry> MaterialVariants => _materialVariants.AsReadOnly();
 
     internal BrowserShaderArtifactSource(string projectDirectory, string manifestPath)
     {
@@ -35,6 +38,29 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
             string descriptor = entry.GetProperty("descriptor").GetString()!;
             if (descriptor != identity + ".shader.json" || !_descriptors.TryAdd(identity, descriptor))
                 throw new InvalidDataException("Browser shader manifest has an invalid or duplicate descriptor identity.");
+        }
+        if (root.TryGetProperty("materialVariants", out JsonElement variants))
+        {
+            if (variants.ValueKind != JsonValueKind.Array || variants.GetArrayLength() > 256)
+                throw new InvalidDataException("Browser material variant catalog exceeds 256 entries.");
+            HashSet<EngineMaterialVariantKey> keys = [];
+            foreach (JsonElement variant in variants.EnumerateArray())
+            {
+                EngineMaterialVariantKey key = ShaderProgramArtifactReader.ReadMaterialVariantReferenceKey(variant);
+                string identity = ShaderProgramArtifactCatalog.ValidateIdentity(variant.GetProperty("descriptorIdentity").GetString())
+                    ?? throw new InvalidDataException("Browser material variant has no descriptor identity.");
+                if (!keys.Add(key))
+                    throw new InvalidDataException($"MaterialVariant.DuplicateKey: '{key}'.");
+                if (!TryResolve(identity, key.Target, out ShaderProgramArtifact? artifact))
+                    throw new InvalidDataException($"MaterialVariant.ArtifactMissing: '{identity}'.");
+                if (!string.Equals(artifact.Pass, key.Pass, StringComparison.Ordinal))
+                    throw new InvalidDataException($"MaterialVariant.PassMismatch: '{identity}'.");
+                using JsonDocument descriptor = JsonDocument.Parse(artifact.DescriptorBytes.ToArray());
+                if (!descriptor.RootElement.TryGetProperty("materialVariant", out JsonElement declaration)
+                    || ShaderProgramArtifactReader.ReadMaterialVariantKey(declaration, artifact.Pass, artifact.Target) != key)
+                    throw new InvalidDataException($"MaterialVariant.DescriptorMismatch: '{identity}'.");
+                _materialVariants.Add(new EngineMaterialVariantEntry(key, identity));
+            }
         }
     }
 

@@ -128,7 +128,10 @@ export class BrowserEngineInput {
             this.cursorX = event.clientX - bounds.left;
             this.cursorY = event.clientY - bounds.top;
         }
-        this.engine.InputPointer(this.cursorX, this.cursorY);
+        // The render viewport uses canvas backing pixels, not CSS layout pixels.
+        this.engine.InputPointer(
+            Math.max(0, Math.min(this.canvas.width, this.cursorX * this.canvas.width / bounds.width)),
+            Math.max(0, Math.min(this.canvas.height, this.cursorY * this.canvas.height / bounds.height)));
     }
 
     publish() {

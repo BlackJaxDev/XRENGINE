@@ -10,6 +10,7 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
 {
     private int _session;
     private readonly List<BrowserShaderArtifactReference> _shaderArtifacts = [];
+    private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
     private readonly Dictionary<string, RuntimeAssetCatalogEntry> _assets = new(StringComparer.Ordinal);
     private BrowserEngineAssetSource(int session) => _session = session;
     public bool SupportsSynchronousReads => false;
@@ -52,6 +53,24 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
             foreach (JsonElement shader in shaders.EnumerateArray())
                 _shaderArtifacts.Add(new BrowserShaderArtifactReference(shader.GetProperty("identity").GetString()!,
                     shader.GetProperty("descriptor").GetString()!, shader.GetProperty("source").GetString()!));
+        if (root.TryGetProperty("materialVariants", out JsonElement variants))
+        {
+            if (variants.ValueKind != JsonValueKind.Array || variants.GetArrayLength() > 256)
+                throw new InvalidDataException("AssetSource.MaterialVariantBudgetExceeded.");
+            HashSet<EngineMaterialVariantKey> keys = [];
+            HashSet<string> identities = _shaderArtifacts.Select(static artifact => artifact.Identity).ToHashSet(StringComparer.Ordinal);
+            foreach (JsonElement variant in variants.EnumerateArray())
+            {
+                EngineMaterialVariantKey key = ShaderProgramArtifactReader.ReadMaterialVariantReferenceKey(variant);
+                string identity = ShaderProgramArtifactCatalog.ValidateIdentity(variant.GetProperty("descriptorIdentity").GetString())
+                    ?? throw new InvalidDataException("AssetSource.MaterialVariantIdentityMissing.");
+                if (!identities.Contains(identity))
+                    throw new InvalidDataException($"AssetSource.MaterialVariantArtifactMissing: '{identity}'.");
+                if (!keys.Add(key))
+                    throw new InvalidDataException($"AssetSource.MaterialVariantDuplicateKey: '{key}'.");
+                _materialVariants.Add(new EngineMaterialVariantEntry(key, identity));
+            }
+        }
         foreach (JsonElement item in root.GetProperty("assets").EnumerateArray())
         {
             string path = item.GetProperty("path").GetString()!;
@@ -89,6 +108,13 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
             artifacts.Add(artifact);
         }
         return new ShaderProgramArtifactCatalog(artifacts);
+    }
+
+    /// <summary>Resolves exact hash-owned variant declarations against already verified shader artifacts.</summary>
+    public EngineMaterialVariantCatalog LoadEngineMaterialVariants(ShaderProgramArtifactCatalog artifacts)
+    {
+        RequireSession();
+        return new EngineMaterialVariantCatalog(_materialVariants, artifacts);
     }
 
     public bool Exists(string path) => TryGetAsset(path, out _);
@@ -154,5 +180,6 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         if (session != 0) BrowserEngineAssetImports.Dispose(session);
         _assets.Clear();
         _shaderArtifacts.Clear();
+        _materialVariants.Clear();
     }
 }

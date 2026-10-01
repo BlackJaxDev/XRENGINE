@@ -243,9 +243,9 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         // Publication producers release on the authoring thread; accepted frames
         // independently retain any immutable shadow bytes they still consume.
         if (RuntimeEngine.IsRenderThread)
-            Lights.Clear();
+            Lights.Clear(disposeProbeTree: true);
         else
-            RuntimeEngine.EnqueueRenderThreadTask(Lights.Clear, "RuntimeWorldRenderer.ClearLights", RenderThreadJobKind.RenderPipelineResource);
+            RuntimeEngine.EnqueueRenderThreadTask(() => Lights.Clear(disposeProbeTree: true), "RuntimeWorldRenderer.ClearLights", RenderThreadJobKind.RenderPipelineResource);
         _physicsDebugRenderer.Dispose();
     }
 }

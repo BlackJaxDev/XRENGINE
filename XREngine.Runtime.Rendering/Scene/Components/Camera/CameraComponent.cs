@@ -494,7 +494,10 @@ namespace XREngine.Components
         protected override void OnDestroying()
         {
             if (!_camera.IsValueCreated)
+            {
+                base.OnDestroying();
                 return;
+            }
 
             Camera.PropertyChanged -= CameraPropertyChanged;
             Camera.ViewportAdded -= ViewportAdded;
@@ -503,6 +506,7 @@ namespace XREngine.Components
             if (Camera.Viewports.Count > 0)
                 foreach (var vp in Camera.Viewports)
                     ViewportRemoved(Camera, vp);
+            base.OnDestroying();
         }
 
         /// <summary>

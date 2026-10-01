@@ -1,5 +1,6 @@
 using System.Text;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Serialization;
 
 namespace XREngine;
@@ -17,10 +18,12 @@ public partial class AssetManager
             throw new InvalidOperationException("AssetSource.RootMismatch: a runtime source cannot change this asset owner's virtual roots.");
         lock (_runtimePublicationGate)
         {
-            if (_runtimeSourceTeardown)
+            if (_runtimeSourceTeardown || _runtimeSourceUnbinding)
                 throw new InvalidOperationException("AssetSource.TeardownPending: wait for the previous content owner to finish teardown.");
             if (ReferenceEquals(_runtimeAssetSource, source))
                 return;
+            if (_runtimeSourceObjects.Count != 0)
+                throw new InvalidOperationException("AssetSource.TeardownPending: the previous content owner still owns engine objects.");
             if (_runtimeAssetSource is not null)
                 throw new InvalidOperationException("AssetSource.AlreadyBound: unload the current world before replacing its content owner.");
             _runtimeAssetSource = source;
@@ -35,21 +38,33 @@ public partial class AssetManager
     {
         lock (_runtimePublicationGate)
         {
-            if (!ReferenceEquals(_runtimeAssetSource, source))
+            if (!ReferenceEquals(_runtimeAssetSource, source) || _runtimeSourceUnbinding || _runtimeSourceDisposing)
                 return;
+            _runtimeSourceUnbinding = true;
             Interlocked.Increment(ref _runtimeSourceEpoch);
-            _runtimeAssetSource = null;
             _runtimeSourceTeardown = true;
         }
+        // Keep the source bound if destruction fails so shutdown can retry the exact
+        // ownership ledger. Cancellation callbacks can reenter this method, but only
+        // the outer unbind may release objects or clear the binding.
         try
         {
             try { _runtimeSourceLifetime.Cancel(); }
-            finally { Dispose(); }
+            finally
+            {
+                lock (_runtimePublicationGate)
+                    DisposeRuntimeSourceObjects();
+            }
+            lock (_runtimePublicationGate)
+            {
+                _runtimeAssetSource = null;
+                _runtimeSourceTeardown = false;
+            }
         }
         finally
         {
             lock (_runtimePublicationGate)
-                _runtimeSourceTeardown = false;
+                _runtimeSourceUnbinding = false;
         }
     }
 
@@ -111,6 +126,10 @@ public partial class AssetManager
                 return RequireRuntimeAssetType(path, cached, expectedType);
 
             using IDisposable scope = AssetDeserializationContext.Push(path);
+            // Deserialization owns new allocations, including replaced constructor defaults.
+            // Separate catalog dependencies were loaded before this synchronous batch and
+            // remain borrowed references until the entire source is released.
+            using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
             XRAsset? asset;
             switch (entry.Encoding)
             {
@@ -135,6 +154,7 @@ public partial class AssetManager
 
             if (asset is null)
                 throw new InvalidDataException($"AssetSource.DeserializeFailed: '{path}' did not produce '{type}'.");
+            ObjectCacheOwnership? ownership = null;
             try
             {
                 lock (_runtimePublicationGate)
@@ -143,32 +163,103 @@ public partial class AssetManager
                     EnsureRuntimeSourceCurrent(source, epoch);
                     if (TryGetAssetByPath(path, out cached))
                     {
-                        asset.Destroy();
                         return RequireRuntimeAssetType(path, cached, expectedType);
                     }
                     RequireRuntimeAssetType(path, asset, expectedType);
+                    if (asset.IsDestroyed)
+                        throw new InvalidDataException($"AssetSource.DestroyedRoot: '{path}' produced an already destroyed asset.");
                     if (asset.ID == Guid.Empty)
                         throw new InvalidDataException($"AssetSource.EmptyIdentity: '{path}' has no stable asset identity.");
                     if (LoadedAssetsByIDInternal.TryGetValue(asset.ID, out XRAsset? owner) && !ReferenceEquals(owner, asset))
                         throw new InvalidDataException($"AssetSource.DuplicateIdentity: '{path}' and '{owner.FilePath}' declare the same asset ID '{asset.ID}'.");
-                    PostLoaded(path, asset);
+                    ownership = publication.CompleteWithOwnership();
+                    _runtimeSourceObjects.Add(ownership);
+                    _runtimeSourceAssets.Add(asset);
+                    PostLoaded(path, asset, ownership);
+                    EnsureRuntimeSourceCurrent(source, epoch);
                     return asset;
                 }
             }
             catch (Exception error)
             {
-                asset.PropertyChanged -= AssetPropertyChanged;
-                LoadedAssetsByIDInternal.TryRemove(new KeyValuePair<Guid, XRAsset>(asset.ID, asset));
-                LoadedAssetsByPathInternal.TryRemove(new KeyValuePair<string, XRAsset>(path, asset));
-                DirtyAssets.TryRemove(new KeyValuePair<Guid, XRAsset>(asset.ID, asset));
-                try { asset.Destroy(); }
-                catch (Exception cleanupError) { throw new AggregateException(error, cleanupError); }
+                lock (_runtimePublicationGate)
+                {
+                    _runtimeSourceAssets.Remove(asset);
+                    asset.PropertyChanged -= AssetPropertyChanged;
+                    LoadedAssetsByIDInternal.TryRemove(new KeyValuePair<Guid, XRAsset>(asset.ID, asset));
+                    LoadedAssetsByPathInternal.TryRemove(new KeyValuePair<string, XRAsset>(path, asset));
+                    DirtyAssets.TryRemove(new KeyValuePair<Guid, XRAsset>(asset.ID, asset));
+                    // An uncommitted scope aborts every allocation on disposal. A failure
+                    // after publication must release the whole ledger, not just the root asset.
+                    if (ownership is not null)
+                    {
+                        bool previousDisposing = _runtimeSourceDisposing;
+                        _runtimeSourceDisposing = true;
+                        try
+                        {
+                            ownership.Dispose();
+                            _runtimeSourceObjects.Remove(ownership);
+                        }
+                        catch (Exception cleanupError) { throw new AggregateException(error, cleanupError); }
+                        finally { _runtimeSourceDisposing = previousDisposing; }
+                    }
+                }
                 throw;
             }
         }
         finally
         {
             ancestors.Remove(path);
+        }
+    }
+
+    private void DisposeRuntimeSourceObjects()
+    {
+        if (_runtimeSourceDisposing)
+            return;
+        _runtimeSourceDisposing = true;
+        try
+        {
+            // Catalog references may borrow an already cached desktop asset. Only roots
+            // materialized by this source lose cache registration and property subscriptions.
+            foreach (XRAsset asset in _runtimeSourceAssets)
+                asset.PropertyChanged -= AssetPropertyChanged;
+            foreach (var pair in LoadedAssetsByIDInternal)
+                if (_runtimeSourceAssets.Contains(pair.Value))
+                    LoadedAssetsByIDInternal.TryRemove(pair);
+            foreach (var pair in LoadedAssetsByPathInternal)
+                if (_runtimeSourceAssets.Contains(pair.Value))
+                    LoadedAssetsByPathInternal.TryRemove(pair);
+            foreach (var pair in LoadedAssetsByOriginalPathInternal)
+                if (_runtimeSourceAssets.Contains(pair.Value))
+                    LoadedAssetsByOriginalPathInternal.TryRemove(pair);
+            foreach (var pair in DirtyAssets)
+                if (_runtimeSourceAssets.Contains(pair.Value))
+                    DirtyAssets.TryRemove(pair);
+            _runtimeSourceAssets.Clear();
+
+            List<Exception>? failures = null;
+            bool hadRuntimeOwnership = _runtimeSourceObjects.Count != 0;
+            for (int index = _runtimeSourceObjects.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    _runtimeSourceObjects[index].Dispose();
+                    _runtimeSourceObjects.RemoveAt(index);
+                }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
+            if (hadRuntimeOwnership)
+            {
+                try { XRObjectBase.ProcessPendingDestructions(); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
+            if (failures is not null)
+                throw new AggregateException("AssetSource.TeardownFailed: source-owned objects could not all be released.", failures);
+        }
+        finally
+        {
+            _runtimeSourceDisposing = false;
         }
     }
 
@@ -184,7 +275,8 @@ public partial class AssetManager
 
     private void EnsureRuntimeSourceCurrent(IRuntimeAssetSource source, int epoch)
     {
-        if (!ReferenceEquals(_runtimeAssetSource, source) || epoch != Volatile.Read(ref _runtimeSourceEpoch))
+        if (_runtimeSourceTeardown || !ReferenceEquals(_runtimeAssetSource, source)
+            || epoch != Volatile.Read(ref _runtimeSourceEpoch))
             throw new OperationCanceledException("AssetSource.StaleSession: the world content owner was replaced.");
     }
 

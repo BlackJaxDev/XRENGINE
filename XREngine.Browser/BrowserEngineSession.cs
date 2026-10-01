@@ -10,6 +10,7 @@ using XREngine.Scene.Physics;
 using XREngine.Components;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Data.Rendering;
+using XREngine.Data.Core;
 
 namespace XREngine.Browser;
 
@@ -17,11 +18,11 @@ namespace XREngine.Browser;
 /// Owns one real engine world on the browser event thread. Its physics factory must come
 /// from an installed browser backend; the reference scene is never used as a fallback.
 /// </summary>
-internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhysicsScene) : IAsyncDisposable
+internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends) : IAsyncDisposable
 {
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
-    private readonly Func<AbstractPhysicsScene> _createPhysicsScene = createPhysicsScene
-        ?? throw new ArgumentNullException(nameof(createPhysicsScene));
+    private readonly PhysicsBackendCatalog _physicsBackends = physicsBackends
+        ?? throw new ArgumentNullException(nameof(physicsBackends));
     private IDisposable? _capabilities;
     private IDisposable? _startupPolicy;
     private IDisposable? _assets;
@@ -52,14 +53,29 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
     private EAudioEffects _previousAudioEffects;
     private bool _running;
     private bool _disposed;
+    private readonly List<ObjectCacheOwnership> _sessionObjects = [];
+    private GameStartupSettings? _previousGameSettings;
+    private UserSettings? _previousUserSettings;
 
     public RuntimeWorld? World => _runtimeWorld;
     public bool IsRunning => _running;
-    public bool HasEngineOwnership => _engineInitialized;
+    public bool HasEngineOwnership => _engineInitialized || _sessionObjects.Count != 0;
     public int CanvasWidth => _canvasWidth;
     public int CanvasHeight => _canvasHeight;
     public int RendererSession => _rendererSession;
     public bool HasPresentedCanvasFrame => _renderer?.IsBackendReplacementFrameReady ?? false;
+    public int CanvasPreparationState => HasPresentedCanvasFrame ? 1
+        : _renderViewport?.RenderPipelineInstance.LastResourceGenerationFailure is not null ? -1 : 0;
+
+    /// <summary>Formats cold startup diagnostics without adding work to successful frame submission.</summary>
+    public string GetRenderingStatus()
+    {
+        XRRenderPipelineInstance? pipeline = _renderViewport?.RenderPipelineInstance;
+        return $"Renderer={_renderer?.State.ToString() ?? "absent"}; " +
+            $"draws={_renderer?.LastEngineMeshDrawCount ?? 0}; " +
+            $"pipeline decline={pipeline?.LastRenderDeclineReason ?? "none"}; " +
+            $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}.";
+    }
 
     /// <summary>Composes a fetched XRWorld through the shared world host and begins gameplay.</summary>
     public async Task StartAsync(XRWorld world, GameStartupSettings authoredSettings, GameState initialState,
@@ -81,8 +97,8 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             if (_running || _engineInitialized)
                 throw new InvalidOperationException("A browser engine world is already active.");
 
-            GameStartupSettings settings = ProjectBrowserStartup(authoredSettings, world,
-                out _canvasWidth, out _canvasHeight);
+            GameStartupSettings settings = OwnConstruction(() => ProjectBrowserStartup(authoredSettings, world,
+                out _canvasWidth, out _canvasHeight));
 
             _capabilities = RuntimeApplicationCapabilityServices.Install(new RuntimeApplicationCapabilities(
                 IsConfigured: true,
@@ -96,15 +112,19 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _installedNetworkTransport = new WebSocketNetworkTransportBackend();
             NetworkTransportServices.Current = _installedNetworkTransport;
             _networkTransportInstalled = true;
-            Engine.InitializeForCallerThread(settings);
+            _previousGameSettings = Engine.PersistentGameSettings;
+            _previousUserSettings = Engine.UserSettings;
+            OwnConstruction(() => Engine.InitializeForCallerThread(settings));
             _engineInitialized = true;
+            // Camera and material factories are shared data services even without a
+            // physical output. Both world hosts resolve physics from this same catalog.
+            _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(
+                BrowserRendererComposition.BackendCatalog, _physicsBackends,
+                static () => new DefaultRenderPipeline());
             if (canvasId is not null)
             {
-                _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(
-                    BrowserRendererComposition.BackendCatalog, new PhysicsBackendCatalog(),
-                    static () => new DefaultRenderPipeline());
                 _canvas = new BrowserCanvasRenderTarget(canvasId);
-                _renderer = BrowserRendererComposition.CreateRequired(_canvas) as WebGpuRendererHost
+                _renderer = OwnConstruction(() => BrowserRendererComposition.CreateRequired(_canvas)) as WebGpuRendererHost
                     ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
                 _renderer.BindShaderArtifacts(shaderArtifacts);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
@@ -137,15 +157,19 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _assets = RuntimeAssetBootstrap.InstallEngineAssetServices();
             _adapters = RuntimeAdapterBootstrap.InstallEngineHostServices(
                 RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.Input,
-                _createPhysicsScene,
+                CreatePhysicsScene,
                 composeRenderedWorlds: canvasId is not null);
             _world = world;
-            _runtimeWorld = Engine.GetOrCreateWorld(world);
+            // Establish the caller's physics ownership before attaching components
+            // whose activation may allocate native bodies. No frame is dispatched here.
+            Engine.Time.Timer.StartCallerThreadLoop();
+            _runtimeWorld = OwnConstruction(() => Engine.GetOrCreateWorld(world));
             _gameState = initialState;
             (_gameState.Worlds ??= []).Add(_runtimeWorld);
             _gameState.Windows = [];
-            Engine.Time.Timer.StartCallerThreadLoop();
-            await Engine.PlayMode.BeginStandalonePlayAsync();
+            // Capture synchronous activation allocations, then close the thread-affine
+            // publication boundary before awaiting any game-provided async startup work.
+            await OwnConstruction(() => Engine.PlayMode.BeginStandalonePlayAsync());
             if (requestedEpoch != Volatile.Read(ref _epoch) || cancellationToken.IsCancellationRequested)
             {
                 StopCore();
@@ -155,17 +179,20 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _inputViewport = new BrowserEngineInputViewport();
             _localPlayer = RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)
                 ?? throw new InvalidOperationException("Browser local-player controller services are not installed.");
-            _localPlayer.Viewport = _inputViewport;
             if (_renderer is not null)
             {
-                _renderViewport = new XRViewport(null, checked((uint)_canvasWidth), checked((uint)_canvasHeight))
+                _renderViewport = OwnConstruction(() => new XRViewport(null, checked((uint)_canvasWidth), checked((uint)_canvasHeight))
                 {
                     WorldInstanceOverride = _runtimeWorld.GetRenderWorld(),
-                };
+                });
+                _renderViewport.BindInputSource(_inputViewport);
+                _renderViewport.BindLocalPlayer(_localPlayer);
                 RefreshCamera();
                 _renderer.BindEngineViewport(_renderViewport);
                 Engine.Time.Timer.RenderFrame += RenderCanvasFrame;
             }
+            else
+                _localPlayer.Viewport = _inputViewport;
             _running = true;
         }
         catch (Exception startupError)
@@ -186,6 +213,20 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             _lifecycle.Release();
         }
     }
+
+    private T OwnConstruction<T>(Func<T> create)
+    {
+        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        T value = create();
+        _sessionObjects.Add(publication.CompleteWithOwnership());
+        return value;
+    }
+
+    private void OwnConstruction(Action create)
+        => OwnConstruction(() => { create(); return true; });
+
+    private AbstractPhysicsScene CreatePhysicsScene()
+        => _physicsBackends.CreateRequired(EPhysicsLibrary.Jolt);
 
     /// <summary>Runs one production engine frame on the browser event thread.</summary>
     public bool Step(double elapsedSeconds)
@@ -295,12 +336,15 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
             Engine.Time.Timer.RenderFrame -= RenderCanvasFrame;
         if (_renderer is not null)
             Capture(errors, () => _renderer.BindEngineViewport(null));
-        if (_renderViewport is not null)
-            Capture(errors, _renderViewport.Destroy);
+        XRViewport? renderViewport = _renderViewport;
+        if (renderViewport is not null)
+            Capture(errors, renderViewport.Destroy);
         _renderViewport = null;
         if (_inputViewport is not null)
             Capture(errors, _inputViewport.Reset);
-        if (_localPlayer is not null && ReferenceEquals(_localPlayer.Viewport, _inputViewport))
+        if (_localPlayer is not null &&
+            (ReferenceEquals(_localPlayer.Viewport, _inputViewport) ||
+             ReferenceEquals(_localPlayer.Viewport, renderViewport)))
             Capture(errors, () => _localPlayer.Viewport = null);
         _localPlayer = null;
         _inputViewport = null;
@@ -340,6 +384,38 @@ internal sealed class BrowserEngineSession(Func<AbstractPhysicsScene> createPhys
         _gameState = null;
         _canvasWidth = 0;
         _canvasHeight = 0;
+        if (_previousGameSettings is { } previousGameSettings)
+        {
+            try
+            {
+                Engine.GameSettings = previousGameSettings;
+                _previousGameSettings = null;
+            }
+            catch (Exception error) { errors.Add(error); }
+        }
+        if (_previousUserSettings is { } previousUserSettings)
+        {
+            try
+            {
+                Engine.UserSettings = previousUserSettings;
+                _previousUserSettings = null;
+            }
+            catch (Exception error) { errors.Add(error); }
+        }
+        if (_previousGameSettings is not null || _previousUserSettings is not null)
+            throw new AggregateException("Browser settings restoration is incomplete.", errors);
+        for (int index = _sessionObjects.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                _sessionObjects[index].Dispose();
+                _sessionObjects.RemoveAt(index);
+            }
+            catch (Exception error) { errors.Add(error); }
+        }
+        Capture(errors, XRObjectBase.ProcessPendingDestructions);
+        if (_sessionObjects.Count != 0)
+            throw new AggregateException("Browser session object cleanup is incomplete.", errors);
         if (_audioConfigured)
         {
             AudioSettings.AudioArchitectureV2 = _previousAudioV2;

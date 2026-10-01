@@ -18,12 +18,14 @@ internal static partial class ProjectBuilder
         IShaderProgramArtifactResolver? resolver = Engine.CurrentProject is { ProjectDirectory: { } projectDirectory, BrowserShaderArtifactManifestPath: { Length: > 0 } manifest }
             ? new BrowserShaderArtifactSource(projectDirectory, manifest) : null;
         IReadOnlyList<ShaderProgramArtifact> shaderArtifacts = BrowserWorldCapabilityAudit.Inspect(world, resolver, cancellationToken);
-        WriteCookedAsset(world, Path.Combine(sourceDirectory, "startup-world.bin"));
         cancellationToken.ThrowIfCancellationRequested();
-        string type = world.GetType().AssemblyQualifiedName
-            ?? throw new InvalidOperationException("The startup world has no stable runtime type identity.");
         string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
         string worldPath = "/game/" + relativeWorld;
+        if (string.Equals(worldPath, "/game/startup.asset", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Browser startup world conflicts with the cooked startup-settings identity.");
+        BrowserAssetDependencyCooker dependencyCooker = new(
+            assetRoot, Engine.Assets?.EngineAssetsPath, sourceDirectory, cancellationToken);
+        dependencyCooker.Cook(world, worldPath, "startup-world.bin");
         GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
         // Keep authored output requirements while the manifest owns the selected world.
         // Copy window objects so removing external world references cannot mutate editor settings.
@@ -37,16 +39,16 @@ internal static partial class ProjectBuilder
         }).ToList();
         settings.RunWithoutWindows = true;
         settings.LogOutputToFile = false;
-        WriteCookedAsset(settings, Path.Combine(sourceDirectory, "startup-settings.bin"));
-        List<object> assets =
-        [
-            new { path = worldPath, type, encoding = "cooked-binary", source = "startup-world.bin", dependencies = Array.Empty<string>() },
-            new { path = "/game/startup.asset", type = typeof(GameStartupSettings).AssemblyQualifiedName!, encoding = "cooked-binary",
-                source = "startup-settings.bin", dependencies = Array.Empty<string>() }
-        ];
+        dependencyCooker.Cook(settings, "/game/startup.asset", "startup-settings.bin");
+        List<object> assets = [.. dependencyCooker.Entries
+            .OrderBy(static entry => entry.Key, StringComparer.Ordinal)
+            .Select(static entry => (object)new { path = entry.Key, type = entry.Value.TypeName, encoding = "cooked-binary",
+                source = entry.Value.Source, dependencies = entry.Value.Dependencies })];
         List<object> shaderReferences = [];
+        HashSet<string> shaderIdentities = new(StringComparer.Ordinal);
         foreach (ShaderProgramArtifact artifact in shaderArtifacts)
         {
+            shaderIdentities.Add(artifact.Identity);
             string descriptorName = artifact.Identity + ".json";
             string sourceName = artifact.Identity + ".wgsl";
             File.WriteAllBytes(Path.Combine(sourceDirectory, descriptorName), artifact.DescriptorBytes.ToArray());
@@ -58,10 +60,29 @@ internal static partial class ProjectBuilder
             assets.Add(new { path = source, type = textType, encoding = "utf8-text", source = sourceName, dependencies = Array.Empty<string>() });
             shaderReferences.Add(new { identity = artifact.Identity, descriptor, source });
         }
+        List<object> materialVariants = [];
+        if (resolver is BrowserShaderArtifactSource shaderSource)
+        {
+            foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
+            {
+                if (!shaderIdentities.Contains(variant.DescriptorIdentity))
+                    continue;
+                materialVariants.Add(new
+                {
+                    semantic = variant.Key.Semantic.Semantic.ToString(),
+                    semanticVersion = variant.Key.Semantic.Version,
+                    target = variant.Key.Target.ToString(),
+                    pass = variant.Key.Pass,
+                    vertexProfile = variant.Key.VertexProfile,
+                    outputProfile = variant.Key.OutputProfile,
+                    descriptorIdentity = variant.DescriptorIdentity
+                });
+            }
+        }
         byte[] recipe = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schema = 1, format = "xrengine-assets", startupWorld = worldPath,
-            startupSettings = "/game/startup.asset", shaderArtifacts = shaderReferences, assets
+            startupSettings = "/game/startup.asset", shaderArtifacts = shaderReferences, materialVariants, assets
         });
         string path = Path.Combine(sourceDirectory, "engine-assets.recipe.json");
         File.WriteAllBytes(path, recipe);

@@ -29,6 +29,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
         CoreWorld.RetargetWorld(targetWorld, () =>
         {
             afterTargetAssigned?.Invoke();
+            EnsurePhysicsInitialized();
             ApplyPhysicsSettings(targetWorld.Settings);
             SubscribeToWorldSettings(targetWorld);
         });
@@ -43,9 +44,8 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
         await CoreWorld.BeginPlayAsync(
             beforeNodeActivation: () =>
             {
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(TargetWorld.Settings);
-                Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
-                _physicsInitialized = true;
                 return Task.CompletedTask;
             },
             afterNodeActivation: () =>
@@ -88,6 +88,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
         CoreWorld.RetargetWorld(targetWorld, () =>
         {
             afterTargetAssigned?.Invoke();
+            EnsurePhysicsInitialized();
             ApplyPhysicsSettings(targetWorld.Settings);
             SubscribeToWorldSettings(targetWorld);
         });
@@ -126,6 +127,16 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
 
     private void ProcessDirtyTransforms()
         => CoreWorld.ProcessDirtyTransforms(Engine.EffectiveSettings.RecalcChildMatricesLoopType);
+
+    /// <summary>Prepares native resources before world assignment can activate components.</summary>
+    private void EnsurePhysicsInitialized()
+    {
+        if (_physicsInitialized)
+            return;
+
+        Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
+        _physicsInitialized = true;
+    }
 
     private void TearDownPhysics()
     {

@@ -12,6 +12,7 @@ const gamepad = document.querySelector('#gamepad');
 let engine;
 let host;
 let epoch = 0;
+let pageHidden = false;
 function report(state, message) {
     status.dataset.state = state;
     status.textContent = message;
@@ -36,6 +37,7 @@ async function start() {
     try {
         const manifest = await publishedManifestUrl();
         if (mine !== epoch) return;
+        host.setPageHidden(pageHidden);
         await host.start(manifest);
     } catch (error) {
         if (mine !== epoch) return;
@@ -57,7 +59,20 @@ enableAudio.addEventListener('click', () => {
         if (mine === epoch) audioStatus.textContent = `Audio activation failed: ${error.message ?? error}`;
     });
 });
-window.addEventListener('pagehide', () => { ++epoch; if (host) void host.stop(); });
+window.addEventListener('pagehide', event => {
+    pageHidden = true;
+    host?.setPageHidden(true);
+    // A cached document keeps the authored world and resumes its frame clock
+    // on pageshow. A discarded document releases its engine ownership.
+    if (event.persisted) return;
+    ++epoch;
+    if (host) void host.stop().catch(error => console.error('Engine page teardown failed:', error));
+});
+window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    pageHidden = false;
+    host?.setPageHidden(false);
+});
 
 try {
     const renderers = new Map();
