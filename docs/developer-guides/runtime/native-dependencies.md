@@ -89,7 +89,7 @@ VMA is not retrieved from upstream as a prebuilt DLL. GPUOpen VMA is a header-on
 - Native project: `Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.vcxproj`
 - Runtime DLL: `VulkanMemoryAllocatorBridge.Native.dll`
 - Packaged runtime location: `XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native`
-- Generated build location: `Build/_AgentValidation/00000000-000000-shared/tools/bin/VulkanMemoryAllocatorBridge/<Configuration>`
+- Generated build location: `Build/_AgentValidation/00000000-000000-shared/tools/bin/VulkanMemoryAllocatorBridge/<Debug-or-Release>`
 - Vendored source snapshot: `Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator` (VMA v3.3.0, MIT)
 - Fetch script: `Tools/Dependencies/Get-VulkanMemoryAllocator.ps1`
 - Direct build script: `Tools/Build-VulkanMemoryAllocatorBridge.ps1`
@@ -111,6 +111,8 @@ dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulk
 ```
 
 The Vulkan module builds the native bridge automatically on Windows before preparing build output. Debug and Release outputs stay in separate ignored build directories and are copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading. Normal managed builds do not modify the packaged runtime DLL.
+
+The Vulkan project maps managed configurations ending in `Debug` or `Release` (for example, `Development Debug`) to the native bridge's `Debug` or `Release` configuration. Set `VmaBridgeNativeConfiguration=Debug` or `VmaBridgeNativeConfiguration=Release` explicitly when using another managed configuration; the bridge build rejects values outside those two native configurations. The mapped value also selects the generated bridge directory and its build-state stamp.
 
 If you are changing the native bridge and want to rebuild it directly:
 

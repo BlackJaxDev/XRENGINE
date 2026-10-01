@@ -10,9 +10,15 @@
          registration/serialization validation rather than inheriting desktop assumptions. -->
     <PublishTrimmed>false</PublishTrimmed>
     <RunAOTCompilation>false</RunAOTCompilation>
+    <XREngineFactoryRegistrationMode>BrowserManifest</XREngineFactoryRegistrationMode>
+    <GeneratedBrowserStaticRegistrations>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', '$(TargetFramework)', 'Generated', 'BrowserStaticRegistrations.g.cs'))</GeneratedBrowserStaticRegistrations>
+    <XREngineFactoryRegistrationOutput>$(GeneratedBrowserStaticRegistrations)</XREngineFactoryRegistrationOutput>
+    <XREngineFactoryRegistrationStamp>$(GeneratedBrowserStaticRegistrations).stamp</XREngineFactoryRegistrationStamp>
+    <XREngineBrowserRegistrationManifest>$(MSBuildProjectDirectory)/browser-registration-manifest.json</XREngineBrowserRegistrationManifest>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" />
@@ -20,4 +26,5 @@
   </ItemGroup>
 
   <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
+  <Import Project="../Build/Registration/FactoryRegistrations.targets" />
 </Project>

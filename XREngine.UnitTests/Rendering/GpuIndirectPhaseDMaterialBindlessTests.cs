@@ -97,10 +97,11 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         string materialScatterSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp");
-        string vulkanDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs");
+        string vulkanDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanDescriptorLayoutCache.cs");
         string vulkanBindlessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanBindlessMaterialDescriptors.cs");
         string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
-        string vkAddressSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanSceneDatabaseAddresses.cs");
+        string vkAddressSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.SceneDatabaseAddressBinding.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanBufferResourceService.cs");
         string renderParametersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Materials/Options/RenderingParameters.cs");
         string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs");
         string vulkanShaderInclude = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/VulkanBindlessMaterialTable.glsl");

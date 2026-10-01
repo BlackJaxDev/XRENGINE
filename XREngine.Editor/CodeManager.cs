@@ -1237,6 +1237,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         }
         else
         {
+            sb.AppendLine("        RuntimeApplicationBootstrap.PrepareDesktopServices();");
             sb.AppendLine("        using IDisposable startupAssetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();");
         }
         sb.AppendLine();

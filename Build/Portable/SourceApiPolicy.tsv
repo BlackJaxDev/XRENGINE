@@ -9,6 +9,16 @@ deny	runtime code or assembly loading	\b(?:Assembly\.(?:Load|LoadFrom|LoadFile|L
 deny	process or desktop services	\b(?:System\.Diagnostics\.Process\b|ProcessStartInfo\b|new\s+Process\b|Process\.(?:Start|GetCurrentProcess|GetProcesses|GetProcessById)\b|(?<!\.)Process\b(?!\s*\()|Environment\.GetFolderPath|RegistryKey\b|(?<!\.)Registry\.(?:ClassesRoot|CurrentConfig|CurrentUser|LocalMachine|PerformanceData|Users|GetValue|SetValue)|System\.Management)\b
 deny	sockets and filesystem watching	\b(?:System\.Net\.Sockets|(?<!\.)Socket(?:AsyncEventArgs|Exception)?\b(?!\s*[,=}])|TcpClient\b|TcpListener\b|UdpClient\b|FileSystemWatcher\b)\b
 reflection	\b(?:Type\.GetType|GetTypes|GetExportedTypes|GetMethods|GetMethod|GetConstructor|GetCustomAttributes|GetCustomAttribute|GetProperties|GetProperty|GetAssemblies|GetUninitializedObject|Activator\.CreateInstance|MakeGenericType|MakeGenericMethod)\b
+allow	XREngine.Runtime.Host/Core/SnapshotAssetReference.cs	Activator.CreateInstance	Legacy third-party asset construction in the untrimmed interpreter; published asset loading uses cooked serializers
+allow	XREngine.Runtime.Host/RenderingHost/Engine.ViewportRebind.cs	GetProperty	Cold play-mode diagnostics inspecting render-object world ownership
+allow	XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs	Activator.CreateInstance	Registered authoring import-options construction; browser startup does not invoke desktop import
+allow	XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs	GetCustomAttributes	Cold assembly configuration metadata in diagnostic capture
+allow	XREngine.Runtime.Host/Engine/Engine.State.cs	GetConstructor	Development controller construction when an explicit controller factory is absent
+allow	XREngine.Runtime.Host/Engine/Engine.State.cs	Activator.CreateInstance	Development controller fallback; published controller creation requires registered factories
+allow	XREngine.Runtime.Host/Engine/Engine.Settings.cs	GetProperties	Managed settings override tracker in the untrimmed interpreter
+allow	XREngine.Runtime.Host/Engine/Engine.Settings.cs	GetProperty	Cold cached editor debug-option and override mapping
+allow	XREngine.Runtime.Host/Settings/GameStartupSettings.Clone.cs	Activator.CreateInstance	Managed startup-settings clone preserving a configured derived type; untrimmed metadata only
+allow	XREngine.Runtime.Host/Settings/GameStartupSettings.Clone.cs	GetProperties	Managed startup-settings and override clone metadata; separate trim review required
 allow	XREngine.Browser/BrowserSceneEnvelope.cs	GetProperty	JsonElement wire-field access, not System.Type reflection
 allow	XREngine.Data/Core/Events/XRPersistentCall.cs	Type.GetType	Serialized event parameter identity resolution
 allow	XREngine.Data/Core/Events/XRPersistentCall.cs	GetMethods	Serialized event target overload resolution

@@ -8,15 +8,15 @@ versioned binary packet bridge with one managed-to-JavaScript submission per fra
 The focused CPU-direct pipeline adds unlit/flat Lambert shading, directional
 shadows, sky/ambient lighting, HDR tonemapping and GPU-composed UI rectangles.
 
-**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented. The host compiles and publishes as of 2026-09-30 ([build record](../docs/work/progress/platform/unified-runtime-build-stabilization.md)) but has not been run in a browser.
-Validation was explicitly deferred for this change. Earlier scene-only results
-in [portable scene boot](../docs/work/progress/rendering/portable-browser-scene-boot.md)
-do not qualify this renderer.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented. The host compiles and publishes as of 2026-09-30 ([build record](../docs/work/progress/platform/unified-runtime-build-stabilization.md)). Local browser smokes render the reference fixture and an editor-published minimal authored world; captures and limitations are recorded in the [harness investigation](../docs/work/investigations/rendering/desktop-browser-reference-harness.md). Physical-device, recovery and performance qualification remain open.
 
 ## Build and run
 
-Install the .NET 10 SDK and its `wasm-tools` workload, then run from the repository
-root. Checked-in shaders and registrations are ready for publishing. The portable
+Install .NET SDK **10.0.401** and its `wasm-tools` workload, then run from the repository
+root. `global.json` requires that exact SDK and workload set **10.0.401.1**;
+the set supplies WebAssembly runtime pack 10.0.12 and Emscripten 3.1.56. Run
+workload installation from the repository so it uses the pin. Checked-in shaders
+and registrations are ready for publishing. The portable
 source guard runs as a C# MSBuild task using the SDK; no Python process is invoked.
 
 ```sh
@@ -33,6 +33,17 @@ are rejected by the portable build guard. See [portable project rules](../docs/d
 
 Serve the `wwwroot` directory in the publish output reported by the SDK through HTTPS
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
+This direct browser publish is the developer harness (`index.html` and `main.js`),
+including the interactive demo and diagnostic controls. An editor **Build Project**
+publish with the `BrowserWebGPU` target instead installs `player.html` as
+`index.html` and removes `main.js` from its staged site. The player requires the
+generated `browser-publish.json` to name a cooked startup world and reports an
+error if the world is absent. It shows load progress and failures, supports gesture
+audio activation and explicit restart, and hides the current fixture overlay.
+No demo scene or diagnostic controls are included in that published entrypoint.
+The separate browser scene, animation, collision and focused pipeline are a
+frozen reference harness. Changes may fix harness defects; new engine features
+follow the [unified runtime design](../docs/work/design/platform/unified-desktop-browser-runtime-design.md).
 Publish the entire `wwwroot/webgpu` directory with the application. Revalidate
 `webgpu/shaders/manifest.json`; hash-named `.shader.json` and `.wgsl` files may be cached
 immutably. The loader rejects missing, stale, oversized or incompatible artifacts
@@ -41,6 +52,9 @@ usable adapter. `?renderer=WebGPU` and `?renderer=Auto` select the packaged WebG
 path; `WebGL2` and unknown renderer names produce a diagnostic. No fallback
 renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
+
+Keep hash-addressed cooked shader payloads under `Assets/shaders/` as LF bytes.
+Line-ending conversion changes their hashes and causes the loader to reject them.
 
 - In the demo, drag the left canvas half to move and the right half to look. Focus
   the canvas for WASD/arrows, Space or an enabled standard gamepad. **Jump** is also
@@ -209,8 +223,9 @@ explicit experimental backend paths described by the audit above.
 
 See [portable host completion](../docs/work/progress/rendering/browser-portable-host-completion.md)
 for generated registrations, source/API guards, frame publication and the remaining
-acceptance work. Regenerate the checked-in browser registry after changing its
-manifest with `python3 Tools/Generate-BrowserRegistrations.py`; neither the registry
+acceptance work. Builds regenerate the browser registry under intermediate output
+from `browser-registration-manifest.json` using the shared PowerShell factory
+generator; neither the registry
 nor scene JSON serialization performs runtime assembly scanning. The portable source
 guard documents its lexical limits and reviewed exceptions; an evaluated inventory
 still needs to be captured from the restored build graph.

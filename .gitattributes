@@ -2,6 +2,8 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+# Content-addressed shader payloads must retain the bytes recorded in their hashes.
+/XREngine.Runtime.Rendering.WebGPU/Assets/shaders/** text eol=lf
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

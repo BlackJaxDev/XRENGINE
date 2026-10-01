@@ -8,6 +8,7 @@ public unsafe partial class OpenGLRenderer
 {
     private nint _glMultiDrawMeshTasksIndirectCountExt;
     private EMeshShaderDialect _meshShaderDialect;
+    private bool _supportsIndirectCountDraw;
 
     public override EMeshShaderDialect MeshShaderDialect
         => _meshShaderDialect;
@@ -48,7 +49,8 @@ public unsafe partial class OpenGLRenderer
         if (!SupportsIndirectCountMeshTaskDispatch() || _glMultiDrawMeshTasksIndirectCountExt == 0)
         {
             failureReason = MeshletDispatchUnsupportedReason;
-            Debug.Out(failureReason);
+            Debug.RenderingWarningEvery(
+                "OpenGL.MeshTasks.IndirectCountUnavailable", TimeSpan.FromSeconds(5), failureReason);
             return false;
         }
 
@@ -77,10 +79,10 @@ public unsafe partial class OpenGLRenderer
     public override string MeshletDispatchUnsupportedReason
         => MeshShaderDialect switch
         {
-            EMeshShaderDialect.OpenGLEXT when _glMultiDrawMeshTasksIndirectCountExt == 0 =>
-                "GL_EXT_mesh_shader is visible, but glMultiDrawMeshTasksIndirectCountEXT is unavailable on the active OpenGL context.",
             EMeshShaderDialect.OpenGLEXT when !SupportsIndirectCountDraw() =>
                 "GL_EXT_mesh_shader is visible, but GL 4.6/GL_ARB_indirect_parameters count buffers are unavailable.",
+            EMeshShaderDialect.OpenGLEXT when _glMultiDrawMeshTasksIndirectCountExt == 0 =>
+                "GL_EXT_mesh_shader is visible, but glMultiDrawMeshTasksIndirectCountEXT is unavailable on the active OpenGL context.",
             EMeshShaderDialect.OpenGLEXT =>
                 "OpenGL EXT mesh-task indirect-count dispatch is available.",
             EMeshShaderDialect.OpenGLNV =>
@@ -91,6 +93,8 @@ public unsafe partial class OpenGLRenderer
 
     private void LoadMeshTaskDispatchDelegates()
     {
+        if (MeshShaderDialect != EMeshShaderDialect.OpenGLEXT || !SupportsIndirectCountDraw())
+            return;
         if (_glMultiDrawMeshTasksIndirectCountExt == 0)
             _glMultiDrawMeshTasksIndirectCountExt = ResolveWindowProcAddress("glMultiDrawMeshTasksIndirectCountEXT");
     }

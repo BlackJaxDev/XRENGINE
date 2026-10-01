@@ -27,6 +27,8 @@
         ProjectReferences="@(ProjectReference)"
         Packages="@(PackageReference)"
         GeneratedRenderCommandRegistrations="$(GeneratedRenderCommandRegistrations)"
+        GeneratedAotFactoryRegistrations="$(GeneratedAotFactoryRegistrations)"
+        GeneratedBrowserStaticRegistrations="$(GeneratedBrowserStaticRegistrations)"
         RepositoryRoot="$(MSBuildThisFileDirectory)../.."
         ProjectsFile="$(MSBuildThisFileDirectory)PortableProjects.tsv"
         PackagesFile="$(MSBuildThisFileDirectory)PortablePackages.tsv"

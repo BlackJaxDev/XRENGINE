@@ -24,6 +24,7 @@ public static class EditorPlayModeController
 
     private sealed record PlayerPossessionSnapshot(
         Type ControllerType,
+        XRWorld? SourceWorld,
         Guid? PawnId,
         Guid? PawnNodeId,
         Type? PawnType,
@@ -313,14 +314,6 @@ public static class EditorPlayModeController
 
     #region Helpers
 
-    private static XRWorld? GetCurrentEditorWorld()
-    {
-        // Get the world currently being viewed in the editor
-        // First try the first window's target world
-        var window = RuntimeEngine.Windows.FirstOrDefault();
-        return window?.TargetWorldInstance?.TargetWorldObject as XRWorld;
-    }
-
     private static void LogPlayerBindings(string phase)
     {
         Debug.Out($"[EditorPlayModeController] {phase}: SnapshotCount={_editorPossessionSnapshot.Count} Windows={RuntimeEngine.Windows.Count}");
@@ -361,6 +354,8 @@ public static class EditorPlayModeController
                 var pawn = localPlayer.ControlledPawn;
                 _editorPossessionSnapshot[localPlayer.LocalPlayerIndex] = new PlayerPossessionSnapshot(
                     localPlayer.GetType(),
+                    (pawn?.SceneNode?.World as RuntimeWorld)?.TargetWorld
+                        ?? (localPlayer.Viewport as XRViewport)?.World?.TargetWorldObject as XRWorld,
                     pawn?.ID,
                     pawn?.SceneNode?.ID,
                     pawn?.GetType(),
@@ -386,35 +381,7 @@ public static class EditorPlayModeController
                 continue;
             }
 
-            PawnComponent? resolvedPawn = null;
-
-            // Best: find by stable object ID (snapshot restore should preserve IDs).
-            if (snapshot.PawnId is Guid pawnId
-                && XREngine.Data.Core.XRObjectBase.ObjectsCache.TryGetValue(pawnId, out var obj)
-                && obj is PawnComponent pawnById
-                && pawnById.SceneNode is not null
-                && !pawnById.IsDestroyed)
-            {
-                resolvedPawn = pawnById;
-            }
-
-            // Fallback: locate by owning scene node ID + pawn type.
-            if (resolvedPawn is null && snapshot.PawnNodeId is Guid nodeId
-                && XREngine.Data.Core.XRObjectBase.ObjectsCache.TryGetValue(nodeId, out var nodeObj)
-                && nodeObj is SceneNode node
-                && !node.IsDestroyed)
-            {
-                if (snapshot.PawnType is Type pawnType)
-                    resolvedPawn = node.Components.OfType<PawnComponent>().FirstOrDefault(p => pawnType.IsInstanceOfType(p));
-                else
-                    resolvedPawn = node.Components.OfType<PawnComponent>().FirstOrDefault();
-            }
-
-            // Last resort: attempt to match by name + type across the current world.
-            if (resolvedPawn is null && snapshot.PawnType is Type pawnType2)
-            {
-                resolvedPawn = FindPawnInCurrentWorldByNameAndType(snapshot.PawnName, pawnType2);
-            }
+            PawnComponent? resolvedPawn = ResolvePawnInSourceWorld(snapshot);
 
             if (resolvedPawn is null)
             {
@@ -422,13 +389,11 @@ public static class EditorPlayModeController
                 continue;
             }
 
-            // CRITICAL FIX: After snapshot restore, the pawn's CameraComponent field can point to a stale
-            // reference (old deserialized object) instead of the actual sibling CameraComponent that was
-            // restored with the scene node. Force rebind to the sibling camera to ensure consistency.
-            var siblingCamera = resolvedPawn.GetSiblingComponent<CameraComponent>();
-            if (siblingCamera is not null && !ReferenceEquals(resolvedPawn.CameraComponent, siblingCamera))
+            // A pawn without an explicit camera can use a camera on its own node.
+            // Explicit references may target descendants and are repaired during scene restore.
+            if (resolvedPawn.CameraComponent is null
+                && resolvedPawn.GetSiblingComponent<CameraComponent>() is { IsDestroyed: false } siblingCamera)
             {
-                Debug.Out($"[EditorPlayModeController] Rebinding pawn CameraComponent: Old={resolvedPawn.CameraComponent?.GetHashCode().ToString() ?? "NULL"} New={siblingCamera.GetHashCode()}");
                 resolvedPawn.CameraComponent = siblingCamera;
             }
 
@@ -520,43 +485,49 @@ public static class EditorPlayModeController
         _editorPossessionSnapshot.Clear();
     }
 
-    private static PawnComponent? FindPawnInCurrentWorldByNameAndType(string? pawnName, Type pawnType)
+    private static PawnComponent? ResolvePawnInSourceWorld(PlayerPossessionSnapshot snapshot)
     {
-        if (pawnType is null)
+        RuntimeWorldRegistry? registry = RuntimeWorldRegistryServices.Current;
+        if (snapshot.SourceWorld is not XRWorld sourceWorld
+            || registry is null
+            || !registry.TryGet(sourceWorld, out RuntimeWorld? runtimeWorld)
+            || runtimeWorld is null
+            || !ReferenceEquals(runtimeWorld.TargetWorld, sourceWorld))
             return null;
 
-        var world = GetCurrentEditorWorld();
-        if (world is null)
-            return null;
+        // Runtime roots also include retained editor-only nodes that are not in XRScene.RootNodes.
+        if (snapshot.PawnId is Guid pawnId
+            && FindPawnInRoots(runtimeWorld, pawn => pawn.ID == pawnId) is { } byId)
+            return byId;
 
-        // Search all scenes in the current editor world.
-        foreach (var scene in world.Scenes)
-        {
-            if (scene.RootNodes is null)
-                continue;
+        if (snapshot.PawnNodeId is Guid nodeId
+            && FindPawnInRoots(runtimeWorld, pawn => pawn.SceneNode.ID == nodeId
+                && (snapshot.PawnType is null || snapshot.PawnType.IsInstanceOfType(pawn))) is { } byNode)
+            return byNode;
 
-            foreach (var root in scene.RootNodes)
-            {
-                var found = FindPawnRecursive(root, pawnName, pawnType);
-                if (found is not null)
-                    return found;
-            }
-        }
+        return snapshot.PawnType is Type pawnType && !string.IsNullOrWhiteSpace(snapshot.PawnName)
+            ? FindPawnInRoots(runtimeWorld, pawn => pawnType.IsInstanceOfType(pawn)
+                && string.Equals(pawn.Name, snapshot.PawnName, StringComparison.Ordinal))
+            : null;
+    }
+
+    private static PawnComponent? FindPawnInRoots(RuntimeWorld world, Func<PawnComponent, bool> matches)
+    {
+        foreach (SceneNode root in world.RootNodes)
+            if (FindPawnRecursive(root, matches) is { } pawn)
+                return pawn;
 
         return null;
     }
 
-    private static PawnComponent? FindPawnRecursive(SceneNode node, string? pawnName, Type pawnType)
+    private static PawnComponent? FindPawnRecursive(SceneNode? node, Func<PawnComponent, bool> matches)
     {
-        if (node is null)
+        if (node is null || node.IsDestroyed || node.Transform.IsDestroyed)
             return null;
 
         foreach (var pawn in node.Components.OfType<PawnComponent>())
         {
-            if (!pawnType.IsInstanceOfType(pawn))
-                continue;
-
-            if (string.IsNullOrWhiteSpace(pawnName) || string.Equals(pawn.Name, pawnName, StringComparison.Ordinal))
+            if (!pawn.IsDestroyed && ReferenceEquals(pawn.SceneNode, node) && matches(pawn))
                 return pawn;
         }
 
@@ -566,7 +537,7 @@ public static class EditorPlayModeController
             if (childNode is null)
                 continue;
 
-            var found = FindPawnRecursive(childNode, pawnName, pawnType);
+            var found = FindPawnRecursive(childNode, matches);
             if (found is not null)
                 return found;
         }

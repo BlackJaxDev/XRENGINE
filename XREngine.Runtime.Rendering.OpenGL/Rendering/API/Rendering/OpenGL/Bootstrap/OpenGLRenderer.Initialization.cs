@@ -35,9 +35,13 @@ public partial class OpenGLRenderer
         // mesh-submission capability query.
         _meshShaderDialect = api.IsExtensionPresent("GL_EXT_mesh_shader")
             ? EMeshShaderDialect.OpenGLEXT
-            : NVMeshShader is not null
+            : api.IsExtensionPresent("GL_NV_mesh_shader")
                 ? EMeshShaderDialect.OpenGLNV
                 : EMeshShaderDialect.None;
+        int majorVersion = api.GetInteger(GLEnum.MajorVersion);
+        int minorVersion = api.GetInteger(GLEnum.MinorVersion);
+        _supportsIndirectCountDraw = majorVersion > 4 || (majorVersion == 4 && minorVersion >= 6) ||
+            api.IsExtensionPresent("GL_ARB_indirect_parameters");
         string version;
         unsafe
         {
