@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current tree compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds; unchecked implementation and verification rows remain open until their own acceptance evidence is recorded. **19 of 110 items are complete; 91 remain open.** The 2026-09-30 portable-host gate and desktop Editor/Server/VRClient evidence remain historical. Resumed source now composes a real `RuntimeWorld` in the browser, but live engine-world/render qualification is still open; see the [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md).
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current tree compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds; unchecked implementation and verification rows remain open until their own acceptance evidence is recorded. **39 of 110 items are complete; 71 remain open.** The 2026-09-30 portable-host gate and desktop Editor/Server/VRClient evidence remain historical. Resumed source now composes a real `RuntimeWorld` in the browser, but live engine-world/render qualification is still open; see the [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md).
 
 Created: 2026-09-29. Updated: 2026-10-01.
 
@@ -20,17 +20,17 @@ The editor stays a desktop application and gains an honest browser publish targe
 
 ## Current State (2026-10-01)
 
-The 2026-09-30 build-stabilization and portable-host results below remain historical evidence for that source snapshot. Implementation resumed on 2026-10-01; the current source/build-versus-live boundary is summarized in the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md). **19 of 110 checklist items remain checked; this audit does not change any checkbox.**
+The 2026-09-30 build-stabilization and portable-host results below remain historical evidence for that source snapshot. Implementation resumed on 2026-10-01; the current source/build-versus-live boundary is summarized in the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md). **39 of 110 checklist items are checked against the qualified snapshot below; 71 remain open.**
 
 | Area | Finding | Tracked by |
 | --- | --- | --- |
-| Build | The 2026-09-30 full gate passed for its source snapshot. On 2026-10-01, the supported in-process task-host override compiled all 18 portable-project rows and a fresh current-tree browser publish exited 0 with no compiler warnings/errors; the compile sweep retained only NU1900 cached-audit warnings. Editor, Server, VRClient, Jolt, transport, content-cooker and shader-cooker checks also have successful logs. This is build/publish evidence, not a live browser smoke or rendered-world result. | UR00.09, UR01, UR04, UR15 |
+| Build | The 2026-09-30 full gate passed for its source snapshot. On 2026-10-01, the supported in-process task-host override compiled all 18 portable-project rows and a fresh current-tree browser publish exited 0 with no compiler warnings/errors; the compile sweep retained only NU1900 cached-audit warnings. Editor, Server, VRClient, Jolt, transport, content-cooker and shader-cooker checks also have successful logs. The later c1da82c snapshot also passed real Chromium depth, world/asset/Jolt lifecycle and offline-audio qualification. Production rendered-world acceptance remains open. | UR00.09, UR01, UR04, UR15 |
 | Toolchain | `global.json` now pins SDK 10.0.401 and workload set 10.0.401.1 following owner approval. The installed browser packs match the recorded toolchain. | UR00.02, decision D5 |
-| Engine host | The facade, timer, settings and shared host services live in portable `XREngine.Runtime.Host`; 121 reviewed sources moved and the baseline public identities are preserved. Browser source now composes `BrowserEngineExports`/`BrowserEngineSession` to load an `XRWorld`, create a `RuntimeWorld`, enter play and step it. Live browser-world execution is still unverified. The production player explicitly reports rendering unavailable. | UR17, UR01, UR02, UR04 |
-| Parity target | `Samples/RollingBall` targets portable `net10.0`; gameplay uses backend-neutral physics contracts and desktop VR composition is separated into `Samples/RollingBall.DesktopVR`. The desktop build passes. Browser serialization, asset loading and playable parity remain unverified; the descriptive rebrand is not legal clearance. | UR10.05–UR10.08, UR11.05, decision D2 |
-| Shaders and pipeline | The hand-written shader inventory and D7 route are recorded. Pinned Slang cooking and ABI validation passed for the depth/depth-probe diagnostic only. The engine material path and broader pass groups remain open; `DefaultRenderPipeline.WebTier.RequireSupportedOutputResources()` rejects WebGPU outputs until required forward-lighting, attachment, material and tonemap routes exist. | UR04–UR06, decision D7 |
-| Jolt leaf | Browser-specific managed/native Jolt supply and reviewed portability allowances are present; D14 is approved and the native/managed spike publish passed. Browser initialization, stepping, callbacks, teardown and physics parity still need live evidence. Desktop physics defaults remain unchanged pending parity. | UR07, decisions D3, D4, D10, D14 |
-| Path casing | All 759 Core paths now use `XREngine.Runtime.Core` in the Git index; 244 case-only renames preserve modes and blobs. Linux execution remains untested. | UR00.08, decision D8 |
+| Engine host | The facade, timer, settings and shared host services live in portable `XREngine.Runtime.Host`; 121 reviewed sources moved and the baseline public identities are preserved. Browser source now composes `BrowserEngineExports`/`BrowserEngineSession` to load an `XRWorld`, create a `RuntimeWorld`, enter play and step it. Minimal Chromium world lifecycle and canonical RollingBall WASM lifecycle now pass. The production DefaultRenderPipeline still rejects unsupported browser output. | UR17, UR01, UR02, UR04 |
+| Parity target | `Samples/RollingBall` targets portable `net10.0`; gameplay uses backend-neutral physics contracts and desktop VR composition is separated into `Samples/RollingBall.DesktopVR`. The desktop build passes. Canonical serialization/loading and game lifecycle pass in published WASM; rendered playable parity remains unverified; the descriptive rebrand is not legal clearance. | UR10.05–UR10.08, UR11.05, decision D2 |
+| Shaders and pipeline | The hand-written shader inventory and D7 route are recorded. Pinned Slang cooking, ABI validation and real engine depth pixels pass for the admitted depth/depth-probe diagnostic. The engine material path and broader pass groups remain open; `DefaultRenderPipeline.WebTier.RequireSupportedOutputResources()` rejects WebGPU outputs until required forward-lighting, attachment, material and tonemap routes exist. | UR04–UR06, decision D7 |
+| Jolt leaf | Browser-specific managed/native Jolt supply and reviewed portability allowances are present; D14 is approved and the native/managed spike publish passed. Chromium initialization, stepping, callbacks and repeated teardown pass. One desktop-versus-WASM falling-body trace matches; full physics/gameplay parity remains open. Desktop physics defaults remain unchanged pending parity. | UR07, decisions D3, D4, D10, D14 |
+| Path casing | All 759 Core paths now use `XREngine.Runtime.Core` in the Git index; 244 case-only renames preserve modes and blobs. The Linux build/publish/browser CI lane now passes. | UR00.08, decision D8 |
 | Unit tests | The repeat full run completes without host abort: 4,804 passed, 669 failed, seven runner skips. No baseline-passing name regressed; additional cases execute after the finalizer repair. Source contracts, fixtures and behavioral failures remain separately classified. | UR00.10, UR00.12, prerequisite checklist |
 
 The caller-thread frame/scheduler smoke, hash-verified asset source, browser publisher, Web Audio adapter, input adapter, WebSocket transport, and focused WebGPU renderer source are also present, with limits recorded in the checkpoint. At checkpoint `fe3a119`, [Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36918408996) passed a minimal real-world lifecycle, asset delivery/lifetime, and native Jolt queries/callbacks/repeated teardown. The depth rendering check failed and remains under repair. This does not establish the complete U1/U2/U3 scene/component, rendered-world, or playable-game acceptance. Local Chromium remains blocked by this host's Unix-socket policy; CI supplies software-WebGPU correctness evidence, not hardware budgets.
@@ -52,6 +52,33 @@ The caller-thread frame/scheduler smoke, hash-verified asset source, browser pub
 - **Validation order.** Validate each feature through its live path (desktop editor, browser page) before adding regression tests, following repository policy. Record browser evidence under `Build/_AgentValidation/<run>/` and durable findings in `docs/work/investigations/<subsystem>/`.
 - **Approvals.** Toolchain pins, new dependencies (repository-built `joltc`, headless-browser test tooling), and supply-path changes need owner approval and license review.
 - **No todo IDs in code.** Keep task IDs out of code, comments, type names, and diagnostics.
+
+## Qualified implementation snapshot
+
+The 2026-10-01 checkpoint `c1da82cd7049ad9a973e589cdee9ce552cffa7f1` passed
+the full local build gate (18 portable rows, shared renderer, Editor, Server,
+VRClient, native-Jolt browser publish) and
+[real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36936819487).
+Desktop builds had zero warnings/errors; local portable restore retained known
+NU1900 cache-audit warnings. The CI depth patches matched expected bytes exactly,
+with 39 engine draws and zero reference packets. Native Jolt, world/asset
+lifecycle, and offline PCM sample checks passed.
+
+This closes the implementation/approved-decision rows `UR01.01`, `UR01.04`, `UR01.06`, `UR02.02`, `UR03.01`, `UR05.01`, `UR06.03`, `UR06.04`, `UR07.01`, `UR07.02`, `UR07.06`, `UR07.07`, `UR08.04`, `UR10.01`, `UR10.04`, `UR10.06`, `UR10.07`, `UR11.03`, `UR15.01`, `UR15.02`.
+Static registrations are supplied by the unified C# path; frozen reference
+Python scripts remain for the separately gated retirement work. Canonical
+RollingBall world/gameplay/Jolt proof uses published WASM under Node, not a
+rendered game: five-cycle callbacks, teardown and late BeginPlay failure/retry
+pass, but the diagnostic package does not exercise Editor BrowserWebGPU
+publishing and initializes no GPU.
+
+The remaining 71 rows comprise 9 implemented but awaiting row-level acceptance,
+42 partial, 19 missing, and 1 physical-device qualification blocker. These are
+implementation-status categories, not additional completed items. Production
+DefaultRenderPipeline rendering, the editor-published playable sample, memory
+bounds, and the broader desktop/browser/device verification rows remain open.
+The detailed [checkpoint record](../../progress/platform/unified-browser-checkpoint-2026-10-01.md)
+preserves evidence and limitations.
 
 ## Build Gate
 
@@ -93,7 +120,7 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-As of 2026-10-01, 19 of 110 items here remain checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, and earlier browser/reference publishes are recorded in their dated reports. New source implementation does not close an item without its required build or live evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes compiled source from the still-missing live browser, renderer, device, performance, recovery, and networking qualification.
+As of the qualified 2026-10-01 snapshot, 39 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, and earlier browser/reference publishes are recorded in their dated reports. New source implementation does not close an item without its required build or live evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes compiled source from the still-missing live browser, renderer, device, performance, recovery, and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -101,13 +128,13 @@ Sizes are rough planning estimates for one engineer: **S** is days, **M** is one
 | --- | --- | --- | --- | --- |
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
 | Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Browser Jolt execution proof; parity before any default-promotion consideration |
-| U1: engine boots | UR17, UR01, UR02, UR03 | 18 | L each; UR01 M | Complete a current browser-world boot and frame/lifecycle proof; D1 and D6 are approved |
-| U2: engine renders | UR04, UR05, UR06 | 22 | UR04 XL, UR05 XL, UR06 L | Build and integrate the renderer, materials and supported web tier, then capture known-value output; D7 is approved |
-| U3: project plays | UR07, UR08, UR09, UR10, UR11 | 29 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
-| U4: production | UR13, UR14, UR15, UR16 | 19 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
+| U1: engine boots | UR17, UR01, UR02, UR03 | 13 | L each; UR01 M | Complete a current browser-world boot and frame/lifecycle proof; D1 and D6 are approved |
+| U2: engine renders | UR04, UR05, UR06 | 19 | UR04 XL, UR05 XL, UR06 L | Build and integrate the renderer, materials and supported web tier, then capture known-value output; D7 is approved |
+| U3: project plays | UR07, UR08, UR09, UR10, UR11 | 19 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
+| U4: production | UR13, UR14, UR15, UR16 | 17 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
 | U5: networked client | UR12 | 3 | L | U3 |
 
-The current critical path is a fresh complete browser build gate, live U1 world-start/frame evidence, production surface and renderer integration, then the engine material/shader path and a bounded WebGPU pipeline. D1, D6, D7 and D14 are approved. Jolt, audio, and portable sample implementation can continue in parallel where the prerequisite checklist permits, but their browser behavior remains unqualified.
+The current critical path follows the passing build, world-lifecycle and depth gates: engine texture/resource bindings, faithful semantic materials and the production WebGPU pipeline, then the actual editor-published playable project. D1, D6, D7 and D14 are approved. Jolt, audio, and portable sample implementation can continue in parallel where the prerequisite checklist permits, while their remaining row-level browser acceptance stays explicit.
 
 ## Historical Pause Record (2026-09-30; implementation resumed 2026-10-01)
 
@@ -193,16 +220,16 @@ Runs after UR00 and before UR01.06, UR02, and UR10. Blocked on decision D1.
 
 Shared projects already target `net10.0` with whole-project checks. Depends on their [integration acceptance](native-subsystem-project-split-todo.md#build-dependency-and-publish-boundaries); source completion alone does not establish browser startup.
 
-- [ ] **UR01.01** `impl` Verify the browser host references the full portable assemblies and include the integration adapters needed for real-world boot. The host currently references Core, Rendering, the WebGPU module, and Animation only. Source-subset profiles and the old portable build property are already removed; qualify the evaluated closure and full API surface.
+- [x] **UR01.01** `impl` Verify the browser host references the full portable assemblies and include the integration adapters needed for real-world boot. The host currently references Core, Rendering, the WebGPU module, and Animation only. Source-subset profiles and the old portable build property are already removed; qualify the evaluated closure and full API surface.
 - [ ] **UR01.02** `impl` Make `XREngine.Browser` a composition root that installs, explicitly and as they land:
   - the host services from UR17, each either implemented or installed as a named unsupported service;
   - the browser leaves: WebGPU renderer, browser platform, Jolt, Web Audio, browser input, fetch asset source, WebSocket transport.
 
   Unavailable required services fail by name.
 - [ ] **UR01.03** `impl` Audit static constructors, module initializers, and reflection scans reachable at browser startup. Qualify the implemented published-metadata lookup and desktop service boundaries, then move any remaining browser-reachable desktop initialization into leaves.
-- [ ] **UR01.04** `impl` Generate static registrations for browser component, transform, serializer, and module registration with the mechanism chosen in D6. Retire the branch's Python registration generator.
+- [x] **UR01.04** `impl` Generate static registrations for browser component, transform, serializer, and module registration with the mechanism chosen in D6. Retire the branch's Python registration generator.
 - [ ] **UR01.05** `verify` Load real YAML/MemoryPack assets in the interpreter and round-trip representative worlds, prefabs, and components.
-- [ ] **UR01.06** `impl` Boot a real `XRWorld` fetched from a cooked bundle through `RuntimeWorld` and the world host, replacing the host's use of `RuntimeSceneHost`. Construct scenes, the game mode, pawns, and components; run fixed and variable updates; report lifecycle state to the page. Depends on UR17.
+- [x] **UR01.06** `impl` Boot a real `XRWorld` fetched from a cooked bundle through `RuntimeWorld` and the world host, replacing the host's use of `RuntimeSceneHost`. Construct scenes, the game mode, pawns, and components; run fixed and variable updates; report lifecycle state to the page. Depends on UR17.
 
 **Acceptance:** the browser runs the engine's own world, scene, and component lifecycle from the same binaries desktop uses.
 
@@ -211,7 +238,7 @@ Shared projects already target `net10.0` with whole-project checks. Depends on t
 Depends on UR17.
 
 - [ ] **UR02.01** `impl` Extract a single-frame engine step (fixed-step simulation with bounded catch-up, variable update, visibility, render recording, submission) that desktop and browser hosts both call. The loop lives in `EngineTimer`: `RunGameLoop`, `BlockForRendering`, the `DispatchUpdate`/`DispatchCollectVisible`/`DispatchSwapBuffers`/`DispatchRender` methods, and the fixed-update worker. `RuntimeRenderThreadHost` in Rendering only wraps the render-thread side. Start from `EngineTimer.BeginExplicitFrame`, which already runs one deterministic frame on the calling thread with the workers stopped, and extend it to real elapsed time.
-- [ ] **UR02.02** `impl` Support rendering on the calling thread: update, swap, collect, and render run in sequence within one step. Verify the engine's double-buffered render state works without a dedicated render thread.
+- [x] **UR02.02** `impl` Support rendering on the calling thread: update, swap, collect, and render run in sequence within one step. Verify the engine's double-buffered render state works without a dedicated render thread.
 - [ ] **UR02.03** `impl` Add a caller-thread executor for the job system (`JobManager`). Inventory every blocking and thread-creating site in the shared closure and make each asynchronous, move it to a desktop leaf, or confine it to cook and editor code. Regenerate the inventory with:
 
   ```sh
@@ -243,7 +270,7 @@ Depends on UR17.
 
 ## UR03 — Asset I/O And Per-Platform Cooking
 
-- [ ] **UR03.01** `impl` Route `AssetManager` loading through the asynchronous members of the asset-source contract and implement the browser source with same-origin, credential-free, hash-verified fetches, reusing `content-loader.js` and `content-manifest.js`. The contract is `IRuntimeAssetSource` with `IAssetReadBatch` (`XREngine.Runtime.Core/Assets/IO/`), installed through `DirectStorageIO.Source`; its only implementation is the DirectStorage leaf. It also exposes synchronous members (`Exists`, `ReadAllBytes`, `ReadRange`, `TryReadInto`, `TryReadFileInto`, `IAssetReadBatch.Execute`). Either remove those from the contract or make the browser source fail them by name; do not block on a fetch.
+- [x] **UR03.01** `impl` Route `AssetManager` loading through the asynchronous members of the asset-source contract and implement the browser source with same-origin, credential-free, hash-verified fetches, reusing `content-loader.js` and `content-manifest.js`. The contract is `IRuntimeAssetSource` with `IAssetReadBatch` (`XREngine.Runtime.Core/Assets/IO/`), installed through `DirectStorageIO.Source`; its only implementation is the DirectStorage leaf. It also exposes synchronous members (`Exists`, `ReadAllBytes`, `ReadRange`, `TryReadInto`, `TryReadFileInto`, `IAssetReadBatch.Execute`). Either remove those from the contract or make the browser source fail them by name; do not block on a fetch.
 - [ ] **UR03.02** `impl` Remove synchronous load wrappers from runtime-reachable paths. On 2026-09-30 the asset manager had 10 sync-over-async sites, and Core and Rendering had 136 direct `File`/`Directory`/`FileStream` call sites across 39 files that bypass the asset source.
 - [ ] **UR03.03** `impl` Add a platform target to cooking (`CookContent` in `XREngine.Editor/ProjectBuilder.cs`). Web cooking produces:
   - WGSL shader artifacts;
@@ -283,7 +310,7 @@ Depends on UR17.
 
 **Starting point.** `Build/CommonAssets/Shaders` holds 552 GLSL sources: 222 fragment, 148 compute, 109 includes, 40 vertex, 20 geometry, 9 mesh/task, and 4 tessellation. Three of them (`Common/MaterialTable.glsl` and the two `Graphics/BindlessMesh` stages) require bindless-texture or 64-bit integer extensions. The same tree has 2 Slang pilots under `FrontendPilots/`. The only other Slang source and all 10 WGSL sources belong to the separate runtime. Slang does not ingest desktop GLSL 4.6 unchanged, so the web tier's shaders must be ported, not only cooked.
 
-- [ ] **UR05.01** `impl` Inventory the shaders the web tier of `DefaultRenderPipeline` needs. Classify each as portable through Slang, needing a WGSL rewrite, or desktop-only. Record the list, grouped by pass, in a progress doc; it is the work list for UR05.07.
+- [x] **UR05.01** `impl` Inventory the shaders the web tier of `DefaultRenderPipeline` needs. Classify each as portable through Slang, needing a WGSL rewrite, or desktop-only. Record the list, grouped by pass, in a progress doc; it is the work list for UR05.07.
 - [ ] **UR05.02** `impl` Cook engine shaders to WGSL with the pinned Slang route and the shader artifact format (reusing `Tools/ShaderCooker`, the `ShaderCompileTarget.WebGPUWgsl` target, and artifact schema checks). Follow the [Slang cross-compile plan](../../design/scripting/slang-shader-cross-compile-plan.md). Depends on decision D7.
 - [ ] **UR05.03** `impl` Extend the engine's material shader generation with a WGSL target, replacing the separate browser material generator. Support the engine's lit material model, not only unlit and Lambert.
 - [ ] **UR05.04** `impl` Implement the WebGPU encoding of logical material and texture references with bounded bind groups, texture arrays for qualifying content, and material batching. No desktop bindless handle reaches WGSL.
@@ -297,8 +324,8 @@ Depends on UR17.
 
 - [ ] **UR06.01** `impl` Define the WebGPU capability profile of `DefaultRenderPipeline`: depth, forward lighting with the engine material model, directional/spot/point shadows within limits, sky and environment, alpha-masked and sorted transparency, HDR with tonemapping, a bounded post-process set, and engine UI.
 - [ ] **UR06.02** `impl` Select passes from capabilities and report excluded passes explicitly; never discover unsupported passes by failing at runtime.
-- [ ] **UR06.03** `impl` Make `AdvancedRenderPipeline` report unsupported for WebGPU outputs through its existing `Available` policy (explicitly unbound, with a reason) and fail under `Required`.
-- [ ] **UR06.04** `impl` Resolve `CpuDirect` mesh submission for WebGPU. Later, and only after measurement, add GPU culling that writes fixed indexed slots with zero-instance culled draws, porting the branch's WGSL culling, BVH, and Hi-Z kernels into the engine's GPU scene path.
+- [x] **UR06.03** `impl` Make `AdvancedRenderPipeline` report unsupported for WebGPU outputs through its existing `Available` policy (explicitly unbound, with a reason) and fail under `Required`.
+- [x] **UR06.04** `impl` Resolve `CpuDirect` mesh submission for WebGPU. Later, and only after measurement, add GPU culling that writes fixed indexed slots with zero-instance culled draws, porting the branch's WGSL culling, BVH, and Hi-Z kernels into the engine's GPU scene path.
 - [ ] **UR06.05** `impl` Run engine skinning and blendshapes through WebGPU compute (reusing the branch's WGSL skinning kernel as a canonical port) or CPU, with CPU/GPU parity checks.
 - [ ] **UR06.06** `impl` Add mobile quality tiers to engine settings: backing resolution and DPR caps, shadow sizes and cadence, light counts, texture tiers, and post effects. Disabled effects must not allocate resources.
 - [ ] **UR06.07** `verify` Render the same test worlds on OpenGL, Vulkan, and WebGPU; compare tolerant captures and document deliberate differences.
@@ -309,13 +336,13 @@ Depends on UR17.
 
 Depends on the [Jolt browser proof and default-promotion gates](native-subsystem-project-split-todo.md#jolt-browser-proof-and-default-promotion-gates) and decisions D3 and D4. The desktop Jolt module already exists.
 
-- [ ] **UR07.01** `owner` Productize the `joltc` Emscripten archive build, pinned to the runtime pack's Emscripten version. Ship it as the Jolt leaf's `browser-wasm` native asset, with a `.props` file that adds the `NativeFileReference`.
-- [ ] **UR07.02** `impl` Install the Jolt module in the browser composition with single-threaded job execution and a truthful capability report.
+- [x] **UR07.01** `owner` Productize the `joltc` Emscripten archive build, pinned to the runtime pack's Emscripten version. Ship it as the Jolt leaf's `browser-wasm` native asset, with a `.props` file that adds the `NativeFileReference`.
+- [x] **UR07.02** `impl` Install the Jolt module in the browser composition with single-threaded job execution and a truthful capability report.
 - [ ] **UR07.03** `verify` Compare desktop and browser results on matched scenes. If the approved native supply enables cross-platform determinism (decision D10), match state hashes; otherwise match within documented tolerances.
 - [ ] **UR07.04** `impl` Fail browser publishing of worlds that require PhysX-only features with the component path and feature name.
 - [ ] **UR07.05** `verify` Measure physics step time on the reference devices and set budgets.
-- [ ] **UR07.06** `impl` Make the Jolt leaf buildable for the browser. `XREngine.Runtime.Physics.Jolt` targets `net10.0-windows7.0` and references `JoltPhysicsSharp` 2.22.0, whose native package has no `browser-wasm` asset. Retarget it to `net10.0`, keep desktop native resolution working, and admit the project and package to the portable policy files.
-- [ ] **UR07.07** `impl` Add a reviewed native-asset allowance to the portability guard. [PortableRuntime.targets](../../../../Build/Portable/PortableRuntime.targets) rejects every `NativeFileReference`, native copy item, and resolved native runtime asset in a portable project, and the browser host is one. Allow named files per project and runtime identifier with a recorded reason, as the package policy does; do not disable the check. Update the [portable project rules](../../../developer-guides/runtime/portable-projects.md).
+- [x] **UR07.06** `impl` Make the Jolt leaf buildable for the browser. `XREngine.Runtime.Physics.Jolt` targets `net10.0-windows7.0` and references `JoltPhysicsSharp` 2.22.0, whose native package has no `browser-wasm` asset. Retarget it to `net10.0`, keep desktop native resolution working, and admit the project and package to the portable policy files.
+- [x] **UR07.07** `impl` Add a reviewed native-asset allowance to the portability guard. [PortableRuntime.targets](../../../../Build/Portable/PortableRuntime.targets) rejects every `NativeFileReference`, native copy item, and resolved native runtime asset in a portable project, and the browser host is one. Allow named files per project and runtime identifier with a recorded reason, as the package policy does; do not disable the check. Update the [portable project rules](../../../developer-guides/runtime/portable-projects.md).
 
 **Acceptance:** engine physics components behave the same on desktop and web through Jolt.
 
@@ -324,7 +351,7 @@ Depends on the [Jolt browser proof and default-promotion gates](native-subsystem
 - [ ] **UR08.01** `impl` Implement `XREngine.Audio.WebAudio` against the audio contracts (sources, listener, spatialization, gain, looping, streaming), reusing `browser-audio.js`. The name follows the existing audio leaves (`XREngine.Audio.OpenAL`, `XREngine.Audio.NAudio`, `XREngine.Audio.SteamAudio`). Engine audio components are unchanged.
 - [ ] **UR08.02** `impl` Add gesture-driven activation, suspension, and resume. Gate simulation only when a world declares audio as required.
 - [ ] **UR08.03** `verify` Validate cooked audio codecs on the browser matrix, including Safari.
-- [ ] **UR08.04** `impl` Report Steam Audio features as unsupported on web unless a WebAssembly build is separately evaluated and approved.
+- [x] **UR08.04** `impl` Report Steam Audio features as unsupported on web unless a WebAssembly build is separately evaluated and approved.
 
 **Acceptance:** engine audio components play in the browser with the same authored data.
 
@@ -342,16 +369,16 @@ Depends on the [Jolt browser proof and default-promotion gates](native-subsystem
 
 Depends on UR17: game code reaches the engine through the `Engine` facade.
 
-- [ ] **UR10.01** `impl` Make project templates and game projects target `net10.0` and reference only portable engine assemblies (plus leaf contracts where needed). The generated target framework is `net10.0-windows7.0` today, set in `XREngine.Editor/CodeManager.cs` and `XREngine.Editor/EditorProjectInitializer.cs`.
+- [x] **UR10.01** `impl` Make project templates and game projects target `net10.0` and reference only portable engine assemblies (plus leaf contracts where needed). The generated target framework is `net10.0-windows7.0` today, set in `XREngine.Editor/CodeManager.cs` and `XREngine.Editor/EditorProjectInitializer.cs`.
 - [ ] **UR10.02** `impl` Report at build time which game-assembly references block browser publishing (desktop-only leaves or APIs), with type and member names.
 - [ ] **UR10.03** `impl` Link the project's game assemblies into the browser publish, with generated static registrations. Editor hot reload remains desktop-only.
-- [ ] **UR10.04** `impl` Keep editor-only code out of game builds, as today.
+- [x] **UR10.04** `impl` Keep editor-only code out of game builds, as today.
 - [ ] **UR10.05** `verify` Load serialized game components, game modes, and pawns in the browser from the same assets as desktop.
 
 The remaining items make the parity target portable. They apply to RollingBall unless decision D2 selects another sample. `Samples/RollingBall` currently targets `net10.0-windows7.0`, references `XREngine.Runtime.Bootstrap`, runs on PhysX (`XREngine.Scene.Physics.Physx`), uses VR components and the OpenVR action manifest, and ships its own cooked-world serializer.
 
-- [ ] **UR10.06** `impl` Move the sample's PhysX-specific calls onto the backend-neutral physics contracts so it runs on Jolt. Otherwise UR07.04 rejects it at publish.
-- [ ] **UR10.07** `impl` Separate the sample's VR rig, OpenVR manifest, and startup-settings generation from its gameplay code, so the gameplay assembly references only portable projects and the desktop build adds the VR part.
+- [x] **UR10.06** `impl` Move the sample's PhysX-specific calls onto the backend-neutral physics contracts so it runs on Jolt. Otherwise UR07.04 rejects it at publish.
+- [x] **UR10.07** `impl` Separate the sample's VR rig, OpenVR manifest, and startup-settings generation from its gameplay code, so the gameplay assembly references only portable projects and the desktop build adds the VR part.
 - [ ] **UR10.08** `impl` Bring the sample's cooked-world serializer under the platform cook target from UR03.03, or replace it with the engine's cooked format, so desktop and web load the same world asset.
 
 **Acceptance:** the same compiled game code runs on desktop and in the browser.
@@ -365,7 +392,7 @@ The remaining items make the parity target portable. They apply to RollingBall u
   4. Write the launch descriptor.
   5. Activate the output atomically, reusing the branch's staging and rollback.
 - [ ] **UR11.02** `impl` Before publishing, report web-unsupported components and features per world with scene paths and reasons. Unsupported required features block the publish; optional ones are listed.
-- [ ] **UR11.03** `impl` Ship a player shell page (canvas, loading progress, errors, audio unlock) separate from the developer harness page.
+- [x] **UR11.03** `impl` Ship a player shell page (canvas, loading progress, errors, audio unlock) separate from the developer harness page.
 - [ ] **UR11.04** `impl` Keep the CLI entry point (`--build-project <project> --build-platform BrowserWebGPU`) and the editor Build Project action stable. Browser publishing must also work from a packaged editor, not only a source checkout.
 - [ ] **UR11.05** `verify` Publish the parity target and a lit, textured, animated test world; play them in the browser and compare with desktop.
 
@@ -394,8 +421,8 @@ The remaining items make the parity target portable. They apply to RollingBall u
 
 ## UR15 — CI, Hosting, And Evidence
 
-- [ ] **UR15.01** `impl` Extend the browser compile lane into a build and publish lane next to the Windows desktop lane. [portable-browser-compile.yml](../../../../.github/workflows/portable-browser-compile.yml) already runs [Test-PortableBrowserCompile.ps1](../../../../Tools/Test-PortableBrowserCompile.ps1) on `ubuntu-latest`; it cannot pass there until UR00.08 fixes the directory casing, and it should use the SDK pin from D5.
-- [ ] **UR15.02** `owner` Propose a headless-browser smoke harness (decision D9) that boots a cooked world and checks startup, rendering, and diagnostics.
+- [x] **UR15.01** `impl` Extend the browser compile lane into a build and publish lane next to the Windows desktop lane. [portable-browser-compile.yml](../../../../.github/workflows/portable-browser-compile.yml) already runs [Test-PortableBrowserCompile.ps1](../../../../Tools/Test-PortableBrowserCompile.ps1) on `ubuntu-latest`; it cannot pass there until UR00.08 fixes the directory casing, and it should use the SDK pin from D5.
+- [x] **UR15.02** `owner` Propose a headless-browser smoke harness (decision D9) that boots a cooked world and checks startup, rendering, and diagnostics.
 - [ ] **UR15.03** `impl` Document production hosting: HTTPS, MIME types, compression, immutable caching, bootstrap revalidation, and CSP. Add cross-origin isolation only if threads are adopted.
 - [ ] **UR15.04** `verify` Run the physical-device matrix from the mobile TODO (MW00.06, MW12.07) with the evidence template in its completion section.
 - [ ] **UR15.05** `impl` Publish user-facing build, publish, hosting, support-matrix, and troubleshooting docs after validation.

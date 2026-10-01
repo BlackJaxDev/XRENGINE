@@ -26,6 +26,8 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Session-scoped cooked shader identities loaded through the engine asset source.</summary>
     public IShaderProgramArtifactResolver? ShaderArtifacts => _shaderArtifacts;
     public int LastEngineMeshDrawCount => _engineMeshDrawCount;
+    internal uint EngineFrameSequence => _engineFrameSequence;
+    internal bool IsRecordingEngineFrame => _engineRecording;
 
     /// <summary>Installs the immutable shader catalog before engine program preparation begins.</summary>
     public void BindShaderArtifacts(IShaderProgramArtifactResolver? artifacts)

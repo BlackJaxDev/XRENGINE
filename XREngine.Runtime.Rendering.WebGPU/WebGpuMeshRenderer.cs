@@ -91,7 +91,8 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         Renderer.ApplyRenderParameters(renderOptionsOverride ?? resolved.Material.RenderOptions);
         if (Renderer.RasterState.CullMode == ECullMode.Both)
             return;
-        if (!TryPrepareDraw(resolved.Material, out WebGpuMaterial? material, out WebGpuMeshDraw? draw))
+        WebGpuMaterial material = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(resolved.Material)!;
+        if (!material.TryPrepareForRendering())
         {
             Renderer.MarkEngineDrawPending();
             return;
@@ -100,7 +101,8 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             ?? throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: an engine camera must own the current mesh pass.");
         if (camera.DepthMode != XRCamera.EDepthMode.Normal)
             throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
-        WebGpuRenderProgram program = material!.Program;
+        WebGpuRenderProgram program = material.Program;
+        program.BeginResourceBindings();
         Renderer.SetEngineUniforms(program.Data, camera);
         program.SetMatrix("ModelMatrix", modelMatrix);
         program.SetMatrix("PreviousModelMatrix", previousModelMatrix);
@@ -113,20 +115,33 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             resolved.Material.OnSettingVertexUniforms(program.Data);
         if (resolved.IsShadowVariant)
             MeshRenderMaterialResolver.ApplyShadowUniforms(program.Data, resolved.Material);
-        PublishNumericBindings(resolved.Material.BindingPublishers, program.Data);
-        PublishNumericBindings(Data.Parent.BindingPublishers, program.Data);
-        draw!.Record();
+        bool deferMissingResources = PublishBindings(resolved.Material.BindingPublishers, program.Data);
+        deferMissingResources |= PublishBindings(Data.Parent.BindingPublishers, program.Data);
+        if (!program.TrySnapshotBindings(deferMissingResources, out WebGpuBindingSet? bindings) ||
+            !TryPrepareDraw(resolved.Material, out _, out WebGpuMeshDraw? draw))
+        {
+            Renderer.MarkEngineDrawPending();
+            return;
+        }
+        draw!.Record(bindings!);
     }
 
-    private static void PublishNumericBindings(RenderBindingPublisherCollection publishers, XRRenderProgram program)
+    private static bool PublishBindings(RenderBindingPublisherCollection publishers, XRRenderProgram program)
     {
+        bool requiresReadyResources = false;
         for (int i = 0; i < publishers.Count; i++)
         {
             IRenderBindingPublisher publisher = publishers[i];
-            if (publisher is IRenderResourceBindingPublisher)
-                throw Unsupported("typed resource binding publishers require retained WebGPU descriptor publication");
+            if (publisher.Generation == 0)
+                throw Unsupported("typed binding publishers require a nonzero content generation");
             publisher.PublishUniforms(program, program);
+            if (publisher is not IRenderResourceBindingPublisher resources) continue;
+            if (resources.ResourceGeneration == 0)
+                throw Unsupported("typed resource publishers require a nonzero descriptor generation");
+            requiresReadyResources |= resources.RequiresReadyDescriptorResources;
+            resources.PublishResources(program, program);
         }
+        return requiresReadyResources;
     }
 
     private bool Pending(string reason)

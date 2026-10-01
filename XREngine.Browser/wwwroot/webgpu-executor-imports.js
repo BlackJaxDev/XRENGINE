@@ -27,8 +27,8 @@ export function installWebGpuImports(runtime, renderers) {
             renderer(id).resources.uploadTextureMip(handle, mip, x, y, width, height, bytes),
         createTextureView: (id, texture, baseMip, mipCount, aspect, label) =>
             renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label),
-        createSampler: (id, addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy) =>
-            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy),
+        createSampler: (id, addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp) =>
+            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp),
         createMesh: (id, vertices, indices) => renderer(id).createMesh(vertices, indices),
         createTexture: (id, width, height, bytes) => renderer(id).createTexture(width, height, bytes),
         createCookedTexture: (id, description, bytes) => renderer(id).createCookedTexture(description, bytes),

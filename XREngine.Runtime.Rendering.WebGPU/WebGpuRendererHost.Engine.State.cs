@@ -82,6 +82,10 @@ public sealed partial class WebGpuRendererHost
     public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
     {
         ArgumentNullException.ThrowIfNull(material);
+        if (material.Textures.Count > 32)
+            throw UnsupportedEngineOperation(nameof(SetMaterialUniforms), "the material exceeds the bounded 32-texture publication profile");
+        for (int i = 0; i < material.Textures.Count; i++)
+            material.Textures[i]?.SampleIn(program, i);
         for (int i = 0; i < material.Parameters.Length; i++)
             material.Parameters[i]?.SetUniform(program, forceUpdate: true);
         material.OnSettingUniforms(program);

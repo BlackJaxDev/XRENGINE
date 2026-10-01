@@ -22,7 +22,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
     private readonly WebGpuFrameBuffer? _frameBuffer;
     private readonly Task _preparation;
     private int _pipeline;
-    private int _commands;
+    private readonly Dictionary<WebGpuBindingSet, int> _commands = [];
     private bool _disposed;
 
     public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
@@ -49,17 +49,28 @@ internal sealed class WebGpuMeshDraw : IDisposable
         {
             if (_preparation.IsFaulted || _preparation.IsCanceled)
                 _preparation.GetAwaiter().GetResult();
-            return !_disposed && _commands != 0 && _preparation.IsCompletedSuccessfully;
+            return !_disposed && _pipeline != 0 && _preparation.IsCompletedSuccessfully;
         }
     }
 
-    public void Record()
+    public void Record(WebGpuBindingSet bindings)
     {
         if (!IsReady)
             throw new InvalidOperationException("WebGPU.Mesh.PipelinePending: defer the draw until asynchronous pipeline creation completes.");
+        if (bindings.IsDisposed)
+            throw new InvalidOperationException("WebGPU.Mesh.BindingsRetired: a draw cannot use a retired resource binding set.");
+        if (!_commands.TryGetValue(bindings, out int commands))
+        {
+            if (_commands.Count >= 64)
+                throw Unsupported("the draw exceeds 64 retained resource binding variants for its current pipeline");
+            commands = _renderer.PrepareCommands(DescribeDraw(bindings));
+            _commands.Add(bindings, commands);
+        }
         Span<uint> offsets = stackalloc uint[16];
         int count = _program.SnapshotUniforms(offsets);
-        _renderer.RecordEngineCommands(_commands, offsets[..count]);
+        _renderer.RecordEngineCommands(commands, offsets[..count]);
+        bindings.MarkRecorded();
+        _frameBuffer?.MarkRecorded();
         _renderer.CountEngineMeshDraw();
     }
 
@@ -69,6 +80,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
             return true;
         if (_frameBuffer?.DependsOn(resource) == true)
             return true;
+        foreach (WebGpuBindingSet bindings in _commands.Keys)
+            if (bindings.DependsOn(resource)) return true;
         foreach (WebGpuVertexStream stream in _streams)
             if (ReferenceEquals(stream.Buffer, resource)) return true;
         return false;
@@ -83,7 +96,6 @@ internal sealed class WebGpuMeshDraw : IDisposable
             return;
         }
         _pipeline = pipeline;
-        _commands = _renderer.PrepareCommands(DescribeDraw());
     }
 
     private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh mesh)
@@ -226,7 +238,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
         return Encoding.UTF8.GetString(bytes.WrittenSpan);
     }
 
-    private string DescribeDraw()
+    private string DescribeDraw(WebGpuBindingSet bindings)
     {
         ArrayBufferWriter<byte> bytes = new();
         using (Utf8JsonWriter writer = new(bytes))
@@ -246,11 +258,11 @@ internal sealed class WebGpuMeshDraw : IDisposable
             }
             writer.WriteNumber("pipeline", _pipeline);
             writer.WriteStartArray("bindings");
-            for (int group = 0; group < _program.GroupHandles.Length; group++)
+            for (int group = 0; group < bindings.GroupHandles.Length; group++)
             {
                 writer.WriteStartObject();
                 writer.WriteNumber("index", group);
-                writer.WriteNumber("group", _program.GroupHandles[group]);
+                writer.WriteNumber("group", bindings.GroupHandles[group]);
                 writer.WriteStartArray("dynamicOffsets");
                 foreach (ShaderStageResourceLayout resource in _program.Artifact.Resources)
                     if (resource.Contract.Set == group && resource.DynamicOffset) writer.WriteNumberValue(0);
@@ -342,10 +354,10 @@ internal sealed class WebGpuMeshDraw : IDisposable
         _disposed = true;
         if (_renderer.State != BrowserRendererState.Disposed)
         {
-            if (_commands != 0) _renderer.RetireEngineResourceAfterFrame(_commands);
+            foreach (int commands in _commands.Values) _renderer.RetireEngineResourceAfterFrame(commands);
             if (_pipeline != 0) _renderer.RetireEngineResourceAfterFrame(_pipeline);
         }
-        _commands = 0;
+        _commands.Clear();
         _pipeline = 0;
     }
 

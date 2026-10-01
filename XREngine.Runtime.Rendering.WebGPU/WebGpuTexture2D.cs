@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Owns an exact-format 2D WebGPU texture and its generation-scoped render views.</summary>
-public sealed unsafe class WebGpuTexture2D : WebGpuObject<XRTexture2D>
+public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 {
     private readonly Dictionary<int, int> _views = [];
     private int _handle;
@@ -15,6 +15,7 @@ public sealed unsafe class WebGpuTexture2D : WebGpuObject<XRTexture2D>
     private int _mipCount;
     private ESizedInternalFormat _format;
     private bool _invalidated = true;
+    private uint _lastRecordedFrame;
 
     public WebGpuTexture2D(WebGpuRendererHost renderer, XRTexture2D data) : base(renderer, data)
     {
@@ -99,9 +100,16 @@ public sealed unsafe class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 
     public void PushData()
     {
+        int previous = _handle;
         Generate();
-        UploadMipmaps();
+        if (Renderer.IsRecordingEngineFrame && _lastRecordedFrame == Renderer.EngineFrameSequence)
+            throw new NotSupportedException("WebGPU.Texture.InFrameMutationUnsupported: texture bytes cannot change after a dependent pass was recorded; publish updates before the next engine frame.");
+        // Storage creation uploads all authored levels before publishing the new generation.
+        if (_handle == previous) UploadMipmaps();
     }
+
+    internal void MarkRecorded()
+        => SetField(ref _lastRecordedFrame, Renderer.EngineFrameSequence, publishNotifications: false);
 
     private void UploadMipmaps()
     {
@@ -121,13 +129,15 @@ public sealed unsafe class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 
     public override void Destroy()
     {
-        if (_handle == 0) return;
+        if (_handle == 0 && _samplerHandle == 0) return;
         Renderer.ReleaseEngineDrawDependencies(this);
+        RetireSamplingResources();
         foreach (int view in _views.Values)
             Renderer.RetireEngineResourceAfterFrame(view);
         _views.Clear();
         Renderer.RetireEngineResourceAfterFrame(_handle);
         SetField(ref _handle, 0);
+        SetField(ref _lastRecordedFrame, 0u);
         _invalidated = true;
     }
 

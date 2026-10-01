@@ -17,11 +17,15 @@ export class EngineMeshDiagnosticHost {
         this.frame = this.frame.bind(this);
     }
 
-    async start(manifestUrl, assetManifestUrl) {
+    async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
+        if (!['engine-depth-probe', 'engine-texture-probe'].includes(artifactName))
+            throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
         await this.stop(false);
         if (epoch !== this.epoch) return;
         this.failure = null;
+        this.kind = artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
+        this.readyMessage = `Engine mesh ${this.kind} diagnostic rendered; RuntimeWorld play and physics are unverified`;
         this.stage = 'loading-shader-artifact';
         if (!assetManifestUrl) throw new Error('Engine mesh diagnostics require a cooked engine asset manifest.');
         const controller = new AbortController();
@@ -30,8 +34,8 @@ export class EngineMeshDiagnosticHost {
             const manifestResponse = await fetch(manifestUrl, { signal: controller.signal });
             if (!manifestResponse.ok) throw new Error(`Diagnostic shader manifest failed: ${manifestResponse.status}`);
             const manifest = await manifestResponse.json();
-            const selected = manifest.artifacts?.find(artifact => artifact.name === 'engine-depth-probe');
-            if (manifest.schemaVersion !== 3 || !selected) throw new Error('Select a schema 3 manifest containing engine-depth-probe.');
+            const selected = manifest.artifacts?.find(artifact => artifact.name === artifactName);
+            if (manifest.schemaVersion !== 3 || !selected) throw new Error(`Select a schema 3 manifest containing ${artifactName}.`);
             const descriptorUrl = new URL(selected.descriptor, manifestResponse.url);
             const descriptorResponse = await fetch(descriptorUrl, { signal: controller.signal });
             if (!descriptorResponse.ok) throw new Error(`Diagnostic descriptor failed: ${descriptorResponse.status}`);
@@ -85,14 +89,21 @@ export class EngineMeshDiagnosticHost {
             this.stage = 'engine-frame';
             const ready = this.exports.Frame(this.session);
             this.stage = 'waiting-for-next-frame';
-            if (ready) this.onState('Engine mesh depth diagnostic rendered; RuntimeWorld play and physics are unverified');
+            if (ready) this.onState(this.readyMessage);
             else if (performance.now() - this.startedAt > 45000)
-                throw new Error(`Engine mesh depth diagnostic did not submit all three expected mesh draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
+                throw new Error(`Engine mesh ${this.kind} diagnostic did not submit all three expected mesh draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
             this.request = requestAnimationFrame(this.frame);
         } catch (error) { this.fail(error); }
     }
 
     statistics() { return this.renderer?.getStatistics() ?? null; }
+
+    setTextureCase(sampleCase) {
+        if (!this.session || this.kind !== 'texture') throw new Error('An active engine texture diagnostic is required.');
+        this.exports.SetTextureCase(this.session, sampleCase);
+        this.startedAt = performance.now();
+        this.onState('Preparing replacement engine texture resources');
+    }
 
     fail(error) {
         // Capture before Stop removes the renderer and managed fixture; cleanup and

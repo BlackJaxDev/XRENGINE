@@ -12,17 +12,23 @@ body{font:16px system-ui;background:#181b22;color:#f5f6fa;margin:2rem}canvas{dis
 <label>Cooked engine asset manifest <input id="assets" type="url" placeholder="URL of the packaged engine asset manifest"></label>
 <button id="start">Start</button><button id="stop">Stop</button>
 <canvas id="engine-depth-canvas" width="512" height="512"></canvas>
-<p>Expected: left triangle depth 0.25 (red ≈64, blue ≈191); right triangle depth 0.75 (red ≈191, blue ≈64). A second far triangle behind the left one must remain occluded.</p>
+<p id="expected">Expected: left triangle depth 0.25 (red ≈64, blue ≈191); right triangle depth 0.75 (red ≈191, blue ≈64). A second far triangle behind the left one must remain occluded.</p>
 <pre id="status">Provide the shader and engine asset manifest URLs, then start.</pre>
 <script type="module">
 import { createBrowserRuntime } from '../browser-runtime.js';
 const status=document.querySelector('#status'), manifest=document.querySelector('#manifest'), assets=document.querySelector('#assets');
 const params=new URLSearchParams(location.search);
+const texture=params.get('probe')==='texture';
+if(texture){
+ document.title='Engine texture diagnostic';
+ document.querySelector('h1').textContent='Engine texture diagnostic';
+ document.querySelector('#expected').textContent='Expected: two engine quads with red/green top corners and blue/white bottom corners. The sRGB midpoint replacement produces linear byte value 55.';
+}
 manifest.value=params.get('manifest') ?? '';
 assets.value=params.get('assets') ?? '';
 const createHost=await createBrowserRuntime();
 const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
-document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null).catch(error=>{status.textContent=String(error);});
+document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null, texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
 document.querySelector('#stop').onclick=()=>host.stop().catch(error=>{status.textContent=String(error);});
 window.engineMeshDiagnostic=host;
 window.addEventListener('pagehide',()=>{void host.stop().catch(()=>{});});

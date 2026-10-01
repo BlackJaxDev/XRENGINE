@@ -29,6 +29,7 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
     private readonly XRShader _vertex;
     private readonly XRShader _fragment;
     private readonly EngineMeshDiagnosticPipeline _pipeline;
+    private XRTexture2D? _texture;
     private bool _disposed;
 
     public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height)
@@ -36,23 +37,24 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
         _ = RuntimeRenderingHostServices.Factories;
-        if (artifact.Pass != "depth-probe" || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
-            throw new ArgumentException("The fixture requires the explicitly cooked depth-probe diagnostic artifact.", nameof(artifact));
+        bool textured = artifact.Pass == "texture-probe";
+        if (artifact.Pass is not ("depth-probe" or "texture-probe") || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
+            throw new ArgumentException("The fixture requires an explicitly cooked engine raster diagnostic artifact.", nameof(artifact));
         _renderer = renderer;
         using IDisposable suppressWrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
         _vertex = new XRShader(EShaderType.Vertex)
         {
-            Name = "Engine depth probe vertex", SourceLanguage = ShaderSourceLanguage.Slang,
+            Name = artifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
             EntryPoint = artifact.VertexEntryPoint, CookedArtifact = artifact,
         };
         _fragment = new XRShader(EShaderType.Fragment)
         {
-            Name = "Engine depth probe fragment", SourceLanguage = ShaderSourceLanguage.Slang,
+            Name = artifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
             EntryPoint = artifact.FragmentEntryPoint, CookedArtifact = artifact,
         };
         _material = new XRMaterial(_vertex, _fragment)
         {
-            Name = "Engine depth probe", RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+            Name = artifact.Name, RenderPass = (int)EDefaultRenderPass.OpaqueForward,
             RenderOptions = new RenderingParameters
             {
                 CullMode = ECullMode.None,
@@ -60,8 +62,18 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
                 DepthTest = new DepthTest { Enabled = ERenderParamUsage.Enabled, UpdateDepth = true, Function = EComparison.Less },
             },
         };
+        if (textured)
+        {
+            _texture = CreateTexture(0);
+            _material.Textures.Add(_texture);
+        }
         _pipeline = new EngineMeshDiagnosticPipeline(_material);
-        _mesh = new XRMesh(
+        _mesh = textured ? new XRMesh(
+            [new Vertex(new Vector3(-0.35f, -0.35f, 0), new Vector2(0, 1)),
+             new Vertex(new Vector3(0.35f, -0.35f, 0), new Vector2(1, 1)),
+             new Vertex(new Vector3(0.35f, 0.35f, 0), new Vector2(1, 0)),
+             new Vertex(new Vector3(-0.35f, 0.35f, 0), new Vector2(0, 0))],
+            new List<ushort> { 0, 1, 2, 0, 2, 3 }) : new XRMesh(
             [new Vertex(new Vector3(-0.35f, -0.35f, 0)), new Vertex(new Vector3(0.35f, -0.35f, 0)), new Vertex(new Vector3(0, 0.35f, 0))],
             new List<ushort> { 0, 1, 2 });
         VisualScene3D visual = new();
@@ -128,6 +140,33 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         _renderWorld.AddWorldObject(component);
     }
 
+    private static XRTexture2D CreateTexture(int sampleCase)
+    {
+        if (sampleCase is not (0 or 1)) throw new ArgumentOutOfRangeException(nameof(sampleCase));
+        ReadOnlySpan<byte> pixels = sampleCase == 0
+            ? [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]
+            : [128, 128, 128, 255, 128, 128, 128, 255, 128, 128, 128, 255, 128, 128, 128, 255];
+        return new XRTexture2D(2, 2, pixels)
+        {
+            Name = sampleCase == 0 ? "Engine UV corner probe" : "Engine sRGB midpoint probe",
+            SizedInternalFormat = sampleCase == 0 ? ESizedInternalFormat.Rgba8 : ESizedInternalFormat.Srgb8Alpha8,
+            AutoGenerateMipmaps = false, MinFilter = ETexMinFilter.Nearest, MagFilter = ETexMagFilter.Nearest,
+            UWrap = ETexWrapMode.ClampToEdge, VWrap = ETexWrapMode.ClampToEdge,
+            MaxAnisotropy = 1, MinLOD = 0, MaxLOD = 0,
+        };
+    }
+
+    public void SetTextureCase(int sampleCase)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_texture is null) throw new InvalidOperationException("EngineMeshDiagnostic.TextureCaseRequired.");
+        XRTexture2D replacement = CreateTexture(sampleCase);
+        XRTexture2D previous = _texture;
+        _material.Textures[0] = replacement;
+        _texture = replacement;
+        previous.Destroy(now: true);
+    }
+
     public bool Frame()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -169,6 +208,7 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         _scene.Dispose();
         _mesh.Destroy();
         _material.Destroy();
+        _texture?.Destroy();
         _vertex.Destroy();
         _fragment.Destroy();
         _pipeline.Destroy();

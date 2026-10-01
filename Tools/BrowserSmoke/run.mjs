@@ -201,6 +201,55 @@ async function depthCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
+async function textureCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-texture', config);
+    try {
+        await page.goto(`${origin}/diagnostics/engine-mesh.html?probe=texture&manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
+            `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
+        await page.locator('#start').click();
+        report.textureCases = [];
+        let initialLive;
+        for (let iteration = 0; iteration < 5; iteration++) {
+            const sampleCase = iteration % 2;
+            if (iteration) await page.evaluate(value => window.engineMeshDiagnostic.setTextureCase(value), sampleCase);
+            await page.waitForFunction(() => {
+                const status = document.querySelector('#status')?.textContent ?? '';
+                return status.startsWith('Engine mesh texture diagnostic rendered') || status.startsWith('Failed:') || status.startsWith('Error:');
+            });
+            const status = await page.locator('#status').textContent();
+            assert(status.startsWith('Engine mesh texture diagnostic rendered'), `BrowserSmoke.EngineTextureFrameFailed: ${status}`);
+            const colors = sampleCase ? [[55, 55, 55, 255], [55, 55, 55, 255], [55, 55, 55, 255], [55, 55, 55, 255]]
+                : [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 255]];
+            const samples = [[100, 210], [190, 210], [100, 300], [190, 300]].map(([x, y], index) =>
+                ({ name: `corner-${index}`, x, y, expected: colors[index], tolerance: 3 }));
+            const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `engine-texture-${iteration}.png`) });
+            const pixels = await capturePixels(page, png, samples);
+            for (const sample of pixels.samples)
+                for (let channel = 0; channel < 4; channel++)
+                    assert(sample.min[channel] >= sample.expected[channel] - sample.tolerance && sample.max[channel] <= sample.expected[channel] + sample.tolerance,
+                        `BrowserSmoke.TexturePixelMismatch: case ${sampleCase} ${sample.name} channel ${channel} expected ${sample.expected[channel]}, got ${sample.min[channel]}..${sample.max[channel]}.`);
+            await page.waitForFunction(() => window.engineMeshDiagnostic.statistics()?.resources?.retiring === 0, null,
+                { timeout: Math.min(config.timeout, 15000) });
+            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            assert(statistics.draws >= 3 && statistics.frameSubmitCalls > 0 && statistics.packets === 0 && statistics.focusedPipeline === null,
+                'BrowserSmoke.EngineTextureSubmission: sampling must use real engine mesh commands.');
+            initialLive ??= statistics.resources.live;
+            assert(statistics.resources.live <= initialLive,
+                `BrowserSmoke.TextureRetention: repeated replacement grew live GPU resources from ${initialLive} to ${statistics.resources.live}.`);
+            report.textureCases.push({ sampleCase, pixels, statistics });
+        }
+        await page.locator('#stop').click();
+        assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),
+            'BrowserSmoke.EngineTextureTeardown: texture diagnostic survived stop.');
+        assertNoBrowserErrors(events);
+    } catch (error) {
+        report.textureFailure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
+        await page.screenshot({ path: path.join(config.output, 'engine-texture-failure.png'), fullPage: true }).catch(() => {});
+        throw error;
+    } finally { await context.close(); }
+}
+
 async function gpuCanaryCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'independent-gpu-canary', config);
     try {
@@ -387,6 +436,8 @@ async function main() {
         if (config.gpuDiagnostics) await captureGpuProcessState(browser, report, 'before-engine-depth');
         if (config.engineManifest) await check('engine-depth', () => depthCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-depth', status: 'skipped', reason: '--engine-manifest was not supplied' });
+        if (config.engineManifest) await check('engine-texture-sampling-lifetime', () => textureCheck(browser, hosted.origin, report, config));
+        else report.checks.push({ name: 'engine-texture-sampling-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {
             await captureGpuProcessState(browser, report, 'after-engine-depth');
             await check('independent-gpu-canary-diagnostic-only', () => gpuCanaryCheck(browser, hosted.origin, report, config));
