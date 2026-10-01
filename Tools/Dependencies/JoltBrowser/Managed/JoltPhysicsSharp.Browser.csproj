@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>JoltPhysicsSharp</AssemblyName>
+    <RootNamespace>JoltPhysicsSharp</RootNamespace>
+    <Version>2.22.0</Version>
+    <PackageVersion>2.22.0</PackageVersion>
+    <AssemblyVersion>2.22.0.0</AssemblyVersion>
+    <FileVersion>2.22.0.0</FileVersion>
+    <Authors>Amer Koleci and Contributors</Authors>
+    <Copyright>Copyright (c) Amer Koleci and Contributors</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseFile />
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+    <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
+    <!-- Preserve the upstream source beyond the reviewed ABI and ownership corrections.
+         Native-filled fields and upstream nullable annotations emit these diagnostics. -->
+    <NoWarn>$(NoWarn);CS0649;CS8602;CS8603</NoWarn>
+    <JoltBrowserManagedSourceRoot Condition="'$(JoltBrowserManagedSourceDirectory)' != ''">$([MSBuild]::NormalizeDirectory('$(JoltBrowserManagedSourceDirectory)'))</JoltBrowserManagedSourceRoot>
+  </PropertyGroup>
+
+  <!-- Only reviewed managed sources are compiled. Importing the upstream
+       project would also import its desktop native-package projects. -->
+  <Import Project="$(JoltBrowserManagedSourceRoot)managed-source-files.props" Condition="'$(JoltBrowserManagedSourceRoot)' != '' and Exists('$(JoltBrowserManagedSourceRoot)managed-source-files.props')" />
+  <ItemGroup Condition="'$(JoltBrowserManagedSourceDirectory)' != ''">
+    <Compile Include="@(JoltBrowserManagedSource)" />
+    <None Include="$(JoltBrowserManagedSourceRoot)LICENSE" Link="JoltPhysicsSharp-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(JoltBrowserManagedSourceRoot)managed-source-pin.json" Link="JoltPhysicsSharp-browser-source-pin.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <JoltBrowserReviewedSource Include="$(JoltBrowserManagedSourceRoot)src/JoltPhysicsSharp/NativeObject.cs" ExpectedSha256="a93aed00b6123fbc442865a7bab7f4bf78f2ee2eb96c10be738757767f74daaa" />
+    <JoltBrowserReviewedSource Include="$(JoltBrowserManagedSourceRoot)src/JoltPhysicsSharp/BroadPhaseLayerInterface.cs" ExpectedSha256="cc910c1e3c56b879e12a02d25f7a08e33766dd21aed5ca6491aa741a8c4d9980" />
+    <JoltBrowserReviewedSource Include="$(JoltBrowserManagedSourceRoot)src/JoltPhysicsSharp/PhysicsSystem.cs" ExpectedSha256="dceb3f72b92018d5b351a7500b6bf374ec984978bfecbe3fdd9556af77957b0e" />
+  </ItemGroup>
+
+  <Target Name="RequirePinnedJoltBrowserManagedSources" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(JoltBrowserManagedSourceDirectory)' == ''" Text="Run Prepare-JoltBrowserManaged.ps1 and set JoltBrowserManagedSourceDirectory to its staged output." />
+    <Error Condition="!Exists('$(JoltBrowserManagedSourceRoot)managed-source-pin.json')" Text="The browser managed-source provenance manifest is missing." />
+    <Error Condition="'@(JoltBrowserManagedSource)' == ''" Text="The pinned managed source-file inventory is missing; rerun Prepare-JoltBrowserManaged.ps1." />
+    <Error Condition="!Exists('$(JoltBrowserManagedSourceRoot)src/JoltPhysicsSharp/JoltApi.cs')" Text="The staged browser managed binding is missing." />
+    <GetFileHash Files="$(JoltBrowserManagedSourceRoot)src/JoltPhysicsSharp/JoltApi.cs" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="JoltBrowserVerifiedApi" />
+    </GetFileHash>
+    <GetFileHash Files="$(JoltBrowserManagedSourceRoot)LICENSE" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="JoltBrowserVerifiedLicense" />
+    </GetFileHash>
+    <Error Condition="'%(JoltBrowserVerifiedApi.FileHash)' != '406b0fb642ed59f403557b50712b369fac4fb49ca043dad17177e4e8dc85d01b'" Text="The browser managed interop source does not match the reviewed source pin and contact-listener correction." />
+    <Error Condition="'%(JoltBrowserVerifiedLicense.FileHash)' != 'afdd2e799fae375a71ce7ff6addb35b77f064c19321593aa869a662c2dc213b1'" Text="The browser managed-source license notice does not match the reviewed pin." />
+    <GetFileHash Files="@(JoltBrowserReviewedSource)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="JoltBrowserVerifiedLifetimeSource" />
+    </GetFileHash>
+    <Error Condition="'%(JoltBrowserVerifiedLifetimeSource.FileHash)' != '%(JoltBrowserVerifiedLifetimeSource.ExpectedSha256)'" Text="The browser managed lifetime source does not match the reviewed ownership correction: %(JoltBrowserVerifiedLifetimeSource.Identity)." />
+    <GetFileHash Files="@(JoltBrowserManagedSource)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="JoltBrowserVerifiedSource" />
+    </GetFileHash>
+    <Error Condition="'%(JoltBrowserVerifiedSource.FileHash)' != '%(JoltBrowserVerifiedSource.ExpectedSha256)'" Text="A staged managed binding source no longer matches its pinned inventory: %(JoltBrowserVerifiedSource.Identity)." />
+  </Target>
+</Project>

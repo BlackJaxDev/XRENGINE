@@ -1,3 +1,6 @@
+using XREngine.Scene.Physics.Jolt;
+using XREngine.Audio.WebAudio;
+
 namespace XREngine.Browser;
 
 internal static class Program
@@ -6,6 +9,8 @@ internal static class Program
     {
         BrowserStaticRegistrations.Initialize();
         BrowserRendererComposition.Initialize();
-        Console.WriteLine("XRENGINE portable scene host loaded.");
+        BrowserEngineExports.InstallPhysicsSceneFactory(static () => new JoltPhysicsBackendModule().CreateScene());
+        WebAudioTransport.Register();
+        Console.WriteLine("XRENGINE browser runtime loaded.");
     }
 }

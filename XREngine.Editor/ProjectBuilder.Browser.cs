@@ -38,7 +38,7 @@ internal static partial class ProjectBuilder
             {
                 Cancellation.ThrowIfCancellationRequested();
                 XRWorld world = LoadStartupWorld(context);
-                _recipePath = BrowserWorldPublishExporter.Export(world, SourceRoot, Cancellation);
+                _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot, Cancellation);
             }
             catch
             {
@@ -85,11 +85,9 @@ internal static partial class ProjectBuilder
                 InstallPlayerShell(site);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
-                    schema = 1,
-                    world = "./content/manifest.json",
-                    quality = "balanced",
-                    submissionStrategy = "Auto",
-                    skinning = "Cpu"
+                    schema = 2,
+                    format = "xrengine-engine-launch",
+                    manifest = "./content/manifest.json"
                 });
                 File.WriteAllBytes(Path.Combine(site, "browser-publish.json"), json);
             }
@@ -121,9 +119,9 @@ internal static partial class ProjectBuilder
                 return path;
             }
 
-            string player = PlayerFile("player.html");
-            if (!File.Exists(player) || !File.Exists(PlayerFile("player.js")) ||
-                !File.Exists(PlayerFile("browser-runtime.js")))
+            string player = PlayerFile("engine-player.html");
+            if (!File.Exists(player) || !File.Exists(PlayerFile("engine-player.js")) ||
+                !File.Exists(PlayerFile("engine-runtime.js")))
                 throw new InvalidOperationException("Browser publish did not include the player shell.");
 
             // Static hosts may prefer stale precompressed variants over the replaced HTML.
@@ -198,7 +196,9 @@ internal static partial class ProjectBuilder
         if (settings.SaveSettingsBeforeBuild)
             steps.Add(new BuildStep("Saving project settings", Engine.SaveProjectSettings));
         steps.Add(new BuildStep("Preparing staged browser output", state.Prepare));
-        steps.Add(new BuildStep("Exporting authored startup world", state.ExportAuthoredWorld));
+        steps.Add(new BuildStep("Compiling portable game assemblies",
+            () => BuildManagedAssemblies(ResolveConfiguration(settings.Configuration), global::CodeManager.Platform_AnyCPU)));
+        steps.Add(new BuildStep("Cooking authored engine startup world", state.ExportAuthoredWorld));
         steps.Add(new BuildStep("Publishing WebAssembly browser application",
             () => state.PublishApplication(ResolveConfiguration(settings.Configuration))));
         steps.Add(new BuildStep("Packaging browser content", state.PackageContent));

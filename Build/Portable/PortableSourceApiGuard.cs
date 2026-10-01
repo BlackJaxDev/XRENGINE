@@ -37,6 +37,10 @@ namespace XREngine.Build
 
         public string GeneratedBrowserStaticRegistrations { get; set; } = string.Empty;
 
+        public string GeneratedBrowserGameRegistrations { get; set; } = string.Empty;
+
+        public string BrowserGameProject { get; set; } = string.Empty;
+
         public ITaskItem[] ProjectReferences { get; set; } = Array.Empty<ITaskItem>();
 
         public ITaskItem[] Packages { get; set; } = Array.Empty<ITaskItem>();
@@ -61,6 +65,7 @@ namespace XREngine.Build
                 var forbidden = new List<KeyValuePair<string, Regex>>();
                 var categories = new HashSet<string>(StringComparer.Ordinal);
                 var reviewed = new HashSet<string>(StringComparer.Ordinal);
+                var reviewedApis = new HashSet<string>(StringComparer.Ordinal);
                 Regex reflection = null;
                 foreach (string line in File.ReadAllLines(PolicyFile))
                 {
@@ -76,6 +81,11 @@ namespace XREngine.Build
                     {
                         // Reasons are retained in the policy for review; they are not suppressions
                         // for other files, symbols, or forbidden native APIs.
+                    }
+                    else if (fields[0] == "allow-api" && fields.Length == 5 && !string.IsNullOrWhiteSpace(fields[4])
+                        && reviewedApis.Add(fields[1] + "|" + fields[2] + "|" + fields[3]))
+                    {
+                        // Exact native leaf API admission; never applies to another source or category.
                     }
                     else
                         throw new ArgumentException("Invalid or duplicate portable API policy entry.");
@@ -94,16 +104,21 @@ namespace XREngine.Build
                     string fullPath = Path.GetFullPath(source.GetMetadata("FullPath"));
                     if (!visited.Add(fullPath))
                         continue;
-                    if (!fullPath.StartsWith(root, comparison) || !File.Exists(fullPath))
+                    bool generatedGameAnchor = ProjectName == "XREngine.Browser"
+                        && !string.IsNullOrWhiteSpace(GeneratedBrowserGameRegistrations)
+                        && fullPath.Equals(Path.GetFullPath(GeneratedBrowserGameRegistrations), comparison);
+                    if ((!fullPath.StartsWith(root, comparison) && !generatedGameAnchor) || !File.Exists(fullPath))
                     {
                         Log.LogError("Portable Compile item is absent or outside the repository: {0}", source.ItemSpec);
                         continue;
                     }
-                    string relative = fullPath.Substring(root.Length).Replace('\\', '/');
+                    string relative = generatedGameAnchor ? "Generated/BrowserGameComposition.g.cs"
+                        : fullPath.Substring(root.Length).Replace('\\', '/');
                     string code = mask.Replace(File.ReadAllText(fullPath), BlankLiteral);
                     foreach (KeyValuePair<string, Regex> rule in forbidden)
                         foreach (Match match in rule.Value.Matches(code))
-                            Report(fullPath, code, match, rule.Key);
+                            if (!reviewedApis.Contains(relative + "|" + rule.Key + "|" + match.Value))
+                                Report(fullPath, code, match, rule.Key);
                     foreach (Match match in reflection.Matches(code))
                         if (!reviewed.Contains(relative + "|" + match.Value))
                             Report(fullPath, code, match, "unreviewed reflection");
@@ -140,7 +155,15 @@ namespace XREngine.Build
             foreach (ITaskItem reference in ProjectReferences)
             {
                 string name = Path.GetFileNameWithoutExtension(reference.ItemSpec);
-                if (!portableProjects.Contains(name))
+                bool authoredGame = ProjectName == "XREngine.Browser" && !string.IsNullOrWhiteSpace(BrowserGameProject)
+                    && Path.GetFullPath(reference.GetMetadata("FullPath")).Equals(Path.GetFullPath(BrowserGameProject),
+                        Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                bool reviewedJoltSource = (ProjectName == "XREngine.Runtime.Physics.Jolt" || ProjectName == "XREngine.Browser")
+                    && name == "JoltPhysicsSharp.Browser"
+                    && Path.GetFullPath(reference.GetMetadata("FullPath")).Equals(
+                        Path.GetFullPath(Path.Combine(RepositoryRoot, "Tools/Dependencies/JoltBrowser/Managed/JoltPhysicsSharp.Browser.csproj")),
+                        Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                if (!portableProjects.Contains(name) && !authoredGame && !reviewedJoltSource)
                     Log.LogError("Portable project {0} references nonportable project {1}.", ProjectName, reference.ItemSpec);
                 string removed = reference.GetMetadata("GlobalPropertiesToRemove");
                 if (removed.IndexOf("XREnginePortableProject", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -154,7 +177,13 @@ namespace XREngine.Build
             if (ProjectName == "XREngine.Runtime.Host")
                 ValidateGeneratedSource(GeneratedAotFactoryRegistrations, "AotFactoryRegistrations.g.cs");
             if (ProjectName == "XREngine.Browser")
+            {
                 ValidateGeneratedSource(GeneratedBrowserStaticRegistrations, "BrowserStaticRegistrations.g.cs");
+                const string gameAnchor = "<Compile Include=\"$(XREngineBrowserGameRegistrationSource)\" />";
+                if (!string.IsNullOrWhiteSpace(BrowserGameProject))
+                    ValidateGeneratedSource(GeneratedBrowserGameRegistrations, "BrowserGameComposition.g.cs");
+                project = project.Replace(gameAnchor, string.Empty);
+            }
             if (ProjectName == "XREngine.Runtime.Rendering")
             {
                 const string generatedItem = "<Compile Include=\"$(GeneratedRenderCommandRegistrations)\" />";

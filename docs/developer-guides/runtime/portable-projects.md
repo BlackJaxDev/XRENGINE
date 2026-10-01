@@ -11,6 +11,7 @@ Portable projects target `net10.0` and compile their normal, complete source set
 | [PortableProjects.tsv](../../../Build/Portable/PortableProjects.tsv) | Names the complete project closure admitted to browser compilation. |
 | [PortablePackages.tsv](../../../Build/Portable/PortablePackages.tsv) | Allows reviewed direct package names and exact versions. |
 | [SourceApiPolicy.tsv](../../../Build/Portable/SourceApiPolicy.tsv) | Records source API restrictions and narrow file/symbol allowances. |
+| [PortableNativeAssets.tsv](../../../Build/Portable/PortableNativeAssets.tsv) | Admits exact native archive paths per project/runtime without disabling native checks. |
 | [PortableRuntime.targets](../../../Build/Portable/PortableRuntime.targets) | Enforces evaluated project, package, compile-item, and native-asset boundaries. |
 | [PortableSourceApiGuard.cs](../../../Build/Portable/PortableSourceApiGuard.cs) | Implements the SDK-hosted lexical source check. |
 
@@ -19,6 +20,16 @@ The guard rejects references outside the portable closure, unreviewed direct pac
 Native/vendor APIs, sockets, dynamic assembly loading, dynamic IL generation, and unmanaged calls belong behind services supplied by other projects. Deny rules match API use rather than bare names, because a deny match cannot be allowlisted. For example, `OpenVR.NET`/`Valve.VR` is denied but an engine enum member named `OpenVR` is not; the Win32 registry roots are denied but an engine property named `Registry` is not. Managed `System.Drawing.Primitives` values and the reviewed `Silk.NET.Maths` package remain allowed. Windows drawing, Silk window/input/context ownership, filesystem watching/mapping, process execution, and native hardware discovery belong to desktop modules.
 
 ## Reflection and registration
+
+The approved browser Jolt supply is a narrow exception: the Jolt leaf and the
+browser host's transitive project closure may reference only the repository's
+hash-verified `JoltPhysicsSharp.Browser.csproj`. The browser host may link only
+its staged `joltc.a` and the pinned archive directory's `libJolt.a`; other native
+items are rejected. Source, managed patch, compiler pins and notices are checked
+before linking. Desktop Jolt retains its NuGet package. Set
+`-p:XREngineJoltBrowser=true` globally for browser restore/build/publish so NuGet
+and compilation select the same reviewed source graph. See the
+[native supply record](../../work/design/platform/jolt-browser-native-supply.md).
 
 Allowances identify source files and symbols, with a reviewed purpose. They distinguish ordinary methods such as `JsonElement.GetProperty` from type reflection. The check is lexical and cannot prove runtime reachability or metadata preservation.
 
@@ -36,6 +47,16 @@ workload command honors that set; the recorded browser runtime pack is 10.0.12
 with Emscripten 3.1.56. Core source paths use `XREngine.Runtime.Core` consistently
 in the Git index so a case-sensitive checkout includes the full project.
 
-[Test-PortableBrowserCompile.ps1](../../../Tools/Test-PortableBrowserCompile.ps1) builds the manifest projects for `browser-wasm` and needs the `wasm-tools` workload; [.github/workflows/portable-browser-compile.yml](../../../.github/workflows/portable-browser-compile.yml) runs the same compile-only lane. It does not launch a browser or establish feature, performance, or native physics support. Browser trimming/AOT is rejected until separately qualified; desktop NativeAOT has its own [cooked-launcher workflow](aot-final-game-builds.md).
+[Test-PortableBrowserCompile.ps1](../../../Tools/Test-PortableBrowserCompile.ps1)
+builds the manifest projects for `browser-wasm` using the approved source flag.
+Prepare Jolt using the commands in [browser publishing](../../work/progress/rendering/browser-project-publishing.md),
+or pass `-JoltBrowserManagedSourceDirectory` and `-JoltBrowserArchiveDirectory`
+for explicitly staged outputs. The script also accepts `-ArtifactsPath`.
+[The CI lane](../../../.github/workflows/portable-browser-compile.yml) builds and
+publishes the host and native diagnostic, cooks pinned Slang depth shaders, and
+runs [real browser smoke qualification](../../../Tools/BrowserSmoke/README.md).
+Its explicit software WebGPU mode does not establish device or performance
+acceptance. Browser trimming/AOT remains rejected until separately qualified;
+desktop NativeAOT has its own [cooked-launcher workflow](aot-final-game-builds.md).
 
 When changing a shared contract, retain dependency direction, update its callers and narrow boundary checks, and qualify the affected desktop and browser paths. A successful source review cannot replace evaluated graph/native-asset inspection or application execution. Current outstanding qualification is tracked in the [integration checklist](../../work/todo/platform/native-subsystem-project-split-todo.md).

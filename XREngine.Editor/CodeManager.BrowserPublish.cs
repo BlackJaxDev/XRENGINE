@@ -1,4 +1,10 @@
 using XREngine;
+using XREngine.Editor;
+using XREngine.Editor.Publishing;
+using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Text;
 
 internal partial class CodeManager
 {
@@ -8,11 +14,20 @@ internal partial class CodeManager
     {
         string project = ResolveBrowserProject();
         Directory.CreateDirectory(publishDirectory);
+        string gameProject = GetManagedGameProjectPath();
+        string gameAssembly = GetBinaryPath(configuration, Platform_AnyCPU);
+        if (!File.Exists(gameProject) || !File.Exists(gameAssembly))
+            throw new FileNotFoundException("Build the portable game assembly before browser publishing.", gameAssembly);
+        BrowserGameAssemblyAudit.Validate(gameAssembly);
+        string? bootstrapTypeName = ProjectBuilder.ResolveGameLaunchBootstrapTypeName(configuration, Platform_AnyCPU);
+        string registrationSource = WriteBrowserGameRegistration(gameAssembly, publishDirectory, bootstrapTypeName);
         Dictionary<string, string?> properties = new()
         {
             ["PublishDir"] = EnsureTrailingSlash(publishDirectory),
             ["RuntimeIdentifier"] = "browser-wasm",
-            ["XREnginePortableRuntime"] = "true",
+            ["XREngineJoltBrowser"] = "true",
+            ["XREngineBrowserGameProject"] = gameProject,
+            ["XREngineBrowserGameRegistrationSource"] = registrationSource,
             ["PublishTrimmed"] = "false",
             ["RunAOTCompilation"] = "false"
         };
@@ -30,6 +45,41 @@ internal partial class CodeManager
             foreach (string symbols in Directory.EnumerateFiles(site, "*.pdb", SearchOption.AllDirectories))
                 File.Delete(symbols);
         return site;
+    }
+
+    private static string WriteBrowserGameRegistration(string assemblyPath, string directory, string? bootstrapTypeName)
+    {
+        using FileStream stream = File.OpenRead(assemblyPath);
+        using PEReader image = new(stream);
+        MetadataReader reader = image.GetMetadataReader();
+        string? anchor = null;
+        foreach (TypeDefinitionHandle handle in reader.TypeDefinitions)
+        {
+            TypeDefinition type = reader.GetTypeDefinition(handle);
+            if ((type.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.Public
+                || type.GetGenericParameters().Count != 0)
+                continue;
+            string name = reader.GetString(type.Name);
+            if (name.StartsWith('<')) continue;
+            string ns = reader.GetString(type.Namespace);
+            string candidate = string.IsNullOrEmpty(ns) ? name : ns + "." + name;
+            if (anchor is null || string.CompareOrdinal(candidate, anchor) < 0) anchor = candidate;
+        }
+        // Use the desktop publisher's validated concrete type so inherited and public
+        // nested implementations have identical registration semantics in both hosts.
+        if (bootstrapTypeName is not null)
+            anchor = bootstrapTypeName.Replace('+', '.');
+        string invocation = anchor is null ? string.Empty
+            : $"        System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(typeof(global::{string.Join(".", anchor.Split('.').Select(segment => "@" + segment))}).Module.ModuleHandle);\n";
+        if (bootstrapTypeName is not null)
+            invocation += $"        BootstrapFactory = static () => new global::{string.Join(".", bootstrapTypeName.Replace('+', '.').Split('.').Select(segment => "@" + segment))}();\n";
+        string source = "namespace XREngine.Browser;\ninternal static partial class BrowserGameComposition\n{\n"
+            + "    static partial void RegisterProvidedGame()\n    {\n"
+            + invocation
+            + "    }\n}\n";
+        string path = Path.Combine(directory, "BrowserGameComposition.g.cs");
+        File.WriteAllText(path, source, new UTF8Encoding(false));
+        return path;
     }
 
     private static string ResolveBrowserProject()

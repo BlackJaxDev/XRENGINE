@@ -423,8 +423,8 @@ Build/Game/
 imgui.ini
 Build/Dependencies/NvComp/
 Samples/Build/Engine/
-Samples/MonkeyBallVR/Build/
-Samples/MonkeyBallVR/Intermediate/
+Samples/RollingBall/Build/
+Samples/RollingBall/Intermediate/
 Build/CommonAssets/Textures/Samples/
 XREngine.Audio/runtimes/win-x64/native/phonon.dll
 *.zip
@@ -460,5 +460,15 @@ Build/Submodules/Build/_AgentValidation/
 Assets/
 !XREngine.Runtime.Core/Assets/
 !XREngine.Runtime.Core/Assets/**
+!XREngine.Runtime.Rendering.WebGPU/Assets/
+!XREngine.Runtime.Rendering.WebGPU/Assets/**
 Build/RenderBench/
 *.code-workspace
+
+# Local browser qualification tooling dependencies and transient reports.
+Tools/BrowserSmoke/node_modules/
+Tools/BrowserSmoke/test-results/
+Tools/BrowserSmoke/playwright-report/
+# Browser audio executor is authored source, not a generated asset folder.
+!XREngine.Audio.WebAudio/Assets/
+!XREngine.Audio.WebAudio/Assets/**

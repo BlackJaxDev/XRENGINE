@@ -2031,6 +2031,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
         if (runtimeRenderer.BackendId == RendererBackendId.Vulkan)
             return RuntimeGraphicsApiKind.Vulkan;
 
+        if (runtimeRenderer.BackendId == RendererBackendId.WebGPU)
+            return RuntimeGraphicsApiKind.WebGPU;
+
         return runtimeRenderer.BackendId == RendererBackendId.OpenGL
             ? RuntimeGraphicsApiKind.OpenGL
             : RuntimeGraphicsApiKind.Unknown;

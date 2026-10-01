@@ -1,3 +1,4 @@
+import { GpuEngineFrame } from './gpu-engine-frame.js';
 import { GpuPassPlan } from './gpu-pass-plan.js';
 import { GpuCommandUsageScope } from './gpu-command-usage-scope.js';
 import { assertPipelineBindingLimits, computeWorkgroupMetadata } from './gpu-command-limits.js';
@@ -34,11 +35,15 @@ function entryPoint(value) {
     return value;
 }
 function hold(dependencies, value) {
+    if (value.retired) throw new Error('A retired GPU resource cannot acquire new command dependencies.');
     if (!dependencies.includes(value)) { dependencies.push(value); value.references = (value.references ?? 0) + 1; }
     return value;
 }
 function release(dependencies) {
-    for (const value of dependencies) value.references--;
+    for (const value of dependencies) {
+        value.references--;
+        if (!value.references) value.tryRetire?.();
+    }
     dependencies.length = 0;
 }
 
@@ -47,13 +52,22 @@ export class GpuCommands {
     constructor(renderer) {
         this.renderer = renderer;
         this.pending = new Set();
+        this.engineFrame = new GpuEngineFrame(this);
         this.canvasColor = { view: undefined, width: 0, height: 0, format: '', sampleCount: 1, usage: 16 };
         this.canvasDepth = { view: undefined, width: 0, height: 0, format: 'depth24plus', sampleCount: 1, usage: 16 };
     }
 
-    get(handle, kind) { return this.renderer._resources.getHandle(handle, kind, this.renderer._owner); }
+    get(handle, kind) {
+        const value = this.renderer._resources.getHandle(handle, kind, this.renderer._owner);
+        if (value.retired) throw new Error('A retired GPU resource cannot be submitted or rebound.');
+        return value;
+    }
 
     publish(kind, value, dependencies = []) {
+        if (dependencies.some(dependency => dependency.retired)) {
+            release(dependencies);
+            throw new Error('GPU preparation completed after a dependency was retired.');
+        }
         value.state = 'ready';
         value.references = 0;
         value.release = () => {
@@ -239,19 +253,21 @@ export class GpuCommands {
                     }
                 }
                 if (attributes > r.device.limits.maxVertexAttributes) throw new RangeError('Too many vertex attributes.');
-                descriptor.fragment = stage(d.fragment, false);
-                descriptor.fragment.targets = array(d.fragment.targets, r.device.limits.maxColorAttachments, 'color targets');
-                for (const target of descriptor.fragment.targets) {
-                    if (!target) continue;
-                    object(target, ['format', 'blend', 'writeMask']);
-                    oneOf(target.format, ['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb'], 'color target format');
-                    integer(target.writeMask ?? 15, 0, 15, 'color write mask');
-                    if (target.blend) {
-                        object(target.blend, ['color', 'alpha']);
-                        for (const component of [target.blend.color, target.blend.alpha]) {
-                            object(component, ['operation', 'srcFactor', 'dstFactor']);
-                            oneOf(component.operation, ['add', 'subtract', 'reverse-subtract', 'min', 'max'], 'blend operation');
-                            for (const factor of [component.srcFactor, component.dstFactor]) oneOf(factor, ['zero', 'one', 'src', 'one-minus-src', 'src-alpha', 'one-minus-src-alpha', 'dst', 'one-minus-dst', 'dst-alpha', 'one-minus-dst-alpha', 'src-alpha-saturated'], 'blend factor');
+                if (d.fragment !== undefined && d.fragment !== null) {
+                    descriptor.fragment = stage(d.fragment, false);
+                    descriptor.fragment.targets = array(d.fragment.targets, r.device.limits.maxColorAttachments, 'color targets');
+                    for (const target of descriptor.fragment.targets) {
+                        if (!target) continue;
+                        object(target, ['format', 'blend', 'writeMask']);
+                        oneOf(target.format, ['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb'], 'color target format');
+                        integer(target.writeMask ?? 15, 0, 15, 'color write mask');
+                        if (target.blend) {
+                            object(target.blend, ['color', 'alpha']);
+                            for (const component of [target.blend.color, target.blend.alpha]) {
+                                object(component, ['operation', 'srcFactor', 'dstFactor']);
+                                oneOf(component.operation, ['add', 'subtract', 'reverse-subtract', 'min', 'max'], 'blend operation');
+                                for (const factor of [component.srcFactor, component.dstFactor]) oneOf(factor, ['zero', 'one', 'src', 'one-minus-src', 'src-alpha', 'one-minus-src-alpha', 'dst', 'one-minus-dst', 'dst-alpha', 'one-minus-dst-alpha', 'src-alpha-saturated'], 'blend factor');
+                            }
                         }
                     }
                 }
@@ -304,7 +320,7 @@ export class GpuCommands {
                 integer(offsets[i], 0, 0xffffffff, 'dynamic offset');
                 if (offsets[i] % binding.alignment || offsets[i] + binding.offset + binding.size > binding.buffer.size) throw new RangeError('Dynamic buffer range is unaligned or out of bounds.');
             }
-            result[item.index] = { native: group.native, offsets, resources: group.resources };
+            result[item.index] = { native: group.native, offsets, engineOffsets: new Uint32Array(offsets.length), dynamic: group.dynamic, resources: group.resources };
         }
         return result;
     }
@@ -319,12 +335,13 @@ export class GpuCommands {
         let draws = 0, hasCanvas = false, presentsCanvas = false;
         try {
             for (const command of input) {
-                if (command.type === 'render') {
-                    object(command, ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference']);
-                    const pipeline = hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
+                if (command.type === 'render' || command.type === 'clear') {
+                    const clearOnly = command.type === 'clear';
+                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference']);
+                    const pipeline = clearOnly ? undefined : hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
                     const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
                     const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata);
-                    plan.assertPipeline(pipeline.descriptor);
+                    if (pipeline) plan.assertPipeline(pipeline.descriptor);
                     for (const attachment of command.pass.colors) {
                         if (!attachment) continue;
                         for (const handle of [attachment.viewHandle, attachment.resolveTargetHandle]) {
@@ -338,6 +355,12 @@ export class GpuCommands {
                     }
                     if (command.pass.depthStencil?.viewHandle > 0) hold(dependencies, this.get(command.pass.depthStencil.viewHandle, 'texture-view'));
                     if (command.pass.depthStencil?.viewHandle === -1) hasCanvas = true;
+                    if (clearOnly) {
+                        const scope = new GpuCommandUsageScope();
+                        for (const attachment of plan.bindings) scope.texture(attachment.source, true, 'render attachment');
+                        operations.push({ type: 'clear', plan });
+                        continue;
+                    }
                     const bindings = this.bindings(command.bindings, pipeline, dependencies);
                     const scope = new GpuCommandUsageScope();
                     scope.bindings(bindings);
@@ -467,37 +490,7 @@ export class GpuCommands {
             const encoder = r.device.createCommandEncoder();
             for (let i = 0; i < operations.length; i++) {
                 const operation = operations[i];
-                if (operation.type === 'copyBuffer') {
-                    encoder.copyBufferToBuffer(operation.source, operation.sourceOffset, operation.destination, operation.destinationOffset, operation.size);
-                    continue;
-                }
-                if (operation.type === 'copyTexture') {
-                    encoder.copyTextureToTexture(operation.source, operation.destination, operation.size);
-                    continue;
-                }
-                const pass = operation.type === 'render' ? encoder.beginRenderPass(operation.plan.prepare(this.canvasColor, this.canvasDepth)) : encoder.beginComputePass();
-                pass.setPipeline(operation.pipeline);
-                for (let binding = 0; binding < operation.bindings.length; binding++) {
-                    const group = operation.bindings[binding];
-                    pass.setBindGroup(binding, group.native, group.offsets);
-                }
-                if (operation.type === 'compute') pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
-                else {
-                    pass.setStencilReference(operation.stencilReference);
-                    for (let slot = 0; slot < operation.vertexBuffers.length; slot++) {
-                        const buffer = operation.vertexBuffers[slot];
-                        pass.setVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.size);
-                    }
-                    if (operation.indexBuffer) pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
-                    for (let draw = 0; draw < operation.draws.length; draw++) {
-                        const value = operation.draws[draw];
-                        if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
-                        else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
-                        else if (value.type === 'draw') pass.draw(value.vertexCount, value.instanceCount, value.firstVertex, value.firstInstance);
-                        else pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
-                    }
-                }
-                pass.end();
+                this.encodeOperation(encoder, operation);
             }
             r._submission[0] = encoder.finish();
             r.device.queue.submit(r._submission);
@@ -512,6 +505,53 @@ export class GpuCommands {
             r._executing = false;
         }
     }
+
+    encodeOperation(encoder, operation, packet = null, offsetBase = 0) {
+        if (operation.type === 'copyBuffer') {
+            encoder.copyBufferToBuffer(operation.source, operation.sourceOffset, operation.destination, operation.destinationOffset, operation.size);
+            return;
+        }
+        if (operation.type === 'copyTexture') {
+            encoder.copyTextureToTexture(operation.source, operation.destination, operation.size);
+            return;
+        }
+        const pass = operation.type === 'compute' ? encoder.beginComputePass() : encoder.beginRenderPass(operation.plan.prepare(this.canvasColor, this.canvasDepth));
+        if (operation.type === 'clear') {
+            pass.end();
+            return;
+        }
+        pass.setPipeline(operation.pipeline);
+        for (let binding = 0; binding < operation.bindings.length; binding++) {
+            const group = operation.bindings[binding];
+            const offsets = packet ? group.engineOffsets : group.offsets;
+            if (packet) {
+                for (let dynamic = 0; dynamic < offsets.length; dynamic++) {
+                    offsets[dynamic] = packet.getUint32(offsetBase, true);
+                    offsetBase += 4;
+                }
+            }
+            pass.setBindGroup(binding, group.native, offsets);
+        }
+        if (operation.type === 'compute') pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
+        else {
+            pass.setStencilReference(operation.stencilReference);
+            for (let slot = 0; slot < operation.vertexBuffers.length; slot++) {
+                const buffer = operation.vertexBuffers[slot];
+                pass.setVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.size);
+            }
+            if (operation.indexBuffer) pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
+            for (let draw = 0; draw < operation.draws.length; draw++) {
+                const value = operation.draws[draw];
+                if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
+                else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
+                else if (value.type === 'draw') pass.draw(value.vertexCount, value.instanceCount, value.firstVertex, value.firstInstance);
+                else pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
+            }
+        }
+        pass.end();
+    }
+
+    submitEngineFrame(commands, uniforms) { return this.engineFrame.submit(commands, uniforms); }
 
     dispose() {
         for (const cancel of this.pending) cancel();

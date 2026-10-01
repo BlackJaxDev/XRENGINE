@@ -1,6 +1,6 @@
 # Browser Jolt native supply proposal
 
-Status: owner approved the recorded browser-only native supply on 2026-09-30. Both pinned static archives build with the installed Emscripten toolchain. Browser execution is blocked by a managed binding signature conflict; a separate supply decision is required. Implementation paused at the owner's request after recording the failure.
+Status: the recorded browser-only native supply was approved on 2026-09-30, and a browser-only managed source build correcting reviewed ABI and ownership errors was approved on 2026-10-01. The corrected managed source and current pinned native archives compile and statically relink successfully. Browser execution remains blocked by the validation environment; desktop package supply and defaults remain unchanged.
 
 Related: [native subsystem debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md).
 
@@ -24,6 +24,8 @@ The approved build completed on 2026-09-30 using clean checkouts of both exact s
 
 Two build-script corrections were required on Windows: CMake source definitions use forward slashes, and the frozen cache points to the installed `emscripten/cache` directory containing `sysroot_install.stamp`. Evidence is under `Build/_AgentValidation/20260930-105523-unified-browser-runtime/temp-build/jolt-browser-native/`, with the successful command output in `logs/portable-jolt-native-build-3.log`. Archive creation alone does not qualify the managed ABI or prove absence of browser worker creation.
 
+The same source and Emscripten pins built successfully on Linux with the approved SDK pack 10.0.12 on 2026-10-01. CMake 4.4.3 and Ninja 1.13.2 came from their official releases; CMake's archive checksum and signed checksum manifest, and Ninja's official release digest, were verified. The 145 native build steps produced `libJolt.a` (4,771,436 bytes, SHA-256 `b4bea8094ae79e882ef2c8c929aeff37cf175156cc25ce81f6bd4eeb33ed718f`) and `libjoltc.a` (473,360 bytes, SHA-256 `2e516d4104c6bbc71a868f58a8e2dd23fa02b019b9ccffbf5179084983437ae8`). Evidence: `Build/_AgentValidation/20261001-163800-webgpu-baseline/logs/jolt-native-build.log`. Emscripten's own Python entry points were permitted for this build; no custom Python build or editing helpers were used.
+
 ## Managed linkage findings
 
 The initial untrimmed interpreter spike publish completed with no warnings/errors, but live `Foundation.Init` failed with `JPH_Init`. The generated native table admitted archive basename `libjoltc`, while the unchanged managed package requests `joltc`; its `libjoltc` table was empty. The SDK derives module admission from native archive basenames. The spike now stages a byte-identical `joltc.a` in its intermediate output and references that alias instead, preserving the original pinned archive and the desktop supply. Adding a second module alongside the empty `libjoltc` table is insufficient because the binding's resolver can select the empty table first.
@@ -32,9 +34,62 @@ The corrected module admission exposes a genuine conflict in the exact `JoltPhys
 
 Read-only metadata/archive comparison found all 1,147 unique managed import names defined in the pinned native archives; this was the only conflicting managed return type found. Symbol presence does not prove the remaining ABI, callbacks or struct layouts. The conflict is not evidence of unsupported function-pointer parameters, and no generated-table edits, signature suppression, trimming workaround or alternate physics fallback were applied.
 
-The next owner decision is either a browser-only reviewed source build correcting the erroneous managed overload to `void`, or the already described narrow owned spike binding with exact C signatures, pointer-sized callback tokens, static unmanaged targets and explicit storage lifetimes. The first changes managed dependency supply; the second proves only the selected spike operations and does not implement the complete engine physics leaf. Neither route is approved or implemented. Default promotion and determinism remain undecided.
+The owner selected the browser-only reviewed source-build route on 2026-10-01. It corrects only the erroneous managed overload to `void`; it does not replace the binding with a narrow spike API. Default promotion and determinism remain undecided.
 
 Evidence is under `Build/_AgentValidation/20260930-105523-unified-browser-runtime/`: `logs/portable-jolt-spike-publish.log` records the initial publish; `logs/portable-jolt-spike-publish-2.log` records the conflicting declarations after admission is corrected; `reports/portable-host/jolt-native-archive-audit.md` contains archive provenance and symbol evidence. Browser callbacks, stepping, raycast, teardown and absence of worker creation remain unqualified.
+
+## Browser managed source supply
+
+[Prepare-JoltBrowserManaged.ps1](../../../../Tools/Dependencies/Prepare-JoltBrowserManaged.ps1) verifies a clean checkout of JoltPhysicsSharp commit `77a5be2dd30d587c1981dfcaf15851f18041b39c` (version 2.22.0), checks the exact MIT license and original source SHA-256 hashes from the lock, and stages every managed source file beneath a reserved validation output. The ABI correction changes the double-precision `JPH_ContactListener_SetProcs` overload from `nint` to `void`. A separately reviewed three-file ownership correction is described below. The pristine checkout is never patched. Exact original, patch, and corrected-source hashes and a per-file provenance manifest accompany the staged license.
+
+The [owned managed-only project](../../../../Tools/Dependencies/JoltBrowser/Managed/JoltPhysicsSharp.Browser.csproj) compiles this staged source into the original JoltPhysicsSharp assembly identity without importing the upstream project, whose project references would bring desktop native packages. It checks the corrected interop, ownership files, license and every inventoried source hash before compilation. Its only warning exclusions cover existing upstream native-filled-field and nullable diagnostics. The Spike consumes this project and still stages the byte-identical `joltc.a` alias. The production desktop leaf continues using its original NuGet package.
+
+The full MIT notice at the exact source commit was verified against SHA-256 `afdd2e799fae375a71ce7ff6addb35b77f064c19321593aa869a662c2dc213b1`. The staged build carries this notice. XRENGINE licensing is unchanged.
+
+Example preparation and managed compilation (PowerShell):
+
+```powershell
+$run = 'Build/_AgentValidation/<reserved-run>'
+pwsh Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$run/temp-build/jolt-browser-managed"
+$managedSources = (Resolve-Path "$run/temp-build/jolt-browser-managed/staged").Path
+dotnet build Tools/Dependencies/JoltBrowser/Managed/JoltPhysicsSharp.Browser.csproj -c Release --artifacts-path "$run/temp-build/jolt-managed-artifacts" -p:JoltBrowserManagedSourceDirectory="$managedSources"
+```
+
+Pass the staged directory as `JoltBrowserManagedSourceDirectory` together with `JoltBrowserArchiveDirectory` when publishing the Spike. Use an absolute resolved source path so invocation location does not change its meaning. No workload is installed by source preparation or managed compilation.
+
+On 2026-10-01 the managed-only Release build passed with zero warnings and errors. Evidence: `Build/_AgentValidation/20261001-163800-webgpu-baseline/logs/jolt-browser-managed-build.log`. This establishes managed compilation and the checked patch, not successful browser static linking or execution.
+
+The native build script now discovers the current host RID rather than hardcoding Windows, and its plan-only mode reports missing tool packs without invoking the native compiler. Unix SDK packs use the host Python 3 runtime internally for Emscripten; the script does not install Python. The native pack location now follows the approved .NET 10.0.401 workload set at 10.0.12, which still contains Emscripten 3.1.56. The native Git pins are unchanged. Archives built with the current pack still require successful managed relinking and browser execution.
+
+## Engine Backend Composition
+
+The complete `XREngine.Runtime.Physics.Jolt` project targets `net10.0`. Desktop resolution retains `JoltPhysicsSharp` 2.22.0 from NuGet. The browser root explicitly sets `XREngineJoltBrowser=true` on its Jolt project reference, selecting the reviewed managed source project even when the SDK does not propagate the root runtime identifier; direct `browser-wasm` builds select the same supply. Browser capability advertisement is compiled only for that source supply. Browser scene initialization requires explicit caller-thread scheduling and the physics owner, then creates the owned native `JobSystemSingleThreaded` adapter. Desktop scene initialization retains `JobSystemThreadPool`. Failed initialization and normal destruction dispose scene, job, and collision-filter resources under the corrected ownership contract. Process-wide foundation initialization publishes success only after the native initializer succeeds, so a failure cannot poison subsequent attempts. Native release remains to be exercised through the browser runtime.
+
+The browser executable imports [JoltBrowserNative.targets](../../../../Tools/Dependencies/JoltBrowser/JoltBrowserNative.targets), which admits only `joltc.a` and `libJolt.a`, rejects threaded WebAssembly, checks the archive provenance against the exact committed lock, and publishes the native license notices. The admitted `joltc.a` remains a byte-identical copy of `libjoltc.a`. This composition is explicit; unsupported or missing native modules fail rather than selecting a substitute solver.
+
+## Current Static Link And Execution Evidence
+
+The untrimmed interpreter spike published successfully on 2026-10-01 with no compiler warnings or errors. Its generated P/Invoke table has a single `void JPH_ContactListener_SetProcs(void *)` declaration and one `joltc` module containing 1,148 entries, including the owned single-thread job export. The linked WebAssembly module is 4,803,349 bytes, declares unshared memory, and has no thread, pthread, worker, or proxy imports. These are static linkage findings, not runtime proof of callback behavior or absence of worker creation.
+
+Evidence is under `Build/_AgentValidation/20261001-163800-webgpu-baseline/`: `logs/jolt-spike-publish-3.log`, `logs/jolt-spike-publish-4.log`, and `reports/jolt-wasm-linkage.json`. This environment's SDK out-of-process task hosts cannot create their IPC sockets, so local qualification used ignored MSBuild `UsingTask Override="true"` declarations to run the same pinned SDK tasks in-process; SDK files and permissions were unchanged. Normal CI does not depend on this local workaround.
+
+Playwright with installed Chromium 151.0.7922.173 failed before loading the spike page because Chromium's process-singleton socket creation returned `EPERM`, including the reviewed escalation attempt. Evidence: `logs/jolt-spike-browser-2.log`. Create-world, 120 steps, managed contact callbacks, raycast, and teardown have not run in that browser environment. The spike now checks contact-added and contact-persisted callbacks as well as the original stepping/raycast loop.
+
+### Reviewed Managed Ownership Correction
+
+The exact pinned managed source leaves `NativeObject.OwnsHandle` false in its parameterless constructor. The public `PhysicsSystem` constructor and the base `JobSystem` constructor use this path without changing ownership. Consequently `Dispose()` skips their `DisposeNative()` methods. For `PhysicsSystem`, that skips native world and listener destruction and release of its managed callback `GCHandle`.
+
+The owned single-threaded job adapters set their inherited protected `OwnsHandle` property to true. `PhysicsSystem` is sealed, so the equivalent fix cannot be supplied through a normal derived engine adapter. The pinned native `JPH_PhysicsSystem_Create` stores all three filter pointers, and `JPH_PhysicsSystem_Destroy` deletes them. Both `ObjectLayerPairFilterMask` and `ObjectVsBroadPhaseLayerFilter` independently own their native pointers. Making the world owned therefore also requires explicit ownership transfer to prevent double frees.
+
+The approved [managed-lifetime.patch](../../../../Tools/Dependencies/JoltBrowser/managed-lifetime.patch) has SHA-256 `b35fb8fee9489983d65885b3bdf168ed745ec17eb934a5e046475b19c1edf5c4`. It adds one-time filter transfer validation in `NativeObject`, makes newly allocated `BroadPhaseLayerInterface` objects owning until transfer, and makes `PhysicsSystem` own the created world and retain the transferred managed filter wrappers. Constructor failure disposes partially acquired listeners, callback userdata and the native world; zero handles are guarded. A second world cannot reuse transferred filters. The lock records exact original and patched hashes of all three files, and the build independently checks those expected patched hashes.
+
+The corrected spike source repeats eight complete world lifecycles, including rejection of already-transferred filters, 120 steps, managed contact callbacks, raycast and disposal of world/filter wrappers. It published successfully in `logs/jolt-spike-publish-lifetime.log`. Those runtime checks remain ready for an eligible browser runner; compilation and successful return from managed `Dispose()` alone are not evidence of native teardown or leak-free repetition.
+
+## Kinematic Target Integration
+
+Source review found that the engine's Jolt target setter immediately changed pose instead of deriving contact-producing velocity. It now publishes a value mailbox that the Jolt scene consumes with its actual fixed simulation delta through `BodyInterface.MoveKinematic`, before moving-ground controller queries. A subsequent step without another target clears the prior command's retained velocity. Non-null and null commands select kinematic and dynamic motion respectively, matching the existing PhysX wrapper's mode selection. Immediate `SetTransform` remains separate and cancels an unconsumed target. See [Physics API](../../../developer-guides/physics/physics-api.md#kinematic-motion-and-immediate-pose-changes) for the complete behavior.
+
+The desktop Jolt leaf Release build passed with zero warnings and errors on 2026-10-01 after this correction. Evidence: `Build/_AgentValidation/20261001-163800-webgpu-baseline/logs/jolt-kinematic-leaf-build.log`. This is compile evidence only; live contact/friction comparison, browser physics execution, and solver parity remain unverified.
 
 ## Acceptance before default promotion
 

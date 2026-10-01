@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Execution;
 using XREngine.Scene.Transforms;
 
 namespace XREngine;
@@ -44,6 +45,8 @@ public sealed partial class RuntimeWorld
     public void ProcessDirtyTransforms(ELoopType loopType)
     {
         ThrowIfDisposed();
+        if (RuntimeWorkScheduler.IsCallerThread && loopType != ELoopType.Sequential)
+            throw new InvalidOperationException("Caller-thread worlds require sequential transform recalculation.");
         if (Interlocked.Exchange(ref _processingDirtyTransforms, 1) != 0)
             return;
 
@@ -105,6 +108,13 @@ public sealed partial class RuntimeWorld
 
     private void RecalculateTransformDepth(List<TransformBase> transforms, ELoopType loopType)
     {
+        if (RuntimeWorkScheduler.IsCallerThread)
+        {
+            foreach (TransformBase transform in transforms)
+                transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: false);
+            return;
+        }
+
         if (transforms.Count <= 1)
         {
             foreach (TransformBase transform in transforms)

@@ -1,0 +1,322 @@
+using System.Buffers;
+using System.Text;
+using System.Text.Json;
+using XREngine.Data;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shaders.Compilation;
+
+namespace XREngine.Rendering.WebGPU;
+
+/// <summary>Retains one fully keyed engine mesh pipeline and draw command until its resource generation changes.</summary>
+internal sealed class WebGpuMeshDraw : IDisposable
+{
+    private readonly WebGpuRendererHost _renderer;
+    private readonly WebGpuRenderProgram _program;
+    private readonly WebGpuVertexStream[] _streams;
+    private readonly WebGpuDataBuffer _indices;
+    private readonly IndexSize _indexSize;
+    private readonly uint _indexCount;
+    private readonly WebGpuRasterState _state;
+    private readonly RenderFrameOutputDescription _output;
+    private readonly Task _preparation;
+    private int _pipeline;
+    private int _commands;
+    private bool _disposed;
+
+    public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
+        XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output)
+    {
+        _renderer = renderer;
+        _program = program;
+        _state = state;
+        _output = output;
+        _indexSize = indexSize;
+        if (indexSize is not (IndexSize.TwoBytes or IndexSize.FourBytes))
+            throw Unsupported("only unsigned 16-bit and 32-bit indices are admitted");
+        _indices = (WebGpuDataBuffer)renderer.GetOrCreateAPIRenderObject(indices, generateNow: true)!;
+        _indexCount = indices.ElementCount;
+        _streams = ResolveStreams(renderer, program.Artifact, mesh);
+        _preparation = PrepareAsync();
+    }
+
+    public bool IsReady
+    {
+        get
+        {
+            if (_preparation.IsFaulted || _preparation.IsCanceled)
+                _preparation.GetAwaiter().GetResult();
+            return !_disposed && _commands != 0 && _preparation.IsCompletedSuccessfully;
+        }
+    }
+
+    public void Record()
+    {
+        if (!IsReady)
+            throw new InvalidOperationException("WebGPU.Mesh.PipelinePending: defer the draw until asynchronous pipeline creation completes.");
+        Span<uint> offsets = stackalloc uint[16];
+        int count = _program.SnapshotUniforms(offsets);
+        _renderer.RecordEngineCommands(_commands, offsets[..count]);
+        _renderer.CountEngineMeshDraw();
+    }
+
+    internal bool DependsOn(AbstractRenderAPIObject resource)
+    {
+        if (ReferenceEquals(_program, resource) || ReferenceEquals(_indices, resource))
+            return true;
+        foreach (WebGpuVertexStream stream in _streams)
+            if (ReferenceEquals(stream.Buffer, resource)) return true;
+        return false;
+    }
+
+    private async Task PrepareAsync()
+    {
+        int pipeline = await _renderer.CreateRenderPipelineAsync(DescribePipeline());
+        if (_disposed || !_renderer.AcceptsBackendWork)
+        {
+            if (_renderer.State == BrowserRendererState.Ready) _renderer.RetireEngineResource(pipeline);
+            return;
+        }
+        _pipeline = pipeline;
+        _commands = _renderer.PrepareCommands(DescribeDraw());
+    }
+
+    private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh mesh)
+    {
+        List<WebGpuVertexStream> streams = [];
+        foreach (ShaderVertexBufferLayout authored in artifact.VertexBuffers)
+        {
+            foreach (ShaderVertexAttribute attribute in authored.Attributes)
+            {
+                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic);
+                if (attribute.Format != format || buffer.InstanceDivisor > 1)
+                    throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible format or instance divisor");
+                string stepMode = buffer.InstanceDivisor == 0 ? "vertex" : "instance";
+                if (authored.StepMode != stepMode)
+                    throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible step mode");
+                WebGpuDataBuffer api = (WebGpuDataBuffer)renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true)!;
+                WebGpuVertexStream? stream = null;
+                for (int i = 0; i < streams.Count; i++)
+                    if (ReferenceEquals(streams[i].Buffer, api)) { stream = streams[i]; break; }
+                if (stream is null)
+                {
+                    stream = new WebGpuVertexStream(api, checked((int)buffer.ElementSize), stepMode);
+                    streams.Add(stream);
+                }
+                stream.Attributes.Add(attribute with { Offset = offset });
+            }
+        }
+        return streams.ToArray();
+    }
+
+    private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh mesh, string semantic)
+    {
+        string format = semantic switch
+        {
+            "position" or "normal" => "float32x3",
+            "tangent" or "color0" => "float32x4",
+            "uv0" => "float32x2",
+            _ => throw Unsupported($"vertex semantic '{semantic}' has no engine stream mapping"),
+        };
+        if (mesh.Interleaved)
+        {
+            uint? offset = semantic switch
+            {
+                "position" => mesh.PositionOffset,
+                "normal" => mesh.NormalOffset,
+                "tangent" => mesh.TangentOffset,
+                "color0" => mesh.ColorCount > 0 ? mesh.ColorOffset : null,
+                "uv0" => mesh.TexCoordCount > 0 ? mesh.TexCoordOffset : null,
+                _ => null,
+            };
+            if (offset is null || mesh.InterleavedVertexBuffer is not { } interleaved)
+                throw Unsupported($"required interleaved vertex semantic '{semantic}' is missing");
+            return (interleaved, checked((int)offset.Value), format);
+        }
+        XRDataBuffer? buffer = semantic switch
+        {
+            "position" => mesh.PositionsBuffer,
+            "normal" => mesh.NormalsBuffer,
+            "tangent" => mesh.TangentsBuffer,
+            "color0" => mesh.ColorBuffers is { Length: > 0 } ? mesh.ColorBuffers[0] : null,
+            "uv0" => mesh.TexCoordBuffers is { Length: > 0 } ? mesh.TexCoordBuffers[0] : null,
+            _ => null,
+        };
+        if (buffer is null || buffer.ComponentType != EComponentType.Float)
+            throw Unsupported($"required float vertex semantic '{semantic}' is missing");
+        return (buffer, 0, format);
+    }
+
+    private string DescribePipeline()
+    {
+        ArrayBufferWriter<byte> bytes = new();
+        using (Utf8JsonWriter writer = new(bytes))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("label", _program.Artifact.Name);
+            writer.WriteStartArray("layouts");
+            foreach (int layout in _program.LayoutHandles) writer.WriteNumberValue(layout);
+            writer.WriteEndArray();
+            writer.WriteStartObject("vertex");
+            writer.WriteNumber("shader", _program.ShaderHandle);
+            writer.WriteString("entryPoint", _program.Artifact.VertexEntryPoint);
+            writer.WriteStartArray("buffers");
+            foreach (WebGpuVertexStream stream in _streams)
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("arrayStride", stream.Stride);
+                writer.WriteString("stepMode", stream.StepMode);
+                writer.WriteStartArray("attributes");
+                foreach (ShaderVertexAttribute attribute in stream.Attributes)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("format", attribute.Format);
+                    writer.WriteNumber("offset", attribute.Offset);
+                    writer.WriteNumber("shaderLocation", attribute.Location);
+                    writer.WriteEndObject();
+                }
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            if (_program.Artifact.FragmentEntryPoint is { } fragment)
+            {
+                writer.WriteStartObject("fragment");
+                writer.WriteNumber("shader", _program.ShaderHandle);
+                writer.WriteString("entryPoint", fragment);
+                writer.WriteStartArray("targets");
+                writer.WriteStartObject();
+                writer.WriteString("format", _output.Properties.ColorEncoding);
+                writer.WriteNumber("writeMask", _state.ColorWriteMask);
+                if (_state.BlendEnabled)
+                {
+                    writer.WriteStartObject("blend");
+                    WriteBlend(writer, "color", _state.SourceRgb, _state.DestinationRgb, _state.RgbEquation);
+                    WriteBlend(writer, "alpha", _state.SourceAlpha, _state.DestinationAlpha, _state.AlphaEquation);
+                    writer.WriteEndObject();
+                }
+                writer.WriteEndObject();
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+            }
+            writer.WriteStartObject("primitive");
+            writer.WriteString("topology", "triangle-list");
+            writer.WriteString("frontFace", _state.Winding == EWinding.CounterClockwise ? "ccw" : "cw");
+            writer.WriteString("cullMode", _state.CullMode switch { ECullMode.Back => "back", ECullMode.Front => "front", _ => "none" });
+            writer.WriteEndObject();
+            writer.WriteStartObject("depthStencil");
+            writer.WriteString("format", _output.Properties.DepthEncoding);
+            writer.WriteBoolean("depthWriteEnabled", _state.DepthEnabled && _state.DepthWrite);
+            writer.WriteString("depthCompare", _state.DepthEnabled ? Compare(_state.DepthComparison) : "always");
+            writer.WriteEndObject();
+            writer.WriteStartObject("multisample");
+            writer.WriteNumber("count", _output.Properties.SampleCount);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(bytes.WrittenSpan);
+    }
+
+    private string DescribeDraw()
+    {
+        ArrayBufferWriter<byte> bytes = new();
+        using (Utf8JsonWriter writer = new(bytes))
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("commands");
+            writer.WriteStartObject();
+            writer.WriteString("type", "render");
+            writer.WritePropertyName("pass");
+            BrowserColorAttachmentPlan?[] colors = _program.Artifact.FragmentEntryPoint is null
+                ? [] : [new BrowserColorAttachmentPlan(0, false, true, default)];
+            new BrowserFrameBufferPlan(colors,
+                new BrowserDepthStencilAttachmentPlan(-1, clearDepth: false)).WriteTo(writer);
+            writer.WriteNumber("pipeline", _pipeline);
+            writer.WriteStartArray("bindings");
+            for (int group = 0; group < _program.GroupHandles.Length; group++)
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("index", group);
+                writer.WriteNumber("group", _program.GroupHandles[group]);
+                writer.WriteStartArray("dynamicOffsets");
+                foreach (ShaderStageResourceLayout resource in _program.Artifact.Resources)
+                    if (resource.Contract.Set == group && resource.DynamicOffset) writer.WriteNumberValue(0);
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteStartArray("vertexBuffers");
+            foreach (WebGpuVertexStream stream in _streams)
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("buffer", stream.Buffer.ResourceHandle);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteStartObject("indexBuffer");
+            writer.WriteNumber("buffer", _indices.ResourceHandle);
+            writer.WriteString("format", _indexSize == IndexSize.TwoBytes ? "uint16" : "uint32");
+            writer.WriteEndObject();
+            writer.WriteStartArray("draws");
+            writer.WriteStartObject();
+            writer.WriteNumber("indexCount", _indexCount);
+            writer.WriteNumber("instanceCount", 1);
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(bytes.WrittenSpan);
+    }
+
+    private static void WriteBlend(Utf8JsonWriter writer, string name, EBlendingFactor source, EBlendingFactor destination, EBlendEquationMode equation)
+    {
+        writer.WriteStartObject(name);
+        writer.WriteString("operation", equation switch
+        {
+            EBlendEquationMode.FuncAdd => "add", EBlendEquationMode.FuncSubtract => "subtract",
+            EBlendEquationMode.FuncReverseSubtract => "reverse-subtract", EBlendEquationMode.Min => "min",
+            EBlendEquationMode.Max => "max", _ => throw Unsupported("unknown blend equation"),
+        });
+        writer.WriteString("srcFactor", BlendFactor(source));
+        writer.WriteString("dstFactor", BlendFactor(destination));
+        writer.WriteEndObject();
+    }
+
+    private static string BlendFactor(EBlendingFactor factor) => factor switch
+    {
+        EBlendingFactor.Zero => "zero", EBlendingFactor.One => "one",
+        EBlendingFactor.SrcColor => "src", EBlendingFactor.OneMinusSrcColor => "one-minus-src",
+        EBlendingFactor.SrcAlpha => "src-alpha", EBlendingFactor.OneMinusSrcAlpha => "one-minus-src-alpha",
+        EBlendingFactor.DstColor => "dst", EBlendingFactor.OneMinusDstColor => "one-minus-dst",
+        EBlendingFactor.DstAlpha => "dst-alpha", EBlendingFactor.OneMinusDstAlpha => "one-minus-dst-alpha",
+        EBlendingFactor.SrcAlphaSaturate => "src-alpha-saturated",
+        _ => throw Unsupported($"blend factor '{factor}' is outside the baseline profile"),
+    };
+
+    private static string Compare(EComparison comparison) => comparison switch
+    {
+        EComparison.Never => "never", EComparison.Less => "less", EComparison.Lequal => "less-equal",
+        EComparison.Equal => "equal", EComparison.Nequal => "not-equal", EComparison.Greater => "greater",
+        EComparison.Gequal => "greater-equal", EComparison.Always => "always",
+        _ => throw Unsupported("unknown depth comparison"),
+    };
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (_renderer.State != BrowserRendererState.Disposed)
+        {
+            if (_commands != 0) _renderer.RetireEngineResource(_commands);
+            if (_pipeline != 0) _renderer.RetireEngineResource(_pipeline);
+        }
+        _commands = 0;
+        _pipeline = 0;
+    }
+
+    private static NotSupportedException Unsupported(string reason)
+        => new($"WebGPU.Mesh.LayoutUnsupported: {reason}.");
+}

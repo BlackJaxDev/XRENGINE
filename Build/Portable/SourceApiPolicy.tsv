@@ -156,3 +156,6 @@ allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Scripting/RenderPipelineScr
 allow	XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs	GetProperty	Optional owning component property on engine physics object
 allow	XREngine.Runtime.Rendering/Objects/Materials/UberMaterialState.cs	GetProperty	Engine authored material lookup method, not System.Type reflection
 allow	XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs	Activator.CreateInstance	Managed mesh generator type construction with authored mesh input
+
+allow	XREngine.Browser/BrowserEngineAssetSource.cs	GetProperty	JsonElement validated runtime asset manifest fields, not System.Type reflection
+allow-api	XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltBrowserJobSystem.cs	native interop	DllImport	Reviewed single-thread wrapper from pinned browser Jolt native archive; no desktop loader or arbitrary native resolution

@@ -54,6 +54,7 @@ namespace XREngine
             {
                 if (disposing)
                 {
+                    CancelWebSocketStart();
                     LastServerError = null;
                     SendPlayerLeaveForLocals("Client disposed");
                     DisposeManagedTransport();
@@ -225,6 +226,7 @@ namespace XREngine
 
             private void TickClientNetwork()
             {
+                ObserveWebSocketFailure();
                 TickReplicationSynchronization();
                 TickManagedTransportHandshake();
                 if (!UDPServerConnectionEstablished)

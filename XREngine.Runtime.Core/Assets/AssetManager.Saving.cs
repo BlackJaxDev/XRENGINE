@@ -14,6 +14,7 @@ namespace XREngine
     {
         private void SaveExistingAssetCore(XRAsset asset)
         {
+            RejectRuntimeCatalogWrite();
             if (asset.FilePath is null)
             {
                 Debug.LogWarning("Cannot save an asset without a file path.");
@@ -37,6 +38,7 @@ namespace XREngine
 
         private void SaveToDirectoryCore(XRAsset asset, string directory)
         {
+            RejectRuntimeCatalogWrite();
 #if !DEBUG
             try
             {
@@ -56,6 +58,12 @@ namespace XREngine
                 Debug.LogException(e, $"An error occurred while saving the asset to '{directory}'.");
             }
 #endif
+        }
+
+        private void RejectRuntimeCatalogWrite()
+        {
+            if (_runtimeCatalogOwner)
+                throw new NotSupportedException("AssetSource.ReadOnly: runtime content catalogs cannot persist authoring changes.");
         }
 
         public Task SaveAsync(XRAsset asset, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)

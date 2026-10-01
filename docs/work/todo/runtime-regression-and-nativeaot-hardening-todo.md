@@ -13,7 +13,7 @@ Predecessors and related work:
 - [Runtime Modularization Phase 6 Progress](../progress/runtime/runtime-modularization-phase6-progress-2026-08-25.md)
 - [Unit Test Project Reorganization TODO](tests/unit-test-project-reorganization-todo.md)
 - [Humanoid Body Root Compensation TODO](avatar/humanoid-body-root-compensation-todo.md)
-- [MonkeyBall VR Final-Build Runtime TODO](games/monkeyball-vr-final-build-runtime-todo.md)
+- [Rolling Ball Final-Build Runtime TODO](games/rolling-ball-final-build-runtime-todo.md)
 
 ## Goal
 
@@ -23,7 +23,7 @@ Close the non-Vulkan software debt exposed by Phase 6 closeout:
 2. repair the actual animation, OpenGL/shared-rendering, cooked-asset,
    snapshot, physics-boundary, editor, and tooling regressions behind that
    suite; and
-3. make the shipped player graph genuinely NativeAOT-safe so the MonkeyBall
+3. make the shipped player graph genuinely NativeAOT-safe so the RollingBall
    launcher publishes and passes its live smoke without
    `-AllowAotWarnings`.
 
@@ -79,7 +79,7 @@ The baseline is intentionally descriptive, not an acceptance result:
 - a heuristic classification of the old TRX found roughly 136
   non-Vulkan-like failures, including some failures already repaired after the
   exhaustive run;
-- the NativeAOT MonkeyBall live smoke passes with `-AllowAotWarnings`, reaches
+- the NativeAOT RollingBall live smoke passes with `-AllowAotWarnings`, reaches
   300 update ticks and 399 physics steps, and verifies its renderer input
   hashes;
 - strict analysis currently reports 913 IL2xxx/IL3xxx diagnostics:
@@ -305,7 +305,7 @@ Acceptance criteria:
 ## A0 - Define And Narrow The NativeAOT Player Surface
 
 - [ ] Inventory every assembly, package, native library, content root, feature
-      registration, and reflection root in the MonkeyBall NativeAOT graph.
+      registration, and reflection root in the RollingBall NativeAOT graph.
 - [ ] Record why each rooted item is required by the selected application
       profile.
 - [ ] Separate authoring-only YAML, source import, editor cache, project tooling,
@@ -325,7 +325,7 @@ Acceptance criteria:
 - [ ] Every player-rooted assembly and native item has a runtime reason.
 - [ ] The 88 editor/dev warning rows are eliminated from the player graph or
       reclassified with evidence that the code is genuinely runtime-required.
-- [ ] Removing authoring surfaces does not break the live cooked MonkeyBall
+- [ ] Removing authoring surfaces does not break the live cooked RollingBall
       smoke.
 
 ## A1 - Generated Runtime Metadata And Cooked Codecs
@@ -401,7 +401,7 @@ Acceptance criteria:
 
 ## A3 - Strict NativeAOT Publication And Runtime Acceptance
 
-- [ ] Publish MonkeyBall without `-AllowAotWarnings` and require zero
+- [ ] Publish RollingBall without `-AllowAotWarnings` and require zero
       IL2xxx/IL3xxx diagnostics.
 - [ ] Verify generated renderer input hashes match the selected just-built
       assemblies.
@@ -464,7 +464,7 @@ Acceptance criteria:
       extension seams.
 - [ ] The selected NativeAOT player graph contains only justified runtime
       assemblies, packages, native cargo, and content.
-- [ ] MonkeyBall publishes without `-AllowAotWarnings` and reports zero strict
+- [ ] RollingBall publishes without `-AllowAotWarnings` and reports zero strict
       IL2xxx/IL3xxx diagnostics.
 - [ ] The packaged AOT smoke validates representative cooked assets, animation,
       texture streaming, snapshot, scene, physics, input, and session metadata.

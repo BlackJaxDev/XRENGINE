@@ -9,11 +9,11 @@ Desktop launchers compose shared `net10.0` projects with explicit backend module
 Use the validation script from the repository root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-MonkeyBallVR.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-RollingBall.ps1
 ```
 
-The matching VS Code task is `Publish-VRMonkeyBall-NativeAOT-Package`. This
-creates the validated `Samples/MonkeyBallVR/Build/Packages/MonkeyBallVR-win-x64.zip`
+The matching VS Code task is `Publish-RollingBall-NativeAOT-Package`. This
+creates the validated `Samples/RollingBall/Build/Packages/RollingBall-win-x64.zip`
 release artifact. For another project, call `Tools/Publish-AotFinalGame.ps1`
 directly with its `.xrproj`.
 

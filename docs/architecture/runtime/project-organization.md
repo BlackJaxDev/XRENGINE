@@ -60,6 +60,7 @@ Most desktop modules currently use Windows-targeted project configurations. Some
 | `XREngine.Runtime.IO.DirectStorage` | DirectStorage asset I/O and GDeflate codec implementation. |
 | `XREngine.Runtime.Diagnostics.Desktop` | WMI/device inventory and native CUDA, nvCOMP, and NVIDIA diagnostics/compression capabilities. |
 | `XREngine.Runtime.Net.Sockets` | TCP/UDP/TLS transports, socket gateways, profiler transport, and socket-based capture components. |
+| `XREngine.Runtime.Net.WebSockets` | Portable asynchronous browser realtime transport; managed admission and replication remain in Core. |
 | `XREngine.Runtime.Net.Osc` | OSC/VMC transport and tracking components. |
 | `XREngine.Runtime.MeshProcessing.Meshoptimizer` | Native meshoptimizer processing. |
 

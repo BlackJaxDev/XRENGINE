@@ -185,7 +185,7 @@ than repository components.
 | `Build/` | Shared build assets, submodules, dependency staging, build output, logs, caches, and disposable validation evidence. |
 | `docs/` | Architecture notes, user and developer guides, dependency records, and active design or investigation documents. |
 | `LEGAL/` | License terms, commercial guidance, contributor agreement, and engine/application boundary guidance. |
-| `Samples/` | Example applications and game content, including the MonkeyBallVR sample. |
+| `Samples/` | Example applications and game content, including the RollingBall sample. |
 | `ThirdParty/` | Checked-in third-party runtime and SDK material that is not supplied through NuGet or submodules. |
 | `Tools/` | Setup, build, dependency, documentation, benchmark, editor-session, and agent-broker scripts and utilities. |
 

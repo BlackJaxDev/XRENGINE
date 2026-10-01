@@ -309,7 +309,7 @@ namespace XREngine.Rendering
             RenderFrame(delta);
         }
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             //UnlinkWindow();
             //_viewports.Clear();
@@ -471,7 +471,21 @@ namespace XREngine.Rendering
         public BoundingRectangle CurrentRenderArea
             => _renderAreaStack.Count > 0
             ? _renderAreaStack.Peek()
-            : new BoundingRectangle(0, 0, XRWindow.RenderWindowSize.X, XRWindow.RenderWindowSize.Y);
+            : ResolveFullRenderArea();
+
+        private BoundingRectangle ResolveFullRenderArea()
+        {
+            if (!HasDesktopWindowServices)
+            {
+                RenderTargetOutputProperties? output = PresentationTarget.OutputProperties;
+                return output is { } properties
+                    ? new BoundingRectangle(0, 0, checked((int)properties.Width), checked((int)properties.Height))
+                    : BoundingRectangle.Empty;
+            }
+
+            var size = XRWindow.RenderWindowSize;
+            return new BoundingRectangle(0, 0, size.X, size.Y);
+        }
 
         public abstract void CropRenderArea(BoundingRectangle region);
         public abstract void SetRenderArea(BoundingRectangle region);
@@ -486,9 +500,9 @@ namespace XREngine.Rendering
 
         public virtual void ClearRenderArea()
         {
-            var size = XRWindow.RenderWindowSize;
-            if (size.X > 0 && size.Y > 0)
-                SetRenderArea(new BoundingRectangle(0, 0, size.X, size.Y));
+            BoundingRectangle area = ResolveFullRenderArea();
+            if (area.Width > 0 && area.Height > 0)
+                SetRenderArea(area);
         }
         public abstract void SetCroppingEnabled(bool enabled);
         public virtual bool SetIndexedViewportScissors(

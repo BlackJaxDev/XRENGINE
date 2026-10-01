@@ -1,0 +1,29 @@
+using System.Collections.Immutable;
+
+namespace XREngine.Rendering.Shaders.Compilation;
+
+/// <summary>
+/// A whole cooked shader module with its explicit engine ABI. Its identity is the
+/// descriptor hash, including source, compiler, dependencies, and physical layout.
+/// </summary>
+public sealed record ShaderProgramArtifact(
+    string Identity,
+    string Name,
+    string Pass,
+    string SourcePath,
+    ShaderArtifact Artifact,
+    string SemanticSchemaIdentity,
+    string Coordinates,
+    string? VertexEntryPoint,
+    string? FragmentEntryPoint,
+    string? ComputeEntryPoint,
+    ImmutableArray<ShaderVertexBufferLayout> VertexBuffers,
+    ImmutableArray<ShaderStageResourceLayout> Resources,
+    ImmutableDictionary<string, int> RequiredLimits)
+{
+    /// <summary>Exact validated descriptor bytes retained for content-addressed repackaging; absent for layout-only recipe objects.</summary>
+    public ImmutableArray<byte> DescriptorBytes { get; internal init; } = [];
+
+    /// <summary>The format of the compiled module; authored shader language remains unchanged.</summary>
+    public ShaderCompileTarget Target => Artifact.Target;
+}

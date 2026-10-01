@@ -721,7 +721,7 @@ internal static partial class ProjectBuilder
         return archivePath;
     }
 
-    private static string? ResolveGameLaunchBootstrapTypeName(string configuration, string platform)
+    internal static string? ResolveGameLaunchBootstrapTypeName(string configuration, string platform)
     {
         using DynamicGameAssemblyScope? gameAssemblyScope = TryLoadBuiltGameAssembly(configuration, platform);
         if (gameAssemblyScope?.Assembly is null)

@@ -74,14 +74,14 @@ The generated launcher resolves archives relative to `AppContext.BaseDirectory` 
 Use the validation script for the canonical AOT path:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-MonkeyBallVR.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-RollingBall.ps1
 ```
 
 Useful script options:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-AotFinalGame.ps1 `
-  -ProjectPath .\Samples\MonkeyBallVR\MonkeyBallVR.xrproj `
+  -ProjectPath .\Samples\RollingBall\RollingBall.xrproj `
   -BuildConfiguration Release `
   -BuildPlatform Windows64 `
   -OutputSubfolder Publish `
@@ -222,25 +222,25 @@ The compiled game assembly must contain exactly one public, concrete `IGameLaunc
 
 ## Sample Project MSBuild Targets
 
-`Samples/MonkeyBallVR/MonkeyBallVR.csproj` exposes a `CookGameExe` target for sample automation.
+`Samples/RollingBall/RollingBall.csproj` exposes a `CookGameExe` target for sample automation.
 
 NativeAOT published sample build:
 
 ```powershell
-dotnet msbuild .\Samples\MonkeyBallVR\MonkeyBallVR.csproj /t:CookGameExe /p:Configuration="Published Release"
+dotnet msbuild .\Samples\RollingBall\RollingBall.csproj /t:CookGameExe /p:Configuration="Published Release"
 ```
 
 Explicitly non-AOT published sample build:
 
 ```powershell
-dotnet msbuild .\Samples\MonkeyBallVR\MonkeyBallVR.csproj /t:CookGameExe `
+dotnet msbuild .\Samples\RollingBall\RollingBall.csproj /t:CookGameExe `
   /p:Configuration="Published Release" `
   /p:GamePublishNativeAot=false `
   /p:GameOutputSubfolder=PublishJit `
   /p:GameDefineConstants=XRE_PUBLISHED
 ```
 
-For MonkeyBall VR, prefer `Tools/Publish-MonkeyBallVR.ps1`; it runs the strict script path and creates the distributable ZIP. The direct MSBuild target remains useful for development diagnostics.
+For Rolling Ball, prefer `Tools/Publish-RollingBall.ps1`; it runs the strict script path and creates the distributable ZIP. The direct MSBuild target remains useful for development diagnostics.
 
 ## Release Validation Checklist
 

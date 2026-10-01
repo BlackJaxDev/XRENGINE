@@ -39,6 +39,12 @@ namespace XREngine
 
         private readonly Func<JobManager> _jobManagerProvider;
         private readonly Func<bool> _remoteAssetDownloadAllowedProvider;
+        private IRuntimeAssetSource? _runtimeAssetSource;
+        private readonly bool _runtimeCatalogOwner;
+        private CancellationTokenSource _runtimeSourceLifetime = new();
+        private int _runtimeSourceEpoch;
+        private readonly object _runtimePublicationGate = new();
+        private bool _runtimeSourceTeardown;
         private readonly ConcurrentDictionary<string, byte> _pendingFeatureCacheImports =
             new(StringComparer.OrdinalIgnoreCase);
 
@@ -111,6 +117,17 @@ namespace XREngine
         {
             _jobManagerProvider = jobManagerProvider ?? (() => RuntimeWorkScheduler.Jobs);
             _remoteAssetDownloadAllowedProvider = remoteAssetDownloadAllowedProvider ?? (static () => false);
+            _runtimeAssetSource = DirectStorageIO.Source;
+            if (_runtimeAssetSource is IRuntimeAssetCatalog catalog)
+            {
+                _runtimeCatalogOwner = true;
+                // Catalog paths identify assets; they are not writable host directories.
+                EngineAssetsPath = Path.GetFullPath(catalog.EngineAssetsRoot);
+                _gameAssetsPath = Path.GetFullPath(catalog.GameAssetsRoot);
+                GameWatcher.Path = _gameAssetsPath;
+                EngineWatcher.Path = EngineAssetsPath;
+                return;
+            }
             string? resolvedEngineAssetsPath = null;
             string? engineAssetsOverridePath = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
             if (!string.IsNullOrWhiteSpace(engineAssetsOverridePath))
@@ -470,11 +487,15 @@ namespace XREngine
             if (assetId == Guid.Empty)
                 return false;
 
-            if (LoadedAssetsByIDInternal.TryGetValue(assetId, out var asset) && !string.IsNullOrWhiteSpace(asset.FilePath) && File.Exists(asset.FilePath))
+            if (LoadedAssetsByIDInternal.TryGetValue(assetId, out var asset) && !string.IsNullOrWhiteSpace(asset.FilePath)
+                && (_runtimeAssetSource?.Exists(asset.FilePath) ?? File.Exists(asset.FilePath)))
             {
                 assetPath = asset.FilePath;
                 return true;
             }
+
+            if (_runtimeCatalogOwner)
+                return false;
 
             if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, out assetPath))
                 return true;
@@ -808,11 +829,29 @@ namespace XREngine
 
         public void Dispose()
         {
-            foreach (var asset in LoadedAssetsByIDInternal.Values)
-                asset.Destroy();
-            LoadedAssetsByIDInternal.Clear();
-            LoadedAssetsByPathInternal.Clear();
-            LoadedAssetsByOriginalPathInternal.Clear();
+            HashSet<XRAsset> assets = new(ReferenceEqualityComparer.Instance);
+            foreach (XRAsset asset in LoadedAssetsByIDInternal.Values) assets.Add(asset);
+            foreach (XRAsset asset in LoadedAssetsByPathInternal.Values) assets.Add(asset);
+            foreach (XRAsset asset in LoadedAssetsByOriginalPathInternal.Values) assets.Add(asset);
+            List<Exception>? failures = null;
+            try
+            {
+                foreach (XRAsset asset in assets)
+                {
+                    asset.PropertyChanged -= AssetPropertyChanged;
+                    try { asset.Destroy(); }
+                    catch (Exception error) { (failures ??= []).Add(error); }
+                }
+            }
+            finally
+            {
+                LoadedAssetsByIDInternal.Clear();
+                LoadedAssetsByPathInternal.Clear();
+                LoadedAssetsByOriginalPathInternal.Clear();
+                DirtyAssets.Clear();
+            }
+            if (failures is not null)
+                throw new AggregateException("AssetSource.TeardownFailed: asset caches were cleared, but one or more assets failed destruction.", failures);
         }
 
         public static string VerifyAssetPath(XRAsset asset, string directory)

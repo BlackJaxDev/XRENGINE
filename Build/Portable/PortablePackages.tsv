@@ -24,3 +24,4 @@ XREngine.Runtime.Rendering	Silk.NET.Maths	2.23.0	Managed window extent and resiz
 XREngine.Runtime.Host	Newtonsoft.Json	13.0.4	Managed startup settings and snapshot JSON; interpreter metadata review only.
 XREngine.Runtime.Host	MemoryPack	1.21.4	Generated managed snapshot serialization.
 XREngine.Runtime.Host	YamlDotNet	18.1.0	Managed settings and snapshot YAML serialization; interpreter metadata review only.
+XREngine.Runtime.Physics.Jolt	JoltPhysicsSharp	2.22.0	Desktop-only condition retains approved package supply; browser uses reviewed managed-source project

@@ -22,7 +22,7 @@ namespace XREngine
         public class CodeProfiler : XRBase
         {
 #if DEBUG
-            private bool _enableFrameLogging = true;
+            private bool _enableFrameLogging = !OperatingSystem.IsBrowser();
             private bool _enableComponentTiming = false;
 #else
             private bool _enableFrameLogging = false;
@@ -33,6 +33,8 @@ namespace XREngine
                 get => _enableFrameLogging;
                 set
                 {
+                    if (value && OperatingSystem.IsBrowser())
+                        throw new PlatformNotSupportedException("Worker-backed frame logging is unavailable in a caller-thread browser host.");
                     if (!SetField(ref _enableFrameLogging, value))
                         return;
 

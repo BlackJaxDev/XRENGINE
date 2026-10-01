@@ -124,7 +124,7 @@ public static class Program
 
         app.MapGet("/health", () => Results.Ok(new { status = "ready", contractVersion = 1, mode = "local-development" }));
         app.MapGet("/v1", () => Results.Ok(new { contractVersion = 1, mode = "host-agent", persistence = "protected-local-checkpoint",
-            realtimeTransport = options.RealtimeTls is null ? "NativeUdp" : "NativeTls" }));
+            realtimeTransport = options.RealtimeTls is null ? "NativeUdp" : options.RealtimeTls.UseWebSocket ? "WebSocket" : "NativeTls" }));
         app.MapGet("/v1/packages", (LocalPackageCatalog catalog) => Results.Ok(catalog.List()));
         app.MapGet("/v1/hosts", (HttpContext context, InMemoryControlPlane registry, LocalWorkerSupervisor supervisor) =>
             User(context).IsAdministrator ? Results.Ok(new { hosts = registry.ListHosts(), resources = supervisor.ResourceHeadroom() }) : Results.StatusCode(403));

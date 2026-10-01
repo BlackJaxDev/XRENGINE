@@ -14,6 +14,21 @@
   <ItemGroup>
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderCompileTarget.cs" Link="Shared/ShaderCompileTarget.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderArtifact.cs" Link="Shared/ShaderArtifact.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifact.cs" Link="Shared/ShaderProgramArtifact.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/IShaderProgramArtifactResolver.cs" Link="Shared/IShaderProgramArtifactResolver.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifactCatalog.cs" Link="Shared/ShaderProgramArtifactCatalog.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifactReader.cs" Link="Shared/ShaderProgramArtifactReader.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderStageVisibility.cs" Link="Shared/ShaderStageVisibility.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderVertexAttribute.cs" Link="Shared/ShaderVertexAttribute.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderVertexBufferLayout.cs" Link="Shared/ShaderVertexBufferLayout.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderStageResourceLayout.cs" Link="Shared/ShaderStageResourceLayout.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiResourceContract.cs" Link="Shared/ShaderAbiResourceContract.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiResourceKind.cs" Link="Shared/ShaderAbiResourceKind.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiResourceOwner.cs" Link="Shared/ShaderAbiResourceOwner.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiFrequency.cs" Link="Shared/ShaderAbiFrequency.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiDescriptorLifetime.cs" Link="Shared/ShaderAbiDescriptorLifetime.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiMemberContract.cs" Link="Shared/ShaderAbiMemberContract.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiMatrixOrder.cs" Link="Shared/ShaderAbiMatrixOrder.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserMaterialShaderDefinition.cs" Link="Shared/BrowserMaterialShaderDefinition.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserMaterialShaderGenerator.cs" Link="Shared/BrowserMaterialShaderGenerator.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserShaderAbi.cs" Link="Shared/BrowserShaderAbi.cs" />

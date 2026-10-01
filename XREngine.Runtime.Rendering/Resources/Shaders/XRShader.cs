@@ -71,9 +71,9 @@ namespace XREngine.Rendering
             set => SetField(ref _generatedUberVariantHash, value);
         }
 
-        public XRShader() { }
-        public XRShader(EShaderType type) => Type = type;
-        public XRShader(EShaderType type, TextFile source)
+        public XRShader() => _source.TextChanged += OnSourceTextChanged;
+        public XRShader(EShaderType type) : this() => Type = type;
+        public XRShader(EShaderType type, TextFile source) : this()
         {
             Type = type;
             Source = source;
@@ -194,6 +194,10 @@ namespace XREngine.Rendering
                 case nameof(SourceLanguage):
                 case nameof(EntryPoint):
                 case nameof(SlangOptions):
+                    CookedArtifact = null;
+                    goto case nameof(CookedArtifact);
+                case nameof(CookedArtifact):
+                case nameof(CookedArtifactIdentity):
                     InvalidateResolvedSourceCache();
                     Interlocked.Increment(ref _sourceRevision);
                     MarkDirty();
@@ -210,6 +214,7 @@ namespace XREngine.Rendering
 
         private void OnSourceTextChanged()
         {
+            CookedArtifact = null;
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
 
@@ -220,6 +225,7 @@ namespace XREngine.Rendering
 
         internal void NotifySourceDependencyChanged(string reason)
         {
+            CookedArtifact = null;
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
             RuntimeShaderServices.Current?.LogWarning(

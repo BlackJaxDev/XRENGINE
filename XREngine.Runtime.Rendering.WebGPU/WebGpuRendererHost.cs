@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Owns the managed half of one WebGPU session and its resource identities.</summary>
-public sealed partial class WebGpuRendererHost : IBrowserRendererHost
+public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRendererHost
 {
     private readonly BrowserCanvasRenderTarget _target;
     private readonly Action<WebGpuRendererHost> _onDisposed;
@@ -11,19 +11,23 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
     private int _session;
     private bool _submittedFrame;
     private bool _deviceLost;
+    private BrowserRendererState _state = BrowserRendererState.Pending;
 
     internal WebGpuRendererHost(BrowserCanvasRenderTarget target, long generation, Action<WebGpuRendererHost> onDisposed)
+        : base(new RendererHostContext(target, backendGeneration: generation))
     {
         _target = target;
-        BackendGeneration = generation;
         _onDisposed = onDisposed;
     }
 
-    public RendererBackendId BackendId => RendererBackendId.WebGPU;
-    public long BackendGeneration { get; }
-    public BrowserRendererState State { get; private set; } = BrowserRendererState.Pending;
-    public bool IsDeviceLost => _deviceLost;
-    public bool IsBackendReplacementFrameReady => State == BrowserRendererState.Ready && _submittedFrame;
+    public override RendererBackendId BackendId => RendererBackendId.WebGPU;
+    public BrowserRendererState State
+    {
+        get => _state;
+        private set => SetField(ref _state, value);
+    }
+    public override bool IsDeviceLost => _deviceLost;
+    public override bool IsBackendReplacementFrameReady => State == BrowserRendererState.Ready && _submittedFrame;
 
     public bool TryDescribeFrameOutput(out RenderFrameOutputDescription output)
     {
@@ -36,7 +40,7 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
         if (State != BrowserRendererState.Pending || sessionId <= 0)
             throw new InvalidOperationException("Only a pending renderer can bind one positive browser session.");
         DeviceCapabilities = ReadCapabilities(sessionId);
-        _session = sessionId;
+        SetField(ref _session, sessionId);
         State = BrowserRendererState.Ready;
     }
 
@@ -44,9 +48,9 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
     {
         if (State == BrowserRendererState.Disposed)
             return;
-        _deviceLost |= deviceLost;
+        SetField(ref _deviceLost, _deviceLost || deviceLost);
         State = _deviceLost ? BrowserRendererState.Lost : BrowserRendererState.Failed;
-        _submittedFrame = false;
+        SetField(ref _submittedFrame, false);
         DeviceCapabilities = null;
     }
 
@@ -124,7 +128,7 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
                 BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(88)) != output.Properties.Height)
                 throw new InvalidOperationException("Frame owner, extent or target generation does not match a drawable renderer output.");
             WebGpuImports.SubmitPacket(_session, bytes);
-            _submittedFrame = true;
+            SetField(ref _submittedFrame, true);
         }
         finally
         {
@@ -163,23 +167,37 @@ public sealed partial class WebGpuRendererHost : IBrowserRendererHost
     public Task CompleteSubmittedWorkAsync(CancellationToken cancellationToken = default) =>
         CompleteSubmittedWorkTicketAsync(cancellationToken);
 
-    public void Dispose()
+    public override void Dispose()
     {
         if (State == BrowserRendererState.Disposed)
             return;
-        State = BrowserRendererState.Disposed;
-        DeviceCapabilities = null;
-        _submittedFrame = false;
+        BeginBackendRetirement();
         try
         {
-            if (_session != 0)
-                WebGpuImports.DisposeRenderer(_session);
+            PrepareForApiObjectTeardown();
+            DestroyCachedAPIRenderObjects();
         }
         finally
         {
-            _resources.Clear();
-            _session = 0;
-            _onDisposed(this);
+            State = BrowserRendererState.Disposed;
+            DeviceCapabilities = null;
+            SetField(ref _submittedFrame, false);
+            try
+            {
+                if (_session != 0)
+                    WebGpuImports.DisposeRenderer(_session);
+            }
+            finally
+            {
+                _resources.Clear();
+                SetField(ref _engineClearCommands, 0);
+                SetField(ref _engineUniformBuffer, 0);
+                SetField(ref _engineUniformArena, null);
+                SetField(ref _engineViewport, null);
+                SetField(ref _shaderArtifacts, null);
+                SetField(ref _session, 0);
+                _onDisposed(this);
+            }
         }
     }
 }

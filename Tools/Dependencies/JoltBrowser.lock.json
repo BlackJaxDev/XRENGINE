@@ -5,8 +5,33 @@
   "joltCommit": "e77f175595e64cb44218cc9d9d56fc365ad0e36a",
   "joltTag": "v5.6.0",
   "emscriptenVersion": "3.1.56",
-  "sdkPackVersion": "10.0.2",
+  "sdkPackVersion": "10.0.12",
   "license": "MIT",
   "desktopSupply": "JoltPhysicsSharp 2.22.0 with JoltPhysics.Native 1.1.0",
-  "crossPlatformDeterministic": false
+  "crossPlatformDeterministic": false,
+  "managedRepository": "https://github.com/amerkoleci/JoltPhysicsSharp.git",
+  "managedCommit": "77a5be2dd30d587c1981dfcaf15851f18041b39c",
+  "managedVersion": "2.22.0",
+  "managedLicenseSha256": "afdd2e799fae375a71ce7ff6addb35b77f064c19321593aa869a662c2dc213b1",
+  "managedApiSha256": "e07dc18e8f3a312c37a5f5ebe26f37c7757b567379b6a20e15aede46c3d2dd3d",
+  "managedPatchedApiSha256": "406b0fb642ed59f403557b50712b369fac4fb49ca043dad17177e4e8dc85d01b",
+  "managedPatch": "contact-listener-double-return-void; explicit-world-filter-ownership",
+  "managedLifetimePatchSha256": "b35fb8fee9489983d65885b3bdf168ed745ec17eb934a5e046475b19c1edf5c4",
+  "managedLifetimeSources": [
+    {
+      "path": "src/JoltPhysicsSharp/NativeObject.cs",
+      "originalSha256": "ac43cdabfcf6ced5243a2e08b06357e2b14a9f2b2aea9b0d16d58cee1b95c534",
+      "patchedSha256": "a93aed00b6123fbc442865a7bab7f4bf78f2ee2eb96c10be738757767f74daaa"
+    },
+    {
+      "path": "src/JoltPhysicsSharp/BroadPhaseLayerInterface.cs",
+      "originalSha256": "0255aa86ba45875da06fa25ac63539412a3bdac10d49bc58ebf3c17d3c47936e",
+      "patchedSha256": "cc910c1e3c56b879e12a02d25f7a08e33766dd21aed5ca6491aa741a8c4d9980"
+    },
+    {
+      "path": "src/JoltPhysicsSharp/PhysicsSystem.cs",
+      "originalSha256": "f183bb54e2e727bfc28f653b35f44042585eefe1d9165b0fefac9063f7795696",
+      "patchedSha256": "dceb3f72b92018d5b351a7500b6bf374ec984978bfecbe3fdd9556af77957b0e"
+    }
+  ]
 }

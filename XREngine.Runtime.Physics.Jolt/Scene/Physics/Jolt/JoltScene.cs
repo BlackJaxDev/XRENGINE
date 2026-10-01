@@ -432,7 +432,10 @@ namespace XREngine.Scene.Physics.Jolt
         public override void Destroy()
         {
             if (_physicsSystem is null)
+            {
+                DisposeNativeSceneResources();
                 return;
+            }
 
             _physicsSystem.OnContactAdded -= OnContactAdded;
             _physicsSystem.OnContactPersisted -= OnContactPersisted;
@@ -462,11 +465,21 @@ namespace XREngine.Scene.Physics.Jolt
             _debugRenderer?.Dispose();
             _debugRenderer = null;
 
-            (_physicsSystem as IDisposable)?.Dispose();
-            _physicsSystem = null;
+            DisposeNativeSceneResources();
+        }
 
-            (_jobSystem as IDisposable)?.Dispose();
+        private void DisposeNativeSceneResources()
+        {
+            _physicsSystem?.Dispose();
+            _physicsSystem = null;
+            _jobSystem?.Dispose();
             _jobSystem = null;
+            _objectVsBroadPhaseLayerFilter?.Dispose();
+            _objectVsBroadPhaseLayerFilter = null;
+            _broadPhaseLayerInterface?.Dispose();
+            _broadPhaseLayerInterface = null;
+            _objectLayerPairFilter?.Dispose();
+            _objectLayerPairFilter = null;
         }
 
         // Collision filtering based on Jolt object-layer masks.
@@ -477,25 +490,15 @@ namespace XREngine.Scene.Physics.Jolt
 
         public override void Initialize()
         {
-            var logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jolt_init.log");
-            
+            if (_physicsSystem is not null)
+                throw new InvalidOperationException("This Jolt scene is already initialized.");
+
             try
             {
-                Console.WriteLine("[JoltScene] Initialize() starting...");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JoltScene.Initialize() starting...{Environment.NewLine}"); } catch { }
-                
                 JoltBootstrap.EnsureInitialized();
-                Console.WriteLine("[JoltScene] JoltBootstrap.EnsureInitialized() completed.");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JoltBootstrap.EnsureInitialized() completed.{Environment.NewLine}"); } catch { }
-
-                // Create job system with default config (simpler, less likely to fail)
-                Console.WriteLine("[JoltScene] Creating JobSystemThreadPool...");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] Creating JobSystemThreadPool...{Environment.NewLine}"); } catch { }
-                
-                _jobSystem = new JobSystemThreadPool();
-                
-                Console.WriteLine("[JoltScene] JobSystemThreadPool created successfully.");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JobSystemThreadPool created successfully.{Environment.NewLine}"); } catch { }
+                _jobSystem = OperatingSystem.IsBrowser()
+                    ? JoltBrowserJobSystem.Create()
+                    : new JobSystemThreadPool();
 
                 // Set up collision filtering (required by PhysicsSystem)
                 _objectLayerPairFilter = new ObjectLayerPairFilterMask();
@@ -519,6 +522,7 @@ namespace XREngine.Scene.Physics.Jolt
 
                 System.Diagnostics.Debug.WriteLine("[JoltScene] Creating PhysicsSystem...");
                 PhysicsSystem system = new(settings);
+                _physicsSystem = system;
                 System.Diagnostics.Debug.WriteLine("[JoltScene] PhysicsSystem created successfully.");
 
                 system.Gravity = new Vector3(0, -9.81f, 0);
@@ -551,7 +555,6 @@ namespace XREngine.Scene.Physics.Jolt
                     UseBodyPairContactCache = true,
                     UseManifoldReduction = true,
                 };
-                _physicsSystem = system;
                 system.OnContactAdded += OnContactAdded;
                 system.OnContactPersisted += OnContactPersisted;
                 System.Diagnostics.Debug.WriteLine("[JoltScene] Initialize() completed successfully.");
@@ -560,6 +563,7 @@ namespace XREngine.Scene.Physics.Jolt
             {
                 System.Diagnostics.Debug.WriteLine($"[JoltScene] Initialize() FAILED: {ex.GetType().Name}: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"[JoltScene] Stack trace: {ex.StackTrace}");
+                Destroy();
                 throw;
             }
         }
@@ -1175,10 +1179,19 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null || _jobSystem is null)
                 return;
 
-            // Mirror PhysX behavior: consume queued character controller movement on the fixed step
-            // so movement + collision resolution happen deterministically with the physics update.
             float dt = RuntimePhysicsServices.Current.FixedDeltaSeconds;
-            if (dt > 0.0f && _characterControllers.Count > 0)
+            if (!float.IsFinite(dt) || dt <= 0.0f)
+                throw new InvalidOperationException("Jolt simulation requires a finite, positive fixed delta.");
+
+            // Publish kinematic velocities before controllers query moving ground, and use exactly
+            // the same duration for target motion and native integration.
+            BodyInterface bodies = _physicsSystem.BodyInterface;
+            foreach (JoltDynamicRigidBody body in _dynamicBodies.Values)
+                body.ApplyKinematicTarget(bodies, dt);
+
+            // Consume queued character controller movement on the fixed step so movement and
+            // collision resolution happen deterministically with the physics update.
+            if (_characterControllers.Count > 0)
             {
                 foreach (var controller in _characterControllers)
                     controller.ConsumeInputBuffer(dt);
@@ -1192,7 +1205,9 @@ namespace XREngine.Scene.Physics.Jolt
                     _debugContactCount = 0;
             }
 
-            _physicsSystem.Update(RuntimePhysicsServices.Current.FixedDeltaSeconds, 3, _jobSystem);
+            PhysicsUpdateError updateError = _physicsSystem.Update(dt, 3, _jobSystem);
+            if (updateError != PhysicsUpdateError.None)
+                throw new InvalidOperationException($"Jolt fixed-step simulation failed: {updateError}.");
             PublishDebugFrame();
 
             foreach (JoltDynamicRigidBody body in _dynamicBodies.Values)

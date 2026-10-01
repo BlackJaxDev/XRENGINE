@@ -331,7 +331,7 @@ public partial class ServerNetworkingManager
     {
         const int headerLength = 16;
         const int guidLength = 16;
-        if (payload.Length < headerLength || !payload[..3].SequenceEqual("FRK"u8))
+        if (payload.Length < headerLength || !payload[..3].SequenceEqual(RealtimeWireProtocol.FrameMagic))
             return false;
         byte flags = payload[3];
         if ((flags & 0b1111_0000) != 0)

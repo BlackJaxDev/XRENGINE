@@ -915,12 +915,12 @@
 			"problemMatcher": []
 		},
 		{
-			"label": "Build-VRMonkeyBall-GenerateGameProject",
+			"label": "Build-RollingBall-GenerateGameProject",
 			"command": "dotnet",
 			"type": "shell",
 			"args": [
 				"msbuild",
-				"${workspaceFolder}/Samples/MonkeyBallVR/MonkeyBallVR.csproj",
+				"${workspaceFolder}/Samples/RollingBall/RollingBall.csproj",
 				"/t:GenerateGameProject",
 				"/p:Configuration=Development Debug"
 			],
@@ -930,12 +930,12 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
-			"label": "Build-VRMonkeyBall-CookGameExe",
+			"label": "Build-RollingBall-CookGameExe",
 			"command": "dotnet",
 			"type": "shell",
 			"args": [
 				"msbuild",
-				"${workspaceFolder}/Samples/MonkeyBallVR/MonkeyBallVR.csproj",
+				"${workspaceFolder}/Samples/RollingBall/RollingBall.csproj",
 				"/t:CookGameExe",
 				"/p:Configuration=Development Release"
 			],
@@ -945,7 +945,7 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
-			"label": "Publish-VRMonkeyBall-NativeAOT-Package",
+			"label": "Publish-RollingBall-NativeAOT-Package",
 			"type": "shell",
 			"command": "powershell",
 			"args": [
@@ -953,7 +953,7 @@
 				"-ExecutionPolicy",
 				"Bypass",
 				"-File",
-				"${workspaceFolder}\\Tools\\Publish-MonkeyBallVR.ps1"
+				"${workspaceFolder}\\Tools\\Publish-RollingBall.ps1"
 			],
 			"group": "build",
 			"presentation": {

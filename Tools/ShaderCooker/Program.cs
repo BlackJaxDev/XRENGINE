@@ -9,7 +9,7 @@ using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Tools.ShaderCooker;
 
-/// <summary>Packages bounded browser shader recipes into immutable, content-addressed assets.</summary>
+/// <summary>Packages explicit engine and legacy fixture shader recipes into immutable, content-addressed assets.</summary>
 internal static class Program
 {
     private const int MaxSourceBytes = 1024 * 1024;
@@ -84,7 +84,7 @@ internal static class Program
                 }
             }
             int distinctSchemas = prepared.Select(item => ParseJson(item.Descriptor)["schemaVersion"]!.GetValue<int>()).Distinct().Count();
-            Require(distinctSchemas == 1, "Schema 1 and schema 2 recipes require separate cooker invocations.");
+            Require(distinctSchemas == 1, "Different artifact schemas require separate cooker invocations.");
             // The manifest is the commit point: prepare and validate every artifact before writing it.
             CheckAncestry(output);
             Directory.CreateDirectory(output);
@@ -99,7 +99,7 @@ internal static class Program
                 WriteAtomic(Path.Combine(output, descriptorName), item.Descriptor, true);
                 artifacts.Add(new JsonObject { ["name"] = item.Name, ["descriptor"] = descriptorName, ["sha256"] = descriptorHash });
             }
-            int schema = prepared.All(item => ParseJson(item.Descriptor)["schemaVersion"]!.GetValue<int>() == 1) ? 1 : 2;
+            int schema = ParseJson(prepared[0].Descriptor)["schemaVersion"]!.GetValue<int>();
             byte[] manifest = Canonical(new JsonObject { ["schemaVersion"] = schema, ["backend"] = "WebGPU", ["packetVersion"] = 2, ["artifacts"] = artifacts });
             Require(manifest.Length <= MaxJsonBytes, "Manifest exceeds the JSON byte limit.");
             cancellation.Token.ThrowIfCancellationRequested();
@@ -126,27 +126,39 @@ internal static class Program
         byte[] recipeBytes = ReadBounded(recipePath, MaxJsonBytes);
         JsonObject recipe = Object(ParseJson(recipeBytes), "recipe");
         int schema = Integer(recipe, "schemaVersion");
-        Require(schema is 1 or 2, "Unsupported recipe schemaVersion.");
+        Require(schema is 1 or 2 or 3, "Unsupported recipe schemaVersion.");
         HashSet<string> keys = new(RecipeKeys, StringComparer.Ordinal);
-        if (schema == 2) keys.Add("coordinates");
+        if (schema >= 2) keys.Add("coordinates");
+        if (schema == 3) keys.Add("pass");
         Require(recipe.Count == keys.Count && recipe.All(item => keys.Contains(item.Key)), "Recipe properties must match the shader recipe schema.");
         string name = String(recipe, "name");
         Require(Regex.IsMatch(name, "^[a-z][a-z0-9-]{0,63}$", RegexOptions.CultureInvariant), "Name must be a lowercase shader identifier.");
-        string stageContext = $"material '{name}' pass 'opaque' target 'WebGPUWgsl' vertexMain/fragmentMain";
+        string stageContext = $"material '{name}' pass '{(schema == 3 ? String(recipe, "pass") : "opaque")}' source '{String(recipe, "source")}' target 'WebGPUWgsl'";
         string language = String(recipe, "sourceLanguage");
         Require(language is "WGSL" or "MaterialRecipe" or "Slang", $"{stageContext}: unsupported sourceLanguage '{language}'.");
-        Require(schema == 2 || language == "WGSL", $"{stageContext}: schema 1 supports explicit WGSL only.");
+        Require(schema >= 2 || language == "WGSL", $"{stageContext}: schema 1 supports explicit WGSL only.");
         Require(String(recipe, "target") == "WebGPUWgsl", $"{stageContext}: target must be WebGPUWgsl.");
-        Require(CanonicalString(recipe["entryPoints"]) == "{\"fragment\":\"fragmentMain\",\"vertex\":\"vertexMain\"}\n", $"{stageContext}: entry points must be vertexMain and fragmentMain.");
-        Require(String(recipe, "matrixLayout") == "column-major" && String(recipe, "semanticSchemaIdentity") == "xrengine.browser.mesh.v1", $"{stageContext}: incompatible matrix or semantic ABI.");
-        Require(CanonicalString(recipe["layout"]) == CanonicalString(Layout) && CanonicalString(recipe["pipeline"]) == CanonicalString(Pipeline), $"{stageContext}: unsupported binding, vertex, material, or pipeline ABI.");
-        if (schema == 2) Require(String(recipe, "coordinates") == Coordinates, $"{stageContext}: incompatible WebGPU coordinate convention.");
-        JsonArray features = Array(recipe["requiredFeatures"], "requiredFeatures");
-        Require(features.Count == 0, $"{stageContext}: this profile does not support optional WebGPU features.");
-        JsonObject limits = Object(recipe["requiredLimits"], "requiredLimits");
-        Require(limits.Count == MinimumLimits.Count && limits.All(item => MinimumLimits.ContainsKey(item.Key)), $"{stageContext}: unsupported requiredLimits.");
-        foreach ((string key, int minimum) in MinimumLimits)
-            Require(Integer(limits, key) >= minimum, $"{stageContext}: requiredLimits.{key} must be at least {minimum}.");
+        ShaderProgramArtifact? engineLayout = null;
+        if (schema == 3)
+        {
+            Require(language is "Slang" or "WGSL", $"{stageContext}: engine recipes require authored Slang or explicit WGSL; the frozen browser material generator is not an engine frontend.");
+            using JsonDocument layoutDocument = JsonDocument.Parse(recipeBytes);
+            try { engineLayout = ShaderProgramArtifactReader.ReadLayout(layoutDocument.RootElement, ShaderArtifact.FromWgsl(""), "recipe"); }
+            catch (InvalidDataException error) { throw new InvalidDataException($"{stageContext}: {error.Message}", error); }
+        }
+        else
+        {
+            Require(CanonicalString(recipe["entryPoints"]) == "{\"fragment\":\"fragmentMain\",\"vertex\":\"vertexMain\"}\n", $"{stageContext}: entry points must be vertexMain and fragmentMain.");
+            Require(String(recipe, "matrixLayout") == "column-major" && String(recipe, "semanticSchemaIdentity") == "xrengine.browser.mesh.v1", $"{stageContext}: incompatible matrix or semantic ABI.");
+            Require(CanonicalString(recipe["layout"]) == CanonicalString(Layout) && CanonicalString(recipe["pipeline"]) == CanonicalString(Pipeline), $"{stageContext}: unsupported binding, vertex, material, or pipeline ABI.");
+            if (schema == 2) Require(String(recipe, "coordinates") == Coordinates, $"{stageContext}: incompatible WebGPU coordinate convention.");
+            JsonArray features = Array(recipe["requiredFeatures"], "requiredFeatures");
+            Require(features.Count == 0, $"{stageContext}: this profile does not support optional WebGPU features.");
+            JsonObject limits = Object(recipe["requiredLimits"], "requiredLimits");
+            Require(limits.Count == MinimumLimits.Count && limits.All(item => MinimumLimits.ContainsKey(item.Key)), $"{stageContext}: unsupported requiredLimits.");
+            foreach ((string key, int minimum) in MinimumLimits)
+                Require(Integer(limits, key) >= minimum, $"{stageContext}: requiredLimits.{key} must be at least {minimum}.");
+        }
         JsonArray defines = Array(recipe["defines"], "defines");
         JsonArray includes = Array(recipe["includes"], "includes");
         JsonObject specialization = Object(recipe["specialization"], "specialization");
@@ -181,7 +193,7 @@ internal static class Program
         }
         else if (language == "Slang")
         {
-            Require(schema == 2, $"{stageContext}: Slang compilation needs schema 2.");
+            Require(schema >= 2, $"{stageContext}: Slang compilation needs schema 2 or later.");
             List<string> includeValues = includes.Select(node => RelativePath(ScalarString(node, "include"), "include directory")).ToList();
             Require(includeValues.Distinct(StringComparer.Ordinal).Count() == includeValues.Count, $"{stageContext}: duplicate include.");
             foreach (string include in includeValues)
@@ -189,7 +201,8 @@ internal static class Program
                 string resolved = ResolveInput(sourceRoot, include);
                 Require(Directory.Exists(resolved), $"{stageContext}: include directory does not exist: {include}.");
             }
-            SlangWgslOutput result = await SlangWgslCompiler.CompileAsync(sourceRoot, sourceRelative, includeValues, defineValues, cancellationToken);
+            SlangWgslOutput result = await SlangWgslCompiler.CompileAsync(sourceRoot, sourceRelative, includeValues, defineValues, cancellationToken,
+                Object(recipe["entryPoints"], "entryPoints").ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal));
             source = StrictUtf8.GetBytes(NormalizeLines(result.Source));
             compilerIdentity = result.CompilerIdentity;
             Require(Regex.IsMatch(compilerIdentity, "^slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant), $"{stageContext}: incompatible Slang compiler identity.");
@@ -206,10 +219,12 @@ internal static class Program
         Require(source.Length is > 0 and <= MaxSourceBytes, $"{stageContext}: emitted WGSL exceeds the source byte limit or is empty.");
         string emitted = StrictUtf8.GetString(source);
         Require(!emitted.Contains('\0') && !emitted.StartsWith('\ufeff'), $"{stageContext}: emitted WGSL contains BOM or NUL.");
-        WgslAbiVerifier.Validate(emitted, stageContext);
+        if (engineLayout is null) WgslAbiVerifier.Validate(emitted, stageContext);
+        else new WgslAbiParser(emitted, stageContext, engineLayout).Validate();
         JsonObject descriptor = new();
         foreach (string key in new[] { "schemaVersion", "name", "sourceLanguage", "target", "entryPoints", "defines", "specialization", "requiredLimits", "matrixLayout", "semanticSchemaIdentity", "layout", "pipeline" })
             descriptor[key] = recipe[key]!.DeepClone();
+        if (schema == 3) descriptor["pass"] = recipe["pass"]!.DeepClone();
         descriptor["requiredFeatures"] = new JsonArray();
         descriptor["compilerIdentity"] = schema == 1 ? "xrengine-wgsl-packager/1" : compilerIdentity;
         string emittedPath = language == "WGSL" ? (schema == 1 ? sourceRelative : sourceDependency) : name + ".wgsl";
@@ -230,6 +245,7 @@ internal static class Program
         byte[] encoded = Canonical(descriptor);
         Require(dependencies.Count <= 512, $"{stageContext}: dependency count exceeds 512.");
         Require(encoded.Length <= MaxJsonBytes, $"{stageContext}: descriptor exceeds the JSON byte limit.");
+        if (schema == 3) _ = ShaderProgramArtifactReader.Read(encoded, source);
         return new PreparedShader(name, encoded, source);
     }
 

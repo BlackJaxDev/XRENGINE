@@ -173,7 +173,7 @@ public partial class ClientNetworkingManager
                     return false;
                 }
             }
-            else if (!IsInnerFrk(payload))
+            else if (!IsInnerRealtimeFrame(payload))
             {
                 RecordUnauthorizedRejection();
                 return false;
@@ -248,7 +248,7 @@ public partial class ClientNetworkingManager
         if (_managedRootKey is null || _managedHello is null || _managedClientNonce is null || _managedServerNonce is null
             || header.SessionId != _managedIdentity.SessionId || header.Generation != _managedIdentity.Generation
             || header.CredentialEpoch != _managedIdentity.CredentialEpoch || header.AssociationId != _managedAssociationId || header.Counter != 1
-            || !IsInnerFrk(payload))
+            || !IsInnerRealtimeFrame(payload))
         {
             RecordUnauthorizedRejection();
             return false;
@@ -421,8 +421,8 @@ public partial class ClientNetworkingManager
         if (ServerIP is { } serverEndpoint)
             UnregisterUdpPeer(serverEndpoint);
     }
-    private static bool IsInnerFrk(ReadOnlySpan<byte> bytes)
-        => bytes.Length >= 3 && bytes[0] == 0x46 && bytes[1] == 0x52 && bytes[2] == 0x4B;
+    private static bool IsInnerRealtimeFrame(ReadOnlySpan<byte> bytes)
+        => bytes.Length >= 3 && bytes[..3].SequenceEqual(RealtimeWireProtocol.FrameMagic);
 
     private enum ManagedClientHandshakeState : byte { None, Hello, Commit, Established, Failed }
 }

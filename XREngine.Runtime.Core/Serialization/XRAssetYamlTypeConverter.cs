@@ -348,12 +348,28 @@ namespace XREngine
                || string.Equals(scalar.Value, "null", StringComparison.OrdinalIgnoreCase)
                || (scalar.Value.Length == 0 && scalar.Style == ScalarStyle.Plain);
 
+        private static bool AssetPathExists(string path)
+            => DirectStorageIO.Source is IRuntimeAssetCatalog catalog
+                ? catalog.TryGetAsset(path, out _)
+                : File.Exists(path);
+
         private static bool TryLoadUntrackedTextAsset(string resolvedPath, Type expectedType, out object? value)
         {
             value = null;
 
             if (!typeof(TextFile).IsAssignableFrom(expectedType))
                 return false;
+
+            if (DirectStorageIO.Source is IRuntimeAssetCatalog)
+            {
+                TextFile source = AssetSerializationServices.Current.LoadImmediate(resolvedPath, expectedType) as TextFile
+                    ?? throw new InvalidDataException($"AssetSource.TextDependencyMissing: '{resolvedPath}'.");
+                // Raw source bytes remain local to the owning shader instead of sharing its asset identity.
+                if (expectedType != typeof(TextFile))
+                    throw new NotSupportedException($"AssetSource.TextTypeUnsupported: '{expectedType}' requires a cooked object payload.");
+                value = new TextFile { Text = source.Text, FilePath = resolvedPath, Name = source.Name };
+                return true;
+            }
 
             try
             {
@@ -410,7 +426,7 @@ namespace XREngine
                         AssetSerializationServices.Current.GameAssetsPath,
                         AssetSerializationServices.Current.EngineAssetsPath,
                         out string? portablePath)
-                        && File.Exists(portablePath))
+                        && AssetPathExists(portablePath))
                     {
                         resolvedPath = portablePath;
                         return true;
@@ -423,7 +439,7 @@ namespace XREngine
                 if (Path.IsPathRooted(scalar))
                 {
                     string full = Path.GetFullPath(scalar);
-                    if (File.Exists(full))
+                    if (AssetPathExists(full))
                     {
                         resolvedPath = full;
                         resolution = ScalarPathResolution.AbsoluteExisting;
@@ -445,7 +461,7 @@ namespace XREngine
                 if (!string.IsNullOrWhiteSpace(AssetSerializationServices.Current.GameAssetsPath))
                 {
                     string candidate = Path.GetFullPath(Path.Combine(AssetSerializationServices.Current.GameAssetsPath, scalar));
-                    if (File.Exists(candidate))
+                    if (AssetPathExists(candidate))
                     {
                         resolvedPath = candidate;
                         resolution = ScalarPathResolution.Relative;
@@ -457,7 +473,7 @@ namespace XREngine
                 if (!string.IsNullOrWhiteSpace(AssetSerializationServices.Current.EngineAssetsPath))
                 {
                     string candidate = Path.GetFullPath(Path.Combine(AssetSerializationServices.Current.EngineAssetsPath, scalar));
-                    if (File.Exists(candidate))
+                    if (AssetPathExists(candidate))
                     {
                         resolvedPath = candidate;
                         resolution = ScalarPathResolution.Relative;
@@ -516,7 +532,7 @@ namespace XREngine
                 if (isEngineSegment && engineRoot is not null)
                 {
                     string candidate = Path.GetFullPath(Path.Combine(engineRoot, tail));
-                    if (File.Exists(candidate))
+                    if (AssetPathExists(candidate))
                     {
                         rebased = candidate;
                         return true;
@@ -526,7 +542,7 @@ namespace XREngine
                 if (!isEngineSegment && gameRoot is not null)
                 {
                     string candidate = Path.GetFullPath(Path.Combine(gameRoot, tail));
-                    if (File.Exists(candidate))
+                    if (AssetPathExists(candidate))
                     {
                         rebased = candidate;
                         return true;
@@ -538,7 +554,7 @@ namespace XREngine
                 if (otherRoot is not null)
                 {
                     string candidate = Path.GetFullPath(Path.Combine(otherRoot, tail));
-                    if (File.Exists(candidate))
+                    if (AssetPathExists(candidate))
                     {
                         rebased = candidate;
                         return true;
@@ -642,6 +658,8 @@ namespace XREngine
             value = ResolveExternalReference(guid, expectedType, portableReference);
             if (value is null)
             {
+                if (DirectStorageIO.Source is IRuntimeAssetCatalog)
+                    throw new InvalidDataException($"AssetSource.DependencyMissing: asset '{guid}', path '{portableReference}', type '{expectedType}' is not hydrated in this runtime catalog.");
                 // The reference target could not be resolved (asset DB does not have this ID and no
                 // backing file exists for it). Returning null here lets YamlDotNet's nullability
                 // enforcement crash on non-nullable XRAsset properties with a misleading
@@ -729,7 +747,7 @@ namespace XREngine
                 }
             }
 
-            if (!File.Exists(assetPath))
+            if (!AssetPathExists(assetPath))
                 return null;
 
             Type loadType = expectedType;
@@ -758,6 +776,16 @@ namespace XREngine
         private static bool TryResolveConcreteAssetType(string assetPath, out Type type)
         {
             type = typeof(XRAsset);
+            if (DirectStorageIO.Source is IRuntimeAssetCatalog catalog)
+            {
+                if (!catalog.TryGetAsset(assetPath, out RuntimeAssetCatalogEntry? entry))
+                    return false;
+                Type? declaredType = AotRuntimeMetadataStore.ResolveType(entry.TypeName);
+                if (declaredType is null || !typeof(XRAsset).IsAssignableFrom(declaredType))
+                    return false;
+                type = declaredType;
+                return true;
+            }
 
             string? hint = null;
             try

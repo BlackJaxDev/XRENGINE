@@ -1,5 +1,6 @@
 import { dotnet } from './_framework/dotnet.js';
 import { BrowserCanvasHost } from './browser-canvas-host.js';
+import { EngineMeshDiagnosticHost } from './diagnostics/engine-mesh-host.js';
 
 /** One runtime may create several independently owned canvas hosts. */
 export async function createBrowserRuntime() {
@@ -60,11 +61,15 @@ export async function createBrowserRuntime() {
         createComputePipeline: (id, json) => renderer(id).commands.createComputePipeline(json),
         prepareCommands: (id, json) => renderer(id).commands.prepareCommands(json),
         submitPreparedCommands: (id, handle) => renderer(id).commands.submitPreparedCommands(handle),
+        submitEngineFrame: (id, commands, uniforms) => renderer(id).commands.submitEngineFrame(commands, uniforms),
+        retireResource: (id, handle) => renderer(id).retireResource(handle),
         disposeRenderer: id => renderers.get(id)?.dispose()
     });
     const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
-    return (canvas, onState, shaderName) => new BrowserCanvasHost(
+    const createHost = (canvas, onState, shaderName) => new BrowserCanvasHost(
         exports.XREngine.Browser.BrowserSceneExports, renderers, canvas, onState, shaderName);
+    createHost.createEngineMeshDiagnostics = (canvas, onState) => new EngineMeshDiagnosticHost(
+        exports.XREngine.Browser.Diagnostics.EngineMeshDiagnosticExports, renderers, canvas, onState);
+    return createHost;
 }
-
