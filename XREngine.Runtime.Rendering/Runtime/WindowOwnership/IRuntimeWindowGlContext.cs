@@ -6,6 +6,7 @@ public interface IRuntimeWindowGlContext
     nint ContextHandle { get; }
     nint DeviceContextHandle { get; }
     long OwnerGeneration { get; }
+    /// <summary>Resolves an entry point on the graphics owner thread, returning zero when unavailable.</summary>
     nint GetProcAddress(string name);
     void MakeCurrent();
     void ClearCurrent();

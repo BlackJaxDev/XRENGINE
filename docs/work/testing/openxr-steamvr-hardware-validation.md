@@ -5,6 +5,12 @@ Branch: `feature/openxr-steamvr-parity`
 
 This report tracks the SteamVR OpenXR hardware matrix for the OpenVR parity work. It records the runnable validation lane added in this pass and the evidence that must be captured on a machine with SteamVR hardware attached.
 
+Body calibration and spectator acceptance use the additional
+[integrated behavior procedure](avatar/openxr-calibration-spectator-validation.md).
+The [October 1 Windows validation](../investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
+records software/runtime checks and rendering blockers without connected XR
+devices; it does not change the pending hardware rows below.
+
 ## Current Validation Status
 
 This agent pass validated source integration, tooling syntax, VS Code orchestration JSON, and the targeted editor build. It did not claim a physical headset pass because no SteamVR HMD/controller/tracker hardware was available through this session.

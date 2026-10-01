@@ -32,6 +32,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Software Vulkan Correctness Validation](testing/software-vulkan-validation.md)
 - [UI](ui/native-hierarchy-panel.md)
 - [VR](vr/openxr-runtime.md)
+- [VR Body Tracking and Spectator Integration](vr/openxr-body-tracking.md)
 
 ## Rendering Features
 
