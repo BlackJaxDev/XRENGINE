@@ -145,6 +145,11 @@ export class WebGpuCanvasRenderer {
             uploadPackets: 0, uploadCommands: 0, uploadBytes: 0, uploadCopiedBytes: 0, uploadArenaGrowth: 0, rejectedUploads: 0,
             frameSubmitCalls: 0, uploadSubmitCalls: 0 };
         this._lastPacketFailure = null;
+        this._firstError = null;
+        this._deviceLoss = null;
+        this._deviceDestroy = null;
+        // Reuse one record on the frame path; snapshot it only when reporting a failure.
+        this._operation = { stage: 'idle', label: '', commandIndex: -1, drawIndex: -1 };
         this._shaderArtifact = undefined;
         this._capabilities = undefined;
         this._engineOnly = false;
@@ -174,7 +179,7 @@ export class WebGpuCanvasRenderer {
 
     _assertActive(signal, lateDevice) {
         if (signal?.aborted || this._disposed || this._failed || this._deviceLost) {
-            lateDevice?.destroy();
+            if (lateDevice) this._destroyDevice(lateDevice, 'abandoned-initialization');
             if (signal?.aborted || (this._disposed && !this._failed))
                 throw new DOMException('WebGPU initialization was canceled.', 'AbortError');
             throw new Error('WebGPU device is unavailable.');
@@ -187,11 +192,56 @@ export class WebGpuCanvasRenderer {
             throw startupAbortError();
     }
 
+    _setOperation(stage, label = '', commandIndex = -1, drawIndex = -1) {
+        const operation = this._operation;
+        operation.stage = stage;
+        operation.label = label;
+        operation.commandIndex = commandIndex;
+        operation.drawIndex = drawIndex;
+    }
+
+    _recordError(reason, stage = this._operation.stage, label = this._operation.label) {
+        if (this._firstError) return;
+        const error = asError(reason);
+        this._firstError = { name: String(reason?.name ?? error.name).slice(0, 128), message: String(error.message).slice(0, 2048),
+            stack: error.stack?.slice(0, 4096) ?? '', startupStage: this._startup.stage,
+            operation: { ...this._operation, stage, label }, owner: this._owner,
+            generation: this._generation, frameSubmits: this._stats.frameSubmitCalls,
+            explicitDestroyRequested: this._deviceDestroy !== null };
+    }
+
+    _destroyDevice(device, reason) {
+        this._deviceDestroy ??= { reason, stack: new Error('WebGPU device destruction requested.').stack?.slice(0, 4096) ?? '',
+            operation: { ...this._operation }, owner: this._owner,
+            disposed: this._disposed, failed: this._failed, deviceLost: this._deviceLost };
+        device.destroy();
+    }
+
+    _observeDevice(device) {
+        device.addEventListener('uncapturederror', this._onUncapturedError);
+        device.lost.then(info => {
+            if (this._disposed || this.device !== device) return;
+            this._deviceLoss = { reason: info.reason, message: String(info.message).slice(0, 2048),
+                operation: { ...this._operation }, explicitDestroyRequested: this._deviceDestroy !== null };
+            this._deviceLost = true;
+            this._fail(new Error(`WebGPU device lost (${info.reason}): ${info.message}`));
+        }, error => { if (!this._disposed && this.device === device) this._fail(error); });
+    }
+
+    getFailureDiagnostics() {
+        return { firstError: this._firstError, deviceLoss: this._deviceLoss, deviceDestroy: this._deviceDestroy,
+            lastOperation: { ...this._operation }, startupStage: this._startup.stage,
+            owner: this._owner, generation: this._generation, frameSubmits: this._stats.frameSubmitCalls,
+            draws: this._stats.draws, disposed: this._disposed, failed: this._failed };
+    }
+
     _fail(reason) {
         if (this._disposed || this._failed) return;
+        this._recordError(reason);
         this._failed = true;
         const error = asError(reason);
-        this.dispose();
+        try { this.dispose(); }
+        catch (cleanupError) { console.error('WebGPU cleanup after renderer failure:', cleanupError); }
         // A synchronous import may still own managed spans. Notify the host only
         // after that stack unwinds; its captured epoch rejects a stopped/replaced host.
         queueMicrotask(() => {
@@ -268,12 +318,7 @@ export class WebGpuCanvasRenderer {
             this.device = device;
             this.pipelineCache = new GpuPipelineCache(device);
             const capabilities = captureDeviceCapabilities(device, deviceRequirements);
-            device.addEventListener('uncapturederror', this._onUncapturedError);
-            device.lost.then(info => {
-                if (this._disposed || this.device !== device) return;
-                this._deviceLost = true;
-                this._fail(new Error(`WebGPU device lost (${info.reason}): ${info.message}`));
-            }, error => { if (!this._disposed && this.device === device) this._fail(error); });
+            this._observeDevice(device);
 
             this.context = this.canvas.getContext('webgpu');
             if (!this.context) throw new Error('WebGPU canvas context is unavailable.');
@@ -353,6 +398,7 @@ export class WebGpuCanvasRenderer {
             this._ready = true;
             this.onState('ready');
         } catch (error) {
+            if (error?.name !== 'AbortError') this._recordError(error);
             if (this._startup.stage !== 'ready') this._startup.stage = error?.name === 'AbortError' ? 'canceled' : 'failed';
             if (error?.name === 'AbortError' && (signal?.aborted || this._disposed)) this.dispose();
             else this._fail(error);
@@ -379,21 +425,19 @@ export class WebGpuCanvasRenderer {
             if (!globalThis.isSecureContext || !navigator.gpu)
                 throw new Error('WebGPU requires a secure context and navigator.gpu.');
             this.onState('requesting-adapter');
+            this._startup.stage = 'requesting-adapter';
             const adapter = await navigator.gpu.requestAdapter();
             this._assertActive(signal);
             if (!adapter) throw new Error('No WebGPU adapter is available.');
             const requirements = { requiredFeatures: [], requiredLimits: {} };
             this.onState('requesting-device');
+            this._startup.stage = 'requesting-device';
             const device = await adapter.requestDevice(requirements);
             this._assertActive(signal, device);
             this.device = device;
             this.pipelineCache = new GpuPipelineCache(device);
-            device.addEventListener('uncapturederror', this._onUncapturedError);
-            device.lost.then(info => {
-                if (this._disposed || this.device !== device) return;
-                this._deviceLost = true;
-                this._fail(new Error(`WebGPU device lost (${info.reason}): ${info.message}`));
-            }, error => { if (!this._disposed && this.device === device) this._fail(error); });
+            this._observeDevice(device);
+            this._startup.stage = 'configuring-context';
             this.context = this.canvas.getContext('webgpu');
             if (!this.context) throw new Error('WebGPU canvas context is unavailable.');
             this.format = navigator.gpu.getPreferredCanvasFormat();
@@ -404,6 +448,7 @@ export class WebGpuCanvasRenderer {
             this._startup.stage = 'ready';
             this.onState('ready');
         } catch (error) {
+            if (error?.name !== 'AbortError') this._recordError(error);
             this._startup.stage = error?.name === 'AbortError' ? 'canceled' : 'failed';
             if (error?.name === 'AbortError' && (signal?.aborted || this._disposed)) this.dispose();
             else this._fail(error);
@@ -452,7 +497,9 @@ export class WebGpuCanvasRenderer {
             this.depthView = undefined;
             this._retire(oldDepth);
             if (width > 0 && height > 0) {
+                this._setOperation('configure-canvas');
                 this.context.configure({ device: this.device, format: this.format, alphaMode: 'opaque' });
+                this._setOperation('create-canvas-depth');
                 this.depthTexture = this.device.createTexture({ size: [width, height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
                 this.depthView = this.depthTexture.createView();
                 this._configured = true;
@@ -956,7 +1003,7 @@ export class WebGpuCanvasRenderer {
         try { this._whiteTexture?.destroy(); } catch (error) { console.error(error); }
         try { this.uniformBuffer?.destroy(); } catch (error) { console.error(error); }
         try { this.device?.removeEventListener('uncapturederror', this._onUncapturedError); } catch (error) { console.error(error); }
-        try { this.device?.destroy(); } catch (error) { console.error(error); }
+        try { if (this.device) this._destroyDevice(this.device, 'renderer-dispose'); } catch (error) { console.error(error); }
         this.bindGroup = undefined;
         this._viewLayout = undefined;
         this._materialLayout = undefined;

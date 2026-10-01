@@ -12,6 +12,8 @@ export class EngineMeshDiagnosticHost {
         this.creation = null;
         this.pendingStop = Promise.resolve();
         this.request = 0;
+        this.stage = 'idle';
+        this.failure = null;
         this.frame = this.frame.bind(this);
     }
 
@@ -19,6 +21,8 @@ export class EngineMeshDiagnosticHost {
         const epoch = ++this.epoch;
         await this.stop(false);
         if (epoch !== this.epoch) return;
+        this.failure = null;
+        this.stage = 'loading-shader-artifact';
         if (!assetManifestUrl) throw new Error('Engine mesh diagnostics require a cooked engine asset manifest.');
         const controller = new AbortController();
         this.controller = controller;
@@ -37,6 +41,7 @@ export class EngineMeshDiagnosticHost {
             if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
             const source = await sourceResponse.text();
             if (controller.signal.aborted || epoch !== this.epoch) return;
+            this.stage = 'creating-engine-session';
             const creation = this.exports.CreateAsync(this.canvas.id, String(assetManifestUrl), descriptorJson, source);
             this.creation = creation;
             let session;
@@ -50,11 +55,14 @@ export class EngineMeshDiagnosticHost {
                 'browser-unlit', 'CpuDirect', 'Cpu');
             this.renderer = renderer;
             try {
+                this.stage = 'initializing-device';
                 await renderer.initializeEngine(controller.signal);
                 if (controller.signal.aborted || epoch !== this.epoch) { renderer.dispose(); return; }
                 renderer.setOwner(this.session);
                 this.renderers.set(this.session, renderer);
+                this.stage = 'resizing-canvas';
                 const generation = renderer.resize(512, 512);
+                this.stage = 'initializing-engine-graphics';
                 this.exports.InitializeGraphics(this.session, renderer.colorFormat, 512, 512, generation);
                 this.startedAt = performance.now();
                 this.onState('Preparing real engine mesh resources');
@@ -65,6 +73,7 @@ export class EngineMeshDiagnosticHost {
             }
         } catch (error) {
             if (controller.signal.aborted || epoch !== this.epoch) return;
+            this.fail(error);
             throw error;
         }
     }
@@ -73,7 +82,9 @@ export class EngineMeshDiagnosticHost {
         this.request = 0;
         if (!this.session) return;
         try {
+            this.stage = 'engine-frame';
             const ready = this.exports.Frame(this.session);
+            this.stage = 'waiting-for-next-frame';
             if (ready) this.onState('Engine mesh depth diagnostic rendered; RuntimeWorld play and physics are unverified');
             else if (performance.now() - this.startedAt > 45000)
                 throw new Error(`Engine mesh depth diagnostic did not submit all three expected mesh draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
@@ -84,11 +95,31 @@ export class EngineMeshDiagnosticHost {
     statistics() { return this.renderer?.getStatistics() ?? null; }
 
     fail(error) {
-        this.onState(`Failed: ${error.message ?? error}`);
+        // Capture before Stop removes the renderer and managed fixture; cleanup and
+        // delayed device-loss callbacks must not replace the original failure.
+        if (this.failure) return;
+        let frameStatus = null;
+        if (this.session) {
+            try { frameStatus = String(this.exports.GetFrameStatus(this.session)).slice(0, 2048); }
+            catch (statusError) { frameStatus = `Unavailable: ${statusError?.message ?? statusError}`.slice(0, 2048); }
+        }
+        const renderer = this.renderer?.getFailureDiagnostics() ?? null;
+        const message = String(error?.message ?? error).slice(0, 2048);
+        this.failure = { message, stack: String(error?.stack ?? '').slice(0, 4096),
+            stage: this.stage, session: this.session, frameStatus, renderer };
+        console.error('Engine mesh diagnostic failed:', JSON.stringify({ ...this.failure, renderer: undefined }));
+        if (renderer) {
+            // Separate bounded records remain readable in browser console artifacts.
+            console.error('WebGPU first error:', JSON.stringify(renderer.firstError));
+            console.error('WebGPU device loss:', JSON.stringify(renderer.deviceLoss));
+            console.error('WebGPU device destruction:', JSON.stringify(renderer.deviceDestroy));
+            console.error('WebGPU failure state:', JSON.stringify({ ...renderer, firstError: undefined, deviceLoss: undefined, deviceDestroy: undefined }));
+        }
+        this.onState(`Failed: ${message}`);
         try {
-            void this.stop().catch(cleanup => this.onState(`Failed: ${error.message ?? error}; cleanup failed: ${cleanup.message ?? cleanup}`));
+            void this.stop().catch(cleanup => this.onState(`Failed: ${message}; cleanup failed: ${String(cleanup?.message ?? cleanup).slice(0, 2048)}`));
         } catch (cleanup) {
-            this.onState(`Failed: ${error.message ?? error}; cleanup failed: ${cleanup.message ?? cleanup}`);
+            this.onState(`Failed: ${message}; cleanup failed: ${String(cleanup?.message ?? cleanup).slice(0, 2048)}`);
         }
     }
 
