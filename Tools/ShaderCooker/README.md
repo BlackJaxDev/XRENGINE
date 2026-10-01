@@ -54,6 +54,16 @@ in a separate invocation. An engine recipe must use authored `Slang` or explicit
 `WGSL`; `MaterialRecipe` remains the frozen fixture generator and is rejected for
 engine artifacts.
 
+Engine recipes may declare an exact cooked material selector with an optional
+`materialVariant` object containing `semantic`, `semanticVersion`,
+`vertexProfile`, and `outputProfile`. The recipe's `target` and `pass` complete
+the key. Only the supported `StandardLitColor` revision 1 semantic is admitted.
+The declaration is copied into the hash-owned shader descriptor and emitted as
+an explicit `materialVariants` reference in the cooker manifest. Recipes without
+the declaration emit no variant reference. Browser publishing carries these
+references only when the selected world includes the exact descriptor hash;
+unknown or custom materials remain unsupported without an explicit companion.
+
 ```sh
 dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj -- --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --source-root Build/CommonAssets/Shaders/WebGPU --output <artifact-output>
 ```

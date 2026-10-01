@@ -10,7 +10,7 @@ namespace XREngine.Scene
 {
     public partial class Lights3DCollection
     {
-        public void Clear()
+        public void Clear(bool disposeProbeTree = false)
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.Clear");
 
@@ -26,7 +26,10 @@ namespace XREngine.Scene
 
             // cached data derived from probe list
             _cells = null;
-            LightProbeTree.Remake(new AABB());
+            if (disposeProbeTree)
+                LightProbeTree.Dispose();
+            else
+                LightProbeTree.Remake(new AABB());
             IBLCaptured = false;
         }
 

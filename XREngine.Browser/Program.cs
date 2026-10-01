@@ -9,7 +9,7 @@ internal static class Program
     {
         BrowserStaticRegistrations.Initialize();
         BrowserRendererComposition.Initialize();
-        BrowserEngineExports.InstallPhysicsSceneFactory(static () => new JoltPhysicsBackendModule().CreateScene());
+        BrowserEngineExports.InstallPhysicsBackend(new JoltPhysicsBackendModule());
         WebAudioTransport.Register();
         Console.WriteLine("XRENGINE browser runtime loaded.");
     }

@@ -5,6 +5,8 @@ namespace XREngine.Core.Files;
 
 public static class RenderingPublishedCookedAssetRegistration
 {
+    // Mesh and texture cooked payloads contain their buffers/pixels rather than
+    // separate XRAsset references.
     public static IDisposable Install()
         => RegistrationLeaseGroup.Create(static leases =>
         {
@@ -16,11 +18,13 @@ public static class RenderingPublishedCookedAssetRegistration
                 typeof(XRMesh),
                 static asset => RuntimeCookedBinarySerializer.Serialize((XRMesh)asset),
                 static (payload, assetType) => RuntimeCookedBinarySerializer.Deserialize(assetType, payload),
-                "XREngine.Runtime.Rendering"));
+                "XREngine.Runtime.Rendering",
+                static _ => Array.Empty<PublishedCookedAssetDependency>()));
             leases.Add(PublishedCookedAssetRegistry.Register(
                 typeof(XRTexture2D),
                 static asset => RuntimeCookedBinarySerializer.Serialize((XRTexture2D)asset),
                 static (payload, assetType) => RuntimeCookedBinarySerializer.Deserialize(assetType, payload),
-                "XREngine.Runtime.Rendering"));
+                "XREngine.Runtime.Rendering",
+                static _ => Array.Empty<PublishedCookedAssetDependency>()));
         });
 }

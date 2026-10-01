@@ -84,3 +84,5 @@
 # Keep hash-pinned patches byte-stable and preserve mandatory blank context-line prefixes.
 /Tools/Dependencies/JoltBrowser/managed-lifetime.patch text eol=lf -whitespace
 /Tools/Dependencies/JoltBrowser/managed-callback-abi.patch text eol=lf -whitespace
+/Tools/Dependencies/JoltBrowser/managed-body-properties-abi.patch text eol=lf -whitespace
+/Tools/Dependencies/JoltBrowser/managed-body-query-abi.patch text eol=lf -whitespace

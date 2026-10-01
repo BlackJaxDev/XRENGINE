@@ -10,6 +10,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Rendering;
 using XREngine.Data.Geometry;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
@@ -26,6 +27,23 @@ internal static class RollingBallWorldCookedSerializer
     private const uint Magic = 0x4D425752;
     private const int Version = 5;
     private const int MaximumCollectionCount = 16_384;
+
+    /// <summary>Lists file references emitted by the version-five world serializer.</summary>
+    public static IReadOnlyList<PublishedCookedAssetDependency> GetExternalDependencies(RollingBallWorldAsset world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        string? skyboxPath = world.Settings.SkyboxTexturePath;
+        if (string.IsNullOrWhiteSpace(skyboxPath))
+            return Array.Empty<PublishedCookedAssetDependency>();
+        if (!AssetReferencePath.IsPortable(skyboxPath)
+            && !skyboxPath.StartsWith("/game/", StringComparison.Ordinal)
+            && !skyboxPath.StartsWith("/engine/", StringComparison.Ordinal))
+        {
+            throw new NotSupportedException(
+                "The Rolling Ball skybox path must use a portable game or engine asset reference for browser cooking.");
+        }
+        return [new PublishedCookedAssetDependency(skyboxPath, typeof(XRAsset))];
+    }
 
     // VR tags remain readable for previously cooked worlds. New authored worlds keep
     // the optional VR rig in the desktop host rather than in the shared payload.

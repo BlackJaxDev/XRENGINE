@@ -13,15 +13,17 @@ export class EngineCanvasHost {
         this.input = input;
         this.onState = onState;
         this.epoch = 0;
+        this.firstFrameSeconds = 0;
         this.frame = this.frame.bind(this);
     }
 
     async start(manifestUrl) {
-        await this.stop();
+        const epoch = ++this.epoch;
+        await this.stop(false);
+        if (epoch !== this.epoch) return;
         const prior = canvasOwners.get(this.canvas);
         if (prior && prior !== this) throw new Error('The engine canvas already has an owner.');
         canvasOwners.set(this.canvas, this);
-        const epoch = ++this.epoch;
         const controller = new AbortController();
         this.controller = controller;
         this.onState('loading', 'Loading the published engine world…');
@@ -76,6 +78,15 @@ export class EngineCanvasHost {
         this.canvas.addEventListener('blur', refresh, { signal });
     }
 
+    setPageHidden(hidden) {
+        this.pageHidden = Boolean(hidden);
+        // A back/forward-cache transition may precede GPU initialization. Keep
+        // the state so that late startup never starts a hidden frame clock.
+        if (this.renderer && this.session) {
+            try { this.syncSurface(); } catch (error) { this.fail(error); }
+        }
+    }
+
     syncSurface() {
         const renderer = this.renderer;
         if (!renderer || !this.session) return;
@@ -88,7 +99,7 @@ export class EngineCanvasHost {
             ? Math.max(1, Math.min(maximum, Math.round(bounds.width * ratio))) : 0;
         const height = width > 0 ? Math.max(1, Math.min(maximum, Math.round(bounds.height * ratio))) : 0;
         const generation = renderer.resize(width, height);
-        const visible = !document.hidden && !this.frozen;
+        const visible = !document.hidden && !this.frozen && !this.pageHidden;
         const focused = document.hasFocus() && document.activeElement === this.canvas;
         this.engine.UpdateCanvasSurface(Math.max(0, bounds.width), Math.max(0, bounds.height),
             width, height, ratio, generation, visible, focused, attached);
@@ -121,9 +132,17 @@ export class EngineCanvasHost {
             const elapsed = this.previousFrame === undefined ? 0 : Math.max(0, (now - this.previousFrame) / 1000);
             this.previousFrame = now;
             if (!this.engine.Step(elapsed)) throw new Error('The engine caller-thread loop stopped.');
-            if (!this.presented && this.engine.HasPresentedCanvasFrame()) {
-                this.presented = true;
-                this.onState('running', `Engine world ready: ${this.detail}`);
+            if (!this.presented) {
+                const state = this.engine.GetCanvasPreparationState();
+                if (state < 0) throw new Error(this.engine.GetCanvasRenderingStatus());
+                if (state > 0) {
+                    this.presented = true;
+                    this.onState('running', `Engine world ready: ${this.detail}`);
+                } else {
+                    this.firstFrameSeconds += elapsed;
+                    if (this.firstFrameSeconds > 45)
+                        throw new Error(`First-frame preparation exceeded 45 seconds. ${this.engine.GetCanvasRenderingStatus()}`);
+                }
             }
             if (!this.request) this.request = requestAnimationFrame(this.frame);
         } catch (error) { this.fail(error); }
@@ -145,8 +164,8 @@ export class EngineCanvasHost {
         });
     }
 
-    async stop() {
-        const stoppedEpoch = ++this.epoch;
+    async stop(supersede = true) {
+        const stoppedEpoch = supersede ? ++this.epoch : this.epoch;
         this.controller?.abort();
         this.controller = null;
         if (this.request) cancelAnimationFrame(this.request);
@@ -178,6 +197,7 @@ export class EngineCanvasHost {
         if (this.epoch === stoppedEpoch) {
             this.detail = null;
             this.presented = false;
+            this.firstFrameSeconds = 0;
             this.failed = false;
         }
     }

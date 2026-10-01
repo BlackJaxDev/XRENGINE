@@ -27,6 +27,8 @@ public static class RollingBallRuntimeRegistration
             static asset => RollingBallWorldCookedSerializer.Serialize((RollingBallWorldAsset)asset),
             static (payload, assetType) => assetType == typeof(RollingBallWorldAsset)
                 ? RollingBallWorldCookedSerializer.Deserialize(payload)
-                : null);
+                : null,
+            ownerName: null,
+            dependencies: static asset => RollingBallWorldCookedSerializer.GetExternalDependencies((RollingBallWorldAsset)asset));
     }
 }

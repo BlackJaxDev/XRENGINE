@@ -68,6 +68,7 @@ public sealed class RuntimeWorldHost : IDisposable
             {
                 afterTargetAssigned?.Invoke();
                 RenderWorld.BindSettings(targetWorld.Settings);
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(targetWorld.Settings);
                 SubscribeToWorldSettings(targetWorld);
             });
@@ -89,12 +90,11 @@ public sealed class RuntimeWorldHost : IDisposable
             beforeNodeActivation: () =>
             {
                 RenderWorld.BindSettings(TargetWorld.Settings);
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(TargetWorld.Settings);
                 RenderWorld.Lights.RebuildCachesFromWorld();
                 RenderWorld.VisualScene.Initialize();
                 _visualSceneInitialized = true;
-                Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
-                _physicsInitialized = true;
                 RenderWorld.VisualScene.GenericRenderTree.Swap();
                 return Task.CompletedTask;
             },
@@ -154,6 +154,7 @@ public sealed class RuntimeWorldHost : IDisposable
             {
                 afterTargetAssigned?.Invoke();
                 RenderWorld.BindSettings(targetWorld.Settings);
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(targetWorld.Settings);
                 SubscribeToWorldSettings(targetWorld);
             });
@@ -236,6 +237,16 @@ public sealed class RuntimeWorldHost : IDisposable
 
     private void ProcessDirtyTransforms()
         => CoreWorld.ProcessDirtyTransforms(Engine.EffectiveSettings.RecalcChildMatricesLoopType);
+
+    /// <summary>Prepares native resources before world assignment can activate components.</summary>
+    private void EnsurePhysicsInitialized()
+    {
+        if (_physicsInitialized)
+            return;
+
+        Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
+        _physicsInitialized = true;
+    }
 
     private void TearDownBackends()
     {

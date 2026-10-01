@@ -13,6 +13,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderCompileTarget.cs" Link="Shared/ShaderCompileTarget.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Objects/Materials/EngineMaterialSemantic.cs" Link="Shared/EngineMaterialSemantic.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Objects/Materials/EngineMaterialSemanticIdentity.cs" Link="Shared/EngineMaterialSemanticIdentity.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/EngineMaterialVariantKey.cs" Link="Shared/EngineMaterialVariantKey.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderArtifact.cs" Link="Shared/ShaderArtifact.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifact.cs" Link="Shared/ShaderProgramArtifact.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/IShaderProgramArtifactResolver.cs" Link="Shared/IShaderProgramArtifactResolver.cs" />

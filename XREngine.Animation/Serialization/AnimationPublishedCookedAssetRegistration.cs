@@ -35,11 +35,14 @@ public static class AnimationPublishedCookedAssetRegistration
     private static IDisposable Register(
         Type assetType,
         PublishedCookedAssetSerializeDelegate serialize)
+        // AnimationClip models store curves and members in the payload; motion models
+        // embed nested clips and blend trees. None of these codecs emits file references.
         => PublishedCookedAssetRegistry.Register(
             assetType,
             serialize,
             static (payload, type) => Deserialize(payload, type),
-            "XREngine.Animation");
+            "XREngine.Animation",
+            static _ => Array.Empty<PublishedCookedAssetDependency>());
 
     private static object? Deserialize(byte[] payload, Type assetType)
     {

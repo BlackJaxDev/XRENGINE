@@ -58,11 +58,15 @@ namespace XREngine.Scene.Physics.Jolt
         private Dictionary<BodyID, JoltRigidActor> _rigidActors = new();
         private Dictionary<BodyID, JoltStaticRigidBody> _staticBodies = new();
         private Dictionary<BodyID, JoltDynamicRigidBody> _dynamicBodies = new();
+        private readonly Dictionary<BodyID, JoltActor> _allocatedActors = new();
         private readonly HashSet<IAbstractJoint> _joints = [];
         private BodyID _worldAnchorBodyID = BodyID.Invalid;
 
         public PhysicsSystem? PhysicsSystem => _physicsSystem;
         public JobSystem? JobSystem => _jobSystem;
+
+        /// <summary>Native actor allocations owned by this scene, including temporarily detached bodies.</summary>
+        public int AllocatedActorCount => _allocatedActors.Count;
 
         public JoltStaticRigidBody? CreateStaticRigidBody(
             IPhysicsGeometry geometry,
@@ -168,8 +172,9 @@ namespace XREngine.Scene.Physics.Jolt
                     return null;
                 }
 
-                JoltStaticRigidBody joltBody = new(bodyID);
+                JoltStaticRigidBody joltBody = new(this, bodyID);
                 joltBody.AttachShapeMetadata(metadata);
+                _allocatedActors.Add(bodyID, joltBody);
                 AddActor(joltBody);
                 return joltBody;
             }
@@ -210,8 +215,9 @@ namespace XREngine.Scene.Physics.Jolt
                     return null;
                 }
 
-                JoltDynamicRigidBody joltBody = new(bodyID, createInfo?.GravityEnabled ?? true);
+                JoltDynamicRigidBody joltBody = new(this, bodyID, createInfo?.GravityEnabled ?? true);
                 joltBody.AttachShapeMetadata(metadata);
+                _allocatedActors.Add(bodyID, joltBody);
                 AddActor(joltBody);
                 return joltBody;
             }
@@ -390,6 +396,10 @@ namespace XREngine.Scene.Physics.Jolt
         {
             if (actor is not JoltActor joltActor)
                 return;
+
+            ObjectDisposedException.ThrowIf(joltActor.IsDestroyed, joltActor);
+            if (!ReferenceEquals(joltActor.AllocationOwner, this))
+                throw new InvalidOperationException("A Jolt body can only be attached to the physics system that allocated it.");
             
             if (_physicsSystem is null)
                 return;
@@ -446,10 +456,11 @@ namespace XREngine.Scene.Physics.Jolt
             foreach (IJoltCharacterController controller in _characterControllers.ToArray())
                 controller.RequestRelease();
 
-            // Remove all actors
-            foreach (var actor in _actors.Values.ToArray())
+            // Allocation ownership survives deactivation and temporary scene detachment.
+            foreach (var actor in _allocatedActors.Values.ToArray())
                 actor.Destroy();
             
+            _allocatedActors.Clear();
             _actors.Clear();
             _rigidActors.Clear();
             _staticBodies.Clear();
@@ -1022,7 +1033,9 @@ namespace XREngine.Scene.Physics.Jolt
             if (actor is not JoltActor joltActor)
                 return;
             
-            if (_physicsSystem is null)
+            if (_physicsSystem is null || joltActor.IsDestroyed
+                || !_actors.TryGetValue(joltActor.BodyID, out JoltActor? attached)
+                || !ReferenceEquals(attached, joltActor))
                 return;
 
             _physicsSystem.BodyInterface.RemoveBody(joltActor.BodyID);
@@ -1038,7 +1051,7 @@ namespace XREngine.Scene.Physics.Jolt
         {
             ArgumentNullException.ThrowIfNull(actor);
 
-            if (_physicsSystem is null || actor.Scene != this || actor.BodyID.IsInvalid)
+            if (_physicsSystem is null || !ReferenceEquals(actor.AllocationOwner, this) || actor.BodyID.IsInvalid)
                 return;
 
             BodyID bodyID = actor.BodyID;
@@ -1051,9 +1064,17 @@ namespace XREngine.Scene.Physics.Jolt
             _rigidActors.Remove(bodyID);
             _staticBodies.Remove(bodyID);
             _dynamicBodies.Remove(bodyID);
+            _allocatedActors.Remove(bodyID);
             if (actor is JoltRigidActor rigidActor)
                 rigidActor.ReleaseShapeMetadata();
-            actor.OnRemovedFromScene(this);
+            XRComponent? component = actor.GetOwningComponent();
+            actor.OnNativeBodyDestroyed();
+            if (actor is JoltRigidActor ownedBody)
+                ownedBody.OwningComponent = null;
+            if (component is DynamicRigidBodyComponent dynamicComponent && ReferenceEquals(dynamicComponent.RigidBody, actor))
+                dynamicComponent.RigidBody = null;
+            else if (component is StaticRigidBodyComponent staticComponent && ReferenceEquals(staticComponent.RigidBody, actor))
+                staticComponent.RigidBody = null;
         }
 
         public static ObjectLayer GetObjectLayer(uint group, uint mask)

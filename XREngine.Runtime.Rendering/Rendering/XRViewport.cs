@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
@@ -62,6 +63,7 @@ namespace XREngine.Rendering
         /// Used to link input handling and player-specific rendering (e.g., split-screen scenarios).
         /// </summary>
         private IPawnController? _associatedPlayer = null;
+        private IRuntimeLocalPlayerInputSource? _inputSource;
 
         /// <summary>
         /// The screen-space rectangular region where this viewport renders within the parent window.
@@ -380,10 +382,40 @@ namespace XREngine.Rendering
             => _frameViewHistoryLedger.CaptureSnapshot();
 
         WindowInputSnapshot IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()
-            => Window?.ConsumeLatestWindowInputSnapshot() ?? default;
+            => _inputSource?.ConsumeInputSnapshot() ?? Window?.ConsumeLatestWindowInputSnapshot() ?? default;
 
         void IRuntimeLocalPlayerViewport.RequestMouseCapture(bool captured)
-            => Window?.RequestMouseCapture(captured);
+        {
+            if (_inputSource is { } inputSource)
+                inputSource.RequestMouseCapture(captured);
+            else
+                Window?.RequestMouseCapture(captured);
+        }
+
+        /// <summary>
+        /// Binds an externally owned input source to this viewport. Without a binding,
+        /// desktop viewports continue to read input from their window.
+        /// </summary>
+        public void BindInputSource(IRuntimeLocalPlayerInputSource? inputSource)
+        {
+            if (_destroyed)
+                throw new InvalidOperationException("A destroyed viewport cannot bind an input source.");
+            if (ReferenceEquals(_inputSource, inputSource))
+                return;
+
+            try
+            {
+                if (_inputSource is { } previousSource)
+                    previousSource.RequestMouseCapture(false);
+                else if (inputSource is not null)
+                    Window?.RequestMouseCapture(false);
+            }
+            finally
+            {
+                // A failed capture release must not keep routing through a stale source.
+                SetField(ref _inputSource, inputSource);
+            }
+        }
 
         /// <summary>
         /// Optional override for the world instance to render.
@@ -510,12 +542,31 @@ namespace XREngine.Rendering
                 if (_associatedPlayer == value)
                     return;
 
-                if (_associatedPlayer is not null)
+                if (_associatedPlayer is not null && ReferenceEquals(_associatedPlayer.Viewport, this))
                     _associatedPlayer.Viewport = null;
                 SetField(ref _associatedPlayer, value);
                 if (_associatedPlayer is not null)
                     _associatedPlayer.Viewport = this;
             }
+        }
+
+        /// <summary>
+        /// Associates a local player with this viewport, keeping the player's camera,
+        /// input routing, and viewport ownership on the same render viewport.
+        /// </summary>
+        public void BindLocalPlayer(IPawnController? player)
+        {
+            if (_destroyed)
+                throw new InvalidOperationException("A destroyed viewport cannot bind a player.");
+            if (player is { IsLocal: false })
+                throw new ArgumentException("Only a local player can be bound to a viewport.", nameof(player));
+
+            if (player?.Viewport is XRViewport previousViewport &&
+                !ReferenceEquals(previousViewport, this) &&
+                ReferenceEquals(previousViewport.AssociatedPlayer, player))
+                previousViewport.AssociatedPlayer = null;
+
+            AssociatedPlayer = player;
         }
 
         /// <summary>
@@ -1005,6 +1056,9 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
+            Exception? inputDetachError = null;
+            try { BindInputSource(null); }
+            catch (Exception error) { inputDetachError = error; }
             _destroyed = true;
             SetSwapBuffersSubscription(false);
             SetCollectVisibleSubscription(false);
@@ -1016,6 +1070,8 @@ namespace XREngine.Rendering
             CameraComponent = null;
             Camera = null;
             Window = null;
+            if (inputDetachError is not null)
+                ExceptionDispatchInfo.Capture(inputDetachError).Throw();
         }
 
         /// <summary>

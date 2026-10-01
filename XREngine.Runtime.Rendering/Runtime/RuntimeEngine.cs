@@ -17,7 +17,17 @@ public static partial class RuntimeEngine
         Debug.IsRenderThreadEvaluator = () => IsRenderThread;
     }
 
-    private static readonly EventList<XRWindow> ActiveWindows = [];
+    private static readonly EventList<XRWindow> ActiveWindows = CreateActiveWindows();
+
+    private static EventList<XRWindow> CreateActiveWindows()
+    {
+        // The process registry can be initialized while a catalog graph is hydrating.
+        // Its lifetime is independent of that graph, including a failed load.
+        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        EventList<XRWindow> windows = [];
+        publication.Complete();
+        return windows;
+    }
     private static int _renderThreadId;
     private static int _windowThreadId;
 

@@ -3,6 +3,7 @@ import { CONTENT_LIMITS, contentManifestUrl } from './content-manifest.js';
 
 const sources = new Map();
 let nextSource = 0;
+const validSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}(?![\s\S])/.test(value);
 
 function requireSource(id) {
     const source = sources.get(id);
@@ -12,7 +13,7 @@ function requireSource(id) {
 
 function assetPath(path) {
     if (typeof path !== 'string' || path.length > 1024
-        || !/^\/(engine|game)\/[A-Za-z0-9_. /-]+$/.test(path)
+        || !/^\/(engine|game)\/[A-Za-z0-9_. /-]+(?![\s\S])/.test(path)
         || path.split('/').slice(1).some(part => !part || part === '.' || part === '..'))
         throw new Error(`AssetSource.InvalidPath: '${path}'.`);
     return path;
@@ -31,7 +32,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         if (foldedPaths.has(entry.path.toLowerCase()) || typeof entry.type !== 'string' || !entry.type || entry.type.length > 1024
             || !['cooked-binary', 'yaml', 'utf8-text'].includes(entry.encoding)
             || !Number.isSafeInteger(entry.bytes) || entry.bytes < 1 || entry.bytes > CONTENT_LIMITS.payloadBytes
-            || !/^[a-f0-9]{64}$/.test(entry.hash) || entry.url !== `payload/${entry.hash}.bin`
+            || !validSha256(entry.hash) || entry.url !== `payload/${entry.hash}.bin`
             || !Array.isArray(entry.dependencies) || entry.dependencies.length > CONTENT_LIMITS.dependencies
             || new Set(entry.dependencies).size !== entry.dependencies.length)
             throw new Error(`AssetSource.InvalidEntry: '${entry.path}'.`);
@@ -48,19 +49,38 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         assetPath(value.startupSettings);
         if (!assets.has(value.startupSettings)) throw new Error('AssetSource.StartupSettingsMissing.');
     }
+    const shaderIdentities = new Set();
     if (value.shaderArtifacts !== undefined && value.shaderArtifacts !== null) {
         if (!Array.isArray(value.shaderArtifacts) || value.shaderArtifacts.length > 256)
             throw new Error('AssetSource.ShaderCatalogBudgetExceeded.');
-        const identities = new Set();
         for (const shader of value.shaderArtifacts) {
-            if (!shader || !/^[a-f0-9]{64}$/.test(shader.identity) || identities.has(shader.identity))
+            if (!shader || !validSha256(shader.identity) || shaderIdentities.has(shader.identity))
                 throw new Error('AssetSource.ShaderIdentityInvalid.');
             assetPath(shader.descriptor); assetPath(shader.source);
             const descriptor = assets.get(shader.descriptor), source = assets.get(shader.source);
             if (!descriptor || !source || descriptor.encoding !== 'utf8-text' || source.encoding !== 'utf8-text'
                 || descriptor.hash !== shader.identity)
                 throw new Error('AssetSource.ShaderPayloadMissingOrMismatched.');
-            identities.add(shader.identity);
+            shaderIdentities.add(shader.identity);
+        }
+    }
+    if (value.materialVariants !== undefined) {
+        if (!Array.isArray(value.materialVariants) || value.materialVariants.length > 256)
+            throw new Error('AssetSource.MaterialVariantBudgetExceeded.');
+        const keys = new Set();
+        const profile = /^[a-z][a-z0-9.-]{0,63}(?![\s\S])/;
+        const validProfile = value => typeof value === 'string' && profile.test(value);
+        for (const variant of value.materialVariants) {
+            if (!variant || Object.keys(variant).length !== 7
+                || variant.semantic !== 'StandardLitColor' || variant.semanticVersion !== 1
+                || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
+                || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
+                || !shaderIdentities.has(variant.descriptorIdentity))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            const key = [variant.semantic, variant.semanticVersion, variant.target, variant.pass,
+                variant.vertexProfile, variant.outputProfile].join('\u001f');
+            if (keys.has(key)) throw new Error('AssetSource.MaterialVariantDuplicateKey.');
+            keys.add(key);
         }
     }
     const heights = new Map();

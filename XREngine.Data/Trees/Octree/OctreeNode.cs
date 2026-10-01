@@ -38,6 +38,7 @@ namespace XREngine.Data.Trees
             foreach (T item in _items)
                 item.OctreeNode = null;
             _items.Clear();
+            _items.Destroy(now: true);
             base.Destroy();
         }
         protected override void RemoveNodeAt(int subDivIndex)

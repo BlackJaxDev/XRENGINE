@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "shaderArtifacts"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "shaderArtifacts", "materialVariants"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -62,6 +62,7 @@ public static partial class BrowserContentPackageBuilder
             });
         }
         List<object> shaderArtifacts = [];
+        Dictionary<string, JsonElement> shaderDescriptors = new(StringComparer.Ordinal);
         if (recipe.TryGetProperty("shaderArtifacts", out JsonElement shaderValues))
         {
             Require(shaderValues.ValueKind == JsonValueKind.Array && shaderValues.GetArrayLength() <= 256, "Shader artifact catalog exceeds its limit.");
@@ -77,13 +78,50 @@ public static partial class BrowserContentPackageBuilder
                 Require(byPath.ContainsKey(descriptor) && byPath.ContainsKey(source), "Shader artifact payload is absent from the catalog.");
                 byte[] descriptorBytes = ReadBounded(SourcePath(recipeDirectory, byPath[descriptor].GetProperty("source").GetString()!), JsonLimit);
                 Require(Convert.ToHexStringLower(SHA256.HashData(descriptorBytes)) == identity, "Shader descriptor identity mismatch.");
+                using JsonDocument descriptorDocument = ReadJson(descriptorBytes);
+                shaderDescriptors.Add(identity!, descriptorDocument.RootElement.Clone());
                 shaderArtifacts.Add(new { identity, descriptor, source });
             }
         }
-        byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(new
+        List<object> materialVariants = [];
+        if (recipe.TryGetProperty("materialVariants", out JsonElement variantValues))
         {
-            schema = 1, format = "xrengine-assets", startupWorld, startupSettings, shaderArtifacts, assets = cookedAssets
-        }, OutputOptions);
+            Require(variantValues.ValueKind == JsonValueKind.Array && variantValues.GetArrayLength() <= 256,
+                "Material variant catalog exceeds its limit.");
+            HashSet<string> keys = new(StringComparer.Ordinal);
+            foreach (JsonElement variant in variantValues.EnumerateArray())
+            {
+                Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
+                string semantic = Choice(variant, "semantic", "StandardLitColor");
+                int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, 1);
+                string target = Choice(variant, "target", "WebGPUWgsl");
+                string pass = MaterialVariantSelector(variant.GetProperty("pass"));
+                string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
+                string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
+                string? descriptorIdentity = variant.GetProperty("descriptorIdentity").GetString();
+                Require(descriptorIdentity is not null && Regex.IsMatch(descriptorIdentity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
+                    "Material variant references an absent shader descriptor.");
+                if (!shaderDescriptors.TryGetValue(descriptorIdentity!, out JsonElement descriptor))
+                    throw new InvalidDataException("Material variant references an absent shader descriptor.");
+                string key = string.Join('\u001f', semantic, semanticVersion, target, pass, vertexProfile, outputProfile);
+                Require(keys.Add(key), "Duplicate material variant key.");
+                Require(descriptor.GetProperty("pass").GetString() == pass && descriptor.GetProperty("target").GetString() == target,
+                    "Material variant pass or target differs from its shader descriptor.");
+                Require(descriptor.TryGetProperty("materialVariant", out JsonElement declaration),
+                    "Material variant is absent from its hash-owned shader descriptor.");
+                Members(declaration, "semantic", "semanticVersion", "vertexProfile", "outputProfile");
+                Require(declaration.GetProperty("semantic").GetString() == semantic
+                    && Integer(declaration.GetProperty("semanticVersion"), 1, 1) == semanticVersion
+                    && declaration.GetProperty("vertexProfile").GetString() == vertexProfile
+                    && declaration.GetProperty("outputProfile").GetString() == outputProfile,
+                    "Material variant differs from its hash-owned shader descriptor.");
+                materialVariants.Add(new { semantic, semanticVersion, target, pass, vertexProfile, outputProfile, descriptorIdentity });
+            }
+        }
+        object manifestModel = materialVariants.Count == 0
+            ? new { schema = 1, format = "xrengine-assets", startupWorld, startupSettings, shaderArtifacts, assets = cookedAssets }
+            : new { schema = 1, format = "xrengine-assets", startupWorld, startupSettings, shaderArtifacts, materialVariants, assets = cookedAssets };
+        byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestModel, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Engine asset manifest exceeds 1 MiB.");
         RejectLinks(outputDirectory);
         Directory.CreateDirectory(outputDirectory);
@@ -112,5 +150,14 @@ public static partial class BrowserContentPackageBuilder
             && path.Split('/').Skip(1).All(part => part.Length != 0 && part is not "." and not ".."),
             $"Invalid engine asset path '{path}'.");
         return path;
+    }
+
+    private static string MaterialVariantSelector(JsonElement value)
+    {
+        Require(value.ValueKind == JsonValueKind.String, "Material variant selector must be a string.");
+        string selector = value.GetString()!;
+        Require(Regex.IsMatch(selector, "^[a-z][a-z0-9.-]{0,63}\\z", RegexOptions.CultureInvariant),
+            "Material variant selector must be a lowercase bounded identifier.");
+        return selector;
     }
 }

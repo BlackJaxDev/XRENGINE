@@ -70,6 +70,10 @@ $lifetimePatch = Join-Path $PSScriptRoot 'JoltBrowser/managed-lifetime.patch'
 Assert-FileHash $lifetimePatch $pin.managedLifetimePatchSha256
 $callbackAbiPatch = Join-Path $PSScriptRoot 'JoltBrowser/managed-callback-abi.patch'
 Assert-FileHash $callbackAbiPatch $pin.managedCallbackAbiPatchSha256
+$bodyPropertiesAbiPatch = Join-Path $PSScriptRoot 'JoltBrowser/managed-body-properties-abi.patch'
+Assert-FileHash $bodyPropertiesAbiPatch $pin.managedBodyPropertiesAbiPatchSha256
+$bodyQueryAbiPatch = Join-Path $PSScriptRoot 'JoltBrowser/managed-body-query-abi.patch'
+Assert-FileHash $bodyQueryAbiPatch $pin.managedBodyQueryAbiPatchSha256
 foreach ($sourcePin in $pin.managedLifetimeSources) {
     Assert-FileHash (Join-Path $SourceDirectory $sourcePin.path) $sourcePin.originalSha256
 }
@@ -100,6 +104,16 @@ Assert-FileHash $stagedApi $pin.managedContactListenerPatchedApiSha256
 $stagedRelative = [IO.Path]::GetRelativePath($repositoryRoot, $stagedRoot).Replace('\', '/')
 Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $callbackAbiPatch)
 Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $callbackAbiPatch)
+Assert-FileHash $stagedApi $pin.managedCallbackPatchedApiSha256
+
+# Match the pinned native body's scalar argument and void return contracts.
+Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $bodyPropertiesAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $bodyPropertiesAbiPatch)
+Assert-FileHash $stagedApi $pin.managedBodyPropertiesPatchedApiSha256
+
+# Keep native object-layer/body identifiers scalar and match the area-activation return.
+Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $bodyQueryAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $bodyQueryAbiPatch)
 Assert-FileHash $stagedApi $pin.managedPatchedApiSha256
 
 # Apply only the separately reviewed lifetime correction to the staged tree.
@@ -123,6 +137,8 @@ $manifest = [ordered]@{
     Patch = $pin.managedPatch
     PatchedApiSha256 = $pin.managedPatchedApiSha256
     CallbackAbiPatchSha256 = $pin.managedCallbackAbiPatchSha256
+    BodyPropertiesAbiPatchSha256 = $pin.managedBodyPropertiesAbiPatchSha256
+    BodyQueryAbiPatchSha256 = $pin.managedBodyQueryAbiPatchSha256
     LifetimePatchSha256 = $pin.managedLifetimePatchSha256
     SourceFiles = @($stagedSources | Sort-Object FullName | ForEach-Object {
         [ordered]@{
