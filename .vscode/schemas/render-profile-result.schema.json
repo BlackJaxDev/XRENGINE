@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xrengine.dev/schemas/render-profile-result.schema.json",
+  "title": "XRENGINE RenderBench Result",
+  "description": "Versioned result and evidence manifest for one Vulkan profile process.",
+  "type": "object",
+  "required": ["schemaVersion", "runId", "startedUtc", "completedUtc", "backend", "executionMode", "recipe", "fixture", "recipeSha256", "executablePath", "executableSha256", "effectiveConfigurationSha256", "workloadSha256", "adapterName", "driverVersion", "vendorId", "deviceId", "output", "processId", "cpuFrameNanoseconds", "gpuFrameNanoseconds", "fixtureManifest", "workCounters", "allocatedBytesOnCaptureThread", "allocatedBytesOnFixtureWorkers", "stabilityGates", "source", "environment", "intervals", "cpuFrameStatistics", "gpuFrameStatistics", "artifactManifest", "targetManifest", "isIntrusive"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "runId": { "$ref": "#/$defs/nonEmptyString" },
+    "startedUtc": { "type": "string", "format": "date-time" },
+    "completedUtc": { "type": "string", "format": "date-time" },
+    "backend": { "const": "Vulkan" },
+    "executionMode": { "enum": ["Component", "Presentationless", "HeadlessWsi", "DesktopWsi", "OpenXr"] },
+    "recipe": { "$ref": "#/$defs/nonEmptyString" },
+    "fixture": { "$ref": "#/$defs/nonEmptyString" },
+    "recipeSha256": { "$ref": "#/$defs/sha256" },
+    "executablePath": { "$ref": "#/$defs/nonEmptyString" },
+    "executableSha256": { "$ref": "#/$defs/sha256" },
+    "effectiveConfigurationSha256": { "$ref": "#/$defs/sha256" },
+    "workloadSha256": { "$ref": "#/$defs/sha256" },
+    "adapterName": { "$ref": "#/$defs/nonEmptyString" },
+    "driverVersion": { "type": "integer", "minimum": 0 },
+    "vendorId": { "type": "integer", "minimum": 0 },
+    "deviceId": { "type": "integer", "minimum": 0 },
+    "output": { "type": "object" },
+    "processId": { "type": "integer", "minimum": 1 },
+    "cpuFrameNanoseconds": { "type": "array", "minItems": 1, "items": { "type": "integer", "minimum": 0 } },
+    "gpuFrameNanoseconds": { "type": "array", "minItems": 1, "items": { "type": "number", "minimum": 0 } },
+    "fixtureManifest": { "type": "object", "required": ["name", "component", "kind", "workerCount", "mutationPolicy", "outputIdentity"] },
+    "workCounters": { "type": "object" },
+    "allocatedBytesOnCaptureThread": { "type": "integer" },
+    "allocatedBytesOnFixtureWorkers": { "type": ["integer", "null"] },
+    "stabilityGates": { "type": "array", "items": { "$ref": "#/$defs/gate" } },
+    "source": { "$ref": "#/$defs/source" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "intervals": { "$ref": "#/$defs/intervals" },
+    "cpuFrameStatistics": { "$ref": "#/$defs/statistics" },
+    "gpuFrameStatistics": { "$ref": "#/$defs/statistics" },
+    "artifactManifest": { "$ref": "#/$defs/artifacts" },
+    "targetManifest": { "type": "object", "required": ["presentationTarget", "outputCount", "graphicsQueueFamily", "presentPolicy", "backendModuleSha256"] },
+    "isIntrusive": { "type": "boolean" },
+    "commandBufferActivity": {
+      "type": ["object", "null"],
+      "properties": {
+        "primaryRecords": { "type": "integer", "minimum": 0 },
+        "primaryReuses": { "type": "integer", "minimum": 0 },
+        "secondaryRecords": { "type": "integer", "minimum": 0 },
+        "secondaryReuses": { "type": "integer", "minimum": 0 },
+        "diagnosticRecording": { "type": "boolean" }
+      }
+    },
+    "operationsPerSecond": { "type": ["number", "null"], "minimum": 0 },
+    "promotionEvidence": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/promotion" }] }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "gate": { "type": "object", "required": ["name", "passed"], "properties": { "name": { "$ref": "#/$defs/nonEmptyString" }, "passed": { "type": "boolean" } } },
+    "statistics": {
+      "type": "object", "required": ["n", "p50", "p90", "p95", "p99", "worst", "mean", "standardDeviation", "medianAbsoluteDeviation"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 1 },
+        "p50": { "type": "number", "minimum": 0 },
+        "p90": { "type": "number", "minimum": 0 },
+        "p95": { "type": "number", "minimum": 0 },
+        "p99": { "type": "number", "minimum": 0 },
+        "worst": { "type": "number", "minimum": 0 },
+        "mean": { "type": "number", "minimum": 0 },
+        "standardDeviation": { "type": "number", "minimum": 0 },
+        "medianAbsoluteDeviation": { "type": "number", "minimum": 0 }
+      }
+    },
+    "source": { "type": "object", "required": ["commit", "dirtyWorktree", "executableSha256", "buildConfiguration", "backendModuleGeneration"], "properties": { "commit": { "$ref": "#/$defs/nonEmptyString" }, "dirtyWorktree": { "type": "boolean" }, "executableSha256": { "$ref": "#/$defs/sha256" }, "buildConfiguration": { "$ref": "#/$defs/nonEmptyString" }, "backendModuleGeneration": { "$ref": "#/$defs/nonEmptyString" } } },
+    "environment": { "type": "object", "required": ["operatingSystem", "processPriority", "profileMode", "instrumentationManifest", "extensionManifest", "powerPolicy", "clockPolicy", "targetRefreshHertz", "thermalNotes", "competingWorkloadWarnings"], "properties": { "operatingSystem": { "$ref": "#/$defs/nonEmptyString" }, "processPriority": { "$ref": "#/$defs/nonEmptyString" }, "profileMode": { "enum": ["DevelopmentProfile", "CleanProfile", "ReleaseBenchmark", "Diagnostics"] }, "instrumentationManifest": { "$ref": "#/$defs/nonEmptyString" }, "extensionManifest": { "$ref": "#/$defs/nonEmptyString" }, "powerPolicy": { "type": ["string", "null"] }, "clockPolicy": { "type": ["string", "null"] }, "targetRefreshHertz": { "type": ["number", "null"], "exclusiveMinimum": 0 }, "thermalNotes": { "type": ["string", "null"] }, "competingWorkloadWarnings": { "type": ["string", "null"] } } },
+    "intervals": { "type": "object", "required": ["processStartUtc", "warmupStartUtc", "warmupEndUtc", "stabilityStartUtc", "stabilityEndUtc", "captureStartUtc", "captureEndUtc", "drainStartUtc", "drainEndUtc", "processEndUtc"], "properties": { "processStartUtc": { "type": "string", "format": "date-time" }, "warmupStartUtc": { "type": "string", "format": "date-time" }, "warmupEndUtc": { "type": "string", "format": "date-time" }, "stabilityStartUtc": { "type": "string", "format": "date-time" }, "stabilityEndUtc": { "type": "string", "format": "date-time" }, "captureStartUtc": { "type": "string", "format": "date-time" }, "captureEndUtc": { "type": "string", "format": "date-time" }, "drainStartUtc": { "type": "string", "format": "date-time" }, "drainEndUtc": { "type": "string", "format": "date-time" }, "processEndUtc": { "type": "string", "format": "date-time" } } },
+    "artifacts": { "type": "object", "required": ["runRoot", "recipePath", "effectiveConfigurationPath", "workloadIdentityPath", "resultPath", "rawFrameStreams", "cpuSpans", "gpuQueries", "validationLogs", "optionalTraces", "optionalImages"], "properties": { "runRoot": { "$ref": "#/$defs/nonEmptyString" }, "recipePath": { "$ref": "#/$defs/nonEmptyString" }, "effectiveConfigurationPath": { "$ref": "#/$defs/nonEmptyString" }, "workloadIdentityPath": { "$ref": "#/$defs/nonEmptyString" }, "resultPath": { "$ref": "#/$defs/nonEmptyString" }, "rawFrameStreams": { "type": "array", "items": { "type": "string" } }, "cpuSpans": { "type": "array", "items": { "type": "string" } }, "gpuQueries": { "type": "array", "items": { "type": "string" } }, "validationLogs": { "type": "array", "items": { "type": "string" } }, "optionalTraces": { "type": "array", "items": { "type": "string" } }, "optionalImages": { "type": "array", "items": { "type": "string" } }, "optionalCaptures": { "type": "array", "items": { "type": "string" } } } },
+    "promotion": { "type": "object", "description": "Absent broader lanes are unresolved, never successful." }
+  }
+}

@@ -380,8 +380,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     {
         if (program is null)
             return;
-        foreach (XRShader shader in program.Shaders)
-            hash.Add(shader.SourceRevision);
+        for (int i = 0, count = program.Shaders.Count; i < count; i++)
+            hash.Add(program.Shaders[i].SourceRevision);
     }
 
     private bool AreRequiredProgramsCurrent()

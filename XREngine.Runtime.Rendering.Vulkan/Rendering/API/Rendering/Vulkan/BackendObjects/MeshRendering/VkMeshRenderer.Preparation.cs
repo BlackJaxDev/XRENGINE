@@ -373,10 +373,10 @@ internal unsafe partial class VkMeshRenderer
 			ReleaseDescriptorAllocation();
 			DestroyEngineUniformBuffers();
 			DestroyAutoUniformBuffers();
+			_pipelineDirty = true;
+			_descriptorDirty = true;
+			_vertexInputStateDirty = true;
 		}
-		_pipelineDirty = true;
-		_descriptorDirty = true;
-		_vertexInputStateDirty = true;
 	}
 
 	private bool CanReusePreparedRenderState(XRMaterial material)

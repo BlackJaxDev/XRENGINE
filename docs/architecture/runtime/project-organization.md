@@ -88,7 +88,7 @@ Image consumers exchange neutral buffers with dimensions, format, stride, origin
 | `XREngine.Runtime.Automation` | Runtime automation/MCP integration used by tooling hosts. |
 | `XREngine.ControlPlane`, `XREngine.ControlPlane.Service` | Control-plane contracts/services and the standalone orchestration service. |
 | `XREngine.Profiler`, `XREngine.Profiler.UI` | Standalone profiler and shared profiler UI. |
-| `XREngine.RenderBench`, `XREngine.Benchmarks` | Rendering and managed benchmark hosts with their own composition. |
+| `XREngine.RenderBench`, `XREngine.Benchmarks` | Editor-independent Vulkan component/presentationless profiling and managed benchmark hosts with their own composition. RenderBench uses runtime automation and the real Vulkan backend; selected CPU/GPU diagnostics stay within its bounded run evidence. |
 | `XREngine.UnitTests` | Backend-neutral fixtures, backend-specific suites, and dependency/source boundary checks. |
 
 Composition is explicit. Referencing a module does not necessarily activate its feature or supply optional vendor binaries. Bootstrap's renderer references are controlled by `XREngineRendererBackends` (`All`, `OpenGL`, `Vulkan`, or headless `None`). Jitter requires explicit installation. The editor installs collider authoring, model import, and ImGui services in addition to the desktop services.

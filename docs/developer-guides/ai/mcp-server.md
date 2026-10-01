@@ -867,13 +867,22 @@ otherwise be lost:
 ## Architecture
 
 Runtime profiling recipes and fixture execution are editor-independent. The
-strict Phase 4 schema is `.vscode/schemas/render-profile-recipe.schema.json`;
+strict schema is `.vscode/schemas/render-profile-recipe.schema.json`;
 `list_render_profile_targets` reports each catalog target's component, mode,
 inclusions, exclusions, and output-hash support. Recipes loaded through MCP and
 recipes passed to RenderBench with `--recipe-file` use the same executor,
 workload identity, correctness gates, and artifact format. Worker-count matrix
 variants retain a common underlying workload hash and suspend MCP only during
 each child capture/drain interval.
+
+The named RenderBench session manager is
+`Tools/Manage-McpRenderBenchSession.ps1 Start|Run|Status|Stop -Name <name>`.
+Preparation and stabilization may run while MCP is available. The accepted
+`start_render_profile` response is serialized before the listener is suspended
+and the parked capture worker is released. Result retrieval occurs after the
+listener resumes. Selected CPU spans and GPU pass queries remain diagnostic
+observers; their bounded records, completeness gates, and trace artifacts are
+described in the [profiler guide](../diagnostics/profiler.md#selected-cpu-and-gpu-diagnostics).
 
 The MCP implementation consists of the following classes:
 

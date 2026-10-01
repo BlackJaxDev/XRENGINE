@@ -92,6 +92,11 @@ public enum EVulkanCpuStage
     PrimaryAdvancedRasterBindingOperation,
     PrimaryFinalization,
     PrimaryEndCommandBuffer,
+    CommandBufferReset,
+    CommandBufferBegin,
+    CommandBufferEnd,
+    SecondaryExecution,
+    ComponentFrame,
     Count,
 }
 

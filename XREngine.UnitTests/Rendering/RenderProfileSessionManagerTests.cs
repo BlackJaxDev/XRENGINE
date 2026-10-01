@@ -56,6 +56,50 @@ public sealed class RenderProfileSessionManagerTests
     }
 
     [Test]
+    public async Task SessionManager_KeepsExecutorLifecycleOnOneOwnerThread()
+    {
+        RenderProfileSessionManager manager = new();
+        ThreadTrackingExecutor executor = new();
+        RenderProfileRecipe recipe = new()
+        {
+            Name = "owner-thread",
+            Component = "SecondaryRecording",
+            Fixture = "secondary-recording",
+            CaptureFrames = 2,
+        };
+
+        string sessionId = manager.Create(recipe, executor);
+        (await manager.WaitReadyAsync(sessionId, TimeSpan.FromSeconds(2))).State.ShouldBe(RenderProfileState.Created);
+        manager.Arm(sessionId);
+        await manager.Start(sessionId).WaitAsync(TimeSpan.FromSeconds(2));
+
+        manager.GetStatus(sessionId).State.ShouldBe(RenderProfileState.Completed);
+        executor.Calls.ShouldBe(["Prepare", "Stabilize", "Warm", "NextFrameId", "Execute", "Execute", "Drain"]);
+        executor.OwnerThreadId.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public async Task SessionManager_CancelsOnOwnerThreadBeforeArm()
+    {
+        RenderProfileSessionManager manager = new();
+        ThreadTrackingExecutor executor = new();
+        RenderProfileRecipe recipe = new()
+        {
+            Name = "cancel-before-arm",
+            Component = "SecondaryRecording",
+            Fixture = "secondary-recording",
+        };
+
+        string sessionId = manager.Create(recipe, executor);
+        (await manager.WaitReadyAsync(sessionId, TimeSpan.FromSeconds(2))).State.ShouldBe(RenderProfileState.Created);
+        await manager.CancelAsync(sessionId).WaitAsync(TimeSpan.FromSeconds(2));
+
+        manager.GetStatus(sessionId).State.ShouldBe(RenderProfileState.Cancelled);
+        executor.Calls.ShouldBe(["Prepare", "Stabilize", "Cancel"]);
+        Should.Throw<InvalidOperationException>(() => manager.Arm(sessionId));
+    }
+
+    [Test]
     public void PresentationlessTarget_RequiresHeadlessCapability()
     {
         PresentationlessRenderTarget target = new(1920, 1080);
@@ -114,5 +158,65 @@ public sealed class RenderProfileSessionManagerTests
         }
 
         public Task CancelAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class ThreadTrackingExecutor : IRenderProfileExecutor
+    {
+        private readonly List<string> _calls = [];
+
+        public int OwnerThreadId { get; private set; }
+        public string[] Calls => [.. _calls];
+        public long NextFrameId
+        {
+            get
+            {
+                Record("NextFrameId");
+                return 0;
+            }
+        }
+
+        public Task<RenderProfilePreparation> PrepareAsync(RenderProfileRecipe recipe, CancellationToken cancellationToken)
+        {
+            Record("Prepare");
+            return Task.FromResult(new RenderProfilePreparation("test-adapter", "test-driver", "test-workload", []));
+        }
+
+        public Task StabilizeAsync(RenderProfileRecipe recipe, CancellationToken cancellationToken)
+        {
+            Record("Stabilize");
+            return Task.CompletedTask;
+        }
+
+        public void WarmCaptureThread(RenderProfileRecipe recipe) => Record("Warm");
+
+        public void ExecuteMeasuredFrame(RenderProfileRecipe recipe, int frameIndex) => Record("Execute");
+
+        public Task<RenderProfileResult> DrainAsync(RenderProfileRecipe recipe, RenderProfilePreparation preparation, CancellationToken cancellationToken)
+        {
+            Record("Drain");
+            return Task.FromResult(new RenderProfileResult
+            {
+                SessionId = string.Empty,
+                RecipeName = string.Empty,
+                ExecutionMode = recipe.ExecutionMode,
+                WorkloadIdentity = preparation.WorkloadIdentity,
+            });
+        }
+
+        public Task CancelAsync(CancellationToken cancellationToken)
+        {
+            Record("Cancel");
+            return Task.CompletedTask;
+        }
+
+        private void Record(string call)
+        {
+            int threadId = Environment.CurrentManagedThreadId;
+            if (OwnerThreadId == 0)
+                OwnerThreadId = threadId;
+            else if (OwnerThreadId != threadId)
+                throw new InvalidOperationException($"Executor moved from {OwnerThreadId} to {threadId} during {call}.");
+            _calls.Add(call);
+        }
     }
 }

@@ -4,6 +4,21 @@ This document describes target-first Vulkan initialization, target output and
 synchronization ownership, and the common per-frame acquire, record, submit,
 and completion flow.
 
+Diagnostic component capture uses `VulkanCpuSpanProfiler` for bounded per-thread
+spans and `IVulkanSelectedGpuPassSink` for selected render-pass timestamps. The
+production host installs the sink only during recording, requires explicit
+`GraphicsOnly` queue mode, and restores the previous sink afterward. A selected
+scope never subtracts timestamps from different native queues. Diagnostic query
+pools belong to frame slots and use delayed availability reads; teardown waits
+for submitted work outside the measured interval before releasing them.
+
+The dedicated RenderBench recording path keeps its observer identity separate
+from clean command-buffer cache evidence. Optional calibrated device/QPC clocks
+include maximum deviation and calibration drift. Counter replay is intrusive
+and currently restricted to the immutable submission control. See the
+[profiler guide](../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
+for recipes, artifacts, comparison rules, and production evidence requirements.
+
 ## Table of Contents
 
 - [Overview](#overview)

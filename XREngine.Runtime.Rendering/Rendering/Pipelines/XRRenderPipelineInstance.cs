@@ -135,6 +135,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public RenderCommandCollection ActiveMeshRenderCommands => RenderState.MeshRenderCommands ?? MeshRenderCommands;
 
+    private bool _propagateCommandExceptions;
+    /// <summary>
+    /// Controls whether a command failure aborts the render invocation. Explicit
+    /// frame producers require this when partially authored output is invalid.
+    /// </summary>
+    public bool PropagateCommandExceptions
+    {
+        get => _propagateCommandExceptions;
+        set => SetField(ref _propagateCommandExceptions, value);
+    }
+
     public RenderResourceRegistry Resources => _resourceBuildContext?.Generation.Registry
         ?? ActiveGeneration?.Registry
         ?? _legacyResources;

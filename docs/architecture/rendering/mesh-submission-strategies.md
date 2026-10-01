@@ -16,6 +16,11 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+Zero-readback passes execute from configured GPU-pass topology even when CPU
+visibility collection publishes no mesh commands. The GPU scene and the pass
+culling mask own mesh membership; CPU visibility must not suppress a default,
+capture, or shadow pass before its GPU dispatch.
+
 Advanced late color and participating temporal passes declare filtered
 `CpuDirect` submission independently of the opaque native GPU family. Their
 draws still execute on the GPU; the CPU filters authored late-lane eligibility.

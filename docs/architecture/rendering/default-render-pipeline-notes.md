@@ -4,6 +4,33 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Explicit Output Failure Policy
+
+`XRRenderPipelineInstance.PropagateCommandExceptions` lets an explicit frame
+producer require complete command authoring. When enabled, a command-container
+exception is retained while the authored pop/unbind sequence finishes, then
+aborts the invocation with its original stack. The
+presentationless production benchmark enables this policy before its first
+frame; a partial scene cannot produce an accepted submission receipt.
+Ordinary viewport recovery continues to isolate command failures by default.
+
+An exact offscreen completion reservation separately rejects required authoring
+failures. A window-free invocation with no output FBO or completion reservation
+must select the explicit failure policy rather than assume that reservation
+validation covers it.
+
+The GPU material table's CPU upload row must match the generated std430 layout.
+Four texture indices plus flags require three header-padding words before the
+first vec4, yielding 36 words/144 bytes for the opaque layout. Keep the size and
+stride guard enabled; a stale row definition otherwise prevents scene raster
+submission while ordinary command recovery can hide the original exception.
+
+Vulkan atlas index synchronization resolves cold mesh-version and index-buffer
+wrappers at the renderer facade before passing typed wrappers to command
+execution. The command runtime's retained wrapper lookup cannot create them.
+Deferred mesh publication and committed atlas bytes deliberately do not create
+backend wrappers; generating existing wrappers alone cannot satisfy first use.
+
 ## Resource Generation Lifecycle
 
 `DefaultRenderPipeline` declares stable pipeline-owned resources through

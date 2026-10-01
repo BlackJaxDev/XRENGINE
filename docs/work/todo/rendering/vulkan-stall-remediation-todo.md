@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-26
+Last Updated: 2026-10-01
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Validated for reachable scope (distinct-world gate dispositioned Not Applicable); S13a/S13b Validated on the September 26 final binary (all September 26 closeout items resolved, including the operator-run elevated capture); S13c Validated for reachable scope (September 26; multi-LOD/streaming cases not exercisable on the fixture); S13d Validated for reachable scope (September 26: four owners validated, zero allocation and zero unchanged-row publication on transform-only motion, per-dependency mutation matrix run; instance count, live material swap, texture replacement and skinning not exercisable on the fixture); S13e Validated for reachable scope (September 26: scene publication prepared once per compatible family, 7.0 to 1.0 calls per family on one and three families per frame, incompatible mutations refresh, restart and stereo pass; resize and MSAA change not drivable on the fixture); S13f-S13i Pending
+Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Validated for reachable scope (distinct-world gate dispositioned Not Applicable); S13a/S13b Validated on the September 26 final binary (all September 26 closeout items resolved, including the operator-run elevated capture); S13c Validated for reachable scope (September 26; multi-LOD/streaming cases not exercisable on the fixture); S13d Validated for reachable scope (September 26: four owners validated, zero allocation and zero unchanged-row publication on transform-only motion, per-dependency mutation matrix run; instance count, live material swap, texture replacement and skinning not exercisable on the fixture); S13e Validated for reachable scope (September 26: scene publication prepared once per compatible family, 7.0 to 1.0 calls per family on one and three families per frame, incompatible mutations refresh, restart and stereo pass; resize and MSAA change not drivable on the fixture); S13f Deferred/Not Applicable (October 1: measured structural scans below 0.05 ms/presentation with zero scan allocation); S13g Validated for the measured allocation-only scope (October 1: 880 to zero bytes/poll; warmed body time down 27.9% stationary and 42.1% moving; broader readiness reuse Deferred; five pre-existing source-text test failures recorded); S13h Deferred (October 1: both gates measured across desktop and three-family emulation; no material contention established, parallel lifetime/utilization evidence insufficient; no synchronization change); S13i Executed; NOT PASSED (October 1: follow-up allocation fixes validated in focused windows; CPU tails, observer/fixture gaps and visual failures remain)
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -19,9 +19,35 @@ second pipeline queue, cache, telemetry system, or publication model. Related
 contracts remain in the [hardening ledger](vulkan-core-hardening-and-device-loss-todo.md)
 and [resource-lifecycle checklist](render-pipeline-resource-lifecycle-todo.md).
 
-This document schedules future work only. Creating it does not authorize test
-changes, dependency upgrades, storage migrations, or changes to launch flows.
+This document tracks retained corrections, measured deferrals and remaining work.
+Updating it does not authorize test changes, dependency upgrades, storage
+migrations, or changes to launch flows.
 Keep durable results in the linked investigation and concise gate status here.
+
+## Current Progress And Next Work (October 1)
+
+S13a-S13e have their recorded scoped validation; S13f/S13h are measured deferrals,
+and S13g passed its allocation-only scope. S13i was executed and remains **NOT
+PASSED**. The original camera-motion/TSR report is still open.
+
+The [continuous-camera investigation](../../investigations/rendering/2026-10-01-cpu-stall-attribution.md)
+now records retained subscription-refresh scratch reuse, corrected program
+invalidation and compact uniform storage. The last two changes reduce sampled
+allocation from **4.269 to 2.093 MB per completed present (51%)** against their
+current-source control. This is separate from the earlier subscription-refresh
+comparison; do not add the percentages or imply an identical historical baseline.
+
+Next, inspect temporary construction in queued mesh requests, prepared-operation
+cohort matching and submission-contract sealing, then validate one bounded fix
+at a time. Sealed binding snapshots remain the largest measured allocation owner,
+but reusing their storage requires resolving program-held references and content
+identity first. Detailed completed work, ranked candidates, rejected approaches
+and acceptance requirements are in the [S13i follow-up](#s13i-prove-the-cumulative-fix-on-the-reported-workload).
+
+GC pauses and the unexplained outer-dispatch interval remain open. Neither
+validation-off allocation measurements nor the successful mutation checks prove
+smooth displayed motion. GPU attribution, visual/temporal correctness and the
+full cumulative comparison remain separate gates.
 
 ## Evidence That Must Not Be Lost
 
@@ -226,16 +252,16 @@ gate record. No item is complete merely because this checklist was written.
 | S10 | [Toolbar icon preparation](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md) | S02; default after S09 disposition | Validated (CPU preparation is off draw; bounded owner publication reaches 12/12 on Vulkan and OpenGL) |
 | S11 | [Camera inspector metadata/discovery](../../investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md) | S10 disposition, measured cost | Validated (cold-path timing, live picker/undo/retry and script generation/lifetime gates passed) |
 | S12 | [Shared Advanced extraction/publication](../../investigations/rendering/2026-09-22-s12-shared-advanced-preparation.md) | S02; default after S11 disposition | Active for merged lifetime gates (local reachable gate passed; incoming distinct-world lifetime validation remains open; preserve both parent evidence sets) |
-| S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | Pending |
+| S13 | Recurring publication/recording/source preparation; parent of S13a-S13i | S02; after S12 disposition | In progress: child dispositions recorded; cumulative acceptance remains NOT PASSED; focused residual allocation corrections retained |
 | S13a | [Current workload, leaf attribution, backend divergence and acceptance budgets](../../investigations/rendering/2026-09-23-s13a-publication-attribution.md) | S12 validated or explicitly dispositioned under the protocol | Validated (September 26 final binary: four-pair observer/retention matrix, OpenGL harness comparison, attached-debugger window and the operator-run elevated WPR/GC capture measured; backend divergence dispositioned Not Reproducible; measured callback owner absent from the elevated trace) |
 | S13b | [Separate publication identity from command dirtiness](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md) | S13a; confirmed identity-only dirty callbacks | Validated (September 26 final binary: 15-row Vulkan matrix, OpenGL subset, material-edit retention after two lifetime fixes, regression tests executed). The emulated-stereo row that first rendered black eye layers was root-caused (two-pass VR path bypassed the viewport boundary, unowned shared collection, Vulkan eye readback context) and passes on the fixed build under Release and Debug validation layers |
 | S13c | [Retain logical mesh/LOD registration by real mutation identity](../../investigations/rendering/2026-09-26-s13c-registration-retention.md) | S13b disposition; measured recurring registration | Validated for reachable scope (September 26: retained registration signature on `LogicalMeshState`, allocation-free hit path, hits only on transform-only motion with registration time down about 120 to 550 times; multi-LOD/streaming cases not exercisable on the fixture; remaining per-submesh update allocation handed to S13d and closed there; a pre-existing shape-replacement command leak found during validation was fixed in `RenderableComponent`) |
 | S13d | [Mutation-scoped material/state/auxiliary updates](../../investigations/rendering/2026-09-26-s13d-auxiliary-state.md) | S13c disposition; measured per-update allocation and writes | Validated for reachable scope (September 26: four owners, each with its own gate: typed `BoundsGpu`/`DrawMetadata` equality removed all per-submesh update allocation; draw-metadata and bounds rows write only when changed, so transform-only motion publishes zero cull-control, classification and visibility elements; the transparency stream publishes its own dirty range instead of a full copy per content-dirty swap; the material-state class row rewrites only when its content changes. Column dependency set documented; per-dependency mutation matrix passes for add, motion, stop, edit bursts, opacity/pass transition and revert, render layer, removal and index reuse; full S13b matrix passes; no unit test regressed. Not exercisable on the fixture: instance count, live material override swap, texture/sampler replacement, skinning) |
 | S13e | [Prepare compatible Advanced scene state once per family](../../investigations/rendering/2026-09-26-s13e-family-preparation.md) | S13d disposition; measured repeated preparation | Validated for reachable scope (September 26: every stage of a family re-prepared the scene publication (seven calls per family, six of them exact frame-slot hits discarded by the lifetime transfer); the family now prepares once per compatible key and stages reuse the immutable state while they resolve the same current package; 1.0 calls and 6.0 reuses per family on one and three families per frame, one slot realization per family, zero failures; shader reload, TSR scale change, publication rejection, renderer restart, emulated stereo and the full S13b matrix pass; resize and MSAA change not drivable on the fixture) |
-| S13f | Retain plan-derived operation metadata | S13e disposition; measured repeated plan scans | Pending |
-| S13g | Bound warmed pipeline-readiness validation | S13f disposition; measured repeated readiness work | Pending |
-| S13h | Shorten or partition a measured serialized critical section | S13g disposition; residual critical-path evidence and lifetime review | Pending |
-| S13i | Cumulative publication/recording reproduction gate | All S13 child dispositions; applicable S15 checks | Pending |
+| S13f | [Retain plan-derived operation metadata](../../investigations/rendering/2026-10-01-advanced-operation-metadata.md) | S13e disposition; measured repeated plan scans | Deferred/Not Applicable (October 1: 12 warmed desktop/stereo windows, zero scan allocation, all window means below the predeclared 0.05 ms/presentation threshold; no cache retained) |
+| S13g | [Bound warmed pipeline-readiness validation](../../investigations/rendering/2026-10-01-warmed-pipeline-readiness.md) | S13f disposition; measured repeated readiness work | Validated for allocation-only scope: 880 to zero bytes/poll and measured body reduction; broader readiness reuse Deferred |
+| S13h | Shorten or partition a measured serialized critical section | S13g disposition; residual critical-path evidence and lifetime review | Deferred: measured acquisition cost below entry gate; concurrent lifetime proof unavailable |
+| S13i | [Cumulative publication/recording reproduction gate](../../investigations/rendering/2026-10-01-cumulative-publication-validation.md) | All S13 child dispositions; applicable S15 checks | Executed October 1; NOT PASSED. Eighteen diagnostic windows confirm retained mechanisms, but CPU tails/unexplained outer-frame time, observer/fixture limits and visual failures prevent cumulative acceptance |
 | S14 | Actual Core update callbacks/registration | S02; default after S13 disposition | Pending |
 | S15 | Temporal correctness and original-regression decision | Baseline plus each affected runtime gate | Pending |
 | S16 | Integrated acceptance and closeout | All applicable prior gates | Pending |
@@ -498,7 +524,7 @@ recording hitch as unresolved. S01 may proceed; S02 remains blocked on S01 (see
 
 ## S01. Correct Profiler Attribution
 
-Anchor: [Engine.CodeProfiler.cs](../../../../XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.CodeProfiler.cs#L1551).
+Anchor: [Engine.CodeProfiler.cs](../../../../XREngine.Runtime.Host/Engine/Subclasses/Engine.CodeProfiler.cs#L1821).
 
 - [x] Define root-inclusive, selected-child-inclusive, synchronous self-time and
   active-scope elapsed fields with matching name, kind, frame/thread and timestamp.
@@ -1019,11 +1045,13 @@ temporal-quality pass. Details and evidence limits are in the S12 gate record.
 
 ## S13. Reduce Recurring Recording And Source Preparation
 
-Status: Pending. The child phases below are future work, not implemented fixes.
-S12's local reachable gate passed; its merged lifetime gate remains open.
-Preserve the September 23 S13 entry evidence and plan. Resolve or explicitly
-disposition that S12 integration gate before dependent S13 implementation work;
-this does not erase the already measured and reverted identity-filter experiment.
+Status: In progress; cumulative acceptance remains open. S13a-S13e have scoped
+validation, S13f/S13h are deferred on measurement, and S13g is validated for its
+allocation-only scope. S13i was executed but did not pass. Its focused residual
+allocation corrections are recorded below; they do not close integration,
+lifetime, visual or motion-tail gates. Preserve the September 23 entry evidence
+and the distinct child dispositions instead of treating historical experiments
+as retained fixes.
 Each child has its own entry evidence, one implementation change, focused build,
 live validation and gate record. If a child needs independent changes, split it
 again and validate each increment. Disprove/defer candidates that are already
@@ -1572,7 +1600,20 @@ Failed attempts/retries are separately counted, not hidden as cache misses.
 
 Owner: Vulkan command planning. Uses the same primary-preparation anchor as S13e.
 
-- [ ] Measure residual full-operation traversals and family discovery after S13e.
+October 1 disposition: **Deferred/Not Applicable**, per the
+[scan-attribution record](../../investigations/rendering/2026-10-01-advanced-operation-metadata.md).
+Twelve 60-second windows on one and three families found allocation-free
+structural scans below the predeclared 0.05 ms/presentation entry threshold.
+Existing sealed-plan, manifest and admitted-frame reuse was audited; the
+remaining dynamic checks cannot be cached solely by plan generation. Temporary
+probes were removed. This is not a Fixed/Validated optimization or a cumulative
+rendering-correctness pass. Cache implementation/validation boxes below are not
+applicable under this disposition and remain as the checklist for reopening.
+Reopen on material operation/family growth, scan allocation, above-budget
+repeated measurements, or separately attributed structural demand cost.
+S13g follows this disposition; stereo image-quality limits remain with S15.
+
+- [x] Measure residual full-operation traversals and family discovery after S13e.
   Count operations, families, visits and allocations on still and moving views.
   Audit existing sealed-plan, variant-manifest and admitted-frame-data reuse first.
 - [ ] If actionable, prepare immutable operation-family indices, stage coverage or
@@ -1599,21 +1640,47 @@ not admit safe reuse or the measured residual cost is below the entry threshold.
 Owner: Vulkan pipeline runtime. Anchor:
 [Advanced readiness](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Advanced/VulkanAdvancedVisibilityPipelineRuntime.Preparation.cs).
 
-- [ ] Prove the actual call chain and frequency from family/stage preparation to
+October 1 disposition: **Validated for the measured allocation-only scope**;
+**broader readiness reuse Deferred**, per the
+[readiness allocation record](../../investigations/rendering/2026-10-01-warmed-pipeline-readiness.md).
+The measured owner was boxed `EventList` enumeration: 880 bytes per poll at
+about 431 polls/presentation. Indexed traversal with one fixed-count read removes
+that allocation while retaining every live revision/currentness check. Six final
+60-second windows measured zero allocation and 27.9%/42.1% stationary/moving
+body-time reductions, passing the predeclared relative CPU gate. No generation
+cache, memoized readiness or skipped calls are retained. The conditional reuse
+item below is intentionally deferred, exempt from this bounded disposition, and
+remains the checklist for a future reuse proposal. Final uninstrumented live
+validation covered shader edits, Pending/Failed recovery and renderer replacement;
+late-result rejection was not deterministically forced. Existing focused tests:
+15 passed; five source-text checks fail against unchanged HEAD files. The evidence
+record preserves those failures and the cold upload-retry recovery limit.
+S13h follows this disposition; its measured deferral is recorded below. S13i/S15 and the original report remain open.
+
+- [x] Prove the actual call chain and frequency from family/stage preparation to
   readiness checks. Time lock wait/body, shader/source identity evaluation and
   program-currentness checks separately. Cold compilation and warmed identity
   validation have different owners; reuse S03-S05 instead of redoing their work.
+- [x] Remove the measured shader-identity traversal allocation without changing
+  identity inputs, ordering, program membership, currentness or invalidation.
+  (October 1: fixed-count indexed traversal; zero bytes in all six final windows.)
 - [ ] If costly, reuse readiness for an exact accepted dependency generation or
   propagate its immutable result within a compatible preparation transaction.
   Retain reliable invalidation for generated source, shader edits, layout/device
   recreation and capability changes. Do not bypass checks without proving every
   mutation producer advances the key; file events alone may be insufficient.
-- [ ] Validate unchanged reuse, unrelated versus dependent shader edits, rapid
+- [x] Validate unchanged reuse, unrelated versus dependent shader edits, rapid
   successive reloads, failed compilation, pending preparation, cancelled/stale
   completion and device-generation replacement through the supported lifecycle.
   Preserve explicit pending/failure behavior and zero foreground compilation joins.
   Pending-to-ready and retryable-failure recovery must remain observable when the
   plan stays unchanged; never freeze a pending result behind a structural cache key.
+  (October 1, allocation-only scope: no reuse introduced; unchanged polling,
+  unrelated/dependent in-memory source edits, delayed Pending, failed compilation,
+  rapid revisions, full shader reload and replacement initiated while Pending
+  exercised. New frame authority recovered Ready and completed scene presents
+  with zero backlog/validation errors/foreground joins. No deterministic late
+  completion rejection or hardware XR claim; the existing guards are unchanged.)
 
 Gate: the selected unchanged readiness path avoids repeated expensive evaluation,
 meets its measured budget and introduces no hot-path allocation. All relevant
@@ -1626,6 +1693,28 @@ existing validation as Deferred/Not Applicable rather than removing it speculati
 Owner: Runtime Rendering/Vulkan with explicit concurrency/lifetime design review.
 This conditional phase follows removal of redundant work; it is not a mandate
 to delete locks or parallelize recording.
+
+**Disposition: Deferred (October 1, 2026).** The
+[separate gate measurements and concurrency review](../../investigations/rendering/2026-10-01-remaining-synchronization-gates.md)
+cover twelve warmed desktop/emulated-three-family windows: 9,653 completed
+presentations and 91,962 genuine transform writes. Approximate acquisition cost
+remained below the predeclared 0.10 ms/present gate for both owners. Held work
+remains substantial, but is not demonstrated contention or proven movable
+immutable computation. Storage preparation ran on one thread in both cohorts;
+true parallel-eye utilization and the changed-design lifetime matrix were not
+established. No lock, thread, pool, publication or retirement change is retained.
+The conditional phase is dispositioned; **S13i has since executed and remains
+NOT PASSED**. Continue its residual attribution below. S15 image acceptance and
+the original workload report remain open.
+
+- [x] Measure the reachable stationary, camera-motion and genuine-mutation
+  workloads separately for both gates; record outermost distributions, instance/
+  thread/site attribution, publication cost, sampled queue state and limitations;
+  apply the conditional gate and retain the ownership review.
+
+The unchecked design/coverage obligations below are **conditions for reopening**,
+not claims that a new synchronization design passed. In particular, sparse job
+snapshots are not worker-utilization or actual parallel mutation/eye-worker proof.
 
 - [ ] Remeasure the GPUScene mutation lock and Vulkan Advanced storage gate
   separately. Capture wait/hold distributions, contender/owner identities,
@@ -1656,6 +1745,114 @@ residual bottleneck or adequate concurrent-lifetime evidence, defer the change.
 
 Owner: Rendering with Profiler. This is an additional S13 acceptance gate, not a
 substitute for any child gate, S15 temporal validation or S16 integrated closeout.
+
+**October 1 result: NOT PASSED.** The
+[cumulative investigation](../../investigations/rendering/2026-10-01-cumulative-publication-validation.md)
+contains eighteen 60-second diagnostic windows and 27,821 attempts against a
+rebuilt original source and frozen current binary. It also fixes an obsolete
+compile guard that omitted 31 frame-identity/outcome/diagnostic fields after the
+profiler moved into Host. The corrected Host build and actual capture-schema
+admission pass; the incomplete observer cohort is excluded.
+
+Stationary identity-driven updates and registration rebuilds remain absent,
+real mutations still write transforms/bounds, and preparation remains one call
+per family. However, current stationary dispatch reaches 1,901 ms, with 1,888 ms
+outside recorded Vulkan work; a 242 ms GC-pause delta does not explain that full
+interval. Motion encoding/dispatch tails remain substantial. The reconstructed
+fixture, unavailable previous workspace/binary, intrusive observer and incomplete
+lifetime/feature series cannot establish the full comparison gate. OpenGL's
+resident counts also did not translate into a valid captured image.
+
+#### Completed Residual Allocation Work
+
+These are focused corrections after the initial cumulative run, with evidence in
+[the CPU investigation](../../investigations/rendering/2026-10-01-cpu-stall-attribution.md).
+They do not change the NOT PASSED disposition above.
+
+- [x] Reuse subscription-refresh sets, dictionaries and submesh snapshot buffers;
+  remove boxed warmed traversal. All three refresh methods have zero allocation
+  samples in the refined run; its separate comparison reduced sampled allocation
+  by about 28% per completed present.
+- [x] Invalidate pipeline, descriptors and vertex input only for actual linked
+  interface changes at program activation. Cold activation, program switches,
+  relinks and geometry/buffer changes keep their invalidation paths. Warmed
+  layout-signature and vertex-input construction have zero allocation samples.
+- [x] Compact `ProgramUniformValue` from 200 to 80 bytes and dictionary entries
+  from 216 to 96 bytes. Keep the managed reference outside the numeric union and
+  preserve constructor-kind getter semantics. No snapshot lifetime change.
+- [x] Run targeted Release builds (zero warnings/errors), continuous camera
+  windows, 20 root-transform changes, deactivation/reactivation and shader reload.
+  Resident draws restore to 393, mutation/reload endpoints complete, and the
+  final endpoints report zero pending retirements. View captured images and stop
+  the isolated editor. Existing black regions remain; no visual-quality pass.
+- [x] Measure and revert source-reference sealed-copy sharing: 2.898 versus
+  2.872 MB per present showed no meaningful benefit. Do not reinstate it without
+  new evidence of eligible source reuse. Exclude its first incomplete capture,
+  whose endpoint introspection raced live command enumeration.
+
+| Latest matched diagnostic comparison | Sampled allocation / completed present | Sealed-copy share |
+|---|---:|---:|
+| Current-source control (refresh correction already present) | 4.269 MB | 2.058 MB |
+| Program invalidation corrected | 2.872 MB | 2.047 MB |
+| Invalidation plus compact uniforms | 2.093 MB | 1.271 MB |
+
+These are individual 60-second diagnostic windows using sampled allocation ticks,
+not exact byte counters or a repeated frame-tail benchmark. Both final traces
+lost zero events. GC suspension maximum was 459.31 ms with allocation stacks and
+23.96 ms with the lighter GC-only observer; neither establishes normal displayed
+cadence. Vulkan validation and engine CPU observers were disabled. The camera
+used one uninterrupted focus command, still eased at its endpoints.
+
+#### Suspected Next Work And Entry Conditions
+
+Execute one implementation at a time; the estimates below identify measured
+owners, not proven optimization designs or exclusive CPU costs.
+
+- [ ] **First bounded candidate: recurring temporary construction.** Inspect
+  `MaterializeQueuedMeshRenderRequestsCore` (~101 KB sampled per present),
+  `IsPreparedMeshOperationCohortMatch` (~71 KB), and `TrySealSubmissionContract`
+  (~69 KB). Establish exact allocating stacks, ownership, escape and mutation
+  boundaries, then choose one owner. Prefer removing redundant construction or
+  reusing owner-held scratch only when its lifetime is proven; do not infer that
+  each method can safely pool its outputs.
+- [ ] **Largest remaining owner: sealed binding snapshots (~1.271 MB/present).**
+  Measure required snapshot contents/copy frequency and establish explicit
+  program-borrow retirement plus content generations before storage reuse.
+  `ApplyBindingSnapshot` retains snapshots beyond recording, and frame-data
+  signatures use snapshot identity; frame-slot retirement alone is insufficient.
+  Do not mark ordinary snapshots as immutable binding artifacts to bypass copies.
+- [ ] **Shadow-path follow-up, conditional on attribution.** Of 396 binding
+  fallbacks in the recorded endpoint, 393 were shadow passes with per-mesh
+  generated programs. Evaluate whether typed shadow data can replace specific
+  dictionary consumers, preserving cascade/face matrices, caster masks, material
+  parameters, textures and arbitrary callbacks. Existing typed shadow state does
+  not yet replace those consumers. No dictionary removal is currently justified.
+- [ ] **Performance/correctness gate for each retained increment.** Freeze the
+  control and candidate; repeat stationary and uninterrupted-motion comparisons
+  with matched observers, reporting bytes per completed present and GC tails.
+  Preserve zero-sample refresh/layout paths and validate relevant real mutations,
+  relinks, snapshot ownership and retention. Record excluded/incomplete runs.
+- [ ] **Jitter attribution remains independent.** Correlate GC suspension,
+  successful-present intervals and the original ~1.9-second outer-dispatch gap
+  with aligned scheduling/file-I/O evidence. Do not attribute all jitter to GC or
+  Vulkan validation. Use a constant-speed path or account explicitly for authored
+  easing before judging speed variation; obtain displayed-motion evidence and
+  user confirmation before closing the original report.
+
+#### Remaining Cumulative Acceptance Work
+
+- [ ] Profiler: repair unavailable camera-state and default-zero lifetime/lease
+  series, then repeat observer overhead/retention admission on a frozen binary.
+  Do not infer zero cost, disabled effects or empty leases from those fields.
+- [ ] Rendering/Profiler: complete the residual allocation and jitter work above,
+  preserving CPU-observer-off controls and measured outliers. The original
+  outer-frame gap still lacks complete scheduling/file-I/O attribution.
+- [ ] Rendering: establish replacement source-row/previous-increment comparison
+  evidence; resolve the failed OpenGL image/readback check and complete the
+  applicable S15 temporal/disocclusion and multi-view gates.
+- [ ] Complete the separate
+  [Advanced GPU attribution item](optimization/advanced-pipeline-gpu-attribution-todo.md)
+  with validated dense observations and one-effect-at-a-time comparisons.
 
 - [ ] Repeat S13a's matched matrices against both the original current-source
   baseline and the previous validated increment. Keep Debug/debugger observations

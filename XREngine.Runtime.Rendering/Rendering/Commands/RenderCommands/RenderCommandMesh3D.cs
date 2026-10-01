@@ -29,6 +29,14 @@ namespace XREngine.Rendering.Commands
         private readonly HashSet<XRMaterial> _observedMaterials = [];
         private readonly HashSet<RenderingParameters> _observedMaterialOptions = [];
         private readonly Dictionary<XRMesh, XREvent<XRMesh>> _observedMeshDataEvents = [];
+        // Refreshes run under the subscription gate. Keep their collection capacity,
+        // but clear scratch references after each refresh so removed owners can retire.
+        private readonly HashSet<XRMaterial> _currentMaterialsScratch = [];
+        private readonly HashSet<RenderingParameters> _currentMaterialOptionsScratch = [];
+        private readonly HashSet<XRMesh> _currentMeshesScratch = [];
+        private readonly Dictionary<XRMesh, XREvent<XRMesh>> _nextMeshDataEventsScratch = [];
+        private XRMeshRenderer.SubMesh[] _materialSubmeshesScratch = [];
+        private XRMeshRenderer.SubMesh[] _meshSubmeshesScratch = [];
         private readonly object _rendererSubscriptionsGate = new();
         private Matrix4x4 _worldMatrix = Matrix4x4.Identity;
         private XRMaterial? _materialOverride;
@@ -276,46 +284,70 @@ namespace XREngine.Rendering.Commands
 
         private void RefreshObservedMaterials()
         {
-            HashSet<XRMaterial> current = [];
-            if (_rendererMutationsAttached)
+            HashSet<XRMaterial> current = _currentMaterialsScratch;
+            int submeshCount = 0;
+            try
             {
-                if (_materialOverride is not null)
-                    current.Add(_materialOverride);
-                if (_observedRenderer?.Material is XRMaterial rendererMaterial)
-                    current.Add(rendererMaterial);
-                if (_observedSubmeshes is not null)
-                    foreach (XRMeshRenderer.SubMesh submesh in _observedSubmeshes)
-                        if (submesh.Material is XRMaterial material)
-                            current.Add(material);
-            }
+                if (_rendererMutationsAttached)
+                {
+                    if (_materialOverride is not null)
+                        current.Add(_materialOverride);
+                    if (_observedRenderer?.Material is XRMaterial rendererMaterial)
+                        current.Add(rendererMaterial);
+                    if (_observedSubmeshes is not null)
+                    {
+                        submeshCount = _observedSubmeshes.CopySnapshot(ref _materialSubmeshesScratch);
+                        for (int index = 0; index < submeshCount; ++index)
+                        {
+                            XRMeshRenderer.SubMesh submesh = _materialSubmeshesScratch[index];
+                            if (submesh.Material is XRMaterial material)
+                                current.Add(material);
+                        }
+                    }
+                }
 
-            foreach (XRMaterial material in _observedMaterials)
-                if (!current.Contains(material))
-                    material.PropertyChanged -= ObservedMaterialPropertyChanged;
-            foreach (XRMaterial material in current)
-                if (!_observedMaterials.Contains(material))
-                    material.PropertyChanged += ObservedMaterialPropertyChanged;
-            _observedMaterials.Clear();
-            _observedMaterials.UnionWith(current);
+                foreach (XRMaterial material in _observedMaterials)
+                    if (!current.Contains(material))
+                        material.PropertyChanged -= ObservedMaterialPropertyChanged;
+                foreach (XRMaterial material in current)
+                    if (!_observedMaterials.Contains(material))
+                        material.PropertyChanged += ObservedMaterialPropertyChanged;
+                _observedMaterials.Clear();
+                foreach (XRMaterial material in current)
+                    _observedMaterials.Add(material);
+            }
+            finally
+            {
+                current.Clear();
+                Array.Clear(_materialSubmeshesScratch, 0, submeshCount);
+            }
             RefreshObservedMaterialOptions();
         }
 
         private void RefreshObservedMaterialOptions()
         {
-            HashSet<RenderingParameters> current = [];
-            if (_rendererMutationsAttached && _renderOptionsOverride is not null)
-                current.Add(_renderOptionsOverride);
-            foreach (XRMaterial material in _observedMaterials)
-                current.Add(material.RenderOptions);
+            HashSet<RenderingParameters> current = _currentMaterialOptionsScratch;
+            try
+            {
+                if (_rendererMutationsAttached && _renderOptionsOverride is not null)
+                    current.Add(_renderOptionsOverride);
+                foreach (XRMaterial material in _observedMaterials)
+                    current.Add(material.RenderOptions);
 
-            foreach (RenderingParameters options in _observedMaterialOptions)
-                if (!current.Contains(options))
-                    options.PropertyChanged -= ObservedMaterialOptionsPropertyChanged;
-            foreach (RenderingParameters options in current)
-                if (!_observedMaterialOptions.Contains(options))
-                    options.PropertyChanged += ObservedMaterialOptionsPropertyChanged;
-            _observedMaterialOptions.Clear();
-            _observedMaterialOptions.UnionWith(current);
+                foreach (RenderingParameters options in _observedMaterialOptions)
+                    if (!current.Contains(options))
+                        options.PropertyChanged -= ObservedMaterialOptionsPropertyChanged;
+                foreach (RenderingParameters options in current)
+                    if (!_observedMaterialOptions.Contains(options))
+                        options.PropertyChanged += ObservedMaterialOptionsPropertyChanged;
+                _observedMaterialOptions.Clear();
+                foreach (RenderingParameters options in current)
+                    _observedMaterialOptions.Add(options);
+            }
+            finally
+            {
+                current.Clear();
+            }
         }
 
         private void ClearObservedMaterials()
@@ -330,37 +362,53 @@ namespace XREngine.Rendering.Commands
 
         private void RefreshObservedMeshes()
         {
-            HashSet<XRMesh> current = [];
-            if (_rendererMutationsAttached)
+            HashSet<XRMesh> current = _currentMeshesScratch;
+            Dictionary<XRMesh, XREvent<XRMesh>> next = _nextMeshDataEventsScratch;
+            int submeshCount = 0;
+            try
             {
-                if (_observedRenderer?.Mesh is XRMesh rendererMesh)
-                    current.Add(rendererMesh);
-                if (_observedSubmeshes is not null)
-                    foreach (XRMeshRenderer.SubMesh submesh in _observedSubmeshes)
-                        if (submesh.Mesh is XRMesh mesh)
-                            current.Add(mesh);
+                if (_rendererMutationsAttached)
+                {
+                    if (_observedRenderer?.Mesh is XRMesh rendererMesh)
+                        current.Add(rendererMesh);
+                    if (_observedSubmeshes is not null)
+                    {
+                        submeshCount = _observedSubmeshes.CopySnapshot(ref _meshSubmeshesScratch);
+                        for (int index = 0; index < submeshCount; ++index)
+                        {
+                            XRMeshRenderer.SubMesh submesh = _meshSubmeshesScratch[index];
+                            if (submesh.Mesh is XRMesh mesh)
+                                current.Add(mesh);
+                        }
+                    }
+                }
+
+                foreach ((XRMesh mesh, XREvent<XRMesh> dataChanged) in _observedMeshDataEvents)
+                    if (!current.Contains(mesh))
+                    {
+                        mesh.PropertyChanged -= ObservedMeshPropertyChanged;
+                        dataChanged.RemoveListener(ObservedMeshDataChanged);
+                    }
+                foreach (XRMesh mesh in current)
+                    if (!_observedMeshDataEvents.ContainsKey(mesh))
+                    {
+                        mesh.PropertyChanged += ObservedMeshPropertyChanged;
+                        (mesh.DataChanged ??= new XREvent<XRMesh>()).AddListener(ObservedMeshDataChanged);
+                    }
+
+                foreach (XRMesh mesh in current)
+                    next.Add(mesh, _observedMeshDataEvents.TryGetValue(mesh, out XREvent<XRMesh>? previous)
+                        ? previous : mesh.DataChanged!);
+                _observedMeshDataEvents.Clear();
+                foreach ((XRMesh mesh, XREvent<XRMesh> dataChanged) in next)
+                    _observedMeshDataEvents.Add(mesh, dataChanged);
             }
-
-            foreach ((XRMesh mesh, XREvent<XRMesh> dataChanged) in _observedMeshDataEvents)
-                if (!current.Contains(mesh))
-                {
-                    mesh.PropertyChanged -= ObservedMeshPropertyChanged;
-                    dataChanged.RemoveListener(ObservedMeshDataChanged);
-                }
-            foreach (XRMesh mesh in current)
-                if (!_observedMeshDataEvents.ContainsKey(mesh))
-                {
-                    mesh.PropertyChanged += ObservedMeshPropertyChanged;
-                    (mesh.DataChanged ??= new XREvent<XRMesh>()).AddListener(ObservedMeshDataChanged);
-                }
-
-            Dictionary<XRMesh, XREvent<XRMesh>> next = [];
-            foreach (XRMesh mesh in current)
-                next.Add(mesh, _observedMeshDataEvents.TryGetValue(mesh, out XREvent<XRMesh>? previous)
-                    ? previous : mesh.DataChanged!);
-            _observedMeshDataEvents.Clear();
-            foreach ((XRMesh mesh, XREvent<XRMesh> dataChanged) in next)
-                _observedMeshDataEvents.Add(mesh, dataChanged);
+            finally
+            {
+                current.Clear();
+                next.Clear();
+                Array.Clear(_meshSubmeshesScratch, 0, submeshCount);
+            }
         }
 
         private void ClearObservedMeshes()
