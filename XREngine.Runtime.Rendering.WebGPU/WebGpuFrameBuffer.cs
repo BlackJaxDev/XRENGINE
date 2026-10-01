@@ -156,6 +156,11 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         return api.GetRenderView(mip, layer);
     }
 
+    internal void MarkRecorded()
+    {
+        foreach (WebGpuTexture2D texture in _textures) texture.MarkRecorded();
+    }
+
     public bool DependsOn(AbstractRenderAPIObject resource)
     {
         if (ReferenceEquals(this, resource)) return true;

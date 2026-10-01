@@ -123,3 +123,22 @@ Use the explicit depth probe through engine renderer objects, then verify:
 A screenshot of a clear alone, offline cook, or successful module compilation is
 not evidence that these rendering checks pass. The probe does not qualify reverse
 Z, alpha masking, shadows, OpenGL/Vulkan preservation, or physical-device support.
+
+## Engine texture binding qualification
+
+The admitted depth profile passed real Chromium/SwiftShader pixels in
+[run 36936819487](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36936819487).
+The next diagnostic, `TextureProbe.slang`, reuses the depth transform function
+and adds the canonical `uv0` stream plus explicitly paired `Texture0` texture
+and sampler declarations. The cooker validates the emitted physical bindings;
+it is not a generated browser-only material or production fallback.
+
+The RGBA8/sRGB texture, immutable binding-set and deferred-retirement source
+compiles, and the browser publishes with the pinned native physics build.
+Published .NET WASM executes three texture cases with 39 recorded mesh draws,
+three texture uploads and three sampler creations through observed imports,
+and releases the recorded handles on stop. GPU imports in that local probe are
+mocked: this establishes managed/interop control flow only. Live corner pixels,
+sRGB decoding and repeated replacement remain pending in the new CI check.
+Arrays, cubes, HDR, depth sampling and storage-resource binding stay unsupported
+until their own engine paths and known-value output are qualified.

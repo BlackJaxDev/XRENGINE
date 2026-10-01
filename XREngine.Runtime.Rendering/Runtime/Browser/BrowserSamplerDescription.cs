@@ -7,11 +7,12 @@ public sealed record BrowserSamplerDescription
 {
     public BrowserSamplerDescription(string AddressU = "clamp-to-edge", string AddressV = "clamp-to-edge",
         string MinFilter = "linear", string MagFilter = "linear", string MipmapFilter = "linear",
-        string Label = "", float LodMaxClamp = 32, int MaxAnisotropy = 1)
+        string Label = "", float LodMaxClamp = 32, int MaxAnisotropy = 1, float LodMinClamp = 0)
     {
         if (!ValidAddress(AddressU) || !ValidAddress(AddressV) ||
             !ValidFilter(MinFilter) || !ValidFilter(MagFilter) || !ValidFilter(MipmapFilter) ||
-            !float.IsFinite(LodMaxClamp) || LodMaxClamp is < 0 or > 32 ||
+            !float.IsFinite(LodMinClamp) || !float.IsFinite(LodMaxClamp) ||
+            LodMinClamp < 0 || LodMinClamp > LodMaxClamp || LodMaxClamp > 32 ||
             MaxAnisotropy is < 1 or > 16 ||
             (MaxAnisotropy > 1 && (MinFilter != "linear" || MagFilter != "linear" || MipmapFilter != "linear")))
             throw new ArgumentException("Browser sampler address, filtering, LOD or anisotropy policy is unsupported.");
@@ -21,6 +22,7 @@ public sealed record BrowserSamplerDescription
         this.MagFilter = MagFilter;
         this.MipmapFilter = MipmapFilter;
         this.Label = Label;
+        this.LodMinClamp = LodMinClamp;
         this.LodMaxClamp = LodMaxClamp;
         this.MaxAnisotropy = MaxAnisotropy;
     }
@@ -31,11 +33,17 @@ public sealed record BrowserSamplerDescription
     public string MagFilter { get; }
     public string MipmapFilter { get; }
     public string Label { get; }
+    /// <summary>Minimum sampled mip level; zero preserves the legacy material sampling contract.</summary>
+    public float LodMinClamp { get; }
     public float LodMaxClamp { get; }
     public int MaxAnisotropy { get; }
 
-    internal string ToPipelineJson() =>
-        $"{{\"addressModeU\":\"{AddressU}\",\"addressModeV\":\"{AddressV}\",\"minFilter\":\"{MinFilter}\",\"magFilter\":\"{MagFilter}\",\"mipmapFilter\":\"{MipmapFilter}\",\"lodMaxClamp\":{LodMaxClamp.ToString("R", CultureInfo.InvariantCulture)},\"maxAnisotropy\":{MaxAnisotropy}}}";
+    internal string ToPipelineJson()
+    {
+        if (LodMinClamp != 0)
+            throw new NotSupportedException("The legacy browser material pipeline requires a zero minimum sampler LOD.");
+        return $"{{\"addressModeU\":\"{AddressU}\",\"addressModeV\":\"{AddressV}\",\"minFilter\":\"{MinFilter}\",\"magFilter\":\"{MagFilter}\",\"mipmapFilter\":\"{MipmapFilter}\",\"lodMaxClamp\":{LodMaxClamp.ToString("R", CultureInfo.InvariantCulture)},\"maxAnisotropy\":{MaxAnisotropy}}}";
+    }
 
     private static bool ValidAddress(string value) => value is "clamp-to-edge" or "repeat" or "mirror-repeat";
     private static bool ValidFilter(string value) => value is "nearest" or "linear";

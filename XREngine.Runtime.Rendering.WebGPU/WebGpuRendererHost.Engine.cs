@@ -109,6 +109,7 @@ public sealed partial class WebGpuRendererHost
                 throw new InvalidOperationException("WebGPU.FrameBuffer.ClearOutsideFrame: framebuffer clears require an active engine frame.");
             int command = framebuffer.GetClearCommand(color, depth, _engineClearColor, _engineClearDepth);
             RecordEngineCommands(command, []);
+            framebuffer.MarkRecorded();
             return;
         }
         if (!color || !depth || stencil)
@@ -217,9 +218,14 @@ public sealed partial class WebGpuRendererHost
 
     internal void ReleaseEngineDrawDependencies(AbstractRenderAPIObject resource)
     {
+        // Release recorded commands before retiring the groups they retain. Both
+        // remain alive through submission if the current frame already used them.
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuMeshRenderer mesh)
                 mesh.ReleaseDrawsUsing(resource);
+        foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
+            if (api is WebGpuRenderProgram program)
+                program.ReleaseBindingSetsUsing(resource);
     }
 
     private static NotSupportedException UnsupportedEngineOperation(string operation,

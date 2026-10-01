@@ -57,6 +57,6 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
         ArgumentNullException.ThrowIfNull(description);
         return Track(WebGpuImports.CreateSampler(_session, description.AddressU, description.AddressV,
             description.MinFilter, description.MagFilter, description.MipmapFilter, description.Label,
-            description.LodMaxClamp, description.MaxAnisotropy));
+            description.LodMaxClamp, description.MaxAnisotropy, description.LodMinClamp));
     }
 }

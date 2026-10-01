@@ -181,18 +181,19 @@ export class GpuResources {
         return handle;
     }
 
-    createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp = 32, maxAnisotropy = 1) {
+    createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp = 32, maxAnisotropy = 1, lodMinClamp = 0) {
         const r = this._ready();
         if (![addressU, addressV].every(value => value === 'clamp-to-edge' || value === 'repeat' || value === 'mirror-repeat') ||
             ![minFilter, magFilter, mipmapFilter].every(value => value === 'nearest' || value === 'linear') ||
-            !Number.isFinite(lodMaxClamp) || lodMaxClamp < 0 || lodMaxClamp > 32 ||
+            !Number.isFinite(lodMinClamp) || !Number.isFinite(lodMaxClamp) ||
+            lodMinClamp < 0 || lodMinClamp > lodMaxClamp || lodMaxClamp > 32 ||
             !Number.isInteger(maxAnisotropy) || maxAnisotropy < 1 || maxAnisotropy > 16 ||
             (maxAnisotropy > 1 && [minFilter, magFilter, mipmapFilter].some(value => value !== 'linear')))
             throw new RangeError('Sampler address, filtering, LOD or anisotropy mode is unsupported.');
         debugLabel(label);
         r._setOperation('create-sampler', label);
         const sampler = r.device.createSampler({ label, addressModeU: addressU, addressModeV: addressV,
-            addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, lodMaxClamp, maxAnisotropy });
+            addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, lodMinClamp, lodMaxClamp, maxAnisotropy });
         return r._resources.add('sampler', { sampler, label, state: 'ready', references: 0,
             filtering: minFilter === 'linear' || magFilter === 'linear' || mipmapFilter === 'linear' }, r._owner);
     }
@@ -202,6 +203,7 @@ export class GpuResources {
             if (immediate) entry.value.buffer.destroy(); else this.renderer._retire(entry.value.buffer);
         } else if (entry.kind === 'texture-view') {
             entry.value.texture.references--;
+            if (!entry.value.texture.references) entry.value.texture.tryRetire?.();
             entry.value.view = null;
         } else if (entry.kind === 'sampler') entry.value.sampler = null;
         else return false;

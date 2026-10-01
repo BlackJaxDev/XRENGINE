@@ -643,8 +643,8 @@ export class WebGpuCanvasRenderer {
         const entry = this._resources.slots[slot];
         if (!entry || entry.generation !== generation || entry.owner !== this._owner)
             throw new Error('Invalid or obsolete resource handle.');
-        if (!['buffer', 'shader', 'binding-layout', 'binding-group', 'render-pipeline', 'compute-pipeline', 'commands'].includes(entry.kind))
-            throw new Error('Deferred engine retirement requires an engine command or buffer resource.');
+        if (!['buffer', 'texture', 'texture-view', 'sampler', 'shader', 'binding-layout', 'binding-group', 'render-pipeline', 'compute-pipeline', 'commands'].includes(entry.kind))
+            throw new Error('Deferred engine retirement requires an engine command, buffer, texture, view or sampler resource.');
         if (entry.value.retired) return;
         entry.value.retired = true;
         entry.value.tryRetire = () => {
@@ -691,7 +691,10 @@ export class WebGpuCanvasRenderer {
         if (entry.value.release) { entry.value.release(); return; }
         if (this.resources.destroy(entry, immediate)) return;
         if (entry.kind === 'material') {
-            if (entry.value.texture) entry.value.texture.references--;
+            if (entry.value.texture) {
+                entry.value.texture.references--;
+                if (!entry.value.texture.references) entry.value.texture.tryRetire?.();
+            }
             if (immediate) entry.value.colorBuffer.destroy();
             else this._retire(entry.value.colorBuffer);
         } else if (entry.kind === 'texture') {

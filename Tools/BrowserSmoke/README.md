@@ -5,6 +5,13 @@ browser application and cooked shader artifacts, launches real Chromium, and
 checks the actual engine-rendered pixels. It neither mocks WebGPU nor replaces
 physics or engine scene objects. A source/build success is not a smoke pass.
 
+The texture diagnostic uses the same engine camera, ModelComponents and frame
+path with canonical UV streams and an authored `XRTexture2D`. It checks four
+colored texture corners, the linear result of sampling an sRGB midpoint, and
+five alternating resource replacements. Retired resources must drain without
+growing the live GPU-resource count; reference-scene packets remain forbidden.
+Array/cube/depth sampling, HDR, and production lit materials are not implied.
+
 The audio check imports the published Web Audio streaming scheduler and renders
 two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
 sample at rates 1 and 2, processed-buffer order, and disposal. It requires no
@@ -28,8 +35,9 @@ node Tools/BrowserSmoke/run.mjs \
   --output Build/_AgentValidation/<run>/reports/browser-smoke
 ```
 
-Cook both `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json` and
-`engine-depth-probe.recipe.json` with `Tools/ShaderCooker`; supply the directory
+Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
+`engine-depth-probe.recipe.json`, and `engine-texture-probe.recipe.json` with
+`Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on
 an ignored prior agent run. The browser publish must include

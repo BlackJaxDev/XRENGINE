@@ -53,8 +53,8 @@ public static partial class EngineMeshDiagnosticExports
             ownsStartup = true;
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(descriptorJson), Encoding.UTF8.GetBytes(wgsl));
-            if (artifact.Pass != "depth-probe")
-                throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select the cooked depth-probe artifact.");
+            if (artifact.Pass is not ("depth-probe" or "texture-probe"))
+                throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select a cooked engine raster diagnostic artifact.");
             stage = "open asset catalog";
             _assetSource = await BrowserEngineAssetSource.OpenAsync(assetManifestUrl, cancellation.Token);
             EnsureCurrentCreation(requestedEpoch, cancellation.Token);
@@ -170,6 +170,14 @@ public static partial class EngineMeshDiagnosticExports
     {
         RequireSession(session);
         return _fixture?.GetFrameStatus() ?? "The engine fixture is not initialized.";
+    }
+
+    [JSExport]
+    public static void SetTextureCase(int session, int sampleCase)
+    {
+        RequireSession(session);
+        (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired."))
+            .SetTextureCase(sampleCase);
     }
 
     [JSExport]
