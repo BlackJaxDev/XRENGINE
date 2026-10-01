@@ -6,7 +6,7 @@ namespace XREngine.Networking;
 internal static class RealtimeTlsFraming
 {
     internal const int MaximumDatagramBytes = 65_507;
-    internal const string ProtocolName = "xrengine-realtime/1";
+    internal const string ProtocolName = RealtimeWireProtocol.TlsProtocol;
 
     internal static async ValueTask<int> ReadAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
     {

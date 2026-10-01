@@ -1662,15 +1662,19 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         if (debugMode >= 0 && debugMode <= 18)
             _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
-        WarmDeferredLightingShaders();
-        WarmFirstRenderShaders();
+        if (!OperatingSystem.IsBrowser() && AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+        {
+            WarmDeferredLightingShaders();
+            WarmFirstRenderShaders();
+        }
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
         RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
         RuntimeEngine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
-        InitializeCommandChain();
+        if (!OperatingSystem.IsBrowser() && AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+            InitializeCommandChain();
     }
 
     private void WarmDeferredLightingShaders()

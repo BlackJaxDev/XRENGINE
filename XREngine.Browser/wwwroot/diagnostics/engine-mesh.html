@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engine mesh depth diagnostic</title>
+<style>
+body{font:16px system-ui;background:#181b22;color:#f5f6fa;margin:2rem}canvas{display:block;width:512px;height:512px;max-width:100%;background:#08090c;margin:1rem 0}input{width:min(70vw,52rem)}button,input{font:inherit;padding:.4rem}pre{white-space:pre-wrap}
+</style>
+<h1>Engine mesh depth diagnostic</h1>
+<p>Static engine ModelComponents, camera, viewport and cooked depth shader. No production world play or physics is started.</p>
+<label>Schema 3 shader manifest <input id="manifest" type="url" placeholder="URL of the cooked depth artifact manifest"></label>
+<button id="start">Start</button><button id="stop">Stop</button>
+<canvas id="engine-depth-canvas" width="512" height="512"></canvas>
+<p>Expected: left triangle depth 0.25 (red ≈64, blue ≈191); right triangle depth 0.75 (red ≈191, blue ≈64). A second far triangle behind the left one must remain occluded.</p>
+<pre id="status">Provide the cooked engine-depth-probe manifest URL, then start.</pre>
+<script type="module">
+import { createBrowserRuntime } from '../browser-runtime.js';
+const status=document.querySelector('#status'), manifest=document.querySelector('#manifest');
+manifest.value=new URLSearchParams(location.search).get('manifest') ?? '';
+const createHost=await createBrowserRuntime();
+const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
+document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href)).catch(error=>{status.textContent=String(error);});
+document.querySelector('#stop').onclick=()=>host.stop();
+window.engineMeshDiagnostic=host;
+window.addEventListener('pagehide',()=>host.stop());
+</script>
+</html>

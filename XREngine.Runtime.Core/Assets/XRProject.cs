@@ -51,6 +51,9 @@ namespace XREngine
         private string _description = string.Empty;
         private string _author = string.Empty;
         private string _startupScenePath = string.Empty;
+        private string? _desktopHostProjectPath;
+        private string? _desktopHostRegistrationType;
+        private string? _browserShaderArtifactManifestPath;
 
         [MemoryPackConstructor]
         public XRProject() { }
@@ -113,6 +116,27 @@ namespace XREngine
         {
             get => _startupScenePath;
             set => SetField(ref _startupScenePath, value);
+        }
+
+        /// <summary>Optional project-relative desktop composition project, excluded from browser gameplay.</summary>
+        public string? DesktopHostProjectPath
+        {
+            get => _desktopHostProjectPath;
+            set => SetField(ref _desktopHostProjectPath, value);
+        }
+
+        /// <summary>Public desktop composition type exposing a parameterless static Register method.</summary>
+        public string? DesktopHostRegistrationType
+        {
+            get => _desktopHostRegistrationType;
+            set => SetField(ref _desktopHostRegistrationType, value);
+        }
+
+        /// <summary>Project-relative schema-three shader cooker manifest used for explicit browser artifact identities.</summary>
+        public string? BrowserShaderArtifactManifestPath
+        {
+            get => _browserShaderArtifactManifestPath;
+            set => SetField(ref _browserShaderArtifactManifestPath, value);
         }
 
         /// <summary>

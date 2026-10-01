@@ -181,7 +181,7 @@ internal sealed class LocalWorkerSupervisor(
                     Visibility = request.IsPublic ? MultiplayerInstanceVisibility.Public : MultiplayerInstanceVisibility.Private,
                     DisplayName = request.DisplayName,
                     HostId = options.HostId,
-                    Endpoint = new() { Host = options.AdvertisedHost, Port = port, ProtocolVersion = package.BuildVersion, Transport = options.RealtimeTls is null ? RealtimeTransportKind.NativeUdp : RealtimeTransportKind.NativeTls },
+                    Endpoint = new() { Host = options.AdvertisedHost, Port = port, ProtocolVersion = package.BuildVersion, Transport = options.RealtimeTls is null ? RealtimeTransportKind.NativeUdp : options.RealtimeTls.UseWebSocket ? RealtimeTransportKind.WebSocket : RealtimeTransportKind.NativeTls },
                     WorldAsset = package.Asset,
                     WorldPackage = package,
                     MaxPlayers = request.MaxPlayers,
@@ -229,7 +229,7 @@ internal sealed class LocalWorkerSupervisor(
                         ManagementLeaseMilliseconds = options.WorkerLeaseSeconds * 1000,
                     },
                     ResourceLimits = new() { CpuPercentLimit = options.WorkerCpuPercent, MemoryBytesLimit = options.WorkerMemoryLimitBytes },
-                    Tls = options.RealtimeTls is null ? null : new ManagedWorkerTlsConfiguration { ListenAddress = options.RealtimeTls.ListenAddress, ListenPort = port, CertificateThumbprint = options.RealtimeTls.CertificateThumbprint, UseMachineCertificateStore = options.RealtimeTls.UseMachineCertificateStore, MaximumConnections = options.RealtimeTls.MaximumConnections, MaximumConnectionsPerAddress = options.RealtimeTls.MaximumConnectionsPerAddress },
+                    Tls = options.RealtimeTls is null ? null : new ManagedWorkerTlsConfiguration { ListenAddress = options.RealtimeTls.ListenAddress, ListenPort = port, CertificateThumbprint = options.RealtimeTls.CertificateThumbprint, UseMachineCertificateStore = options.RealtimeTls.UseMachineCertificateStore, MaximumConnections = options.RealtimeTls.MaximumConnections, MaximumConnectionsPerAddress = options.RealtimeTls.MaximumConnectionsPerAddress, UseWebSocket = options.RealtimeTls.UseWebSocket, AllowedWebSocketOrigins = [.. options.RealtimeTls.AllowedWebSocketOrigins] },
                 };
                 admissionSigner.ConfigureLaunch(launch);
                 execution = new WorkerExecution

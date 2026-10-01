@@ -27,4 +27,12 @@ internal static partial class WebGpuImports
 
     [JSImport("submitPreparedCommands", "xrengine.webgpu")]
     internal static partial bool SubmitPreparedCommands(int session, int commandsHandle);
+
+    [JSImport("submitEngineFrame", "xrengine.webgpu")]
+    internal static partial bool SubmitEngineFrame(int session,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> commands,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> uniforms);
+
+    [JSImport("retireResource", "xrengine.webgpu")]
+    internal static partial void RetireResource(int session, int handle);
 }

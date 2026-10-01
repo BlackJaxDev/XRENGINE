@@ -1,0 +1,219 @@
+using System.Buffers;
+using System.Numerics;
+using System.Text;
+using System.Text.Json;
+using XREngine.Rendering.Shaders.Compilation;
+
+namespace XREngine.Rendering.WebGPU;
+
+/// <summary>Compiles an explicit cooked engine module and retains its immutable uniform binding layouts.</summary>
+public sealed class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>, IRenderPreparationState
+{
+    private readonly record struct UniformTarget(WebGpuUniformBlock Block, ShaderAbiMemberContract Member);
+    private readonly Dictionary<string, List<UniformTarget>> _uniforms = new(StringComparer.Ordinal);
+    private ShaderProgramArtifact? _artifact;
+    private Task? _preparation;
+    private int _shaderHandle;
+    private int[] _layouts = [];
+    private int[] _groups = [];
+    private WebGpuUniformBlock[] _blocks = [];
+    private int _preparationEpoch;
+
+    public WebGpuRenderProgram(WebGpuRendererHost renderer, XRRenderProgram data) : base(renderer, data)
+    {
+        data.LinkRequested += Link;
+        data.UseRequested += Link;
+        data.UniformSetMatrix4x4Requested += SetMatrix;
+        data.UniformSetFloatRequested += SetFloat;
+        data.UniformSetVector2Requested += SetVector2;
+        data.UniformSetVector3Requested += SetVector3;
+        data.UniformSetVector4Requested += SetVector4;
+        data.UniformSetIntRequested += SetInt;
+        data.UniformSetUIntRequested += SetUInt;
+        data.UniformSetBoolRequested += SetBool;
+    }
+
+    public ShaderProgramArtifact Artifact => _artifact
+        ?? throw new InvalidOperationException("WebGPU.Program.Pending: no cooked program has been prepared.");
+    public int ShaderHandle => _shaderHandle;
+    public ReadOnlySpan<int> LayoutHandles => _layouts;
+    public ReadOnlySpan<int> GroupHandles => _groups;
+    public int UniformBlockCount => _blocks.Length;
+    public override bool IsGenerated => _shaderHandle != 0 && _preparation?.IsCompletedSuccessfully == true;
+    public bool IsPreparedForRendering => IsGenerated;
+
+    public override void Generate()
+    {
+        ValidateOwnerGeneration();
+        if (!Data.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, Renderer.ShaderArtifacts, out ShaderProgramArtifact? artifact) || artifact is null)
+            throw new NotSupportedException($"WebGPU.Program.ArtifactMissing: program '{Data.Name}' has no complete WebGPU shader companion.");
+        if (_artifact is not null && _artifact.Identity != artifact.Identity)
+            throw new NotSupportedException("WebGPU.Program.ArtifactChanged: replace the program and dependent mesh bindings at a resource-generation boundary.");
+        if (_preparation is null)
+        {
+            SetField(ref _artifact, artifact);
+            SetField(ref _preparation, PrepareAsync(artifact, _preparationEpoch));
+        }
+        Task preparation = _preparation
+            ?? throw new InvalidOperationException("WebGPU.Program.PreparationMissing: the module preparation request was not retained.");
+        if (preparation.IsFaulted || preparation.IsCanceled)
+            preparation.GetAwaiter().GetResult();
+    }
+
+    public bool TryPrepareForRendering()
+    {
+        Generate();
+        return IsGenerated;
+    }
+
+    private async Task PrepareAsync(ShaderProgramArtifact artifact, int epoch)
+    {
+        foreach (ShaderStageResourceLayout resource in artifact.Resources)
+            if (resource.Contract.Kind != ShaderAbiResourceKind.UniformBuffer ||
+                resource.BindingType != "uniform" || !resource.DynamicOffset)
+                throw new NotSupportedException($"WebGPU.Program.BindingUnsupported: '{artifact.Name}' binding '{resource.Contract.Name}' requires an admitted dynamic uniform buffer.");
+        int shader = await Renderer.CreateShaderModuleAsync(artifact.Artifact.WgslSource, artifact.Name);
+        if (IsRetired || Data.IsDestroyed || !Renderer.AcceptsBackendWork || epoch != _preparationEpoch)
+        {
+            if (Renderer.State == BrowserRendererState.Ready)
+                Renderer.RetireEngineResource(shader);
+            throw new InvalidOperationException("WebGPU.Program.Obsolete: module preparation completed after its engine owner retired.");
+        }
+        SetField(ref _shaderHandle, shader);
+
+        int groupCount = 0;
+        foreach (ShaderStageResourceLayout resource in artifact.Resources)
+            groupCount = Math.Max(groupCount, checked((int)resource.Contract.Set + 1));
+        int arena = artifact.Resources.Length == 0 ? 0 : Renderer.EnsureEngineUniformBuffer();
+        SetField(ref _layouts, new int[groupCount]);
+        SetField(ref _groups, new int[groupCount]);
+        List<WebGpuUniformBlock> blocks = [];
+        for (int group = 0; group < groupCount; group++)
+        {
+            _layouts[group] = Renderer.CreateBindingLayout(DescribeGroup(artifact, group, layout: true, arena));
+            _groups[group] = Renderer.CreateBindingGroup(DescribeGroup(artifact, group, layout: false, arena));
+            foreach (ShaderStageResourceLayout resource in artifact.Resources.OrderBy(static resource => resource.Contract.Binding))
+            {
+                if (resource.Contract.Set != group)
+                    continue;
+                WebGpuUniformBlock block = new(resource.Contract);
+                blocks.Add(block);
+                foreach (ShaderAbiMemberContract member in resource.Contract.Members)
+                {
+                    if (!_uniforms.TryGetValue(member.ProviderName, out List<UniformTarget>? targets))
+                        _uniforms.Add(member.ProviderName, targets = []);
+                    targets.Add(new(block, member));
+                }
+            }
+        }
+        SetField(ref _blocks, blocks.ToArray());
+        Data.SetBackendLinked(true);
+    }
+
+    private string DescribeGroup(ShaderProgramArtifact artifact, int group, bool layout, int arena)
+    {
+        ArrayBufferWriter<byte> output = new();
+        using (Utf8JsonWriter writer = new(output))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("label", artifact.Name);
+            if (!layout) writer.WriteNumber("layout", _layouts[group]);
+            writer.WriteStartArray("entries");
+            foreach (ShaderStageResourceLayout resource in artifact.Resources)
+            {
+                if (resource.Contract.Set != group) continue;
+                writer.WriteStartObject();
+                writer.WriteNumber("binding", resource.Contract.Binding);
+                if (layout)
+                {
+                    writer.WriteNumber("visibility", (int)resource.Visibility);
+                    writer.WriteStartObject("buffer");
+                    writer.WriteString("type", "uniform");
+                    writer.WriteBoolean("hasDynamicOffset", true);
+                    writer.WriteNumber("minBindingSize", resource.Contract.ByteSize);
+                    writer.WriteEndObject();
+                }
+                else
+                {
+                    writer.WriteNumber("resource", arena);
+                    writer.WriteNumber("offset", 0);
+                    writer.WriteNumber("size", resource.Contract.ByteSize);
+                }
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    internal int SnapshotUniforms(Span<uint> offsets)
+    {
+        if (!IsGenerated || offsets.Length < _blocks.Length)
+            throw new InvalidOperationException("WebGPU.Program.UniformsPending: program resources are not prepared.");
+        for (int i = 0; i < _blocks.Length; i++)
+            offsets[i] = Renderer.SnapshotEngineUniforms(_blocks[i].Bytes);
+        return _blocks.Length;
+    }
+
+    private void Link(XRRenderProgram _) => Generate();
+
+    public void SetMatrix(string name, Matrix4x4 value)
+    {
+        if (_uniforms.TryGetValue(name, out List<UniformTarget>? targets))
+            foreach (UniformTarget target in targets) target.Block.WriteMatrix(target.Member, value);
+    }
+
+    private void SetFloat(string name, float value) => SetFloats(name, [value]);
+    private void SetVector2(string name, Vector2 value) => SetFloats(name, [value.X, value.Y]);
+    private void SetVector3(string name, Vector3 value) => SetFloats(name, [value.X, value.Y, value.Z]);
+    public void SetVector4(string name, Vector4 value) => SetFloats(name, [value.X, value.Y, value.Z, value.W]);
+    private void SetInt(string name, int value) => SetUInt(name, unchecked((uint)value));
+    private void SetBool(string name, bool value) => SetUInt(name, value ? 1u : 0u);
+
+    private void SetFloats(string name, ReadOnlySpan<float> values)
+    {
+        if (_uniforms.TryGetValue(name, out List<UniformTarget>? targets))
+            foreach (UniformTarget target in targets) target.Block.Write(target.Member, values);
+    }
+
+    private void SetUInt(string name, uint value)
+    {
+        if (_uniforms.TryGetValue(name, out List<UniformTarget>? targets))
+            foreach (UniformTarget target in targets) target.Block.WriteInteger(target.Member, value);
+    }
+
+    protected override void OnRetiring()
+    {
+        Data.LinkRequested -= Link;
+        Data.UseRequested -= Link;
+        Data.UniformSetMatrix4x4Requested -= SetMatrix;
+        Data.UniformSetFloatRequested -= SetFloat;
+        Data.UniformSetVector2Requested -= SetVector2;
+        Data.UniformSetVector3Requested -= SetVector3;
+        Data.UniformSetVector4Requested -= SetVector4;
+        Data.UniformSetIntRequested -= SetInt;
+        Data.UniformSetUIntRequested -= SetUInt;
+        Data.UniformSetBoolRequested -= SetBool;
+        base.OnRetiring();
+    }
+
+    public override void Destroy()
+    {
+        SetField(ref _preparationEpoch, checked(_preparationEpoch + 1));
+        Renderer.ReleaseEngineDrawDependencies(this);
+        if (Renderer.State != BrowserRendererState.Disposed)
+        {
+            foreach (int group in _groups) if (group != 0) Renderer.RetireEngineResource(group);
+            foreach (int layout in _layouts) if (layout != 0) Renderer.RetireEngineResource(layout);
+            if (_shaderHandle != 0) Renderer.RetireEngineResource(_shaderHandle);
+        }
+        SetField(ref _groups, []);
+        SetField(ref _layouts, []);
+        SetField(ref _blocks, []);
+        SetField(ref _shaderHandle, 0);
+        SetField(ref _preparation, null);
+        _uniforms.Clear();
+        Data.SetBackendLinked(false);
+    }
+}

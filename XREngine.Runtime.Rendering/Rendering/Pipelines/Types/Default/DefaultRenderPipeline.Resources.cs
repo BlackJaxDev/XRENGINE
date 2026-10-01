@@ -81,10 +81,14 @@ public partial class DefaultRenderPipeline
             Math.Max(height, 1u))) + 1);
 
     internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
-        => GlobalIlluminationProviderRegistry.BuildResourceVariant(GlobalIlluminationPlan, viewport);
+    {
+        RequireSupportedOutputResources();
+        return GlobalIlluminationProviderRegistry.BuildResourceVariant(GlobalIlluminationPlan, viewport);
+    }
 
     internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
+        RequireSupportedOutputResources();
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
 
         if (viewport?.CapturePolicy.UsesMinimalDirectFboPath == true)
@@ -174,6 +178,7 @@ public partial class DefaultRenderPipeline
 
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        RequireSupportedOutputResources();
         if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.MinimalDirectCapture) != 0)
             return;
 

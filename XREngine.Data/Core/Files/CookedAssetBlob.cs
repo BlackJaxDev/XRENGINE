@@ -38,6 +38,7 @@ namespace XREngine.Core.Files
         {
             ArgumentNullException.ThrowIfNull(cookedData);
 
+            CookedMemoryPackEnvelope.Validate(cookedData, hasFormat: true);
             var blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(cookedData);
             return blob.Format switch
             {
@@ -59,6 +60,7 @@ namespace XREngine.Core.Files
             if (cookedData.IsEmpty)
                 throw new ArgumentException("Cooked data is empty.", nameof(cookedData));
 
+            CookedMemoryPackEnvelope.Validate(cookedData, hasFormat: true);
             var blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(cookedData);
             return blob.Format switch
             {

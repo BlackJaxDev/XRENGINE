@@ -12,7 +12,7 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
-    public class XRRenderProgram : GenericRenderObject, IEnumerable<XRShader>
+    public partial class XRRenderProgram : GenericRenderObject, IEnumerable<XRShader>
     {
         public sealed record ShaderUniformBinding(
             string Name,
@@ -562,7 +562,10 @@ namespace XREngine.Rendering
         }
 
         private void MarkShaderInterfaceDirty()
-            => _shaderInterfaceDirty = true;
+        {
+            _shaderInterfaceDirty = true;
+            CookedArtifact = null;
+        }
 
         protected override void OnDestroying()
         {

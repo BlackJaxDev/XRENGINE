@@ -13,6 +13,9 @@ using XREngine.Runtime.Bootstrap;
 /// </remarks>
 public interface IGameLaunchBootstrap
 {
+    /// <summary>Installs game-owned serializers and factories after engine asset services, before loading cooked assets.</summary>
+    void InitializeRegistrations() { }
+
     /// <summary>
     /// Gets the application capabilities that must be installed before the game
     /// constructs or deserializes its world graph.

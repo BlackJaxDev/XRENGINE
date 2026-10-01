@@ -533,6 +533,27 @@ export class WebGpuCanvasRenderer {
         this._destroyEntry(entry, false);
     }
 
+    retireResource(handle) {
+        this._stats.controlCalls++;
+        this._requireOwner();
+        const slot = Number.isInteger(handle) ? handle & 0xffff : 0;
+        const generation = Number.isInteger(handle) ? Math.floor(handle / 0x10000) : 0;
+        const entry = this._resources.slots[slot];
+        if (!entry || entry.generation !== generation || entry.owner !== this._owner)
+            throw new Error('Invalid or obsolete resource handle.');
+        if (!['buffer', 'shader', 'binding-layout', 'binding-group', 'render-pipeline', 'compute-pipeline', 'commands'].includes(entry.kind))
+            throw new Error('Deferred engine retirement requires an engine command or buffer resource.');
+        if (entry.value.retired) return;
+        entry.value.retired = true;
+        entry.value.tryRetire = () => {
+            if (this._disposed || entry.value.references) return;
+            entry.value.tryRetire = undefined;
+            this._resources.remove(handle, this._owner);
+            this._destroyEntry(entry, false);
+        };
+        entry.value.tryRetire();
+    }
+
     copyTexture(sourceHandle, destinationHandle, sourceX, sourceY, destinationX, destinationY, width, height) {
         this._stats.controlCalls++;
         this._requireOwner();

@@ -10,5 +10,8 @@ namespace XREngine
 
         /// <summary>Managed software mixer via NAudio. No native OpenAL dependency.</summary>
         NAudio,
+
+        /// <summary>Browser Web Audio output with gesture-gated activation.</summary>
+        WebAudio,
     }
 }

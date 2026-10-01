@@ -7,6 +7,7 @@ public partial class EngineTimer
 {
     private int _explicitFrameOwnerThreadId;
     private long _explicitFrameTimestampTicks;
+    private volatile bool _usesExplicitFrameClock;
 
     /// <summary>
     /// Opens one deterministic, single-threaded frame clock while the normal timer is stopped.
@@ -14,23 +15,13 @@ public partial class EngineTimer
     /// </summary>
     public ExplicitFrameScope BeginExplicitFrame(float fixedDelta)
     {
-        if (IsRunning || UpdateThreadHandle is { IsAlive: true } ||
-            CollectVisibleThreadHandle is { IsAlive: true } ||
-            FixedUpdateThreadHandle is { IsAlive: true })
-        {
-            throw new InvalidOperationException(
-                "Explicit frames require a stopped EngineTimer with no prior loop workers.");
-        }
+        if (!float.IsFinite(fixedDelta) || fixedDelta < 0.0f || fixedDelta >= long.MaxValue / (double)StopwatchTickFrequency)
+            throw new ArgumentOutOfRangeException(nameof(fixedDelta), "Frame elapsed time must be finite and non-negative.");
 
-        int threadId = Environment.CurrentManagedThreadId;
-        if (Interlocked.CompareExchange(ref _explicitFrameOwnerThreadId, threadId, 0) != 0)
-            throw new InvalidOperationException("An explicit EngineTimer frame is already active.");
-
+        long deltaTicks = SecondsToStopwatchTicks(Math.Max(0.000001f, fixedDelta));
+        int threadId = BeginExplicitFrameClock(deltaTicks, callerThreadLoop: false);
         try
         {
-            EnsureExplicitGateReady();
-            long deltaTicks = SecondsToStopwatchTicks(Math.Max(0.000001f, fixedDelta));
-            Interlocked.Add(ref _explicitFrameTimestampTicks, deltaTicks);
             Update.DeltaTicks = deltaTicks;
             Collect.DeltaTicks = deltaTicks;
             Render.DeltaTicks = deltaTicks;
@@ -45,6 +36,36 @@ public partial class EngineTimer
             FixedUpdateManager.LastTimestampTicks = _explicitFrameTimestampTicks;
             unchecked { ++UpdateFrameId; }
             return new ExplicitFrameScope(this, threadId);
+        }
+        catch
+        {
+            Volatile.Write(ref _explicitFrameOwnerThreadId, 0);
+            throw;
+        }
+    }
+
+    private int BeginExplicitFrameClock(long deltaTicks, bool callerThreadLoop)
+    {
+        if (_watch.IsRunning || (!callerThreadLoop && IsCallerThreadLoop) ||
+            UpdateThreadHandle is { IsAlive: true } ||
+            CollectVisibleThreadHandle is { IsAlive: true } ||
+            FixedUpdateThreadHandle is { IsAlive: true })
+        {
+            throw new InvalidOperationException("Explicit frames require an EngineTimer with no active loop workers.");
+        }
+
+        int threadId = Environment.CurrentManagedThreadId;
+        if (callerThreadLoop && Volatile.Read(ref _callerThreadLoopOwnerThreadId) != threadId)
+            throw new InvalidOperationException("Only the caller-thread loop owner can advance its frame clock.");
+        if (Interlocked.CompareExchange(ref _explicitFrameOwnerThreadId, threadId, 0) != 0)
+            throw new InvalidOperationException("An explicit EngineTimer frame is already active.");
+
+        try
+        {
+            EnsureExplicitGateReady();
+            _explicitFrameTimestampTicks = checked(_explicitFrameTimestampTicks + deltaTicks);
+            _usesExplicitFrameClock = true;
+            return threadId;
         }
         catch
         {

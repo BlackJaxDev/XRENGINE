@@ -48,6 +48,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Atmospheric Scattering Component](developer-guides/components/atmospheric-scattering.md)
 - [Global Illumination](developer-guides/gi/global-illumination.md)
 - [Networking](developer-guides/networking/networking.md)
+- [Browser Realtime Transport](developer-guides/networking/browser-realtime.md)
 - [Control Plane](developer-guides/networking/control-plane.md)
 - [Physics API](developer-guides/physics/physics-api.md)
 - [Scene Graph Developer Guide](developer-guides/scene/scene-graph.md)
@@ -118,11 +119,11 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
-[Portable engine host ownership](work/progress/platform/portable-engine-host-ownership.md) records the shared facade, timer, services and desktop composition boundary. The [host validation record](work/investigations/platform/portable-engine-host-validation.md) contains the desktop/browser build gate, Editor camera/UI restore and Server/VRClient startup evidence, including current limitations. Real browser-world startup remains active in the [unified runtime checklist](work/todo/platform/unified-desktop-browser-runtime-todo.md).
+[Portable engine host ownership](work/progress/platform/portable-engine-host-ownership.md) records the shared facade, timer, services and desktop composition boundary. The [host validation record](work/investigations/platform/portable-engine-host-validation.md) contains the desktop/browser build gate, Editor camera/UI restore and Server/VRClient startup evidence, including current limitations. Browser engine composition is now present in source; the [unified runtime checklist](work/todo/platform/unified-desktop-browser-runtime-todo.md) and [2026-10-01 implementation checkpoint](work/progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguish that work from still-open live browser and renderer acceptance.
 
-[Portable browser engine boot qualification](work/progress/platform/portable-browser-engine-boot.md) records partial real asset round-trips and the external asset/native binding boundaries. The unified runtime effort is paused at the owner's request, with its resume order recorded in the checklist.
+[Portable browser engine boot qualification](work/progress/platform/portable-browser-engine-boot.md) records the current shared-engine startup source, earlier partial asset round-trips, and the remaining browser execution boundary. The effort resumed on 2026-10-01; source composition does not yet establish a live engine-world or rendered-game result. Browser Jolt's managed source supply and native/managed spike publish are approved and built, while browser physics execution remains unverified.
 
-[Browser project publishing](work/progress/rendering/browser-project-publishing.md) connects the existing editor/CLI build flow to saved-world export, a shared content packager and a complete static browser bundle. It documents admitted native asset coverage and the remaining authoring and validation gaps.
+[Browser project publishing](work/progress/rendering/browser-project-publishing.md) connects the existing editor/CLI build flow to saved-world export, a shared content packager and a static browser bundle. The current production player is headless and explicitly reports rendering unavailable; the engine WebGPU pipeline, authored-world parity, packaged-editor publishing, and live browser qualification remain open.
 
 [Browser compute reuse audit and integration](work/progress/rendering/browser-compute-reuse-audit.md) maps existing skinning, GPU scene and Hi-Z contracts to their WebGPU backend implementations, experimental controls and deferred qualification. Canonical palette/bounds types are shared; no second production animator or scene database is introduced.
 

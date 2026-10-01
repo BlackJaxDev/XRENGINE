@@ -62,6 +62,12 @@ All layouts together must fit per-stage uniform/storage/texture/sampler limits a
 
 ## Ordered sequences
 
+Attachment-only operations use `{ "type": "clear", "pass": { ... } }` with the
+same validated attachment plan as a render command. They do not require a shader
+or graphics pipeline. This supports engine-owned canvas clears without routing
+through reference scene policy. A render pipeline may omit `fragment` for a
+vertex-only depth pass, which must have no color attachments.
+
 `PrepareCommands` accepts `{ "label": "Frame", "commands": [...] }`. At most 4096 commands and 4096 total draws are admitted per sequence. Commands execute in supplied order in one encoder and one queue submission.
 
 A render command has:
@@ -111,5 +117,30 @@ A texture-copy command is `{ "type": "copyTexture", "source": sourceHandle, "des
 Replay traverses retained arrays without new per-draw objects. WebGPU encoder, pass encoder, command buffer and current-canvas-view creation remain required browser operations. Compute-only and copy-only submissions do not mark a replacement renderer's first presentation frame ready. Submission errors stop the renderer; asynchronous uncaptured device errors follow its existing terminal error path.
 
 ## Status
+
+### Engine frame replay
+
+The engine adapter additionally records `submitEngineFrame(commands, uniforms)`.
+Its little-endian command arena has a 48-byte header and 80-byte records, bounded
+to 4097 records and 4096 draws. The header identifies magic `0x45475258`, schema 1,
+byte length, record count, session, surface generation, width/height, an owned
+uniform-buffer handle, uniform byte length, and a monotonically increasing frame
+sequence. Each record selects one retained raster/attachment command and up to
+16 dynamic uniform offsets, in group/binding order. The executor validates the
+whole arena, ownership, surface/sequence, alignment, active uniform ranges, and
+retained command shape before GPU encoding. It imports uniform bytes synchronously
+and executes all records through one encoder/queue submission. Managed views do
+not survive the import; retained native descriptor arrays are reused.
+
+`retireResource` is an engine-only lifecycle operation for command, pipeline,
+binding, shader, and buffer handles. It blocks new dependencies immediately and
+releases the physical resource once existing dependency references drain. Pending
+preparation cannot publish with a retired dependency. Existing `destroyResource`
+keeps its strict referenced-resource rejection behavior for callers that require
+immediate logical destruction. GPU buffer destruction still uses completion-based
+retirement, independently of the managed dependency graph.
+
+Engine frame replay and real API wrappers are source implementations pending
+integrated live validation; this extension does not qualify the full render tier.
 
 Source implementation and [opt-in compute/indirect references](browser-compute-indirect.md) are present. Builds, browser execution, GPU validation, shader execution, screenshots and performance checks were deliberately deferred at the user's request. These APIs do not establish hardware acceptance or a GPU-driven scene strategy.

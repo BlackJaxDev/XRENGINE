@@ -19,6 +19,14 @@ body.RigidBody = CreateDynamicBody();
 
 When a component activates, it registers its actor with the active `AbstractPhysicsScene`. When it deactivates or is removed, it unregisters the actor. Component and scene contracts live in `XREngine.Runtime.Core`; gameplay code should use `IAbstractPhysicsActor`, `IAbstractDynamicRigidBody`, `IAbstractCharacterController`, and the typed neutral joint interfaces rather than concrete solver wrappers.
 
+### Kinematic Motion And Immediate Pose Changes
+
+Use `IAbstractDynamicRigidBody.KinematicTarget` for contact-producing movement and `SetTransform` for an immediate pose change, such as a reset. A non-null target selects kinematic motion; clearing it with `null` restores dynamic motion. Set targets during `PrePhysics` when they must affect that fixed step.
+
+Jolt stores the latest target in a value mailbox and consumes it before character-controller moving-ground queries and native simulation. It uses `BodyInterface.MoveKinematic` to derive linear and angular velocity from the same finite, positive fixed delta passed to `PhysicsSystem.Update`; it does not teleport to the target. Multiple writes before consumption coalesce to the last value. Without another command, target-generated velocity is stopped before the following simulation step so a one-shot target does not keep moving the body. The getter retains the last requested target until cleared or replaced.
+
+Jolt's immediate `SetTransform` cancels an unconsumed target without changing the body's motion type. It does not erase separately authored velocity. As with other immediate native body operations, callers must synchronize pose changes with simulation; only target publication uses the cross-thread mailbox. Non-finite positions, invalid rotations, and non-positive or non-finite simulation deltas fail explicitly. These implementation semantics do not establish contact/friction equivalence with PhysX; live solver comparison remains required.
+
 ## Queries
 
 Use `AbstractPhysicsScene` query methods for raycast, sweep, and overlap work. Engine queries use shared data types such as `Segment`, `LayerMask`, `RaycastHit`, `SweepHit`, and `OverlapHit`.

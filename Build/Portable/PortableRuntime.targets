@@ -8,6 +8,11 @@
     </Task>
   </UsingTask>
 
+  <UsingTask TaskName="XREngine.Build.PortableNativeAssetGuard" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll" Condition="'$(XREnginePortableProject)' == 'true'">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)PortableNativeAssetGuard.cs" /></Task>
+  </UsingTask>
+
   <Target Name="ValidateXREnginePortableProject"
           BeforeTargets="CoreCompile;ResolveReferences"
           Condition="'$(XREnginePortableProject)' == 'true'">
@@ -29,6 +34,8 @@
         GeneratedRenderCommandRegistrations="$(GeneratedRenderCommandRegistrations)"
         GeneratedAotFactoryRegistrations="$(GeneratedAotFactoryRegistrations)"
         GeneratedBrowserStaticRegistrations="$(GeneratedBrowserStaticRegistrations)"
+        GeneratedBrowserGameRegistrations="$(XREngineBrowserGameRegistrationSource)"
+        BrowserGameProject="$(XREngineBrowserGameProject)"
         RepositoryRoot="$(MSBuildThisFileDirectory)../.."
         ProjectsFile="$(MSBuildThisFileDirectory)PortableProjects.tsv"
         PackagesFile="$(MSBuildThisFileDirectory)PortablePackages.tsv"
@@ -41,8 +48,9 @@
       <_PortableNativeFile Include="@(None)"
                            Condition="('%(None.CopyToOutputDirectory)' != '' or '%(None.CopyToPublishDirectory)' != '') and ('%(None.Extension)' == '.dll' or '%(None.Extension)' == '.so' or '%(None.Extension)' == '.dylib' or '%(None.Extension)' == '.a' or '%(None.Extension)' == '.lib' or $([System.String]::Copy('%(None.Identity)').Replace('\', '/').Contains('/runtimes/')))" />
     </ItemGroup>
-    <Error Condition="'@(_PortableNativeFile)' != ''"
-           Text="Portable project $(MSBuildProjectName) includes native copy item(s): @(_PortableNativeFile, ', ')." />
+    <XREngine.Build.PortableNativeAssetGuard Candidates="@(_PortableNativeFile)" ProjectName="$(MSBuildProjectName)"
+        RuntimeIdentifier="$(RuntimeIdentifier)" PolicyFile="$(MSBuildThisFileDirectory)PortableNativeAssets.tsv"
+        JoltBrowserLinkArchive="$(JoltBrowserLinkArchive)" JoltBrowserArchiveDirectory="$(JoltBrowserArchiveDirectory)" />
   </Target>
 
   <Target Name="ValidateXREnginePortableResolvedAssets"

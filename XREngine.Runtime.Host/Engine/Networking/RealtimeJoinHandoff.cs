@@ -32,7 +32,7 @@ public static class RealtimeJoinHandoff
         RealtimeEndpointDescriptor endpoint = payload.Endpoint
             ?? throw new InvalidOperationException("Realtime handoff payload is missing endpoint.");
 
-        if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
+        if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls or RealtimeTransportKind.WebSocket))
             throw new NotSupportedException($"Realtime transport '{endpoint.Transport}' is not supported by this runtime.");
 
         if (string.IsNullOrWhiteSpace(endpoint.Host))
@@ -40,6 +40,10 @@ public static class RealtimeJoinHandoff
 
         if (endpoint.Port is <= 0 or > 65535)
             throw new InvalidOperationException("Realtime handoff endpoint port must be between 1 and 65535.");
+
+        if (endpoint.Transport == RealtimeTransportKind.WebSocket)
+            ValidateWebSocketAdmission(endpoint.Host, endpoint.Port, payload.SessionId, payload.WorkerGeneration,
+                payload.AccountId, payload.ClientId, payload.ReservationId, payload.AdmissionSecret, payload.CredentialEpoch);
 
         settings.NetworkingType = ENetworkingType.Client;
         settings.MultiplayerTransport = endpoint.Transport;
@@ -74,8 +78,13 @@ public static class RealtimeJoinHandoff
         if (settings.NetworkingType != ENetworkingType.Client)
             return;
 
-        if (settings.MultiplayerTransport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
+        if (settings.MultiplayerTransport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls or RealtimeTransportKind.WebSocket))
             throw new NotSupportedException($"Realtime transport '{settings.MultiplayerTransport}' is not supported by this runtime.");
+
+        if (settings.MultiplayerTransport == RealtimeTransportKind.WebSocket)
+            ValidateWebSocketAdmission(settings.ServerIP, settings.UdpServerSendPort, settings.MultiplayerSessionId,
+                settings.MultiplayerWorkerGeneration, settings.MultiplayerAccountId, settings.MultiplayerClientId,
+                settings.MultiplayerReservationId, settings.MultiplayerAdmissionSecret, settings.MultiplayerCredentialEpoch);
 
         if (!IsProtocolCompatible(settings.ExpectedMultiplayerProtocolVersion, currentProtocolVersion))
         {
@@ -144,6 +153,21 @@ public static class RealtimeJoinHandoff
     {
         return RealtimeJoinHandoffContract.IsProtocolCompatible(expectedProtocolVersion, currentProtocolVersion);
     }
+
+    private static void ValidateWebSocketAdmission(string host, int port, Guid? session, Guid? generation,
+        string? account, string? client, string? reservation, string? admission, long credentialEpoch)
+    {
+        if (Uri.CheckHostName(host) == UriHostNameType.Unknown || port is < 1 or > 65535)
+            throw new InvalidOperationException("Realtime WebSocket handoff requires a valid advertised hostname and port.");
+        RealtimeWebSocketProtocol.ValidateEndpoint(new UriBuilder("wss", host, port, RealtimeWebSocketProtocol.Path).Uri);
+        if (session is null || session == Guid.Empty || generation is null || generation == Guid.Empty || credentialEpoch < 0
+            || !IsBoundedIdentity(account, 256) || !IsBoundedIdentity(client, 128) || !IsBoundedIdentity(reservation, 128)
+            || string.IsNullOrWhiteSpace(admission) || admission.Length > 4096)
+            throw new InvalidOperationException("Realtime WebSocket handoff requires a complete bounded managed player admission.");
+    }
+
+    private static bool IsBoundedIdentity(string? value, int maximumBytes)
+        => !string.IsNullOrWhiteSpace(value) && System.Text.Encoding.UTF8.GetByteCount(value) <= maximumBytes;
 
     public static string DescribeWorldAsset(WorldAssetIdentity? asset)
     {

@@ -20,13 +20,14 @@ internal static class SlangWgslCompiler
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(45);
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
-    /// <summary>Compiles the fixed browser mesh vertex and fragment entry points as one WGSL module.</summary>
+    /// <summary>Compiles explicit stage entry points as one WGSL module.</summary>
     internal static async Task<SlangWgslOutput> CompileAsync(
         string sourceRoot,
         string sourcePath,
         IReadOnlyList<string> includes,
         IReadOnlyList<string> defines,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? entryPoints = null)
     {
         ArgumentNullException.ThrowIfNull(sourceRoot);
         ArgumentNullException.ThrowIfNull(sourcePath);
@@ -78,13 +79,24 @@ internal static class SlangWgslCompiler
             };
             foreach (string argument in new[]
             {
-                "-lang", "slang", source, "-target", "wgsl", "-whole-program",
-                "-entry", "vertexMain", "-stage", "vertex",
-                "-entry", "fragmentMain", "-stage", "fragment",
+                "-lang", "slang", source, "-target", "wgsl", "-o", wgsl,
                 "-matrix-layout-column-major", "-restrictive-capability-check",
                 "-reflection-json", reflection, "-depfile", depfile,
             })
                 start.ArgumentList.Add(argument);
+            // For WGSL module output, -o must precede entries. A trailing -o is
+            // associated with the last stage by Slang and may leave the module on stdout.
+            entryPoints ??= new Dictionary<string, string> { ["vertex"] = "vertexMain", ["fragment"] = "fragmentMain" };
+            foreach ((string stage, string entry) in entryPoints)
+            {
+                if (stage is not ("vertex" or "fragment" or "compute") ||
+                    !Regex.IsMatch(entry, "^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.CultureInvariant))
+                    throw new ArgumentException("Invalid explicit shader entry point.", nameof(entryPoints));
+                start.ArgumentList.Add("-entry");
+                start.ArgumentList.Add(entry);
+                start.ArgumentList.Add("-stage");
+                start.ArgumentList.Add(stage);
+            }
             foreach (string include in includePaths)
             {
                 start.ArgumentList.Add("-I");
@@ -95,8 +107,6 @@ internal static class SlangWgslCompiler
                 start.ArgumentList.Add("-D");
                 start.ArgumentList.Add(define);
             }
-            start.ArgumentList.Add("-o");
-            start.ArgumentList.Add(wgsl);
 
             (int exitCode, string diagnostics) = await RunAsync(start, cancellationToken).ConfigureAwait(false);
             if (exitCode != 0)
@@ -180,9 +190,13 @@ internal static class SlangWgslCompiler
             throw new InvalidOperationException($"slangc must be pinned to 2026.8; reported '{version.Trim()}'.");
 
         string directory = Path.GetDirectoryName(compiler)!;
+        string siblingLibraryDirectory = Path.GetFullPath(Path.Combine(directory, "..", "lib"));
+        bool splitInstallation = Path.GetFileName(directory).Equals("bin", StringComparison.OrdinalIgnoreCase) && Directory.Exists(siblingLibraryDirectory);
+        string installationRoot = splitInstallation ? Path.GetDirectoryName(directory)! : directory;
+        string[] compilerDirectories = splitInstallation ? [directory, siblingLibraryDirectory] : [directory];
         SortedSet<string> files = new(StringComparer.Ordinal);
         files.Add(compiler);
-        foreach (string path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+        foreach (string path in compilerDirectories.SelectMany(path => Directory.EnumerateFiles(path, "*", SearchOption.TopDirectoryOnly)))
         {
             string name = Path.GetFileName(path);
             if ((name.StartsWith("slang", StringComparison.OrdinalIgnoreCase) ||
@@ -193,7 +207,7 @@ internal static class SlangWgslCompiler
                  name.Contains(".so.", StringComparison.OrdinalIgnoreCase)))
                 files.Add(path);
         }
-        foreach (string path in Directory.EnumerateDirectories(directory, "slang-standard-module*", SearchOption.TopDirectoryOnly))
+        foreach (string path in compilerDirectories.SelectMany(path => Directory.EnumerateDirectories(path, "slang-standard-module*", SearchOption.TopDirectoryOnly)))
         {
             Stack<string> pending = new();
             pending.Push(path);
@@ -221,13 +235,19 @@ internal static class SlangWgslCompiler
         AppendHash(hash, version.Trim());
         foreach (string path in files)
         {
-            RejectReparse(path);
-            FileInfo info = new(path);
+            FileInfo original = new(path);
+            FileSystemInfo resolved = original.ResolveLinkTarget(returnFinalTarget: true) ?? original;
+            string resolvedPath = Path.GetFullPath(resolved.FullName);
+            if (!resolvedPath.StartsWith(Path.TrimEndingDirectorySeparator(installationRoot) + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                throw new InvalidDataException("A Slang library link escapes its installation.");
+            RejectReparse(resolvedPath);
+            FileInfo info = new(resolvedPath);
             total = checked(total + info.Length);
             if (total > MaxToolchainBytes)
                 throw new InvalidDataException("The Slang installation exceeds the toolchain size limit.");
-            AppendHash(hash, Path.GetRelativePath(directory, path).Replace('\\', '/'));
-            hash.AppendData(await HashFileAsync(path, info.Length, cancellationToken).ConfigureAwait(false));
+            AppendHash(hash, Path.GetRelativePath(installationRoot, path).Replace('\\', '/'));
+            AppendHash(hash, Path.GetRelativePath(installationRoot, resolvedPath).Replace('\\', '/'));
+            hash.AppendData(await HashFileAsync(resolvedPath, info.Length, cancellationToken).ConfigureAwait(false));
         }
         return "slang/2026.8/" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }

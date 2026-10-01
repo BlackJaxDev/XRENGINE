@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace XREngine
 {
-    public class JobManager
+    public partial class JobManager
     {
         [ThreadStatic]
         private static bool _isJobWorkerThread;
@@ -139,8 +139,14 @@ namespace XREngine
         public int WorkerCount => _generalDomain?.WorkerCount ?? _configuredWorkerCount;
         public IRemoteJobTransport? RemoteTransport { get; set; }
 
-        public JobManager(int? workerCount = null, int? maxQueueSize = null, int? queueWarningThreshold = null, int? workerCap = null)
-            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap, createWorkerDomains: true)
+        public JobManager(
+            int? workerCount = null,
+            int? maxQueueSize = null,
+            int? queueWarningThreshold = null,
+            int? workerCap = null,
+            JobExecutionMode executionMode = JobExecutionMode.WorkerThreads)
+            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap,
+                createWorkerDomains: executionMode == JobExecutionMode.WorkerThreads, executionMode)
         {
         }
 
@@ -149,8 +155,16 @@ namespace XREngine
             int? maxQueueSize,
             int? queueWarningThreshold,
             int? workerCap,
-            bool createWorkerDomains)
+            bool createWorkerDomains,
+            JobExecutionMode executionMode = JobExecutionMode.WorkerThreads)
         {
+            if (!Enum.IsDefined(executionMode))
+                throw new ArgumentOutOfRangeException(nameof(executionMode));
+            if (OperatingSystem.IsBrowser() && executionMode != JobExecutionMode.CallerThread)
+                throw new PlatformNotSupportedException("The browser requires explicit caller-thread job execution.");
+            ExecutionMode = executionMode;
+            _callerThreadId = Environment.CurrentManagedThreadId;
+
             int cap = workerCap ?? ReadWorkerCapFromEnv() ?? DefaultWorkerCap;
             int reserved = Math.Max(0, DefaultReservedThreads);
             int defaultWorkers = Math.Max(1, Environment.ProcessorCount - reserved);
@@ -158,7 +172,7 @@ namespace XREngine
 
             int count = workerCount ?? ReadWorkerCountFromEnv() ?? defaultWorkers;
             count = Math.Clamp(count, createWorkerDomains ? 1 : 0, cap);
-            _configuredWorkerCount = count;
+            _configuredWorkerCount = IsCallerThreadExecutor ? 0 : count;
 
             _maxQueueSize = maxQueueSize ?? ReadQueueLimitFromEnv() ?? DefaultQueueLimit;
             _queueWarningThreshold = queueWarningThreshold ?? ReadQueueWarningThresholdFromEnv() ?? DefaultQueueWarningThreshold;
@@ -167,7 +181,7 @@ namespace XREngine
             if (_maxQueueSize > 0 && _queueWarningThreshold > _maxQueueSize)
                 _queueWarningThreshold = _maxQueueSize;
 
-            if (_maxQueueSize > 0)
+            if (_maxQueueSize > 0 && !IsCallerThreadExecutor)
                 _queueSlots = new SemaphoreSlim(_maxQueueSize, _maxQueueSize);
 
             if (createWorkerDomains)
@@ -180,6 +194,8 @@ namespace XREngine
         internal void AttachGeneralDomain(Execution.EngineGeneralWorkDomain domain)
         {
             ArgumentNullException.ThrowIfNull(domain);
+            if (IsCallerThreadExecutor)
+                throw new InvalidOperationException("A caller-thread job executor cannot own worker domains.");
             if (Interlocked.CompareExchange(ref _generalDomain, domain, null) is not null)
                 throw new InvalidOperationException("The JobManager general execution domain is already installed.");
 
@@ -197,6 +213,8 @@ namespace XREngine
         internal void AttachAuxiliaryDomain(Execution.EngineJobAuxiliaryWorkDomain domain)
         {
             ArgumentNullException.ThrowIfNull(domain);
+            if (IsCallerThreadExecutor)
+                throw new InvalidOperationException("A caller-thread job executor cannot own worker domains.");
             if (Interlocked.CompareExchange(ref _auxiliaryDomain, domain, null) is not null)
                 throw new InvalidOperationException("The JobManager auxiliary execution domain is already installed.");
 
@@ -236,16 +254,20 @@ namespace XREngine
             };
         }
 
-        public bool IsQueueBounded => _queueSlots != null;
+        public bool IsQueueBounded => _maxQueueSize > 0;
 
-        public int QueueCapacity => _queueSlots != null ? _maxQueueSize : int.MaxValue;
+        public int QueueCapacity => IsQueueBounded ? _maxQueueSize : int.MaxValue;
 
-        public int QueueSlotsAvailable => _queueSlots?.CurrentCount ?? int.MaxValue;
+        public int QueueSlotsAvailable => IsCallerThreadExecutor && IsQueueBounded
+            ? Math.Max(0, _maxQueueSize - Volatile.Read(ref _callerQueueSlotsInUse))
+            : _queueSlots?.CurrentCount ?? int.MaxValue;
 
         public int QueueSlotsInUse
         {
             get
             {
+                if (IsCallerThreadExecutor)
+                    return Volatile.Read(ref _callerQueueSlotsInUse);
                 if (_queueSlots is null)
                     return 0;
 
@@ -297,7 +319,7 @@ namespace XREngine
                     return job.Handle;
                 }
 
-                if (_queueSlots is null)
+                if (!IsQueueBounded)
                 {
                     Enqueue(job, countAgainstSlots: false);
                     return job.Handle;
@@ -306,7 +328,9 @@ namespace XREngine
                 bool acquired = false;
                 try
                 {
-                    acquired = _queueSlots.Wait(0);
+                    acquired = IsCallerThreadExecutor
+                        ? TryAcquireCallerThreadQueueSlot()
+                        : _queueSlots!.Wait(0);
                 }
                 catch (ObjectDisposedException)
                 {
@@ -357,21 +381,27 @@ namespace XREngine
             JobAffinity affinity,
             RenderThreadJobKind renderThreadKind)
         {
+            if (IsCallerThreadExecutor)
+                EnsureCallerThread();
+
             if (!job.TryStartForShutdownRejection())
                 throw new InvalidOperationException("Job has already been scheduled or completed.");
 
             ConfigureStartedJob(job, priority, affinity, renderThreadKind, CancellationToken.None);
             CancelQueuedJobForShutdown(job);
+            if (IsCallerThreadExecutor)
+                ShutdownCallerThread();
             return job.Handle;
         }
 
-        private static void ConfigureStartedJob(
+        private void ConfigureStartedJob(
             Job job,
             JobPriority priority,
             JobAffinity affinity,
             RenderThreadJobKind renderThreadKind,
             CancellationToken cancellationToken)
         {
+            job.UsesCallerThreadExecutor = IsCallerThreadExecutor;
             job.Priority = priority;
             job.Affinity = affinity;
             job.RenderThreadKind = affinity == JobAffinity.RenderThread
@@ -399,11 +429,14 @@ namespace XREngine
                 return;
             }
 
-            _auxiliaryDomain!.NotifyDeferredWorkAvailable();
+            _auxiliaryDomain?.NotifyDeferredWorkAvailable();
         }
 
         internal bool TryPromoteDeferredJob()
         {
+            if (IsCallerThreadExecutor)
+                return TryPromoteCallerThreadDeferredJob();
+
             if (!_deferredBySlot.TryDequeue(out Job? job))
                 return false;
 
@@ -415,7 +448,7 @@ namespace XREngine
 
             bool acquired = AcquireQueueSlot(_cts.Token);
             if (acquired)
-                job.UsesQueueSlot = _queueSlots is not null;
+                job.UsesQueueSlot = IsQueueBounded;
 
             if (!acquired || _cts.IsCancellationRequested)
             {
@@ -544,7 +577,7 @@ namespace XREngine
                     return;
                 }
 
-                job.UsesQueueSlot = _queueSlots is not null;
+                job.UsesQueueSlot = IsQueueBounded;
             }
 
             bool notifyGeneral = false;
@@ -594,11 +627,14 @@ namespace XREngine
             if (!notifyRemote)
                 return;
 
-            _auxiliaryDomain!.NotifyRemoteWorkAvailable();
+            _auxiliaryDomain?.NotifyRemoteWorkAvailable();
         }
 
         private bool AcquireQueueSlot(CancellationToken cancellationToken)
         {
+            if (IsCallerThreadExecutor)
+                return !cancellationToken.IsCancellationRequested && TryAcquireCallerThreadQueueSlot();
+
             if (_queueSlots is null)
                 return true;
 
@@ -791,14 +827,35 @@ namespace XREngine
         private static TimeSpan TicksToTimeSpan(long ticks)
             => TimeSpan.FromSeconds(ticks / (double)System.Diagnostics.Stopwatch.Frequency);
 
-        private static void Log(string message)
-            => LogMessage?.Invoke(message);
+        private void Log(string message)
+        {
+            try
+            {
+                LogMessage?.Invoke(message);
+            }
+            catch when (IsCallerThreadExecutor)
+            {
+                // A diagnostic callback cannot take ownership from the host pump.
+            }
+        }
 
-        private static IDisposable? StartProfilerScope(string name)
-            => ProfilerScopeFactory?.Invoke(name);
+        private IDisposable? StartProfilerScope(string name)
+        {
+            try
+            {
+                return ProfilerScopeFactory?.Invoke(name);
+            }
+            catch (Exception exception) when (IsCallerThreadExecutor)
+            {
+                Log($"Caller-thread job profiler callback faulted: {exception}");
+                return null;
+            }
+        }
 
         public bool Process()
-            => TryDispatchGeneralWork(out _);
+            => IsCallerThreadExecutor
+                ? ProcessCallerThreadJobs(maxJobs: 1) != 0
+                : TryDispatchGeneralWork(out _);
 
         internal bool TryDispatchRemoteJob()
         {
@@ -913,6 +970,11 @@ namespace XREngine
                             ReleaseAfterTerminalNotification(job);
                             return;
                         case JobStepResult.Waiting:
+                            if (IsCallerThreadExecutor)
+                            {
+                                _callerPendingJobs.Enqueue(job);
+                                return;
+                            }
                             if (job.PendingTask is { IsCompleted: false } pending)
                             {
                                 pending.ContinueWith(_ => Requeue(job), TaskContinuationOptions.ExecuteSynchronously);
@@ -970,6 +1032,12 @@ namespace XREngine
             {
                 ObserveShutdownOperation(notification);
                 RemoveActive(job);
+                return;
+            }
+
+            if (IsCallerThreadExecutor)
+            {
+                _callerPendingJobs.Enqueue(job);
                 return;
             }
 
@@ -1102,6 +1170,16 @@ namespace XREngine
         /// </param>
         public void ProcessMainThreadJobs(int maxJobs = int.MaxValue, double budgetMilliseconds = 0.0)
         {
+            using CallerThreadPumpScope callerPump = EnterCallerThreadPump();
+            if (!callerPump.CanProcess || !PrepareCallerThreadPhase(maxJobs))
+                return;
+            if (IsCallerThreadExecutor)
+            {
+                maxJobs = Math.Min(maxJobs, DefaultCallerThreadJobLimit);
+                if (budgetMilliseconds <= 0.0)
+                    budgetMilliseconds = DefaultCallerThreadBudgetMilliseconds;
+            }
+
             int snapshot = SnapshotQueuedMainThreadJobs();
             int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
 
@@ -1120,7 +1198,14 @@ namespace XREngine
                     : Math.Max(0L, dequeuedAt - queuedAt) * 1000.0 / Stopwatch.Frequency;
                 RecordWait(job, bucket);
                 string label = job.GetProfilerLabel();
-                JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label, job.RenderThreadKind);
+                try
+                {
+                    JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label, job.RenderThreadKind);
+                }
+                catch (Exception exception) when (IsCallerThreadExecutor)
+                {
+                    Log($"Caller-thread job dispatch observer faulted: {exception}");
+                }
                 long jobStart = Stopwatch.GetTimestamp();
                 using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{label}"))
                 {
@@ -1131,12 +1216,19 @@ namespace XREngine
                 double overBudgetMilliseconds = budgetMilliseconds <= 0.0
                     ? 0.0
                     : Math.Max(0.0, (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency - budgetMilliseconds);
-                RenderThreadJobExecutionObserver?.Invoke(
-                    label,
-                    job.RenderThreadKind,
-                    durationMilliseconds,
-                    queueDelayMilliseconds,
-                    overBudgetMilliseconds);
+                try
+                {
+                    RenderThreadJobExecutionObserver?.Invoke(
+                        label,
+                        job.RenderThreadKind,
+                        durationMilliseconds,
+                        queueDelayMilliseconds,
+                        overBudgetMilliseconds);
+                }
+                catch (Exception exception) when (IsCallerThreadExecutor)
+                {
+                    Log($"Caller-thread job execution observer faulted: {exception}");
+                }
                 MaybeLogSlowRenderThreadJob(job, label, jobElapsedTicks, budgetMilliseconds);
                 processed++;
 
@@ -1148,6 +1240,12 @@ namespace XREngine
 
         public void ProcessAppThreadJobs(int maxJobs = int.MaxValue)
         {
+            using CallerThreadPumpScope callerPump = EnterCallerThreadPump();
+            if (!callerPump.CanProcess || !PrepareCallerThreadPhase(maxJobs))
+                return;
+            if (IsCallerThreadExecutor)
+                maxJobs = Math.Min(maxJobs, DefaultCallerThreadJobLimit);
+
             int snapshot = SnapshotQueuedAppThreadJobs();
             int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
 
@@ -1165,6 +1263,12 @@ namespace XREngine
 
         public void ProcessCollectVisibleSwapJobs(int maxJobs = 128)
         {
+            using CallerThreadPumpScope callerPump = EnterCallerThreadPump();
+            if (!callerPump.CanProcess || !PrepareCallerThreadPhase(maxJobs))
+                return;
+            if (IsCallerThreadExecutor)
+                maxJobs = Math.Min(Math.Min(maxJobs, DefaultCallerThreadJobLimit), SnapshotQueuedJobs(JobAffinity.CollectVisibleSwap));
+
             int processed = 0;
             while (processed < maxJobs && TryDequeueWithAging(_pendingCollectVisibleSwapByPriority, JobAffinity.CollectVisibleSwap, out var job, out var bucket))
             {
@@ -1256,11 +1360,20 @@ namespace XREngine
                 => _result.TrySetCanceled();
         }
 
+        /// <summary>
+        /// Stops admission and requests cancellation. Worker execution optionally
+        /// performs bounded joins. Caller-thread execution always performs one
+        /// bounded, nonblocking cancellation slice and must be pumped or retried
+        /// until this returns true before dependent runtime state is destroyed.
+        /// </summary>
         public bool Shutdown(bool waitForWorkers = true)
             => Shutdown(waitForWorkers, ShutdownTaskWaitTimeout);
 
         internal bool Shutdown(bool waitForWorkers, TimeSpan timeout)
         {
+            if (IsCallerThreadExecutor)
+                return ShutdownCallerThread();
+
             long deadline = CreateShutdownDeadline(timeout);
             bool firstRequest;
             lock (_submissionSync)
@@ -1403,6 +1516,12 @@ namespace XREngine
 
         private void CancelQueuedJobForShutdown(Job job)
         {
+            if (IsCallerThreadExecutor)
+            {
+                QueueCallerThreadShutdownJob(job);
+                return;
+            }
+
             bool tracked;
             lock (_shutdownFinalizationLock)
             {
@@ -1513,6 +1632,12 @@ namespace XREngine
 
         private void CancelActiveJobForShutdown(Job job)
         {
+            if (IsCallerThreadExecutor)
+            {
+                QueueCallerThreadShutdownJob(job);
+                return;
+            }
+
             if (!job.TryClaimShutdownManagerFinalization())
                 return;
 
@@ -1593,6 +1718,13 @@ namespace XREngine
 
         private void ReleaseQueueSlot(Job job)
         {
+            if (IsCallerThreadExecutor)
+            {
+                if (job.TryClearQueueSlot())
+                    Interlocked.Decrement(ref _callerQueueSlotsInUse);
+                return;
+            }
+
             if (_queueSlots is null || !job.TryClearQueueSlot())
                 return;
 

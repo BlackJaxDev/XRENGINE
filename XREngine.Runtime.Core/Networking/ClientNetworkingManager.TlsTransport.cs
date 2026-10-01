@@ -17,6 +17,8 @@ public partial class ClientNetworkingManager
 
     private void StartSelectedTransport(IPAddress serverAddress, int serverPort, int clientPort)
     {
+        if (Transport == RealtimeTransportKind.WebSocket)
+            throw new NotSupportedException("Realtime WebSocket requires the asynchronous StartWebSocketAsync entry point.");
         if (Transport == RealtimeTransportKind.NativeUdp)
         {
             StartUdpSender(serverAddress, serverPort, clientPort);

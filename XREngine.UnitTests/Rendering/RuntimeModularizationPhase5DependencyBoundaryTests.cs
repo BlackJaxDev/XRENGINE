@@ -198,7 +198,12 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         foreach (string adapterName in BootstrapAotAdapterNames)
             bootstrapProject.ShouldContain($"..\\{adapterName}\\**\\*.cs");
         bootstrapProject.ShouldContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
-        bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
+        XElement modelingFactoryInput = XDocument.Parse(bootstrapProject)
+            .Descendants("XREngineFactoryRegistrationInput")
+            .Single(input => (string?)input.Attribute("RegistrationAssembly") == "XREngine.Runtime.ModelingIntegration");
+        ((string?)modelingFactoryInput.Attribute("Include"))!.Replace('\\', '/')
+            .ShouldBe("../XREngine.Runtime.ModelingIntegration/**/*.cs");
+        ((string?)modelingFactoryInput.Attribute("EmitRegistration")).ShouldBe("true");
         File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }
 

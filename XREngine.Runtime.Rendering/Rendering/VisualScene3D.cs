@@ -52,7 +52,10 @@ namespace XREngine.Scene
             _useGpuBvhActive = VulkanFeatureProfile.ResolveGpuBvhUsage(strategy);
             GPUCommands.UseGpuBvh = _useGpuBvhActive;
             GPUCommands.UseInternalBvh = _useGpuBvhActive;
-            BvhRaycasts.WarmShaders();
+            // GPU BVH raycast shaders are OpenGL-only; browser CPU-direct scenes must not
+            // load GLSL merely by constructing their shared visual scene.
+            if (!OperatingSystem.IsBrowser())
+                BvhRaycasts.WarmShaders();
         }
 
         /// <summary>

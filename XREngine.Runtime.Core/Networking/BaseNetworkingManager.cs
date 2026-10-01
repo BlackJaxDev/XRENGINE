@@ -77,6 +77,18 @@ namespace XREngine
 
             public bool UDPServerConnectionEstablished
                 => UdpReceiver is { } transport && (transport.Connected || transport.IsBound);
+            /// <summary>Ordered browser connections bound pending work before transport framing and coalesce only superseded transforms.</summary>
+            protected virtual bool UseBoundedRealtimeQueues => false;
+            private string? _wireProtocolFailure;
+            /// <summary>Diagnostic for an incompatible packet rejected before it can affect peer state.</summary>
+            public string? WireProtocolFailure => _wireProtocolFailure;
+            private void RecordWireProtocolMismatch()
+            {
+                SetField(ref _wireProtocolFailure, RealtimeWireProtocol.UpdateRequiredMessage);
+                Debug.NetworkingWarning("[Net] {0}", RealtimeWireProtocol.UpdateRequiredMessage);
+            }
+            protected virtual void OnRealtimeQueueOverflow()
+                => throw new NetworkTransportException("Realtime send backlog exceeded its bounded capacity.", 0);
             public string LocalPeerId { get; }
             protected static string CurrentProtocolVersion => RuntimeNetworkingHostServices.Current.ProtocolVersion;
             public event Func<RemoteJobRequest, Task<RemoteJobResponse?>>? RemoteJobRequestReceived;
@@ -124,7 +136,8 @@ namespace XREngine
 
                     try
                     {
-                        _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
+                        if (!OperatingSystem.IsBrowser())
+                            _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
                     }
                     catch
                     {
@@ -191,6 +204,11 @@ namespace XREngine
                 while ((receiver?.Available ?? 0) > 0)
                 {
                     DatagramReceiveResult result = await receiver!.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
+                    if (RealtimeWireProtocol.IsIncompatible(result.Buffer))
+                    {
+                        RecordWireProtocolMismatch();
+                        continue;
+                    }
                     if (result.Buffer.Length > MaxInboundDatagramBytes)
                     {
                         Debug.NetworkingWarning("[Net] Dropped oversized UDP datagram ({0} bytes) from {1}.", result.Buffer.Length, result.RemoteEndPoint);
@@ -286,6 +304,8 @@ namespace XREngine
 
                 public IPEndPoint EndPoint { get; set; }
                 public ConcurrentQueue<QueuedUdpPacket> SendQueue { get; } = new();
+                public Dictionary<Guid, QueuedUdpPacket> PendingTransforms { get; } = [];
+                public int PendingBytes;
                 public ConcurrentDictionary<ushort, PendingAckPacket> MustAck { get; } = new();
                 public ConcurrentDictionary<ushort, long> RttBuffer { get; } = new();
                 public Deque<ushort> ReceivedRemoteSequences { get; } = [];
@@ -391,11 +411,70 @@ namespace XREngine
 
             private void EnqueueForPeer(UdpPeerState peer, ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, long? firstSendTicks = null)
             {
-                peer.SendQueue.Enqueue(new QueuedUdpPacket(sequenceNum, bytes));
-                if (resendOnFailedAck)
+                if (!UseBoundedRealtimeQueues)
                 {
-                    long firstSend = firstSendTicks ?? CurrentEngineTicks();
-                    peer.MustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
+                    peer.SendQueue.Enqueue(new QueuedUdpPacket(sequenceNum, bytes));
+                    if (resendOnFailedAck)
+                    {
+                        long firstSend = firstSendTicks ?? CurrentEngineTicks();
+                        peer.MustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
+                    }
+                    return;
+                }
+                bool overflow = false;
+                lock (peer.SendQueue)
+                {
+                    bool coalesce = !resendOnFailedAck && ownerId != Guid.Empty
+                        && bytes.Length >= 4 && ((bytes[3] >> 1) & 7) == (byte)EBroadcastType.Transform;
+                    bool replaced = coalesce && peer.PendingTransforms.ContainsKey(ownerId);
+                    int previousBytes = replaced ? peer.PendingTransforms[ownerId].Bytes.Length : 0;
+                    int pendingCount = peer.SendQueue.Count + peer.PendingTransforms.Count;
+                    overflow = (
+                        (!replaced && pendingCount >= RealtimeWebSocketProtocol.MaximumQueuedDatagrams)
+                        || peer.PendingBytes - previousBytes + bytes.Length > RealtimeWebSocketProtocol.MaximumQueuedBytes
+                        || resendOnFailedAck && !peer.MustAck.ContainsKey(sequenceNum) && peer.MustAck.Count >= 32);
+                    if (!overflow)
+                    {
+                        QueuedUdpPacket packet = new(sequenceNum, bytes);
+                        if (coalesce)
+                            peer.PendingTransforms[ownerId] = packet;
+                        else
+                            peer.SendQueue.Enqueue(packet);
+                        peer.PendingBytes += bytes.Length - previousBytes;
+                        if (resendOnFailedAck)
+                        {
+                            long firstSend = firstSendTicks ?? CurrentEngineTicks();
+                            peer.MustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
+                        }
+                    }
+                }
+                if (overflow)
+                    OnRealtimeQueueOverflow();
+            }
+
+            private bool TryTakeQueuedPacket(UdpPeerState peer, out QueuedUdpPacket packet)
+            {
+                if (!UseBoundedRealtimeQueues)
+                    return peer.SendQueue.TryDequeue(out packet);
+                lock (peer.SendQueue)
+                {
+                    if (peer.SendQueue.TryDequeue(out packet))
+                    {
+                        peer.PendingBytes -= packet.Bytes.Length;
+                        return true;
+                    }
+                    Guid selected = Guid.Empty;
+                    foreach (KeyValuePair<Guid, QueuedUdpPacket> pending in peer.PendingTransforms)
+                    {
+                        selected = pending.Key;
+                        packet = pending.Value;
+                        break;
+                    }
+                    if (selected == Guid.Empty)
+                        return false;
+                    peer.PendingTransforms.Remove(selected);
+                    peer.PendingBytes -= packet.Bytes.Length;
+                    return true;
                 }
             }
 
@@ -524,7 +603,7 @@ namespace XREngine
             {
                 ClearOldRTTs(peer);
 
-                if (peer.SendQueue.IsEmpty)
+                if (!UseBoundedRealtimeQueues && peer.SendQueue.IsEmpty)
                     return;
 
                 long nowTicks = CurrentEngineTicks();
@@ -538,7 +617,7 @@ namespace XREngine
                 }
 
                 int packetsSent = 0;
-                while (packetsSent < packetsAllowed && peer.SendQueue.TryDequeue(out QueuedUdpPacket data))
+                while (packetsSent < packetsAllowed && TryTakeQueuedPacket(peer, out QueuedUdpPacket data))
                 {
                     if (!peer.RttBuffer.ContainsKey(data.SequenceNum))
                         peer.RttBuffer[data.SequenceNum] = CurrentEngineTicks();
@@ -552,7 +631,16 @@ namespace XREngine
                         // A managed association can be provisional while its simulation-thread
                         // admission publishes. Retain the inner reliable frame until a transport
                         // key is routable instead of silently losing its first assignment.
-                        peer.SendQueue.Enqueue(data);
+                        if (UseBoundedRealtimeQueues)
+                        {
+                            lock (peer.SendQueue)
+                            {
+                                peer.SendQueue.Enqueue(data);
+                                peer.PendingBytes += data.Bytes.Length;
+                            }
+                        }
+                        else
+                            peer.SendQueue.Enqueue(data);
                         break;
                     }
 
@@ -613,7 +701,7 @@ namespace XREngine
             }
 
             //protocol header is only 3 bytes so the flag can come right after to align back to 4 bytes
-            private static readonly byte[] Protocol = [0x46, 0x52, 0x4B]; // "FRK"
+            private static ReadOnlySpan<byte> Protocol => RealtimeWireProtocol.FrameMagic;
             private const ushort _halfMaxSeq = 32768;
             /// <summary>
             /// Compares two sequence numbers, accounting for the wrap-around point at half the maximum value.
@@ -689,7 +777,9 @@ namespace XREngine
             /// <param name="transform"></param>
             public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
-                Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
+                // Coalescing must never discard a delta that a later transform depends on.
+                byte[] bytes = UseBoundedRealtimeQueues ? transform.EncodeToBytes(false) : transform.EncodeToBytes();
+                Send(transform.ID, false, bytes, EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
             }
 
             /// <summary>
@@ -1016,15 +1106,19 @@ namespace XREngine
             {
                 if (inBuf is null || availableDataLen < 0 || availableDataLen > inBuf.Length || availableDataLen > MaxInboundDatagramBytes)
                     return 0;
+                if (RealtimeWireProtocol.IsIncompatible(inBuf.AsSpan(0, availableDataLen)))
+                {
+                    RecordWireProtocolMismatch();
+                    return 0;
+                }
 
                 int offset = 0;
                 while (availableDataLen >= HeaderLen && offset < availableDataLen)
                 {
                     //Search for protocol
-                    byte[] protocol = new byte[3];
-                    for (int i = 0; i < 3; i++)
-                        protocol[i] = inBuf[offset + i];
-                    if (!protocol.SequenceEqual(Protocol))
+                    if (offset > availableDataLen - Protocol.Length)
+                        return 0;
+                    if (!inBuf.AsSpan(offset, Protocol.Length).SequenceEqual(Protocol))
                     {
                         //Skip to next byte
                         offset++;
@@ -1100,7 +1194,7 @@ namespace XREngine
                 => sender is not null;
 
             /// <summary>
-            /// Verifies an outer managed UDP envelope before the inner FRK packet can update peer
+            /// Verifies an outer managed UDP envelope before the inner realtime packet can update peer
             /// state. Roles own handshake and association state; the default is fail-closed.
             /// </summary>
             protected virtual bool TryUnwrapManagedDatagram(ReadOnlyMemory<byte> datagram, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
@@ -1109,11 +1203,11 @@ namespace XREngine
                 return false;
             }
 
-            /// <summary>When enabled, bare legacy FRK packets are rejected before they can create peer or ACK state.</summary>
+            /// <summary>When enabled, bare legacy realtime packets are rejected before they can create peer or ACK state.</summary>
             protected virtual bool RequiresManagedUdpTransport => false;
 
             /// <summary>
-            /// Decodes exactly one complete state-change FRK frame without touching peer,
+            /// Decodes exactly one complete state-change realtime frame without touching peer,
             /// reliability, acknowledgement, or application state. Managed transports use
             /// this before committing their outer replay counter.
             /// </summary>
@@ -1181,7 +1275,7 @@ namespace XREngine
                 }
             }
 
-            /// <summary>Wraps a queued inner FRK datagram immediately before transmission so retries receive fresh outer counters.</summary>
+            /// <summary>Wraps a queued inner realtime datagram immediately before transmission so retries receive fresh outer counters.</summary>
             protected virtual byte[]? ProtectOutboundDatagram(byte[] innerDatagram, IPEndPoint target)
                 => innerDatagram;
 

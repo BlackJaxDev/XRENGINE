@@ -575,7 +575,9 @@ public static partial class RuntimeEngine
             => RuntimeRenderingHostServices.Factories.ResolveSceneCameraDepthModePreference();
 
         public static ERenderClipDepthRange ResolveEffectiveClipDepthRange(RuntimeGraphicsApiKind backend)
-            => Settings.ClipDepthRange;
+            => backend == RuntimeGraphicsApiKind.WebGPU
+                ? ERenderClipDepthRange.ZeroToOne
+                : Settings.ClipDepthRange;
 
         public static ERenderClipDepthRange EffectiveClipDepthRange
             => ResolveEffectiveClipDepthRange(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
@@ -750,6 +752,21 @@ public static partial class RuntimeEngine
             LastResolvedSupportsMeshletDispatch = supportsMeshletDispatch;
 
             EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
+            if (renderer.BackendId == RendererBackendId.WebGPU)
+            {
+                if (forced is not null and not EMeshSubmissionStrategy.CpuDirect ||
+                    requestedGpuDispatch == true && forced != EMeshSubmissionStrategy.CpuDirect)
+                {
+                    throw new NotSupportedException(
+                        "WebGPU.MeshSubmission.Unsupported: the engine WebGPU profile supports CpuDirect; explicitly requested GPU submission is not available.");
+                }
+
+                LastMeshletDowngradeRequested = null;
+                LastMeshletDowngradeResolved = null;
+                LastMeshletDowngradeReason = null;
+                return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.CpuDirect);
+            }
+
             if (forced.HasValue)
             {
                 if (forced.Value.IsAnyMeshletStrategy())

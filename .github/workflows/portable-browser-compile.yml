@@ -1,34 +1,114 @@
-name: Portable browser compile
+name: Portable browser build and publish
 
 on:
   push:
     branches:
       - master
+      - codex/webgpu-readiness-audit
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: portable-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  POWERSHELL_TELEMETRY_OPTOUT: '1'
+  VALIDATION_ROOT: Build/_AgentValidation/00000000-000000-shared/browser-ci
+
 jobs:
   compile:
-    name: Compile every portable project for browser-wasm
+    name: Compile portable projects and publish the browser host
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout repository and submodules
+      - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
 
       - name: Install WebAssembly workload
         run: dotnet workload install wasm-tools
 
+      - name: Set up browser qualification tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
+
+      - name: Install pinned browser tooling
+        run: |
+          npm ci --prefix Tools/BrowserSmoke
+          cd Tools/BrowserSmoke
+          npx playwright install --with-deps chromium
+
+      - name: Install pinned Slang compiler
+        shell: bash
+        run: |
+          mkdir -p "$VALIDATION_ROOT/toolchain/slang"
+          curl --fail --location --retry 3 --output "$VALIDATION_ROOT/toolchain/slang.tar.gz" https://github.com/shader-slang/slang/releases/download/v2026.8/slang-2026.8-linux-x86_64.tar.gz
+          echo "b23af8f2569e7961ca143c6ecd9abf6d7ac14a9bda739a1c6281694f774fa3eb  $VALIDATION_ROOT/toolchain/slang.tar.gz" | sha256sum --check
+          tar -xzf "$VALIDATION_ROOT/toolchain/slang.tar.gz" -C "$VALIDATION_ROOT/toolchain/slang"
+          echo "XRE_SLANGC=$GITHUB_WORKSPACE/$VALIDATION_ROOT/toolchain/slang/bin/slangc" >> "$GITHUB_ENV"
+
+      - name: Prepare pinned browser physics sources
+        shell: pwsh
+        run: |
+          ./Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/managed"
+          ./Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/native" -DotNetRoot $env:DOTNET_ROOT
+
       - name: Compile portable projects
         shell: pwsh
-        run: ./Tools/Test-PortableBrowserCompile.ps1 -Configuration Release
+        run: ./Tools/Test-PortableBrowserCompile.ps1 -Configuration Release -JoltBrowserManagedSourceDirectory "$env:VALIDATION_ROOT/jolt/managed/staged" -JoltBrowserArchiveDirectory "$env:VALIDATION_ROOT/jolt/native/archives" -ArtifactsPath "$env:VALIDATION_ROOT/portable"
+
+      - name: Publish browser host
+        run: dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1 --output "$VALIDATION_ROOT/browser" --artifacts-path "$VALIDATION_ROOT/browser-build" -p:WasmBuildNative=true -p:XREngineJoltBrowser=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
+
+      - name: Publish native physics lifecycle diagnostic
+        run: dotnet publish Tools/Dependencies/JoltBrowser/Spike/JoltBrowserSpike.csproj -c Release -m:1 --output "$VALIDATION_ROOT/jolt-spike" --artifacts-path "$VALIDATION_ROOT/jolt-spike-build" -p:WasmBuildNative=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
+
+      - name: Cook engine depth shaders
+        run: dotnet run --project Tools/ShaderCooker --configuration Release -- --source-root Build/CommonAssets/Shaders/WebGPU --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-probe.recipe.json --output "$VALIDATION_ROOT/depth-shaders"
+
+      - name: Package canonical engine lifecycle world
+        run: dotnet run --project Tools/BrowserContentCooker --configuration Release -- Tools/BrowserSmoke/Content/engine-assets.recipe.json "$VALIDATION_ROOT/browser/wwwroot/diagnostics/content"
+
+      - name: Verify static browser bundle
+        shell: pwsh
+        run: |
+          $root = "$env:VALIDATION_ROOT/browser/wwwroot"
+          foreach ($name in @('index.html', 'engine-player.html', 'engine-runtime.js', 'engine-assets.js')) {
+            if (!(Test-Path (Join-Path $root $name))) { throw "Missing browser asset: $name" }
+          }
+          $nativeLeaves = Get-ChildItem $root -File -Recurse | Where-Object {
+            $_.Name -match 'XREngine\.Runtime\.(Bootstrap|Rendering\.(OpenGL|Vulkan)|Platform\.Desktop)'
+          }
+          if ($nativeLeaves) { throw "Desktop-only assemblies leaked into the browser output: $($nativeLeaves.Name -join ', ')" }
+
+      - name: Qualify browser engine pixels and native physics
+        run: node Tools/BrowserSmoke/run.mjs --browser-publish "$VALIDATION_ROOT/browser/wwwroot" --shader-artifacts "$VALIDATION_ROOT/depth-shaders" --jolt-spike "$VALIDATION_ROOT/jolt-spike/wwwroot" --engine-manifest /diagnostics/content/manifest.json --require-world-play --gpu-mode software --output "$VALIDATION_ROOT/evidence"
+
+      - name: Preserve qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-software-qualification
+          path: ${{ env.VALIDATION_ROOT }}/evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve browser build for inspection
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-static-bundle
+          path: ${{ env.VALIDATION_ROOT }}/browser/wwwroot
+          if-no-files-found: error
+          retention-days: 7

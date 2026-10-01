@@ -664,6 +664,59 @@ namespace XREngine
                 _editModeSimulationActive = true;
             }
 
+            /// <summary>Begins a standalone world without blocking the host's event thread.</summary>
+            public static async Task BeginStandalonePlayAsync()
+            {
+                if (_editModeSimulationActive)
+                    return;
+
+                Configuration.SimulatePhysics = true;
+                State = EPlayModeState.EnteringPlay;
+                Controller.SetActiveGameMode(null);
+                try
+                {
+                    foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
+                    {
+                        worldInstance.PhysicsEnabled = true;
+                        worldInstance.GameMode = null;
+                        await (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
+                            ?? worldInstance.BeginPlayAsync());
+                    }
+
+                    State = EPlayModeState.Play;
+                    _editModeSimulationActive = true;
+                }
+                catch
+                {
+                    EndStandalonePlay();
+                    throw;
+                }
+            }
+
+            /// <summary>Ends a standalone session without entering the editor lifecycle.</summary>
+            public static void EndStandalonePlay()
+            {
+                if (!_editModeSimulationActive && State != EPlayModeState.EnteringPlay)
+                    return;
+
+                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
+                {
+                    if (worldInstance.IsPlaySessionActive)
+                    {
+                        if (RuntimeWorldHostServices.Current is { } host)
+                            host.EndPlay(worldInstance);
+                        else
+                            worldInstance.EndPlay();
+                    }
+                    worldInstance.PhysicsEnabled = false;
+                    worldInstance.GameMode = null;
+                }
+
+                Controller.SetActiveGameMode(null);
+                _editModeSimulationActive = false;
+                State = EPlayModeState.Edit;
+            }
+
             private static void BeginPlayWithoutTransitions()
                 => BeginPlayWithoutTransitions(warnTransitionsDisabled: true);
 

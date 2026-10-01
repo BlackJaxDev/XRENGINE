@@ -23,8 +23,25 @@
     <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" />
     <ProjectReference Include="../XREngine.Animation/XREngine.Animation.csproj" />
+    <ProjectReference Include="../XREngine.Audio.WebAudio/XREngine.Audio.WebAudio.csproj" />
+    <ProjectReference Include="../XREngine.Runtime.Physics.Jolt/XREngine.Runtime.Physics.Jolt.csproj"
+                      AdditionalProperties="XREngineJoltBrowser=true" />
+    <ProjectReference Include="../XREngine.Runtime.Net.WebSockets/XREngine.Runtime.Net.WebSockets.csproj" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(XREngineBrowserGameProject)' != ''">
+    <ProjectReference Include="$(XREngineBrowserGameProject)" />
+    <Compile Include="$(XREngineBrowserGameRegistrationSource)" />
+  </ItemGroup>
+  <Target Name="ValidateBrowserNativeSourceSelection" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(XREngineJoltBrowser)' != 'true'" Text="BrowserBuild.SourceBindingRequired: pass -p:XREngineJoltBrowser=true to restore and publish the reviewed browser physics source instead of the desktop NuGet binding." />
+  </Target>
+  <Target Name="ValidateBrowserGameComposition" BeforeTargets="CoreCompile" Condition="'$(XREngineBrowserGameProject)' != ''">
+    <Error Condition="!Exists('$(XREngineBrowserGameRegistrationSource)')" Text="Browser game publish requires generated static game registration source." />
+  </Target>
+
   <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
+  <Import Project="../XREngine.Audio.WebAudio/BrowserAssets.props" />
+  <Import Project="../Tools/Dependencies/JoltBrowser/JoltBrowserNative.targets" />
   <Import Project="../Build/Registration/FactoryRegistrations.targets" />
 </Project>

@@ -138,7 +138,7 @@ internal static class EditorProjectInitializer
         var sb = new StringBuilder();
         sb.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
         sb.AppendLine("  <PropertyGroup>");
-        sb.AppendLine("    <TargetFramework>net10.0-windows7.0</TargetFramework>");
+        sb.AppendLine("    <TargetFramework>net10.0</TargetFramework>");
         sb.AppendLine("    <OutputType>Library</OutputType>");
         sb.AppendLine($"    <RootNamespace>{EscapeXml(rootNamespace)}</RootNamespace>");
         sb.AppendLine($"    <AssemblyName>{EscapeXml(projectName)}</AssemblyName>");
@@ -306,9 +306,8 @@ internal static class EditorProjectInitializer
             Path.Combine(repositoryRoot, "XREngine.Runtime.AnimationIntegration", "XREngine.Runtime.AnimationIntegration.csproj"),
             Path.Combine(repositoryRoot, "XREngine.Runtime.AudioIntegration", "XREngine.Runtime.AudioIntegration.csproj"),
             Path.Combine(repositoryRoot, "XREngine.Runtime.InputIntegration", "XREngine.Runtime.InputIntegration.csproj"),
-            Path.Combine(repositoryRoot, "XREngine.Runtime.ModelAssetPipeline", "XREngine.Runtime.ModelAssetPipeline.csproj"),
             Path.Combine(repositoryRoot, "XREngine.Runtime.ModelingIntegration", "XREngine.Runtime.ModelingIntegration.csproj"),
-            Path.Combine(repositoryRoot, "XREngine.Runtime.Bootstrap", "XREngine.Runtime.Bootstrap.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.Host", "XREngine.Runtime.Host.csproj"),
         ];
 
         return [.. projectPaths.Where(File.Exists)];
