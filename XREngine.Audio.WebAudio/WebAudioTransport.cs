@@ -6,8 +6,8 @@ namespace XREngine.Audio.WebAudio;
 /// <summary>PCM playback adapter for browser Web Audio. Output stays suspended until a page gesture unlocks it.</summary>
 public sealed class WebAudioTransport : IAudioTransport
 {
-    private readonly Dictionary<AudioSourceHandle, AudioBufferHandle> _attachedBuffers = [];
     private int _context;
+    private const int MaximumQueuedBuffers = 32;
 
     public WebAudioTransport() => Open();
 
@@ -35,7 +35,6 @@ public sealed class WebAudioTransport : IAudioTransport
             return;
         WebAudioImports.Close(_context);
         _context = 0;
-        _attachedBuffers.Clear();
     }
 
     public void Dispose() => Close();
@@ -52,13 +51,11 @@ public sealed class WebAudioTransport : IAudioTransport
     public AudioSourceHandle CreateSource()
     {
         AudioSourceHandle handle = new(checked((uint)WebAudioImports.CreateSource(RequireOpen())));
-        _attachedBuffers.Add(handle, AudioBufferHandle.Invalid);
         return handle;
     }
     public void DestroySource(AudioSourceHandle source)
     {
         WebAudioImports.DestroySource(RequireOpen(), checked((int)source.Id));
-        _attachedBuffers.Remove(source);
     }
     public AudioBufferHandle CreateBuffer()
         => new(checked((uint)WebAudioImports.CreateBuffer(RequireOpen())));
@@ -82,15 +79,29 @@ public sealed class WebAudioTransport : IAudioTransport
     public void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer)
     {
         WebAudioImports.SetSourceBuffer(RequireOpen(), checked((int)source.Id), checked((int)buffer.Id));
-        _attachedBuffers[source] = buffer;
     }
     public void QueueBuffers(AudioSourceHandle source, ReadOnlySpan<AudioBufferHandle> buffers)
-        => throw new NotSupportedException("WebAudio.StreamingUnsupported: queued playback buffers require a browser streaming adapter.");
+    {
+        if (buffers.Length > MaximumQueuedBuffers)
+            throw new ArgumentOutOfRangeException(nameof(buffers), "Web Audio admits at most 32 queued buffers per source.");
+        Span<int> ids = stackalloc int[buffers.Length];
+        for (int i = 0; i < buffers.Length; i++)
+            ids[i] = checked((int)buffers[i].Id);
+        WebAudioImports.QueueBuffers(RequireOpen(), checked((int)source.Id), ids);
+    }
     public int UnqueueProcessedBuffers(AudioSourceHandle source, Span<AudioBufferHandle> output)
-        => throw new NotSupportedException("WebAudio.StreamingUnsupported: queued playback buffers require a browser streaming adapter.");
-    public int GetBuffersProcessed(AudioSourceHandle source) => 0;
+    {
+        Span<int> ids = stackalloc int[MaximumQueuedBuffers];
+        int count = WebAudioImports.UnqueueProcessedBuffers(RequireOpen(), checked((int)source.Id), ids,
+            Math.Min(output.Length, MaximumQueuedBuffers));
+        for (int i = 0; i < count; i++)
+            output[i] = new(checked((uint)ids[i]));
+        return count;
+    }
+    public int GetBuffersProcessed(AudioSourceHandle source)
+        => WebAudioImports.BuffersProcessed(RequireOpen(), checked((int)source.Id));
     public int GetBuffersQueued(AudioSourceHandle source)
-        => _attachedBuffers.TryGetValue(source, out AudioBufferHandle buffer) && buffer.IsValid ? 1 : 0;
+        => WebAudioImports.BuffersQueued(RequireOpen(), checked((int)source.Id));
 
     public void SetSourcePosition(AudioSourceHandle source, Vector3 position)
         => WebAudioImports.SourcePosition(RequireOpen(), checked((int)source.Id), position.X, position.Y, position.Z);

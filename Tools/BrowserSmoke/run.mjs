@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { readConfig, browserLaunchOptions, depthSamples, help } from './smoke.config.mjs';
 import { captureGpuProcessState, initializeGpuCanary } from './gpu-diagnostics.mjs';
+import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -41,6 +42,12 @@ async function startServer(config, requests) {
             if (!['GET', 'HEAD'].includes(request.method)) { status = 405; throw new Error('Read-only server'); }
             pathname = decodeURIComponent(new URL(request.url, `http://${authority}`).pathname);
             if (pathname === '/favicon.ico') { status = 204; response.writeHead(status); response.end(); return; }
+            if (pathname === '/__audio-probe/') {
+                status = 200;
+                response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+                response.end('<!doctype html><title>Offline engine audio qualification</title>');
+                return;
+            }
             if (config.gpuDiagnostics && pathname === '/__gpu-canary/') {
                 status = 200;
                 response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
@@ -223,6 +230,16 @@ async function gpuCanaryCheck(browser, origin, report, config) {
     }
 }
 
+async function audioStreamCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-audio-stream', config);
+    try {
+        await page.goto(`${origin}/__audio-probe/`, { waitUntil: 'domcontentloaded' });
+        report.audioStream = await page.evaluate(runOfflineAudioProbe,
+            { moduleUrl: `${origin}/web-audio-stream.js`, budgetMs: Math.min(config.timeout, 45000) });
+        assertNoBrowserErrors(events);
+    } finally { await context.close(); }
+}
+
 async function enginePageCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-diagnostic', config);
     try {
@@ -377,6 +394,7 @@ async function main() {
         }
         await check(config.requireWorldPlay ? 'engine-world-play-stop' : 'engine-diagnostic-export-boot',
             () => enginePageCheck(browser, hosted.origin, report, config));
+        await check('engine-audio-stream-samples', () => audioStreamCheck(browser, hosted.origin, report, config));
         let launchDescriptor;
         try {
             launchDescriptor = JSON.parse(await fs.readFile(path.join(config.browserPublish, 'browser-publish.json'), 'utf8'));

@@ -42,7 +42,7 @@ export function browserLaunchOptions(config) {
     // Software execution is an explicit qualification mode, never a silent fallback.
     // These developer switches are used only with the harness's trusted loopback roots.
     if (config.gpuMode === 'software') args.push(
-        '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--use-vulkan=swiftshader');
+        '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--use-vulkan=swiftshader', '--enable-features=Vulkan');
     if (config.gpuDiagnostics) args.push('--enable-logging=stderr', '--vmodule=gpu*=1,webgpu*=1,dawn*=1');
     return {
         headless: !config.headed,

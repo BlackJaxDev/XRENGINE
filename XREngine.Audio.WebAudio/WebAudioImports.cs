@@ -47,6 +47,15 @@ internal static partial class WebAudioImports
     internal static partial void Rewind(int context, int source);
     [JSImport("setSourceBuffer", "xrengine.engineAudio")]
     internal static partial void SetSourceBuffer(int context, int source, int buffer);
+    [JSImport("queueBuffers", "xrengine.engineAudio")]
+    internal static partial void QueueBuffers(int context, int source, [JSMarshalAs<JSType.MemoryView>] Span<int> buffers);
+    [JSImport("unqueueProcessedBuffers", "xrengine.engineAudio")]
+    internal static partial int UnqueueProcessedBuffers(int context, int source,
+        [JSMarshalAs<JSType.MemoryView>] Span<int> output, int maximum);
+    [JSImport("buffersProcessed", "xrengine.engineAudio")]
+    internal static partial int BuffersProcessed(int context, int source);
+    [JSImport("buffersQueued", "xrengine.engineAudio")]
+    internal static partial int BuffersQueued(int context, int source);
     [JSImport("sourcePosition", "xrengine.engineAudio")]
     internal static partial void SourcePosition(int context, int source, float x, float y, float z);
     [JSImport("sourceVelocity", "xrengine.engineAudio")]
