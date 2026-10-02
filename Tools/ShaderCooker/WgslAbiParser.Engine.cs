@@ -158,6 +158,16 @@ internal sealed partial class WgslAbiParser
                 Fail(offset, "raw storage must use a runtime array<u32> with four-byte scalar stride");
             return;
         }
+        if (expected.Kind == ShaderAbiResourceKind.StorageBuffer && expected.ByteSize == 16 && expected.Members.IsEmpty)
+        {
+            if (!resolved.StartsWith("array<", StringComparison.Ordinal) || !resolved.EndsWith('>'))
+                Fail(offset, "UI vector storage must use a runtime array<vec4<f32>>");
+            string element = resolved[6..^1];
+            if (element.Contains(',') ||
+                ResolveAlias(element, new HashSet<string>(StringComparer.Ordinal), offset) != "vec4<f32>")
+                Fail(offset, "UI vector storage must use a runtime array<vec4<f32>> with sixteen-byte stride");
+            return;
+        }
         if (!_structs.TryGetValue(resolved, out WgslAbiStructure? structure)) Fail(offset, "buffer must use a named physical structure");
         if (structure.Members.Count != expected.Members.Length) Fail(offset, "buffer member count differs from declared ABI");
         int cursor = 0, alignment = 16;

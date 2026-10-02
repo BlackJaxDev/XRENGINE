@@ -51,6 +51,15 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         assetPath(value.startupSettings);
         if (!assets.has(value.startupSettings)) throw new Error('AssetSource.StartupSettingsMissing.');
     }
+    if (value.defaultUiFont !== undefined) {
+        assetPath(value.defaultUiFont);
+        const font = assets.get(value.defaultUiFont);
+        if (!value.defaultUiFont.startsWith('/engine/Fonts/') || !font
+            || font.encoding !== 'cooked-binary'
+            || !font.type.startsWith('XREngine.Rendering.FontGlyphSet, XREngine.Runtime.Rendering,')
+            || font.dependencies.length !== 0)
+            throw new Error('AssetSource.DefaultUiFontInvalid: expected a standalone cooked engine FontGlyphSet.');
+    }
     const shaderIdentities = new Set();
     const shaderDescriptors = new Map();
     if (value.shaderArtifacts !== undefined && value.shaderArtifacts !== null) {
@@ -76,7 +85,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'OpaqueShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle'].includes(variant.semantic) || variant.semanticVersion !== 1
+                || !['StandardLitColor', 'OpaqueShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle', 'UIQuadBatched', 'UITextBatchedBitmap'].includes(variant.semantic) || variant.semanticVersion !== 1
                 || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
                 || !shaderIdentities.has(variant.descriptorIdentity))
@@ -87,6 +96,10 @@ export function validateEngineAssetManifest(value, manifestUrl) {
             const debugProfiles = { DebugPoint: 'instanced-debug-point-v1', DebugLine: 'instanced-debug-line-v1', DebugTriangle: 'instanced-debug-triangle-v1' };
             if (debugProfiles[variant.semantic] && (variant.pass !== 'debug-overlay'
                 || variant.vertexProfile !== debugProfiles[variant.semantic] || variant.outputProfile !== 'display-rgba-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            const uiProfiles = { UIQuadBatched: 'instanced-ui-quad-v1', UITextBatchedBitmap: 'instanced-ui-bitmap-text-v1' };
+            if (uiProfiles[variant.semantic] && (variant.pass !== 'screen-ui'
+                || variant.vertexProfile !== uiProfiles[variant.semantic] || variant.outputProfile !== 'display-rgba-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             const key = [variant.semantic, variant.semanticVersion, variant.target, variant.pass,
                 variant.vertexProfile, variant.outputProfile].join('\u001f');

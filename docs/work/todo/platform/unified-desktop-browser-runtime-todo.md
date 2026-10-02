@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds; the exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` also passed real Chromium/SwiftShader CI on 2026-10-02. **39 of 110 items are checked; 71 remain open.** New runtime/render evidence qualifies bounded profiles but does not close unchecked rows without their own acceptance evidence. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits.
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **41 of 110 items are checked; 69 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
 
 Created: 2026-09-29. Updated: 2026-10-02.
 
@@ -24,13 +24,19 @@ The later exact commit `3d18468ebdf1115b431743c56ce0f345d8c3235d` passed
 [Chromium shadow qualification](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36954020671),
 adding the shared standalone directional PCSS path, map resize, repeated
 disable/restore resource retirement, and stop/restart to the qualified profile.
-The current debug-HUD implementation also passes published-WASM/import-boundary
-execution through the real component and shared pipeline, but its GPU pixel
-qualification is pending. These are partial-row advances; the count remains
-**39 checked and 71 open**. The [shader record](../../progress/rendering/unified-webgpu-shader-cooking.md)
-distinguishes the exact live evidence from newer source work.
+The exact later commit `a5762484b8c763fa59f8edb6000d0b61a455bf00` passed
+[Chromium debug-overlay qualification](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36961007160),
+including real component callbacks, dynamic storage growth, alpha blending,
+resize and restart. The complete compiled Editor browser publisher also ran
+through game compilation, world cook, WebAssembly publication, content packaging,
+shell installation and atomic activation. That closes the game-linking and
+publisher-flow implementation rows; Windows CLI and actual published gameplay
+remain separate open acceptance checks. The count is **41 checked and 69 open**.
+The [shader record](../../progress/rendering/unified-webgpu-shader-cooking.md) and
+[publisher evidence](../../progress/rendering/browser-project-publishing.md#same-assets-and-game-code)
+distinguish live results from newer source work.
 
-The 2026-09-30 build-stabilization and portable-host results remain historical evidence for their source snapshot. The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed [real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) on 2026-10-02, qualifying a bounded shared `DefaultRenderPipeline` lit/HDR profile, its resizes, and the listed lifecycle/resource checks. This remains software-WebGPU evidence; full production/gameplay and device acceptance are open. **39 of 110 checklist items remain checked; 71 remain open.** See the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) and [lit-profile acceptance](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance) for exact scope.
+The 2026-09-30 build-stabilization and portable-host results remain historical evidence for their source snapshot. The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed [real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) on 2026-10-02, qualifying a bounded shared `DefaultRenderPipeline` lit/HDR profile, its resizes, and the listed lifecycle/resource checks. This remains software-WebGPU evidence; full production/gameplay and device acceptance are open. **41 of 110 checklist items are checked; 69 remain open.** See the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) and [lit-profile acceptance](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance) for exact scope.
 
 | Area | Finding | Tracked by |
 | --- | --- | --- |
@@ -313,7 +319,7 @@ Depends on UR17.
 
 ## UR04 — WebGPU Renderer Backend For The Engine
 
-- [ ] **UR04.01** `impl` Implement `AbstractRenderer` and its API-object wrappers in `XREngine.Runtime.Rendering.WebGPU`. The base class is about 2,100 lines with 66 abstract members, and the module currently implements only `IBrowserRendererHost`. Land it in slices, each passing the build gate and rendering through the engine path before the next begins:
+- [ ] **UR04.01** `impl` Implement `AbstractRenderer` and its API-object wrappers in `XREngine.Runtime.Rendering.WebGPU`. The base class is about 2,100 lines with 66 abstract members, and the module currently implements only `IBrowserRendererHost`. Implement coherent groups with narrow compile checks; qualify rendering through the complete engine path at end-to-end milestones before closing the corresponding coverage:
   - [ ] Renderer skeleton registered in the backend catalog: every abstract member is implemented or fails with a named unsupported diagnostic; clear and present work.
   - [ ] Data buffers and views, programs, mesh renderers, and vertex layouts: one unlit `ModelComponent` renders through an engine camera.
   - [ ] 2D, array, and cube textures and samplers: a textured material renders.
@@ -344,7 +350,7 @@ Depends on UR17.
 - [ ] **UR05.04** `impl` Implement the WebGPU encoding of logical material and texture references with bounded bind groups, texture arrays for qualifying content, and material batching. No desktop bindless handle reaches WGSL.
 - [ ] **UR05.05** `impl` Report web-unsupported shaders and material features at cook time with material, pass, source location, and reason.
 - [ ] **UR05.06** `verify` Verify coordinate conventions (clip depth range, texture Y, winding, matrix layout, reversed-Z where the engine uses it) with known-value renders.
-- [ ] **UR05.07** `impl` Port the hand-written web-tier shaders from the UR05.01 list by the route chosen in D7, one pass group at a time: depth and shadow casters, forward lit surfaces, sky and environment, tonemapping and the bounded post-process set, then UI and text. Each group cooks without errors and has its known-value render listed under UR05.06 before the next group starts. Desktop GLSL behavior is unchanged.
+- [ ] **UR05.07** `impl` Port the hand-written web-tier shaders from the UR05.01 list by the route chosen in D7: depth and shadow casters, forward lit surfaces, sky and environment, tonemapping and the bounded post-process set, then UI and text. Implement coherent groups with narrow cook/compile checks and run known-value rendering at end-to-end milestones; each group's known-value result must be recorded before this coverage is closed, not before work on another group begins. Desktop GLSL behavior is unchanged.
 
 **Acceptance:** engine materials cook to WGSL and render with correct interpretation; unsupported ones fail by name.
 
@@ -399,7 +405,7 @@ Depends on UR17: game code reaches the engine through the `Engine` facade.
 
 - [x] **UR10.01** `impl` Make project templates and game projects target `net10.0` and reference only portable engine assemblies (plus leaf contracts where needed). The generated target framework is `net10.0-windows7.0` today, set in `XREngine.Editor/CodeManager.cs` and `XREngine.Editor/EditorProjectInitializer.cs`.
 - [ ] **UR10.02** `impl` Report at build time which game-assembly references block browser publishing (desktop-only leaves or APIs), with type and member names.
-- [ ] **UR10.03** `impl` Link the project's game assemblies into the browser publish, with generated static registrations. Editor hot reload remains desktop-only.
+- [x] **UR10.03** `impl` Link the project's game assemblies into the browser publish, with generated static registrations. Editor hot reload remains desktop-only. Done 2026-10-02: the complete production publisher generated the typed game bootstrap/static registrations and activated a browser bundle containing the canonical game WebCIL and bootstrap. See the [publisher evidence](../../progress/rendering/browser-project-publishing.md#same-assets-and-game-code); runtime gameplay acceptance remains separate.
 - [x] **UR10.04** `impl` Keep editor-only code out of game builds, as today.
 - [ ] **UR10.05** `verify` Load serialized game components, game modes, and pawns in the browser from the same assets as desktop.
 
@@ -413,7 +419,7 @@ The remaining items make the parity target portable. They apply to RollingBall u
 
 ## UR11 — Editor Browser Publishing On The Unified Path
 
-- [ ] **UR11.01** `impl` Replace `BrowserWorldPublishExporter` with this flow:
+- [x] **UR11.01** `impl` Replace `BrowserWorldPublishExporter` with this flow. Done 2026-10-02: the compiled production `BuildCurrentProjectSynchronously` chain completed all steps below and activated the canonical RollingBall bundle atomically through a portable Linux invocation. This is complete publisher execution, not Windows CLI or gameplay acceptance; see the [publisher evidence](../../progress/rendering/browser-project-publishing.md#same-assets-and-game-code).
   1. Cook the startup world's web closure.
   2. Build the game assemblies.
   3. Publish the browser host with the engine assemblies, game assemblies, and selected leaves.

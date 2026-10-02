@@ -300,15 +300,26 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Dispose()
         {
+            XRMeshRenderer? meshRenderer = Mesh;
+            XRMesh? mesh = meshRenderer?.Mesh;
+            XRMaterial? material = meshRenderer?.Material;
             GlyphTransformsBuf?.Destroy();
             GlyphTexCoordsBuf?.Destroy();
             TextInstanceBuf?.Destroy();
             GlyphTextIndexBuf?.Destroy();
-            Mesh?.Destroy();
+            meshRenderer?.Destroy();
+            mesh?.Destroy();
+            material?.Destroy();
+            GlyphTransformsBuf = null;
+            GlyphTexCoordsBuf = null;
+            TextInstanceBuf = null;
+            GlyphTextIndexBuf = null;
+            Mesh = null;
         }
     }
 
     private readonly Dictionary<XRTexture2D, TextGPUResources> _textGPU = [];
+    private bool _disposed;
 
     #endregion
 
@@ -587,12 +598,14 @@ public sealed class UIBatchCollector : IDisposable
             return;
 
         // Create the batched material
-        XRShader vertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex);
-        XRShader fragmentShader = XRShader.EngineShader(
-            Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment);
+        bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+        XRShader[] shaders = webGpu ? [] :
+        [
+            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment)
+        ];
 
-        var material = new XRMaterial(Array.Empty<ShaderVar>(), [vertexShader, fragmentShader])
+        var material = new XRMaterial(Array.Empty<ShaderVar>(), shaders)
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
             RenderOptions = new RenderingParameters
@@ -601,7 +614,8 @@ public sealed class UIBatchCollector : IDisposable
                 DepthTest = new DepthTest
                 {
                     Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always
+                    Function = EComparison.Always,
+                    UpdateDepth = !webGpu
                 },
                 StencilTest = new StencilTest
                 {
@@ -610,6 +624,8 @@ public sealed class UIBatchCollector : IDisposable
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
+        if (webGpu)
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV1;
 
         _matQuadMesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
@@ -674,6 +690,8 @@ public sealed class UIBatchCollector : IDisposable
     private void UploadMaterialQuadData(List<MaterialQuadEntry> entries)
     {
         uint count = (uint)entries.Count;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU && count > 65536)
+            throw new NotSupportedException("WebGPU.UI.QuadCapacityExceeded: one screen UI quad group admits at most 65536 instances.");
 
         // Resize if needed
         if (count > _matQuadCapacity)
@@ -724,14 +742,14 @@ public sealed class UIBatchCollector : IDisposable
 
         gpu = new TextGPUResources();
 
-        XRShader vertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex);
-        XRShader stereoMv2VertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex);
-        XRShader stereoNvVertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex);
-        XRShader fragmentShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
+        bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+        XRShader[] shaders = webGpu ? [] :
+        [
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment)
+        ];
 
         ShaderVar[] parameters =
         [
@@ -744,7 +762,7 @@ public sealed class UIBatchCollector : IDisposable
             new ShaderInt(TextRenderLayerCombined, TextRenderLayerVertexUniformName),
         ];
 
-        var material = new XRMaterial(parameters, [fontAtlas], [vertexShader, stereoMv2VertexShader, stereoNvVertexShader, fragmentShader])
+        var material = new XRMaterial(parameters, [fontAtlas], shaders)
         {
             Name = "UIBatchTextMaterial",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
@@ -754,7 +772,8 @@ public sealed class UIBatchCollector : IDisposable
                 DepthTest = new DepthTest
                 {
                     Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always
+                    Function = EComparison.Always,
+                    UpdateDepth = !webGpu
                 },
                 StencilTest = new StencilTest
                 {
@@ -763,6 +782,8 @@ public sealed class UIBatchCollector : IDisposable
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
+        if (webGpu)
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV1;
 
         gpu.Mesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
@@ -1016,6 +1037,10 @@ public sealed class UIBatchCollector : IDisposable
             return;
         }
 
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+            (batchData.AtlasType != TextAtlasBitmap || batchData.DebugMode != 0))
+            throw new NotSupportedException("WebGPU.UI.TextProfileUnsupported: screen text requires a bitmap atlas and normal shading.");
+
         using var sample = RuntimeEngine.Profiler.Start();
 
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
@@ -1227,6 +1252,9 @@ public sealed class UIBatchCollector : IDisposable
     {
         uint totalGlyphs = (uint)batchData.TotalGlyphs;
         uint textCount = (uint)batchData.Entries.Count;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+            (totalGlyphs > 65536 || textCount > 65536))
+            throw new NotSupportedException("WebGPU.UI.TextCapacityExceeded: one bitmap text group admits at most 65536 glyphs and text entries.");
 
         // Resize if needed
         bool resized = false;
@@ -1315,6 +1343,23 @@ public sealed class UIBatchCollector : IDisposable
     private static void DisableBatchCropping()
         => AbstractRenderer.Current?.SetCroppingEnabled(false);
 
+    /// <summary>The shared screen batch has one authored straight-alpha raster profile.</summary>
+    internal static bool HasWebGpuRasterProfile(RenderingParameters parameters)
+    {
+        BlendMode? blend = parameters.BlendModeAllDrawBuffers;
+        return parameters.CullMode == ECullMode.None &&
+            parameters.DepthTest.IsDisabled && parameters.StencilTest.IsDisabled &&
+            parameters.AlphaToCoverage != ERenderParamUsage.Enabled &&
+            parameters.BlendModesPerDrawBuffer is not { Count: > 0 } &&
+            parameters.WriteRed && parameters.WriteGreen && parameters.WriteBlue && parameters.WriteAlpha &&
+            blend is { IsEnabled: true, RgbSrcFactor: EBlendingFactor.SrcAlpha,
+                RgbDstFactor: EBlendingFactor.OneMinusSrcAlpha,
+                AlphaSrcFactor: EBlendingFactor.SrcAlpha,
+                AlphaDstFactor: EBlendingFactor.OneMinusSrcAlpha,
+                RgbEquation: EBlendEquationMode.FuncAdd,
+                AlphaEquation: EBlendEquationMode.FuncAdd };
+    }
+
     private static string GetRenderPassDisplayName(int renderPass)
         => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
             ? ((EDefaultRenderPass)renderPass).ToString()
@@ -1392,10 +1437,22 @@ public sealed class UIBatchCollector : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+        Clear();
+        XRMeshRenderer? meshRenderer = _matQuadMesh;
+        XRMesh? mesh = meshRenderer?.Mesh;
+        XRMaterial? material = meshRenderer?.Material;
         _matQuadTransformBuf?.Destroy();
         _matQuadColorBuf?.Destroy();
         _matQuadBoundsBuf?.Destroy();
-        _matQuadMesh?.Destroy();
+        meshRenderer?.Destroy();
+        mesh?.Destroy();
+        material?.Destroy();
+        _matQuadTransformBuf = null;
+        _matQuadColorBuf = null;
+        _matQuadBoundsBuf = null;
+        _matQuadMesh = null;
 
         foreach (var gpu in _textGPU.Values)
             gpu.Dispose();

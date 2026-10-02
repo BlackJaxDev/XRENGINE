@@ -36,6 +36,20 @@ resource generations. This check requires a package manifest containing the
 exact cooked pipeline artifacts and reports failures separately from the
 authored RollingBall world-play check.
 
+The separate `rollingball-editor-published-game` check mounts the unmodified
+output of `Tools/BrowserSmoke/Publisher/RollingBallPublisher.csproj`. That driver
+copies the canonical RollingBall project, Assets, Config, and Metadata into an
+owned validation directory, hashes those authored bytes before and after, and
+calls the compiled production Editor's browser build method. The normal game
+compile, world cook, WebAssembly publish, content pack, launch configuration,
+and atomic activation must all finish. No prebuilt replacement page or mock
+world is used. Chromium opens that shipping index page, requires the real
+world/Jolt startup and nontrivial canvas pixels, exercises focused keyboard
+tilt and reset, checks the pause HUD color transition and its reversal on
+resume, resizes the canvas, and starts a second fresh lifecycle. Saved game
+screenshots and pixel summaries are bounded visual/input evidence; they do not
+establish numeric rigid-body parity or native-GPU performance.
+
 The directional-shadow diagnostic is a separate static fixture. It cooks the
 `StandardLitColorV1` HDR shadow receiver and `OpaqueShadowDepthV1` writer as
 distinct variants, then uses one registered `DirectionalLightComponent` and its
@@ -82,6 +96,7 @@ npx playwright install chromium
 cd ../..
 node Tools/BrowserSmoke/run.mjs \
   --browser-publish <browser-publish>/wwwroot \
+  --game-publish <editor-published-rollingball-root> \
   --shader-artifacts <depth-shader-cook-output> \
   --output Build/_AgentValidation/<run>/reports/browser-smoke
 ```
@@ -103,6 +118,25 @@ that variable absent the harness uses Playwright's managed Chromium and its new
 headless channel. `--headed` is available for local inspection. The harness does
 not download or install a browser as part of a run.
 
+`--game-publish` points to an activated browser-game directory rather than the
+bare browser host. It is optional for the full diagnostic harness and required
+by `--game-only`. The portable publisher driver can invoke the compiled Editor
+browser method on Linux with `EnableWindowsTargeting=true`; the dedicated
+Windows CI lane uses the actual Editor CLI instead. The Linux CI lane retains
+the shared renderer and runtime diagnostics, avoiding a duplicate game publish.
+
+The Windows CI lane invokes the production Editor CLI with the canonical
+RollingBall project: `--build-project <project.xrproj> --build-configuration
+Release --build-platform BrowserWebGPU --output-subfolder browser-game`. It
+stages authored inputs under the validation root and uses the pinned Jolt
+source/build scripts. Explicit browser target selection treats saved desktop
+NativeAOT options as inapplicable defaults; explicit incompatible AOT CLI
+options still fail. The CLI override is not saved into project settings. This
+lane runs `run.mjs --game-only --game-publish <editor-output> --gpu-mode software
+--output <evidence>` to check the activated shipping game in Chromium without
+repeating the full engine-diagnostic suite. Its artifact retains the Editor
+CLI log, descriptor, manifest, browser report/logs, and canvas screenshots.
+
 Default `--gpu-mode native` does not force a software implementation and rejects
 reported fallback/SwiftShader/llvmpipe adapters. An unavailable WebGPU adapter is
 a failing `WebGPUUnsupported` result, never a skipped/passed rendering check.
@@ -113,7 +147,7 @@ correctness only. It is not physical-device, native GPU, or performance evidence
 Do not use software developer switches with untrusted web content.
 
 The harness binds an ephemeral port on `127.0.0.1`. Only the supplied publish,
-shader, and optional Jolt directories are mounted. Path/symlink escapes, hidden
+shader, and optional Jolt/game directories are mounted. Path/symlink escapes, hidden
 path segments, non-read requests, and unexpected Host headers are rejected.
 Browser requests to other origins are blocked and fail qualification. No server
 is exposed on a LAN interface.

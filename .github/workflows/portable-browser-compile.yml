@@ -17,6 +17,7 @@ concurrency:
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  MSBUILDDISABLENODEREUSE: '1'
   POWERSHELL_TELEMETRY_OPTOUT: '1'
   VALIDATION_ROOT: Build/_AgentValidation/00000000-000000-shared/browser-ci
 
@@ -118,3 +119,113 @@ jobs:
           path: ${{ env.VALIDATION_ROOT }}/browser/wwwroot
           if-no-files-found: error
           retention-days: 7
+
+  windows-editor-browser:
+    name: Publish RollingBall with the Windows Editor CLI and qualify Chromium
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Install WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Set up browser qualification tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
+
+      - name: Install pinned browser tooling
+        shell: pwsh
+        run: |
+          npm ci --prefix Tools/BrowserSmoke
+          if ($LASTEXITCODE -ne 0) { throw 'Browser tooling install failed.' }
+          Push-Location Tools/BrowserSmoke
+          try {
+            npx playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Chromium install failed.' }
+          }
+          finally { Pop-Location }
+
+      - name: Prepare pinned browser physics sources
+        shell: pwsh
+        run: |
+          ./Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/managed"
+          ./Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/native" -DotNetRoot $env:DOTNET_ROOT
+
+      - name: Stage canonical RollingBall inputs
+        shell: pwsh
+        run: |
+          $source = 'Samples/RollingBall'
+          $project = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The CLI validation project must start empty.' }
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
+          foreach ($name in @('RollingBall.xrproj', 'Assets', 'Config', 'Metadata')) {
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination $project -Recurse
+          }
+          Write-Output "Staged canonical RollingBall project: $project"
+
+      - name: Publish RollingBall through the Editor CLI
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project/RollingBall.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The Editor browser-publishing CLI failed; inspect $log." }
+
+      - name: Verify activated game bundle and unchanged canonical inputs
+        shell: pwsh
+        run: |
+          $site = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project/Build/browser-game'
+          $descriptorFile = Join-Path $site 'browser-publish.json'
+          $manifestFile = Join-Path $site 'content/manifest.json'
+          foreach ($file in @((Join-Path $site 'index.html'), $descriptorFile, $manifestFile)) {
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Editor bundle is incomplete: $file" }
+          }
+          $descriptor = Get-Content -LiteralPath $descriptorFile -Raw | ConvertFrom-Json
+          $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
+          if ($descriptor.schema -ne 2 -or $descriptor.format -ne 'xrengine-engine-launch' -or
+              $descriptor.manifest -ne './content/manifest.json' -or
+              $manifest.startupWorld -ne '/game/Worlds/RollingBallWorld.asset' -or
+              $manifest.assets.Count -lt 32 -or $manifest.shaderArtifacts.Count -lt 15 -or
+              $manifest.pipelineArtifacts.Count -lt 9) {
+            throw 'The Editor did not activate the canonical RollingBall browser content.'
+          }
+          git diff --exit-code -- Samples/RollingBall
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical RollingBall inputs changed during CLI publishing.' }
+
+      - name: Qualify the Editor-published game in Chromium
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/evidence'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          node Tools/BrowserSmoke/run.mjs --game-only `
+            --game-publish "$env:VALIDATION_ROOT/rollingball-cli/project/Build/browser-game" `
+            --gpu-mode software --output $evidence 2>&1 | Tee-Object -FilePath (Join-Path $evidence 'browser-process.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Chromium RollingBall qualification failed.' }
+
+      - name: Preserve Windows Editor CLI and browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-rollingball-qualification
+          path: |
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/evidence
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game/content/manifest.json
+          if-no-files-found: warn
+          retention-days: 14

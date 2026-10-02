@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using XREngine.Core.Files;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering;
 
 namespace XREngine.Browser;
 
@@ -22,6 +23,7 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
     public string GameAssetsRoot => "/game";
     public string StartupWorldPath { get; private set; } = string.Empty;
     public string? StartupSettingsPath { get; private set; }
+    public string? DefaultUiFontPath { get; private set; }
 
     /// <summary>Validates the complete manifest before exposing asset identities to the engine.</summary>
     public static async Task<BrowserEngineAssetSource> OpenAsync(string manifestUrl, CancellationToken cancellationToken = default)
@@ -92,6 +94,19 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
                 paths[index++] = dependency.GetString()!;
             _assets.Add(path, new RuntimeAssetCatalogEntry(path, type, encoding, Array.AsReadOnly(paths)));
         }
+        if (root.TryGetProperty("defaultUiFont", out JsonElement fontReference))
+        {
+            if (fontReference.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("AssetSource.DefaultUiFontInvalid: expected a cooked font path.");
+            string path = fontReference.GetString()!;
+            if (!path.StartsWith("/engine/Fonts/", StringComparison.Ordinal)
+                || !_assets.TryGetValue(path, out RuntimeAssetCatalogEntry? entry)
+                || entry.Encoding != RuntimeAssetEncoding.CookedBinary
+                || entry.TypeName != typeof(FontGlyphSet).AssemblyQualifiedName
+                || entry.Dependencies.Count != 0)
+                throw new InvalidDataException("AssetSource.DefaultUiFontInvalid: expected a standalone cooked engine FontGlyphSet.");
+            DefaultUiFontPath = path;
+        }
     }
 
     private void ReadPipelineArtifacts(JsonElement pipelines)
@@ -132,6 +147,21 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
             artifacts.Add(artifact);
         }
         return new ShaderProgramArtifactCatalog(artifacts);
+    }
+
+    /// <summary>Hydrates the explicitly packaged default font before UI can activate.</summary>
+    public async Task<FontGlyphSet?> LoadDefaultUiFontAsync(CancellationToken cancellationToken = default)
+    {
+        RequireSession();
+        if (DefaultUiFontPath is not { } path)
+            return null;
+        FontGlyphSet font = await Engine.Assets.LoadFromRuntimeSourceAsync(path,
+            typeof(FontGlyphSet), cancellationToken: cancellationToken) as FontGlyphSet
+            ?? throw new InvalidDataException("AssetSource.DefaultUiFontInvalid: cooked font did not hydrate.");
+        if (font.AtlasType != EFontAtlasType.Bitmap || font.Glyphs is not { Count: > 0 }
+            || font.Atlas is not { Mipmaps.Length: > 0 })
+            throw new NotSupportedException("AssetSource.DefaultUiFontUnsupported: expected a bitmap atlas with glyphs and mips.");
+        return font;
     }
 
     /// <summary>Resolves exact hash-owned variant declarations against already verified shader artifacts.</summary>
@@ -227,5 +257,6 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         _shaderArtifacts.Clear();
         _materialVariants.Clear();
         _pipelineArtifactIdentities.Clear();
+        DefaultUiFontPath = null;
     }
 }

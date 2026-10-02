@@ -35,6 +35,18 @@ export class BrowserEngineInput {
         this.composing = false;
         this.cursorX = 0;
         this.cursorY = 0;
+        this.textElement = null;
+        this.textEvents = null;
+        this.textGeneration = 0;
+        this.textVersion = 0;
+        this.textComposing = false;
+        this.textCommitPending = false;
+        this.textConflict = false;
+        this.compositionBaseValue = '';
+        this.textCommitSequence = 0;
+        this.textEpoch = 0;
+        this.textPosition = { hidden: false, left: NaN, top: NaN, width: NaN, height: NaN,
+            clipTop: NaN, clipRight: NaN, clipBottom: NaN, clipLeft: NaN };
     }
 
     install() {
@@ -63,7 +75,8 @@ export class BrowserEngineInput {
         }, { signal });
         canvas.addEventListener('compositionend', event => {
             this.composing = false;
-            if (typeof event.data === 'string') this.engine.InputText(event.data.slice(0, 64));
+            if (typeof event.data === 'string' && event.data.length <= 64)
+                this.engine.InputText(event.data);
         }, { signal });
         canvas.addEventListener('pointerdown', event => {
             const button = mouseButton(event.button);
@@ -114,7 +127,7 @@ export class BrowserEngineInput {
             this.engine.InputScroll(event.deltaX / step, -event.deltaY / step);
             event.preventDefault();
         }, { signal, passive: false });
-        canvas.addEventListener('blur', () => this.reset(), { signal });
+        canvas.addEventListener('blur', () => this.engine.ResetInput(), { signal });
         document.addEventListener('visibilitychange', () => { if (document.hidden) this.reset(); }, { signal });
     }
 
@@ -135,7 +148,7 @@ export class BrowserEngineInput {
     }
 
     publish() {
-        const focused = !document.hidden && document.hasFocus() && document.activeElement === this.canvas;
+        const focused = this.ownsFocus();
         let connected = false, mask = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0;
         if (focused && this.gamepadToggle.checked) {
             let pads;
@@ -174,11 +187,225 @@ export class BrowserEngineInput {
 
     reset() {
         this.pointer = -1;
+        this.removeTextElement();
         this.engine.ResetInput();
     }
 
     dispose() {
         this.events.abort();
         this.reset();
+    }
+
+    ownsFocus() {
+        return !document.hidden && document.hasFocus() &&
+            (document.activeElement === this.canvas || document.activeElement === this.textElement);
+    }
+
+    /** Called after the engine frame so the focused widget and UI layout are current. */
+    syncTextFocus() {
+        const generation = this.engine.RefreshTextInput();
+        if (!generation) {
+            this.removeTextElement();
+            return;
+        }
+        if (generation !== this.textGeneration)
+            this.createTextElement(generation);
+
+        const element = this.textElement;
+        if (!element) return;
+        const version = this.engine.GetTextInputContentVersion();
+        if ((this.textComposing || this.textCommitPending) && version !== this.textVersion) {
+            if (this.engine.GetTextInputValue() !== this.compositionBaseValue)
+                this.textConflict = true;
+            this.textVersion = version;
+        } else if (!this.textComposing && !this.textCommitPending && version !== this.textVersion) {
+            this.textVersion = version;
+            const value = this.engine.GetTextInputValue();
+            if (element.value !== value) element.value = value;
+        }
+        const cursor = this.engine.GetTextInputCursor();
+        if (!this.textComposing && document.activeElement !== element &&
+            (element.selectionStart !== cursor || element.selectionEnd !== cursor))
+            element.setSelectionRange(cursor, cursor);
+        element.readOnly = this.engine.GetTextInputReadOnly();
+        this.positionTextElement();
+    }
+
+    createTextElement(generation) {
+        const focusWasOnCanvas = document.activeElement === this.canvas;
+        this.removeTextElement();
+        const singleLine = this.engine.GetTextInputSingleLine();
+        const element = document.createElement(singleLine ? 'input' : 'textarea');
+        if (singleLine) element.type = 'text';
+        element.setAttribute('aria-label', this.engine.GetTextInputLabel() || 'Engine text input');
+        element.setAttribute('autocomplete', 'off');
+        element.maxLength = 16384;
+        element.readOnly = this.engine.GetTextInputReadOnly();
+        element.style.position = 'fixed';
+        element.style.zIndex = '2147483647';
+        element.style.boxSizing = 'border-box';
+        element.style.background = 'transparent';
+        element.style.color = 'transparent';
+        element.style.caretColor = '#90c9ef';
+        element.style.border = '0';
+        element.style.outline = '2px solid #90c9ef';
+        // Native font metrics can differ from engine glyph metrics; the DOM caret
+        // and focus ring aid editing/accessibility but do not claim glyph-pixel alignment.
+        element.style.fontSize = '16px';
+        element.style.resize = 'none';
+        element.style.pointerEvents = 'none';
+        element.value = this.engine.GetTextInputValue();
+        this.textVersion = this.engine.GetTextInputContentVersion();
+        const cursor = this.engine.GetTextInputCursor();
+        element.setSelectionRange(cursor, cursor);
+        const controller = new AbortController();
+        const signal = controller.signal;
+        this.textEvents = controller;
+        this.textElement = element;
+        this.textGeneration = generation;
+        this.textComposing = false;
+        this.textCommitPending = false;
+        this.textConflict = false;
+        const epoch = ++this.textEpoch;
+        element.addEventListener('compositionstart', () => {
+            this.textCommitSequence++;
+            this.textComposing = true;
+            this.textCommitPending = false;
+            this.compositionBaseValue = this.engine.GetTextInputValue();
+            this.textConflict = element.value !== this.compositionBaseValue;
+            this.engine.ResetInput();
+        }, { signal });
+        element.addEventListener('compositionend', () => {
+            this.textComposing = false;
+            this.textCommitPending = true;
+            const commit = ++this.textCommitSequence;
+            setTimeout(() => {
+                if (epoch !== this.textEpoch || commit !== this.textCommitSequence) return;
+                this.textCommitPending = false;
+                if (this.textConflict || this.engine.GetTextInputValue() !== this.compositionBaseValue)
+                    this.restoreTextElement();
+                else
+                    this.applyTextElement();
+                this.textConflict = false;
+            }, 0);
+        }, { signal });
+        element.addEventListener('input', event => {
+            if (!event.isComposing && !this.textComposing && !this.textCommitPending)
+                this.applyTextElement();
+        }, { signal });
+        element.addEventListener('select', () => {
+            if (!this.textComposing && !this.textCommitPending && this.textGeneration === generation) {
+                const cursor = element.selectionDirection === 'backward'
+                    ? element.selectionStart : element.selectionEnd;
+                this.engine.SelectTextInput(generation, cursor);
+            }
+        }, { signal });
+        element.addEventListener('keydown', event => {
+            if (event.isComposing || this.textComposing) return;
+            if (event.key === 'Enter' && singleLine) {
+                this.engine.ActOnTextInput(generation, true);
+                event.preventDefault();
+            } else if (event.key === 'Escape') {
+                if (this.engine.ActOnTextInput(generation, false)) event.preventDefault();
+            }
+        }, { signal });
+        document.body.appendChild(element);
+        this.positionTextElement();
+        if (focusWasOnCanvas) element.focus({ preventScroll: true });
+    }
+
+    applyTextElement() {
+        const element = this.textElement;
+        if (!element || !this.textGeneration || this.textComposing) return;
+        const accepted = this.engine.EditTextInput(this.textGeneration, element.value,
+            element.selectionStart, element.selectionEnd);
+        const value = this.engine.GetTextInputValue();
+        if (!accepted || value !== element.value) {
+            element.value = value;
+            const cursor = this.engine.GetTextInputCursor();
+            element.setSelectionRange(cursor, cursor);
+        }
+        this.textVersion = this.engine.GetTextInputContentVersion();
+    }
+
+    restoreTextElement() {
+        const element = this.textElement;
+        if (!element) return;
+        element.value = this.engine.GetTextInputValue();
+        const cursor = this.engine.GetTextInputCursor();
+        element.setSelectionRange(cursor, cursor);
+        this.textVersion = this.engine.GetTextInputContentVersion();
+    }
+
+    positionTextElement() {
+        const element = this.textElement;
+        if (!element) return;
+        const position = this.textPosition;
+        const x = this.engine.GetTextInputX();
+        const y = this.engine.GetTextInputY();
+        const width = this.engine.GetTextInputWidth();
+        const height = this.engine.GetTextInputHeight();
+        const rect = this.canvas.getBoundingClientRect();
+        const left = rect.left + x * rect.width;
+        const top = rect.top + y * rect.height;
+        const boxWidth = width * rect.width;
+        const boxHeight = height * rect.height;
+        const right = left + boxWidth;
+        const bottom = top + boxHeight;
+        if (width <= 0 || height <= 0 || !Number.isFinite(left) || !Number.isFinite(top) ||
+            right <= rect.left || left >= rect.right || bottom <= rect.top || top >= rect.bottom) {
+            if (!position.hidden) {
+                element.style.left = '-10000px';
+                element.style.top = '0';
+                element.style.width = '1px';
+                element.style.height = '1px';
+                element.style.clipPath = 'inset(50%)';
+                position.hidden = true;
+            }
+            return;
+        }
+
+        // Clip the projected box without moving its origin; moving it would shift
+        // the native caret relative to the engine-rendered text.
+        const clipTop = Math.max(0, rect.top - top);
+        const clipRight = Math.max(0, right - rect.right);
+        const clipBottom = Math.max(0, bottom - rect.bottom);
+        const clipLeft = Math.max(0, rect.left - left);
+        if (position.hidden || position.left !== left) element.style.left = `${left}px`;
+        if (position.hidden || position.top !== top) element.style.top = `${top}px`;
+        if (position.hidden || position.width !== boxWidth) element.style.width = `${boxWidth}px`;
+        if (position.hidden || position.height !== boxHeight) element.style.height = `${boxHeight}px`;
+        if (position.hidden || position.clipTop !== clipTop || position.clipRight !== clipRight ||
+            position.clipBottom !== clipBottom || position.clipLeft !== clipLeft)
+            element.style.clipPath = `inset(${clipTop}px ${clipRight}px ${clipBottom}px ${clipLeft}px)`;
+        position.hidden = false;
+        position.left = left;
+        position.top = top;
+        position.width = boxWidth;
+        position.height = boxHeight;
+        position.clipTop = clipTop;
+        position.clipRight = clipRight;
+        position.clipBottom = clipBottom;
+        position.clipLeft = clipLeft;
+    }
+
+    removeTextElement() {
+        ++this.textEpoch;
+        this.textEvents?.abort();
+        this.textEvents = null;
+        this.textElement?.remove();
+        this.textElement = null;
+        this.textGeneration = 0;
+        this.textVersion = 0;
+        this.textComposing = false;
+        this.textCommitPending = false;
+        this.textConflict = false;
+        this.compositionBaseValue = '';
+        this.textCommitSequence++;
+        this.textPosition.hidden = false;
+        this.textPosition.left = this.textPosition.top = NaN;
+        this.textPosition.width = this.textPosition.height = NaN;
+        this.textPosition.clipTop = this.textPosition.clipRight = NaN;
+        this.textPosition.clipBottom = this.textPosition.clipLeft = NaN;
     }
 }

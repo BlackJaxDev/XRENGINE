@@ -393,6 +393,59 @@ namespace XREngine.Rendering.UI
             SetValue();
         }
 
+        /// <summary>
+        /// Applies one user edit and caret movement atomically. Native text services can
+        /// supply a completed IME composition or selected-range replacement here.
+        /// </summary>
+        public bool UserReplaceText(string value, int selectionStart, int selectionEnd)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (selectionStart < 0 || selectionEnd < selectionStart || selectionEnd > value.Length)
+                return false;
+            if (MaxInputLength is { } maximum && value.Length > maximum)
+                return false;
+
+            string previous = Text;
+            if (value != previous)
+            {
+                int prefix = 0;
+                int commonLength = Math.Min(previous.Length, value.Length);
+                while (prefix < commonLength && previous[prefix] == value[prefix])
+                    prefix++;
+
+                int suffix = 0;
+                while (suffix < commonLength - prefix &&
+                       previous[previous.Length - 1 - suffix] == value[value.Length - 1 - suffix])
+                    suffix++;
+
+                int insertionLength = value.Length - prefix - suffix;
+                if (insertionLength > 0 && !PreValidateInput(value.Substring(prefix, insertionLength)))
+                    return false;
+                if (!PostValidateInput(value))
+                    return false;
+
+                Text = value;
+                SetValue();
+            }
+
+            CursorPosition = selectionEnd;
+            return true;
+        }
+
+        /// <summary>Raises the same single-line submit action as the engine Enter key.</summary>
+        public void UserSubmit()
+        {
+            if (SingleLineMode)
+                Submitted?.Invoke(this);
+        }
+
+        /// <summary>Raises the same single-line cancel action as the engine Escape key.</summary>
+        public void UserCancel()
+        {
+            if (SingleLineMode)
+                Cancelled?.Invoke(this);
+        }
+
         public void UserRemoveText(int count, bool backward)
         {
             string newText;
@@ -474,7 +527,7 @@ namespace XREngine.Rendering.UI
                     //Re-validate cursor position
                     CursorPosition = _cursorPosition;
                     //Display updated text to the user
-                    TextComponent.Text = FormatText(Text);
+                    TextComponent.Text = IsFocused ? Text : FormatText(Text);
                     break;
             }
         }

@@ -15,6 +15,7 @@ internal static partial class ProjectBuilder
             "." + Path.GetFileName(context.BuildRoot) + ".browser-stage-" + Guid.NewGuid().ToString("N"));
         private string? _siteRoot;
         private string? _recipePath;
+        private bool _includesDefaultUiFont;
 
         private string SourceRoot => Path.Combine(_stageRoot, "content-source");
         private string PublishRoot => Path.Combine(_stageRoot, "publish");
@@ -39,7 +40,8 @@ internal static partial class ProjectBuilder
             {
                 Cancellation.ThrowIfCancellationRequested();
                 XRWorld world = LoadStartupWorld(context);
-                _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot, Cancellation);
+                _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
+                    Cancellation, out _includesDefaultUiFont);
             }
             catch
             {
@@ -84,6 +86,8 @@ internal static partial class ProjectBuilder
                 Cancellation.ThrowIfCancellationRequested();
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
                 InstallPlayerShell(site);
+                if (_includesDefaultUiFont)
+                    InstallDefaultUiFontLicense(site);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     schema = 2,
@@ -135,13 +139,35 @@ internal static partial class ProjectBuilder
             File.Copy(player, PlayerFile("index.html"), overwrite: true);
         }
 
+        private static void InstallDefaultUiFontLicense(string site)
+        {
+            string source = Engine.Assets.ResolveEngineAssetPath("Fonts", "Roboto", "LICENSE.txt");
+            FileInfo license = new(source);
+            if (!license.Exists || license.LinkTarget is not null ||
+                (license.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new FileNotFoundException("BrowserCook.DefaultUiFontLicenseMissing: canonical Roboto license is unavailable.", source);
+            string licensesDirectory = Path.Combine(site, "licenses");
+            DirectoryInfo destinationDirectory = new(licensesDirectory);
+            if (destinationDirectory.Exists && (destinationDirectory.LinkTarget is not null ||
+                (destinationDirectory.Attributes & FileAttributes.ReparsePoint) != 0))
+                throw new NotSupportedException("BrowserCook.DefaultUiFontLicenseLinked: license output cannot be linked.");
+            Directory.CreateDirectory(licensesDirectory);
+            string destination = Path.Combine(licensesDirectory, "Roboto-LICENSE.txt");
+            FileInfo existing = new(destination);
+            if (existing.Exists && (existing.LinkTarget is not null ||
+                (existing.Attributes & FileAttributes.ReparsePoint) != 0))
+                throw new NotSupportedException("BrowserCook.DefaultUiFontLicenseLinked: license output cannot be linked.");
+            File.Copy(source, destination, overwrite: true);
+        }
+
         internal void Commit()
         {
             Cancellation.ThrowIfCancellationRequested();
             string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
             if (!File.Exists(Path.Combine(site, "index.html")) ||
                 !File.Exists(Path.Combine(site, "browser-publish.json")) ||
-                !File.Exists(Path.Combine(site, "content", "manifest.json")))
+                !File.Exists(Path.Combine(site, "content", "manifest.json")) ||
+                (_includesDefaultUiFont && !File.Exists(Path.Combine(site, "licenses", "Roboto-LICENSE.txt"))))
             {
                 Cleanup();
                 throw new InvalidOperationException("Browser output is incomplete; keeping the previous build.");

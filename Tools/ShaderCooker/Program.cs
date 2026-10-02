@@ -179,7 +179,8 @@ internal static class Program
                 Require(variant.Count == 4 && variant.ContainsKey("semantic") && variant.ContainsKey("semanticVersion")
                     && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
                 string semantic = String(variant, "semantic");
-                Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle"
+                Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
+                    "UIQuadBatched" or "UITextBatchedBitmap"
                     && Integer(variant, "semanticVersion") == 1,
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
@@ -199,6 +200,16 @@ internal static class Program
                     Require(String(recipe, "pass") == "debug-overlay" && vertexProfile == debugProfile &&
                         outputProfile == "display-rgba-v1",
                         $"{stageContext}: debug primitive requires its exact overlay pass and profiles.");
+                string? uiProfile = semantic switch
+                {
+                    "UIQuadBatched" => "instanced-ui-quad-v1",
+                    "UITextBatchedBitmap" => "instanced-ui-bitmap-text-v1",
+                    _ => null,
+                };
+                if (uiProfile is not null)
+                    Require(String(recipe, "pass") == "screen-ui" && vertexProfile == uiProfile &&
+                        outputProfile == "display-rgba-v1",
+                        $"{stageContext}: screen UI requires its exact display pass and profiles.");
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");

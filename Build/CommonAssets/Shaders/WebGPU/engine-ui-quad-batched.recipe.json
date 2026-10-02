@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-ui-quad-batched",
+  "pass": "screen-ui",
+  "source": "UIQuadBatched.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": { "vertex": "uiQuadVertex", "fragment": "uiQuadFragment" },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 64,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 3,
+    "maxStorageBufferBindingSize": 4194304
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "materialVariant": {
+    "semantic": "UIQuadBatched",
+    "semanticVersion": 1,
+    "vertexProfile": "instanced-ui-quad-v1",
+    "outputProfile": "display-rgba-v1"
+  },
+  "layout": {
+    "vertexBuffers": [
+      { "slot": 0, "stride": 12, "stepMode": "vertex", "attributes": [
+        { "location": 0, "offset": 0, "format": "float32x3", "semantic": "position" }
+      ] }
+    ],
+    "bindings": [
+      {
+        "name": "View", "physicalName": "view_0", "group": 0, "binding": 0,
+        "kind": "uniform", "visibility": ["vertex"], "owner": "Engine", "frequency": "View",
+        "bytes": 64, "dynamic": true,
+        "members": [
+          { "name": "viewProjection_0", "provider": "ViewProjection", "offset": 0, "bytes": 64, "type": "mat4x4<f32>" }
+        ]
+      },
+      {
+        "name": "QuadTransformBuffer", "physicalName": "quadTransforms_0", "group": 1, "binding": 0,
+        "kind": "read-only-storage", "visibility": ["vertex"], "owner": "Engine", "frequency": "Object",
+        "bytes": 16, "dynamic": false, "members": []
+      },
+      {
+        "name": "QuadColorBuffer", "physicalName": "quadColors_0", "group": 1, "binding": 1,
+        "kind": "read-only-storage", "visibility": ["vertex"], "owner": "Engine", "frequency": "Object",
+        "bytes": 16, "dynamic": false, "members": []
+      },
+      {
+        "name": "QuadBoundsBuffer", "physicalName": "quadBounds_0", "group": 1, "binding": 2,
+        "kind": "read-only-storage", "visibility": ["vertex"], "owner": "Engine", "frequency": "Object",
+        "bytes": 16, "dynamic": false, "members": []
+      }
+    ]
+  },
+  "pipeline": {}
+}

@@ -71,6 +71,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
         if (_instanceStorage is { } storage && _instanceBuffer is not null &&
             instances > _instanceBuffer.Data.Length / (uint)storage.StrideBytes)
             throw Unsupported("the requested instance count exceeds the published logical storage length");
+        if (_instanceStorage is { } uiStorage)
+            ValidateUIStorageExtent(uiStorage.Name, instances);
         if (!_commands.TryGetValue(bindings, out int commands))
         {
             if (_commands.Count >= 64)
@@ -84,6 +86,39 @@ internal sealed class WebGpuMeshDraw : IDisposable
         bindings.MarkRecorded();
         _frameBuffer?.MarkRecorded();
         _renderer.CountEngineMeshDraw();
+    }
+
+    private void ValidateUIStorageExtent(string sourceName, uint instances)
+    {
+        if (sourceName == "QuadTransformBuffer")
+        {
+            RequireStorageExtent("QuadColorBuffer", instances, 16);
+            RequireStorageExtent("QuadBoundsBuffer", instances, 16);
+            return;
+        }
+        if (sourceName != "GlyphTransformsBuffer") return;
+
+        RequireStorageExtent("GlyphTexCoordsBuffer", instances, 16);
+        WebGpuDataBuffer indexBuffer = RequireStorageExtent("GlyphTextIndexBuffer", instances, 4);
+        WebGpuDataBuffer textBuffer = RequireStorageExtent("TextInstanceBuffer", 1, 128);
+        if (indexBuffer.Data is not XRDataBuffer<uint> indices)
+            throw Unsupported("bitmap text requires a CPU-backed uint glyph-to-text index buffer");
+        Span<uint> indexValues = indices.GetCpuMirrorSpan();
+        if (indexValues.Length < instances)
+            throw Unsupported("bitmap text glyph indices have no complete CPU mirror");
+        uint textCount = textBuffer.Data.Length / 128;
+        for (int index = 0; index < instances; index++)
+            if (indexValues[index] >= textCount)
+                throw Unsupported("bitmap text glyph index exceeds the published text metadata range");
+    }
+
+    private WebGpuDataBuffer RequireStorageExtent(string name, uint instances, uint stride)
+    {
+        if (!_program.TryGetStorageBinding(name, out WebGpuDataBuffer? buffer) || buffer is null ||
+            buffer.Data.Length % stride != 0 || buffer.Data.Length / stride < instances ||
+            buffer.BackendAllocatedByteSize < buffer.Data.Length)
+            throw Unsupported($"'{name}' does not cover the requested UI instance range");
+        return buffer;
     }
 
     internal bool DependsOn(AbstractRenderAPIObject resource)
@@ -160,6 +195,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
                     stream = new WebGpuVertexStream(api, checked((int)buffer.ElementSize), stepMode);
                     streams.Add(stream);
                 }
+                if (artifact.Pass == "screen-ui" && stream.Stride != authored.Stride)
+                    throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible declared stream stride");
                 stream.Attributes.Add(attribute with { Offset = offset });
             }
         }

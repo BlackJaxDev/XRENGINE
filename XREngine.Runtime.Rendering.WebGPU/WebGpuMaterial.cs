@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.WebGPU;
@@ -14,14 +15,19 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
     private bool _directionalShadowReceiver;
     private bool _opaqueShadowDepth;
     private EngineMaterialSemantic _debugPrimitive;
+    private EngineMaterialSemantic _uiSemantic;
 
-    internal WebGpuInstanceStorageContract? InstanceStorageContract => _debugPrimitive switch
+    internal WebGpuInstanceStorageContract? InstanceStorageContract => (_uiSemantic, _debugPrimitive) switch
     {
-        EngineMaterialSemantic.DebugPoint => new("PointsBuffer", 16, 65536),
-        EngineMaterialSemantic.DebugLine => new("LinesBuffer", 28, 65536),
-        EngineMaterialSemantic.DebugTriangle => new("TrianglesBuffer", 40, 65536),
+        (EngineMaterialSemantic.UIQuadBatched, _) => new("QuadTransformBuffer", 64, 65536),
+        (EngineMaterialSemantic.UITextBatchedBitmap, _) => new("GlyphTransformsBuffer", 16, 65536),
+        (_, EngineMaterialSemantic.DebugPoint) => new("PointsBuffer", 16, 65536),
+        (_, EngineMaterialSemantic.DebugLine) => new("LinesBuffer", 28, 65536),
+        (_, EngineMaterialSemantic.DebugTriangle) => new("TrianglesBuffer", 40, 65536),
         _ => null,
     };
+
+    internal EngineMaterialSemantic UISemantic => _uiSemantic;
 
     public WebGpuRenderProgram Program => _apiProgram
         ?? throw new InvalidOperationException("WebGPU.Material.ProgramPending: the material has not been prepared.");
@@ -65,6 +71,20 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
                 SetField(ref _debugPrimitive, Data.EngineSemantic.Semantic);
             }
+            else if (Data.EngineSemantic.Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap)
+            {
+                bool text = Data.EngineSemantic.Semantic == EngineMaterialSemantic.UITextBatchedBitmap;
+                if (Data.Shaders.Count != 0 ||
+                    (text ? Data.Textures.Count != 1 || Data.Textures[0] is not XRTexture2D atlas ||
+                        atlas.SizedInternalFormat != ESizedInternalFormat.R8 : Data.Textures.Count != 0) ||
+                    (text ? !HasBitmapTextParameters() : Data.Parameters.Length != 0))
+                    throw new NotSupportedException("WebGPU.Material.UIUnsupported: screen UI requires the exact source-free quad or bitmap-text material profile.");
+                EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                    "screen-ui", text ? "instanced-ui-bitmap-text-v1" : "instanced-ui-quad-v1", "display-rgba-v1");
+                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
+                    throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                SetField(ref _uiSemantic, Data.EngineSemantic.Semantic);
+            }
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
             {
                 if (!StandardLitColorSurfaceBinding.TryCreate(Data, out StandardLitColorSurfaceBinding? surface, out string? reason))
@@ -94,9 +114,38 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
         return IsGenerated;
     }
 
+    private bool HasBitmapTextParameters()
+    {
+        if (Data.Parameters.Length != 7) return false;
+        string[] names = ["TextAtlasType", "MsdfDistanceRange", "MsdfDistanceRangeMiddle", "MsdfFillBias",
+            "TextDebugMode", "TextRenderLayer", "TextRenderLayer_VTX"];
+        for (int index = 0; index < names.Length; index++)
+        {
+            if (!string.Equals(Data.Parameters[index].Name, names[index], StringComparison.Ordinal)) return false;
+            if (index is 0 or 4 or 5 or 6)
+            {
+                if (Data.Parameters[index] is not Rendering.Models.Materials.ShaderInt) return false;
+            }
+            else if (Data.Parameters[index] is not Rendering.Models.Materials.ShaderFloat) return false;
+        }
+        return true;
+    }
+
     /// <summary>Publishes the canonical surface without changing its authored parameters or render pass.</summary>
     internal void PublishSurface()
     {
+        if (_uiSemantic != EngineMaterialSemantic.None)
+        {
+            if (_uiSemantic == EngineMaterialSemantic.UITextBatchedBitmap &&
+                (Data.Textures.Count != 1 || Data.Textures[0] is not XRTexture2D { SizedInternalFormat: ESizedInternalFormat.R8 } ||
+                 Data.Parameters.Length != 7 ||
+                 Data.Parameters[0] is not Rendering.Models.Materials.ShaderInt { Value: 0 } ||
+                 Data.Parameters[4] is not Rendering.Models.Materials.ShaderInt { Value: 0 } ||
+                 Data.Parameters[5] is not Rendering.Models.Materials.ShaderInt { Value: 0 } ||
+                 Data.Parameters[6] is not Rendering.Models.Materials.ShaderInt { Value: 0 }))
+                throw new NotSupportedException("WebGPU.Material.UITextProfileUnsupported: only a normal-shaded R8 bitmap atlas with combined fill and outline is admitted.");
+            return;
+        }
         if (_debugPrimitive != EngineMaterialSemantic.None)
         {
             XRCamera camera = RuntimeEngine.Rendering.State.RenderingCamera
@@ -144,5 +193,6 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
         SetField(ref _directionalShadowReceiver, false);
         SetField(ref _opaqueShadowDepth, false);
         SetField(ref _debugPrimitive, EngineMaterialSemantic.None);
+        SetField(ref _uiSemantic, EngineMaterialSemantic.None);
     }
 }

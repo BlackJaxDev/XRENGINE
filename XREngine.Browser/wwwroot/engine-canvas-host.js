@@ -100,7 +100,7 @@ export class EngineCanvasHost {
         const height = width > 0 ? Math.max(1, Math.min(maximum, Math.round(bounds.height * ratio))) : 0;
         const generation = renderer.resize(width, height);
         const visible = !document.hidden && !this.frozen && !this.pageHidden;
-        const focused = document.hasFocus() && document.activeElement === this.canvas;
+        const focused = this.input.ownsFocus();
         this.engine.UpdateCanvasSurface(Math.max(0, bounds.width), Math.max(0, bounds.height),
             width, height, ratio, generation, visible, focused, attached);
         this.rawRatio = rawRatio;
@@ -132,6 +132,7 @@ export class EngineCanvasHost {
             const elapsed = this.previousFrame === undefined ? 0 : Math.max(0, (now - this.previousFrame) / 1000);
             this.previousFrame = now;
             if (!this.engine.Step(elapsed)) throw new Error('The engine caller-thread loop stopped.');
+            this.input.syncTextFocus();
             if (!this.presented) {
                 const state = this.engine.GetCanvasPreparationState();
                 if (state < 0) throw new Error(this.engine.GetCanvasRenderingStatus());

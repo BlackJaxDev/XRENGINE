@@ -27,4 +27,13 @@ public static class RenderingPublishedCookedAssetRegistration
                 "XREngine.Runtime.Rendering",
                 static _ => Array.Empty<PublishedCookedAssetDependency>()));
         });
+
+    /// <summary>Installs the restricted cooked bitmap profile only for an explicit browser owner.</summary>
+    public static IDisposable InstallBrowserBitmapFontCodec()
+        => PublishedCookedAssetRegistry.Register(
+            typeof(FontGlyphSet),
+            static asset => PublishedFontGlyphSetCodec.Serialize((FontGlyphSet)asset),
+            static (payload, _) => PublishedFontGlyphSetCodec.Deserialize(payload),
+            "XREngine.Runtime.Rendering.BrowserBitmapFonts",
+            static _ => Array.Empty<PublishedCookedAssetDependency>());
 }

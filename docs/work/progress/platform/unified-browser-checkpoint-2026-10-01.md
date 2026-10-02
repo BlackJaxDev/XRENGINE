@@ -299,16 +299,22 @@ evidence. This does not qualify cascades, atlases, spot/point-light shadows,
 contact shadows, UI, or the rendered canonical game. Shared DebugDraw primitives,
 the game's authored GTAO/bloom and the full project publish/play route remain open.
 
-The following shared-debug slice passes published-WASM/import-boundary execution:
+The following shared-debug slice now passes real Chromium at exact commit
+`a5762484b8c763fa59f8edb6000d0b61a455bf00`:
 real registered callbacks feed the engine point/line/triangle visualizer, whose
 cooked vertex shaders consume ordered frame-packet storage snapshots. Zero to
-512-instance cohorts, capacity growth and same-count mutations pass. GPU pixels
-remain pending. A fresh Editor build has zero warnings/errors; its actual
-compiled cook method hydrates the canonical game-owned world under an isolated
-browser material target, and the production content packager emits sixteen
-assets, seven shader artifacts, six material variants and the exact tonemap
-mapping. This is a local method-level publisher probe, not the complete Windows
-Editor CLI or a rendered browser-game acceptance result. See the
+1,024-instance cohorts, capacity growth, same-count mutations, alpha blending,
+resize and restart pass, with 68 stable live resources and zero retiring after
+warmup. See [the exact run](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36961007160).
+A fresh Editor build has zero warnings/errors, and the complete compiled
+`BuildCurrentProjectSynchronously` chain has executed game compilation, canonical
+world cook, actual browser publication, content packaging, player-shell setup
+and atomic activation. Its bundle contains 32 verified assets, fifteen shader
+artifacts, six material variants and nine pipeline mappings. This supersedes
+the earlier method-only cook probe. The portable Linux invocation is not the
+Windows Editor CLI process or rendered browser-game acceptance. The complete
+publisher and static game-linking evidence closes two implementation rows,
+bringing the checklist to 41 checked of 110, with 69 open. See the
 [publisher record](../rendering/browser-project-publishing.md) and
 [debug overlay record](../rendering/unified-webgpu-shader-cooking.md#shared-debug-primitive-overlays).
 

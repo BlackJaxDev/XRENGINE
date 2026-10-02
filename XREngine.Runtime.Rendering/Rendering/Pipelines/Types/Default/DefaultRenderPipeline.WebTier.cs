@@ -326,6 +326,7 @@ public partial class DefaultRenderPipeline
             debugBloomChoice.FalseCommands = tonemapCommands;
             commands.Add<VPRC_Manual>().ManualAction = RenderWebDebugDrawCallbacks;
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = false;
+            commands.Add<VPRC_RenderScreenSpaceUI>();
         }
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, EMeshSubmissionStrategy.CpuDirect);
         return commands;
@@ -358,8 +359,9 @@ public partial class DefaultRenderPipeline
             .DependsOn(tonemap);
         if (debugBloom != beforeOutput)
             overlay.DependsOn(debugBloom);
+        int afterOverlay = LinkWebPass(metadata, nameof(VPRC_RenderScreenSpaceUI), (int)EDefaultRenderPass.OnTopForward);
         metadata.ForPass((int)EDefaultRenderPass.PostRender, nameof(EDefaultRenderPass.PostRender), ERenderGraphPassStage.Graphics)
-            .DependsOn((int)EDefaultRenderPass.OnTopForward);
+            .DependsOn(afterOverlay);
     }
 
     private static int LinkWebQuadPass(RenderPassMetadataCollection metadata, string sourceQuad,
@@ -384,8 +386,8 @@ public partial class DefaultRenderPipeline
             throw new NotSupportedException("WebGPU.DefaultPipeline.SubmissionUnsupported: explicitly select CpuDirect for this output.");
         ValidateWebGlobalIllumination();
         XRRenderPipelineInstance instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline!;
-        if (instance.RenderState.ScreenSpaceUserInterface is { IsActive: true })
-            throw new NotSupportedException("WebGPU.DefaultPipeline.UiUnsupported: engine screen-space UI needs cooked WebGPU material variants.");
+        if (instance.RenderState.ScreenSpaceUserInterface is { IsActive: true, IsScreenSpace: false })
+            throw new NotSupportedException("WebGPU.DefaultPipeline.UiSpaceUnsupported: this output admits screen-space UI only.");
         ReadOnlySpan<int> unsupportedPasses =
         [
             (int)EDefaultRenderPass.Background, (int)EDefaultRenderPass.DeferredDecals,

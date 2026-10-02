@@ -44,6 +44,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     private int _canvasWidth;
     private int _canvasHeight;
     private BrowserEngineInputViewport? _inputViewport;
+    private readonly BrowserTextInputBridge _textInput = new();
     private IPawnController? _localPlayer;
     private int _epoch;
     private bool _engineInitialized;
@@ -55,6 +56,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     private bool _disposed;
     private ShaderProgramArtifact? _tonemapArtifact;
     private WebPipelineArtifactCatalog? _pipelineArtifacts;
+    private IDisposable? _defaultUiFontScope;
     private readonly List<ObjectCacheOwnership> _sessionObjects = [];
     private GameStartupSettings? _previousGameSettings;
     private UserSettings? _previousUserSettings;
@@ -68,6 +70,14 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     public bool HasPresentedCanvasFrame => _renderer?.IsBackendReplacementFrameReady ?? false;
     public int CanvasPreparationState => HasPresentedCanvasFrame ? 1
         : _renderViewport?.RenderPipelineInstance.LastResourceGenerationFailure is not null ? -1 : 0;
+
+    /// <summary>Binds a fetched font only for this session's synchronous UI layout.</summary>
+    public void InstallDefaultUiFont(FontGlyphSet font)
+    {
+        if (_defaultUiFontScope is not null)
+            throw new InvalidOperationException("BrowserFont.DefaultUiFontAlreadyInstalled.");
+        _defaultUiFontScope = FontGlyphSet.InstallDefaultUiFont(font);
+    }
 
     /// <summary>Formats cold startup diagnostics without adding work to successful frame submission.</summary>
     public string GetRenderingStatus()
@@ -313,6 +323,24 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
 
     public void ResetInput() => _inputViewport?.Reset();
 
+    public int RefreshTextInput() => _textInput.Refresh(_localPlayer?.FocusedInteractable, _renderViewport);
+    public string TextInputValue => _textInput.Value;
+    public int TextInputContentVersion => _textInput.ContentVersion;
+    public string TextInputLabel => _textInput.Label;
+    public int TextInputCursor => _textInput.Cursor;
+    public bool TextInputSingleLine => _textInput.SingleLine;
+    public bool TextInputReadOnly => _textInput.ReadOnly;
+    public float TextInputX => _textInput.X;
+    public float TextInputY => _textInput.Y;
+    public float TextInputWidth => _textInput.Width;
+    public float TextInputHeight => _textInput.Height;
+    public bool EditTextInput(int generation, string value, int selectionStart, int selectionEnd)
+        => _textInput.Edit(generation, _localPlayer?.FocusedInteractable, value, selectionStart, selectionEnd);
+    public bool SelectTextInput(int generation, int cursor)
+        => _textInput.Select(generation, _localPlayer?.FocusedInteractable, cursor);
+    public bool ActOnTextInput(int generation, bool submit)
+        => _textInput.Action(generation, _localPlayer?.FocusedInteractable, submit);
+
     /// <summary>Discards a suspended page's elapsed time without a physics catch-up burst.</summary>
     public void ResetFrameTiming()
     {
@@ -351,6 +379,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         }
 
         _running = false;
+        _textInput.Clear();
         if (_renderer is not null)
             Engine.Time.Timer.RenderFrame -= RenderCanvasFrame;
         if (_renderer is not null)
@@ -437,6 +466,10 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         Capture(errors, XRObjectBase.ProcessPendingDestructions);
         if (_sessionObjects.Count != 0)
             throw new AggregateException("Browser session object cleanup is incomplete.", errors);
+        IDisposable? defaultUiFontScope = _defaultUiFontScope;
+        _defaultUiFontScope = null;
+        if (defaultUiFontScope is not null)
+            Capture(errors, defaultUiFontScope.Dispose);
         if (_audioConfigured)
         {
             AudioSettings.AudioArchitectureV2 = _previousAudioV2;

@@ -135,6 +135,10 @@ namespace XREngine.Rendering.UI
 
             canvasComp?.BatchCollector?.BreakBatchRun(RenderPass);
 
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+                AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+                throw new NotSupportedException($"WebGPU.UI.UnbatchedUnsupported: '{GetType().Name}' requires an admitted screen-space batch profile; clipping, custom shaders, and individual UI draws are unsupported.");
+
             if (diagLog)
             {
                 Debug.UI($"[ShouldRender2D] ACCEPTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} mesh={Mesh is not null} renderPass={RenderCommand2D.RenderPass} instances={RenderCommand2D.Instances}");

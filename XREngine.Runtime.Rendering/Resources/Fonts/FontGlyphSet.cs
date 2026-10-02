@@ -1037,10 +1037,7 @@ namespace XREngine.Rendering
         }
 
         public static FontGlyphSet LoadDefaultFontBitmap()
-            => LoadEngineFont(
-                RuntimeEngine.Rendering.Settings.DefaultFontFolder,
-                RuntimeEngine.Rendering.Settings.DefaultFontFileName,
-                CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
+            => ResolveDefaultBitmapFont();
 
         public static FontGlyphSet LoadDefaultUIFont()
                 => LoadDefaultUIFontBitmap();
@@ -1054,10 +1051,7 @@ namespace XREngine.Rendering
             ?? LoadDefaultUIFontBitmap();
 
         public static FontGlyphSet LoadDefaultUIFontBitmap()
-            => LoadEngineFont(
-                RuntimeEngine.Rendering.Settings.DefaultFontFolder,
-                    RuntimeEngine.Rendering.Settings.DefaultFontFileName,
-                CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
+            => ResolveDefaultBitmapFont();
 
         public static FontGlyphSet LoadDefaultUIFontMtsdf()
             => LoadEngineFont(
