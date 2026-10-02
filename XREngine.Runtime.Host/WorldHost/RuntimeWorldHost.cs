@@ -16,6 +16,7 @@ public sealed class RuntimeWorldHost : IDisposable
     private bool _visualSceneInitialized;
     private bool _timeCallbacksLinked;
     private bool _disposed;
+    private bool _endingPlay;
     private XRWorld? _subscribedWorld;
 
     internal RuntimeWorldHost(AbstractPhysicsScene physicsScene, VisualScene3D visualScene)
@@ -127,17 +128,25 @@ public sealed class RuntimeWorldHost : IDisposable
     /// <summary>Ends Core callbacks before tearing down backend-specific resources.</summary>
     public void EndPlay()
     {
-        if (_disposed || !CoreWorld.IsPlaySessionActive)
+        if (_disposed || _endingPlay || CoreWorld.PlayState == RuntimeWorldPlayState.Stopped)
             return;
 
-        UnlinkTimeCallbacks();
-        CoreWorld.EndPlay(
-            afterNodeDeactivation: () =>
-            {
-                TearDownBackends();
-                RenderWorld.ResetPhysicsDebugRenderer();
-            },
-            afterPersistentRootReactivation: RenderWorld.Lights.RebuildCachesFromWorld);
+        _endingPlay = true;
+        try
+        {
+            UnlinkTimeCallbacks();
+            CoreWorld.EndPlay(
+                afterNodeDeactivation: () =>
+                {
+                    TearDownBackends();
+                    RenderWorld.ResetPhysicsDebugRenderer();
+                },
+                afterPersistentRootReactivation: RenderWorld.Lights.RebuildCachesFromWorld);
+        }
+        finally
+        {
+            _endingPlay = false;
+        }
     }
 
     /// <summary>Retargets this composed host while preserving its runtime identity.</summary>

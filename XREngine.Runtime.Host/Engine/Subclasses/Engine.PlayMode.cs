@@ -13,7 +13,7 @@ namespace XREngine
         /// Manages play mode state and transitions for the engine.
         /// Handles entering/exiting play mode, physics control, and state management.
         /// </summary>
-        public static class PlayMode
+        public static partial class PlayMode
         {
             private static RuntimePlayModeController Controller => RuntimePlayModeController.Current;
             private static WorldStateSnapshot? _editModeSnapshot;
@@ -589,7 +589,7 @@ namespace XREngine
             /// <summary>
             /// Resolves which GameMode should be used.
             /// </summary>
-            private static GameMode? ResolveGameMode(XRWorld? world)
+            private static GameMode? ResolveGameMode(XRWorld? world, bool createFallback = true)
             {
                 // Priority 1: Configuration override
                 if (Configuration.GameModeOverride is not null)
@@ -604,7 +604,7 @@ namespace XREngine
                     return world.Settings.DefaultGameMode;
 
                 // Priority 4: Create default
-                return new CustomGameMode();
+                return createFallback ? new CustomGameMode() : null;
             }
 
             /// <summary>
@@ -635,86 +635,6 @@ namespace XREngine
                 _editModeSimulationActive = true;
 
                 Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
-            }
-
-            /// <summary>
-            /// Enters play for a standalone runtime without editor snapshot/restore transitions.
-            /// </summary>
-            internal static void BeginStandalonePlay()
-            {
-                if (_editModeSimulationActive)
-                    return;
-
-                Configuration.SimulatePhysics = true;
-                State = EPlayModeState.EnteringPlay;
-
-                // A cooked standalone world owns its authored pawn and gameplay components.
-                // Do not synthesize the editor's fallback CustomGameMode here: doing so spawns
-                // a second default pawn after the authored graph has begun play.
-                Controller.SetActiveGameMode(null);
-                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
-                {
-                    worldInstance.PhysicsEnabled = true;
-                    worldInstance.GameMode = null;
-                    (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
-                        ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
-                }
-
-                State = EPlayModeState.Play;
-                _editModeSimulationActive = true;
-            }
-
-            /// <summary>Begins a standalone world without blocking the host's event thread.</summary>
-            public static async Task BeginStandalonePlayAsync()
-            {
-                if (_editModeSimulationActive)
-                    return;
-
-                Configuration.SimulatePhysics = true;
-                State = EPlayModeState.EnteringPlay;
-                Controller.SetActiveGameMode(null);
-                try
-                {
-                    foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
-                    {
-                        worldInstance.PhysicsEnabled = true;
-                        worldInstance.GameMode = null;
-                        await (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
-                            ?? worldInstance.BeginPlayAsync());
-                    }
-
-                    State = EPlayModeState.Play;
-                    _editModeSimulationActive = true;
-                }
-                catch
-                {
-                    EndStandalonePlay();
-                    throw;
-                }
-            }
-
-            /// <summary>Ends a standalone session without entering the editor lifecycle.</summary>
-            public static void EndStandalonePlay()
-            {
-                if (!_editModeSimulationActive && State != EPlayModeState.EnteringPlay)
-                    return;
-
-                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
-                {
-                    if (worldInstance.IsPlaySessionActive)
-                    {
-                        if (RuntimeWorldHostServices.Current is { } host)
-                            host.EndPlay(worldInstance);
-                        else
-                            worldInstance.EndPlay();
-                    }
-                    worldInstance.PhysicsEnabled = false;
-                    worldInstance.GameMode = null;
-                }
-
-                Controller.SetActiveGameMode(null);
-                _editModeSimulationActive = false;
-                State = EPlayModeState.Edit;
             }
 
             private static void BeginPlayWithoutTransitions()
