@@ -1,8 +1,8 @@
 const maximumBufferBytes = 256 * 1024 * 1024;
 const maximumTextureBytes = 256 * 1024 * 1024;
 const maximumWriteBytes = 64 * 1024 * 1024;
-const colorFormats = new Set(['rgba8unorm', 'rgba8unorm-srgb']);
-const renderColorFormats = new Set([...colorFormats, 'rgba16float']);
+const uploadBytesPerPixel = new Map([['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4]]);
+const renderColorFormats = new Set(['rgba8unorm', 'rgba8unorm-srgb', 'rgba16float']);
 const depthFormats = new Set(['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float']);
 
 function integer(value, minimum, maximum, name) {
@@ -115,19 +115,23 @@ export class GpuResources {
         integer(mipLevelCount, 1, 1 + Math.floor(Math.log2(Math.max(width, height))), 'mip count');
         if (sampleCount !== 1 && sampleCount !== 4) throw new RangeError('Texture sample count must be one or four.');
         const color = renderColorFormats.has(format);
-        if (!color && !depthFormats.has(format)) throw new RangeError('Texture format is outside the baseline profile.');
+        const redCoverage = format === 'r8unorm';
+        if (!color && !redCoverage && !depthFormats.has(format)) throw new RangeError('Texture format is outside the baseline profile.');
         const supported = GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT;
         integer(usage, 1, supported, 'texture usage');
         if (usage & ~supported) throw new RangeError('Texture usage is outside the baseline profile.');
-        if (!color && ((usage & GPUTextureUsage.COPY_DST) ||
+        if (redCoverage && (sampleCount !== 1 || (usage & GPUTextureUsage.RENDER_ATTACHMENT)))
+            throw new RangeError('R8 coverage textures require one sample and cannot be render attachments.');
+        if (!color && !redCoverage && ((usage & GPUTextureUsage.COPY_DST) ||
             ((usage & GPUTextureUsage.COPY_SRC) && (format !== 'depth32float' || sampleCount !== 1))))
             throw new RangeError('Depth transfers require a single-sample depth32float copy source; depth/stencil copy destinations are unsupported.');
         if (sampleCount > 1 && (mipLevelCount !== 1 || !(usage & GPUTextureUsage.RENDER_ATTACHMENT) ||
             (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST))))
             throw new RangeError('Multisampled textures require attachment usage, one mip and no transfer usage.');
+        const bytesPerPixel = redCoverage ? 1 : uploadBytesPerPixel.has(format) ? 4 : 8;
         let estimatedBytes = 0;
         for (let mip = 0; mip < mipLevelCount; mip++)
-            estimatedBytes += Math.max(1, Math.floor(width / 2 ** mip)) * Math.max(1, Math.floor(height / 2 ** mip)) * 8 * sampleCount;
+            estimatedBytes += Math.max(1, Math.floor(width / 2 ** mip)) * Math.max(1, Math.floor(height / 2 ** mip)) * bytesPerPixel * sampleCount;
         if (estimatedBytes > maximumTextureBytes) throw new RangeError('Texture exceeds the bounded allocation budget.');
         debugLabel(label);
         r._setOperation('create-texture', label);
@@ -147,14 +151,15 @@ export class GpuResources {
         const mipHeight = Math.max(1, Math.floor(entry.height / 2 ** mip));
         integer(width, 1, mipWidth, 'upload width'); integer(height, 1, mipHeight, 'upload height');
         integer(x, 0, mipWidth - width, 'upload x'); integer(y, 0, mipHeight - height, 'upload y');
-        const length = width * height * 4;
-        if (!colorFormats.has(entry.format) || entry.sampleCount !== 1 || !(entry.usage & GPUTextureUsage.COPY_DST) || memory?.byteLength !== length)
-            throw new RangeError('Mip uploads require single-sample RGBA8, COPY_DST and tightly packed bytes.');
+        const bytesPerPixel = uploadBytesPerPixel.get(entry.format);
+        const length = width * height * bytesPerPixel;
+        if (!bytesPerPixel || entry.sampleCount !== 1 || !(entry.usage & GPUTextureUsage.COPY_DST) || memory?.byteLength !== length)
+            throw new RangeError('Mip uploads require single-sample R8 or RGBA8, COPY_DST and tightly packed bytes.');
         this._bytes(memory);
         this.textureDestination.texture = entry.texture;
         this.textureDestination.mipLevel = mip;
         this.textureDestination.origin.x = x; this.textureDestination.origin.y = y;
-        this.textureLayout.bytesPerRow = width * 4; this.textureLayout.rowsPerImage = height;
+        this.textureLayout.bytesPerRow = width * bytesPerPixel; this.textureLayout.rowsPerImage = height;
         this.textureExtent.width = width; this.textureExtent.height = height;
         try {
             r.device.queue.writeTexture(this.textureDestination, this.staging, this.textureLayout, this.textureExtent);

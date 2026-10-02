@@ -14,10 +14,18 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
     private bool _focused;
     private bool _mouseCaptured;
     private bool _captureDesired;
+    private int _transitionsSinceConsume;
+    private int _textCharactersSinceConsume;
 
     public bool CaptureDesired => _captureDesired;
 
-    public WindowInputSnapshot ConsumeInputSnapshot() => _snapshots.ConsumeLatest();
+    public WindowInputSnapshot ConsumeInputSnapshot()
+    {
+        WindowInputSnapshot snapshot = _snapshots.ConsumeLatest();
+        _transitionsSinceConsume = 0;
+        _textCharactersSinceConsume = 0;
+        return snapshot;
+    }
     public void RequestMouseCapture(bool captured) => _captureDesired = captured;
     public void RefreshControlledPawnCamera(XRComponent? controlledPawnComponent)
     {
@@ -30,7 +38,10 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
             return;
         if (_keys[keyValue] == down)
             return;
+        if (down && _transitionsSinceConsume >= 256)
+            return;
         _keys[keyValue] = down;
+        _transitionsSinceConsume++;
         if (down)
             _snapshots.RecordKeyDown((EKey)keyValue);
         else
@@ -43,8 +54,11 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
         if (value.Length > 64)
             throw new ArgumentOutOfRangeException(nameof(value), "One browser text event may contain at most 64 characters.");
         foreach (char character in value)
-            if (!char.IsControl(character))
+            if (!char.IsControl(character) && _textCharactersSinceConsume < 256)
+            {
                 _snapshots.RecordTextInput(character);
+                _textCharactersSinceConsume++;
+            }
     }
 
     public void Pointer(float x, float y)
@@ -59,7 +73,10 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
             return;
         if (_buttons[buttonValue] == down)
             return;
+        if (down && _transitionsSinceConsume >= 256)
+            return;
         _buttons[buttonValue] = down;
+        _transitionsSinceConsume++;
         if (down)
             _snapshots.RecordMouseDown((EMouseButton)buttonValue);
         else

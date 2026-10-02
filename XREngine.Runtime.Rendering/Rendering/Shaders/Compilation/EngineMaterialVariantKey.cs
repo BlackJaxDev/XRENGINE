@@ -38,6 +38,16 @@ public readonly record struct EngineMaterialVariantKey(
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "debug-overlay" ||
              VertexProfile != debugProfile || OutputProfile != "display-rgba-v1"))
             throw new ArgumentException($"{Semantic.Semantic}V1 requires the WebGPU debug-overlay/{debugProfile}/display-rgba-v1 variant.");
+        string? uiProfile = Semantic.Semantic switch
+        {
+            EngineMaterialSemantic.UIQuadBatched => "instanced-ui-quad-v1",
+            EngineMaterialSemantic.UITextBatchedBitmap => "instanced-ui-bitmap-text-v1",
+            _ => null,
+        };
+        if (uiProfile is not null &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "screen-ui" ||
+             VertexProfile != uiProfile || OutputProfile != "display-rgba-v1"))
+            throw new ArgumentException($"{Semantic.Semantic}V1 requires the WebGPU screen-ui/{uiProfile}/display-rgba-v1 variant.");
     }
 
     private static void ValidateProfile(string value, string parameterName)

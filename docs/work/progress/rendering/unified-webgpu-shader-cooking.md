@@ -385,3 +385,46 @@ replacement, authored face coverage, and 1×1/odd-sized resource generations.
 Review repaired synthetic-pass ID reservation, depth-clear metadata, and
 depth-normal cull/winding preservation before that run. This remains recording
 boundary evidence; actual effect pixels and retirement on Chromium are pending.
+
+The first effect run at `6bb782456fd0cef9bb9be62381e7214700141d28`
+([36964904038](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36964904038))
+rendered the effect scene but failed the direct-light isolation assertion.
+All earlier browser checks passed. The retained HDR reads show a stale first
+patch after two independent case changes: contact red remains `0.040537109375`
+across cases 6→7 and `0.044261474609375` across cases 10→11, while the next patch
+already reflects the new setting. The capture contains the visible bloom halo
+and AO scene. This points to the diagnostic reading before the shared
+collect/swap publication completes, rather than establishing a production AO
+math defect. The check now waits for two completed ready frames after mutation;
+numeric assertions and tolerances are unchanged. The next end-to-end CI run
+must verify that diagnosis and the remaining effect assertions.
+
+## Shared bitmap screen UI implementation
+
+The shared canvas command now follows display composition, retaining
+`UserInterfaceRenderPipeline` and `UIBatchCollector`. Source-free WebGPU panel
+and bitmap-text variants use the collector's exact transform/color/bounds and
+glyph/UV/text/index storage buffers. Text keeps the shared glyph layout and
+bitmap fill/outline behavior. Desktop GLSL remains unchanged. R8 atlases admit
+explicit sampled mip uploads without enabling R8 render attachments or automatic
+mip generation. Unsupported clipped, rotated-glyph, textured/custom UI and
+non-screen canvas profiles remain visible errors rather than dropped draws.
+
+Canonical Roboto is cooked with the existing FreeType leaf, preserving all 893
+glyphs, their metrics, and twelve R8 mip levels. The bounded Brotli codec
+round-trips every byte in a 952,658-byte registry payload; the final publisher
+still enforces its 4 MiB asset cap. Default text fonts are explicitly packaged,
+preloaded before world hydration, scoped to the session, and accompanied by the
+verbatim font license. No browser font rasterizer or host font path is needed.
+
+Both Slang UI recipes pass ABI cooking, and integrated Editor and browser/Jolt
+Release builds pass with zero warnings/errors. Source review repaired cooked
+fixed-size text activation, restricted font registration to explicit browser
+owners, rejected unsupported authored font profiles before clearing imports,
+and gave decoded fonts deterministic native mip cleanup. A destruction probe
+confirms owned mip sources reach zero length while borrowed atlases survive.
+Real engine UI pixels, coordinate hit testing,
+and browser font/resource lifetime are not yet qualified. The browser text
+bridge source connects the existing focused text widget to a native input/IME
+proxy while the engine retains visible text rendering; browser behavior remains
+for end-to-end validation.

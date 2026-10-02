@@ -3,6 +3,8 @@ import { parseArgs } from 'node:util';
 export function readConfig(argv = process.argv.slice(2), env = process.env) {
     const { values } = parseArgs({ args: argv, strict: true, allowPositionals: false, options: {
         'browser-publish': { type: 'string' },
+        'game-publish': { type: 'string' },
+        'game-only': { type: 'boolean', default: false },
         'shader-artifacts': { type: 'string' },
         'jolt-spike': { type: 'string' },
         'engine-manifest': { type: 'string' },
@@ -15,8 +17,11 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         help: { type: 'boolean', default: false },
     } });
     if (values.help) return { help: true };
-    for (const required of ['browser-publish', 'shader-artifacts', 'output'])
+    const gameOnly = values['game-only'];
+    for (const required of gameOnly ? ['game-publish', 'output'] : ['browser-publish', 'shader-artifacts', 'output'])
         if (!values[required]) throw new Error(`BrowserSmoke.Config: --${required} is required.`);
+    if (gameOnly && (values['engine-manifest'] || values['jolt-spike'] || values['require-world-play'] || values['gpu-diagnostics']))
+        throw new Error('BrowserSmoke.Config: game-only mode does not run engine diagnostics.');
     if (!['native', 'software'].includes(values['gpu-mode']))
         throw new Error('BrowserSmoke.Config: --gpu-mode must be native or software.');
     const timeout = Number(values['timeout-ms']);
@@ -29,7 +34,8 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         engineManifest.includes('\\') || engineManifest.includes('..') || engineManifest.includes('?') || engineManifest.includes('#')))
         throw new Error('BrowserSmoke.Config: --engine-manifest must be a root-relative path inside browser publish output.');
     return {
-        browserPublish: values['browser-publish'], shaderArtifacts: values['shader-artifacts'],
+        browserPublish: values['browser-publish'], gamePublish: values['game-publish'], gameOnly,
+        shaderArtifacts: values['shader-artifacts'],
         joltSpike: values['jolt-spike'], output: values.output, engineManifest,
         requireWorldPlay: values['require-world-play'], gpuMode: values['gpu-mode'],
         gpuDiagnostics: values['gpu-diagnostics'],
@@ -61,9 +67,11 @@ export const depthSamples = Object.freeze([
 ]);
 
 export const help = `Usage: node Tools/BrowserSmoke/run.mjs
-  --browser-publish <published-wwwroot>
-  --shader-artifacts <schema3-engine-shader-artifacts-directory>
+  [--browser-publish <published-wwwroot>]
+  [--game-publish <editor-published-rollingball-root>]
+  [--shader-artifacts <schema3-engine-shader-artifacts-directory>]
   --output <evidence-directory>
+  [--game-only]
   [--jolt-spike <published-spike-wwwroot>]
   [--engine-manifest /relative/engine-assets/manifest.json]
   [--require-world-play] [--gpu-mode native|software] [--gpu-diagnostics] [--headed]
@@ -72,5 +80,6 @@ export const help = `Usage: node Tools/BrowserSmoke/run.mjs
 XRE_BROWSER_EXECUTABLE may select an already-installed Chromium executable.
 Otherwise use Playwright's managed Chromium (install with playwright install chromium).
 Only the supplied filesystem roots are served, on 127.0.0.1 at an ephemeral port.
+--game-only requires --game-publish and runs just the Editor-published RollingBall check.
 Software mode is labeled API/shader correctness evidence, never hardware acceptance.
 `;

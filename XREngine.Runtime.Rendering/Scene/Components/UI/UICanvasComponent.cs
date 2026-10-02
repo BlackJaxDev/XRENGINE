@@ -61,6 +61,11 @@ namespace XREngine.Components
         private RenderInfo3D? _worldSpaceQuadRenderInfo;
         private XRMaterial? _offscreenMaterial;
         private XRMaterialFrameBuffer? _offscreenFbo;
+        private XRTexture2D? _ownedOffscreenTexture;
+        private XRMesh? _ownedOffscreenMesh;
+        private XRMeshRenderer? _ownedOffscreenRenderer;
+        private Vector2 _screenCameraSize;
+        private UserInterfaceRenderPipeline? _ownedDefaultPipeline;
         private bool _timerHooksInstalled = false;
         private int _collectGeneration = 0;
         private int _lastSwappedGeneration = -1;
@@ -98,6 +103,16 @@ namespace XREngine.Components
 
         private void EnsureOffscreenResourcesInitialized()
         {
+            if (OperatingSystem.IsBrowser() || AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU ||
+                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            {
+                if (CanvasDrawSpaceOrDefault != ECanvasDrawSpace.Screen)
+                    throw new NotSupportedException("WebGPU.UI.CanvasSpaceUnsupported: the cooked UI profile admits screen-space canvases only.");
+                // A screen canvas has no world quad. Do not construct its desktop-only
+                // offscreen material or register an unused scene object on browser startup.
+                SetField(ref _renderedObjects, Array.Empty<RenderInfo>());
+                return;
+            }
             if (_offscreenFbo is not null)
                 return;
 
@@ -108,6 +123,7 @@ namespace XREngine.Components
                 EPixelFormat.Rgba,
                 EPixelType.UnsignedByte,
                 EFrameBufferAttachment.ColorAttachment0);
+            SetField(ref _ownedOffscreenTexture, offscreenTexture);
 
             _offscreenMaterial = XRMaterial.CreateUnlitTextureMaterialForward(offscreenTexture);
             _offscreenMaterial.EnableTransparency();
@@ -115,6 +131,8 @@ namespace XREngine.Components
 
             var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
             var quadRenderer = new XRMeshRenderer(quadMesh, _offscreenMaterial);
+            SetField(ref _ownedOffscreenMesh, quadMesh);
+            SetField(ref _ownedOffscreenRenderer, quadRenderer);
 
             _worldSpaceQuadCommand = new RenderCommandMesh3D((int)EDefaultRenderPass.TransparentForward, quadRenderer, Matrix4x4.Identity);
             _worldSpacePreRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, RenderNonScreenCanvasToTexture);
@@ -201,6 +219,7 @@ namespace XREngine.Components
             }
             else
                 Camera2D.Parameters = new XROrthographicCameraParameters(bounds.Width, bounds.Height, DefaultNearZ, DefaultFarZ);
+            SetField(ref _screenCameraSize, new Vector2(bounds.Width, bounds.Height));
 
             if (Transform is UICanvasTransform tfm)
                 _renderPipeline.ViewportResized(tfm.ActualSize);
@@ -447,6 +466,43 @@ namespace XREngine.Components
         {
             base.OnComponentDeactivated();
             RemoveTimerHooks();
+        }
+
+        protected override void OnDestroying()
+        {
+            RemoveTimerHooks();
+            try { base.OnDestroying(); }
+            finally
+            {
+                if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                    ReleaseOwnedCanvasResources();
+                else
+                    RuntimeEngine.EnqueueRenderThreadTask(ReleaseOwnedCanvasResources,
+                        "UICanvas.ReleaseResources", RenderThreadJobKind.RenderPipelineResource);
+            }
+        }
+
+        private void ReleaseOwnedCanvasResources()
+        {
+            List<Exception>? failures = null;
+            Release(_renderPipeline.RequestTerminalTeardown);
+            Release(BatchCollector.Dispose);
+            Release(() => _visualScene2D?.Destroy());
+            Release(() => _offscreenFbo?.Destroy(true));
+            Release(() => _ownedOffscreenRenderer?.Destroy(true));
+            Release(() => _ownedOffscreenMesh?.Destroy(true));
+            Release(() => _offscreenMaterial?.Destroy(true));
+            Release(() => _ownedOffscreenTexture?.Destroy(true));
+            Release(() => _camera2D?.Transform.Destroy(true));
+            Release(() => _ownedDefaultPipeline?.Destroy(true));
+            if (failures is not null)
+                throw new AggregateException("The canvas could not release all owned rendering resources.", failures);
+
+            void Release(Action release)
+            {
+                try { release(); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
         }
 
         private void EnsureTimerHooksInstalled()
@@ -838,8 +894,8 @@ namespace XREngine.Components
             }
 
             bool needsResize =
-                MathF.Abs(width - _offscreenFbo!.Width) > 0.5f ||
-                MathF.Abs(height - _offscreenFbo.Height) > 0.5f;
+                MathF.Abs(width - _screenCameraSize.X) > 0.5f ||
+                MathF.Abs(height - _screenCameraSize.Y) > 0.5f;
 
             var proj = Camera2D.ProjectionMatrix;
             bool invalidProjection =
@@ -1030,7 +1086,11 @@ namespace XREngine.Components
         private void EnsureRenderPipelineInitialized()
         {
             if (_renderPipeline.AssignedPipeline is null)
-                RenderPipeline = new UserInterfaceRenderPipeline();
+            {
+                if (_ownedDefaultPipeline is null)
+                    SetField(ref _ownedDefaultPipeline, new UserInterfaceRenderPipeline());
+                RenderPipeline = _ownedDefaultPipeline;
+            }
         }
     }
 }

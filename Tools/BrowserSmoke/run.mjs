@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { readConfig, browserLaunchOptions, depthSamples, help } from './smoke.config.mjs';
 import { captureGpuProcessState, initializeGpuCanary } from './gpu-diagnostics.mjs';
 import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
+import { rollingBallGameCheck } from './rollingball-game.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -30,9 +31,10 @@ async function directory(value) {
 
 async function startServer(config, requests) {
     const mounts = [
-        { prefix: '/__shaders/', root: await directory(config.shaderArtifacts) },
+        ...(config.shaderArtifacts ? [{ prefix: '/__shaders/', root: await directory(config.shaderArtifacts) }] : []),
         ...(config.joltSpike ? [{ prefix: '/__jolt/', root: await directory(config.joltSpike) }] : []),
-        { prefix: '/', root: await directory(config.browserPublish) },
+        ...(config.gamePublish ? [{ prefix: '/__game/', root: await directory(config.gamePublish) }] : []),
+        { prefix: '/', root: await directory(config.browserPublish ?? config.gamePublish) },
     ];
     let authority;
     const server = http.createServer(async (request, response) => {
@@ -386,7 +388,10 @@ async function effectsCheck(browser, origin, report, config) {
         const waitReady = async previous => {
             await page.waitForFunction(before => {
                 const host = window.engineMeshDiagnostic;
-                return !!host.failure || (host.session > 0 && host.readyFrames > before);
+                // Scene/light and postprocess values publish across the engine's
+                // collect/swap boundary. Read after the next completed render,
+                // not the frame that first observes the mutation.
+                return !!host.failure || (host.session > 0 && host.readyFrames >= before + 2);
             }, previous, { timeout: Math.min(config.timeout, 120000) });
             const failure = await page.evaluate(() => window.engineMeshDiagnostic.failure);
             assert(!failure, `BrowserSmoke.EffectsFrameFailed: ${JSON.stringify(failure)}`);
@@ -1131,6 +1136,16 @@ async function joltCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
+async function publishedRollingBallCheck(browser, origin, report, config) {
+    const descriptor = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'browser-publish.json'), 'utf8'));
+    const manifest = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'content', 'manifest.json'), 'utf8'));
+    assert(descriptor.schema === 2 && descriptor.format === 'xrengine-engine-launch' &&
+        descriptor.manifest === './content/manifest.json' &&
+        manifest.startupWorld === '/game/Worlds/RollingBallWorld.asset',
+        'BrowserSmoke.RollingBallBundle: expected the Editor-activated canonical game publish.');
+    await rollingBallGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+}
+
 async function main() {
     const config = readConfig();
     if (config.help) { console.log(help); return; }
@@ -1142,7 +1157,9 @@ async function main() {
         gpuDiagnostics: config.gpuDiagnostics,
         executable: config.executablePath ? path.basename(config.executablePath) : 'playwright-managed-chromium',
         browserLogs: {}, externalRequests: [], requests: [], checks: [],
-        scope: 'Renderer diagnostic correctness and selected runtime smoke checks; not full browser, desktop, physical-device or performance acceptance.' };
+        scope: config.gameOnly
+            ? 'Editor-published RollingBall gameplay in Chromium; not desktop, complete browser or performance acceptance.'
+            : 'Renderer diagnostic correctness and selected runtime smoke checks; not full browser, desktop, physical-device or performance acceptance.' };
     let browser, server;
     const check = async (name, action) => {
         const start = performance.now();
@@ -1160,6 +1177,16 @@ async function main() {
         report.browser = browser.version();
         browser.on('disconnected', () => { report.browserDisconnected = {
             time: new Date().toISOString(), closeRequested: report.browserCloseRequested === true }; });
+        if (config.gameOnly) {
+            await check('rollingball-editor-published-game',
+                () => publishedRollingBallCheck(browser, hosted.origin, report, config));
+            await check('local-delivery', async () => {
+                assert(report.externalRequests.length === 0, 'BrowserSmoke.ExternalRequest: the published application requested resources outside the loopback roots.');
+                assert(!report.requests.some(request => request.status >= 400), 'BrowserSmoke.HttpFailure: a served resource request failed; inspect requests in smoke-report.json.');
+            });
+            report.passed = report.checks.every(result => result.status === 'passed');
+            return;
+        }
         if (config.gpuDiagnostics) await captureGpuProcessState(browser, report, 'before-engine-depth');
         if (config.engineManifest) await check('engine-depth', () => depthCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-depth', status: 'skipped', reason: '--engine-manifest was not supplied' });
@@ -1198,6 +1225,10 @@ async function main() {
                 await shippingPlayerCheck(browser, hosted.origin, report, config);
             });
         } else report.checks.push({ name: 'published-engine-autostart', status: 'skipped', reason: 'A bare browser runtime publish has no authored launch descriptor' });
+        if (config.gamePublish) await check('rollingball-editor-published-game',
+            () => publishedRollingBallCheck(browser, hosted.origin, report, config));
+        else report.checks.push({ name: 'rollingball-editor-published-game', status: 'skipped',
+            reason: '--game-publish was not supplied' });
         if (config.engineManifest) await check('engine-asset-delivery-lifetime', () => assetSourceCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-asset-delivery-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.joltSpike) await check('jolt-native-browser-lifetime', () => joltCheck(browser, hosted.origin, report, config));

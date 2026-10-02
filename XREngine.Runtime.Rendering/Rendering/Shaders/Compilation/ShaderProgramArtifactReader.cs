@@ -141,6 +141,12 @@ public static class ShaderProgramArtifactReader
                 buffers[0].StepMode == "vertex" && buffers[0].Attributes.Length == 1 &&
                 buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" },
                 "debug primitive variants require the fixed indexed position scaffold");
+        if (materialVariant is { } uiStream &&
+            uiStream.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap))
+            Require(buffers.Count == 1 && buffers[0].Slot == 0 && buffers[0].Stride == 12 &&
+                buffers[0].StepMode == "vertex" && buffers[0].Attributes.Length == 1 &&
+                buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" },
+                "screen UI variants require the fixed indexed position quad");
         ImmutableArray<ShaderStageResourceLayout>.Builder resources = ImmutableArray.CreateBuilder<ShaderStageResourceLayout>();
         HashSet<(int, int)> bindings = [];
         foreach (JsonElement resource in Property(layout, "bindings", JsonValueKind.Array).EnumerateArray())
@@ -187,7 +193,18 @@ public static class ShaderProgramArtifactReader
                     EngineMaterialSemantic.DebugLine => "LinesBuffer",
                     _ => "TrianglesBuffer",
                 });
-            Require(isBuffer ? rawDebugStorage || size > 0 && size % 16 == 0 : size == 0 && !dynamic,
+            bool uiStorage = materialVariant is { } uiSelected &&
+                uiSelected.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap) &&
+                kind == "read-only-storage" && group == 1 && !dynamic &&
+                owner == ShaderAbiResourceOwner.Engine && frequency == ShaderAbiFrequency.Object &&
+                visibility == ShaderStageVisibility.Vertex &&
+                (uiSelected.Semantic.Semantic == EngineMaterialSemantic.UIQuadBatched
+                    ? (binding, resourceName, size) is (0, "QuadTransformBuffer", 16) or
+                        (1, "QuadColorBuffer", 16) or (2, "QuadBoundsBuffer", 16)
+                    : (binding, resourceName, size) is (0, "GlyphTransformsBuffer", 16) or
+                        (1, "GlyphTexCoordsBuffer", 16) or (2, "TextInstanceBuffer", 16) or
+                        (3, "GlyphTextIndexBuffer", 4));
+            Require(isBuffer ? rawDebugStorage || uiStorage || size > 0 && size % 16 == 0 : size == 0 && !dynamic,
                 "invalid resource byte size or dynamic offset");
             ImmutableArray<ShaderAbiMemberContract>.Builder members = ImmutableArray.CreateBuilder<ShaderAbiMemberContract>();
             HashSet<string> names = new(StringComparer.Ordinal);
@@ -205,8 +222,8 @@ public static class ShaderProgramArtifactReader
                 members.Add(new ShaderAbiMemberContract(memberName, provider, (uint)offset, (uint)memberSize, type,
                     MatrixOrder: matrix ? ShaderAbiMatrixOrder.ColumnMajor : ShaderAbiMatrixOrder.None, MatrixStride: matrix ? 16u : 0u));
             }
-            Require(rawDebugStorage ? members.Count == 0 : isBuffer ? members.Count > 0 : members.Count == 0,
-                "only the exact debug runtime storage binding may omit fixed buffer members");
+            Require(rawDebugStorage || uiStorage ? members.Count == 0 : isBuffer ? members.Count > 0 : members.Count == 0,
+                "only declared runtime storage bindings may omit fixed buffer members");
             ShaderAbiResourceContract contract = new(resourceName, physicalName, (uint)group, (uint)binding, resourceKind, owner, frequency, (uint)size, members.ToImmutable());
             resources.Add(new ShaderStageResourceLayout(contract, visibility, kind, dynamic));
         }
@@ -244,6 +261,28 @@ public static class ShaderProgramArtifactReader
             CheckLimit(limits, "maxStorageBufferBindingSize", checked(65536 * stride));
             Require(resources.Count(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer) == 1,
                 "debug primitive variants require exactly one raw storage binding");
+        }
+        if (materialVariant is { } uiVariant &&
+            uiVariant.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap))
+        {
+            bool text = uiVariant.Semantic.Semantic == EngineMaterialSemantic.UITextBatchedBitmap;
+            Require(resources.Count == (text ? 7 : 4) &&
+                resources.Count(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer) == (text ? 4 : 3),
+                "screen UI variants require their exact storage and atlas bindings");
+            Require(resources.Any(resource => resource.Contract.Name == "View" &&
+                resource.Contract.Set == 0 && resource.Contract.Binding == 0 &&
+                resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer &&
+                resource.Contract.ByteSize == 64 && resource.Visibility == ShaderStageVisibility.Vertex),
+                "screen UI variants require the exact camera projection binding");
+            if (text)
+                Require(resources.Any(resource => resource.Contract.Name == "Texture0" &&
+                    resource.Contract.Set == 2 && resource.Contract.Binding == 0 &&
+                    resource.BindingType == "texture-2d-float" && resource.Visibility == ShaderStageVisibility.Fragment) &&
+                    resources.Any(resource => resource.Contract.Name == "Texture0" &&
+                    resource.Contract.Set == 2 && resource.Contract.Binding == 1 &&
+                    resource.BindingType == "filtering-sampler" && resource.Visibility == ShaderStageVisibility.Fragment),
+                    "bitmap text requires an exact atlas and sampler pair");
+            CheckLimit(limits, "maxStorageBufferBindingSize", checked(65536 * (text ? 128 : 64)));
         }
         CheckLimit(limits, "maxDynamicStorageBuffersPerPipelineLayout", resources.Count(resource => resource.DynamicOffset && resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer));
         string sourcePath = Property(descriptor, "source").ValueKind == JsonValueKind.String
@@ -304,7 +343,8 @@ public static class ShaderProgramArtifactReader
         string semanticName = Text(value, "semantic");
         Require(Enum.TryParse(semanticName, ignoreCase: false, out EngineMaterialSemantic semantic) &&
             semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.OpaqueShadowDepth or
-                EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle,
+                EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
+                EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap,
             "unsupported material semantic");
         EngineMaterialVariantKey key = new(new EngineMaterialSemanticIdentity(semantic,
             Property(value, "semanticVersion", JsonValueKind.Number).GetInt32()), target, pass,

@@ -55,10 +55,23 @@ namespace XREngine.Rendering.UI
     /// </remarks>
     public class UITextComponent : UIRenderableComponent
     {
+        private static bool UseWebGpuBatchOnly =>
+            RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+            AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+
         #region Construction
         public UITextComponent()
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward;
+        }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            // Cooked component hydration does not raise Text/Font property notifications.
+            // Resolve the preloaded font and build glyph layout after transform wiring.
+            if (!string.IsNullOrEmpty(Text))
+                UpdateText(forceRemake: false);
         }
 
         #endregion
@@ -622,6 +635,11 @@ namespace XREngine.Rendering.UI
         /// <param name="atlas"></param>
         private void VerifyCreated(bool forceRemake, XRTexture2D? atlas)
         {
+            // Browser screen text is rendered by the shared bitmap batch. Building this
+            // legacy per-component mesh would synchronously load desktop GLSL stages.
+            if (UseWebGpuBatchOnly)
+                return;
+
             var mesh = Mesh;
             if ((!forceRemake && mesh is not null) || atlas is null)
                 return;
@@ -650,6 +668,9 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         protected virtual XRMaterial CreateMaterial(XRTexture2D atlas)
         {
+            if (UseWebGpuBatchOnly)
+                throw new NotSupportedException("WebGPU.UI.IndividualTextUnsupported: screen bitmap text must use the shared UI batch.");
+
             string fragmentShaderName = Font?.AtlasType switch
             {
                 EFontAtlasType.Mtsdf => "TextMtsdfScreen.fs",
@@ -993,18 +1014,22 @@ namespace XREngine.Rendering.UI
         public override bool SupportsBatchedRendering
             => !DisableBatching &&
                !ClipToBounds &&
-               !AnimatableTransforms;
+               !AnimatableTransforms &&
+               (!UseWebGpuBatchOnly ||
+                NonVertexShadersOverride is null &&
+                UIBatchCollector.HasWebGpuRasterProfile(RenderParameters));
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
             var font = Font;
             if (font is null || font.Atlas is not { } atlas)
-                return false; // Font not loaded yet — fall back to individual rendering
+                return UseWebGpuBatchOnly &&
+                    string.IsNullOrEmpty(Text);
 
             using (_glyphLock.EnterScope())
             {
                 if (_glyphs.Count == 0)
-                    return false; // No glyphs — fall back to individual rendering
+                    return UseWebGpuBatchOnly;
 
                 var tfm = BoundableTransform;
                 var worldMatrix = GetRenderWorldMatrix(tfm);

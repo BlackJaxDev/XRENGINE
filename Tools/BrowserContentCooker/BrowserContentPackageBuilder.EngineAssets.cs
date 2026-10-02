@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "shaderArtifacts", "materialVariants", "pipelineArtifacts"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -33,6 +33,19 @@ public static partial class BrowserContentPackageBuilder
         string? startupSettings = recipe.TryGetProperty("startupSettings", out JsonElement settings) ? EngineAssetPath(settings) : null;
         Require(startupSettings is null || byPath.ContainsKey(startupSettings), "Startup settings are absent from the asset catalog.");
         Require(byPath.ContainsKey(startupWorld), "Startup world is absent from the engine asset catalog.");
+        string? defaultUiFont = recipe.TryGetProperty("defaultUiFont", out JsonElement fontValue) ? EngineAssetPath(fontValue) : null;
+        if (defaultUiFont is not null)
+        {
+            Require(defaultUiFont.StartsWith("/engine/Fonts/", StringComparison.Ordinal)
+                && byPath.ContainsKey(defaultUiFont),
+                "Default UI font is absent from the engine font catalog.");
+            JsonElement fontAsset = byPath[defaultUiFont];
+            Require(fontAsset.GetProperty("encoding").GetString() == "cooked-binary"
+                && fontAsset.GetProperty("type").GetString()?.StartsWith(
+                    "XREngine.Rendering.FontGlyphSet, XREngine.Runtime.Rendering,", StringComparison.Ordinal) == true
+                && dependencies[defaultUiFont].Length == 0,
+                "Default UI font must be a standalone cooked FontGlyphSet.");
+        }
         Dictionary<string, int> heights = new(StringComparer.Ordinal);
         foreach (string path in byPath.Keys)
             ValidateGraph(path, byPath, dependencies, new HashSet<string>(StringComparer.Ordinal), heights, 0);
@@ -93,7 +106,7 @@ public static partial class BrowserContentPackageBuilder
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
                 string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth",
-                    "DebugPoint", "DebugLine", "DebugTriangle");
+                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UITextBatchedBitmap");
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, 1);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
@@ -112,6 +125,15 @@ public static partial class BrowserContentPackageBuilder
                 if (debugProfile is not null)
                     Require(pass == "debug-overlay" && vertexProfile == debugProfile && outputProfile == "display-rgba-v1",
                         "Debug primitives require their exact overlay pass and profiles.");
+                string? uiProfile = semantic switch
+                {
+                    "UIQuadBatched" => "instanced-ui-quad-v1",
+                    "UITextBatchedBitmap" => "instanced-ui-bitmap-text-v1",
+                    _ => null,
+                };
+                if (uiProfile is not null)
+                    Require(pass == "screen-ui" && vertexProfile == uiProfile && outputProfile == "display-rgba-v1",
+                        "Screen UI requires its exact batched pass and profiles.");
                 string? descriptorIdentity = variant.GetProperty("descriptorIdentity").GetString();
                 Require(descriptorIdentity is not null && Regex.IsMatch(descriptorIdentity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
                     "Material variant references an absent shader descriptor.");
@@ -182,6 +204,8 @@ public static partial class BrowserContentPackageBuilder
         };
         if (materialVariants.Count != 0)
             manifestModel.Add("materialVariants", materialVariants);
+        if (defaultUiFont is not null)
+            manifestModel.Add("defaultUiFont", defaultUiFont);
         if (pipelineArtifacts.Count != 0)
             manifestModel.Add("pipelineArtifacts", pipelineArtifacts);
         manifestModel.Add("assets", cookedAssets);

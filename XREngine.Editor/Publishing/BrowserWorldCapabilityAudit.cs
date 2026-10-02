@@ -4,6 +4,7 @@ using XREngine.Components.Mesh.Shapes;
 using XREngine.Components.VR;
 using XREngine.Data.Components.Scene;
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -61,10 +62,40 @@ internal static class BrowserWorldCapabilityAudit
                             InspectMaterial(lod.Material, path, mesh.Name);
                 else if (component is ShapeMeshComponent shape)
                     InspectMaterial(shape.Material, path, shape.GetType().Name);
+                else if (component is UICanvasComponent canvas)
+                {
+                    if (canvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen || canvas.StrictOneByOneRenderCalls)
+                        throw new NotSupportedException($"BrowserCook.UiCanvasUnsupported: '{path}' requires a batched screen-space canvas.");
+                }
+                else if (component is UITextComponent text)
+                {
+                    if (!text.SupportsBatchedRendering || text.Font is { AtlasType: not EFontAtlasType.Bitmap })
+                        throw new NotSupportedException($"BrowserCook.UiTextUnsupported: '{path}' requires unclipped bitmap text without custom stages or glyph rotation.");
+                    RequireUiVariant(EngineMaterialSemanticIdentity.UITextBatchedBitmapV1,
+                        "instanced-ui-bitmap-text-v1", path);
+                }
+                else if (component is UIMaterialComponent quad)
+                {
+                    if (!quad.SupportsBatchedRendering)
+                        throw new NotSupportedException($"BrowserCook.UiMaterialUnsupported: '{path}' requires the source-free solid-color screen UI profile.");
+                    RequireUiVariant(EngineMaterialSemanticIdentity.UIQuadBatchedV1,
+                        "instanced-ui-quad-v1", path);
+                }
+                else if (component is UIRenderableComponent)
+                    throw new NotSupportedException($"BrowserCook.UiComponentUnsupported: '{path}' component '{component.GetType().FullName}' has no cooked screen UI profile.");
             }
             foreach (var transform in node.Transform.Children)
                 if (transform.SceneNode is SceneNode child)
                     Visit(child, depth + 1);
+        }
+
+        void RequireUiVariant(EngineMaterialSemanticIdentity semantic, string profile, string path)
+        {
+            EngineMaterialVariantKey key = new(semantic, ShaderCompileTarget.WebGPUWgsl,
+                "screen-ui", profile, "display-rgba-v1");
+            if (resolver is not BrowserShaderArtifactSource source ||
+                !source.MaterialVariants.Any(variant => variant.Key == key))
+                throw new NotSupportedException($"BrowserCook.UiVariantMissing: '{path}' requires '{key}' in the project shader manifest.");
         }
 
         void InspectMaterial(XRMaterial? material, string path, string? meshName)

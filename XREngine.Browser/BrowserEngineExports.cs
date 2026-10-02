@@ -83,7 +83,11 @@ public static partial class BrowserEngineExports
             _fileSystemInstalled = true;
             Engine.Assets.BindRuntimeSource(_source);
             _assetOwnerBound = true;
-            _assetRegistrations = RuntimeAssetBootstrap.InstallEngineAssetServices();
+            _assetRegistrations = XREngine.Data.RegistrationLeaseGroup.Create(static leases =>
+            {
+                leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
+                leases.Add(RenderingPublishedCookedAssetRegistration.InstallBrowserBitmapFontCodec());
+            });
             _materialConstruction = BrowserEngineMaterialConstruction.Install();
             stage = "initialize game registrations";
             BrowserGameComposition.Initialize();
@@ -94,6 +98,11 @@ public static partial class BrowserEngineExports
             stage = "load shader catalog";
             _shaderArtifacts = await _source.LoadShaderArtifactsAsync(token);
             _materialVariants = _source.LoadEngineMaterialVariants(_shaderArtifacts);
+            _session = new BrowserEngineSession(PhysicsBackends);
+            stage = "preload default UI font";
+            FontGlyphSet? defaultUiFont = await _source.LoadDefaultUiFontAsync(token);
+            if (defaultUiFont is not null)
+                _session.InstallDefaultUiFont(defaultUiFont);
             stage = "load startup world";
             XRWorld world = await Engine.Assets.LoadFromRuntimeSourceAsync(
                 _source.StartupWorldPath, typeof(XRWorld), cancellationToken: token) as XRWorld
@@ -125,7 +134,6 @@ public static partial class BrowserEngineExports
             if (requestedEpoch != Volatile.Read(ref _epoch))
                 throw new OperationCanceledException("Browser world startup was superseded.");
 
-            _session = new BrowserEngineSession(PhysicsBackends);
             stage = "start engine world";
             await _session.StartAsync(world, configuredSettings, initialState, token, canvasId, _shaderArtifacts,
                 _materialVariants, _source.LoadTonemapArtifact(_shaderArtifacts), _source.LoadPipelineArtifacts(_shaderArtifacts));
@@ -219,6 +227,37 @@ public static partial class BrowserEngineExports
     public static bool GetInputCaptureDesired() => _session?.CaptureDesired ?? false;
     [JSExport]
     public static void ResetInput() => _session?.ResetInput();
+    [JSExport]
+    public static int RefreshTextInput() => _session?.RefreshTextInput() ?? 0;
+    [JSExport]
+    public static string GetTextInputValue() => _session?.TextInputValue ?? string.Empty;
+    [JSExport]
+    public static int GetTextInputContentVersion() => _session?.TextInputContentVersion ?? 0;
+    [JSExport]
+    public static string GetTextInputLabel() => _session?.TextInputLabel ?? string.Empty;
+    [JSExport]
+    public static int GetTextInputCursor() => _session?.TextInputCursor ?? 0;
+    [JSExport]
+    public static bool GetTextInputSingleLine() => _session?.TextInputSingleLine ?? true;
+    [JSExport]
+    public static bool GetTextInputReadOnly() => _session?.TextInputReadOnly ?? true;
+    [JSExport]
+    public static float GetTextInputX() => _session?.TextInputX ?? -1;
+    [JSExport]
+    public static float GetTextInputY() => _session?.TextInputY ?? -1;
+    [JSExport]
+    public static float GetTextInputWidth() => _session?.TextInputWidth ?? 0;
+    [JSExport]
+    public static float GetTextInputHeight() => _session?.TextInputHeight ?? 0;
+    [JSExport]
+    public static bool EditTextInput(int generation, string value, int selectionStart, int selectionEnd)
+        => _session?.EditTextInput(generation, value, selectionStart, selectionEnd) ?? false;
+    [JSExport]
+    public static bool SelectTextInput(int generation, int cursor)
+        => _session?.SelectTextInput(generation, cursor) ?? false;
+    [JSExport]
+    public static bool ActOnTextInput(int generation, bool submit)
+        => _session?.ActOnTextInput(generation, submit) ?? false;
     [JSExport]
     public static void PublishInput(bool focused, bool captured, bool gamepadConnected, int gamepadButtonMask,
         float leftTrigger, float rightTrigger, float leftX, float leftY, float rightX, float rightY)

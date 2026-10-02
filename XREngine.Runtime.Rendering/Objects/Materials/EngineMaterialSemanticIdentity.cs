@@ -18,6 +18,10 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity DebugTriangleV1 => new(EngineMaterialSemantic.DebugTriangle, 1);
 
+    public static EngineMaterialSemanticIdentity UIQuadBatchedV1 => new(EngineMaterialSemantic.UIQuadBatched, 1);
+
+    public static EngineMaterialSemanticIdentity UITextBatchedBitmapV1 => new(EngineMaterialSemantic.UITextBatchedBitmap, 1);
+
     /// <summary>Rejects unknown semantics and revisions before they can select cooked code.</summary>
     public void Validate()
     {
@@ -28,6 +32,8 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
         if (Semantic == EngineMaterialSemantic.OpaqueShadowDepth && Version == 1)
             return;
         if (Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle && Version == 1)
+            return;
+        if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap && Version == 1)
             return;
         throw new ArgumentException($"Unsupported engine material semantic '{Semantic}' version {Version}.");
     }

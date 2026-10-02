@@ -9,4 +9,6 @@ public enum EngineMaterialSemantic
     DebugPoint = 3,
     DebugLine = 4,
     DebugTriangle = 5,
+    UIQuadBatched = 6,
+    UITextBatchedBitmap = 7,
 }

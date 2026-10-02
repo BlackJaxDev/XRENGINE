@@ -64,6 +64,20 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
             return Pending("ProgramsPending");
+        if (apiMaterial.UISemantic != EngineMaterialSemantic.None)
+        {
+            WebGpuRasterState state = Renderer.RasterState;
+            if (frameBuffer is not null || output.Properties.SampleCount != 1 ||
+                output.Properties.ColorEncoding is not ("rgba8unorm" or "bgra8unorm") ||
+                state.DepthEnabled || state.DepthWrite || state.CullMode != ECullMode.None ||
+                !state.BlendEnabled || state.SourceRgb != EBlendingFactor.SrcAlpha ||
+                state.DestinationRgb != EBlendingFactor.OneMinusSrcAlpha ||
+                state.SourceAlpha != EBlendingFactor.SrcAlpha ||
+                state.DestinationAlpha != EBlendingFactor.OneMinusSrcAlpha ||
+                state.RgbEquation != EBlendEquationMode.FuncAdd ||
+                state.AlphaEquation != EBlendEquationMode.FuncAdd)
+                throw Unsupported("screen UI requires the display output and exact straight-alpha, no-depth, no-cull raster state");
+        }
         WebGpuInstanceStorageContract? instanceStorage = apiMaterial.InstanceStorageContract;
         WebGpuDataBuffer? instanceBuffer = null;
         uint instanceLimit = 0;
@@ -75,6 +89,9 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
                 buffer.Target != EBufferTarget.ShaderStorageBuffer ||
                 buffer.Length < contract.StrideBytes || !HasDeclaredStorage(apiMaterial.Program, contract.Name))
                 throw Unsupported("the cooked instance storage contract does not match an owned renderer buffer and shader binding");
+            if (apiMaterial.UISemantic != EngineMaterialSemantic.None &&
+                buffer.Length % (uint)contract.StrideBytes != 0)
+                throw Unsupported("the UI instance storage length does not match its declared packed stride");
             instanceBuffer = (WebGpuDataBuffer)Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false)!;
             ulong bindingBytes = instanceBuffer.IsGenerated ? instanceBuffer.BackendAllocatedByteSize : buffer.Length;
             instanceLimit = (uint)Math.Min(contract.MaximumInstances, bindingBytes / (uint)contract.StrideBytes);

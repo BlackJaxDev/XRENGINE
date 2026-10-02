@@ -15,8 +15,25 @@ namespace XREngine.Rendering.UI
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UIMaterialComponentEditor")]
     public class UIMaterialComponent : UIRenderableComponent
     {
+        private static bool UseWebGpuBatchOnly =>
+            RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+            AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+
         public UIMaterialComponent()
-            : this(XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta), false) { }
+            : this(CreateDefaultQuadMaterial(), false) { }
+
+        private static XRMaterial CreateDefaultQuadMaterial()
+        {
+            if (!UseWebGpuBatchOnly)
+                return XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta);
+
+            // The shared screen batch owns the cooked draw material. This source-free
+            // component material retains the authored MatColor used by buttons/panels.
+            return new XRMaterial([new ShaderVector4(Color.Magenta.ToVector4(), "MatColor")], Array.Empty<XRShader>())
+            {
+                RenderPass = (int)EDefaultRenderPass.OpaqueForward
+            };
+        }
 
         public UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false)
         {
@@ -115,7 +132,7 @@ namespace XREngine.Rendering.UI
         {
             if (Material is null)
             {
-                var mat = XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta);
+                var mat = CreateDefaultQuadMaterial();
                 mat.RenderOptions = _renderParameters;
                 Material = mat;
             }
@@ -191,7 +208,12 @@ namespace XREngine.Rendering.UI
                 XRMaterial? material = Material;
                 return !DisableBatching &&
                     !ClipToBounds &&
-                    (material?.Textures is null || material.Textures.Count == 0);
+                    (material?.Textures is null || material.Textures.Count == 0) &&
+                    (!UseWebGpuBatchOnly ||
+                     material is { HasEngineSemantic: false } && material.Shaders.Count == 0 &&
+                     material.Parameters.Length == 1 &&
+                     material.Parameters[0] is ShaderVector4 { Name: "MatColor" } &&
+                     UIBatchCollector.HasWebGpuRasterProfile(material.RenderOptions));
             }
         }
 
