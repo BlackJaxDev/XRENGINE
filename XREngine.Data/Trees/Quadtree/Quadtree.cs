@@ -192,6 +192,13 @@ namespace XREngine.Data.Trees
             _head.FindAllIntersecting(point, list, predicate);
         }
 
+        /// <summary>Collects point hits without allocating. False means storage overflow; partial hits must not be used.</summary>
+        public bool TryFindAllIntersecting(Vector2 point, Span<T?> destination, out int count)
+        {
+            count = 0;
+            return _head.TryFindAllIntersecting(point, destination, ref count);
+        }
+
         public void FindAllIntersectingSorted(Vector2 point, SortedSet<T> sortedSet, Predicate<T>? predicate = null)
             => _head.FindAllIntersecting(point, sortedSet, predicate);
 

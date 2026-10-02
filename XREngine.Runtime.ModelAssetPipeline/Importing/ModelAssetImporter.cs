@@ -1370,6 +1370,15 @@ namespace XREngine
 
             ConfigureImportedTransparency(mat, textureList, textures);
             PopulateSurfaceTextureBindings(mat, textureList, textures);
+            // Only the explicitly selected opaque PBR family grants cooked eligibility.
+            // The strict reader checks slots, numeric schema, UVs and callback ownership;
+            // forward, height, specular, opacity and emissive families remain authored shaders.
+            if (hasAnyTexture && !transp && !usesHeightMap && !hasSpecular && !hasAlphaMask && !hasEmissive)
+            {
+                mat.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitTextureV1;
+                if (!StandardLitTextureSurfaceBinding.TryCreate(mat, out _, out _))
+                    mat.EngineSemantic = EngineMaterialSemanticIdentity.None;
+            }
         }
 
         public static XRMaterial MakeMaterialDeferred(XRTexture[] textureList, List<TextureSlot> textures, string name)

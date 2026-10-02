@@ -17,7 +17,7 @@ export class EngineCanvasHost {
         this.frame = this.frame.bind(this);
     }
 
-    async start(manifestUrl) {
+    async start(manifestUrl, qualityPreset = '') {
         const epoch = ++this.epoch;
         await this.stop(false);
         if (epoch !== this.epoch) return;
@@ -28,9 +28,11 @@ export class EngineCanvasHost {
         this.controller = controller;
         this.onState('loading', 'Loading the published engine world…');
         try {
+            this.engine.SetCanvasQualityPreset(qualityPreset);
             const detail = await this.engine.StartCanvasAsync(manifestUrl, this.canvas.id);
             this.detail = detail;
             if (epoch !== this.epoch || controller.signal.aborted) return;
+            this.quality = JSON.parse(this.engine.GetCanvasQualitySettingsJson());
             const session = this.engine.GetRendererSession();
             if (!Number.isInteger(session) || session <= 0)
                 throw new Error('WebGPU.EngineCanvas.SessionUnavailable: the authored world did not return a renderer owner.');
@@ -93,16 +95,17 @@ export class EngineCanvasHost {
         const bounds = this.canvas.getBoundingClientRect();
         const attached = this.canvas.isConnected;
         const rawRatio = window.devicePixelRatio || 1;
-        const maximum = Math.min(1920, renderer.maxDimension);
-        const ratio = Math.min(rawRatio, 2, maximum / Math.max(1, bounds.width, bounds.height));
+        const maximum = Math.min(this.quality.maxBackingDimension, renderer.maxDimension);
+        const ratio = Math.min(rawRatio, this.quality.maxDevicePixelRatio) * this.quality.resolutionScale;
+        const boundedRatio = Math.min(ratio, maximum / Math.max(1, bounds.width, bounds.height));
         const width = attached && bounds.width > 0 && bounds.height > 0
-            ? Math.max(1, Math.min(maximum, Math.round(bounds.width * ratio))) : 0;
-        const height = width > 0 ? Math.max(1, Math.min(maximum, Math.round(bounds.height * ratio))) : 0;
+            ? Math.max(1, Math.min(maximum, Math.round(bounds.width * boundedRatio))) : 0;
+        const height = width > 0 ? Math.max(1, Math.min(maximum, Math.round(bounds.height * boundedRatio))) : 0;
         const generation = renderer.resize(width, height);
         const visible = !document.hidden && !this.frozen && !this.pageHidden;
         const focused = this.input.ownsFocus();
         this.engine.UpdateCanvasSurface(Math.max(0, bounds.width), Math.max(0, bounds.height),
-            width, height, ratio, generation, visible, focused, attached);
+            width, height, boundedRatio, generation, visible, focused, attached);
         this.rawRatio = rawRatio;
         this.attached = attached;
         this.drawable = visible && attached && width > 0 && height > 0;
@@ -197,6 +200,7 @@ export class EngineCanvasHost {
         }
         if (this.epoch === stoppedEpoch) {
             this.detail = null;
+            this.quality = null;
             this.presented = false;
             this.firstFrameSeconds = 0;
             this.failed = false;

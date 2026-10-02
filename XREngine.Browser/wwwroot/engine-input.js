@@ -32,6 +32,7 @@ export class BrowserEngineInput {
         this.gamepadStatus = gamepadToggle.parentElement?.querySelector('[role="status"]');
         this.events = new AbortController();
         this.pointer = -1;
+        this.contacts = new Int32Array(10).fill(-1);
         this.composing = false;
         this.cursorX = 0;
         this.cursorY = 0;
@@ -71,6 +72,7 @@ export class BrowserEngineInput {
         }, { signal });
         canvas.addEventListener('compositionstart', () => {
             this.composing = true;
+            this.cancelPointers();
             this.engine.ResetInput();
         }, { signal });
         canvas.addEventListener('compositionend', event => {
@@ -79,6 +81,19 @@ export class BrowserEngineInput {
                 this.engine.InputText(event.data);
         }, { signal });
         canvas.addEventListener('pointerdown', event => {
+            if (event.pointerType === 'touch') {
+                if (document.hidden || this.contacts.includes(event.pointerId)) return;
+                const slot = this.contacts.indexOf(-1);
+                if (slot < 0 || !Number.isInteger(event.pointerId) || event.pointerId < 0 || event.pointerId > 2147483647) return;
+                canvas.focus({ preventScroll: true });
+                if (!owns()) return;
+                try { canvas.setPointerCapture(event.pointerId); }
+                catch { return; }
+                this.contacts[slot] = event.pointerId;
+                if (!this.publishContact(event, 0)) this.releaseContact(event.pointerId);
+                event.preventDefault();
+                return;
+            }
             const button = mouseButton(event.button);
             if (button < 0 || document.hidden) return;
             canvas.focus({ preventScroll: true });
@@ -99,10 +114,21 @@ export class BrowserEngineInput {
             event.preventDefault();
         }, { signal });
         canvas.addEventListener('pointermove', event => {
+            if (event.pointerType === 'touch') {
+                if (this.contacts.includes(event.pointerId) && owns()) this.publishContact(event, 1);
+                return;
+            }
             if ((event.pointerId === this.pointer || event.pointerType === 'mouse') && owns())
                 this.publishPointer(event);
         }, { signal });
         const release = event => {
+            if (event.pointerType === 'touch') {
+                if (this.contacts.includes(event.pointerId)) {
+                    this.publishContact(event, 2);
+                    this.releaseContact(event.pointerId);
+                }
+                return;
+            }
             const button = mouseButton(event.button);
             if (button >= 0) this.engine.InputMouseButton(button, false);
             if (event.pointerId === this.pointer) {
@@ -112,6 +138,11 @@ export class BrowserEngineInput {
         };
         canvas.addEventListener('pointerup', release, { signal });
         const cancel = event => {
+            if (this.contacts.includes(event.pointerId)) {
+                this.publishContact(event, 3);
+                this.releaseContact(event.pointerId);
+                return;
+            }
             if (event.pointerId !== this.pointer) return;
             this.pointer = -1;
             this.engine.InputMouseButton(0, false);
@@ -127,8 +158,41 @@ export class BrowserEngineInput {
             this.engine.InputScroll(event.deltaX / step, -event.deltaY / step);
             event.preventDefault();
         }, { signal, passive: false });
-        canvas.addEventListener('blur', () => this.engine.ResetInput(), { signal });
+        canvas.addEventListener('blur', () => {
+            this.cancelPointers();
+            this.engine.ResetInput();
+        }, { signal });
+        window.addEventListener('blur', () => {
+            this.cancelPointers();
+            this.engine.ResetInput();
+        }, { signal });
         document.addEventListener('visibilitychange', () => { if (document.hidden) this.reset(); }, { signal });
+    }
+
+    publishContact(event, phase) {
+        const bounds = this.canvas.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0) return false;
+        // The bridge transports contacts only. Engine UI decides capture and action mappings.
+        return this.engine.InputContact(event.pointerId, phase,
+            (event.clientX - bounds.left) * this.canvas.width / bounds.width,
+            (event.clientY - bounds.top) * this.canvas.height / bounds.height);
+    }
+
+    releaseContact(id) {
+        const slot = this.contacts.indexOf(id);
+        if (slot < 0) return;
+        this.contacts[slot] = -1;
+        if (this.canvas.hasPointerCapture(id)) this.canvas.releasePointerCapture(id);
+    }
+
+    cancelPointers() {
+        for (let index = 0; index < this.contacts.length; index++) {
+            const id = this.contacts[index];
+            if (id >= 0) this.releaseContact(id);
+        }
+        const pointer = this.pointer;
+        this.pointer = -1;
+        if (pointer >= 0 && this.canvas.hasPointerCapture(pointer)) this.canvas.releasePointerCapture(pointer);
     }
 
     publishPointer(event) {
@@ -186,7 +250,7 @@ export class BrowserEngineInput {
     }
 
     reset() {
-        this.pointer = -1;
+        this.cancelPointers();
         this.removeTextElement();
         this.engine.ResetInput();
     }

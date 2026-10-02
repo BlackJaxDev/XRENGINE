@@ -36,6 +36,25 @@ the shell reports the renderer, pipeline-decline, and resource-failure state
 instead of waiting indefinitely. Restart creates a fresh owner; unsupported
 passes do not select a substitute renderer or simplified game runtime.
 
+The authored engine output reads `RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality`.
+Its default preserves the currently admitted WebGPU light, shadow, texture, and
+post-effect behavior, with canvas DPR capped at 2 and backing extent at 1920.
+The published `browser-publish.json` has an optional `quality` value of `low`,
+`balanced`, or `high`. A null value keeps the authored engine setting; a named
+value explicitly selects the corresponding browser profile before world startup.
+Hosts embedding `EngineCanvasHost` can pass the same named value to `start`.
+The host asks the engine for the resolved canvas sizing policy rather than
+maintaining a separate set of quality numbers. Choose a profile before world
+startup; change it by restarting the browser world.
+
+Lower profiles reduce the backing resolution, cap admitted directional/point/
+spot light counts and texture dimensions, and cap authored standalone shadow-map
+dimensions. Excess required lights, textures, or shadow sizes fail visibly;
+authored content is never silently clipped or resized. `low` explicitly disables
+GTAO and bloom. Their passes and generation-owned targets are then omitted.
+Shadow update cadence and physical shadow-map downscaling are not yet supported;
+all admitted shadows retain the normal per-frame producer/receiver contract.
+
 ## Frozen reference harness
 
 This standalone application composes the engine's shared scene/component/transform

@@ -21,7 +21,7 @@ namespace XREngine.Components
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UICanvasInputComponentEditor")]
     [RequireComponents(typeof(UICanvasComponent))]
     [XRTypeRedirect("XREngine.Components.UICanvasInputComponent")]
-    public class UICanvasInputComponent : XRComponent, IUICanvasInputSource
+    public partial class UICanvasInputComponent : XRComponent, IUICanvasInputSource
     {
         /// <summary>
         /// Returns the canvas component this input component is controlling.
@@ -559,6 +559,8 @@ namespace XREngine.Components
 
         private void OnGamepadInteractButtonDown()
         {
+            if (IsVirtualGamepadDispatch)
+                return;
             FocusedComponent?.OnInteract();
         }
         private void OnGamepadInteractButtonUp()
@@ -568,15 +570,23 @@ namespace XREngine.Components
 
         private void OnMouseInteractButtonDown()
         {
-            FocusedComponent = TopMostInteractable;
-            LeftClickDown?.Invoke(TopMostInteractable);
+            if (IsVirtualMouseConsumed)
+                return;
+            UIInteractableComponent? target = TryGetTouchMouseTarget(out UIInteractableComponent? touchTarget)
+                ? touchTarget : TopMostInteractable;
+            FocusedComponent = target;
+            LeftClickDown?.Invoke(target);
 
             if (FocusedComponent is not null && FocusedComponent.InteractOnButtonDown)
                 FocusedComponent.OnInteract();
         }
         private void OnMouseInteractButtonUp()
         {
-            if (FocusedComponent is not null && TopMostInteractable == FocusedComponent && !FocusedComponent.InteractOnButtonDown)
+            if (IsVirtualMouseConsumed || IsTouchMouseCancelled)
+                return;
+            UIInteractableComponent? target = TryGetTouchMouseTarget(out UIInteractableComponent? touchTarget)
+                ? touchTarget : TopMostInteractable;
+            if (FocusedComponent is not null && target == FocusedComponent && !FocusedComponent.InteractOnButtonDown)
                 OnInteract();
         }
 
@@ -605,6 +615,8 @@ namespace XREngine.Components
         }
         protected virtual void OnGamepadBackButtonDown()
         {
+            if (IsVirtualGamepadDispatch)
+                return;
             FocusedComponent?.OnBack();
         }
         protected virtual void OnGamepadBackButtonUp()

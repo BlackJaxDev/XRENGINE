@@ -1163,10 +1163,11 @@ internal static partial class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static void WriteCookedAsset(object data, string destination, AotRuntimeMetadata? aotMetadata = null)
+    private static void WriteCookedAsset(object data, string destination, AotRuntimeMetadata? aotMetadata = null,
+        CookedBinarySerializationCallbacks? callbacks = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var blob = CreateCookedBlob(data, aotMetadata);
+        var blob = CreateCookedBlob(data, aotMetadata, callbacks);
         WriteCookedBlob(destination, blob);
     }
 
@@ -1282,7 +1283,8 @@ internal static partial class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null)
+    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null,
+        CookedBinarySerializationCallbacks? callbacks = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         Type runtimeType = instance.GetType();
@@ -1291,7 +1293,11 @@ internal static partial class ProjectBuilder
         if (PublishedCookedAssetRegistry.TrySerialize(instance, out byte[] runtimePayload))
             return new CookedAssetBlob(typeName, CookedAssetFormat.RuntimeBinaryV1, runtimePayload);
 
-        byte[] payload = CookedBinarySerializer.Serialize(instance);
+        // A nested MemoryPack asset envelope starts an independent serialization and
+        // would hide its materials from this explicit platform projection. Registered
+        // serializers above remain authoritative and retain their original format.
+        byte[] payload = callbacks is null ? CookedBinarySerializer.Serialize(instance)
+            : CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(instance, callbacks));
         return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV1, payload);
     }
 

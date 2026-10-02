@@ -130,6 +130,9 @@ public static class ShaderProgramArtifactReader
         if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
             Require(vertex is not null && fragment is not null && compute is null,
                 "lit-color coverage variants require vertex and fragment stages, including alpha-tested depth");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+            Require(vertex is not null && fragment is not null && compute is null,
+                "lit-texture variants require vertex and fragment stages");
         if (materialVariant?.Semantic.IsSkybox() == true)
             Require(vertex == "skyVertex" && fragment == "skyFragment" && compute is null,
                 "skybox variants require their exact vertex and fragment entry points");
@@ -390,7 +393,7 @@ public static class ShaderProgramArtifactReader
     {
         string semanticName = Text(value, "semantic");
         Require(Enum.TryParse(semanticName, ignoreCase: false, out EngineMaterialSemantic semantic) &&
-            semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
+            semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
                 EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
                 EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap or
                 EngineMaterialSemantic.SkyboxGradient or EngineMaterialSemantic.SkyboxEquirectangular or

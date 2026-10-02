@@ -82,7 +82,7 @@ internal static class BrowserWorldCapabilityAudit
                                 (resolver is not BrowserShaderArtifactSource computeSource ||
                                 !computeSource.ComputeArtifacts.ContainsKey(WebComputeArtifactCatalog.PackedSkinningKernel)))
                                 throw new NotSupportedException($"BrowserCook.ComputeArtifactMissing: '{path}' mesh '{mesh.Name}' requires packed-skinning in the project shader manifest.");
-                            InspectMaterial(lod.Material, path, mesh.Name);
+                            InspectMaterial(lod.Material, path, mesh.Name, lod.Mesh);
                         }
                 else if (component is SkyboxComponent sky)
                 {
@@ -135,11 +135,31 @@ internal static class BrowserWorldCapabilityAudit
                 throw new NotSupportedException($"BrowserCook.UiVariantMissing: '{path}' requires '{key}' in the project shader manifest.");
         }
 
-        void InspectMaterial(XRMaterial? material, string path, string? meshName)
+        void InspectMaterial(XRMaterial? material, string path, string? meshName, XRMesh? geometry = null)
         {
             shadows.InspectMaterial(material);
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+            {
+                if (material.Shaders.Count != 0)
+                    throw new NotSupportedException($"BrowserCook.TexturedSourceUnsupported: '{path}' material '{material.Name}' requires a serializer-owned source-free semantic companion; authored stages cannot be stripped implicitly.");
+                if (!StandardLitTextureSurfaceBinding.TryCreate(material, out StandardLitTextureSurfaceBinding? binding, out string? reason) ||
+                    !binding!.TryRead(out StandardLitTextureSurface surface, out reason))
+                    throw new NotSupportedException($"BrowserCook.TexturedSurfaceUnsupported: '{path}' material '{material.Name}': {reason}.");
+                if (geometry is not null && (!geometry.HasNormals || geometry.TexCoordCount == 0 || surface.Normal is not null && !geometry.HasTangents))
+                    throw new NotSupportedException($"BrowserCook.TexturedVertexUnsupported: '{path}' mesh '{meshName}' requires normals, UV0, and float4 authored tangents when normal mapped.");
+                if (resolver is not BrowserShaderArtifactSource textureSource ||
+                    !textureSource.MaterialVariants.Any(variant => variant.Key.Semantic == material.EngineSemantic &&
+                        variant.Key.Pass == "opaque-forward" && variant.Key.VertexProfile == surface.VertexProfile &&
+                        variant.Key.OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1"))
+                    throw new NotSupportedException($"BrowserCook.TexturedVariantMissing: '{path}' requires its exact opaque texture variant.");
+                if (surface.Normal is not null && !textureSource.MaterialVariants.Any(variant =>
+                    variant.Key == new EngineMaterialVariantKey(material.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        "depth-normal", surface.VertexProfile, "normal-rgba16f-v1")))
+                    throw new NotSupportedException($"BrowserCook.TexturedNormalVariantMissing: '{path}' requires the mapped-normal replay variant.");
+                return;
+            }
             if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1 ||
                 material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
             {

@@ -116,7 +116,8 @@ internal static partial class ProjectBuilder
                 {
                     schema = 2,
                     format = "xrengine-engine-launch",
-                    manifest = "./content/manifest.json"
+                    manifest = "./content/manifest.json",
+                    quality = (string?)null
                 });
                 File.WriteAllBytes(Path.Combine(site, "browser-publish.json"), json);
             }

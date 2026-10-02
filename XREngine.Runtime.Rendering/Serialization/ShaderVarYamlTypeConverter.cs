@@ -43,11 +43,22 @@ namespace XREngine
             string? name = null;
             string? typeToken = null;
             string? valueToken = null;
+            Type? declaredType = null;
             bool hasColorKey = false;
 
             while (!parser.TryConsume<MappingEnd>(out _))
             {
                 string key = ConsumeScalar(parser, "Expected a scalar mapping key while deserializing a ShaderVar.");
+
+                if (key == "__type")
+                {
+                    string declaredName = ConsumeScalar(parser, "ShaderVar '__type' must be a concrete type name.");
+                    Type resolvedType = ResolveDeclaredType(declaredName);
+                    if (declaredType is not null && declaredType != resolvedType)
+                        throw new YamlException("ShaderVar mapping contains conflicting '__type' declarations.");
+                    declaredType = resolvedType;
+                    continue;
+                }
 
                 if (key == "Color")
                     hasColorKey = true;
@@ -80,7 +91,12 @@ namespace XREngine
                 SkipNode(parser);
             }
 
-            Type concreteType = InferConcreteShaderVarType(typeToken, valueToken, hasColorKey) ?? typeof(ShaderFloat);
+            if (declaredType is not null && typeToken is not null &&
+                (!TryParseShaderVarType(typeToken, out EShaderVarType tokenType) ||
+                    !ShaderVar.ShaderTypeAssociations.TryGetValue(tokenType, out Type? tokenClrType) || tokenClrType != declaredType))
+                throw new YamlException("ShaderVar's concrete '__type' conflicts with its shader type declaration.");
+
+            Type concreteType = declaredType ?? InferConcreteShaderVarType(typeToken, valueToken, hasColorKey) ?? typeof(ShaderFloat);
 
             if (Activator.CreateInstance(concreteType) is not ShaderVar shaderVar)
                 throw new YamlException($"Failed to create a ShaderVar instance of type '{concreteType.FullName}'.");
@@ -92,6 +108,16 @@ namespace XREngine
                 TrySetValueFromScalar(shaderVar, valueToken!);
 
             return shaderVar;
+        }
+
+        private static Type ResolveDeclaredType(string typeName)
+        {
+            // The writer emits FullName. Resolve only the existing shader-parameter
+            // types, never an arbitrary CLR type or an assembly named by asset data.
+            foreach (Type candidate in ShaderVar.ShaderTypeAssociations.Values)
+                if (string.Equals(candidate.FullName, typeName, StringComparison.Ordinal))
+                    return candidate;
+            throw new YamlException($"ShaderVar '__type: {typeName}' is not a supported concrete shader-parameter type.");
         }
 
         public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)

@@ -489,6 +489,26 @@ namespace XREngine.Data.Trees
             //}
             //IsLoopingItems = false;
         }
+        internal bool TryFindAllIntersecting(Vector2 point, Span<T?> destination, ref int count)
+        {
+            if (!_bounds.Contains(point))
+                return true;
+            for (int index = 0; index < _subNodes.Length; index++)
+                if (_subNodes[index] is { } child && !child.TryFindAllIntersecting(point, destination, ref count))
+                    return false;
+            // EventList's interface enumerator allocates even when its backing list is not thread-safe.
+            for (int index = 0; index < _items.Count; index++)
+            {
+                T? item = _items[index];
+                if (item is null || !item.Contains(point))
+                    continue;
+                if (count == destination.Length)
+                    return false;
+                destination[count++] = item;
+            }
+            return true;
+        }
+
         public void FindAllIntersecting(Vector2 point, List<T> intersecting, Predicate<T>? predicate = null)
         {
             if (!_bounds.Contains(point))

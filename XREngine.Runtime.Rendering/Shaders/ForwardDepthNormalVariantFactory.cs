@@ -48,6 +48,10 @@ public static class ForwardDepthNormalVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+            return StandardLitTextureVariantFactory.CreateDepthNormal(sourceMaterial);
+
         if (sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
             return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
 

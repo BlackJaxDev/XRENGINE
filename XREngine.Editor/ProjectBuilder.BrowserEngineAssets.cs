@@ -27,7 +27,7 @@ internal static partial class ProjectBuilder
         includesDefaultUiFont = PrepareBrowserUiFonts(world, assetRoot, out authoredFonts);
         if (string.Equals(worldPath, "/game/startup.asset", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Browser startup world conflicts with the cooked startup-settings identity.");
-        BrowserAssetDependencyCooker dependencyCooker = new(
+        using BrowserAssetDependencyCooker dependencyCooker = new(
             assetRoot, Engine.Assets?.EngineAssetsPath, sourceDirectory, cancellationToken);
         dependencyCooker.Cook(world, worldPath, "startup-world.bin");
         foreach (BrowserUiFontCookRequest font in authoredFonts)

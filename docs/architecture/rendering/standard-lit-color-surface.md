@@ -1,5 +1,9 @@
 # Standard lit-color surface binding
 
+Opaque authored texture surfaces have a separate
+[standard lit-texture contract](standard-lit-texture-surface.md); they do not
+broaden the color-only material schemas below.
+
 `XRMaterial` factory methods mark their built-in lit-color output with
 `EngineMaterialSemanticIdentity.StandardLitColorV1`. The shared
 `StandardLitColorSurfaceBinding` reads that explicit identity and validates the

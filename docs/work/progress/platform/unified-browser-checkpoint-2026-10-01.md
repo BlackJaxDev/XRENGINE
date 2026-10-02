@@ -394,3 +394,67 @@ Editor shared-package path and the browser identity validator, preserving all
 records hashes and boundaries. Windows full publication and rendered RollingBall
 remain end-to-end acceptance checks, while shared touch controls and remaining
 material coverage continue as code-first implementation work.
+
+## Shared input, textured surfaces and output policy (2026-10-02)
+
+Authored FreeType bitmap-font cooking and engine virtual sticks/buttons now close
+two complete implementation rows, bringing the checklist to **47/110**, with 63
+open. The coherent group passed Editor, native-Jolt Browser, Server, VRClient,
+desktop WebGPU, all eighteen portable compile rows and a fresh interpreter
+publication with zero compiler warnings/errors. Subsequent targeted Editor and
+Browser builds also pass after the material serialization and output-factory
+repairs below. Runtime UI/IME/device acceptance is not implied by these builds.
+
+Virtual controls use the owning player's existing gamepad mappings, a bounded
+ten-contact stream, locked span-based engine UI hit tests and per-control input
+delivery state. Focus, visibility, viewport/pawn replacement, overflow and callback
+reentrancy cancel the correct contribution without advancing withheld physical
+input. Ordinary touch widgets resolve fresh hit targets rather than stale hover.
+
+The opaque deferred texture profile preserves base/normal/metallic/roughness
+behavior through strict typed semantics, seven cooked shader variants, a
+source-free material carrier, and exact canonical shader/snippet verification.
+Cook-only alias reconciliation compares complete CPU image payloads and omitted
+sampler/import metadata before unifying equal persistent identities. Runtime
+bindings still require exact references. The ordinary-world probe exposed and
+repaired a separate YAML converter bug: explicit `ShaderFloat` values written as
+integer-looking scalars had incorrectly reloaded as `ShaderInt`. The converter
+now honors only its existing closed type registry; untagged inference remains.
+The sample catalog has 40 artifacts, 30 material variants, nine pipeline passes
+and one compute kernel. New textured pixels remain unqualified.
+
+Explicit browser quality settings now control canvas resolution/DPR, light and
+resource admission caps, and optional GTAO/bloom targets. Lower presets fail
+oversized authored content rather than silently dropping it; default behavior is
+preserved. Settings restoration is session-owned and startup selections are
+captured per request. True shadow cadence/downsize and cooked texture tiers are
+still open, so the quality-profile row remains unchecked.
+
+Exact commit `ff215b9673b5a3885ea5a101624cdccb97d7cb08` passed the complete Linux
+regression job and genuine Windows Editor CLI publisher in
+[run 36986080740](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36986080740).
+The Windows artifact contains 68 assets, 33 shaders, 23 material variants, nine
+pipeline passes and one compute kernel. Its SHA-256 is
+`0632b4610020724b5de6228f2c62929600334ec117a014d8c6e70ebe04e45a33`.
+The exact bundle is transferred to Linux Chromium because the Windows runner
+does not provide the required WebGPU adapter. Game startup reaches WebGPU but
+exposed an independent factory entry point selecting desktop Advanced resources.
+The source repair scopes explicit and lazy caller-thread pipeline creation to
+the same browser recipe, preserves Required-Advanced rejection, and rejects
+unsupported capture/stereo/XR requests. It does not package desktop GLSL as a
+workaround. Actual rendered/playable game acceptance awaits the repaired run.
+
+Cook admission also now rejects both character-controller families by name:
+existing PhysX unfiltered sweeps and Jolt filtered movement do not preserve the
+same authored collision selection. Rigid-body/RollingBall filtering is unchanged.
+
+The fixed ordinary textured-world probe now passes the real Editor preparation,
+world cook, post-hydration capability audit and content packager. The saved
+12,367-byte input retains SHA-256
+`08f7f9c9ce25523570a537e62b98f5190daf70b8605b94e789aabc0a87842589`.
+The produced source-free material has one image shared by legacy slots 0/2/3
+and all three semantic roles, and the strict runtime reader passes. Its raster
+fixture catalog produces 80 assets and 39 shader artifacts. The targeted driver
+uses the genuine CPU headless rendering-host services; it does not render or
+claim GPU acceptance. Both final Editor and native-Jolt Browser builds pass with
+zero warnings/errors after the alias, YAML type and canonical-expansion fixes.

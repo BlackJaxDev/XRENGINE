@@ -111,6 +111,8 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
             }
             else if (Data.EngineSemantic.IsSkybox())
                 artifact = ResolveSkyboxArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+                artifact = ResolveLitTextureArtifact();
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
             {
                 XRMaterial source = Data.StandardLitColorSourceMaterial ?? Data;
@@ -191,6 +193,8 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
     internal void PublishSurface()
     {
         if (TryPublishSkybox())
+            return;
+        if (TryPublishLitTexture())
             return;
         if (_uiSemantic != EngineMaterialSemantic.None)
         {
@@ -278,6 +282,8 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
         SetField(ref _apiProgram, null);
         SetField(ref _program, null);
         SetField(ref _litSurface, null);
+        SetField(ref _litTextureSurface, null);
+        SetField(ref _litTextureVertexProfile, null);
         SetField(ref _directionalShadowReceiver, false);
         SetField(ref _localShadowReceiver, false);
         SetField(ref _opaqueShadowDepth, false);

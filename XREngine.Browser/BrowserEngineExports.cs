@@ -52,6 +52,7 @@ public static partial class BrowserEngineExports
 
     private static async Task<string> StartCoreAsync(string manifestUrl, string? canvasId)
     {
+        string? qualityPreset = TakeRequestedCanvasQualityPreset();
         ArgumentException.ThrowIfNullOrWhiteSpace(manifestUrl);
         int requestedEpoch = Interlocked.Increment(ref _epoch);
         await Lifecycle.WaitAsync();
@@ -142,7 +143,7 @@ public static partial class BrowserEngineExports
             stage = "start engine world";
             await _session.StartAsync(world, configuredSettings, initialState, token, canvasId, _shaderArtifacts,
                 _materialVariants, _source.LoadTonemapArtifact(_shaderArtifacts), _source.LoadPipelineArtifacts(_shaderArtifacts),
-                computeArtifacts);
+                computeArtifacts, qualityPreset);
             token.ThrowIfCancellationRequested();
             return $"{world.Name ?? "<unnamed>"}: {_session.World?.RootNodes.Count ?? 0} root nodes playing; " +
                 $"Jolt physics; fixed rate {configuredSettings.FixedFramesPerSecond:F0} Hz; " +

@@ -42,6 +42,13 @@ public static class MeshRenderMaterialResolver
                     variant.ShadowUniformSourceMaterial = shadowOverride;
                     return new(variant, shadowOverride, true, false, "CookedLitColorCoverageShadowDepth");
                 }
+                if (shadowSourceMaterial?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+                {
+                    if (shadowSourceMaterial.Shaders.Count != 0 ||
+                        !StandardLitTextureSurfaceBinding.TryRead(shadowSourceMaterial, out _, out _))
+                        throw new NotSupportedException("WebGPU.ShadowCaster.TexturedSurfaceUnsupported: an exact source-free opaque textured surface is required.");
+                    return new(shadowOverride, null, true, false, "CookedOpaqueTexturedShadowDepth");
+                }
                 if (shadowSourceMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 ||
                     shadowSourceMaterial.Shaders.Count != 0 ||
                     !shadowSourceMaterial.CanUseSharedOpaqueShadowMaterial())

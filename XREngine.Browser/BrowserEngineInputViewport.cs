@@ -5,9 +5,10 @@ using XREngine.Rendering;
 namespace XREngine.Browser;
 
 /// <summary>Publishes browser device snapshots to the engine's existing local-player input path.</summary>
-internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, IRuntimeLocalPlayerInputSource
+internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, IRuntimeLocalPlayerInputSource, IRuntimePointerContactSource
 {
     private readonly WindowInputSnapshotAccumulator _snapshots = new();
+    private readonly WindowPointerContactBuffer _contacts = new();
     private readonly bool[] _keys = new bool[(int)EKey.LastKey + 1];
     private readonly bool[] _buttons = new bool[3];
     private WindowGamepadSnapshot _gamepad;
@@ -18,6 +19,14 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
     private int _textCharactersSinceConsume;
 
     public bool CaptureDesired => _captureDesired;
+    public object PointerContactOwner => this;
+    public ulong PointerContactSequence => _contacts.LatestSequence;
+    public ulong PointerContactGeneration => _contacts.Generation;
+    public int ConsumePointerContacts(Span<WindowPointerContact> destination, out ulong generation)
+        => _contacts.Consume(destination, out generation);
+
+    public bool Contact(int id, int phase, float x, float y)
+        => _contacts.Record(new WindowPointerContact(id, (EPointerContactPhase)phase, x, y));
 
     public WindowInputSnapshot ConsumeInputSnapshot()
     {
@@ -95,7 +104,10 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
             return;
         _focused = focused;
         if (!focused)
+        {
             ReleasePressed();
+            _contacts.Cancel();
+        }
     }
 
     public void Gamepad(bool connected, int buttonMask, float leftTrigger, float rightTrigger,
@@ -128,6 +140,7 @@ internal sealed class BrowserEngineInputViewport : IRuntimeLocalPlayerViewport, 
 
     public void Reset()
     {
+        _contacts.Cancel();
         _focused = false;
         _mouseCaptured = false;
         _captureDesired = false;

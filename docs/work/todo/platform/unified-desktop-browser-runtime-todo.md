@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **45 of 110 items are checked; 65 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **47 of 110 items are checked; 63 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
 
 Created: 2026-09-29. Updated: 2026-10-02.
 
@@ -31,12 +31,12 @@ resize and restart. The complete compiled Editor browser publisher also ran
 through game compilation, world cook, WebAssembly publication, content packaging,
 shell installation and atomic activation. That closes the game-linking and
 publisher-flow implementation rows; Windows CLI and actual published gameplay
-remain separate open acceptance checks. The count is **45 checked and 65 open**.
+remain separate open acceptance checks. The count is **47 checked and 63 open**.
 The [shader record](../../progress/rendering/unified-webgpu-shader-cooking.md) and
 [publisher evidence](../../progress/rendering/browser-project-publishing.md#same-assets-and-game-code)
 distinguish live results from newer source work.
 
-The 2026-09-30 build-stabilization and portable-host results remain historical evidence for their source snapshot. The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed [real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) on 2026-10-02, qualifying a bounded shared `DefaultRenderPipeline` lit/HDR profile, its resizes, and the listed lifecycle/resource checks. This remains software-WebGPU evidence; full production/gameplay and device acceptance are open. **45 of 110 checklist items are checked; 65 remain open.** See the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) and [lit-profile acceptance](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance) for exact scope.
+The 2026-09-30 build-stabilization and portable-host results remain historical evidence for their source snapshot. The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed [real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) on 2026-10-02, qualifying a bounded shared `DefaultRenderPipeline` lit/HDR profile, its resizes, and the listed lifecycle/resource checks. This remains software-WebGPU evidence; full production/gameplay and device acceptance are open. **47 of 110 checklist items are checked; 63 remain open.** See the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) and [lit-profile acceptance](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance) for exact scope.
 
 | Area | Finding | Tracked by |
 | --- | --- | --- |
@@ -106,7 +106,7 @@ rendered game: five-cycle callbacks, teardown and late BeginPlay failure/retry
 pass, but the diagnostic package does not exercise Editor BrowserWebGPU
 publishing and initializes no GPU.
 
-The remaining 65 rows are still open; current source progress and partial live
+The remaining 63 rows are still open; current source progress and partial live
 qualification do not change the checked-row count. Shadow-enabled rendering,
 engine UI, the full production tier, editor-published playable RollingBall,
 memory/performance bounds, physical-device checks, recovery and broader
@@ -137,6 +137,22 @@ coverage pixels, layered textures, UI/IME behavior, custom-font cooking, full
 recovery and production/device budgets remain open. Focused text accessibility
 and a finite blocked-API list do not by themselves close broader UI or game-API
 coverage rows.
+
+### Compiled font and touch implementation (2026-10-02)
+
+Authored FreeType bitmap-font cooking and shared virtual stick/button controls
+now satisfy UR09.03 and UR09.05. Editor, native-Jolt Browser, Server, VRClient,
+desktop WebGPU, all eighteen portable compile rows and fresh browser publication
+pass with zero warnings/errors for the coherent source group. Glyph coverage is
+cooked offline; browser runtime binds hash-verified owned atlases before world
+activation. Virtual controls are ordinary engine UI feeding existing player
+mappings with bounded multi-touch, physical-input preservation and ownership
+cancellation. The checklist is **47 checked and 63 open**. UI/IME pixels, device
+input acceptance, broader accessibility and the complete quality profile remain
+separate open work. The new opaque textured material projection exposed a normal
+YAML alias-reconstruction issue during its targeted real cook. The corrected
+saved-world path now passes production cooking, post-hydration capability audit
+and packaging with strict runtime aliases and unchanged authored-file bytes.
 
 ## Build Gate
 
@@ -178,7 +194,7 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-As of this 2026-10-02 update, 45 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+As of this 2026-10-02 update, 47 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -417,9 +433,9 @@ Depends on the [Jolt browser proof and default-promotion gates](native-subsystem
 
 - [ ] **UR09.01** `impl` Implement a browser input leaf that feeds `XREngine.Input` devices from pointer, touch, keyboard, IME, wheel, and Gamepad API events, reusing `browser-input.js`. Player controllers and input mappings are unchanged.
 - [ ] **UR09.02** `impl` Render engine UI through WebGPU with hit testing in the same coordinate convention as rendering.
-- [ ] **UR09.03** `impl` Cook glyph atlases with FreeType at cook time and render cooked fonts at runtime. Desktop shipping builds may use the same path.
+- [x] **UR09.03** `impl` Cook glyph atlases with FreeType at cook time and render cooked fonts at runtime. Desktop shipping builds may use the same path.
 - [ ] **UR09.04** `impl` Bridge text entry, IME, and accessibility to DOM elements.
-- [ ] **UR09.05** `impl` Express mobile touch controls (virtual sticks, buttons) as engine input mappings and UI, not page-specific script.
+- [x] **UR09.05** `impl` Express mobile touch controls (virtual sticks, buttons) as engine input mappings and UI, not page-specific script.
 
 **Acceptance:** a user can play with touch, keyboard/mouse, or gamepad through the engine's own input and UI.
 

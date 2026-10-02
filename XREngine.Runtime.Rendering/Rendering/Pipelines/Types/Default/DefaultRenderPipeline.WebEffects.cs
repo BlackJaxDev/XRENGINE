@@ -48,7 +48,7 @@ public partial class DefaultRenderPipeline
         AmbientOcclusionSettings? ao = GetSettings<AmbientOcclusionSettings>(state);
         BloomSettings? bloom = GetSettings<BloomSettings>(state);
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.WebForwardLit;
-        if (ao is { Enabled: true })
+        if (RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableGtao && ao is { Enabled: true })
         {
             if (AmbientOcclusionSettings.NormalizeType(ao.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion)
                 throw new NotSupportedException($"WebGPU.DefaultPipeline.AmbientOcclusionModeUnsupported: {ao.Type} requires a cooked WebGPU effect route.");
@@ -61,7 +61,7 @@ public partial class DefaultRenderPipeline
                 _ => throw new NotSupportedException($"WebGPU.DefaultPipeline.GtaoResolutionUnsupported: {ao.GroundTruth.Resolution}."),
             };
         }
-        if (bloom is { Enabled: true })
+        if (RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom && bloom is { Enabled: true })
             mask |= DefaultPipelineResourceFeature.WebBloomEnabled;
         return (ulong)mask;
     }
@@ -442,13 +442,16 @@ public partial class DefaultRenderPipeline
     }
 
     private bool ShouldUseWebGtao()
-        => ResolveAmbientOcclusionSettings() is { Enabled: true };
+        => RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableGtao &&
+            ResolveAmbientOcclusionSettings() is { Enabled: true };
 
     private bool ShouldUseWebBloom()
-        => GetSettings<BloomSettings>(ResolveCurrentSettingsCamera()?.GetPostProcessState(this)) is { Enabled: true };
+        => RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom &&
+            GetSettings<BloomSettings>(ResolveCurrentSettingsCamera()?.GetPostProcessState(this)) is { Enabled: true };
 
     private bool ShouldUseWebDebugBloomOnly()
-        => GetSettings<BloomSettings>(ResolveCurrentSettingsCamera()?.GetPostProcessState(this)) is
+        => RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom &&
+            GetSettings<BloomSettings>(ResolveCurrentSettingsCamera()?.GetPostProcessState(this)) is
             { Enabled: true, DebugBloomOnly: true };
 
     private void ValidateWebGlobalIllumination()
