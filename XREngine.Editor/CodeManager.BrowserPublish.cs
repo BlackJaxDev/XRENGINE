@@ -1,6 +1,7 @@
 using XREngine;
 using XREngine.Editor;
 using XREngine.Editor.Publishing;
+using XREngine.Components.Scripting;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
@@ -8,6 +9,39 @@ using System.Text;
 
 internal partial class CodeManager
 {
+    internal string GetBrowserGameAssemblyPath(string configuration)
+    {
+        string project = GetManagedGameProjectPath();
+        return Path.Combine(Path.GetDirectoryName(project)!, "Build", Platform_AnyCPU, configuration,
+            GameTargetFramework, GetProjectName() + ".dll");
+    }
+
+    /// <summary>Builds and loads the exact game target consumed by the browser project reference.</summary>
+    internal void BuildBrowserGameAssemblyForPublishing(string configuration, CancellationToken cancellationToken)
+    {
+        string gameProject = GetManagedGameProjectPath();
+        bool singleNode = UseSingleNodeBrowserPublish();
+        if (!BuildProjectFile(gameProject, configuration, Platform_AnyCPU, ["Build"], extraProperties: null,
+            out string? log, cancellationToken, singleNode))
+            throw new InvalidOperationException($"Browser game assembly build failed. {log}");
+        string gameAssembly = GetBrowserGameAssemblyPath(configuration);
+        if (!File.Exists(gameAssembly))
+            throw new FileNotFoundException("Browser game build did not produce its exact managed target.", gameAssembly);
+        GameCSProjLoader.Unload("GAME");
+        GameCSProjLoader.LoadFromPath("GAME", gameAssembly);
+        Assembly loaded = GameCSProjLoader.GetLoadedAssembly("GAME")
+            ?? throw new InvalidOperationException("Browser game build did not load its compiled assembly.");
+        using FileStream stream = File.OpenRead(gameAssembly);
+        using PEReader image = new(stream);
+        MetadataReader reader = image.GetMetadataReader();
+        if (loaded.ManifestModule.ModuleVersionId != reader.GetGuid(reader.GetModuleDefinition().Mvid))
+            throw new InvalidOperationException("Browser game build loaded an assembly different from its compiled target.");
+    }
+
+    private static bool UseSingleNodeBrowserPublish()
+        => string.Equals(Environment.GetEnvironmentVariable("XRE_BROWSER_PUBLISH_SINGLE_MSBUILD_NODE"),
+            "1", StringComparison.Ordinal);
+
     /// <summary>Publishes the browser application with the existing child-MSBuild logging path.</summary>
     internal string PublishBrowserApplication(string configuration, string publishDirectory, bool includePdbFiles,
         CancellationToken cancellationToken = default)
@@ -15,11 +49,13 @@ internal partial class CodeManager
         string project = ResolveBrowserProject();
         Directory.CreateDirectory(publishDirectory);
         string gameProject = GetManagedGameProjectPath();
-        string gameAssembly = GetBinaryPath(configuration, Platform_AnyCPU);
+        string gameAssembly = GetBrowserGameAssemblyPath(configuration);
         if (!File.Exists(gameProject) || !File.Exists(gameAssembly))
             throw new FileNotFoundException("Build the portable game assembly before browser publishing.", gameAssembly);
         BrowserGameAssemblyAudit.Validate(gameAssembly);
-        string? bootstrapTypeName = ProjectBuilder.ResolveGameLaunchBootstrapTypeName(configuration, Platform_AnyCPU);
+        Assembly activeGame = GameCSProjLoader.GetLoadedAssembly("GAME")
+            ?? throw new InvalidOperationException("The browser game assembly is not loaded for bootstrap inspection.");
+        string? bootstrapTypeName = ProjectBuilder.ResolveGameLaunchBootstrapTypeName(activeGame);
         string registrationSource = WriteBrowserGameRegistration(gameAssembly, publishDirectory, bootstrapTypeName);
         Dictionary<string, string?> properties = new()
         {
@@ -31,8 +67,11 @@ internal partial class CodeManager
             ["PublishTrimmed"] = "false",
             ["RunAOTCompilation"] = "false"
         };
+        // Restricted local task hosts can request a single MSBuild node without
+        // changing the ordinary publisher's build scheduling.
+        bool singleNode = UseSingleNodeBrowserPublish();
         if (!BuildProjectFile(project, configuration, Platform_AnyCPU, ["Publish"], properties, out string? log,
-            cancellationToken))
+            cancellationToken, singleNode))
         {
             Debug.Out(log ?? "Browser publish produced no diagnostics.");
             throw new InvalidOperationException($"Browser application publish failed. {log}");
@@ -82,7 +121,7 @@ internal partial class CodeManager
         return path;
     }
 
-    private static string ResolveBrowserProject()
+    internal static string ResolveBrowserProject()
     {
         foreach (string start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
         {

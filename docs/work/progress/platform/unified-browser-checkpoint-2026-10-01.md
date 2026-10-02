@@ -7,23 +7,23 @@ earlier limitations.
 
 ## Current checkpoint
 
-The reviewed service/audio/frame-clock implementation passes the integrated
+The reviewed authored-runtime/metadata/readback/shadow implementation passes the integrated
 Editor, Server, VRClient, desktop WebGPU, nineteen portable compile rows and
 fresh interpreter/native-Jolt browser publication with zero compiler warnings
-or errors. **55 of 110 named checklist items are complete.** The preceding
-published implementation at `4a801dba8aa7543b79b6c4fc44506a0115dcb54d` also passed
-those builds, and its genuine Windows Editor CLI published successfully in
-[run 37005875660](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37005875660).
-Its game check stops at the pause capture: the timed canvas capture is still
-green, while the subsequent full-page failure capture shows the yellow paused
-HUD. Input/presentation timing is under investigation; resize is not reached.
-The baseline browser/rendering/physics job passes.
+or errors. **57 of 110 named checklist items are complete.** The preceding
+published implementation at `0078867c7327e2a50605a655207854319045e2bb` has now
+passed genuine Windows Editor CLI publication and exact-bundle RollingBall
+Chromium qualification in
+[run 37024792567](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37024792567).
+Its inspected pause/resume and both resized captures show real game/HUD output;
+the prior border-only false positive is absent. All three jobs for this exact
+commit are now successful, including the baseline browser/audio checks.
 
 The preceding exact-bundle run already displays the real RollingBall course,
 ball, obstacles and authored HUD, including the mapped pause/resume transition.
 Inspection also exposed a blank resize capture despite a green check. The
 current source corrects output-generation readiness and requires real interior
-game/HUD pixels; that stricter resize result remains unqualified. See
+game/HUD pixels; both stricter resize cases now pass with inspected game output. See
 [the evidence correction](#game-input-acceptance-and-resize-evidence-correction-2026-10-02).
 
 Current source also includes lit textured surfaces, bounded sky/local-shadow/
@@ -31,7 +31,7 @@ post-process profiles, GPU deformation, engine UI and authored font cooking,
 shared touch controls, composed audio activation and the browser platform leaf.
 These implementations have different acceptance boundaries; compiled source
 does not imply that every profile has rendered correctly. Full textured and
-animated authored-world play, queued audio output acceptance, broader recovery/networking,
+animated authored-world play, audible-device audio acceptance, broader recovery/networking,
 allocation/size budgets, desktop capture parity and physical-device acceptance
 remain open. The frozen reference runtime remains until its parity gate is met.
 
@@ -737,3 +737,82 @@ A separate startup audit proves Development-mode assembly scans still execute
 for replication metadata and type redirects. Reusing the existing published
 metadata builder with a verified in-memory browser install is the next bounded
 startup cut; no native constructor side effect was observed by that audit.
+
+### Immutable render-cache reconciliation (2026-10-02)
+
+The source/evidence audit of compiled commit `0078867c` confirms the admitted
+C# raster state and complete retained draw keys, plus bounded draw/layout/
+bind-group/pipeline caches. This closes the immutable render-state cache row
+and brings the current count to 56/110. It does not claim missing image-readback,
+material generation/batching, whole-frame error-scope or allocation acceptance.
+
+### Exact-bundle RollingBall resize and pause acceptance (2026-10-02)
+
+Commit `0078867c7327e2a50605a655207854319045e2bb` passes genuine Windows Editor
+publication and the exact-bundle Linux Chromium game job in
+[run 37024792567](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37024792567).
+The [capture artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37024792567/artifacts/11235184430)
+was downloaded, its SHA-256 verified, and both resized plus pause/resume PNGs
+inspected. Resized captures contain the actual lit course, ball, obstacles and
+green authored HUD: 197,647 and 237,031 accepted interior colorful pixels, with
+2,995 and 3,646 green pixels. They are not the earlier CSS-border-only images.
+Pause shows the yellow status bar; resume restores green. Two fresh browser
+contexts pass, with no accepted browser console errors or outside requests.
+Tilt/reset image changes still are not independent state traces of each callback.
+The software adapter establishes this bounded rendering/game result, not physical
+performance, complete gameplay semantics, all device lifecycles or desktop parity.
+
+### Queued-loop browser sample acceptance (2026-10-02)
+
+The same `0078867c` run passes all three jobs. Its
+[software-browser artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37024792567/artifacts/11236861043)
+was downloaded with verified archive SHA-256. The OfflineAudioContext report
+records zero maximum PCM error in all six cases: the two retained non-looping
+cases, continuous queue loops at rates one/two, and near-end loop disable at
+rates one/two. Loop playback starts at frame 256; finite tails end at frames
+5,056 and 2,656 respectively. This qualifies actual browser sample scheduling,
+not audible device output, gestures, spatialization or codec support. All
+existing renderer/asset/Jolt checks also pass. The software GTAO/bloom sweep
+took 19.7 minutes; broad qualification continues at coherent milestones while
+independent implementation proceeds, rather than gating each source edit.
+
+### Authored-runtime, metadata and GPU services milestone (2026-10-02)
+
+The coherent frozen source builds Editor, Server, VRClient, WebGPU, the portable
+RenderingParity game, all nineteen browser compile rows, and a fresh native-Jolt
+WASM publish with zero compiler warnings/errors. Logs are under the active run's
+`authored-runtime-gate/` directory. This closes published startup metadata and
+brings the checklist to 57/110. The remaining 53 rows retain their own full-wording
+implementation or acceptance requirements.
+
+- [Published metadata](browser-published-metadata-2026-10-02.md) is hash-owned by
+  the activated bundle and installed before engine/game startup. The genuine
+  Editor method chain publishes the canonical RollingBall project, and its exact
+  output passes three headless WASM start/120-step/stop cycles. The local route
+  calls compiled production methods; the separate approved Windows lane runs
+  the actual Editor CLI
+- The saved RenderingParity world now preserves its game mode, camera/pawn,
+  exact scene skeleton/root aliases, shared geometry, named morph and four mapped
+  material roles through real generic hydration and Editor save/cook/package.
+  Authored YAML and RollingBall codec bytes are unchanged. The generic derived
+  transform cache needs a matching-engine recook; see the
+  [construction investigation](../../investigations/rendering/authored-rendering-world-construction-2026-10-02.md)
+- [Async canvas and depth readbacks](browser-webgpu-readback-2026-10-02.md) use
+  accepted producer tickets, bounded copies, async error/map completion and
+  lifecycle cancellation. [GPU luminance](browser-webgpu-luminance-2026-10-02.md)
+  adds a hash-owned reduction kernel; legacy mip-generation and sRGB cases
+  remain explicit unsupported contracts
+- [Shadow quality](browser-webgpu-shadow-quality-2026-10-02.md) preserves authored
+  dimensions while capping browser allocation, and reuses only unchanged,
+  supported static casters tied to exact accepted target production
+- The shared shader preparation cooks 42 artifacts, nine pipeline entries and
+  both packed-skinning and luminance compute entries. Packaging succeeds with
+  84 assets. Source/ABI cooking is not actual GPU compilation or pixel proof
+
+The milestone workflow retains RollingBall's checks and separately publishes
+RenderingParity through the genuine Windows Editor CLI, then runs each exact
+bundle in Linux Chromium. The new world's broad capture checks cover visible
+surfaces, motion, pause/reset, resize and two fresh contexts. Manifest presence
+and moving pixels alone cannot prove mapped-lighting semantics or GPU skinning
+execution; those acceptance claims remain open. No new GPU readback, luminance,
+shadow-cadence or authored-world rendering result is claimed before CI evidence.

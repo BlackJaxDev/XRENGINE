@@ -500,16 +500,22 @@ public partial class XRMesh : XRAsset
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
-        if (propName == nameof(BlendshapeNames) && field is string[] names)
+        if (propName == nameof(BlendshapeNames))
+            RebuildBlendshapeNameLookup();
+    }
+
+    private void RebuildBlendshapeNameLookup()
+    {
+        // This is derived construction metadata, not a notification side effect.
+        // Generic graph hydration suppresses notifications across nested meshes.
+        string[] names = BlendshapeNames ?? [];
+        _blendshapeNameToIndex.Clear();
+        for (int i = 0; i < names.Length; i++)
         {
-            _blendshapeNameToIndex.Clear();
-            for (int i = 0; i < names.Length; i++)
-            {
-                if (!string.IsNullOrEmpty(names[i]) && !_blendshapeNameToIndex.ContainsKey(names[i]))
-                    _blendshapeNameToIndex.Add(names[i], i);
-                else
-                    XREngine.Debug.MeshesWarning($"Duplicate or empty blendshape name '{names[i]}' found in mesh {Name}");
-            }
+            if (!string.IsNullOrEmpty(names[i]) && !_blendshapeNameToIndex.ContainsKey(names[i]))
+                _blendshapeNameToIndex.Add(names[i], i);
+            else
+                XREngine.Debug.MeshesWarning($"Duplicate or empty blendshape name '{names[i]}' found in mesh {Name}");
         }
     }
 
@@ -557,6 +563,9 @@ public partial class XRMesh : XRAsset
 
     private void OnBuffersAssigned()
     {
+        // Runtime clones can copy authored names under graph suppression too.
+        // Refresh this cold metadata alongside the existing convenience buffers.
+        RebuildBlendshapeNameLookup();
         // After YAML deserialization, we want to ensure the convenience buffer references
         // are hydrated from the serialized buffer collection.
         PositionsBuffer = Buffers.GetValueOrDefault(ECommonBufferType.Position.ToString());

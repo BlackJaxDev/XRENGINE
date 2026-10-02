@@ -133,6 +133,13 @@ namespace XREngine.Core.Files
             }
         }
 
+        /// <summary>Returns registered type identities for a cooker's exact assembly-ownership boundary.</summary>
+        public static Type[] SnapshotRegisteredTypes()
+        {
+            lock (Sync)
+                return [.. Entries.Keys.OrderBy(static type => type.AssemblyQualifiedName, StringComparer.Ordinal)];
+        }
+
         internal static bool TryResolveByFullName(string fullTypeName, bool ignoreCase, out Type? assetType)
         {
             StringComparison comparison = ignoreCase

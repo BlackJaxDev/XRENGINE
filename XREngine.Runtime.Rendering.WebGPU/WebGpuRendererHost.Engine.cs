@@ -65,6 +65,7 @@ public sealed partial class WebGpuRendererHost
         finally
         {
             SetField(ref _engineRecording, false, publishNotifications: false);
+            _engineProducedTextures.Clear();
             ArmPendingEngineFences(submitted);
             for (int i = 0; i < _engineDeferredReleases.Count; i++)
                 RetireEngineResource(_engineDeferredReleases[i]);
@@ -240,7 +241,8 @@ public sealed partial class WebGpuRendererHost
         };
 
     public override ScreenshotReadbackStatus GetScreenshotReadbackStatus()
-        => new() { Backend = "WebGPU", Supported = false, NonBlockingGpuWait = true };
+        => new() { Backend = "WebGPU", Supported = TryDescribeFrameOutput(out _),
+            NonBlockingGpuWait = true, QueueCapacity = 16 };
 
     public override void PrepareForApiObjectTeardown()
     {

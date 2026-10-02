@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "publishedMetadata", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -33,6 +33,20 @@ public static partial class BrowserContentPackageBuilder
         string? startupSettings = recipe.TryGetProperty("startupSettings", out JsonElement settings) ? EngineAssetPath(settings) : null;
         Require(startupSettings is null || byPath.ContainsKey(startupSettings), "Startup settings are absent from the asset catalog.");
         Require(byPath.ContainsKey(startupWorld), "Startup world is absent from the engine asset catalog.");
+        string? publishedMetadata = recipe.TryGetProperty("publishedMetadata", out JsonElement metadataValue)
+            ? EngineAssetPath(metadataValue) : null;
+        if (publishedMetadata is not null)
+        {
+            Require(publishedMetadata == "/engine/Metadata/AotRuntimeMetadata.bin" && byPath.ContainsKey(publishedMetadata),
+                "Published runtime metadata is absent from the engine catalog.");
+            JsonElement metadataAsset = byPath[publishedMetadata];
+            Require(metadataAsset.GetProperty("encoding").GetString() == "cooked-binary"
+                && (metadataAsset.GetProperty("type").GetString() == "XREngine.AotRuntimeMetadata, XREngine.Data"
+                    || metadataAsset.GetProperty("type").GetString()?.StartsWith(
+                        "XREngine.AotRuntimeMetadata, XREngine.Data,", StringComparison.Ordinal) == true)
+                && dependencies[publishedMetadata].Length == 0,
+                "Published runtime metadata must be a standalone AotRuntimeMetadata payload.");
+        }
         string? defaultUiFont = recipe.TryGetProperty("defaultUiFont", out JsonElement fontValue) ? EngineAssetPath(fontValue) : null;
         if (defaultUiFont is not null)
         {
@@ -230,14 +244,16 @@ public static partial class BrowserContentPackageBuilder
             }
         }
         List<object> computeArtifacts = [];
+        HashSet<string> computeKernels = new(StringComparer.Ordinal);
         if (recipe.TryGetProperty("computeArtifacts", out JsonElement computeValues))
         {
-            Require(computeValues.ValueKind == JsonValueKind.Array && computeValues.GetArrayLength() <= 1,
-                "Compute artifact catalog exceeds one kernel.");
+            Require(computeValues.ValueKind == JsonValueKind.Array && computeValues.GetArrayLength() <= 2,
+                "Compute artifact catalog exceeds two kernels.");
             foreach (JsonElement compute in computeValues.EnumerateArray())
             {
                 Members(compute, "kernel", "descriptorIdentity");
-                string kernel = Choice(compute, "kernel", "packed-skinning");
+                string kernel = Choice(compute, "kernel", "packed-skinning", "luminance-reduction");
+                Require(computeKernels.Add(kernel), "Compute artifact kernels must be unique.");
                 JsonElement identityValue = compute.GetProperty("descriptorIdentity");
                 Require(identityValue.ValueKind == JsonValueKind.String, "Compute artifact identity must be a string.");
                 string identity = identityValue.GetString()!;
@@ -245,17 +261,18 @@ public static partial class BrowserContentPackageBuilder
                     "Compute artifact identity must be a lowercase SHA-256 descriptor hash.");
                 if (!shaderDescriptors.TryGetValue(identity, out JsonElement descriptor))
                     throw new InvalidDataException("Compute artifact references an absent shader descriptor.");
+                bool skinning = kernel == "packed-skinning";
                 Require(descriptor.ValueKind == JsonValueKind.Object
-                    && descriptor.GetProperty("pass").GetString() == "skinning"
+                    && descriptor.GetProperty("pass").GetString() == (skinning ? "skinning" : "luminance-reduction")
                     && descriptor.GetProperty("target").GetString() == "WebGPUWgsl"
                     && descriptor.GetProperty("semanticSchemaIdentity").GetString() == "xrengine.engine.compute.v1"
                     && descriptor.TryGetProperty("entryPoints", out JsonElement entries) && entries.ValueKind == JsonValueKind.Object
-                    && entries.EnumerateObject().Count() == 1 && entries.GetProperty("compute").GetString() == "skin"
+                    && entries.EnumerateObject().Count() == 1 && entries.GetProperty("compute").GetString() == (skinning ? "skin" : "reduce")
                     && descriptor.TryGetProperty("workgroupSize", out JsonElement workgroup) && workgroup.ValueKind == JsonValueKind.Array
-                    && workgroup.GetArrayLength() == 3 && workgroup[0].GetInt32() == 64
+                    && workgroup.GetArrayLength() == 3 && workgroup[0].GetInt32() == (skinning ? 64 : 256)
                     && workgroup[1].GetInt32() == 1 && workgroup[2].GetInt32() == 1
                     && !descriptor.TryGetProperty("materialVariant", out _),
-                    "Compute artifact descriptor must be the matching packed skinning WebGPU program.");
+                    "Compute artifact descriptor must match the selected engine WebGPU kernel.");
                 computeArtifacts.Add(new { kernel, descriptorIdentity = identity });
             }
         }
@@ -268,6 +285,8 @@ public static partial class BrowserContentPackageBuilder
             manifestModel.Add("materialVariants", materialVariants);
         if (defaultUiFont is not null)
             manifestModel.Add("defaultUiFont", defaultUiFont);
+        if (publishedMetadata is not null)
+            manifestModel.Add("publishedMetadata", publishedMetadata);
         if (pipelineArtifacts.Count != 0)
             manifestModel.Add("pipelineArtifacts", pipelineArtifacts);
         if (computeArtifacts.Count != 0)

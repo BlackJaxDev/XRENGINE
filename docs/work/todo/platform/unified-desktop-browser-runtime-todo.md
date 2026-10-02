@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **53 of 110 items are checked; 57 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **57 of 110 items are checked; 53 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
 
 Created: 2026-09-29. Updated: 2026-10-02.
 
@@ -20,24 +20,24 @@ The editor stays a desktop application and gains an honest browser publish targe
 
 ## Current State (2026-10-02)
 
-The published source at `4a801dba8aa7543b79b6c4fc44506a0115dcb54d` passes
-Editor, Server, VRClient, desktop WebGPU, all nineteen portable compile rows and
-fresh interpreter/native-Jolt browser publication with zero compiler warnings or
-errors. The count is **53 of 110 named items complete, 57 open**. The genuine
-Windows Editor CLI also passes for this snapshot in
-[run 37005875660](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37005875660).
-The game check stops at the pause capture before resize: the timed canvas capture
-is green, while the subsequent full-page failure capture shows the yellow paused
-HUD. Presentation/capture timing remains under investigation; the baseline
-browser/rendering/physics job passes.
+The current coherent source passes Editor, Server, VRClient, desktop WebGPU,
+RenderingParity, all nineteen portable compile rows and fresh interpreter/native-
+Jolt browser publication with zero compiler warnings or errors. The count is
+**57 of 110 named items complete, 53 open**. Published metadata is now installed
+before engine/game startup, and the actual metadata-bearing RollingBall bundle
+passes three headless WebAssembly start/step/stop cycles. The authored textured,
+skeletal/morph world passes its real generic hydration and Editor cook/package
+path. Its GPU deformation and mapped-lighting pixels still need qualification.
 
-The preceding exact Editor bundle renders the real RollingBall course, ball,
-obstacles and authored HUD in Chromium/SwiftShader. The mapped pause/resume HUD
-transition is visible. Capture review found that the first resize check had
-accepted only a CSS outline despite a green job. Current source corrects
-output-generation readiness and strengthens that existing check to require
-interior game/HUD pixels. Neither generic image changes nor a green job alone
-establish full gameplay or desktop parity. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md)
+The preceding published commit `0078867c7327e2a50605a655207854319045e2bb` passes
+all three existing jobs in
+[run 37024792567](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37024792567).
+The genuine Windows Editor bundle renders the real RollingBall course, ball,
+obstacles and authored HUD in Chromium/SwiftShader. Inspected captures verify
+pause/resume and both resizes; the earlier CSS-outline false positive is absent.
+All six offline queued-audio cases have zero maximum sample error. These bounded
+results do not establish full gameplay, audible-device, performance or desktop
+parity. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md)
 records exact captures, corrections, source groups and their separate limits.
 
 | Area | Current evidence and remaining boundary |
@@ -45,7 +45,7 @@ records exact captures, corrections, source groups and their separate limits.
 | Shared host/platform | Real `Engine`, `RuntimeWorld`, game assemblies, caller-thread jobs/frame callbacks and the browser platform leaf compose successfully. Surface generations, timing resets and scoped pipeline selection are implemented; desktop pacing and the full blocking-site closure remain open. |
 | Game and publishing | The unchanged authored RollingBall project passes genuine Windows Editor CLI publication and renders through the shipping browser player. Portable gameplay, repeated published-WASM lifecycle and scoped rollback/retry pass. Broader gameplay-state, resize and desktop comparison remain acceptance work. |
 | Rendering | Bounded shared lit/HDR/tonemap, directional shadow and debug-overlay profiles have known-value Chromium evidence. Textured PBR, GPU deformation, sky/local shadows, coverage, engine UI/text and bounded post effects are implemented and compiled/cooked; their complete production and authored-world qualification remains open. |
-| Assets/input/audio | Hash-verified shared cooked assets, font atlases, mapped transient input, touch controls, spatial/queued audio and composed activation are implemented. Default RollingBall cache v5 bytes remain identical; explicit required audio uses the backward-readable v6 extension. Queued-stream automatic looping, complete I/O closure, broader codec/IME/accessibility and device checks remain open. |
+| Assets/input/audio | Hash-verified shared cooked assets, font atlases, mapped transient input, touch controls, spatial/queued audio and composed activation are implemented. Default RollingBall cache v5 bytes remain identical; explicit required audio uses the backward-readable v6 extension. Queued-stream automatic looping and offline sample correctness pass; complete I/O closure, broader codec/IME/accessibility and device checks remain open. |
 | Physics/networking | Native browser Jolt lifecycle/contact/query checks pass; a bounded matched native/WASM micro-scene has tolerance evidence. Canonical-game physics traces, physical-device budgets and real-server throttling/disconnect qualification remain open. |
 | Toolchain/cleanup | The approved SDK/workload and Slang pins are retained, path casing is corrected, and clean Linux/Windows publication works. The separate browser reference runtime stays frozen until genuine parity permits retirement. |
 
@@ -102,7 +102,7 @@ was at most `4.3e-8` radians. This is not a full canonical-game physics trace,
 rendered browser play, or a universal determinism guarantee; UR07.03 and U3
 acceptance remain open.
 
-The checked implementation/approved-decision rows remain `UR01.01`, `UR01.04`, `UR01.06`, `UR02.02`, `UR03.01`, `UR05.01`, `UR06.03`, `UR06.04`, `UR07.01`, `UR07.02`, `UR07.06`, `UR07.07`, `UR08.04`, `UR10.01`, `UR10.04`, `UR10.06`, `UR10.07`, `UR11.03`, `UR15.01`, `UR15.02`; the newer partial runtime and renderer evidence does not itself check additional rows.
+At the earlier lit-only checkpoint, the checked implementation/approved-decision rows were `UR01.01`, `UR01.04`, `UR01.06`, `UR02.02`, `UR03.01`, `UR05.01`, `UR06.03`, `UR06.04`, `UR07.01`, `UR07.02`, `UR07.06`, `UR07.07`, `UR08.04`, `UR10.01`, `UR10.04`, `UR10.06`, `UR10.07`, `UR11.03`, `UR15.01`, `UR15.02`; the newer partial runtime and renderer evidence does not itself check additional rows.
 Static registrations are supplied by the unified C# path; frozen reference
 Python scripts remain for the separately gated retirement work. Canonical
 RollingBall world/gameplay/Jolt proof uses published WASM under Node, not a
@@ -110,11 +110,10 @@ rendered game: five-cycle callbacks, teardown and late BeginPlay failure/retry
 pass, but the diagnostic package does not exercise Editor BrowserWebGPU
 publishing and initializes no GPU.
 
-The remaining 57 rows are still open; current source progress and partial live
-qualification do not change the checked-row count. Shadow-enabled rendering,
-engine UI, the full production tier, editor-published playable RollingBall,
-memory/performance bounds, physical-device checks, recovery and broader
-desktop/browser/device verification remain open.
+The current remaining 53 rows require further implementation or their stated
+acceptance evidence. Full production shader coverage, authored textured/deformed
+world parity, memory/performance bounds, physical-device checks, recovery and
+broader desktop/browser/device verification remain open.
 The detailed [checkpoint record](../../progress/platform/unified-browser-checkpoint-2026-10-01.md)
 preserves evidence and limitations.
 
@@ -215,6 +214,33 @@ acceptance remain pending. Browser startup still takes Development-mode assembly
 scans for replication and type redirects; the separate published-metadata audit
 and implementation remains open under UR01.03.
 
+### Reconciled immutable render caches (2026-10-02)
+
+A source/evidence audit of compiled commit `0078867c` closes UR04.02: the engine
+tracks admitted raster state in C#, keys retained draws by material/state/target
+revision, and bounds draw variants, resource layouts and bind-group/pipeline
+caches. The JavaScript cache executes the resolved immutable descriptors; it does
+not select the engine's material or raster policy. The current count is
+**56 checked and 54 open**. This does not close remaining abstract renderer
+operations, shader-generation coverage, actual batching, error-scope coverage or
+whole-frame allocation verification.
+
+### Published startup and authored-runtime milestone (2026-10-02)
+
+The startup audit and verified metadata install now satisfy UR01.03, bringing
+the count to **57 checked and 53 open**. Actual browser-output assemblies supply
+the type table before engine assets, game registration or world hydration.
+Premature Development discovery, mismatched active game types and replacement
+metadata fail explicitly. Desktop service boundaries remain composed through
+leaves. The genuine publisher and three exact-bundle headless WASM lifecycles
+pass, followed by the coherent full build gate with zero warnings/errors. See
+[the metadata record](../../progress/platform/browser-published-metadata-2026-10-02.md).
+The same compiled group adds the authored textured/deformed world and repairs
+its derived transform identity cache, bounded final-canvas/depth readbacks,
+GPU luminance reduction and conservative shadow sizing/reuse. These partial
+renderer changes do not close their broader rows before all contract and live
+acceptance requirements are satisfied.
+
 ## Build Gate
 
 Run narrow compile/cook checks during coherent implementation groups, and the full gate at end-to-end milestones and before checking an `impl` item. Fix failures caused by the change; list unrelated failures separately instead of working around them.
@@ -255,7 +281,7 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-As of this 2026-10-02 update, 53 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+As of this 2026-10-02 update, 57 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -361,7 +387,7 @@ Shared projects already target `net10.0` with whole-project checks. Depends on t
   - the browser leaves: WebGPU renderer, browser platform, Jolt, Web Audio, browser input, fetch asset source, WebSocket transport.
 
   Unavailable required services fail by name.
-- [ ] **UR01.03** `impl` Audit static constructors, module initializers, and reflection scans reachable at browser startup. Qualify the implemented published-metadata lookup and desktop service boundaries, then move any remaining browser-reachable desktop initialization into leaves.
+- [x] **UR01.03** `impl` Audit static constructors, module initializers, and reflection scans reachable at browser startup. Qualify the implemented published-metadata lookup and desktop service boundaries, then move any remaining browser-reachable desktop initialization into leaves.
 - [x] **UR01.04** `impl` Generate static registrations for browser component, transform, serializer, and module registration with the mechanism chosen in D6. Retire the branch's Python registration generator.
 - [ ] **UR01.05** `verify` Load real YAML/MemoryPack assets in the interpreter and round-trip representative worlds, prefabs, and components.
 - [x] **UR01.06** `impl` Boot a real `XRWorld` fetched from a cooked bundle through `RuntimeWorld` and the world host, replacing the host's use of `RuntimeSceneHost`. Construct scenes, the game mode, pawns, and components; run fixed and variable updates; report lifecycle state to the page. Depends on UR17.
@@ -427,7 +453,7 @@ Depends on UR17.
   - [ ] Framebuffers and render buffers: offscreen targets and resolves work.
   - [ ] Materials and uniform data: the engine's lit material renders.
   - [ ] Compute dispatch.
-- [ ] **UR04.02** `impl` Track GL-shaped state in C# and resolve it into cached immutable render pipelines, layouts, and bind groups with complete keys and bounded caches, following the Vulkan backend's approach.
+- [x] **UR04.02** `impl` Track GL-shaped state in C# and resolve it into cached immutable render pipelines, layouts, and bind groups with complete keys and bounded caches, following the Vulkan backend's approach.
 - [ ] **UR04.03** `impl` Record commands into reusable C# arenas and flush one packet per frame to the JavaScript executor. Reuse the branch's resource, command, readback, usage-scope, limits, and pipeline-cache executors. Move the policy logic in `browser-render-pipeline.js` into C#.
 - [ ] **UR04.04** `impl` Clean up the renderer contract for non-blocking backends:
   - neutral `RuntimeImage` readbacks (implemented shared contract; browser renderer support still required);

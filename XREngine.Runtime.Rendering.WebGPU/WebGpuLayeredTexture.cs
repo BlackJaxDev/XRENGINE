@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Owns one engine array or cube image and its generation-scoped subresource views.</summary>
-public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T> where T : XRTexture
+public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuProducedTexture where T : XRTexture
 {
     private readonly record struct SampledViewKey(int BaseMip, int MipCount, bool Depth);
     private readonly record struct SamplerState(string U, string V, string W, string Min, string Mag,
@@ -57,6 +57,10 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T> where T :
     public uint Height => AuthoredHeight;
     public uint SampleCount => (uint)AuthoredSamples;
     public override nint GetHandle() => _handle;
+
+    internal bool IsCurrentGpuAllocationForCopy => _handle != 0 && !_invalidated && !IsRetired && !Data.IsDestroyed &&
+        _width == AuthoredWidth && _height == AuthoredHeight && _layers == AuthoredLayers &&
+        _mips == AuthoredMips && _samples == AuthoredSamples && _format == AuthoredFormat;
 
     protected void Invalidate() => _invalidated = true;
     private void OnDataChanged(object? sender, IXRPropertyChangedEventArgs change)
@@ -254,6 +258,38 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T> where T :
 
     internal bool WasRecordedInFrame(uint frameSequence) => _lastRecordedFrame == frameSequence;
 
+    private uint _lastProducedFrame;
+    private uint _lastCommittedProducedFrame;
+    private ulong _productionTicket;
+    private ulong _committedProductionTicket;
+
+    public void MarkProduced()
+    {
+        MarkRecorded();
+        if (_productionTicket == ulong.MaxValue)
+            throw new InvalidOperationException("WebGPU.Texture.ProductionTicketExhausted: replace the renderer.");
+        SetField(ref _productionTicket, _productionTicket + 1, publishNotifications: false);
+        SetField(ref _lastProducedFrame, Renderer.EngineFrameSequence, publishNotifications: false);
+        Renderer.RegisterProducedTexture(this);
+    }
+
+    public void CommitProducedFrame(uint frameSequence)
+    {
+        if (_lastProducedFrame == frameSequence)
+        {
+            SetField(ref _lastCommittedProducedFrame, frameSequence, publishNotifications: false);
+            SetField(ref _committedProductionTicket, _productionTicket, publishNotifications: false);
+        }
+    }
+
+    public bool WasProducedInFrame(uint frameSequence) => _lastProducedFrame == frameSequence;
+
+    public bool HasCommittedProduction
+        => IsGenerated && _lastProducedFrame != 0 && _lastProducedFrame == _lastCommittedProducedFrame &&
+            _productionTicket == _committedProductionTicket;
+
+    public ulong ProductionTicket => _productionTicket;
+
     public override void Destroy()
     {
         if (_handle == 0 && _samplerHandle == 0) return;
@@ -267,6 +303,9 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T> where T :
         Renderer.RetireEngineResourceAfterFrame(_handle);
         SetField(ref _handle, 0);
         SetField(ref _lastRecordedFrame, 0u);
+        SetField(ref _lastProducedFrame, 0u);
+        SetField(ref _lastCommittedProducedFrame, 0u);
+        SetField(ref _committedProductionTicket, 0u);
         _invalidated = true;
     }
 

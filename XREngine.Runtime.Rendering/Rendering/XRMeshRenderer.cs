@@ -508,7 +508,9 @@ namespace XREngine.Rendering
         /// <summary>
         /// Creates an unpublished renderer used solely to prepare replacement buffers. The asset
         /// cache deferral keeps the staging owner detached; only child buffers created while the
-        /// caller's render-publication scope is open join that transaction.
+        /// caller's render-publication scope is open join that transaction. Callers suppress
+        /// registration during construction so the temporary owner's metadata containers do not
+        /// join an enclosing batch that will outlive their failed-construction cleanup.
         /// </summary>
         private XRMeshRenderer(bool detachedStagingRenderer)
             : base(deferObjectCachePublication: true)
@@ -1745,10 +1747,14 @@ namespace XREngine.Rendering
             XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
                 targetBuffers.CapturePreparationTicket(BlendshapeBufferState.CollectionKeys);
             int expectedSettingsRevision = CurrentSettingsRevision;
-            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            XRMeshRenderer staging;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
             {
-                _mesh = sourceMesh,
-            };
+                staging = new(detachedStagingRenderer: true)
+                {
+                    _mesh = sourceMesh,
+                };
+            }
             BlendshapeBufferState prepared;
             try
             {
@@ -2954,10 +2960,14 @@ namespace XREngine.Rendering
             XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
                 targetBuffers.CapturePreparationTicket(BoneBufferState.CollectionKeys);
             int expectedSettingsRevision = CurrentSettingsRevision;
-            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            XRMeshRenderer staging;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
             {
-                _mesh = sourceMesh,
-            };
+                staging = new(detachedStagingRenderer: true)
+                {
+                    _mesh = sourceMesh,
+                };
+            }
             BoneBufferState prepared;
             try
             {
@@ -3989,14 +3999,18 @@ namespace XREngine.Rendering
             XRMesh.BufferCollection targetBuffers = Buffers;
             XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
                 targetBuffers.CapturePreparationTicket(MeshDeformBufferState.CollectionKeys);
-            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            XRMeshRenderer staging;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
             {
-                _mesh = targetMesh,
-                _deformMeshRenderer = deformer,
-                _meshDeformInfluences = influences,
-                _maxMeshDeformInfluences = maxInfluences,
-                _optimizeMeshDeformToVec4 = optimizeToVec4,
-            };
+                staging = new(detachedStagingRenderer: true)
+                {
+                    _mesh = targetMesh,
+                    _deformMeshRenderer = deformer,
+                    _meshDeformInfluences = influences,
+                    _maxMeshDeformInfluences = maxInfluences,
+                    _optimizeMeshDeformToVec4 = optimizeToVec4,
+                };
+            }
             MeshDeformBufferState prepared;
             try
             {

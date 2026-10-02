@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -7,8 +8,92 @@ using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.WebGPU;
 
-public sealed partial class WebGpuRendererHost
+public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
 {
+    private LightComponent? _authorizedDirectionalShadowLight;
+    private LightComponent? _authorizedSpotShadowLight;
+    private LightComponent? _authorizedPointShadowLight;
+    private XRTexture? _authorizedDirectionalShadowTexture;
+    private XRTexture? _authorizedSpotShadowTexture;
+    private XRTexture? _authorizedPointShadowTexture;
+
+    public void AuthorizeShadowReuse(LightComponent light, XRTexture texture)
+    {
+        switch (light)
+        {
+            case DirectionalLightComponent:
+                _authorizedDirectionalShadowLight = light;
+                _authorizedDirectionalShadowTexture = texture;
+                break;
+            case SpotLightComponent:
+                _authorizedSpotShadowLight = light;
+                _authorizedSpotShadowTexture = texture;
+                break;
+            case PointLightComponent:
+                _authorizedPointShadowLight = light;
+                _authorizedPointShadowTexture = texture;
+                break;
+        }
+    }
+
+    private bool CanPublishReusedShadow(LightComponent light, XRTexture texture)
+        => light switch
+        {
+            DirectionalLightComponent => ReferenceEquals(_authorizedDirectionalShadowLight, light) &&
+                ReferenceEquals(_authorizedDirectionalShadowTexture, texture),
+            SpotLightComponent => ReferenceEquals(_authorizedSpotShadowLight, light) &&
+                ReferenceEquals(_authorizedSpotShadowTexture, texture),
+            PointLightComponent => ReferenceEquals(_authorizedPointShadowLight, light) &&
+                ReferenceEquals(_authorizedPointShadowTexture, texture),
+            _ => false,
+        } && CanReuseCommittedShadow(texture);
+
+    private void ResetAuthorizedShadowReuse()
+    {
+        _authorizedDirectionalShadowLight = null;
+        _authorizedSpotShadowLight = null;
+        _authorizedPointShadowLight = null;
+        _authorizedDirectionalShadowTexture = null;
+        _authorizedSpotShadowTexture = null;
+        _authorizedPointShadowTexture = null;
+    }
+
+    public bool CanReuseCommittedShadow(XRTexture texture)
+    {
+        if (State != BrowserRendererState.Ready ||
+            !TryGetAPIRenderObject(texture, out AbstractRenderAPIObject? api))
+            return false;
+        return api switch
+        {
+            WebGpuTexture2D image => image.HasCommittedProduction,
+            WebGpuTextureCube image => image.HasCommittedProduction,
+            _ => false,
+        };
+    }
+
+    public bool WasShadowProducedInCurrentFrame(XRTexture texture)
+    {
+        if (!_engineRecording || !TryGetAPIRenderObject(texture, out AbstractRenderAPIObject? api))
+            return false;
+        return api switch
+        {
+            WebGpuTexture2D image => image.WasProducedInFrame(_engineFrameSequence),
+            WebGpuTextureCube image => image.WasProducedInFrame(_engineFrameSequence),
+            _ => false,
+        };
+    }
+
+    public ulong GetShadowProductionTicket(XRTexture texture)
+    {
+        if (!TryGetAPIRenderObject(texture, out AbstractRenderAPIObject? api))
+            return 0;
+        return api switch
+        {
+            WebGpuTexture2D image => image.ProductionTicket,
+            WebGpuTextureCube image => image.ProductionTicket,
+            _ => 0,
+        };
+    }
     private XRTexture2D? _defaultDirectionalShadow;
     private ObjectCacheOwnership? _defaultDirectionalShadowOwnership;
     private int _defaultDirectionalShadowClear;
@@ -47,13 +132,16 @@ public sealed partial class WebGpuRendererHost
     private static void ValidateDirectionalShadowLight(DirectionalLightComponent light)
     {
         int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxDirectionalShadowDimension;
-        if (light.ShadowMapResolutionWidth > qualityLimit || light.ShadowMapResolutionHeight > qualityLimit)
-            throw ShadowUnsupported($"light '{light.Name}' shadow size {light.ShadowMapResolutionWidth}x{light.ShadowMapResolutionHeight} exceeds the selected browser directional-shadow limit {qualityLimit}; authored maps are not resized implicitly");
+        (uint width, uint height) = light.GetEffectiveShadowMapResolution(
+            light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight);
+        if (width > qualityLimit || height > qualityLimit)
+            throw ShadowUnsupported($"light '{light.Name}' shadow target exceeds the selected browser directional-shadow limit {qualityLimit}");
         if (light.UseShadowAtlas || light.EnableCascadedShadows || light.ShadowMapEncoding != EShadowMapEncoding.Depth ||
             light.EnableContactShadows || light.SoftShadowMode != ESoftShadowMode.ContactHardeningPcss ||
             light.BlockerSamples != 8 || light.FilterSamples != 8 ||
-            light.ShadowMapResolutionWidth is 0 or > 2048 || light.ShadowMapResolutionHeight is 0 or > 2048)
-            throw ShadowUnsupported($"light '{light.Name}' requires non-cascaded standalone depth, PCSS 8/8, no contact shadows, and dimensions at most 2048");
+            light.ShadowMapResolutionWidth == 0 || light.ShadowMapResolutionHeight == 0 ||
+            width > 2048 || height > 2048)
+            throw ShadowUnsupported($"light '{light.Name}' requires non-cascaded standalone depth, PCSS 8/8, no contact shadows, and effective dimensions at most 2048");
         if (light.ShadowCamera is not { DepthMode: XRCamera.EDepthMode.Normal, Parameters: XROrthographicCameraParameters })
             throw ShadowUnsupported($"light '{light.Name}' requires its authored normal-Z orthographic shadow camera");
     }
@@ -89,7 +177,8 @@ public sealed partial class WebGpuRendererHost
             WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(texture, generateNow: true)!;
             // A required map is never substituted with the disabled-binding default.
             // An unready nested shadow viewport causes the complete frame to defer.
-            if (!api.WasRecordedInFrame(_engineFrameSequence)) MarkEngineDrawPending();
+            if (!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(selected, texture))
+                MarkEngineDrawPending();
             program.SetMatrix("DirectionalShadowViewProjection", selected.ShadowCamera!.ViewProjectionMatrix);
             program.SetVector4("DirectionalShadowControl", new Vector4(1, selectedIndex, 0, 0));
             program.SetVector4("DirectionalShadowBiasProjection", selected.ShadowBiasProjectionParameters);

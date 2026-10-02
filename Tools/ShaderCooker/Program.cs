@@ -263,12 +263,15 @@ internal static class Program
                 JsonObject compute = Object(computeNode, "computeArtifact");
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
                 string kernel = String(compute, "kernel");
-                Require(compute.Count == 1 && WebComputeArtifactCatalog.IsSupportedKernel(kernel) &&
-                    String(recipe, "pass") == "skinning" && entries.Count == 1 &&
-                    String(entries, "compute") == "skin" && materialVariant is null && pipelineArtifact is null &&
+                bool skinning = kernel == WebComputeArtifactCatalog.PackedSkinningKernel;
+                bool luminance = kernel == WebComputeArtifactCatalog.LuminanceReductionKernel;
+                Require(compute.Count == 1 && (skinning || luminance) &&
+                    String(recipe, "pass") == (skinning ? "skinning" : "luminance-reduction") && entries.Count == 1 &&
+                    String(entries, "compute") == (skinning ? "skin" : "reduce") &&
+                    materialVariant is null && pipelineArtifact is null &&
                     String(recipe, "semanticSchemaIdentity") == "xrengine.engine.compute.v1" &&
-                    CanonicalString(recipe["workgroupSize"]) == "[64,1,1]\n",
-                    $"{stageContext}: packed skinning requires its exact compute identity, entry, workgroup and semantic schema.");
+                    CanonicalString(recipe["workgroupSize"]) == (skinning ? "[64,1,1]\n" : "[256,1,1]\n"),
+                    $"{stageContext}: engine compute kernel requires its exact identity, entry, workgroup and semantic schema.");
                 computeArtifact = new JsonObject { ["kernel"] = kernel };
             }
         }
@@ -376,7 +379,8 @@ internal static class Program
         if (schema == 3)
         {
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(encoded, source);
-            if (computeArtifact is not null) WebComputeArtifactCatalog.ValidatePackedSkinning(artifact);
+            if (computeArtifact is not null)
+                WebComputeArtifactCatalog.ValidateKernel(String(computeArtifact, "kernel"), artifact);
         }
         return new PreparedShader(name, encoded, source, materialVariant, pipelineArtifact, computeArtifact);
     }

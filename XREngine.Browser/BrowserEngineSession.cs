@@ -157,6 +157,9 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
                 if (computeArtifacts?.TryResolve(WebComputeArtifactCatalog.PackedSkinningKernel,
                         out ShaderProgramArtifact? deformationArtifact) == true)
                     _renderer.BindMeshDeformationArtifact(deformationArtifact);
+                if (computeArtifacts?.TryResolve(WebComputeArtifactCatalog.LuminanceReductionKernel,
+                        out ShaderProgramArtifact? luminanceArtifact) == true)
+                    _renderer.BindLuminanceArtifact(luminanceArtifact);
                 _renderer.BindShaderArtifacts(shaderArtifacts, materialVariants);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
                 if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)

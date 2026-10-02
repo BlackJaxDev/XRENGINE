@@ -16,6 +16,18 @@ the world. Material semantics and parameters are retained without loading
 desktop GLSL. Hash-owned `materialVariants` metadata is validated before play;
 it does not make an absent renderer variant available.
 
+An authored world manifest declares the hash-owned
+`/engine/Metadata/AotRuntimeMetadata.bin` payload. Startup verifies and installs
+that type table before selecting Published mode, binding engine assets, running
+game registrations, or reading the cooked world. Missing metadata or an earlier
+development type-discovery scan fails by name. The type-table fingerprint is
+process-wide: a restart using the same table is supported, while different
+published type metadata requires a page reload. The fingerprint does not name
+the whole content bundle; worlds and assets keep their own hash-owned identities.
+Restricted local MSBuild hosts can set `XRE_BROWSER_PUBLISH_SINGLE_MSBUILD_NODE=1`
+to serialize the Editor's child browser game-build and browser-publish commands. Normal builds do
+not set it; the published output and failure checks are unchanged.
+
 ### Host-service composition
 
 `BrowserEngineSession` composes the real shared `Engine` on the browser event
@@ -83,6 +95,19 @@ Hosts embedding `EngineCanvasHost` can pass the same named value to `start`.
 The host asks the engine for the resolved canvas sizing policy rather than
 maintaining a separate set of quality numbers. Choose a profile before world
 startup; change it by restarting the browser world.
+
+Browser shadow targets scale to the selected directional, point, and spot
+dimension caps while keeping the light's authored resolution. The shadow
+viewport and directional texel bias use the same effective dimensions. High,
+balanced, and low refresh unchanged shadows every 1, 2, and 3 render frames;
+light binding, caster membership/transform/material identity, projection,
+output, or resource changes refresh immediately.
+Skinned, mesh-deformed, textured, coverage, and multi-instance casters refresh
+every frame; cadence reuse is reserved for unchanged static opaque color casters
+and unchanged empty caster sets.
+Only a shadow image produced by an accepted WebGPU frame can be reused. See
+[browser shadow quality](../docs/work/progress/platform/browser-webgpu-shadow-quality-2026-10-02.md)
+for the exact reuse and validation boundary.
 
 The production canvas host and `BrowserCanvasRenderTarget` belong to
 `XREngine.Runtime.Platform.Browser`; the published `engine-canvas-host.js` URL and

@@ -35,13 +35,15 @@ public partial class SpotLightComponent
         if (UseShadowAtlas || ShadowMapEncoding != EShadowMapEncoding.Depth ||
             ShadowMapStorageFormat != EShadowMapStorageFormat.R16Float || EnableContactShadows ||
             SoftShadowMode != ESoftShadowMode.ContactHardeningPcss || BlockerSamples != 8 || FilterSamples != 8 ||
-            ShadowMapResolutionWidth is 0 or > 2048 || ShadowMapResolutionHeight is 0 or > 2048)
-            throw new NotSupportedException("WebGPU.SpotShadow.ProfileUnsupported: requires standalone R16Float projected depth, PCSS 8/8, no contact shadows, and dimensions at most 2048.");
+            ShadowMapResolutionWidth == 0 || ShadowMapResolutionHeight == 0)
+            throw new NotSupportedException("WebGPU.SpotShadow.ProfileUnsupported: requires standalone R16Float projected depth, PCSS 8/8, no contact shadows, and effective dimensions at most 2048.");
     }
 
     private XRMaterial CreateCookedShadowMaterial(uint width, uint height)
     {
         ValidateCookedShadowConfiguration();
+        if (width is 0 or > 2048 || height is 0 or > 2048)
+            throw new NotSupportedException("WebGPU.SpotShadow.ResolutionUnsupported: effective dimensions must be positive and at most 2048.");
         XRTexture2D depth = CreateCookedShadowTexture(width, height, EPixelInternalFormat.DepthComponent24,
             EPixelFormat.DepthComponent, EPixelType.UnsignedInt, EFrameBufferAttachment.DepthAttachment);
         XRTexture2D projected = CreateCookedShadowTexture(width, height, EPixelInternalFormat.R16f,

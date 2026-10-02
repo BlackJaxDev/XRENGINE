@@ -38,15 +38,15 @@ public partial class PointLightComponent
         if (UseShadowAtlas || ShadowRenderMode != EPointShadowRenderMode.Sequential ||
             ShadowMapEncoding != EShadowMapEncoding.Depth || ShadowMapStorageFormat != EShadowMapStorageFormat.R16Float ||
             EnableContactShadows || SoftShadowMode != ESoftShadowMode.ContactHardeningPcss || BlockerSamples != 8 || FilterSamples != 8 ||
-            ShadowMapResolutionWidth is 0 or > 2048 || ShadowMapResolutionHeight != ShadowMapResolutionWidth)
-            throw new NotSupportedException("WebGPU.PointShadow.ProfileUnsupported: requires authored Sequential standalone R16Float radial depth, PCSS 8/8, no contact shadows, and square dimensions at most 2048.");
+            ShadowMapResolutionWidth == 0 || ShadowMapResolutionHeight != ShadowMapResolutionWidth)
+            throw new NotSupportedException("WebGPU.PointShadow.ProfileUnsupported: requires authored Sequential standalone R16Float radial depth, PCSS 8/8, no contact shadows, and effective square dimensions at most 2048.");
     }
 
     private XRMaterial CreateCookedShadowMaterial(uint width, uint height)
     {
         ValidateCookedShadowConfiguration();
-        if (width != height)
-            throw new NotSupportedException("WebGPU.PointShadow.ResolutionUnsupported: the six cube faces require square dimensions.");
+        if (width != height || width is 0 or > 2048)
+            throw new NotSupportedException("WebGPU.PointShadow.ResolutionUnsupported: the six cube faces require positive square effective dimensions at most 2048.");
         XRTextureCube depth = CreateCookedShadowCube(width, EPixelInternalFormat.DepthComponent24,
             EPixelFormat.DepthComponent, EPixelType.UnsignedInt, EFrameBufferAttachment.DepthAttachment);
         XRTextureCube radial = CreateCookedShadowCube(width, EPixelInternalFormat.R16f,

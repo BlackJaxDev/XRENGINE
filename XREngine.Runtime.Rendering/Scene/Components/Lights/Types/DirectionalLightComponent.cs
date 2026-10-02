@@ -285,8 +285,10 @@ namespace XREngine.Components.Lights
                 depthRange = MathF.Max(ortho.FarZ - ortho.NearZ, 1e-4f);
             }
 
-            float mapWidth = MathF.Max(1.0f, ShadowMapResolutionWidth);
-            float mapHeight = MathF.Max(1.0f, ShadowMapResolutionHeight);
+            (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(
+                ShadowMapResolutionWidth, ShadowMapResolutionHeight);
+            float mapWidth = MathF.Max(1.0f, resourceWidth);
+            float mapHeight = MathF.Max(1.0f, resourceHeight);
             float texelWorldSize = MathF.Max(width / mapWidth, height / mapHeight);
             float constantDepthBias = texelWorldSize * ShadowDepthBiasTexels / depthRange;
             float normalOffset = texelWorldSize * ShadowNormalBiasTexels;

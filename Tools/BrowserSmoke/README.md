@@ -3,7 +3,9 @@
 The CI game lane publishes through the genuine Windows Editor CLI, verifies its
 activated canonical content, and uploads the exact static bundle. A dependent
 Linux Chromium job downloads that artifact and runs the existing game checks
-with explicit SwiftShader. This keeps Editor CLI execution and GPU qualification
+with explicit SwiftShader. RollingBall and RenderingParity use separate matrix
+entries and artifacts, so a second-world failure does not replace the first
+game result. This keeps Editor CLI execution and GPU qualification
 on runners that provide their required capabilities; the game is not republished
 or rewritten on Linux. The separate Linux engine-regression job remains intact.
 
@@ -57,6 +59,16 @@ resume, resizes the canvas, and starts a second fresh lifecycle. Saved game
 screenshots and pixel summaries are bounded visual/input evidence; they do not
 establish numeric rigid-body parity or native-GPU performance.
 
+The separate `rendering-parity-editor-published-game` check opens the shipping
+player for the saved RenderingParity world. Its static mapped panel and animated
+skeletal/morph ribbon must both occupy the canvas interior. Captures check
+right-side motion, animation pause, bind-pose reset, resume, actual canvas resize,
+and two fresh page contexts without console errors. CI cooks canonical shaders
+with the pinned Slang release and verifies the packed-skinning and tangent-material
+artifacts in the genuine Editor bundle. These broad pixel/artifact checks do not
+by themselves prove GPU dispatch or known-value mapped-lighting semantics; those
+remain separate acceptance evidence.
+
 The directional-shadow diagnostic is a separate static fixture. It cooks the
 `StandardLitColorV1` HDR shadow receiver and `OpaqueShadowDepthV1` writer as
 distinct variants, then uses one registered `DirectionalLightComponent` and its
@@ -88,8 +100,10 @@ The audio check imports the published Web Audio streaming scheduler and renders
 two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
 sample at rates 1 and 2, processed-buffer order, and disposal. It also checks
 whole-queue native looping and disabling near the end of a traversal at both
-rates, including the absence of an extra traversal. Those additional loop cases
-await their first exact-commit browser run. The check requires no
+rates, including the absence of an extra traversal. All six cases pass with zero
+maximum PCM error at commit `0078867c` in
+[run 37024792567](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37024792567).
+The check requires no
 microphone or output-device permission. This establishes scheduling/sample
 correctness only, not audible playback, gesture unlock, spatialization, or codec
 support across the device matrix.
@@ -130,7 +144,8 @@ not download or install a browser as part of a run.
 
 `--game-publish` points to an activated browser-game directory rather than the
 bare browser host. It is optional for the full diagnostic harness and required
-by `--game-only`. The portable publisher driver can invoke the compiled Editor
+by `--game-only`. `--game-kind rollingball` is the default; use
+`--game-kind rendering-parity` for the authored textured/deformed world. The portable publisher driver can invoke the compiled Editor
 browser method on Linux with `EnableWindowsTargeting=true`; the dedicated
 Windows CI lane uses the actual Editor CLI instead. The Linux CI lane retains
 the shared renderer and runtime diagnostics, avoiding a duplicate game publish.
@@ -201,12 +216,16 @@ not claim decoded-world acceptance. Add `--require-world-play` only for a publis
 with a real browser physics module and cooked startup world: it requires two
 actual start/stop cycles on engine-diagnostic and fails named if the backend is absent.
 
-The CI lane packages `Content/EngineSmokeWorld.asset` with the shared content
-packager and requires two real engine-world start/stop cycles, each completing
-at least twelve caller-thread frames. This minimal canonical YAML world contains
-one scene/root transform, not a separate scene DTO. It qualifies the headless
-world lifecycle and hash-verified asset path; it is not a representative game,
-cooked-binary roundtrip, renderer, or physical-device parity result.
+The CI lane cooks `Content/EngineSmokeWorld.asset` into a published binary world
+and generates its type metadata with `Tools/BrowserRuntimeMetadataCooker`, both
+under the ignored validation root. The effects-recipe preparer copies those
+generated inputs into its staging directory before the shared content packager
+runs. No generated fixture binary is checked in. The lane requires two real
+engine-world start/stop cycles, each completing at least twelve caller-thread
+frames. This minimal canonical authored world contains one scene/root transform,
+not a separate scene DTO. It qualifies the headless world lifecycle, published
+binary hydration, and hash-verified asset path; it is not a representative game,
+renderer, or physical-device parity result.
 
 Optional `--jolt-spike <jolt-browser-spike-wwwroot>` mounts the separately published
 native spike, runs its existing native assertions twice, requires native teardown

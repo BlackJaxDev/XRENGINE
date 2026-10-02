@@ -159,5 +159,9 @@ namespace XREngine.Components.Scripting
         /// </summary>
         public static AssemblyData? GetAssemblyData(string id)
             => _loadedAssemblies.TryGetValue(id, out var data) ? data.data : null;
+
+        /// <summary>Returns the exact currently owned assembly without creating another load context.</summary>
+        public static Assembly? GetLoadedAssembly(string id)
+            => _loadedAssemblies.TryGetValue(id, out var data) ? data.assembly : null;
     }
 }

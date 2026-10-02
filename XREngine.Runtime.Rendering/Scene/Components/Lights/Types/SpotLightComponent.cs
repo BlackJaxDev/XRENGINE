@@ -298,7 +298,10 @@ namespace XREngine.Components.Capture.Lights.Types
             base.SetShadowMapResolution(width, height);
 
             if (ShadowCamera?.Parameters is XRPerspectiveCameraParameters p)
-                p.AspectRatio = width / height;
+            {
+                (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
+                p.AspectRatio = (float)resourceWidth / resourceHeight;
+            }
         }
 
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)

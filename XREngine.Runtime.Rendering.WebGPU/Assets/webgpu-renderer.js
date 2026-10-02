@@ -3,6 +3,7 @@ import { captureDeviceCapabilities } from './gpu-capabilities.js';
 import { GpuResources } from './gpu-resources.js';
 import { GpuPipelineCache } from './gpu-pipeline-cache.js';
 import { GpuReadback } from './gpu-readback.js';
+import { GpuLuminance } from './gpu-luminance.js';
 import { GpuCommands } from './gpu-commands.js';
 import { BrowserRenderPipeline } from './browser-render-pipeline.js';
 import { browserPipelineRequirements } from './browser-pipeline-requirements.js';
@@ -122,6 +123,7 @@ export class WebGpuCanvasRenderer {
         this._resources = new GpuResourceTable();
         this.resources = new GpuResources(this);
         this.readback = new GpuReadback(this);
+        this.luminance = new GpuLuminance(this);
         this.commands = new GpuCommands(this);
         this.focusedPipeline = null;
         this._retired = new Set();
@@ -485,6 +487,7 @@ export class WebGpuCanvasRenderer {
             throw new RangeError(`Canvas dimensions must be integers from 0 to ${limit}.`);
         if (width === this._width && height === this._height) return this._generation;
         if (this._generation === 0x7fffffff) throw new Error('Canvas generations are exhausted; restart the session.');
+        this.readback.invalidateCanvas();
         this._width = width;
         this._height = height;
         try {
@@ -498,7 +501,8 @@ export class WebGpuCanvasRenderer {
             this._retire(oldDepth);
             if (width > 0 && height > 0) {
                 this._setOperation('configure-canvas');
-                this.context.configure({ device: this.device, format: this.format, alphaMode: 'opaque' });
+                this.context.configure({ device: this.device, format: this.format, alphaMode: 'opaque',
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
                 this._setOperation('create-canvas-depth');
                 this.depthTexture = this.device.createTexture({ size: [width, height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
                 this.depthView = this.depthTexture.createView();
@@ -996,6 +1000,7 @@ export class WebGpuCanvasRenderer {
         this.commands.dispose();
         this.focusedPipeline?.dispose();
         this.skinning.dispose();
+        this.luminance.dispose();
         this.readback.dispose();
         this._resources.clear(entry => this._destroyEntry(entry, true));
         this.resources.dispose();

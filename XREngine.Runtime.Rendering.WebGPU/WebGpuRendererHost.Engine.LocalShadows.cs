@@ -56,8 +56,10 @@ public sealed partial class WebGpuRendererHost
     private static void ValidateSpotShadowLight(SpotLightComponent light)
     {
         int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxSpotShadowDimension;
-        if (light.ShadowMapResolutionWidth > qualityLimit || light.ShadowMapResolutionHeight > qualityLimit)
-            throw ShadowUnsupported($"spot '{light.Name}' shadow size {light.ShadowMapResolutionWidth}x{light.ShadowMapResolutionHeight} exceeds the selected browser spot-shadow limit {qualityLimit}; authored maps are not resized implicitly");
+        (uint width, uint height) = light.GetEffectiveShadowMapResolution(
+            light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight);
+        if (width > qualityLimit || height > qualityLimit)
+            throw ShadowUnsupported($"spot '{light.Name}' shadow target exceeds the selected browser spot-shadow limit {qualityLimit}");
         light.ValidateCookedShadowConfiguration();
         if (light.ShadowCamera is not { DepthMode: XRCamera.EDepthMode.Normal, Parameters: XRPerspectiveCameraParameters })
             throw ShadowUnsupported($"spot '{light.Name}' requires its normal-Z perspective shadow camera");
@@ -66,8 +68,10 @@ public sealed partial class WebGpuRendererHost
     private static void ValidatePointShadowLight(PointLightComponent light)
     {
         int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxPointShadowDimension;
-        if (light.ShadowMapResolutionWidth > qualityLimit || light.ShadowMapResolutionHeight > qualityLimit)
-            throw ShadowUnsupported($"point '{light.Name}' shadow size {light.ShadowMapResolutionWidth}x{light.ShadowMapResolutionHeight} exceeds the selected browser point-shadow limit {qualityLimit}; authored maps are not resized implicitly");
+        (uint width, uint height) = light.GetEffectiveShadowMapResolution(
+            light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight);
+        if (width > qualityLimit || height > qualityLimit)
+            throw ShadowUnsupported($"point '{light.Name}' shadow target exceeds the selected browser point-shadow limit {qualityLimit}");
         light.ValidateCookedShadowConfiguration();
         for (int face = 0; face < PointLightComponent.ShadowFaceCount; face++)
             if (!light.TryGetShadowFaceCamera(face, out XRCamera camera) ||
@@ -93,7 +97,8 @@ public sealed partial class WebGpuRendererHost
             if (spot.CookedShadowReceiverTexture is null)
                 throw ShadowUnsupported($"spot '{spot.Name}' has no light-owned projected depth texture");
             WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(spotTexture, generateNow: true)!;
-            if (!api.WasRecordedInFrame(_engineFrameSequence)) MarkEngineDrawPending();
+            if (!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(spot, spotTexture))
+                MarkEngineDrawPending();
         }
         program.SetMatrix("SpotShadowViewProjection", spot?.ShadowCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity);
         program.SetVector4("SpotShadowControl", spot is null ? Vector4.Zero :
@@ -112,7 +117,8 @@ public sealed partial class WebGpuRendererHost
             pointTexture = point.CookedShadowReceiverTexture
                 ?? throw ShadowUnsupported($"point '{point.Name}' has no light-owned radial-distance cube");
             WebGpuTextureCube api = (WebGpuTextureCube)GetOrCreateAPIRenderObject(pointTexture, generateNow: true)!;
-            if (!api.WasRecordedInFrame(_engineFrameSequence) || point.LastRenderedShadowFaceMask != 63)
+            if ((!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(point, pointTexture)) ||
+                point.LastRenderedShadowFaceMask != 63)
                 MarkEngineDrawPending();
         }
         program.SetVector4("PointShadowControl", point is null ? Vector4.Zero :

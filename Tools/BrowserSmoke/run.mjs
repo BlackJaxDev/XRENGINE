@@ -9,6 +9,7 @@ import { readConfig, browserLaunchOptions, depthSamples, help } from './smoke.co
 import { captureGpuProcessState, initializeGpuCanary } from './gpu-diagnostics.mjs';
 import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 import { rollingBallGameCheck } from './rollingball-game.mjs';
+import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -1136,14 +1137,21 @@ async function joltCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
-async function publishedRollingBallCheck(browser, origin, report, config) {
+async function publishedGameCheck(browser, origin, report, config) {
     const descriptor = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'browser-publish.json'), 'utf8'));
     const manifest = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'content', 'manifest.json'), 'utf8'));
+    const parity = config.gameKind === 'rendering-parity';
+    const worldPath = parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
     assert(descriptor.schema === 2 && descriptor.format === 'xrengine-engine-launch' &&
-        descriptor.manifest === './content/manifest.json' &&
-        manifest.startupWorld === '/game/Worlds/RollingBallWorld.asset',
-        'BrowserSmoke.RollingBallBundle: expected the Editor-activated canonical game publish.');
-    await rollingBallGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+        descriptor.manifest === './content/manifest.json' && manifest.startupWorld === worldPath,
+        'BrowserSmoke.GameBundle: expected the Editor-activated canonical game publish.');
+    if (parity) {
+        assert(manifest.computeArtifacts?.some(entry => entry.kernel === 'packed-skinning') &&
+            manifest.materialVariants?.some(entry => entry.semantic === 'StandardLitTexture' &&
+                entry.pass === 'opaque-forward' && entry.vertexProfile === 'position-normal-tangent-uv-v1'),
+            'BrowserSmoke.RenderingParityArtifacts: mapped normal surfaces and packed deformation artifacts are required.');
+        await renderingParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+    } else await rollingBallGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
 }
 
 async function main() {
@@ -1158,8 +1166,10 @@ async function main() {
         executable: config.executablePath ? path.basename(config.executablePath) : 'playwright-managed-chromium',
         browserLogs: {}, externalRequests: [], requests: [], checks: [],
         scope: config.gameOnly
-            ? 'Editor-published RollingBall gameplay in Chromium; not desktop, complete browser or performance acceptance.'
+            ? `Editor-published ${config.gameKind} in Chromium; not desktop, complete browser or performance acceptance.`
             : 'Renderer diagnostic correctness and selected runtime smoke checks; not full browser, desktop, physical-device or performance acceptance.' };
+    const gameCheckName = config.gameKind === 'rendering-parity'
+        ? 'rendering-parity-editor-published-world' : 'rollingball-editor-published-game';
     let browser, server;
     const check = async (name, action) => {
         const start = performance.now();
@@ -1178,8 +1188,8 @@ async function main() {
         browser.on('disconnected', () => { report.browserDisconnected = {
             time: new Date().toISOString(), closeRequested: report.browserCloseRequested === true }; });
         if (config.gameOnly) {
-            await check('rollingball-editor-published-game',
-                () => publishedRollingBallCheck(browser, hosted.origin, report, config));
+            await check(gameCheckName,
+                () => publishedGameCheck(browser, hosted.origin, report, config));
             await check('local-delivery', async () => {
                 assert(report.externalRequests.length === 0, 'BrowserSmoke.ExternalRequest: the published application requested resources outside the loopback roots.');
                 assert(!report.requests.some(request => request.status >= 400), 'BrowserSmoke.HttpFailure: a served resource request failed; inspect requests in smoke-report.json.');
@@ -1225,9 +1235,9 @@ async function main() {
                 await shippingPlayerCheck(browser, hosted.origin, report, config);
             });
         } else report.checks.push({ name: 'published-engine-autostart', status: 'skipped', reason: 'A bare browser runtime publish has no authored launch descriptor' });
-        if (config.gamePublish) await check('rollingball-editor-published-game',
-            () => publishedRollingBallCheck(browser, hosted.origin, report, config));
-        else report.checks.push({ name: 'rollingball-editor-published-game', status: 'skipped',
+        if (config.gamePublish) await check(gameCheckName,
+            () => publishedGameCheck(browser, hosted.origin, report, config));
+        else report.checks.push({ name: gameCheckName, status: 'skipped',
             reason: '--game-publish was not supplied' });
         if (config.engineManifest) await check('engine-asset-delivery-lifetime', () => assetSourceCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-asset-delivery-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });

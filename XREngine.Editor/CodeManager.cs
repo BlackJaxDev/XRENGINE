@@ -1062,7 +1062,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string[] targets,
         IReadOnlyDictionary<string, string?>? extraProperties,
         out string? log,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool singleNode = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var startInfo = new DiagnosticsProcessStartInfo("dotnet")
@@ -1087,6 +1088,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         startInfo.ArgumentList.Add(projectFilePath);
         startInfo.ArgumentList.Add("/restore");
         startInfo.ArgumentList.Add("/nologo");
+        if (singleNode)
+            startInfo.ArgumentList.Add("/m:1");
         startInfo.ArgumentList.Add($"/t:{string.Join(";", targets)}");
         startInfo.ArgumentList.Add($"/p:Configuration={configuration}");
         startInfo.ArgumentList.Add($"/p:Platform={platform}");
