@@ -10,7 +10,7 @@ public sealed partial class WebGpuRendererHost
 {
     private XRTextureCube? _defaultPointShadow;
     private ObjectCacheOwnership? _defaultPointShadowOwnership;
-    private int _defaultPointShadowClear;
+    private readonly int[] _defaultPointShadowClears = new int[PointLightComponent.ShadowFaceCount];
     private uint _defaultPointShadowClearFrame;
     private bool _defaultPointShadowInitialized;
     private XRTexture2D? _defaultSpotShadow;
@@ -180,19 +180,18 @@ public sealed partial class WebGpuRendererHost
         }
         if (!_defaultPointShadowInitialized && _defaultPointShadowClearFrame != _engineFrameSequence)
         {
-            if (_defaultPointShadowClear == 0)
+            for (int face = 0; face < _defaultPointShadowClears.Length; face++)
             {
-                WebGpuTextureCube api = (WebGpuTextureCube)GetOrCreateAPIRenderObject(_defaultPointShadow, generateNow: true)!;
-                System.Text.StringBuilder commands = new("{\"label\":\"Disabled point shadow initialization\",\"commands\":[");
-                for (int face = 0; face < 6; face++)
+                if (_defaultPointShadowClears[face] == 0)
                 {
-                    if (face > 0) commands.Append(',');
+                    WebGpuTextureCube api = (WebGpuTextureCube)GetOrCreateAPIRenderObject(_defaultPointShadow, generateNow: true)!;
                     BrowserFrameBufferPlan plan = new([new BrowserColorAttachmentPlan(api.GetRenderView(0, face), true, true, Vector4.One)]);
-                    commands.Append("{\"type\":\"clear\",\"pass\":").Append(plan.ToJson()).Append('}');
+                    // Every ordered engine frame record references one retained operation.
+                    _defaultPointShadowClears[face] = PrepareCommands(
+                        "{\"label\":\"Disabled point shadow face initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
                 }
-                SetField(ref _defaultPointShadowClear, PrepareCommands(commands.Append("]}").ToString()));
+                RecordEngineCommands(_defaultPointShadowClears[face], []);
             }
-            RecordEngineCommands(_defaultPointShadowClear, []);
             SetField(ref _defaultPointShadowClearFrame, _engineFrameSequence, publishNotifications: false);
         }
         return _defaultPointShadow ?? throw new InvalidOperationException("WebGPU.Shadow.DefaultPointMissing: initialization did not publish its owned texture.");
@@ -217,7 +216,7 @@ public sealed partial class WebGpuRendererHost
         _defaultPointShadowOwnership?.Dispose();
         SetField(ref _defaultPointShadowOwnership, null);
         SetField(ref _defaultPointShadow, null);
-        SetField(ref _defaultPointShadowClear, 0);
+        Array.Clear(_defaultPointShadowClears);
         SetField(ref _defaultPointShadowClearFrame, 0u);
         SetField(ref _defaultPointShadowInitialized, false);
     }

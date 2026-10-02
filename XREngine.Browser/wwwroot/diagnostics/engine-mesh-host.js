@@ -200,6 +200,9 @@ export class EngineMeshDiagnosticHost {
     setDebugCase(sampleCase) {
         if (!this.session || this.kind !== 'debug') throw new Error('An active engine debug diagnostic is required.');
         this.exports.SetDebugCase(this.session, sampleCase);
+        // Mutated producer counts are not evidence that this case was submitted.
+        // Invalidate the previous readiness stamp until the new frames settle.
+        this.lastReadySession = 0;
         this.settleFrames = 2;
         this.startedAt = performance.now();
         this.onState('Preparing changed registered debug shapes');
