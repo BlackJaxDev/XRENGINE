@@ -15,9 +15,13 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     private int _directionalShadows, _pointShadows, _spotShadows;
     private bool _litV1, _litV2;
     private bool _litTexture, _litNormalTexture;
+    private readonly List<string> _lightPaths = [];
+    private readonly Dictionary<EngineMaterialSemanticIdentity, (string Path, string? Material, string? Mesh)> _materialPaths = [];
 
-    internal void InspectMaterial(XRMaterial? material)
+    internal void InspectMaterial(XRMaterial? material, string path, string? mesh)
     {
+        if (material is not null)
+            _materialPaths.TryAdd(material.EngineSemantic, (path, material.Name, mesh));
         _litV1 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1;
         _litV2 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
@@ -32,6 +36,7 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     internal void Inspect(XRComponent component, string path)
     {
         if (component is not LightComponent { Type: ELightType.Dynamic } light) return;
+        _lightPaths.Add($"'{path}' ({light.GetType().Name})");
         switch (light)
         {
             case DirectionalLightComponent directional:
@@ -50,13 +55,21 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
                 _pointLights++;
                 if (!point.CastsShadows) break;
                 _pointShadows++;
-                point.ValidateCookedShadowConfiguration();
+                try { point.ValidateCookedShadowConfiguration(); }
+                catch (NotSupportedException error)
+                {
+                    throw new NotSupportedException($"BrowserCook.ShadowProfileUnsupported: '{path}', pass 'point-shadow-depth': {error.Message}", error);
+                }
                 break;
             case SpotLightComponent spot:
                 _spotLights++;
                 if (!spot.CastsShadows) break;
                 _spotShadows++;
-                spot.ValidateCookedShadowConfiguration();
+                try { spot.ValidateCookedShadowConfiguration(); }
+                catch (NotSupportedException error)
+                {
+                    throw new NotSupportedException($"BrowserCook.ShadowProfileUnsupported: '{path}', pass 'spot-shadow-depth': {error.Message}", error);
+                }
                 break;
         }
     }
@@ -65,7 +78,7 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     {
         if (_directionalLights > 4 || _pointLights > 8 || _spotLights > 8 ||
             _directionalShadows > 1 || _pointShadows > 1 || _spotShadows > 1)
-            throw new NotSupportedException("BrowserCook.LightCapacityExceeded: the forward profile supports 4 directional, 8 point, 8 spot lights and at most one standalone shadow map for each type.");
+            throw new NotSupportedException($"BrowserCook.LightCapacityExceeded: pass 'forward-lighting' supports 4 directional, 8 point, 8 spot lights and at most one standalone shadow map for each type. Authored lights: {string.Join(", ", _lightPaths)}.");
         bool local = _pointShadows != 0 || _spotShadows != 0;
         if (_directionalShadows == 0 && !local) return;
         string output = local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1";
@@ -96,6 +109,8 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
         if (resolver is BrowserShaderArtifactSource source)
             foreach (EngineMaterialVariantEntry entry in source.MaterialVariants)
                 if (entry.Key == key) return;
-        throw new NotSupportedException($"BrowserCook.ShadowVariantMissing: the shared world requires exact variant '{key}'.");
+        if (_materialPaths.TryGetValue(semantic, out var sourceMaterial))
+            throw new NotSupportedException($"BrowserCook.ShadowVariantMissing: '{sourceMaterial.Path}' mesh '{sourceMaterial.Mesh}', material '{sourceMaterial.Material}', pass '{pass}' requires exact variant '{key}'.");
+        throw new NotSupportedException($"BrowserCook.ShadowVariantMissing: pass '{pass}' requires exact variant '{key}' for authored lights: {string.Join(", ", _lightPaths)}.");
     }
 }

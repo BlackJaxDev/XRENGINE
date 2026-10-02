@@ -414,29 +414,17 @@ public partial class DefaultRenderPipeline
             (int)EDefaultRenderPass.PostDepthOfFieldForward,
         ];
         foreach (int pass in unsupportedPasses)
-            if (instance.ActiveMeshRenderCommands.HasRenderingCommands(pass))
+            if (!IsWebSceneMeshPassSupported(pass) && instance.ActiveMeshRenderCommands.HasRenderingCommands(pass))
                 throw new NotSupportedException($"WebGPU.DefaultPipeline.PassUnsupported: pass '{(EDefaultRenderPass)pass}' has no cooked output route.");
         instance.ActiveMeshRenderCommands.ValidatePublishedDebugDrawCallbacks();
+        if (instance.ActiveMeshRenderCommands.HasRenderingMeshCommands((int)EDefaultRenderPass.OnTopForward))
+            throw new NotSupportedException("WebGPU.DefaultPipeline.PassUnsupported: OnTopForward admits the published display debug callbacks, not scene mesh materials.");
 
         PipelinePostProcessState? state = (instance.RenderState.SceneCamera ?? instance.LastSceneCamera)?.GetPostProcessState(this);
-        if (GetSettings<MotionBlurSettings>(state) is { Enabled: true } ||
-            GetSettings<DepthOfFieldSettings>(state) is { Enabled: true } ||
-            GetSettings<VolumetricFogSettings>(state) is { Enabled: true } ||
-            GetSettings<VignetteSettings>(state) is { Enabled: true } ||
-            GetSettings<ChromaticAberrationSettings>(state) is { Enabled: true } ||
-            GetSettings<FogSettings>(state) is { DepthFogIntensity: > 0 } ||
-            GetSettings<LensDistortionSettings>(state) is { Intensity: not 0 } ||
-            GetSettings<GpuBvhDebugSettings>(state) is { Enabled: true } or { MeshletDebugDisplayEnabled: true } or { FullOverdrawEnabled: true } ||
-            ShouldRunAtmosphericScattering() || HasFullPipelineDebugVisualization())
-            throw new NotSupportedException("WebGPU.DefaultPipeline.EffectUnsupported: a selected camera effect has no cooked WebGPU pass.");
-        ColorGradingSettings? color = GetSettings<ColorGradingSettings>(state);
-        if (color is not null && (color.AutoExposure || color.ExposureMode != ColorGradingSettings.ExposureControlMode.Artist ||
-            !float.IsFinite(color.Exposure) || !float.IsFinite(color.Gamma) || color.Exposure < 0 || color.Gamma <= 0 ||
-            color.Contrast != 1 || color.Saturation != 1 || color.Brightness != 1 || color.Hue != 1 ||
-            (Vector3)color.Tint != Vector3.One))
-            throw new NotSupportedException("WebGPU.DefaultPipeline.ColorGradingUnsupported: use manual artist exposure and gamma with neutral color grading.");
-        if (GetSettings<TonemappingSettings>(state) is { Tonemapping: not ETonemappingType.Mobius })
-            throw new NotSupportedException("WebGPU.DefaultPipeline.TonemapUnsupported: the supplied output route supports Mobius tonemapping.");
+        if (GetWebPostProcessRejection(state, out string selectedPass) is { } reason)
+            throw new NotSupportedException($"WebGPU.DefaultPipeline.EffectUnsupported: selected pass '{selectedPass}': {reason}");
+        if (ShouldRunAtmosphericScattering() || GetWebPipelineFeatureRejection() is not null)
+            throw new NotSupportedException("WebGPU.DefaultPipeline.EffectUnsupported: a selected pipeline feature has no cooked WebGPU pass.");
     }
 
     private void SetWebTonemapUniforms(XRRenderProgram program)

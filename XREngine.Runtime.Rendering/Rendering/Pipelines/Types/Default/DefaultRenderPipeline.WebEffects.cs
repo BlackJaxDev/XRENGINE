@@ -50,8 +50,8 @@ public partial class DefaultRenderPipeline
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.WebForwardLit;
         if (RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableGtao && ao is { Enabled: true })
         {
-            if (AmbientOcclusionSettings.NormalizeType(ao.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion)
-                throw new NotSupportedException($"WebGPU.DefaultPipeline.AmbientOcclusionModeUnsupported: {ao.Type} requires a cooked WebGPU effect route.");
+            if (GetWebAmbientOcclusionRejection(ao) is { } reason)
+                throw new NotSupportedException($"WebGPU.DefaultPipeline.AmbientOcclusionModeUnsupported: {reason}");
             mask |= DefaultPipelineResourceFeature.WebGtaoEnabled;
             mask |= ao.GroundTruth.Resolution switch
             {

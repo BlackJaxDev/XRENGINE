@@ -17,6 +17,7 @@ internal static partial class ProjectBuilder
         out IReadOnlyList<BrowserUiFontCookRequest> authoredFonts)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        BrowserRenderingCapabilityAudit.InspectStartup(Engine.PersistentGameSettings);
         Directory.CreateDirectory(sourceDirectory);
         // The existing serializer owns component graphs and game-specific formats. No
         // browser scene projection is allowed to remove authored gameplay behavior.

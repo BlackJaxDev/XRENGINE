@@ -21,11 +21,13 @@ internal static class BrowserWorldCapabilityAudit
     {
         Dictionary<string, ShaderProgramArtifact> artifacts = new(StringComparer.Ordinal);
         BrowserShadowCapabilityAudit shadows = new(resolver);
+        BrowserRenderingCapabilityAudit rendering = new(resolver);
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         foreach (XRScene scene in world.Scenes)
             foreach (SceneNode root in scene.RootNodes)
                 Visit(root, 0);
         shadows.Complete();
+        rendering.Complete(world.Name ?? "startup-world");
         if (resolver is BrowserShaderArtifactSource shaderSource)
         {
             foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
@@ -61,6 +63,8 @@ internal static class BrowserWorldCapabilityAudit
             {
                 BrowserPhysicsCapabilityAudit.Inspect(component, path);
                 shadows.Inspect(component, path);
+                if (component is CameraComponent camera)
+                    rendering.Inspect(camera, path);
                 if (component is SceneCaptureComponentBase or AdvancedOffscreenTextureCaptureComponent or
                     MirrorCaptureComponent or LightProbeGridSpawnerComponent)
                     throw new NotSupportedException($"BrowserCook.EnvironmentCaptureUnsupported: '{path}' component '{component.GetType().FullName}' requires an explicit cooked capture and probe/IBL path.");
@@ -137,9 +141,10 @@ internal static class BrowserWorldCapabilityAudit
 
         void InspectMaterial(XRMaterial? material, string path, string? meshName, XRMesh? geometry = null)
         {
-            shadows.InspectMaterial(material);
+            shadows.InspectMaterial(material, path, meshName);
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
+            BrowserRenderingCapabilityAudit.InspectMaterial(material, path, meshName);
             if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
             {
                 if (material.Shaders.Count != 0)
