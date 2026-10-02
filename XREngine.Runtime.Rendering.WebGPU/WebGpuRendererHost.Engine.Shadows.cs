@@ -35,7 +35,10 @@ public sealed partial class WebGpuRendererHost
             ShaderCompileTarget.WebGPUWgsl, "depth", "static-position-v1", "depth-normal-v1");
         EngineMaterialVariantKey receiver = new(EngineMaterialSemanticIdentity.StandardLitColorV1,
             ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", "linear-hdr-directional-shadow-v1");
-        if (_materialVariants?.TryResolve(depth, out _) != true || _materialVariants.TryResolve(receiver, out _) != true)
+        EngineMaterialVariantKey coverageReceiver = new(EngineMaterialSemanticIdentity.StandardLitColorV2,
+            ShaderCompileTarget.WebGPUWgsl, "forward-coverage", "static-position-normal-v1", "linear-hdr-directional-shadow-v1");
+        if (_materialVariants?.TryResolve(depth, out _) != true ||
+            (_materialVariants.TryResolve(receiver, out _) != true && _materialVariants.TryResolve(coverageReceiver, out _) != true))
             throw ShadowUnsupported("the package must supply both exact opaque caster and directional receiver variants");
     }
 

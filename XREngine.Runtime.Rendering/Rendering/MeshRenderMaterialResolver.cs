@@ -30,6 +30,12 @@ public static class MeshRenderMaterialResolver
                 if (globalMaterialOverride?.EngineSemantic != EngineMaterialSemanticIdentity.OpaqueShadowDepthV1 ||
                     globalMaterialOverride.Shaders.Count != 0)
                     throw new NotSupportedException("WebGPU.ShadowCaster.OverrideUnsupported: expected a source-free OpaqueShadowDepthV1 override.");
+                if (shadowSourceMaterial?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+                {
+                    XRMaterial variant = shadowSourceMaterial.ShadowCasterVariant
+                        ?? throw new NotSupportedException("WebGPU.ShadowCaster.MaterialUnsupported: the coverage surface has no exact caster variant.");
+                    return new(variant, globalMaterialOverride, true, false, "CookedLitColorCoverageShadowDepth");
+                }
                 if (shadowSourceMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 ||
                     shadowSourceMaterial.Shaders.Count != 0 ||
                     !shadowSourceMaterial.CanUseSharedOpaqueShadowMaterial())
@@ -93,7 +99,11 @@ public static class MeshRenderMaterialResolver
 
         if (renderState?.UseDepthNormalMaterialVariants ?? false)
         {
-            XRMaterial? depthNormalVariant = meshRenderer.Material?.DepthNormalPrePassVariant;
+            XRMaterial? depthNormalSource = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+                localMaterialOverride?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2
+                ? localMaterialOverride ?? meshRenderer.Material
+                : meshRenderer.Material;
+            XRMaterial? depthNormalVariant = depthNormalSource?.DepthNormalPrePassVariant;
             if (depthNormalVariant is not null)
                 return new(depthNormalVariant, null, false, true, "DepthNormalVariant");
 
@@ -191,6 +201,10 @@ public static class MeshRenderMaterialResolver
     {
         if (!shadowState.IsShadowPass)
             return;
+
+        // Built-in coverage is not an arbitrary material callback. Publish it
+        // even on backends whose shadow capture skips event-based material hooks.
+        material.PublishStandardLitColorCoverage(program);
 
         XRMaterial? shadowUniformSource = material.ShadowUniformSourceMaterial;
         if (shadowUniformSource?.HasSettingShadowUniformHandlers == true)

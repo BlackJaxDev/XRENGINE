@@ -148,6 +148,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     /// </summary>
     public (XRDataBuffer? positions, XRDataBuffer? normals, XRDataBuffer? tangents, XRDataBuffer? interleaved) GetSkinnedBuffers(XRMeshRenderer renderer)
     {
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+            return (null, null, null, null);
         lock (_syncRoot)
         {
             if (_resources.TryGetValue(renderer, out _))
@@ -165,6 +167,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     /// </summary>
     public bool HasSkinnedBuffers(XRMeshRenderer renderer)
     {
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+            return false;
         lock (_syncRoot)
         {
             if (!_resources.TryGetValue(renderer, out var resources))
@@ -180,6 +184,12 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     public bool TryGetSkinnedBoundsBuffer(XRMeshRenderer renderer, out XRDataBuffer? boundsBuffer, out uint boundsVec4Offset)
     {
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+        {
+            boundsBuffer = null;
+            boundsVec4Offset = 0u;
+            return false;
+        }
         lock (_syncRoot)
         {
             if (_resources.TryGetValue(renderer, out var resources) && resources.HasValidSkinnedBounds)
@@ -197,6 +207,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     public bool TryReadSkinnedWorldBounds(XRMeshRenderer renderer, out AABB bounds)
     {
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+        {
+            bounds = default;
+            return false;
+        }
         lock (_syncRoot)
         {
             if (_resources.TryGetValue(renderer, out var resources) && resources.TryReadSkinnedBounds(out bounds))
@@ -243,6 +258,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         ArgumentNullException.ThrowIfNull(renderer);
         buffers = (null, null);
         diagnostic = null;
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+        {
+            diagnostic = "The active backend's packed deformation outputs do not implement the canonical GPU mesh BVH buffer layout.";
+            return false;
+        }
         Run(renderer, forceSkinning: true, forceBlendshapes: forceBlendshapeOutput);
 
         lock (_syncRoot)
@@ -279,6 +299,12 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     {
         if (AbstractRenderer.Current is null)
             return;
+
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability backendDeformation)
+        {
+            backendDeformation.TryPrepareMeshDeformation(renderer);
+            return;
+        }
 
         var mesh = renderer.Mesh;
         if (mesh is null || mesh.VertexCount <= 0)
@@ -878,6 +904,12 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     public void RunVisible(RenderCommandCollection commands)
     {
         if (commands is null)
+            return;
+
+        // The backend owns its output layout and records the producer at the first
+        // raster consumer, inside its atomic frame. This is a responsibility handoff,
+        // not publication of completed canonical desktop pre-pass buffers.
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
             return;
 
         bool computeSkinningEnabledForBackend =

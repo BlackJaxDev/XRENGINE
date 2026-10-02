@@ -633,11 +633,21 @@ namespace XREngine
                         // key is routable instead of silently losing its first assignment.
                         if (UseBoundedRealtimeQueues)
                         {
+                            bool overflow;
                             lock (peer.SendQueue)
                             {
-                                peer.SendQueue.Enqueue(data);
-                                peer.PendingBytes += data.Bytes.Length;
+                                // A concurrent producer may have used the capacity
+                                // released by dequeue before the key became unavailable.
+                                overflow = peer.SendQueue.Count + peer.PendingTransforms.Count >= RealtimeWebSocketProtocol.MaximumQueuedDatagrams
+                                    || peer.PendingBytes + data.Bytes.Length > RealtimeWebSocketProtocol.MaximumQueuedBytes;
+                                if (!overflow)
+                                {
+                                    peer.SendQueue.Enqueue(data);
+                                    peer.PendingBytes += data.Bytes.Length;
+                                }
                             }
+                            if (overflow)
+                                OnRealtimeQueueOverflow();
                         }
                         else
                             peer.SendQueue.Enqueue(data);

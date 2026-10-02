@@ -487,7 +487,7 @@ public partial class DefaultRenderPipeline
             commands.Add<VPRC_DepthTest>().Enable = true;
             VPRC_ForwardDepthNormalPrePass prepass = commands.Add<VPRC_ForwardDepthNormalPrePass>();
             prepass.SetOptions(
-                [(int)EDefaultRenderPass.OpaqueDeferred, (int)EDefaultRenderPass.OpaqueForward],
+                [(int)EDefaultRenderPass.OpaqueDeferred, (int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
                 gpuDispatch: false);
         }
         commands.Add<VPRC_DepthTest>().Enable = false;

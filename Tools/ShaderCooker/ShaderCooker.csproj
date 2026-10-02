@@ -18,9 +18,11 @@
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/EngineMaterialVariantKey.cs" Link="Shared/EngineMaterialVariantKey.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderArtifact.cs" Link="Shared/ShaderArtifact.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifact.cs" Link="Shared/ShaderProgramArtifact.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderComputeWorkgroupSize.cs" Link="Shared/ShaderComputeWorkgroupSize.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/IShaderProgramArtifactResolver.cs" Link="Shared/IShaderProgramArtifactResolver.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifactCatalog.cs" Link="Shared/ShaderProgramArtifactCatalog.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/WebPipelineArtifactCatalog.cs" Link="Shared/WebPipelineArtifactCatalog.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/WebComputeArtifactCatalog.cs" Link="Shared/WebComputeArtifactCatalog.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifactReader.cs" Link="Shared/ShaderProgramArtifactReader.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderStageVisibility.cs" Link="Shared/ShaderStageVisibility.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderVertexAttribute.cs" Link="Shared/ShaderVertexAttribute.cs" />

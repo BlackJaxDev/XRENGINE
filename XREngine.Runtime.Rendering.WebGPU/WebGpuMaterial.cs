@@ -5,7 +5,7 @@ using XREngine.Rendering.Shaders.Compilation;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Keeps an engine material's authored stages and callbacks attached to its cooked program.</summary>
-public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
+public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
     : WebGpuObject<XRMaterial>(renderer, data), IRenderPreparationState
 {
     private XRRenderProgram? _program;
@@ -14,6 +14,7 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
     private StandardLitColorSurfaceBinding? _litSurface;
     private bool _directionalShadowReceiver;
     private bool _opaqueShadowDepth;
+    private EStandardLitColorAuxiliaryPass _litAuxiliaryPass;
     private EngineMaterialSemantic _debugPrimitive;
     private EngineMaterialSemantic _uiSemantic;
 
@@ -87,17 +88,39 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
             }
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
             {
-                if (!StandardLitColorSurfaceBinding.TryCreate(Data, out StandardLitColorSurfaceBinding? surface, out string? reason))
+                XRMaterial source = Data.StandardLitColorSourceMaterial ?? Data;
+                if (source.Shaders.Count != 0 || Data.Shaders.Count != 0)
+                    throw new NotSupportedException("WebGPU.Material.SourceUnsupported: semantic variants require source-free engine materials.");
+                if (!StandardLitColorSurfaceBinding.TryCreate(source, out StandardLitColorSurfaceBinding? surface, out string? reason))
                     throw new NotSupportedException($"WebGPU.Material.SurfaceUnsupported: '{Data.Name}': {reason}");
-                EngineMaterialVariantKey shadowKey = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
-                    "opaque-forward", "static-position-normal-v1", "linear-hdr-directional-shadow-v1");
-                EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
-                    "opaque-forward", "static-position-normal-v1", "linear-hdr-v1");
-                bool shadowReceiver = Renderer.MaterialVariants?.TryResolve(shadowKey, out artifact) == true;
-                if (!shadowReceiver && Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
-                    throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                EStandardLitColorAuxiliaryPass auxiliary = Data.StandardLitColorAuxiliaryPass;
+                if (auxiliary != EStandardLitColorAuxiliaryPass.None)
+                {
+                    if (Data.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV2 ||
+                        source.GetEffectiveTransparencyMode() is not (Rendering.Models.Materials.ETransparencyMode.Opaque or Rendering.Models.Materials.ETransparencyMode.Masked))
+                        throw new NotSupportedException("WebGPU.Material.CoverageUnsupported: auxiliary coverage requires an opaque or masked V2 surface.");
+                    EngineMaterialVariantKey auxiliaryKey = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        auxiliary == EStandardLitColorAuxiliaryPass.ShadowDepth ? "depth" : "depth-normal",
+                        auxiliary == EStandardLitColorAuxiliaryPass.ShadowDepth ? "static-position-v1" : "static-position-normal-v1",
+                        auxiliary == EStandardLitColorAuxiliaryPass.ShadowDepth ? "depth-normal-v1" : "normal-rgba16f-v1");
+                    if (Renderer.MaterialVariants?.TryResolve(auxiliaryKey, out artifact) != true)
+                        throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {auxiliaryKey} variant.");
+                    SetField(ref _litAuxiliaryPass, auxiliary);
+                }
+                else
+                {
+                    string pass = Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2
+                        ? "forward-coverage" : "opaque-forward";
+                    EngineMaterialVariantKey shadowKey = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        pass, "static-position-normal-v1", "linear-hdr-directional-shadow-v1");
+                    EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        pass, "static-position-normal-v1", "linear-hdr-v1");
+                    bool shadowReceiver = Renderer.MaterialVariants?.TryResolve(shadowKey, out artifact) == true;
+                    if (!shadowReceiver && Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
+                        throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                    SetField(ref _directionalShadowReceiver, shadowReceiver);
+                }
                 SetField(ref _litSurface, surface);
-                SetField(ref _directionalShadowReceiver, shadowReceiver);
             }
             using IDisposable publication = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
             XRRenderProgram program = new(false, false, Data.Shaders) { Name = Data.Name, CookedArtifact = artifact };
@@ -174,9 +197,28 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
         if (!_litSurface.TryRead(out StandardLitColorSurface surface, out string? reason))
             throw new NotSupportedException($"WebGPU.Material.SurfaceUnsupported: '{Data.Name}': {reason}");
         WebGpuFrameBuffer? target = Renderer.GetBoundEngineFrameBuffer();
+        if (Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+        {
+            if (target is null || !target.HasDepth || target.SampleCount != 1)
+                throw new NotSupportedException("WebGPU.Material.CoverageOutputUnsupported: coverage surfaces require a single-sample depth attachment.");
+            ValidateCoverageRasterState(surface);
+            Program.SetVector4("StandardLitCoverage", new Vector4(
+                surface.TransparencyMode == Rendering.Models.Materials.ETransparencyMode.Masked ? 1 : 0,
+                surface.AlphaCutoff,
+                surface.TransparencyMode == Rendering.Models.Materials.ETransparencyMode.PremultipliedAlpha ? 1 : 0, 0));
+        }
+        if (_litAuxiliaryPass == EStandardLitColorAuxiliaryPass.ShadowDepth)
+        {
+            if (target is null || target.HasColor || !target.HasDepth || target.SampleCount != 1)
+                throw new NotSupportedException("WebGPU.Material.ShadowDepthOutputUnsupported: coverage casters require one depth-only single-sample attachment.");
+            Program.SetVector4("StandardLitBaseColorOpacity", new Vector4(surface.BaseColor, surface.Opacity));
+            return;
+        }
         if (target is null || target.ColorFormats.Length != 1 || target.ColorFormats[0] != "rgba16float")
             throw new NotSupportedException("WebGPU.Material.OutputUnsupported: standard lit surfaces require one linear RGBA16F color attachment and explicit presentation.");
         Program.SetVector4("StandardLitBaseColorOpacity", new Vector4(surface.BaseColor, surface.Opacity));
+        if (_litAuxiliaryPass == EStandardLitColorAuxiliaryPass.DepthNormal)
+            return;
         Program.SetVector4("StandardLitRoughnessMetallicSpecularEmission",
             new Vector4(surface.Roughness, surface.Metallic, surface.Specular, surface.Emission));
         Renderer.PublishForwardLights(Program, _directionalShadowReceiver);
@@ -192,6 +234,7 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
         SetField(ref _litSurface, null);
         SetField(ref _directionalShadowReceiver, false);
         SetField(ref _opaqueShadowDepth, false);
+        SetField(ref _litAuxiliaryPass, EStandardLitColorAuxiliaryPass.None);
         SetField(ref _debugPrimitive, EngineMaterialSemantic.None);
         SetField(ref _uiSemantic, EngineMaterialSemantic.None);
     }

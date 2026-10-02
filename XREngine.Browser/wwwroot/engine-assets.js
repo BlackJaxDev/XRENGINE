@@ -1,5 +1,6 @@
 import { BrowserContentLoader } from './content-loader.js';
 import { CONTENT_LIMITS, contentManifestUrl } from './content-manifest.js';
+import { readSharedWorldPackage } from './engine-world-package.js';
 
 const sources = new Map();
 let nextSource = 0;
@@ -46,6 +47,8 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         assets.set(entry.path, { ...entry, url: contentManifestUrl(entry.url, manifestUrl) });
     }
     assetPath(value.startupWorld);
+    if (value.worldPackage !== undefined && value.worldPackage !== 'world-package.json')
+        throw new Error('AssetSource.WorldPackageInvalid: unsupported package descriptor location.');
     if (!assets.has(value.startupWorld)) throw new Error('AssetSource.StartupWorldMissing: startup world is not packaged.');
     if (value.startupSettings !== undefined && value.startupSettings !== null) {
         assetPath(value.startupSettings);
@@ -85,10 +88,19 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'OpaqueShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle', 'UIQuadBatched', 'UITextBatchedBitmap'].includes(variant.semantic) || variant.semanticVersion !== 1
+                || !['StandardLitColor', 'OpaqueShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle', 'UIQuadBatched', 'UITextBatchedBitmap'].includes(variant.semantic)
+                || !(variant.semanticVersion === 1 || variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2)
                 || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
                 || !shaderIdentities.has(variant.descriptorIdentity))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2
+                && !(variant.pass === 'forward-coverage' && variant.vertexProfile === 'static-position-normal-v1'
+                    && ['linear-hdr-v1', 'linear-hdr-directional-shadow-v1'].includes(variant.outputProfile)
+                    || variant.pass === 'depth-normal' && variant.vertexProfile === 'static-position-normal-v1'
+                    && variant.outputProfile === 'normal-rgba16f-v1'
+                    || variant.pass === 'depth' && variant.vertexProfile === 'static-position-v1'
+                    && variant.outputProfile === 'depth-normal-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.semantic === 'OpaqueShadowDepth' && (variant.pass !== 'depth'
                 || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'depth-normal-v1'))
@@ -122,6 +134,20 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                 throw new Error('AssetSource.PipelineArtifactDescriptorBudgetExceeded.');
             if (passes.has(pipeline.pass)) throw new Error('AssetSource.PipelineArtifactDuplicatePass.');
             passes.add(pipeline.pass);
+        }
+    }
+    if (value.computeArtifacts !== undefined) {
+        if (!Array.isArray(value.computeArtifacts) || value.computeArtifacts.length > 1)
+            throw new Error('AssetSource.ComputeArtifactBudgetExceeded.');
+        for (const compute of value.computeArtifacts) {
+            if (!compute || typeof compute !== 'object' || Array.isArray(compute)
+                || Object.keys(compute).length !== 2 || compute.kernel !== 'packed-skinning'
+                || !validSha256(compute.descriptorIdentity))
+                throw new Error('AssetSource.ComputeArtifactInvalid.');
+            const descriptor = shaderDescriptors.get(compute.descriptorIdentity);
+            if (!descriptor) throw new Error('AssetSource.ComputeArtifactMissing.');
+            if (descriptor.bytes > CONTENT_LIMITS.jsonBytes)
+                throw new Error('AssetSource.ComputeArtifactDescriptorBudgetExceeded.');
         }
     }
     const heights = new Map();
@@ -165,6 +191,42 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
             loader.releasePayload(bytes);
         }
     }
+    for (const compute of manifest.computeArtifacts ?? []) {
+        const shader = manifest.shaderArtifacts.find(artifact => artifact.identity === compute.descriptorIdentity);
+        const entry = assets.get(shader.descriptor);
+        const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, compute.descriptorIdentity, entry.path);
+        try {
+            const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+            const expectedNames = ['PackedSkinningData', 'BonePalette', 'ActiveMorphs', 'DeformedPositions', 'DeformedAttributes', 'Update'];
+            const physicalNames = ['data', 'palette', 'activeMorphs', 'vertices', 'attributes', 'update'];
+            const expectedKinds = ['read-only-storage', 'read-only-storage', 'read-only-storage', 'storage', 'storage', 'uniform'];
+            const expectedBytes = [4, 16, 8, 4, 16, 16];
+            const bindings = descriptor?.layout?.bindings;
+            if (descriptor?.pass !== 'skinning' || descriptor.target !== 'WebGPUWgsl'
+                || descriptor.semanticSchemaIdentity !== 'xrengine.engine.compute.v1'
+                || !descriptor.entryPoints || Object.keys(descriptor.entryPoints).length !== 1
+                || descriptor.entryPoints.compute !== 'skin'
+                || !Array.isArray(descriptor.workgroupSize)
+                || descriptor.workgroupSize.length !== 3 || descriptor.workgroupSize.some((size, i) => size !== [64, 1, 1][i])
+                || Object.hasOwn(descriptor, 'materialVariant')
+                || !descriptor.pipeline || typeof descriptor.pipeline !== 'object'
+                || Array.isArray(descriptor.pipeline) || Object.keys(descriptor.pipeline).length !== 0
+                || !Array.isArray(bindings) || bindings.length !== 6
+                || bindings.some((binding, i) => binding.name !== expectedNames[i] || binding.physicalName !== physicalNames[i]
+                    || binding.kind !== expectedKinds[i]
+                    || binding.group !== 0 || binding.binding !== i || binding.bytes !== expectedBytes[i]
+                    || binding.owner !== 'Engine' || binding.frequency !== 'Object'
+                    || binding.dynamic !== (i === 5) || (binding.runtimeArray === true) !== (i !== 5)
+                    || !Array.isArray(binding.visibility) || binding.visibility.length !== 1 || binding.visibility[0] !== 'compute'
+                    || !Array.isArray(binding.members) || binding.members.length !== (i === 5 ? 4 : 0))
+                || bindings[5].members.some((member, i) => member.name !== ['activeCount', 'reserved0', 'reserved1', 'reserved2'][i]
+                    || member.provider !== ['ActiveMorphCount', 'Reserved0', 'Reserved1', 'Reserved2'][i]
+                    || member.offset !== i * 4 || member.bytes !== 4 || member.type !== 'u32'))
+                throw new Error('AssetSource.ComputeArtifactDescriptorMismatch.');
+        } finally {
+            loader.releasePayload(bytes);
+        }
+    }
 }
 
 /** Imports retain owned bytes only; no managed memory view crosses an await. */
@@ -173,12 +235,13 @@ export const engineAssetImports = {
         if (nextSource === 0x7fffffff) throw new Error('AssetSource.SessionCapacityExceeded.');
         const id = ++nextSource;
         sources.set(id, { loader: new BrowserContentLoader(contentManifestUrl(url)), assets: null,
-            manifest: null, reads: new Map(), nextRead: 0, queue: [], active: 0, disposed: false });
+            manifest: null, worldPackage: null, reads: new Map(), nextRead: 0, queue: [], active: 0, disposed: false });
         return id;
     },
     async open(id) {
         const source = requireSource(id);
-        const manifest = await source.loader.readManifest();
+        const initialManifest = await source.loader.readManifest();
+        const { manifest, worldPackage } = await readSharedWorldPackage(source.loader, initialManifest);
         source.loader.signal.throwIfAborted();
         const validated = validateEngineAssetManifest(manifest, source.loader.manifestUrl);
         await validatePipelineArtifactDescriptors(source.loader, validated);
@@ -186,11 +249,17 @@ export const engineAssetImports = {
         if (source !== requireSource(id)) throw new Error('AssetSource.StaleSession.');
         source.manifest = validated.manifest;
         source.assets = validated.assets;
+        source.worldPackage = worldPackage;
     },
     manifest(id) {
         const source = requireSource(id);
         if (!source.manifest) throw new Error('AssetSource.NotReady.');
         return JSON.stringify(source.manifest);
+    },
+    verifiedWorldPackage(id) {
+        const source = requireSource(id);
+        if (!source.manifest) throw new Error('AssetSource.NotReady.');
+        return source.worldPackage ? JSON.stringify(source.worldPackage) : '';
     },
     beginRead(id, path) {
         const source = requireSource(id);

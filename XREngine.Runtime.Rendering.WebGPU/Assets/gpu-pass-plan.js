@@ -131,6 +131,8 @@ export class GpuPassPlan {
             throw new Error('Render attachment requires a ready renderable texture view.');
         if (source.mipCount !== undefined && source.mipCount !== 1)
             throw new Error('Render attachment views must select exactly one mip level.');
+        if (source.dimension !== undefined && (source.dimension !== '2d' || source.arrayLayerCount !== 1))
+            throw new Error('Render attachment views must select one 2D layer or face.');
         if (depthStencil !== (depthFormats.has(source.format) || stencilFormats.has(source.format)))
             throw new Error('Render attachment format does not match its color or depth/stencil role.');
         if (!depthStencil && source.aspect !== undefined && source.aspect !== 'all') throw new Error('Color attachment requires the all aspect.');
@@ -153,10 +155,11 @@ export class GpuPassPlan {
         // View identity alone cannot detect two views of the same writable subresource.
         const texture = source.canvasHandle ?? source.texture?.texture ?? source.texture ?? source;
         for (const used of this._subresources) {
-            if (used.texture === texture && used.mip === (source.baseMip ?? 0))
+            if (used.texture === texture && used.mip === (source.baseMip ?? 0) &&
+                used.layer === (source.baseArrayLayer ?? 0))
                 throw new Error('A render pass cannot alias attachment subresources.');
         }
-        this._subresources.add({ texture, mip: source.baseMip ?? 0 });
+        this._subresources.add({ texture, mip: source.baseMip ?? 0, layer: source.baseArrayLayer ?? 0 });
     }
 
     assertPipeline(descriptor) {

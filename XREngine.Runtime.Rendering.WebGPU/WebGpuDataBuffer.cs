@@ -272,7 +272,12 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
     public void Bind() => throw Unsupported(nameof(Bind), "WebGPU buffers require an explicit program or vertex-layout binding");
     public void Unbind() => throw Unsupported(nameof(Unbind), "WebGPU buffers require an explicit program or vertex-layout binding");
     public void BindSSBO(XRRenderProgram program, uint? bindingIndexOverride = null)
-        => throw Unsupported(nameof(BindSSBO), "engine program binding layouts are not available");
+    {
+        if (bindingIndexOverride is not { } binding)
+            throw Unsupported(nameof(BindSSBO), "a cooked compute buffer requires an explicit binding index");
+        _ = Renderer.GetOrCreateAPIRenderObject(program);
+        program.BindBuffer(Data, binding);
+    }
 
     private void ReportState()
         => Data.ReportBackendUploadState(BackendAllocatedByteSize, BackendUploadedByteCount,

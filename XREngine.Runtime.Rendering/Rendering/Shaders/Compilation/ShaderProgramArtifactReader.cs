@@ -19,6 +19,8 @@ public static class ShaderProgramArtifactReader
         "maxUniformBufferBindingSize", "maxDynamicUniformBuffersPerPipelineLayout", "maxUniformBuffersPerShaderStage",
         "maxSampledTexturesPerShaderStage", "maxSamplersPerShaderStage", "maxStorageBuffersPerShaderStage",
         "maxStorageBufferBindingSize", "maxDynamicStorageBuffersPerPipelineLayout",
+        "maxComputeWorkgroupSizeX", "maxComputeWorkgroupSizeY", "maxComputeWorkgroupSizeZ",
+        "maxComputeInvocationsPerWorkgroup", "maxComputeWorkgroupsPerDimension",
     };
 
     /// <summary>Checks source length/hash before exposing the explicit layout to an engine renderer.</summary>
@@ -32,7 +34,9 @@ public static class ShaderProgramArtifactReader
         string[] keys = ["schemaVersion", "name", "pass", "sourceLanguage", "target", "entryPoints", "defines", "includes",
             "specialization", "requiredFeatures", "requiredLimits", "matrixLayout", "semanticSchemaIdentity", "layout", "pipeline",
             "coordinates", "compilerIdentity", "source", "sourceMap", "dependencies"];
-        ExactKeys(descriptor, descriptor.TryGetProperty("materialVariant", out _) ? [.. keys, "materialVariant"] : keys);
+        if (descriptor.TryGetProperty("materialVariant", out _)) keys = [.. keys, "materialVariant"];
+        if (descriptor.TryGetProperty("workgroupSize", out _)) keys = [.. keys, "workgroupSize"];
+        ExactKeys(descriptor, keys);
         if (descriptor.TryGetProperty("materialVariant", out JsonElement variant))
             _ = ReadMaterialVariantKey(variant, Text(descriptor, "pass"), ShaderCompileTarget.WebGPUWgsl);
         string language = Text(descriptor, "sourceLanguage"), compiler = Text(descriptor, "compilerIdentity");
@@ -97,9 +101,29 @@ public static class ShaderProgramArtifactReader
             }
         }
         Require((vertex is not null && compute is null) || (compute is not null && vertex is null && fragment is null), "provide a vertex stage with optional fragment, or one compute stage");
+        ShaderComputeWorkgroupSize? workgroupSize = null;
+        if (compute is not null)
+        {
+            JsonElement dimensions = Property(descriptor, "workgroupSize", JsonValueKind.Array);
+            Require(dimensions.GetArrayLength() == 3, "compute workgroupSize must have three dimensions");
+            Span<uint> values = stackalloc uint[3];
+            for (int index = 0; index < values.Length; index++)
+            {
+                Require(dimensions[index].TryGetUInt32(out uint value) && value is > 0 and <= 1024,
+                    "compute workgroup dimensions must be positive bounded integers");
+                values[index] = value;
+            }
+            Require((ulong)values[0] * values[1] * values[2] <= 1024,
+                "compute workgroup invocation count exceeds the supported profile");
+            workgroupSize = new(values[0], values[1], values[2]);
+        }
+        else Require(!descriptor.TryGetProperty("workgroupSize", out _), "raster artifacts cannot declare compute workgroup dimensions");
         if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1)
             Require(vertex == "depthVertex" && fragment is null && compute is null,
                 "opaque shadow depth variant requires its vertex-only depth entry point");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+            Require(vertex is not null && fragment is not null && compute is null,
+                "lit-color coverage variants require vertex and fragment stages, including alpha-tested depth");
         if (materialVariant is { } debugEntries &&
             debugEntries.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle))
             Require(vertex is not null && fragment is not null && compute is null,
@@ -151,7 +175,9 @@ public static class ShaderProgramArtifactReader
         HashSet<(int, int)> bindings = [];
         foreach (JsonElement resource in Property(layout, "bindings", JsonValueKind.Array).EnumerateArray())
         {
-            ExactKeys(resource, "name", "physicalName", "group", "binding", "kind", "visibility", "owner", "frequency", "bytes", "dynamic", "members");
+            string[] resourceKeys = ["name", "physicalName", "group", "binding", "kind", "visibility", "owner", "frequency", "bytes", "dynamic", "members"];
+            bool runtimeArray = resource.TryGetProperty("runtimeArray", out JsonElement runtimeArrayValue);
+            ExactKeys(resource, runtimeArray ? [.. resourceKeys, "runtimeArray"] : resourceKeys);
             int group = Bounded(resource, "group", 0, 3), binding = Bounded(resource, "binding", 0, 63);
             Require(bindings.Add((group, binding)), "duplicate resource binding");
             string resourceName = Text(resource, "name"), physicalName = Text(resource, "physicalName"), kind = Text(resource, "kind");
@@ -181,6 +207,10 @@ public static class ShaderProgramArtifactReader
             Require(frequency != ShaderAbiFrequency.Unknown, "resource update frequency must be explicit");
             int size = Bounded(resource, "bytes", 0, 65536);
             bool dynamic = Property(resource, "dynamic").GetBoolean();
+            if (runtimeArray)
+                Require(runtimeArrayValue.ValueKind == JsonValueKind.True && compute is not null &&
+                    resourceKind == ShaderAbiResourceKind.StorageBuffer && !dynamic && size > 0 && size % 4 == 0,
+                    "runtimeArray requires a non-dynamic compute storage element with a positive four-byte stride");
             bool isBuffer = resourceKind is ShaderAbiResourceKind.UniformBuffer or ShaderAbiResourceKind.StorageBuffer;
             bool rawDebugStorage = materialVariant is { } selected &&
                 selected.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle) &&
@@ -204,7 +234,8 @@ public static class ShaderProgramArtifactReader
                     : (binding, resourceName, size) is (0, "GlyphTransformsBuffer", 16) or
                         (1, "GlyphTexCoordsBuffer", 16) or (2, "TextInstanceBuffer", 16) or
                         (3, "GlyphTextIndexBuffer", 4));
-            Require(isBuffer ? rawDebugStorage || uiStorage || size > 0 && size % 16 == 0 : size == 0 && !dynamic,
+            bool rawComputeStorage = runtimeArray && Property(resource, "members", JsonValueKind.Array).GetArrayLength() == 0;
+            Require(isBuffer ? rawDebugStorage || uiStorage || runtimeArray || size > 0 && size % 16 == 0 : size == 0 && !dynamic,
                 "invalid resource byte size or dynamic offset");
             ImmutableArray<ShaderAbiMemberContract>.Builder members = ImmutableArray.CreateBuilder<ShaderAbiMemberContract>();
             HashSet<string> names = new(StringComparer.Ordinal);
@@ -222,10 +253,10 @@ public static class ShaderProgramArtifactReader
                 members.Add(new ShaderAbiMemberContract(memberName, provider, (uint)offset, (uint)memberSize, type,
                     MatrixOrder: matrix ? ShaderAbiMatrixOrder.ColumnMajor : ShaderAbiMatrixOrder.None, MatrixStride: matrix ? 16u : 0u));
             }
-            Require(rawDebugStorage || uiStorage ? members.Count == 0 : isBuffer ? members.Count > 0 : members.Count == 0,
+            Require(rawDebugStorage || uiStorage || rawComputeStorage ? members.Count == 0 : isBuffer ? members.Count > 0 : members.Count == 0,
                 "only declared runtime storage bindings may omit fixed buffer members");
             ShaderAbiResourceContract contract = new(resourceName, physicalName, (uint)group, (uint)binding, resourceKind, owner, frequency, (uint)size, members.ToImmutable());
-            resources.Add(new ShaderStageResourceLayout(contract, visibility, kind, dynamic));
+            resources.Add(new ShaderStageResourceLayout(contract, visibility, kind, dynamic) { RuntimeArray = runtimeArray });
         }
         Require(resources.Count <= 64, "resource count exceeds the bounded profile");
         ImmutableDictionary<string, int>.Builder limits = ImmutableDictionary.CreateBuilder<string, int>(StringComparer.Ordinal);
@@ -233,6 +264,13 @@ public static class ShaderProgramArtifactReader
         {
             Require(LimitNames.Contains(limit.Name) && limit.Value.TryGetInt32(out int value) && value > 0, "invalid required limit '" + limit.Name + "'");
             limits.Add(limit.Name, limit.Value.GetInt32());
+        }
+        if (workgroupSize is { } groupSize)
+        {
+            CheckLimit(limits, "maxComputeWorkgroupSizeX", checked((int)groupSize.X));
+            CheckLimit(limits, "maxComputeWorkgroupSizeY", checked((int)groupSize.Y));
+            CheckLimit(limits, "maxComputeWorkgroupSizeZ", checked((int)groupSize.Z));
+            CheckLimit(limits, "maxComputeInvocationsPerWorkgroup", checked((int)(groupSize.X * groupSize.Y * groupSize.Z)));
         }
         CheckLimit(limits, "maxVertexAttributes", locations.Count);
         CheckLimit(limits, "maxVertexBuffers", buffers.Count);
@@ -290,7 +328,8 @@ public static class ShaderProgramArtifactReader
         if (descriptor.TryGetProperty("sourceMap", out JsonElement map)) sourcePath = Text(map, "path");
         Require(RelativePath(sourcePath), "source path must be relative and normalized");
         return new ShaderProgramArtifact(identity, name, pass, sourcePath, artifact, schema, CoordinateConvention, vertex, fragment, compute,
-            buffers.OrderBy(buffer => buffer.Slot).ToImmutableArray(), resources.ToImmutable(), limits.ToImmutable());
+            buffers.OrderBy(buffer => buffer.Slot).ToImmutableArray(), resources.ToImmutable(), limits.ToImmutable())
+            { ComputeWorkgroupSize = workgroupSize };
     }
 
     internal static int VertexFormatBytes(string format) => format switch

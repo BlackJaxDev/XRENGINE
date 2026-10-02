@@ -64,9 +64,6 @@ public sealed partial class WebGpuRendererHost
     public override void DisableSampleShading()
         => throw UnsupportedEngineOperation(nameof(DisableSampleShading));
 
-    public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
-        => throw UnsupportedEngineOperation(nameof(DispatchCompute));
-
     public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback)
         => throw UnsupportedEngineOperation(nameof(GetScreenshotAsync));
 

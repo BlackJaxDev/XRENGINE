@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -107,11 +107,17 @@ public static partial class BrowserContentPackageBuilder
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
                 string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth",
                     "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UITextBatchedBitmap");
-                int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, 1);
+                int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
+                if (semantic == "StandardLitColor" && semanticVersion == 2)
+                    Require(pass == "forward-coverage" && vertexProfile == "static-position-normal-v1" &&
+                            outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" ||
+                        pass == "depth-normal" && vertexProfile == "static-position-normal-v1" && outputProfile == "normal-rgba16f-v1" ||
+                        pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1",
+                        "Lit-color coverage requires its exact color, normal, or depth profile.");
                 if (semantic == "OpaqueShadowDepth")
                     Require(pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1",
                         "Opaque shadow depth requires its exact pass and profiles.");
@@ -154,7 +160,7 @@ public static partial class BrowserContentPackageBuilder
                     "Material variant is absent from its hash-owned shader descriptor.");
                 Members(declaration, "semantic", "semanticVersion", "vertexProfile", "outputProfile");
                 Require(declaration.GetProperty("semantic").GetString() == semantic
-                    && Integer(declaration.GetProperty("semanticVersion"), 1, 1) == semanticVersion
+                    && Integer(declaration.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1) == semanticVersion
                     && declaration.GetProperty("vertexProfile").GetString() == vertexProfile
                     && declaration.GetProperty("outputProfile").GetString() == outputProfile,
                     "Material variant differs from its hash-owned shader descriptor.");
@@ -197,6 +203,36 @@ public static partial class BrowserContentPackageBuilder
                 pipelineArtifacts.Add(new { pass, descriptorIdentity });
             }
         }
+        List<object> computeArtifacts = [];
+        if (recipe.TryGetProperty("computeArtifacts", out JsonElement computeValues))
+        {
+            Require(computeValues.ValueKind == JsonValueKind.Array && computeValues.GetArrayLength() <= 1,
+                "Compute artifact catalog exceeds one kernel.");
+            foreach (JsonElement compute in computeValues.EnumerateArray())
+            {
+                Members(compute, "kernel", "descriptorIdentity");
+                string kernel = Choice(compute, "kernel", "packed-skinning");
+                JsonElement identityValue = compute.GetProperty("descriptorIdentity");
+                Require(identityValue.ValueKind == JsonValueKind.String, "Compute artifact identity must be a string.");
+                string identity = identityValue.GetString()!;
+                Require(Regex.IsMatch(identity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
+                    "Compute artifact identity must be a lowercase SHA-256 descriptor hash.");
+                if (!shaderDescriptors.TryGetValue(identity, out JsonElement descriptor))
+                    throw new InvalidDataException("Compute artifact references an absent shader descriptor.");
+                Require(descriptor.ValueKind == JsonValueKind.Object
+                    && descriptor.GetProperty("pass").GetString() == "skinning"
+                    && descriptor.GetProperty("target").GetString() == "WebGPUWgsl"
+                    && descriptor.GetProperty("semanticSchemaIdentity").GetString() == "xrengine.engine.compute.v1"
+                    && descriptor.TryGetProperty("entryPoints", out JsonElement entries) && entries.ValueKind == JsonValueKind.Object
+                    && entries.EnumerateObject().Count() == 1 && entries.GetProperty("compute").GetString() == "skin"
+                    && descriptor.TryGetProperty("workgroupSize", out JsonElement workgroup) && workgroup.ValueKind == JsonValueKind.Array
+                    && workgroup.GetArrayLength() == 3 && workgroup[0].GetInt32() == 64
+                    && workgroup[1].GetInt32() == 1 && workgroup[2].GetInt32() == 1
+                    && !descriptor.TryGetProperty("materialVariant", out _),
+                    "Compute artifact descriptor must be the matching packed skinning WebGPU program.");
+                computeArtifacts.Add(new { kernel, descriptorIdentity = identity });
+            }
+        }
         Dictionary<string, object?> manifestModel = new(StringComparer.Ordinal)
         {
             ["schema"] = 1, ["format"] = "xrengine-assets", ["startupWorld"] = startupWorld,
@@ -208,6 +244,8 @@ public static partial class BrowserContentPackageBuilder
             manifestModel.Add("defaultUiFont", defaultUiFont);
         if (pipelineArtifacts.Count != 0)
             manifestModel.Add("pipelineArtifacts", pipelineArtifacts);
+        if (computeArtifacts.Count != 0)
+            manifestModel.Add("computeArtifacts", computeArtifacts);
         manifestModel.Add("assets", cookedAssets);
         byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestModel, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Engine asset manifest exceeds 1 MiB.");

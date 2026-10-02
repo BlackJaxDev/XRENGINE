@@ -532,6 +532,8 @@ namespace XREngine
 
             private void ApplyWorldDescriptor(WorldSyncDescriptor descriptor)
             {
+                if (IsReplicationDisposed)
+                    return;
                 IRuntimeNetworkWorldContext? worldInstance = ResolvePrimaryWorldInstance();
                 if (worldInstance is null)
                 {
@@ -595,6 +597,8 @@ namespace XREngine
 
             private void HandlePlayerLeave(PlayerLeaveNotice leave)
             {
+                if (IsReplicationDisposed)
+                    return;
                 if (_activeSessionId != Guid.Empty && leave.SessionId != _activeSessionId)
                     return;
 

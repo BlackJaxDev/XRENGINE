@@ -538,8 +538,18 @@ namespace XREngine.Rendering
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            InvalidateDepthNormalPrePassVariant();
-            InvalidateShadowCasterVariant();
+            // V2 auxiliary programs read the live source's parameters/coverage.
+            // Numeric and mode edits must not destroy stable replay pipelines.
+            // Replacing the parameter layout, shaders, or options still invalidates.
+            bool preserveCoverageVariants = EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 &&
+                propName is nameof(BindingValueVersion) or nameof(AlphaCutoff) or nameof(TransparencyMode)
+                    or nameof(TransparentTechniqueOverride) or nameof(RenderPass) or nameof(TransparentSortPriority)
+                    or nameof(Name);
+            if (!preserveCoverageVariants)
+            {
+                InvalidateDepthNormalPrePassVariant();
+                InvalidateShadowCasterVariant();
+            }
             InvalidateOutlinePassVariant();
 
             switch (propName)

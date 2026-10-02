@@ -9,6 +9,7 @@ internal sealed partial class WgslAbiParser
     private readonly Dictionary<string, HashSet<string>> _functionReferences = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ShaderStageVisibility> _stages = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _vertexInputs = [];
+    private readonly Dictionary<string, ShaderComputeWorkgroupSize> _workgroups = new(StringComparer.Ordinal);
 
     private void EngineFunctionDeclaration(WgslAbiToken name, List<WgslAbiAttribute> attributes)
     {
@@ -31,6 +32,27 @@ internal sealed partial class WgslAbiParser
         }
         if (stage != ShaderStageVisibility.None && !_stages.TryAdd(name.Text, stage))
             Fail(name.Offset, "duplicate stage entry point");
+        List<WgslAbiAttribute> workgroups = attributes.Where(attribute => attribute.Name == "workgroup_size").ToList();
+        if (stage == ShaderStageVisibility.Compute)
+        {
+            if (workgroups.Count != 1 || workgroups[0].Argument is null)
+                Fail(name.Offset, "compute entry requires one literal @workgroup_size");
+            string[] dimensions = workgroups[0].Argument!.Split(',');
+            if (dimensions.Length is < 1 or > 3)
+                Fail(name.Offset, "compute workgroup size requires one to three dimensions");
+            uint[] values = [1, 1, 1];
+            for (int index = 0; index < dimensions.Length; index++)
+            {
+                string literal = dimensions[index];
+                if (literal.EndsWith('u') || literal.EndsWith('i')) literal = literal[..^1];
+                if (literal.Length is < 1 or > 4 || !literal.All(character => character is >= '0' and <= '9') ||
+                    !uint.TryParse(literal, out values[index]) || values[index] is < 1 or > 1024)
+                    Fail(name.Offset, "compute workgroup dimension must be a bounded decimal literal");
+            }
+            _workgroups.Add(name.Text, new(values[0], values[1], values[2]));
+        }
+        else if (workgroups.Count != 0)
+            Fail(name.Offset, "only compute entry points can declare a workgroup size");
         Expect("(");
         while (!Take(")"))
         {
@@ -77,6 +99,10 @@ internal sealed partial class WgslAbiParser
         CheckEntry(expected.VertexEntryPoint, ShaderStageVisibility.Vertex);
         CheckEntry(expected.FragmentEntryPoint, ShaderStageVisibility.Fragment);
         CheckEntry(expected.ComputeEntryPoint, ShaderStageVisibility.Compute);
+        if (expected.ComputeEntryPoint is { } compute &&
+            (expected.ComputeWorkgroupSize is not { } workgroup ||
+             !_workgroups.TryGetValue(compute, out ShaderComputeWorkgroupSize actualWorkgroup) || actualWorkgroup != workgroup))
+            Fail(0, "compute workgroup dimensions differ from the declared ABI");
         int entryCount = (expected.VertexEntryPoint is null ? 0 : 1) + (expected.FragmentEntryPoint is null ? 0 : 1) + (expected.ComputeEntryPoint is null ? 0 : 1);
         if (_stages.Count != entryCount) Fail(0, "WGSL contains an undeclared stage entry point");
         int attributeCount = 0;
@@ -107,7 +133,7 @@ internal sealed partial class WgslAbiParser
             };
             if (found.Kind != kind) Fail(found.Offset, "resource address space does not match its declared binding kind");
             if (contract.Kind is ShaderAbiResourceKind.UniformBuffer or ShaderAbiResourceKind.StorageBuffer)
-                CheckEngineBuffer(found.Type, found.Offset, contract);
+                CheckEngineBuffer(found.Type, found.Offset, contract, resource.RuntimeArray);
             else
             {
                 string type = resource.BindingType switch
@@ -141,9 +167,27 @@ internal sealed partial class WgslAbiParser
         return false;
     }
 
-    private void CheckEngineBuffer(string type, int offset, ShaderAbiResourceContract expected)
+    private void CheckEngineBuffer(string type, int offset, ShaderAbiResourceContract expected, bool runtimeArray)
     {
         string resolved = ResolveAlias(type, new HashSet<string>(StringComparer.Ordinal), offset);
+        if (runtimeArray)
+        {
+            if (!resolved.StartsWith("array<", StringComparison.Ordinal) || !resolved.EndsWith('>'))
+                Fail(offset, "compute runtime storage must declare a runtime-sized array");
+            string element = resolved[6..^1];
+            if (element.Contains(','))
+                Fail(offset, "compute runtime storage cannot declare a fixed element count");
+            resolved = ResolveAlias(element, new HashSet<string>(StringComparer.Ordinal), offset);
+            if (expected.Members.IsEmpty)
+            {
+                if (_structs.ContainsKey(resolved))
+                    Fail(offset, "structured compute array elements require explicit members");
+                WgslAbiShape shape = Resolve(resolved, new HashSet<string>(StringComparer.Ordinal), offset);
+                if (RoundUp(shape.Size, shape.Alignment, offset) != expected.ByteSize)
+                    Fail(offset, "compute runtime array stride differs from the declared ABI");
+                return;
+            }
+        }
         if (expected.Kind == ShaderAbiResourceKind.StorageBuffer && expected.ByteSize == 4 && expected.Members.IsEmpty)
         {
             // The descriptor's empty-member storage cohort is explicitly a raw
@@ -170,7 +214,7 @@ internal sealed partial class WgslAbiParser
         }
         if (!_structs.TryGetValue(resolved, out WgslAbiStructure? structure)) Fail(offset, "buffer must use a named physical structure");
         if (structure.Members.Count != expected.Members.Length) Fail(offset, "buffer member count differs from declared ABI");
-        int cursor = 0, alignment = 16;
+        int cursor = 0, alignment = runtimeArray ? 1 : 16;
         for (int index = 0; index < structure.Members.Count; index++)
         {
             WgslAbiMember member = structure.Members[index];

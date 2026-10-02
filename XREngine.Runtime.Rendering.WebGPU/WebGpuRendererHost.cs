@@ -178,6 +178,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             try
             {
                 PrepareForApiObjectTeardown();
+                DestroyMeshDeformationResources();
                 DestroyCachedAPIRenderObjects();
             }
             finally

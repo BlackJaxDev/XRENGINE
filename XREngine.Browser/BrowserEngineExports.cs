@@ -98,6 +98,7 @@ public static partial class BrowserEngineExports
             stage = "load shader catalog";
             _shaderArtifacts = await _source.LoadShaderArtifactsAsync(token);
             _materialVariants = _source.LoadEngineMaterialVariants(_shaderArtifacts);
+            WebComputeArtifactCatalog computeArtifacts = _source.LoadComputeArtifacts(_shaderArtifacts);
             _session = new BrowserEngineSession(PhysicsBackends);
             stage = "preload default UI font";
             FontGlyphSet? defaultUiFont = await _source.LoadDefaultUiFontAsync(token);
@@ -107,6 +108,8 @@ public static partial class BrowserEngineExports
             XRWorld world = await Engine.Assets.LoadFromRuntimeSourceAsync(
                 _source.StartupWorldPath, typeof(XRWorld), cancellationToken: token) as XRWorld
                 ?? throw new InvalidDataException("The cooked startup asset did not deserialize to XRWorld.");
+            _source.RegisterVerifiedWorldIdentity(world);
+            AdmitMeshDeformation(world, computeArtifacts);
             stage = "load startup settings";
             GameStartupSettings cookedSettings;
             if (_source.StartupSettingsPath is { } settingsPath)
@@ -136,7 +139,8 @@ public static partial class BrowserEngineExports
 
             stage = "start engine world";
             await _session.StartAsync(world, configuredSettings, initialState, token, canvasId, _shaderArtifacts,
-                _materialVariants, _source.LoadTonemapArtifact(_shaderArtifacts), _source.LoadPipelineArtifacts(_shaderArtifacts));
+                _materialVariants, _source.LoadTonemapArtifact(_shaderArtifacts), _source.LoadPipelineArtifacts(_shaderArtifacts),
+                computeArtifacts);
             token.ThrowIfCancellationRequested();
             return $"{world.Name ?? "<unnamed>"}: {_session.World?.RootNodes.Count ?? 0} root nodes playing; " +
                 $"Jolt physics; fixed rate {configuredSettings.FixedFramesPerSecond:F0} Hz; " +

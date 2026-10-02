@@ -18,7 +18,7 @@ namespace XREngine.Browser;
 /// Owns one real engine world on the browser event thread. Its physics factory must come
 /// from an installed browser backend; the reference scene is never used as a fallback.
 /// </summary>
-internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends) : IAsyncDisposable
+internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physicsBackends) : IAsyncDisposable
 {
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly PhysicsBackendCatalog _physicsBackends = physicsBackends
@@ -93,7 +93,8 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     public async Task StartAsync(XRWorld world, GameStartupSettings authoredSettings, GameState initialState,
         CancellationToken cancellationToken = default, string? canvasId = null,
         IShaderProgramArtifactResolver? shaderArtifacts = null, EngineMaterialVariantCatalog? materialVariants = null,
-        ShaderProgramArtifact? tonemapArtifact = null, WebPipelineArtifactCatalog? pipelineArtifacts = null)
+        ShaderProgramArtifact? tonemapArtifact = null, WebPipelineArtifactCatalog? pipelineArtifacts = null,
+        WebComputeArtifactCatalog? computeArtifacts = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(authoredSettings);
@@ -141,6 +142,9 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
                 _canvas = new BrowserCanvasRenderTarget(canvasId);
                 _renderer = OwnConstruction(() => BrowserRendererComposition.CreateRequired(_canvas)) as WebGpuRendererHost
                     ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
+                if (computeArtifacts?.TryResolve(WebComputeArtifactCatalog.PackedSkinningKernel,
+                        out ShaderProgramArtifact? deformationArtifact) == true)
+                    _renderer.BindMeshDeformationArtifact(deformationArtifact);
                 _renderer.BindShaderArtifacts(shaderArtifacts, materialVariants);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
                 if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
@@ -259,7 +263,9 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         if (!_running)
             return false;
         RefreshCamera();
-        return Engine.Time.Timer.StepFrame(elapsedSeconds);
+        bool stepped = Engine.Time.Timer.StepFrame(elapsedSeconds);
+        ObserveNetworkFailure();
+        return stepped;
     }
 
     private void RefreshCamera()
@@ -302,7 +308,10 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         _canvas.UpdateSurface(surface);
         _renderer.SynchronizeEngineViewport(replaced);
         if (!surface.CanRender)
+        {
+            SuspendNetwork();
             ResetFrameTiming();
+        }
     }
 
     public void RendererFailed(bool deviceLost) => _renderer?.MarkFailed(deviceLost);
@@ -352,6 +361,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     public async Task StopAsync()
     {
         Interlocked.Increment(ref _epoch);
+        SuspendNetwork();
         await _lifecycle.WaitAsync();
         try
         {
@@ -379,6 +389,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         }
 
         _running = false;
+        Capture(errors, SuspendNetwork);
         _textInput.Clear();
         if (_renderer is not null)
             Engine.Time.Timer.RenderFrame -= RenderCanvasFrame;

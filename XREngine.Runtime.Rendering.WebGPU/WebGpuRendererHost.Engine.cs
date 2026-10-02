@@ -42,6 +42,7 @@ public sealed partial class WebGpuRendererHost
         IRuntimeRenderWorld? world = _engineViewport?.World;
         try
         {
+            RetireDestroyedMeshDeformations();
             bool ready;
             if (world is not null)
             {
@@ -221,6 +222,8 @@ public sealed partial class WebGpuRendererHost
         {
             XRDataBuffer buffer => new WebGpuDataBuffer(this, buffer),
             XRTexture2D texture => new WebGpuTexture2D(this, texture),
+            XRTexture2DArray array => new WebGpuTexture2DArray(this, array),
+            XRTextureCube cube => new WebGpuTextureCube(this, cube),
             XRFrameBuffer framebuffer => new WebGpuFrameBuffer(this, framebuffer),
             XRRenderProgram program => new WebGpuRenderProgram(this, program),
             XRMaterial material => new WebGpuMaterial(this, material),
@@ -290,6 +293,14 @@ public sealed partial class WebGpuRendererHost
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuRenderProgram program)
                 program.ReleaseBindingSetsUsingHandle(resource, handle);
+    }
+
+    /// <summary>Retires raster commands for one descriptor generation before its groups retire.</summary>
+    internal void ReleaseEngineMeshCommandsUsingBindingSet(WebGpuRenderProgram program, WebGpuBindingSet bindings)
+    {
+        foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
+            if (api is WebGpuMeshRenderer mesh)
+                mesh.ReleaseCommandUsing(program, bindings);
     }
 
     private static NotSupportedException UnsupportedEngineOperation(string operation,

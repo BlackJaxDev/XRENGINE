@@ -32,6 +32,10 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
     public uint SampleCount => Data.MultiSampleCount;
     public override nint GetHandle() => _handle;
 
+    internal bool IsCurrentGpuAllocationForCopy => _handle != 0 && !_invalidated && !IsRetired && !Data.IsDestroyed &&
+        _width == Data.Width && _height == Data.Height && _samples == Data.MultiSampleCount &&
+        _mipCount == Data.Mipmaps.Length && _format == Data.SizedInternalFormat;
+
     private void Invalidate() => _invalidated = true;
 
     private void OnDataChanged(object? sender, IXRPropertyChangedEventArgs change)

@@ -32,6 +32,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         data.UniformSetBoolRequested += SetBool;
         data.SamplerRequested += SetSampler;
         data.SamplerRequestedByLocation += SetSamplerByLocation;
+        data.BindBufferRequested += SetBuffer;
     }
 
     public ShaderProgramArtifact Artifact => _artifact
@@ -70,6 +71,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
     private async Task PrepareAsync(ShaderProgramArtifact artifact, int epoch)
     {
         ValidateResourceLayout(artifact);
+        InitializeUniformBlocks(artifact);
         int shader = await Renderer.CreateShaderModuleAsync(artifact.Artifact.WgslSource, artifact.Name);
         if (IsRetired || Data.IsDestroyed || !Renderer.AcceptsBackendWork || epoch != _preparationEpoch)
         {
@@ -87,10 +89,20 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
             hasUniforms |= resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer;
         SetField(ref _uniformArena, hasUniforms ? Renderer.EnsureEngineUniformBuffer() : 0);
         SetField(ref _layouts, new int[groupCount]);
+        for (int group = 0; group < groupCount; group++)
+            _layouts[group] = Renderer.CreateBindingLayout(DescribeGroup(artifact, group, layout: true));
+        Data.SetBackendLinked(true);
+    }
+
+    /// <summary>Installs CPU uniform targets before asynchronous module compilation can defer a frame.</summary>
+    private void InitializeUniformBlocks(ShaderProgramArtifact artifact)
+    {
+        int groupCount = 0;
+        foreach (ShaderStageResourceLayout resource in artifact.Resources)
+            groupCount = Math.Max(groupCount, checked((int)resource.Contract.Set + 1));
         List<WebGpuUniformBlock> blocks = [];
         for (int group = 0; group < groupCount; group++)
         {
-            _layouts[group] = Renderer.CreateBindingLayout(DescribeGroup(artifact, group, layout: true));
             foreach (ShaderStageResourceLayout resource in artifact.Resources.OrderBy(static resource => resource.Contract.Binding))
             {
                 if (resource.Contract.Set != group || resource.Contract.Kind != ShaderAbiResourceKind.UniformBuffer)
@@ -106,7 +118,6 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
             }
         }
         SetField(ref _blocks, blocks.ToArray());
-        Data.SetBackendLinked(true);
     }
 
     private string DescribeGroup(ShaderProgramArtifact artifact, int group, bool layout)
@@ -135,7 +146,12 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
                     writer.WriteNumber("offset", 0);
                     writer.WriteNumber("size", resource.Contract.ByteSize);
                 }
-                else writer.WriteNumber("resource", _resourceHandles[index]);
+                else
+                {
+                    writer.WriteNumber("resource", _resourceHandles[index]);
+                    if (resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer)
+                        writer.WriteNumber("size", _resourceSizes[index]);
+                }
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
@@ -194,6 +210,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         Data.UniformSetBoolRequested -= SetBool;
         Data.SamplerRequested -= SetSampler;
         Data.SamplerRequestedByLocation -= SetSamplerByLocation;
+        Data.BindBufferRequested -= SetBuffer;
         base.OnRetiring();
     }
 
@@ -201,6 +218,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
     {
         SetField(ref _preparationEpoch, checked(_preparationEpoch + 1));
         Renderer.ReleaseEngineDrawDependencies(this);
+        DestroyCompute();
         ClearBindingSets();
         if (Renderer.State != BrowserRendererState.Disposed)
         {
@@ -214,6 +232,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         _uniforms.Clear();
         _samplers.Clear();
         SetField(ref _resourceHandles, []);
+        SetField(ref _resourceSizes, []);
         SetField(ref _resourceOwners, []);
         SetField(ref _uniformArena, 0);
         Data.SetBackendLinked(false);

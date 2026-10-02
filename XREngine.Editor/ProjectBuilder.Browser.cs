@@ -16,6 +16,7 @@ internal static partial class ProjectBuilder
         private string? _siteRoot;
         private string? _recipePath;
         private bool _includesDefaultUiFont;
+        private BrowserSharedWorldPackage? _sharedWorldPackage;
 
         private string SourceRoot => Path.Combine(_stageRoot, "content-source");
         private string PublishRoot => Path.Combine(_stageRoot, "publish");
@@ -39,9 +40,29 @@ internal static partial class ProjectBuilder
             try
             {
                 Cancellation.ThrowIfCancellationRequested();
-                XRWorld world = LoadStartupWorld(context);
-                _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
-                    Cancellation, out _includesDefaultUiFont);
+                if (string.IsNullOrWhiteSpace(context.Project.BrowserSharedWorldPackageManifestPath))
+                {
+                    XRWorld world = LoadStartupWorld(context);
+                    _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
+                        Cancellation, out _includesDefaultUiFont);
+                }
+                else
+                {
+                    string worldPath = ResolveBrowserStartupWorldPath(context);
+                    _sharedWorldPackage = PrepareBrowserSharedWorldPackage(context.Project, worldPath, context.AssetsDirectory, Cancellation);
+                    using XREngine.Data.Core.ObjectCachePublicationScope publication = XREngine.Data.Core.XRObjectBase.BeginIndependentObjectCachePublication();
+                    using StringReader reader = new(new System.Text.UTF8Encoding(false, true).GetString(_sharedWorldPackage.NativeWorldBytes));
+                    using var sourceContext = AssetDeserializationContext.Push(worldPath);
+                    XRWorld world = AssetManager.Deserializer.Deserialize<XRWorld>(reader)
+                        ?? throw new InvalidDataException("BrowserCook.SharedPackageWorldInvalid: retained native bytes did not hydrate an XRWorld.");
+                    if (world.GetType() != typeof(XRWorld))
+                        throw new NotSupportedException("BrowserCook.SharedPackageProfileUnsupported: requires the exact base XRWorld type.");
+                    world.FilePath = worldPath;
+                    using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
+                    _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
+                        Cancellation, out _includesDefaultUiFont);
+                    RequireSharedBrowserCook(_sharedWorldPackage, _recipePath);
+                }
             }
             catch
             {
@@ -71,6 +92,7 @@ internal static partial class ProjectBuilder
                 string recipe = _recipePath ?? throw new InvalidOperationException("Browser world export did not produce a recipe.");
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
                 BrowserContentPackageBuilder.Build(recipe, Path.Combine(site, "content"), Cancellation);
+                PublishBrowserSharedWorldPackage(_sharedWorldPackage, Path.Combine(site, "content"), Cancellation);
             }
             catch
             {
@@ -250,6 +272,17 @@ internal static partial class ProjectBuilder
 
     private static XRWorld LoadStartupWorld(BuildContext context)
     {
+        string path = ResolveBrowserStartupWorldPath(context);
+        // Deserialize afresh from the authored asset; AssetManager.Load may return the editor's mutable cache.
+        // The abstract base lets the saved type hint select a game-owned XRWorld subclass.
+        XRWorld world = AssetManager.DeserializeAssetFile(path, typeof(XRAsset)) as XRWorld
+            ?? throw new InvalidOperationException("Startup target asset did not deserialize as XRWorld.");
+        world.FilePath = path;
+        return world;
+    }
+
+    private static string ResolveBrowserStartupWorldPath(BuildContext context)
+    {
         GameStartupSettings startup = Engine.PersistentGameSettings
             ?? throw new InvalidOperationException("Save game startup settings before browser publishing.");
         if (startup.RunWithoutWindows)
@@ -279,12 +312,7 @@ internal static partial class ProjectBuilder
             !string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("Browser startup world must be a saved project .asset inside Assets.");
         if (!File.Exists(path)) throw new FileNotFoundException("Saved browser startup world was not found.", path);
-        // Deserialize afresh from the authored asset; AssetManager.Load may return the editor's mutable cache.
-        // The abstract base lets the saved type hint select a game-owned XRWorld subclass.
-        XRWorld world = AssetManager.DeserializeAssetFile(path, typeof(XRAsset)) as XRWorld
-            ?? throw new InvalidOperationException("Startup target asset did not deserialize as XRWorld.");
-        world.FilePath = path;
-        return world;
+        return path;
     }
 
     private static void RejectBrowserOutputLinks(string output, string buildDirectory)

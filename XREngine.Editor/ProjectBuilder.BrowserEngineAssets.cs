@@ -58,6 +58,7 @@ internal static partial class ProjectBuilder
         }).ToList();
         settings.RunWithoutWindows = true;
         settings.LogOutputToFile = false;
+        ClearBrowserRealtimeCredentials(settings);
         dependencyCooker.Cook(settings, "/game/startup.asset", "startup-settings.bin");
         List<object> assets = [.. dependencyCooker.Entries
             .OrderBy(static entry => entry.Key, StringComparer.Ordinal)
@@ -87,6 +88,7 @@ internal static partial class ProjectBuilder
         }
         List<object> materialVariants = [];
         List<object> pipelineArtifacts = [];
+        List<object> computeArtifacts = [];
         if (resolver is BrowserShaderArtifactSource shaderSource)
         {
             foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
@@ -110,16 +112,39 @@ internal static partial class ProjectBuilder
                     throw new InvalidDataException($"The declared browser pipeline artifact '{pass}' was not packaged.");
                 pipelineArtifacts.Add(new { pass, descriptorIdentity = identity });
             }
+            foreach ((string kernel, string identity) in shaderSource.ComputeArtifacts)
+            {
+                if (!shaderIdentities.Contains(identity))
+                    throw new InvalidDataException($"The declared browser compute artifact '{kernel}' was not packaged.");
+                computeArtifacts.Add(new { kernel, descriptorIdentity = identity });
+            }
         }
         byte[] recipe = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schema = 1, format = "xrengine-assets", startupWorld = worldPath,
             startupSettings = "/game/startup.asset", shaderArtifacts = shaderReferences,
             defaultUiFont = includesDefaultUiFont ? BrowserDefaultUiFontPath : null,
-            materialVariants, pipelineArtifacts, assets
+            materialVariants, pipelineArtifacts, computeArtifacts, assets
         }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
         string path = Path.Combine(sourceDirectory, "engine-assets.recipe.json");
         File.WriteAllBytes(path, recipe);
         return path;
+    }
+
+    /// <summary>Published settings must never carry an editor session's transient admission grant.</summary>
+    private static void ClearBrowserRealtimeCredentials(GameStartupSettings settings)
+    {
+        settings.MultiplayerSessionId = null;
+        settings.MultiplayerSessionToken = null;
+        settings.MultiplayerAccountId = null;
+        settings.MultiplayerReservationId = null;
+        settings.MultiplayerAdmissionSecret = null;
+        settings.MultiplayerClientId = null;
+        settings.MultiplayerWorkerGeneration = null;
+        settings.MultiplayerResumeRequested = false;
+        settings.MultiplayerCredentialEpoch = 0;
+        settings.ExpectedMultiplayerProtocolVersion = null;
+        settings.ExpectedMultiplayerWorldAsset = null;
+        settings.IgnoreEnvironmentRealtimeHandoffs = true;
     }
 }

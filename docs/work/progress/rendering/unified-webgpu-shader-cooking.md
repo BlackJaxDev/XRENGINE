@@ -446,3 +446,52 @@ and browser font/resource lifetime are not yet qualified. The browser text
 bridge source connects the existing focused text widget to a native input/IME
 proxy while the engine retains visible text rendering; browser behavior remains
 for end-to-end validation.
+
+## Canonical compute and texture-family implementation
+
+The shared renderer now records cooked compute dispatches in the same ordered,
+atomic engine frame as raster commands. Compute artifacts declare literal
+workgroup dimensions and explicit runtime-array element strides; cooking and
+runtime admission reject inconsistent source/descriptor layouts. Numeric storage
+bindings resolve only unambiguous cooked binding slots. Logical buffer lengths,
+not retained allocation capacity, define storage ranges and instance limits.
+Changing those ranges retires dependent raster/compute commands before their
+bind groups, while immutable pipelines remain reusable.
+
+The canonical mesh adapter packs retained engine skinning and sparse quantized
+morph inputs for the existing WGSL kernel. It preserves Core4x8/Core4x16 and spill
+influences, affine palette bases, authored influence caps, active morph weights,
+thresholds, maximum accumulation, normals and tangent signs. A renderer owns its
+position and normal/tangent output streams; these different physical layouts are
+not published as the engine's canonical `Skinned*` buffers. Shared preparation
+only warms resources. The first actual raster draw records the producer after
+render-data and uniform callbacks, and shadow/prepass/color consumers reuse it
+within that attempted frame. An aborted frame never promotes persistent clean
+output state. Rigid worlds allocate no deformation GPU resources.
+
+The bounded packed profile admits 16,384 vertices, 1,024 palette entries, 256
+morph shapes and 65,536 records per renderer, with an 8 MiB packed input arena
+and at most 1,024 resident renderer generations. Disabled features do not consume
+their record budgets. Canonical all-identity morphs retain validated zero
+sentinel/metadata rather than failing for deliberately omitted sparse records.
+Destroyed/replaced owners release API resources and native input mirrors; dirty
+source generations include layout, revision and pointer changes.
+
+Sampled cube and 2D-array textures now preserve authored mip/layer ranges and
+sampler W addressing. Layered render attachments select exactly one mip and
+layer; sampled views select their declared contiguous range. Transactional
+uploads/copies validate all source generations before adopting a replacement,
+and resource alias checks include layer overlap. Depth arrays admit comparison
+or load-only use. Unsupported CPU texel formats, implicit mip generation and
+incompatible sample/attachment profiles fail explicitly.
+
+The integrated browser/Jolt Release build passes with zero warnings/errors after
+review. The complete compute cooker also builds cleanly and accepts the updated
+real packed kernel. Its immutable
+artifact is added to the sample catalog, whose eighteen descriptor/source hash
+pairs are verified. Static review found no remaining high/medium findings after
+producer ordering, disabled-feature admission and native-buffer ownership fixes.
+These are implementation/cook results: canonical GPU deformation output parity,
+layered-texture pixels and final integrated desktop build acceptance remain
+open. The frozen reference scene's deformation counters are not evidence
+for this canonical engine path.

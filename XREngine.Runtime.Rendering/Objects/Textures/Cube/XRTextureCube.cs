@@ -24,6 +24,7 @@ namespace XREngine.Rendering
             uint dim,
             int mipCount = 1)
         {
+            _sizedInternalFormat = ESizedInternalFormat.Rgba8;
             uint sDim = dim;
             CubeMipmap[] mips = new CubeMipmap[mipCount];
             for (uint i = 0u; i < mipCount; i++)

@@ -21,14 +21,16 @@ export function installWebGpuImports(runtime, renderers) {
         writeBuffer: (id, handle, offset, bytes) => renderer(id).resources.writeBuffer(handle, offset, bytes),
         copyBuffer: (id, source, sourceOffset, destination, destinationOffset, size) =>
             renderer(id).resources.copyBuffer(source, sourceOffset, destination, destinationOffset, size),
-        createTextureResource: (id, width, height, mips, samples, format, usage, label) =>
-            renderer(id).resources.createTexture(width, height, mips, samples, format, usage, label),
-        uploadTextureMip: (id, handle, mip, x, y, width, height, bytes) =>
-            renderer(id).resources.uploadTextureMip(handle, mip, x, y, width, height, bytes),
-        createTextureView: (id, texture, baseMip, mipCount, aspect, label) =>
-            renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label),
-        createSampler: (id, addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp, compare) =>
-            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp, compare),
+        createTextureResource: (id, width, height, mips, samples, format, usage, label, layers) =>
+            renderer(id).resources.createTexture(width, height, mips, samples, format, usage, label, layers),
+        uploadTextureMip: (id, handle, mip, x, y, width, height, bytes, layer) =>
+            renderer(id).resources.uploadTextureMip(handle, mip, x, y, width, height, bytes, layer),
+        copyTextureSubresource: (id, source, destination, sourceMip, destinationMip, destinationLayer, width, height) =>
+            renderer(id).resources.copyTextureSubresource(source, destination, sourceMip, destinationMip, destinationLayer, width, height),
+        createTextureView: (id, texture, baseMip, mipCount, aspect, label, baseLayer, layerCount, dimension) =>
+            renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label, baseLayer, layerCount, dimension),
+        createSampler: (id, addressU, addressV, addressW, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp, compare) =>
+            renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp, compare, addressW),
         createMesh: (id, vertices, indices) => renderer(id).createMesh(vertices, indices),
         createTexture: (id, width, height, bytes) => renderer(id).createTexture(width, height, bytes),
         createCookedTexture: (id, description, bytes) => renderer(id).createCookedTexture(description, bytes),

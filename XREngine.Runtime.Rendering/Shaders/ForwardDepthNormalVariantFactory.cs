@@ -48,6 +48,9 @@ public static class ForwardDepthNormalVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
+        if (sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+            return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
+
         if (sourceMaterial.RenderPass != (int)EDefaultRenderPass.OpaqueForward &&
             sourceMaterial.RenderPass != (int)EDefaultRenderPass.MaskedForward)
             return null;

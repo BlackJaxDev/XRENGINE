@@ -12,6 +12,8 @@ internal static partial class BrowserEngineAssetImports
     internal static partial Task OpenAsync(int session);
     [JSImport("manifest", "xrengine.assets")]
     internal static partial string GetManifest(int session);
+    [JSImport("verifiedWorldPackage", "xrengine.assets")]
+    internal static partial string GetVerifiedWorldPackage(int session);
     [JSImport("beginRead", "xrengine.assets")]
     internal static partial int BeginRead(int session, string path);
     [JSImport("waitRead", "xrengine.assets")]

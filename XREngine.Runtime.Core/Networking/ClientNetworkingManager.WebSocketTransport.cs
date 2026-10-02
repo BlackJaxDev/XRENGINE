@@ -8,15 +8,17 @@ public partial class ClientNetworkingManager
     private CancellationTokenSource? _webSocketStart;
     private readonly object _webSocketLifecycleLock = new();
     private bool _webSocketStarted;
+    private bool _webSocketTerminated;
     private string? _webSocketFailure;
 
     protected override bool UseBoundedRealtimeQueues => Transport == RealtimeTransportKind.WebSocket;
 
     protected override void OnRealtimeQueueOverflow()
     {
-        _webSocketFailure = "Realtime send backlog exceeded; fresh admission and state resynchronization are required.";
+        const string failure = "Realtime send backlog exceeded; fresh admission and state resynchronization are required.";
+        SetField(ref _webSocketFailure, failure);
         UdpSender?.Close();
-        throw new NetworkTransportException(_webSocketFailure, 0);
+        throw new NetworkTransportException(failure, 0);
     }
 
     /// <summary>Transport-only failure; successful connection does not imply successful player admission.</summary>
@@ -42,7 +44,7 @@ public partial class ClientNetworkingManager
         CancellationTokenSource start;
         lock (_webSocketLifecycleLock)
         {
-            if (_webSocketStarted)
+            if (_webSocketStarted || _webSocketTerminated)
                 throw new InvalidOperationException("Realtime manager has already started; reconnect requires a new manager and fresh admission.");
             _webSocketStarted = true;
             start = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -52,26 +54,40 @@ public partial class ClientNetworkingManager
         try
         {
             connection = await backend.ConnectWebSocketAsync(endpoint, protocolPeer, start.Token);
-            start.Token.ThrowIfCancellationRequested();
-            UdpSender = connection;
-            UdpReceiver = connection;
-            ServerIP = new IPEndPoint(protocolPeer.Address, protocolPeer.Port);
-            LastServerError = null;
-            PauseUntilReplicationAssignment();
-            EnsureClientTick();
-            StartManagedTransportHandshake();
+            lock (_webSocketLifecycleLock)
+            {
+                // Suspension and publication share this boundary. A backend may finish
+                // its upgrade concurrently with cancellation or ignore cancellation.
+                start.Token.ThrowIfCancellationRequested();
+                if (_webSocketTerminated)
+                    throw new OperationCanceledException(start.Token);
+                UdpSender = connection;
+                UdpReceiver = connection;
+                ServerIP = new IPEndPoint(protocolPeer.Address, protocolPeer.Port);
+                LastServerError = null;
+                PauseUntilReplicationAssignment();
+                EnsureClientTick();
+                StartManagedTransportHandshake();
+                if (ManagedTransportFailure is not null)
+                    throw new NetworkTransportException("Realtime WebSocket admission could not start.", 0);
+            }
         }
         catch
         {
             connection?.Dispose();
             UdpSender = UdpReceiver = null;
-            _webSocketFailure = "Realtime WebSocket connection failed. " + RealtimeWireProtocol.UpdateRequiredMessage;
+            DisposeManagedTransport();
+            SetField(ref _webSocketFailure, _webSocketFailure
+                ?? "Realtime WebSocket connection failed or was canceled; obtain fresh admission before reconnecting.");
+            HandleManagedTerminalCleanup(_webSocketFailure!);
             throw;
         }
         finally
         {
             lock (_webSocketLifecycleLock)
             {
+                AdmissionSecret = null;
+                SessionToken = null;
                 _webSocketStart = null;
                 start.Dispose();
             }
@@ -81,28 +97,40 @@ public partial class ClientNetworkingManager
     /// <summary>Closes a suspended browser session immediately, clearing keys and stale replication state.</summary>
     public void SuspendWebSocket()
     {
-        if (!_webSocketStarted)
-            return;
-        _webSocketFailure ??= "Realtime WebSocket suspended; resume requires fresh admission and a complete replication baseline.";
-        CancelWebSocketStart();
-        UdpSender?.Dispose();
-        UdpSender = UdpReceiver = null;
+        lock (_webSocketLifecycleLock)
+        {
+            CancelWebSocketStart();
+            if (!_webSocketStarted)
+                return;
+            SetField(ref _webSocketFailure, _webSocketFailure
+                ?? "Realtime WebSocket suspended; resume requires fresh admission and a complete replication baseline.");
+            UdpSender?.Dispose();
+            UdpSender = UdpReceiver = null;
+        }
         DisposeManagedTransport();
-        HandleManagedTerminalCleanup(_webSocketFailure);
+        HandleManagedTerminalCleanup(_webSocketFailure!);
     }
 
     private void ObserveWebSocketFailure()
     {
-        if (UdpSender is not IRealtimeWebSocketTransport { Connected: false } connection)
+        if (UdpSender is not IRealtimeWebSocketTransport connection)
             return;
-        _webSocketFailure = connection.Failure ?? "Realtime WebSocket closed; fresh admission is required.";
+        if (connection.Connected && ManagedTransportFailure is null)
+            return;
+        SetField(ref _webSocketFailure, connection.Failure
+            ?? "Realtime WebSocket closed or admission failed; fresh admission is required.");
         SuspendWebSocket();
     }
 
     private void CancelWebSocketStart()
     {
         lock (_webSocketLifecycleLock)
+        {
+            _webSocketTerminated = true;
+            AdmissionSecret = null;
+            SessionToken = null;
             _webSocketStart?.Cancel();
+        }
         // The asynchronous connection attempt owns its continuation; never wait on the browser thread.
     }
 }

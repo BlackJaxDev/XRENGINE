@@ -287,6 +287,14 @@ public partial class DefaultRenderPipeline
             VPRC_RenderMeshesPass forward = commands.Add<VPRC_RenderMeshesPass>();
             forward.SetOptions((int)EDefaultRenderPass.OpaqueForward, EMeshSubmissionStrategy.CpuDirect);
             forward.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
+            VPRC_RenderMeshesPass masked = commands.Add<VPRC_RenderMeshesPass>();
+            masked.SetOptions((int)EDefaultRenderPass.MaskedForward, EMeshSubmissionStrategy.CpuDirect);
+            masked.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
+            // The canonical pass collection owns stable far-to-near ordering and
+            // authored sort priority. Blending occurs in HDR before bloom/tonemap.
+            VPRC_RenderMeshesPass transparent = commands.Add<VPRC_RenderMeshesPass>();
+            transparent.SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            transparent.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
             // A depth-tested debug primitive has no display-overlay equivalent. If one is
             // submitted, its explicit WebGPU material rejection preserves that distinction.
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = true;
@@ -345,8 +353,12 @@ public partial class DefaultRenderPipeline
             .DependsOn(beforeForward);
         metadata.ForPass((int)EDefaultRenderPass.OpaqueForward, nameof(EDefaultRenderPass.OpaqueForward), ERenderGraphPassStage.Graphics)
             .DependsOn((int)EDefaultRenderPass.OpaqueDeferred);
+        metadata.ForPass((int)EDefaultRenderPass.MaskedForward, nameof(EDefaultRenderPass.MaskedForward), ERenderGraphPassStage.Graphics)
+            .DependsOn((int)EDefaultRenderPass.OpaqueForward);
+        metadata.ForPass((int)EDefaultRenderPass.TransparentForward, nameof(EDefaultRenderPass.TransparentForward), ERenderGraphPassStage.Graphics)
+            .DependsOn((int)EDefaultRenderPass.MaskedForward);
 
-        int beforeOutput = (int)EDefaultRenderPass.OpaqueForward;
+        int beforeOutput = (int)EDefaultRenderPass.TransparentForward;
         beforeOutput = LinkWebQuadPass(metadata, WebBloomCopyQuadName, WebBloomMipFboNames[0], beforeOutput);
         for (int level = 1; level <= 4; level++)
             beforeOutput = LinkWebQuadPass(metadata, WebBloomDownQuadNames[level], WebBloomMipFboNames[level], beforeOutput);
@@ -391,7 +403,6 @@ public partial class DefaultRenderPipeline
         ReadOnlySpan<int> unsupportedPasses =
         [
             (int)EDefaultRenderPass.Background, (int)EDefaultRenderPass.DeferredDecals,
-            (int)EDefaultRenderPass.MaskedForward, (int)EDefaultRenderPass.TransparentForward,
             (int)EDefaultRenderPass.WeightedBlendedOitForward, (int)EDefaultRenderPass.PerPixelLinkedListForward,
             (int)EDefaultRenderPass.DepthPeelingForward,
             (int)EDefaultRenderPass.PostBloomForward, (int)EDefaultRenderPass.PostMotionBlurForward,

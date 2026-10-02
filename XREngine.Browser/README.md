@@ -76,6 +76,17 @@ submission, resets input and elapsed timing, and resumes through the same surfac
 lifecycle on `pageshow`. A discarded page instead requests engine teardown.
 The focused page-state probe passes; real browser history/cache behavior remains
 part of lifecycle qualification.
+
+The engine runtime also exposes an explicit asynchronous managed WebSocket join
+for authenticated application hosts. It consumes the shared handoff only in
+memory, requires an independently verified loaded world identity, and keeps
+gameplay paused until the production server baseline commits. Page suspension
+and world teardown retire the client; resuming requires fresh admission.
+Microphone/voice support is explicitly unavailable. See the
+[browser realtime contract](../docs/developer-guides/networking/browser-realtime.md)
+for the entry points, origin/cookie policy, queue bounds, and remaining
+real-server qualification. A local published game does not become a networked
+game merely because the transport leaf is installed.
 The separate browser scene, animation, collision and focused pipeline are a
 frozen reference harness. Changes may fix harness defects; new engine features
 follow the [unified runtime design](../docs/work/design/platform/unified-desktop-browser-runtime-design.md).

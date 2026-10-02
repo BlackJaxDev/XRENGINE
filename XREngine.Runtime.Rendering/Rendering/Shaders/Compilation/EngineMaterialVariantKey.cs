@@ -23,6 +23,9 @@ public readonly record struct EngineMaterialVariantKey(
         ValidateProfile(Pass, nameof(Pass));
         ValidateProfile(VertexProfile, nameof(VertexProfile));
         ValidateProfile(OutputProfile, nameof(OutputProfile));
+        if (Semantic == EngineMaterialSemanticIdentity.StandardLitColorV2 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || !IsLitCoverageProfile()))
+            throw new ArgumentException("StandardLitColorV2 requires an exact forward-coverage, depth-normal, or depth profile.");
         if (Semantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1 &&
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "depth" ||
              VertexProfile != "static-position-v1" || OutputProfile != "depth-normal-v1"))
@@ -49,6 +52,16 @@ public readonly record struct EngineMaterialVariantKey(
              VertexProfile != uiProfile || OutputProfile != "display-rgba-v1"))
             throw new ArgumentException($"{Semantic.Semantic}V1 requires the WebGPU screen-ui/{uiProfile}/display-rgba-v1 variant.");
     }
+
+    private bool IsLitCoverageProfile()
+        => Pass switch
+        {
+            "forward-coverage" => VertexProfile == "static-position-normal-v1" &&
+                (OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1"),
+            "depth-normal" => VertexProfile == "static-position-normal-v1" && OutputProfile == "normal-rgba16f-v1",
+            "depth" => VertexProfile == "static-position-v1" && OutputProfile == "depth-normal-v1",
+            _ => false,
+        };
 
     private static void ValidateProfile(string value, string parameterName)
     {

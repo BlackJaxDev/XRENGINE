@@ -2,6 +2,7 @@ import { dotnet } from './_framework/dotnet.js';
 import { engineAssetImports } from './engine-assets.js';
 import { engineAudioImports } from './engine-audio.js';
 import { installWebGpuImports } from './webgpu-executor-imports.js';
+import { installEngineNetworkLifecycle } from './engine-network.js';
 
 /** Boots the shared Engine and RuntimeWorld exports without constructing the reference scene. */
 export async function createEngineRuntime(renderers = new Map()) {
@@ -11,5 +12,7 @@ export async function createEngineRuntime(renderers = new Map()) {
     installWebGpuImports(runtime, renderers);
     const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
-    return exports.XREngine.Browser.BrowserEngineExports;
+    const engine = exports.XREngine.Browser.BrowserEngineExports;
+    installEngineNetworkLifecycle(engine);
+    return engine;
 }
