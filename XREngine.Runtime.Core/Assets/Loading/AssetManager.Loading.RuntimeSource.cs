@@ -121,13 +121,17 @@ public partial class AssetManager
                 await LoadCatalogAssetAsync(Path.GetFullPath(dependency), typeof(XRAsset), source, catalog, epoch,
                     ancestors, cancellationToken).ConfigureAwait(false);
 
-            byte[] payload = await source.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+            using RuntimeAssetIntegration integration = source is IRuntimeAssetIntegrationSource integrationSource
+                ? await integrationSource.ReadForIntegrationAsync(path, cancellationToken).ConfigureAwait(false)
+                : new RuntimeAssetIntegration(await source.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false));
+            byte[] payload = integration.Payload;
             cancellationToken.ThrowIfCancellationRequested();
             EnsureRuntimeSourceCurrent(source, epoch);
             // Another asynchronous request can have completed this identity while bytes were fetched.
             if (TryGetAssetByPath(path, out cached))
                 return RequireRuntimeAssetType(path, cached, expectedType);
 
+            long allocationStart = GC.GetAllocatedBytesForCurrentThread();
             using IDisposable scope = AssetDeserializationContext.Push(path);
             // Deserialization owns new allocations, including replaced constructor defaults.
             // Separate catalog dependencies were loaded before this synchronous batch and
@@ -158,6 +162,7 @@ public partial class AssetManager
             if (asset is null)
                 throw new InvalidDataException($"AssetSource.DeserializeFailed: '{path}' did not produce '{type}'.");
             ObjectCacheOwnership? ownership = null;
+            RuntimeSourceAssetOwnership? retained = null;
             try
             {
                 lock (_runtimePublicationGate)
@@ -176,10 +181,13 @@ public partial class AssetManager
                     if (LoadedAssetsByIDInternal.TryGetValue(asset.ID, out XRAsset? owner) && !ReferenceEquals(owner, asset))
                         throw new InvalidDataException($"AssetSource.DuplicateIdentity: '{path}' and '{owner.FilePath}' declare the same asset ID '{asset.ID}'.");
                     ownership = publication.CompleteWithOwnership();
-                    _runtimeSourceObjects.Add(ownership);
+                    retained = new RuntimeSourceAssetOwnership(path, ownership);
+                    _runtimeSourceObjects.Add(retained);
                     _runtimeSourceAssets.Add(asset);
                     PostLoaded(path, asset, ownership);
                     EnsureRuntimeSourceCurrent(source, epoch);
+                    (source as IRuntimeAssetIntegrationSource)?.RetainAsset(path, payload.Length,
+                        Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocationStart), ownership);
                     return asset;
                 }
             }
@@ -201,7 +209,8 @@ public partial class AssetManager
                         try
                         {
                             ownership.Dispose();
-                            _runtimeSourceObjects.Remove(ownership);
+                            (source as IRuntimeAssetIntegrationSource)?.ReleaseAsset(path);
+                            _runtimeSourceObjects.Remove(retained!);
                         }
                         catch (Exception cleanupError) { throw new AggregateException(error, cleanupError); }
                         finally { _runtimeSourceDisposing = previousDisposing; }
@@ -247,7 +256,9 @@ public partial class AssetManager
             {
                 try
                 {
-                    _runtimeSourceObjects[index].Dispose();
+                    RuntimeSourceAssetOwnership retained = _runtimeSourceObjects[index];
+                    retained.Objects.Dispose();
+                    (_runtimeAssetSource as IRuntimeAssetIntegrationSource)?.ReleaseAsset(retained.Path);
                     _runtimeSourceObjects.RemoveAt(index);
                 }
                 catch (Exception error) { (failures ??= []).Add(error); }

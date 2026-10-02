@@ -23,6 +23,23 @@ internal static partial class BrowserEngineAssetImports
     internal static partial void CopyRead(int session, int ticket, [JSMarshalAs<JSType.MemoryView>] Span<byte> destination);
     [JSImport("releaseRead", "xrengine.assets")]
     internal static partial void ReleaseRead(int session, int ticket);
+    [JSImport("progress", "xrengine.assets")]
+    internal static partial string GetProgress(int session);
+    [JSImport("currentProgress", "xrengine.assets")]
+    internal static partial string GetCurrentProgress();
+    [JSImport("adjustManagedStaging", "xrengine.assets")]
+    internal static partial void AdjustManagedStaging(int session, int bytes);
+    [JSImport("beginIntegration", "xrengine.assets")]
+    internal static partial int BeginIntegration(int session, string path, int byteLength, string companionPath);
+    [JSImport("waitIntegration", "xrengine.assets")]
+    [return: JSMarshalAs<JSType.Promise<JSType.Void>>]
+    internal static partial Task WaitIntegrationAsync(int session, int ticket);
+    [JSImport("finishIntegration", "xrengine.assets")]
+    internal static partial void FinishIntegration(int session, int ticket);
+    [JSImport("retain", "xrengine.assets")]
+    internal static partial void Retain(int session, string path, int serializedBytes, int objects, double managedBytes, double nativeBytes);
+    [JSImport("releaseAsset", "xrengine.assets")]
+    internal static partial void ReleaseAsset(int session, string path, double nativeBytes);
     [JSImport("dispose", "xrengine.assets")]
     internal static partial void Dispose(int session);
 }

@@ -11,6 +11,13 @@ qualification. See the
 [current checkpoint](../docs/work/progress/platform/unified-browser-checkpoint-2026-10-01.md)
 for exact build/runtime evidence and remaining work.
 
+The [authored asset delivery contract](../docs/work/progress/platform/browser-authored-asset-delivery-2026-10-02.md)
+describes essential/streamed catalog roots, shared hydration admission, lifetime
+accounting and on-demand progress/memory estimates. Native package preflight
+still authenticates all files; its transfer cost is reported separately from
+lazy scene hydration. The shipping player displays progress only while delivery
+is active and performs no idle diagnostic polling.
+
 Browser composition installs its built-in material target before deserializing
 the world. Material semantics and parameters are retained without loading
 desktop GLSL. Hash-owned `materialVariants` metadata is validated before play;

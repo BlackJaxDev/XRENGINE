@@ -27,19 +27,73 @@ internal static partial class ProjectBuilder
 
         public IReadOnlyDictionary<string, (string TypeName, string Source, string[] Dependencies)> Entries => _entries;
 
+        /// <summary>Resolves the host's portable scene spelling to an admitted project asset.</summary>
+        public (string Identity, string Path) ResolveStreamedScene(string authoredPath)
+        {
+            if (string.IsNullOrWhiteSpace(authoredPath))
+                throw new InvalidDataException("BrowserCook.StreamedScenePathMissing: declare a saved scene asset.");
+            string path = authoredPath.Trim().Replace('\\', '/');
+            if (!path.StartsWith("/game/", StringComparison.Ordinal)
+                && !path.StartsWith("/engine/", StringComparison.Ordinal)
+                && !AssetReferencePath.IsPortable(path))
+            {
+                if (Path.IsPathRooted(path) || path.Contains(':'))
+                    throw new NotSupportedException($"BrowserCook.StreamedScenePathInvalid: '{authoredPath}' must be a portable scene identity.");
+                path = AssetReferencePath.GamePrefix + path;
+            }
+            string relative = path.StartsWith("/game/", StringComparison.Ordinal)
+                ? path["/game/".Length..]
+                : path.StartsWith("/engine/", StringComparison.Ordinal)
+                    ? path["/engine/".Length..]
+                    : path.StartsWith(AssetReferencePath.GamePrefix, StringComparison.OrdinalIgnoreCase)
+                        ? path[AssetReferencePath.GamePrefix.Length..]
+                        : path.StartsWith(AssetReferencePath.EnginePrefix, StringComparison.OrdinalIgnoreCase)
+                            ? path[AssetReferencePath.EnginePrefix.Length..] : path;
+            if (relative.Split('/').Any(static part => part is "" or "." or ".."))
+                throw new NotSupportedException($"BrowserCook.StreamedScenePathInvalid: '{authoredPath}' contains an empty or noncanonical segment.");
+            if (!Path.HasExtension(path))
+                path += $".{AssetManager.AssetExtension}";
+            return Resolve(path);
+        }
+
+        /// <summary>Updates a scene discovered earlier as another streamed root's declared dependency.</summary>
+        public string RecookDeclaredScene(XRScene scene, string catalogPath)
+        {
+            if (!_entries.TryGetValue(catalogPath, out var existing)
+                || !_assetTypes.TryGetValue(catalogPath, out Type? existingType)
+                || existingType != scene.GetType())
+                throw new InvalidDataException($"BrowserCook.StreamedSceneTypeConflict: '{catalogPath}'.");
+            string[] declared = [.. DescribeDependencies(scene, catalogPath)
+                .Select(dependency => Resolve(dependency.AssetPath).Identity)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+            if (!declared.SequenceEqual(existing.Dependencies, StringComparer.Ordinal))
+                throw new InvalidDataException($"BrowserCook.StreamedSceneDependencyChanged: '{catalogPath}'.");
+            WriteCookedAsset(scene, Path.Combine(sourceDirectory, existing.Source), callbacks: CookCallbacks);
+            return existing.Source;
+        }
+
         /// <summary>Declares a publisher-generated standalone asset as a dependency of a cooked parent.</summary>
         public void AddCookedLeaf(string parentPath, string catalogPath, Type assetType, string sourceName)
         {
-            if (!_entries.TryGetValue(parentPath, out var parent) || _entries.ContainsKey(catalogPath)
+            if (!_entries.TryGetValue(parentPath, out var parent)
                 || _entries.Count >= 4096 || parent.Dependencies.Length >= 64
                 || !File.Exists(Path.Combine(sourceDirectory, sourceName)))
                 throw new InvalidDataException($"BrowserCook.GeneratedDependencyInvalid: '{catalogPath}'.");
             string typeName = assetType.AssemblyQualifiedName
                 ?? throw new InvalidOperationException($"BrowserCook.GeneratedDependencyTypeInvalid: '{catalogPath}'.");
-            _entries.Add(catalogPath, (typeName, sourceName, []));
-            _assetTypes.Add(catalogPath, assetType);
-            _entries[parentPath] = (parent.TypeName, parent.Source,
-                [.. parent.Dependencies.Append(catalogPath).Order(StringComparer.Ordinal)]);
+            if (_entries.TryGetValue(catalogPath, out var existing))
+            {
+                if (existing.TypeName != typeName || existing.Source != sourceName || existing.Dependencies.Length != 0)
+                    throw new InvalidDataException($"BrowserCook.GeneratedDependencyConflict: '{catalogPath}'.");
+            }
+            else
+            {
+                _entries.Add(catalogPath, (typeName, sourceName, []));
+                _assetTypes.Add(catalogPath, assetType);
+            }
+            if (!parent.Dependencies.Contains(catalogPath, StringComparer.Ordinal))
+                _entries[parentPath] = (parent.TypeName, parent.Source,
+                    [.. parent.Dependencies.Append(catalogPath).Order(StringComparer.Ordinal)]);
         }
 
         public string Cook(XRAsset asset, string catalogPath, string sourceName)
@@ -156,6 +210,11 @@ internal static partial class ProjectBuilder
                 }
                 return [new PublishedCookedAssetDependency(skyboxPath, typeof(XRAsset))];
             }
+
+            // Exact base scenes serialize their node/component graph inline. Streaming
+            // volume scene paths are package roots, discovered separately by the publisher.
+            if (asset.GetType() == typeof(XRScene))
+                return Array.Empty<PublishedCookedAssetDependency>();
 
             throw new NotSupportedException(
                 $"Browser asset '{catalogPath}' has no serializer-owned dependency declaration for '{asset.GetType().FullName}'.");

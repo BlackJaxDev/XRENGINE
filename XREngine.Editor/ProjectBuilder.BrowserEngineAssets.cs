@@ -12,7 +12,7 @@ namespace XREngine.Editor;
 internal static partial class ProjectBuilder
 {
     /// <summary>Cooks the authored engine world using the same registered format as desktop publishing.</summary>
-    private static string CookBrowserEngineWorld(XRWorld world, string assetRoot, string sourceDirectory,
+    private static string CookBrowserEngineWorld(XRWorld world, XRProject project, string assetRoot, string sourceDirectory,
         CancellationToken cancellationToken, out bool includesDefaultUiFont,
         out IReadOnlyList<BrowserUiFontCookRequest> authoredFonts)
     {
@@ -25,18 +25,20 @@ internal static partial class ProjectBuilder
             ? new BrowserShaderArtifactSource(projectDirectory, manifest) : null;
         string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
         string worldPath = "/game/" + relativeWorld;
-        includesDefaultUiFont = PrepareBrowserUiFonts(world, assetRoot, out authoredFonts);
+        includesDefaultUiFont = PrepareBrowserUiFonts(world.Scenes, assetRoot, out authoredFonts);
         if (string.Equals(worldPath, "/game/startup.asset", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Browser startup world conflicts with the cooked startup-settings identity.");
         using BrowserAssetDependencyCooker dependencyCooker = new(
             assetRoot, Engine.Assets?.EngineAssetsPath, sourceDirectory, resolver, cancellationToken);
         dependencyCooker.Cook(world, worldPath, "startup-world.bin");
+        HashSet<string> cookedFonts = new(StringComparer.Ordinal);
         foreach (BrowserUiFontCookRequest font in authoredFonts)
         {
             CookBrowserUiFont(font, assetRoot, sourceDirectory, cancellationToken);
+            cookedFonts.Add(font.CatalogPath);
             dependencyCooker.AddCookedLeaf(worldPath, font.CatalogPath, typeof(FontGlyphSet), font.SourceName);
         }
-        IReadOnlyList<ShaderProgramArtifact> shaderArtifacts;
+        Dictionary<string, ShaderProgramArtifact> shaderArtifacts = new(StringComparer.Ordinal);
         // Inspect what the browser will actually hydrate. A registered game serializer may
         // intentionally project desktop shader data into explicit cooked material semantics.
         // This CPU-only audit may run in a live desktop editor; temporary materials must not
@@ -49,9 +51,22 @@ internal static partial class ProjectBuilder
                 File.ReadAllBytes(Path.Combine(sourceDirectory, "startup-world.bin")), typeof(XRWorld)) as XRWorld
                 ?? throw new InvalidDataException("The browser startup payload did not hydrate an XRWorld.");
             using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
-            VerifyPublishedUiFontReferences(world, runtimeWorld);
-            shaderArtifacts = BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver, cancellationToken);
+            VerifyPublishedUiFontReferences(world.Scenes, runtimeWorld.Scenes);
+            if (!BrowserStreamedSceneBindings(world.Scenes).SequenceEqual(
+                BrowserStreamedSceneBindings(runtimeWorld.Scenes), StringComparer.Ordinal))
+                throw new InvalidDataException("BrowserCook.StreamedSceneReferenceLost: the cooked startup world changed its authored scene targets.");
+            foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver, cancellationToken))
+                shaderArtifacts.TryAdd(artifact.Identity, artifact);
         }
+        (string[] streamedRoots, bool streamedUsesDefaultFont, IReadOnlyList<BrowserUiFontCookRequest> streamedFonts,
+            IReadOnlyList<ShaderProgramArtifact> streamedShaders) =
+            CookBrowserStreamedScenes(project, world, assetRoot, sourceDirectory, dependencyCooker, resolver,
+                cookedFonts, cancellationToken);
+        includesDefaultUiFont |= streamedUsesDefaultFont;
+        authoredFonts = [.. authoredFonts.Concat(streamedFonts).DistinctBy(static font => font.CatalogPath)
+            .OrderBy(static font => font.CatalogPath, StringComparer.Ordinal)];
+        foreach (ShaderProgramArtifact artifact in streamedShaders)
+            shaderArtifacts.TryAdd(artifact.Identity, artifact);
         cancellationToken.ThrowIfCancellationRequested();
         GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
         // Keep authored output requirements while the manifest owns the selected world.
@@ -84,7 +99,10 @@ internal static partial class ProjectBuilder
         }
         List<object> shaderReferences = [];
         HashSet<string> shaderIdentities = new(StringComparer.Ordinal);
-        foreach (ShaderProgramArtifact artifact in shaderArtifacts)
+        List<string> essentialRoots = [worldPath, "/game/startup.asset", runtimeMetadataPath];
+        if (includesDefaultUiFont)
+            essentialRoots.Add(BrowserDefaultUiFontPath);
+        foreach (ShaderProgramArtifact artifact in shaderArtifacts.Values.OrderBy(static artifact => artifact.Identity, StringComparer.Ordinal))
         {
             shaderIdentities.Add(artifact.Identity);
             string descriptorName = artifact.Identity + ".json";
@@ -96,6 +114,8 @@ internal static partial class ProjectBuilder
             string textType = typeof(TextFile).AssemblyQualifiedName!;
             assets.Add(new { path = descriptor, type = textType, encoding = "utf8-text", source = descriptorName, dependencies = Array.Empty<string>() });
             assets.Add(new { path = source, type = textType, encoding = "utf8-text", source = sourceName, dependencies = Array.Empty<string>() });
+            essentialRoots.Add(descriptor);
+            essentialRoots.Add(source);
             shaderReferences.Add(new { identity = artifact.Identity, descriptor, source });
         }
         List<object> materialVariants = [];
@@ -136,7 +156,8 @@ internal static partial class ProjectBuilder
             schema = 1, format = "xrengine-assets", startupWorld = worldPath,
             startupSettings = "/game/startup.asset", publishedMetadata = runtimeMetadataPath, shaderArtifacts = shaderReferences,
             defaultUiFont = includesDefaultUiFont ? BrowserDefaultUiFontPath : null,
-            materialVariants, pipelineArtifacts, computeArtifacts, assets
+            essentialRoots = essentialRoots.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal),
+            streamedRoots, materialVariants, pipelineArtifacts, computeArtifacts, assets
         }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
         string path = Path.Combine(sourceDirectory, "engine-assets.recipe.json");
         File.WriteAllBytes(path, recipe);

@@ -63,6 +63,7 @@ public readonly record struct EngineMaterialVariantKey(
         string? uiProfile = Semantic.Semantic switch
         {
             EngineMaterialSemantic.UIQuadBatched => "instanced-ui-quad-v1",
+            EngineMaterialSemantic.UIQuadBatchedTexture => "instanced-ui-quad-texture-v1",
             EngineMaterialSemantic.UITextBatchedBitmap => "instanced-ui-bitmap-text-v1",
             _ => null,
         };

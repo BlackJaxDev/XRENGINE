@@ -21,4 +21,6 @@ public enum EngineMaterialSemantic
     StandardLitTexture = 15,
     /// <summary>Explicit authored opaque PBR inputs with exact target-cooked shader companions.</summary>
     AuthoredLit = 16,
+    /// <summary>Painter-ordered screen image quads grouped by one sampled texture.</summary>
+    UIQuadBatchedTexture = 17,
 }

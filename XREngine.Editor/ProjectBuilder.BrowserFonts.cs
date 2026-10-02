@@ -25,7 +25,7 @@ internal static partial class ProjectBuilder
         string NoticePath, string NoticeHash, string NoticeOutputName);
 
     /// <summary>Replaces desktop font objects with portable identities before cooking the world.</summary>
-    private static bool PrepareBrowserUiFonts(XRWorld world, string assetRoot,
+    private static bool PrepareBrowserUiFonts(IEnumerable<XRScene> scenes, string assetRoot,
         out IReadOnlyList<BrowserUiFontCookRequest> authoredFonts)
     {
         bool requiresDefault = false;
@@ -37,7 +37,7 @@ internal static partial class ProjectBuilder
             RuntimeEngine.Rendering.Settings.DefaultFontFolder,
             RuntimeEngine.Rendering.Settings.DefaultFontFileName));
         string canonicalDefault = Path.GetFullPath(Engine.Assets.ResolveEngineAssetPath("Fonts", "Roboto", "Roboto-Regular.ttf"));
-        foreach (XRScene scene in world.Scenes)
+        foreach (XRScene scene in scenes)
             foreach (SceneNode root in scene.RootNodes)
                 Visit(root, 0);
         authoredFonts = selected.Values.OrderBy(static font => font.CatalogPath, StringComparer.Ordinal).ToArray();
@@ -184,13 +184,13 @@ internal static partial class ProjectBuilder
         return cooked;
     }
 
-    private static void VerifyPublishedUiFontReferences(XRWorld authoredWorld, XRWorld cookedWorld)
+    private static void VerifyPublishedUiFontReferences(IEnumerable<XRScene> authoredScenes, IEnumerable<XRScene> cookedScenes)
     {
-        static List<string?> Collect(XRWorld world)
+        static List<string?> Collect(IEnumerable<XRScene> scenes)
         {
             List<string?> references = [];
             HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
-            foreach (XRScene scene in world.Scenes)
+            foreach (XRScene scene in scenes)
                 foreach (SceneNode root in scene.RootNodes)
                     Visit(root);
             return references;
@@ -207,7 +207,7 @@ internal static partial class ProjectBuilder
                         Visit(childNode);
             }
         }
-        if (!Collect(authoredWorld).SequenceEqual(Collect(cookedWorld), StringComparer.Ordinal))
+        if (!Collect(authoredScenes).SequenceEqual(Collect(cookedScenes), StringComparer.Ordinal))
             throw new InvalidDataException("BrowserCook.UiFontReferenceLost: the cooked world did not retain its authored font identities.");
     }
 

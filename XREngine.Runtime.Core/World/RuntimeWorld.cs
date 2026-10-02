@@ -18,7 +18,11 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 {
     private readonly ConcurrentDictionary<Type, object> _capabilities = [];
     private readonly HashSet<XRScene> _loadedScenes = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<XRScene> _scenesAwaitingCleanup = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<XRScene> _scenesAttaching = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<XRScene> _scenesDetaching = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<XRScene, HashSet<SceneNode>> _visibleRootsByScene = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<SceneNode> _externallyOwnedSceneRoots = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentQueue<PhysicsRaycastRequest> _pendingPhysicsRaycasts = new();
     private readonly ConcurrentQueue<PhysicsRaycastRequest> _physicsRaycastRequestPool = new();
     private readonly ConcurrentQueue<IAbstractDynamicRigidBody> _pendingMinYPlaneResetRequests = new();
@@ -33,6 +37,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     private IRuntimeWorldScenePolicy? _scenePolicy;
     private GameMode? _gameMode;
     private bool _disposed;
+    private bool _disposing;
 
     public RuntimeWorld(AbstractPhysicsScene physicsScene, XRWorld? targetWorld = null)
     {
@@ -43,6 +48,9 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     /// <summary>The source world asset represented by this live runtime context.</summary>
     public XRWorld? TargetWorld => _targetWorld;
+
+    /// <summary>Whether world teardown is in progress or has completed.</summary>
+    public bool IsDisposing => _disposing || _disposed;
 
     /// <summary>
     /// Changes the serialized world represented by this live context. Bootstrap
@@ -362,14 +370,30 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     void IRuntimeWorldContext.EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix)
         => RuntimeWorldMatrixChangeQueued?.Invoke(worldObject, worldMatrix);
 
+    /// <summary>Reports whether this world currently owns a scene, including one awaiting detach retry.</summary>
+    public bool IsSceneLoaded(XRScene scene) => _loadedScenes.Contains(scene);
+
+    /// <summary>Reports a fully attached scene, excluding one awaiting failed cleanup.</summary>
+    public bool IsSceneReady(XRScene scene)
+        => _loadedScenes.Contains(scene) && !_scenesAwaitingCleanup.Contains(scene)
+            && !_scenesAttaching.Contains(scene) && !_scenesDetaching.Contains(scene);
+
     /// <summary>Loads a scene and observes its visibility until it is unloaded.</summary>
     public void LoadScene(XRScene scene)
     {
         ThrowIfDisposed();
+        if (_disposing)
+            throw new InvalidOperationException("Scene.WorldDisposing: scenes cannot attach during world teardown.");
         ArgumentNullException.ThrowIfNull(scene);
         if (!_loadedScenes.Add(scene))
+        {
+            if (_scenesAwaitingCleanup.Contains(scene) || _scenesAttaching.Contains(scene)
+                || _scenesDetaching.Contains(scene))
+                throw new InvalidOperationException("Scene.CleanupPending: retry unloading this scene before attaching it again.");
             return;
+        }
 
+        _scenesAttaching.Add(scene);
         scene.PropertyChanged += ScenePropertyChanged;
         try
         {
@@ -378,33 +402,48 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         }
         catch (Exception attachmentError)
         {
-            scene.PropertyChanged -= ScenePropertyChanged;
-            _loadedScenes.Remove(scene);
             try
             {
                 UnloadVisibleScene(scene);
             }
             catch (Exception cleanupError)
             {
+                _scenesAwaitingCleanup.Add(scene);
                 throw new AggregateException("Scene attachment and rollback both failed.", attachmentError, cleanupError);
             }
+            scene.PropertyChanged -= ScenePropertyChanged;
+            _loadedScenes.Remove(scene);
             throw;
         }
+        finally { _scenesAttaching.Remove(scene); }
     }
 
     /// <summary>Stops observing a scene and removes its currently visible roots.</summary>
     public void UnloadScene(XRScene scene)
     {
         ArgumentNullException.ThrowIfNull(scene);
-        if (!_loadedScenes.Remove(scene))
+        if (!_loadedScenes.Contains(scene))
             return;
-
-        scene.PropertyChanged -= ScenePropertyChanged;
-        UnloadVisibleScene(scene);
+        if (!_scenesDetaching.Add(scene))
+            throw new InvalidOperationException("Scene.DetachInProgress: retry after the current scene detach finishes.");
+        try
+        {
+            try { UnloadVisibleScene(scene); }
+            catch
+            {
+                _scenesAwaitingCleanup.Add(scene);
+                throw;
+            }
+            scene.PropertyChanged -= ScenePropertyChanged;
+            _loadedScenes.Remove(scene);
+            _scenesAwaitingCleanup.Remove(scene);
+        }
+        finally { _scenesDetaching.Remove(scene); }
     }
 
     private void OnRootNodeDestroying(SceneNode node)
     {
+        _externallyOwnedSceneRoots.Remove(node);
         _scenePolicy?.OnRootNodeDestroying(this, node);
         _lifecycle.RootNodes.RemoveDuringNodeDestroy(node);
         foreach (XRScene scene in _loadedScenes)
@@ -420,7 +459,9 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     private void ScenePropertyChanged(object? sender, IXRPropertyChangedEventArgs args)
     {
-        if (sender is not XRScene scene || args.PropertyName != nameof(XRScene.IsVisible) || !_loadedScenes.Contains(scene))
+        if (sender is not XRScene scene || args.PropertyName != nameof(XRScene.IsVisible)
+            || !_loadedScenes.Contains(scene) || _scenesAwaitingCleanup.Contains(scene)
+            || _scenesAttaching.Contains(scene) || _scenesDetaching.Contains(scene))
             return;
 
         if (scene.IsVisible)
@@ -442,8 +483,14 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             if (_scenePolicy?.TryAttachSceneRoot(this, scene, node) == true)
                 continue;
 
-            if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
+            if (RootNodes.Any(existing => ReferenceEquals(existing, node)))
             {
+                if (!IsVisibleRootOfAnotherLoadedScene(scene, node))
+                    _externallyOwnedSceneRoots.Add(node);
+            }
+            else
+            {
+                _externallyOwnedSceneRoots.Remove(node);
                 try
                 {
                     RootNodes.Add(node);
@@ -460,18 +507,31 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     private void UnloadVisibleScene(XRScene scene)
     {
-        if (!_visibleRootsByScene.Remove(scene, out HashSet<SceneNode>? roots))
+        if (!_visibleRootsByScene.TryGetValue(scene, out HashSet<SceneNode>? roots))
             return;
 
-        foreach (SceneNode node in roots)
+        foreach (SceneNode node in roots.ToArray())
         {
             if (_scenePolicy?.TryDetachSceneRoot(this, scene, node) == true)
+            {
+                roots.Remove(node);
                 continue;
+            }
             if (IsVisibleRootOfAnotherLoadedScene(scene, node))
+            {
+                roots.Remove(node);
                 continue;
+            }
+            if (_externallyOwnedSceneRoots.Remove(node))
+            {
+                roots.Remove(node);
+                continue;
+            }
 
             RootNodes.Remove(node);
+            roots.Remove(node);
         }
+        _visibleRootsByScene.Remove(scene);
     }
 
     private bool IsVisibleRootOfAnotherLoadedScene(XRScene excluded, SceneNode node)
@@ -539,24 +599,29 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     public void Dispose()
     {
-        if (_disposed)
+        if (_disposed || _disposing)
             return;
-
-        if (PlayState != RuntimeWorldPlayState.Stopped)
-            EndPlay();
-        Disposing?.Invoke(this);
-        Disposing = null;
-        UnloadTargetWorld();
-        _targetWorld = null;
-        _initialDynamicBodyPoses.Clear();
-        ClearPendingPhysicsRequests();
-        while (_physicsRaycastRequestPool.TryDequeue(out _))
+        _disposing = true;
+        try
         {
+            if (PlayState != RuntimeWorldPlayState.Stopped)
+                EndPlay();
+            Disposing?.Invoke(this);
+            Disposing = null;
+            UnloadTargetWorld();
+            _targetWorld = null;
+            _initialDynamicBodyPoses.Clear();
+            _externallyOwnedSceneRoots.Clear();
+            ClearPendingPhysicsRequests();
+            while (_physicsRaycastRequestPool.TryDequeue(out _))
+            {
+            }
+            _capabilities.Clear();
+            _scenePolicy = null;
+            GameMode = null;
+            _disposed = true;
         }
-        _capabilities.Clear();
-        _scenePolicy = null;
-        GameMode = null;
-        _disposed = true;
+        finally { _disposing = false; }
     }
 
     private void RemoveCapability(Type type, object capability)

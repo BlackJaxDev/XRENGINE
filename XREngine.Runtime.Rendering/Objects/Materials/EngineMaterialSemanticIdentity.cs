@@ -35,6 +35,8 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity UIQuadBatchedV1 => new(EngineMaterialSemantic.UIQuadBatched, 1);
 
+    public static EngineMaterialSemanticIdentity UIQuadBatchedTextureV1 => new(EngineMaterialSemantic.UIQuadBatchedTexture, 1);
+
     public static EngineMaterialSemanticIdentity UITextBatchedBitmapV1 => new(EngineMaterialSemantic.UITextBatchedBitmap, 1);
 
     public static EngineMaterialSemanticIdentity SkyboxGradientV1 => new(EngineMaterialSemantic.SkyboxGradient, 1);
@@ -67,7 +69,7 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
             return;
         if (Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle && Version == 1)
             return;
-        if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap && Version == 1)
+        if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap && Version == 1)
             return;
         if (IsSkybox())
             return;

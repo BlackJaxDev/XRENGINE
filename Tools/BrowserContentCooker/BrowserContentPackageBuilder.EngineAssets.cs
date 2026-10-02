@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "publishedMetadata", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "publishedMetadata", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts", "essentialRoots", "streamedRoots"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -64,6 +64,30 @@ public static partial class BrowserContentPackageBuilder
         foreach (string path in byPath.Keys)
             ValidateGraph(path, byPath, dependencies, new HashSet<string>(StringComparer.Ordinal), heights, 0);
 
+        bool hasEssentialRoots = recipe.TryGetProperty("essentialRoots", out _);
+        bool hasStreamedRoots = recipe.TryGetProperty("streamedRoots", out _);
+        Require(hasEssentialRoots == hasStreamedRoots, "Engine delivery roots must declare both essentialRoots and streamedRoots.");
+        string[]? essentialRoots = hasEssentialRoots ? EngineAssetRoots(recipe, "essentialRoots", byPath, 1) : null;
+        string[]? streamedRoots = hasStreamedRoots ? EngineAssetRoots(recipe, "streamedRoots", byPath, 0) : null;
+        HashSet<string>? essentialClosure = null;
+        if (essentialRoots is not null)
+        {
+            HashSet<string> essential = EngineAssetClosure(essentialRoots, dependencies);
+            essentialClosure = essential;
+            HashSet<string> covered = EngineAssetClosure(streamedRoots!, dependencies);
+            covered.UnionWith(essential);
+            Require(essential.Contains(startupWorld)
+                && (startupSettings is null || essential.Contains(startupSettings))
+                && (publishedMetadata is null || essential.Contains(publishedMetadata))
+                && (defaultUiFont is null || essential.Contains(defaultUiFont)),
+                "Engine startup world, settings, metadata, and default font must be essential.");
+            Require(streamedRoots!.All(path => !essential.Contains(path)
+                && byPath[path].GetProperty("encoding").GetString() == "cooked-binary"
+                && path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)),
+                "A streamed scene root must be a separate cooked asset outside the essential closure.");
+            Require(covered.SetEquals(byPath.Keys), "Engine delivery roots must cover every declared asset.");
+        }
+
         Dictionary<string, byte[]> payloads = new(StringComparer.Ordinal);
         List<object> cookedAssets = [];
         long totalBytes = 0;
@@ -103,6 +127,8 @@ public static partial class BrowserContentPackageBuilder
                 string descriptor = EngineAssetPath(shader.GetProperty("descriptor"));
                 string source = EngineAssetPath(shader.GetProperty("source"));
                 Require(byPath.ContainsKey(descriptor) && byPath.ContainsKey(source), "Shader artifact payload is absent from the catalog.");
+                Require(essentialClosure is null || essentialClosure.Contains(descriptor) && essentialClosure.Contains(source),
+                    "Shader descriptor and source assets must be essential.");
                 byte[] descriptorBytes = ReadBounded(SourcePath(recipeDirectory, byPath[descriptor].GetProperty("source").GetString()!), JsonLimit);
                 Require(Convert.ToHexStringLower(SHA256.HashData(descriptorBytes)) == identity, "Shader descriptor identity mismatch.");
                 using JsonDocument descriptorDocument = ReadJson(descriptorBytes);
@@ -120,7 +146,7 @@ public static partial class BrowserContentPackageBuilder
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
                 string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "OpaqueShadowDepth",
-                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UITextBatchedBitmap", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
+                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
                     "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1);
                 string target = Choice(variant, "target", "WebGPUWgsl");
@@ -166,6 +192,7 @@ public static partial class BrowserContentPackageBuilder
                 string? uiProfile = semantic switch
                 {
                     "UIQuadBatched" => "instanced-ui-quad-v1",
+                    "UIQuadBatchedTexture" => "instanced-ui-quad-texture-v1",
                     "UITextBatchedBitmap" => "instanced-ui-bitmap-text-v1",
                     _ => null,
                 };
@@ -293,6 +320,11 @@ public static partial class BrowserContentPackageBuilder
             manifestModel.Add("pipelineArtifacts", pipelineArtifacts);
         if (computeArtifacts.Count != 0)
             manifestModel.Add("computeArtifacts", computeArtifacts);
+        if (essentialRoots is not null)
+        {
+            manifestModel.Add("essentialRoots", essentialRoots);
+            manifestModel.Add("streamedRoots", streamedRoots);
+        }
         manifestModel.Add("assets", cookedAssets);
         byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestModel, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Engine asset manifest exceeds 1 MiB.");
@@ -323,6 +355,31 @@ public static partial class BrowserContentPackageBuilder
             && path.Split('/').Skip(1).All(part => part.Length != 0 && part is not "." and not ".."),
             $"Invalid engine asset path '{path}'.");
         return path;
+    }
+
+    private static string[] EngineAssetRoots(JsonElement recipe, string member,
+        Dictionary<string, JsonElement> byPath, int minimum)
+    {
+        string[] roots = [.. Array(recipe, member, 4096, minimum).Select(EngineAssetPath)];
+        Require(roots.Distinct(StringComparer.Ordinal).Count() == roots.Length,
+            $"Engine {member} contains duplicate roots.");
+        Require(roots.All(byPath.ContainsKey), $"Engine {member} references an absent asset.");
+        return roots;
+    }
+
+    private static HashSet<string> EngineAssetClosure(IEnumerable<string> roots,
+        IReadOnlyDictionary<string, string[]> dependencies)
+    {
+        HashSet<string> closure = new(StringComparer.Ordinal);
+        Stack<string> pending = new(roots);
+        while (pending.TryPop(out string? path))
+        {
+            if (!closure.Add(path))
+                continue;
+            foreach (string dependency in dependencies[path])
+                pending.Push(dependency);
+        }
+        return closure;
     }
 
     private static string MaterialVariantSelector(JsonElement value)

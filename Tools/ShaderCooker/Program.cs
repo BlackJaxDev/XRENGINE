@@ -195,7 +195,7 @@ internal static class Program
                 string semantic = String(variant, "semantic");
                 int semanticVersion = Integer(variant, "semanticVersion");
                 Require(semantic is "StandardLitColor" or "StandardLitTexture" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
-                    "UIQuadBatched" or "UITextBatchedBitmap" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
+                    "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
                     "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
                     "SkyboxCubemap" or "SkyboxDynamicProcedural"
                     && (semanticVersion == 1 || semantic == "StandardLitColor" && semanticVersion == 2),
@@ -233,6 +233,7 @@ internal static class Program
                 string? uiProfile = semantic switch
                 {
                     "UIQuadBatched" => "instanced-ui-quad-v1",
+                    "UIQuadBatchedTexture" => "instanced-ui-quad-texture-v1",
                     "UITextBatchedBitmap" => "instanced-ui-bitmap-text-v1",
                     _ => null,
                 };

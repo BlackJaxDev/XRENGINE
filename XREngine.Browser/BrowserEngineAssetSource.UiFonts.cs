@@ -5,17 +5,24 @@ using XREngine.Scene;
 
 namespace XREngine.Browser;
 
-public sealed partial class BrowserEngineAssetSource
+public sealed partial class BrowserEngineAssetSource : IRuntimeScenePreparationSource
 {
     /// <summary>Resolves authored font identities from the verified asset graph before world activation.</summary>
-    internal async Task BindUiFontsAsync(XRWorld world, CancellationToken cancellationToken)
+    internal Task BindUiFontsAsync(XRWorld world, CancellationToken cancellationToken)
+        => BindUiFontsAsync(world.Scenes, StartupWorldPath, cancellationToken);
+
+    /// <summary>Resolves only resources declared by this scene's catalog dependency entry.</summary>
+    public Task PrepareSceneAsync(XRScene scene, string catalogPath, CancellationToken cancellationToken = default)
+        => BindUiFontsAsync([scene], catalogPath, cancellationToken);
+
+    private async Task BindUiFontsAsync(IEnumerable<XRScene> scenes, string ownerPath, CancellationToken cancellationToken)
     {
         int session = RequireSession();
-        if (!_assets.TryGetValue(StartupWorldPath, out RuntimeAssetCatalogEntry? startup))
-            throw new InvalidDataException("AssetSource.StartupWorldMissing.");
+        if (!_assets.TryGetValue(ownerPath, out RuntimeAssetCatalogEntry? owner))
+            throw new InvalidDataException($"AssetSource.SceneMissing: '{ownerPath}'.");
         Dictionary<string, FontGlyphSet> loaded = new(StringComparer.Ordinal);
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
-        foreach (XRScene scene in world.Scenes)
+        foreach (XRScene scene in scenes)
             foreach (SceneNode root in scene.RootNodes)
                 await Visit(root, 0);
 
@@ -32,7 +39,7 @@ public sealed partial class BrowserEngineAssetSource
                     continue;
                 if (!path.StartsWith("/game/Fonts/Cooked/", StringComparison.Ordinal)
                     || !path.EndsWith(".cooked.asset", StringComparison.Ordinal)
-                    || !startup.Dependencies.Contains(path)
+                    || !owner.Dependencies.Contains(path)
                     || !_assets.TryGetValue(path, out RuntimeAssetCatalogEntry? entry)
                     || entry.Encoding != RuntimeAssetEncoding.CookedBinary
                     || entry.TypeName != typeof(FontGlyphSet).AssemblyQualifiedName

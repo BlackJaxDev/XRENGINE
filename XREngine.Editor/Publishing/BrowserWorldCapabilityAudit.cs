@@ -118,10 +118,17 @@ internal static class BrowserWorldCapabilityAudit
                 }
                 else if (component is UIMaterialComponent quad)
                 {
+                    bool textured = quad.Material?.Textures.Count == 1;
+                    if (textured && !UIMaterialComponent.HasCanonicalImageShader(quad.Material!))
+                        throw new NotSupportedException($"BrowserCook.UiImageShaderUnsupported: '{path}' image material requires the canonical engine fragment stage or its source-free cooked companion.");
+                    if (textured && quad.Material!.Textures[0] is XRTexture2D image &&
+                        !UIMaterialComponent.TryGetWebGpuImageProfile(image, out string? reason))
+                        throw new NotSupportedException($"BrowserCook.UiImageTextureUnsupported: '{path}': {reason}.");
                     if (!quad.SupportsBatchedRendering)
-                        throw new NotSupportedException($"BrowserCook.UiMaterialUnsupported: '{path}' requires the source-free solid-color screen UI profile.");
-                    RequireUiVariant(EngineMaterialSemanticIdentity.UIQuadBatchedV1,
-                        "instanced-ui-quad-v1", path);
+                        throw new NotSupportedException($"BrowserCook.UiMaterialUnsupported: '{path}' requires a source-free solid-color or single-image screen UI profile with MatColor and the exact raster state.");
+                    RequireUiVariant(textured ? EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 :
+                            EngineMaterialSemanticIdentity.UIQuadBatchedV1,
+                        textured ? "instanced-ui-quad-texture-v1" : "instanced-ui-quad-v1", path);
                 }
                 else if (component is UIRenderableComponent)
                     throw new NotSupportedException($"BrowserCook.UiComponentUnsupported: '{path}' component '{component.GetType().FullName}' has no cooked screen UI profile.");
