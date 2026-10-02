@@ -10,6 +10,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderScreenSpaceUI : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("screen-ui");
+
         /// <summary>
         /// The name of the FBO to render the UI to.
         /// If null, the UI will be rendered to the current viewport.
@@ -20,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// If true, the command will not render anything if the FBO is not found.
         /// Note that this should be false if you want to render to the current viewport instead of an FBO.
         /// </summary>
+        [System.ComponentModel.DefaultValue(false)]
         public bool FailRenderIfNoOutputFBO { get; set; } = false;
 
         //public override bool NeedsCollecVisible => true;

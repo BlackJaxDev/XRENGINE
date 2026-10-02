@@ -203,13 +203,14 @@ export class WebGpuCanvasRenderer {
         operation.drawIndex = drawIndex;
     }
 
-    _recordError(reason, stage = this._operation.stage, label = this._operation.label) {
+    _recordError(reason, stage = this._operation.stage, label = this._operation.label, context = this._operation) {
         if (this._firstError) return;
         const error = asError(reason);
         this._firstError = { name: String(reason?.name ?? error.name).slice(0, 128), message: String(error.message).slice(0, 2048),
             stack: error.stack?.slice(0, 4096) ?? '', startupStage: this._startup.stage,
-            operation: { ...this._operation, stage, label }, owner: this._owner,
-            generation: this._generation, frameSubmits: this._stats.frameSubmitCalls,
+            operation: { stage, label, commandIndex: context.commandIndex, drawIndex: context.drawIndex },
+            owner: context.owner ?? this._owner, generation: context.generation ?? this._generation,
+            frameSequence: context.sequence ?? null, frameSubmits: this._stats.frameSubmitCalls,
             explicitDestroyRequested: this._deviceDestroy !== null };
     }
 
@@ -976,6 +977,7 @@ export class WebGpuCanvasRenderer {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
             gpuMemory: estimateRendererGpuMemory(this),
             focusedPipeline: this.focusedPipeline?.getStatistics() ?? null,
+            engineFrame: this.commands.engineFrame.getStatistics(),
             deformation: { mode: this.skinningMode, ...this.skinning.stats },
             resources: { live: this._resources.slots.reduce((count, entry) => count + (entry ? 1 : 0), 0),
                 retiring: this._retired.size, pipelineCacheEntries: this.pipelineCache?.entries.size ?? 0,

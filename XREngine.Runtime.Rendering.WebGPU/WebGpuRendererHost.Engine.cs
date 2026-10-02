@@ -29,47 +29,94 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Records an engine-owned canvas clear and presents through the generic executor.</summary>
     protected override void RenderFrameCallback(double delta)
     {
-        if (!double.IsFinite(delta) || delta < 0)
-            throw new ArgumentOutOfRangeException(nameof(delta));
-        RequireReady();
-        if (!TryDescribeFrameOutput(out RenderFrameOutputDescription output))
-            return;
-
-        using ThreadCurrentScope rendererScope = EnterThreadCurrentScope(this);
-        using FrameOutputScope outputScope = PushFrameOutput(output);
-        BeginEngineFrame();
-        bool submitted = false;
-        IRuntimeRenderWorld? world = _engineViewport?.World;
+        WebGpuEngineFrameStatistics? statistics = BeginEngineFrameStatistics();
+        long allocationStart = statistics is null ? 0 : GC.GetAllocatedBytesForCurrentThread();
+        long recordingBytes = 0, submissionBytes = 0;
+        bool recordingMeasured = false, frameBegun = false;
+        string outcome = "Faulted";
         try
         {
-            RetireDestroyedMeshDeformations();
-            bool ready;
-            if (world is not null)
+            if (!double.IsFinite(delta) || delta < 0)
+                throw new ArgumentOutOfRangeException(nameof(delta));
+            RequireReady();
+            if (!TryDescribeFrameOutput(out RenderFrameOutputDescription output))
             {
-                ValidateDirectionalShadowProfile(world);
+                outcome = "NoOutput";
+                return;
+            }
+
+            using ThreadCurrentScope rendererScope = EnterThreadCurrentScope(this);
+            using FrameOutputScope outputScope = PushFrameOutput(output);
+            BeginEngineFrame();
+            frameBegun = true;
+            bool submitted = false;
+            IRuntimeRenderWorld? world = _engineViewport?.World;
+            try
+            {
+                RetireDestroyedMeshDeformations();
+                bool ready;
+                if (world is not null)
+                {
+                    ValidateDirectionalShadowProfile(world);
+                    try
+                    {
+                        world.GlobalPreRender();
+                        ready = RecordEngineViewport(output);
+                    }
+                    finally { world.GlobalPostRender(); }
+                }
+                else ready = RecordEngineViewport(output);
+                // A consumer must never see a partially prepared producer (for example,
+                // a clear without its mesh draws, or HDR without a ready output pass).
+                if (!ready || _engineCommandCount == 0 || _engineDrawPending)
+                {
+                    outcome = "Incomplete";
+                    return;
+                }
+                long submissionStart = statistics is null ? 0 : GC.GetAllocatedBytesForCurrentThread();
+                recordingBytes = submissionStart - allocationStart;
+                recordingMeasured = true;
                 try
                 {
-                    world.GlobalPreRender();
-                    ready = RecordEngineViewport(output);
+                    SubmitEngineFrame(output);
+                    submitted = true;
+                    outcome = _submittedFrame ? "Presented" : "Unpresented";
                 }
-                finally { world.GlobalPostRender(); }
+                finally
+                {
+                    if (statistics is not null)
+                        submissionBytes = GC.GetAllocatedBytesForCurrentThread() - submissionStart;
+                }
             }
-            else ready = RecordEngineViewport(output);
-            // A consumer must never see a partially prepared producer (for example,
-            // a clear without its mesh draws, or HDR without a ready output pass).
-            if (!ready || _engineCommandCount == 0 || _engineDrawPending)
-                return;
-            SubmitEngineFrame(output);
-            submitted = true;
+            finally
+            {
+                if (statistics is not null && !recordingMeasured)
+                {
+                    recordingBytes = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+                    recordingMeasured = true;
+                }
+                SetField(ref _engineRecording, false, publishNotifications: false);
+                _engineProducedTextures.Clear();
+                ArmPendingEngineFences(submitted);
+                for (int i = 0; i < _engineDeferredReleases.Count; i++)
+                    RetireEngineResource(_engineDeferredReleases[i]);
+                _engineDeferredReleases.Clear();
+            }
+        }
+        catch
+        {
+            outcome = "Faulted";
+            throw;
         }
         finally
         {
-            SetField(ref _engineRecording, false, publishNotifications: false);
-            _engineProducedTextures.Clear();
-            ArmPendingEngineFences(submitted);
-            for (int i = 0; i < _engineDeferredReleases.Count; i++)
-                RetireEngineResource(_engineDeferredReleases[i]);
-            _engineDeferredReleases.Clear();
+            if (statistics is not null)
+            {
+                long totalBytes = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+                if (!recordingMeasured)
+                    recordingBytes = totalBytes;
+                CompleteEngineFrameStatistics(statistics, frameBegun, outcome, recordingBytes, submissionBytes, totalBytes);
+            }
         }
     }
 
@@ -146,7 +193,7 @@ public sealed partial class WebGpuRendererHost
                 throw new InvalidOperationException("WebGPU.FrameBuffer.ClearOutsideFrame: framebuffer clears require an active engine frame.");
             int command = framebuffer.GetClearCommand(color, depth, _engineClearColor, _engineClearDepth);
             RecordEngineCommands(command, []);
-            framebuffer.MarkRecorded();
+            framebuffer.MarkRecorded(color, depth);
             return;
         }
         if (stencil)
@@ -261,6 +308,7 @@ public sealed partial class WebGpuRendererHost
             XRTexture2D texture => new WebGpuTexture2D(this, texture),
             XRTexture2DArray array => new WebGpuTexture2DArray(this, array),
             XRTextureCube cube => new WebGpuTextureCube(this, cube),
+            XRRenderBuffer renderbuffer => new WebGpuRenderBuffer(this, renderbuffer),
             XRFrameBuffer framebuffer => new WebGpuFrameBuffer(this, framebuffer),
             XRRenderProgram program => new WebGpuRenderProgram(this, program),
             XRMaterial material => new WebGpuMaterial(this, material),
@@ -287,6 +335,8 @@ public sealed partial class WebGpuRendererHost
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuMeshRenderer mesh)
                 mesh.DestroyDraws();
+            else if (api is WebGpuFrameBuffer framebuffer)
+                framebuffer.ReleaseColorResolvesUsing(framebuffer);
     }
 
     public override void WaitForGpu()
@@ -317,6 +367,8 @@ public sealed partial class WebGpuRendererHost
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuMeshRenderer mesh)
                 mesh.ReleaseDrawsUsing(resource);
+            else if (api is WebGpuFrameBuffer framebuffer)
+                framebuffer.ReleaseColorResolvesUsing(resource);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuRenderProgram program)
                 program.ReleaseBindingSetsUsing(resource);

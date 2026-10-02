@@ -7,8 +7,7 @@ import { queueIntegration, finishIntegration, deliverySnapshot, INTEGRATION_LIMI
 const sources = new Map();
 let nextSource = 0;
 const validSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}(?![\s\S])/.test(value);
-const pipelinePasses = new Set(['tonemap', 'depth-normal', 'gtao-generate', 'gtao-blur-horizontal',
-    'gtao-blur-vertical', 'bloom-copy', 'bloom-downsample', 'bloom-upsample', 'bloom-combine']);
+const pipelineComponent = value => typeof value === 'string' && /^[a-z][a-z0-9.-]{0,63}(?![\s\S])/.test(value);
 
 function requireSource(id) {
     const source = sources.get(id);
@@ -155,20 +154,24 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         }
     }
     if (value.pipelineArtifacts !== undefined) {
-        if (!Array.isArray(value.pipelineArtifacts) || value.pipelineArtifacts.length > 16)
+        if (!Array.isArray(value.pipelineArtifacts) || value.pipelineArtifacts.length > 256)
             throw new Error('AssetSource.PipelineArtifactBudgetExceeded.');
-        const passes = new Set();
+        const bindings = new Set();
         for (const pipeline of value.pipelineArtifacts) {
+            const hasScope = pipeline && typeof pipeline === 'object' && Object.hasOwn(pipeline, 'scope');
             if (!pipeline || typeof pipeline !== 'object' || Array.isArray(pipeline)
-                || Object.keys(pipeline).length !== 2 || !pipelinePasses.has(pipeline.pass)
+                || Object.keys(pipeline).length !== (hasScope ? 3 : 2)
+                || !Object.hasOwn(pipeline, 'pass') || !Object.hasOwn(pipeline, 'descriptorIdentity')
+                || !pipelineComponent(pipeline.pass) || (hasScope && !pipelineComponent(pipeline.scope))
                 || !validSha256(pipeline.descriptorIdentity))
                 throw new Error('AssetSource.PipelineArtifactInvalid.');
             const descriptor = shaderDescriptors.get(pipeline.descriptorIdentity);
             if (!descriptor) throw new Error('AssetSource.PipelineArtifactMissing.');
             if (descriptor.bytes > CONTENT_LIMITS.jsonBytes)
                 throw new Error('AssetSource.PipelineArtifactDescriptorBudgetExceeded.');
-            if (passes.has(pipeline.pass)) throw new Error('AssetSource.PipelineArtifactDuplicatePass.');
-            passes.add(pipeline.pass);
+            const bindingKey = hasScope ? `${pipeline.scope}::${pipeline.pass}` : pipeline.pass;
+            if (bindings.has(bindingKey)) throw new Error('AssetSource.PipelineArtifactDuplicateBinding.');
+            bindings.add(bindingKey);
         }
     }
     if (value.computeArtifacts !== undefined) {

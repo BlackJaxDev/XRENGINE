@@ -110,38 +110,6 @@ export class GpuReadback {
         return false;
     }
 
-    beginCanvasProducerScopes() {
-        const device = this.renderer.device;
-        device.pushErrorScope('out-of-memory');
-        try { device.pushErrorScope('validation'); }
-        catch (error) {
-            void device.popErrorScope().catch(() => {});
-            throw error;
-        }
-    }
-
-    endCanvasProducerScopes() {
-        const device = this.renderer.device;
-        let validation, memory;
-        try { validation = device.popErrorScope(); }
-        catch (error) { validation = Promise.reject(error); }
-        try { memory = device.popErrorScope(); }
-        catch (error) { memory = Promise.reject(error); }
-        const gate = Promise.allSettled([validation, memory]).then(results => {
-            for (const result of results) {
-                if (result.status === 'rejected') throw result.reason;
-                if (result.value) throw new Error(`WebGPU engine frame: ${result.value.message}`);
-            }
-        });
-        // Scoping a producer error must not suppress the renderer's usual terminal
-        // validation-failure transition merely because a capture was pending.
-        void gate.catch(error => {
-            try { this.renderer._fail(error); }
-            catch (failure) { console.error('WebGPU readback producer failure transition:', failure); }
-        });
-        return gate;
-    }
-
     /** Called only after a complete engine frame has been submitted, before implicit presentation. */
     captureCanvas(texture, generation, presentsCanvas, producerGate) {
         if (!presentsCanvas) return;

@@ -94,7 +94,7 @@ internal static class Program
             JsonArray pipelineArtifacts = [];
             JsonArray computeArtifacts = [];
             HashSet<string> variantKeys = new(StringComparer.Ordinal);
-            HashSet<string> pipelinePasses = new(StringComparer.Ordinal);
+            HashSet<string> pipelineBindings = new(StringComparer.Ordinal);
             HashSet<string> computeKernels = new(StringComparer.Ordinal);
             foreach (PreparedShader item in prepared.OrderBy(item => item.Name, StringComparer.Ordinal))
             {
@@ -118,7 +118,11 @@ internal static class Program
                     JsonObject reference = (JsonObject)pipeline.DeepClone();
                     reference["descriptorIdentity"] = descriptorHash;
                     string pass = String(reference, "pass");
-                    Require(pipelinePasses.Add(pass), $"Duplicate pipeline artifact pass '{pass}'.");
+                    string? scope = reference.ContainsKey("scope") ? String(reference, "scope") : null;
+                    string bindingKey = WebPipelineArtifactCatalog.GetBindingKey(scope, pass);
+                    Require(pipelineBindings.Add(bindingKey), $"Duplicate pipeline artifact binding '{bindingKey}'.");
+                    Require(pipelineBindings.Count <= WebPipelineArtifactCatalog.MaximumEntries,
+                        "Pipeline artifact catalog exceeds its limit.");
                     pipelineArtifacts.Add(reference);
                 }
                 if (item.ComputeArtifact is { } compute)
@@ -253,12 +257,17 @@ internal static class Program
             {
                 JsonObject pipeline = Object(pipelineNode, "pipelineArtifact");
                 string pass = String(pipeline, "pass");
+                bool hasScope = pipeline.ContainsKey("scope");
+                string? scope = hasScope ? String(pipeline, "scope") : null;
+                _ = WebPipelineArtifactCatalog.GetBindingKey(scope, pass);
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
-                Require(pipeline.Count == 1 && WebPipelineArtifactCatalog.IsSupportedPass(pass) &&
+                Require(pipeline.Count == (hasScope ? 2 : 1) &&
                     pass == String(recipe, "pass") && entries.Count == 2 &&
                     entries.ContainsKey("vertex") && entries.ContainsKey("fragment") && materialVariant is null,
-                    $"{stageContext}: the pipeline artifact must explicitly select a supported complete raster program without a material variant.");
+                    $"{stageContext}: the pipeline artifact must explicitly select a complete authored raster program without a material variant.");
                 pipelineArtifact = new JsonObject { ["pass"] = pass };
+                if (scope is not null)
+                    pipelineArtifact["scope"] = scope;
             }
             if (recipe.TryGetPropertyValue("computeArtifact", out JsonNode? computeNode))
             {

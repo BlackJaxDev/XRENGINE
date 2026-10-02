@@ -64,15 +64,17 @@ references only when the selected world includes the exact descriptor hash;
 unknown or custom materials remain unsupported without an explicit companion.
 
 A schema-three whole-program recipe can also declare
-`"pipelineArtifact": { "pass": "tonemap" }`. This explicitly binds the
-verified vertex/fragment program to an engine-owned pass in the manifest's
+`"pipelineArtifact": { "pass": "tonemap" }` or
+`"pipelineArtifact": { "scope": "advanced", "pass": "tonemap" }`. This explicitly binds the
+verified vertex/fragment program to an authored pass in the manifest's
 `pipelineArtifacts` array using the descriptor's SHA-256 identity. The cooker
-does not infer pipeline ownership from a shader name or source path. Duplicate
-pass declarations and a mismatched recipe pass fail before manifest publication.
-The bounded pass set is `tonemap`, `depth-normal`, `gtao-generate`,
-`gtao-blur-horizontal`, `gtao-blur-vertical`, `bloom-copy`,
-`bloom-downsample`, `bloom-upsample`, and `bloom-combine`. An absent pass is
-required only when the corresponding pipeline feature is selected.
+does not infer pipeline ownership from a shader name or source path. Unscoped
+entries retain their original pass binding key. Scoped entries use `scope::pass`,
+while the descriptor still declares the original pass. Scope and pass are
+bounded lowercase identifiers without colons, so distinct authored pipelines
+may use the same pass name without collisions. Duplicate binding keys and a
+mismatched recipe pass fail before manifest publication. Missing required
+programs are reported by the selected pipeline.
 
 ```sh
 dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj -- --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --source-root Build/CommonAssets/Shaders/WebGPU --output <artifact-output>

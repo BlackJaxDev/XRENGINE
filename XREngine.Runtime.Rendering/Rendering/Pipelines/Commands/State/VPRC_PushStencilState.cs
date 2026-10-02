@@ -10,7 +10,11 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_PushStencilState : ViewportStateRenderCommand<VPRC_PopStencilState>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("stencil");
+
         /// <summary>Stencil comparison function.</summary>
+        [System.ComponentModel.DefaultValue(EComparison.Always)]
         public EComparison Function { get; set; } = EComparison.Always;
 
         /// <summary>Reference value for the stencil test.</summary>
@@ -23,12 +27,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         public uint WriteMask { get; set; } = 0xFF;
 
         /// <summary>Action when both stencil and depth tests fail.</summary>
+        [System.ComponentModel.DefaultValue(EStencilOp.Keep)]
         public EStencilOp StencilFail { get; set; } = EStencilOp.Keep;
 
         /// <summary>Action when stencil passes but depth fails.</summary>
+        [System.ComponentModel.DefaultValue(EStencilOp.Keep)]
         public EStencilOp DepthFail { get; set; } = EStencilOp.Keep;
 
         /// <summary>Action when both tests pass.</summary>
+        [System.ComponentModel.DefaultValue(EStencilOp.Keep)]
         public EStencilOp BothPass { get; set; } = EStencilOp.Keep;
 
         protected override void Execute()

@@ -463,7 +463,28 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <summary>
     /// Gets or sets the material to use when an invalid material is encountered during rendering.
     /// </summary>
-    public XRMaterial? InvalidMaterial { get; set; }
+    public XRMaterial? InvalidMaterial
+    {
+        get
+        {
+            if (_invalidMaterial is null && _invalidMaterialSource is { } source)
+                SetField(ref _invalidMaterial, source.InvalidMaterial, publishNotifications: false);
+            return _invalidMaterial;
+        }
+        set
+        {
+            SetField(ref _invalidMaterialSource, null, publishNotifications: false);
+            SetField(ref _invalidMaterial, value);
+        }
+    }
+    private XRMaterial? _invalidMaterial;
+    private RenderPipeline? _invalidMaterialSource;
+
+    private void SetLazyInvalidMaterial(RenderPipeline pipeline)
+    {
+        SetField(ref _invalidMaterial, null, publishNotifications: false);
+        SetField(ref _invalidMaterialSource, pipeline, publishNotifications: false);
+    }
 
     /// <summary>
     /// Renders the scene to the viewport or framebuffer.

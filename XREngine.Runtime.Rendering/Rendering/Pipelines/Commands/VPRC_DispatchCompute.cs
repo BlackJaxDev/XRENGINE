@@ -7,7 +7,52 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_DispatchCompute : ViewportRenderCommand
     {
-        private readonly XRRenderProgram _computeProgram = new(false, false);
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            requirements.RequireOperation("compute");
+            requirements.RequireProgram(_computeProgram);
+            if (Textures is { Count: > 0 }) requirements.RequireOperation("storage-images");
+        }
+
+        private XRRenderProgram _computeProgram = new(false, false);
+
+        /// <summary>
+        /// Authoritative runtime program used by both dependency discovery and execution.
+        /// Its enumerable shader interface is not a serializable program representation;
+        /// the explicit shader collection and identity below preserve authoring data.
+        /// </summary>
+        [YamlDotNet.Serialization.YamlIgnore]
+        public XRRenderProgram ComputeProgram
+        {
+            get => _computeProgram;
+            set
+            {
+                ArgumentNullException.ThrowIfNull(value);
+                SetField(ref _computeProgram, value);
+            }
+        }
+
+        [YamlDotNet.Serialization.YamlMember(Order = 1000)]
+        public EventList<XRShader> ComputeShaders
+        {
+            get => _computeProgram.Shaders;
+            set
+            {
+                if (ReferenceEquals(value, _computeProgram.Shaders))
+                    return;
+                _computeProgram.Shaders.Clear();
+                if (value is not null)
+                    _computeProgram.Shaders.AddRange(value);
+            }
+        }
+
+        /// <summary>Exact whole-program companion, restored after shader collection hydration.</summary>
+        [YamlDotNet.Serialization.YamlMember(Order = 1001)]
+        public string? CookedProgramIdentity
+        {
+            get => _computeProgram.CookedArtifactIdentity;
+            set => _computeProgram.CookedArtifactIdentity = value;
+        }
 
         private static uint GetOne() => 1u;
 
@@ -50,9 +95,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (_computeProgram.Shaders.Count <= 0)
+            if (_computeProgram.Shaders.Count == 0 && _computeProgram.CookedArtifactIdentity is null)
                 return;
 
+            AbstractRenderer renderer = AbstractRenderer.Current
+                ?? throw new InvalidOperationException("Compute dispatch requires an active renderer.");
+            _ = renderer.GetOrCreateAPIRenderObject(_computeProgram, generateNow: true)
+                ?? throw new InvalidOperationException("Compute dispatch requires a backend program wrapper.");
             ActivePipelineInstance.RenderState.ApplyScopedProgramBindings(_computeProgram);
 
             var textures = Textures?.Select(binding => (

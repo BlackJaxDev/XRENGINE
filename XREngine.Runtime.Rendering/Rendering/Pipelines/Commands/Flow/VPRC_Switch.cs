@@ -7,6 +7,14 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            if (Cases is not null)
+                foreach (ViewportRenderCommandContainer commands in Cases.Values)
+                    requirements.Include(commands);
+            requirements.Include(DefaultCase);
+        }
+
         public string? Label { get; set; }
 
         public Func<int>? SwitchEvaluator { get; set; }

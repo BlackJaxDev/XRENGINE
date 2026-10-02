@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **64 of 110 items are checked; 46 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **65 of 114 items are checked; 49 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
 
 Created: 2026-09-29. Updated: 2026-10-02.
 
@@ -15,6 +15,7 @@ Run the same engine, worlds, and C# game code in the browser (WebGPU, .NET 10 We
 - **Same assets:** one serialized world, prefab, and component format.
 - **Same code:** one set of engine and game assemblies.
 - **Per-platform differences are limited to** platform leaves (renderer backend, audio, input, windowing, physics native build, transports) and cooked GPU/format variants (shaders, textures, audio codecs).
+- **Modular pipelines:** support the same authored `RenderPipeline` assets, including Default, Advanced and custom command graphs. Admission follows concrete operation/resource/program capabilities, not a pipeline-type whitelist or silent replacement. The owner's 2026-10-02 clarification and implementation order are recorded in the [modular pipeline plan](../../design/platform/modular-browser-render-pipelines-2026-10-02.md).
 
 The editor stays a desktop application and gains an honest browser publish target on this path. The separate browser runtime on the `codex/webgpu-readiness-audit` branch is stabilized as a reference harness and retired once this path reaches parity.
 
@@ -23,7 +24,7 @@ The editor stays a desktop application and gains an honest browser publish targe
 The current coherent source passes Editor, Server, VRClient, desktop WebGPU,
 RenderingParity, all nineteen portable compile rows and fresh interpreter/native-
 Jolt browser publication with zero compiler warnings or errors. The count is
-**64 of 110 named items complete, 46 open**. Published metadata is now installed
+**65 of 114 named items complete, 49 open**. Published metadata is now installed
 before engine/game startup, and the actual metadata-bearing RollingBall bundle
 passes three headless WebAssembly start/step/stop cycles. The authored textured,
 skeletal/morph world passes its real generic hydration and Editor cook/package
@@ -288,6 +289,25 @@ compile/cook checks do not establish known-value browser image rendering or clos
 general UI coverage. Rotated glyphs, MSDF, sRGB image handling and wider UI
 accessibility remain explicit gaps.
 
+### Expanded modular-pipeline scope (2026-10-02)
+
+Decision D15 adds four explicitly open named items, UR06.08–UR06.11, for generic
+asset contracts, real Advanced backend operations/shaders and live acceptance.
+The total is now **114**, with **64 completed and 50 open**. The preceding
+64/110 milestone remains its historical published result. Completed initial
+safety and CPU-direct gates do not count the newly required Advanced support as
+finished; there is no new completion from this scope update.
+
+The subsequent generic-contract implementation and full build gate close
+UR06.08, bringing the current source to **65/114 complete, 49 open**. This closes
+the shared authoring/cooking contract, not Advanced stages or browser pixels.
+
+The owner's accompanying submission clarification permits CPU-direct,
+GPU-driven indirect and GPU meshlet zero-readback paths. Preserve the selected
+mode and implement supported compute/indirect algorithms without steady-state
+CPU count/visibility readback or silent CPU fallback. Hardware task/mesh shader
+extensions remain a separate concrete capability limit.
+
 ## Build Gate
 
 Run narrow compile/cook checks during coherent implementation groups, and the full gate at end-to-end milestones and before checking an `impl` item. Fix failures caused by the change; list unrelated failures separately instead of working around them.
@@ -325,10 +345,11 @@ These block the listed items. Record each decision here with its date when it is
 | D12 | Retire the separate browser runtime after shared-engine parity. | UR16 | Approved 2026-10-01: retire it after the shared engine reaches parity. Preserve the frozen reference harness until then. |
 | D13 | Whether Server and VRClient may reference the model asset pipeline, and whether Bootstrap's registration generator may scan it. | UR00.12 | Approved 2026-09-30: retain the application-root references and Bootstrap model-pipeline scan; update the graph and documentation. Approved 2026-10-01: also retain the existing desktop ModelingIntegration factory scan and correct the stale dependency-boundary assertion; this adds no native dependency. |
 | D14 | Browser managed Jolt binding supply after the unchanged package fails static linking. | Browser native proof, UR01.06, UR07.01/UR07.02 | Approved 2026-10-01: a reviewed browser-only source build correcting `JoltPhysicsSharp` 2.22.0's conflicting `JPH_ContactListener_SetProcs` overload (`void` is the pinned native signature). Keep desktop package supply unchanged. Source pin/license review and the exact native/managed spike publish passed on 2026-10-01. Browser execution proof remains required. The owner separately approved Python only as an internal Emscripten dependency; implementation and editing helpers remain C#/PowerShell/JavaScript. See the [native supply record](../../design/platform/jolt-browser-native-supply.md#managed-linkage-findings). |
+| D15 | Browser support for modular render-pipeline assets. | UR04, UR05, UR06, UR11 | Clarified 2026-10-02: support Default, Advanced and other authored pipeline assets through the shared modular contracts. Do not whitelist concrete pipeline types or substitute Default. Missing GPU operations retain precise capability diagnostics. Existing Default-based evidence and pipeline defaults remain unchanged; see the [implementation plan](../../design/platform/modular-browser-render-pipelines-2026-10-02.md). |
 
 ## Remaining Work
 
-As of this 2026-10-02 update, 64 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+As of the 2026-10-02 modular-contract implementation gate, 65 of 114 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -337,7 +358,7 @@ Sizes are rough planning estimates for one engineer: **S** is days, **M** is one
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
 | Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Remaining native subsystem acceptance; broader physics parity before any default-promotion consideration |
 | U1: engine boots | UR17, UR01, UR02, UR03 | 7 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
-| U2: engine renders | UR04, UR05, UR06 | 14 | UR04 XL, UR05 XL, UR06 L | Extend the qualified depth and lit/HDR profile to remaining production passes, shadows and UI; compare supported worlds and preserve desktop rendering; D7 is approved |
+| U2: engine renders | UR04, UR05, UR06 | 17 | UR04 XL, UR05 XL, UR06 L | Extend the qualified depth and lit/HDR profile to remaining production passes, shadows and UI; compare supported worlds and preserve desktop rendering; D7 is approved |
 | U3: project plays | UR07, UR08, UR09, UR10, UR11 | 9 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
 | U4: production | UR13, UR14, UR15, UR16 | 15 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
 | U5: networked client | UR12 | 1 | L | U3 |
@@ -376,7 +397,7 @@ Remaining workstreams are UR01–UR16: live browser-world boot; shared frame ste
 | --- | --- | --- |
 | U0 — Reference harness | The build gate passes. The branch's browser app and editor browser target build, run, and have recorded evidence. The separate runtime is frozen. | UR00 |
 | U1 — Engine boots in the browser | The real portable assemblies load a real `XRWorld` asset through fetch, construct scenes, the game mode, and components, and tick fixed/variable updates without rendering. | Native subsystem integration acceptance; UR17; UR01–UR03 |
-| U2 — Engine renders in the browser | Engine cameras, `ModelComponent`, and engine materials render through the WebGPU backend and the web tier of `DefaultRenderPipeline`, with resize and device-loss reporting. | UR04–UR06 |
+| U2 — Engine renders in the browser | Engine cameras, `ModelComponent`, and engine materials render through the shared WebGPU backend using Default, Advanced and authored modular pipeline assets, with precise operation capabilities, preserved submission modes, resize and device-loss reporting. | UR04–UR06 |
 | U3 — Published project plays | Editor Build Project with the browser target produces a site that runs the startup world with the project's game code, Jolt physics, audio, input, and UI. The parity target chosen in D2 plays. | UR07–UR11 |
 | U4 — Production qualification | Physical mobile devices, budgets, runtime mode (interpreter or AOT), recovery, hosting, and CI pass. The separate runtime is retired. | UR13–UR16 |
 | U5 — Networked browser client | The browser client joins the real server path. | UR12 |
@@ -493,7 +514,7 @@ Depends on UR17.
 
 ## UR04 — WebGPU Renderer Backend For The Engine
 
-- [ ] **UR04.01** `impl` Implement `AbstractRenderer` and its API-object wrappers in `XREngine.Runtime.Rendering.WebGPU`. The base class is about 2,100 lines with 66 abstract members, and the module currently implements only `IBrowserRendererHost`. Implement coherent groups with narrow compile checks; qualify rendering through the complete engine path at end-to-end milestones before closing the corresponding coverage:
+- [ ] **UR04.01** `impl` Complete `AbstractRenderer` and its API-object wrappers in `XREngine.Runtime.Rendering.WebGPU`. The original inventory counted about 2,100 base-class lines and 66 abstract members, when the module implemented only `IBrowserRendererHost`; the current backend now implements bounded shared renderer profiles documented in the checkpoint. Implement the remaining coherent groups with narrow compile checks; qualify rendering through the complete engine path at end-to-end milestones before closing the corresponding coverage:
   - [ ] Renderer skeleton registered in the backend catalog: every abstract member is implemented or fails with a named unsupported diagnostic; clear and present work.
   - [ ] Data buffers and views, programs, mesh renderers, and vertex layouts: one unlit `ModelComponent` renders through an engine camera.
   - [ ] 2D, array, and cube textures and samplers: a textured material renders.
@@ -530,15 +551,25 @@ Depends on UR17.
 
 **Acceptance:** engine materials cook to WGSL and render with correct interpretation; unsupported ones fail by name.
 
-## UR06 — Render Pipeline Web Tier
+## UR06 — Modular Render Pipeline Web Support
 
-- [ ] **UR06.01** `impl` Define the WebGPU capability profile of `DefaultRenderPipeline`: depth, forward lighting with the engine material model, directional/spot/point shadows within limits, sky and environment, alpha-masked and sorted transparency, HDR with tonemapping, a bounded post-process set, and engine UI.
-- [ ] **UR06.02** `impl` Select passes from capabilities and report excluded passes explicitly; never discover unsupported passes by failing at runtime.
-- [x] **UR06.03** `impl` Make `AdvancedRenderPipeline` report unsupported for WebGPU outputs through its existing `Available` policy (explicitly unbound, with a reason) and fail under `Required`.
-- [x] **UR06.04** `impl` Resolve `CpuDirect` mesh submission for WebGPU. Later, and only after measurement, add GPU culling that writes fixed indexed slots with zero-instance culled draws, porting the branch's WGSL culling, BVH, and Hi-Z kernels into the engine's GPU scene path.
+Decision D15 requires the same modular asset model for Default, Advanced and
+other authored pipelines. Existing Default-based evidence remains valid; neither
+Advanced nor arbitrary authored-pipeline support is implied by it. Do not close
+this work by allowing only a concrete pipeline class or substituting another
+pipeline when a required operation is missing.
+
+- [ ] **UR06.01** `impl` Define shared WebGPU operation/resource/program requirements for modular `RenderPipeline` assets, including Default, Advanced and authored command graphs. Implement the actual admitted stage families without pipeline substitution. Default's profile includes depth, forward lighting with the engine material model, directional/spot/point shadows within limits, sky and environment, alpha-masked and sorted transparency, HDR with tonemapping, bounded post-processing and engine UI. Advanced requires its real visibility/classification/native-shading and selected per-sample contracts; backend limits receive precise operation diagnostics.
+- [ ] **UR06.02** `impl` Select and validate each authored pipeline's declared commands, resources and cooked program dependencies against capabilities, and report excluded or required unsupported operations explicitly. Publication and runtime use the same shared declarations; no concrete pipeline-type whitelist, Default-only artifact-name gate or implicit Default postprocess schema applies to other pipelines. Preserve authored asset identity and settings; never discover unsupported passes only by failing during rendering.
+- [x] **UR06.03** `impl` Historical safety gate: make unavailable `AdvancedRenderPipeline` requests report a reason through `Available` and fail under `Required`, rather than silently substituting a pipeline. The initial WebGPU rejection was implemented. D15 supersedes keeping Advanced permanently unsupported; this completed guard is not Advanced rendering support. Its replacement with concrete capability checks and real execution is explicitly open in UR06.08–UR06.11.
+- [x] **UR06.04** `impl` Baseline mesh submission: resolve `CpuDirect` for WebGPU. This implemented baseline remains valid and does not establish Advanced GPU-scene submission. D15 requires the selected pipeline's real GPU-driven paths, tracked in UR06.09; measurement still governs performance claims and default promotion, rather than blocking required source implementation.
 - [ ] **UR06.05** `impl` Run engine skinning and blendshapes through WebGPU compute (reusing the branch's WGSL skinning kernel as a canonical port) or CPU, with CPU/GPU parity checks.
 - [ ] **UR06.06** `impl` Add mobile quality tiers to engine settings: backing resolution and DPR caps, shadow sizes and cadence, light counts, texture tiers, and post effects. Disabled effects must not allocate resources.
-- [ ] **UR06.07** `verify` Render the same test worlds on OpenGL, Vulkan, and WebGPU; compare tolerant captures and document deliberate differences.
+- [ ] **UR06.07** `verify` Render the same test worlds on OpenGL, Vulkan, and WebGPU using Default, Advanced and an unrelated authored modular pipeline; compare tolerant captures and document deliberate differences and concrete capability limits.
+- [x] **UR06.08** `impl` Replace browser-specific concrete-pipeline and global pass-name gates with shared pipeline/command requirement and cooked-program dependency contracts. Preserve authored asset identity and settings, generic metadata, scoped program references and backward-readable existing manifests. A shader-free custom clear pipeline and an unrelated quad pipeline must require only their own operations/programs, not Default artifacts or pass enums. Done 2026-10-02: shared declarations, exact/scoped catalogs and production publisher audit pass saved clear/quad/program probes and the full compile/native-WASM gate. See the [implementation record](../../progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md). Actual GPU output remains the distinct UR06.11 acceptance.
+- [ ] **UR06.09** `impl` Implement the shared WebGPU resource/dispatch/synchronization operations required by Advanced: admitted integer visibility targets and MRTs, storage-image and texture-view bindings, canonical GPU-scene/indirect submission, non-blocking frame-slot completion and pass-boundary visibility. Preserve authored CPU-direct, GPU-driven indirect and GPU meshlet zero-readback modes using supported compute/indirect mechanisms; zero-readback modes must not read counts/visibility back to the CPU or silently fall back. Distinguish hardware task/mesh shader extensions from GPU meshlet algorithms. Use faithful backend lowering where available and precise operation-level diagnostics for actual WebGPU limits; no alternate pipeline substitution.
+- [ ] **UR06.10** `impl` Port Advanced's actual visibility, classification/reconstruction, native shading and selected per-sample MSAA stage/program family through the shared cook/render path. Preserve the canonical frame contract and supported material behavior, use bounded logical texture/material references rather than desktop bindless handles, and declare all required resources and cooked programs.
+- [ ] **UR06.11** `verify` Publish and run Default, Advanced and unrelated authored modular pipeline assets in the browser. Verify selected asset/settings/submission-mode identity, produced outputs, scoped-program alias isolation, capability rejection, resource lifetime/recovery and each implemented Advanced stage/MSAA path. Exercise CPU-direct, GPU-driven indirect and compute/indirect meshlet paths; prove zero-readback modes keep counts/visibility on the GPU. A class being admitted or compiling does not pass this acceptance; desktop image comparison remains UR06.07.
 
 **Acceptance (U2):** a representative engine world renders in the browser through engine objects and the web tier, with documented differences from desktop.
 

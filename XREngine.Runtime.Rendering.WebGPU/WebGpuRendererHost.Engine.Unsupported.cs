@@ -65,27 +65,6 @@ public sealed partial class WebGpuRendererHost
         out string failure)
         => throw UnsupportedEngineOperation(nameof(TryReadTexturePixelRgbaFloat));
 
-    public override void Blit(
-        XRFrameBuffer? inFBO,
-        XRFrameBuffer? outFBO,
-        int inX, int inY, uint inW, uint inH,
-        int outX, int outY, uint outW, uint outH,
-        EReadBufferMode readBufferMode,
-        bool colorBit, bool depthBit, bool stencilBit,
-        bool linearFilter)
-        => throw UnsupportedEngineOperation(nameof(Blit));
-
-    public override void BlitWithDrawBuffer(
-        XRFrameBuffer? inFBO,
-        XRFrameBuffer? outFBO,
-        uint inW, uint inH,
-        uint outW, uint outH,
-        EReadBufferMode readBufferMode,
-        EReadBufferMode drawBufferMode,
-        bool colorBit, bool depthBit, bool stencilBit,
-        bool linearFilter)
-        => throw UnsupportedEngineOperation(nameof(BlitWithDrawBuffer));
-
     public override void MemoryBarrier(EMemoryBarrierMask mask)
         => throw UnsupportedEngineOperation(nameof(MemoryBarrier));
 

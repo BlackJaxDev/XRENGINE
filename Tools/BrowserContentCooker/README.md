@@ -44,19 +44,23 @@ shaders use the separate optional `pipelineArtifacts` array:
 
 ```json
 "pipelineArtifacts": [
-  { "pass": "tonemap", "descriptorIdentity": "<lowercase SHA-256 descriptor hash>" }
+  { "pass": "tonemap", "descriptorIdentity": "<lowercase SHA-256 descriptor hash>" },
+  { "scope": "advanced", "pass": "tonemap", "descriptorIdentity": "<another lowercase SHA-256 descriptor hash>" }
 ]
 ```
 
-The placeholder must be replaced by the 64-character descriptor hash in
-`shaderArtifacts`. Supported passes are `tonemap`, `depth-normal`,
-`gtao-generate`, `gtao-blur-horizontal`, `gtao-blur-vertical`, `bloom-copy`,
-`bloom-downsample`, `bloom-upsample`, and `bloom-combine`. Entries have exactly
-these two fields, no repeated passes, and at most 16 entries. The referenced
-hash-owned descriptor must declare the matching pass, `target: "WebGPUWgsl"`,
-and complete vertex and fragment entry points.
-Unknown passes, malformed entries, missing references, and mismatched descriptor
-metadata fail before output files are written. Omitted or empty catalogs do not
+Each placeholder must be replaced by a 64-character descriptor hash in
+`shaderArtifacts`. Each entry has a bounded lowercase `pass`, an optional
+bounded lowercase `scope`, and exactly one descriptor identity. A missing scope
+keeps the legacy binding key equal to the pass; a scoped entry uses
+`scope::pass`, while its descriptor still declares only the pass. These fields
+permit any authored pass identity following the lowercase identifier grammar;
+colon is excluded to prevent ambiguous bindings. Duplicate binding keys and
+arrays exceeding 256 entries are rejected. The referenced hash-owned descriptor
+must declare the matching pass, `target: "WebGPUWgsl"`, and complete vertex and
+fragment entry points without a material variant. Malformed entries, missing
+references, and mismatched descriptor metadata fail before output files are
+written. Omitted or empty catalogs do not
 select a shader implicitly by its name or source path. These engine catalogs
 are independent of the frozen forward-renderer recipe format below.
 

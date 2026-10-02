@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices.JavaScript;
 using System.Text;
+using System.Text.Json;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
@@ -290,6 +291,26 @@ public static partial class EngineMeshDiagnosticExports
     {
         RequireSession(session);
         return _fixture?.GetFrameStatus() ?? "The engine fixture is not initialized.";
+    }
+
+    /// <summary>Enables bounded, allocation-free counter capture between diagnostic frames.</summary>
+    [JSExport]
+    public static void ConfigureFrameStatistics(int session, bool enabled, bool reset)
+    {
+        RequireSession(session);
+        (_renderer ?? throw new InvalidOperationException("EngineMeshDiagnostic.RendererRequired."))
+            .ConfigureEngineFrameStatistics(enabled, reset);
+    }
+
+    /// <summary>Returns an explicitly requested snapshot; no JSON is created during frame recording.</summary>
+    [JSExport]
+    public static string GetFrameStatistics(int session)
+    {
+        RequireSession(session);
+        return JsonSerializer.Serialize(
+            (_renderer ?? throw new InvalidOperationException("EngineMeshDiagnostic.RendererRequired."))
+                .CaptureEngineFrameStatistics(),
+            BrowserEngineStatisticsJsonContext.Default.WebGpuEngineFrameStatistics);
     }
 
     [JSExport]

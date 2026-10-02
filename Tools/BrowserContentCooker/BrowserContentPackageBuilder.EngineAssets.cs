@@ -237,16 +237,27 @@ public static partial class BrowserContentPackageBuilder
         List<object> pipelineArtifacts = [];
         if (recipe.TryGetProperty("pipelineArtifacts", out JsonElement pipelineValues))
         {
-            Require(pipelineValues.ValueKind == JsonValueKind.Array && pipelineValues.GetArrayLength() <= 16,
+            Require(pipelineValues.ValueKind == JsonValueKind.Array && pipelineValues.GetArrayLength() <= 256,
                 "Pipeline artifact catalog exceeds its limit.");
-            HashSet<string> passes = new(StringComparer.Ordinal);
+            HashSet<string> bindings = new(StringComparer.Ordinal);
             foreach (JsonElement pipeline in pipelineValues.EnumerateArray())
             {
-                Members(pipeline, "pass", "descriptorIdentity");
-                string pass = Choice(pipeline, "pass", "tonemap", "depth-normal", "gtao-generate",
-                    "gtao-blur-horizontal", "gtao-blur-vertical", "bloom-copy", "bloom-downsample",
-                    "bloom-upsample", "bloom-combine");
-                Require(passes.Add(pass), "Duplicate pipeline artifact pass.");
+                MembersOptional(pipeline, ["pass", "descriptorIdentity"], ["scope"]);
+                JsonElement passValue = pipeline.GetProperty("pass");
+                Require(passValue.ValueKind == JsonValueKind.String, "Pipeline artifact pass must be a string.");
+                string pass = passValue.GetString()!;
+                Require(Regex.IsMatch(pass, "^[a-z][a-z0-9.-]{0,63}\\z", RegexOptions.CultureInvariant),
+                    "Pipeline artifact pass must be a bounded lowercase identifier.");
+                string? scope = null;
+                if (pipeline.TryGetProperty("scope", out JsonElement scopeValue))
+                {
+                    Require(scopeValue.ValueKind == JsonValueKind.String, "Pipeline artifact scope must be a string.");
+                    scope = scopeValue.GetString()!;
+                    Require(Regex.IsMatch(scope, "^[a-z][a-z0-9.-]{0,63}\\z", RegexOptions.CultureInvariant),
+                        "Pipeline artifact scope must be a bounded lowercase identifier.");
+                }
+                string bindingKey = scope is null ? pass : scope + "::" + pass;
+                Require(bindings.Add(bindingKey), "Duplicate pipeline artifact binding.");
                 JsonElement identityValue = pipeline.GetProperty("descriptorIdentity");
                 Require(identityValue.ValueKind == JsonValueKind.String, "Pipeline artifact identity must be a string.");
                 string descriptorIdentity = identityValue.GetString()!;
@@ -267,7 +278,10 @@ public static partial class BrowserContentPackageBuilder
                     && !string.IsNullOrWhiteSpace(fragment.GetString())
                     && !descriptor.TryGetProperty("materialVariant", out _),
                     "Pipeline artifact descriptor must be a complete matching WebGPU raster program.");
-                pipelineArtifacts.Add(new { pass, descriptorIdentity });
+                if (scope is null)
+                    pipelineArtifacts.Add(new { pass, descriptorIdentity });
+                else
+                    pipelineArtifacts.Add(new { scope, pass, descriptorIdentity });
             }
         }
         List<object> computeArtifacts = [];

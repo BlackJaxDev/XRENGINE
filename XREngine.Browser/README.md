@@ -258,20 +258,23 @@ declaration. Browser startup rejects duplicate keys, missing hashes, and
 mismatched descriptors before activating the world. A missing catalog entry
 does not trigger a shader-name or authored-source fallback.
 
-Pipeline-owned shaders use a separate optional `pipelineArtifacts` array. An
-entry has exactly a supported `pass` and `descriptorIdentity` containing the
-lowercase SHA-256 hash of a descriptor already listed in `shaderArtifacts`.
-Supported passes are `tonemap`, `depth-normal`, `gtao-generate`,
-`gtao-blur-horizontal`, `gtao-blur-vertical`, `bloom-copy`,
-`bloom-downsample`, `bloom-upsample`, and `bloom-combine`. Unknown passes,
-duplicate passes, unknown fields,
-missing references, and arrays exceeding 16 entries are rejected. The cooker,
-browser loader, and managed source require the hash-owned descriptor to declare
-the same pass and the `WebGPUWgsl` target. The browser verifies these descriptor
-bytes before exposing the catalog, and managed startup resolves each module from
-the verified shader catalog. Tonemap absence leaves output unsupported; optional
-effect modules are required only when their corresponding graph branches are used. Shader
-names and source paths never select a pipeline artifact.
+Pipeline-owned raster shaders use a separate optional `pipelineArtifacts` array.
+An entry declares a bounded lowercase `pass`, the `descriptorIdentity` SHA-256
+hash of a descriptor already in `shaderArtifacts`, and an optional bounded
+lowercase `scope`. Both identifiers allow letters, digits, periods, and hyphens
+and must start with a letter. An unscoped entry binds under its `pass`, retaining
+the previous manifest shape and output. A scoped entry binds under
+`scope::pass`; its hash-owned descriptor still declares only the original
+`pass`. This permits distinct authored pipelines to use the same pass name
+without substituting one pipeline's program for another. Unknown fields,
+duplicate binding keys, missing references, and arrays exceeding 256 entries
+are rejected. The cooker, browser loader, and managed source require the
+hash-owned descriptor to declare the same pass, the `WebGPUWgsl` target, and
+complete raster stages without a material variant. The browser verifies the
+descriptor bytes before exposing the catalog, and managed startup resolves each
+module from the verified shader catalog. Missing required passes leave that
+authored pipeline unsupported. Shader names and source paths never select a
+pipeline artifact.
 
 The isolated `diagnostics/engine-mesh.html?probe=effects` page loads the verified
 package catalog and renders real static `ModelComponent` geometry through the

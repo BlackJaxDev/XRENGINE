@@ -17,53 +17,22 @@ public partial class DefaultRenderPipeline
 {
     private const string WebTonemapFBOName = "WebTonemapMaterial";
     private ShaderProgramArtifact? _webTonemapArtifact;
-    private WebPipelineArtifactCatalog? _webPipelineArtifacts;
-
-    /// <summary>Hash-verified package programs for the WebGPU pipeline's explicitly declared passes.</summary>
-    [YamlIgnore]
-    public WebPipelineArtifactCatalog? WebPipelineArtifacts
+    protected override void OnBindingWebPipelineArtifacts(WebPipelineArtifactCatalog artifacts)
     {
-        get => _webPipelineArtifacts;
-        init => BindWebPipelineArtifacts(value);
-    }
-
-    /// <summary>Binds one immutable package catalog without changing authored effect settings.</summary>
-    public void BindWebPipelineArtifacts(WebPipelineArtifactCatalog? artifacts)
-    {
-        ArgumentNullException.ThrowIfNull(artifacts);
-        if (_webPipelineArtifacts is { } installed)
-        {
-            if (ReferenceEquals(installed, artifacts))
-                return;
-            if (!installed.HasSameIdentities(artifacts))
-                throw new InvalidOperationException("WebGPU.DefaultPipeline.ArtifactIdentitiesChanged: replace the pipeline asset to install different pass programs.");
-            return;
-        }
         if (artifacts.TryResolve("tonemap", out ShaderProgramArtifact? tonemap))
             BindWebTonemapArtifact(tonemap);
-        SetField(ref _webPipelineArtifacts, artifacts, nameof(WebPipelineArtifacts));
     }
 
     /// <summary>Returns the exact program for a pipeline-owned pass when its optional feature is available.</summary>
-    public bool TryGetWebPipelineArtifact(string pass, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+    public override bool TryGetWebPipelineArtifact(string pass, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
     {
-        if (!WebPipelineArtifactCatalog.IsSupportedPass(pass))
-            throw new ArgumentOutOfRangeException(nameof(pass), "Unknown WebGPU pipeline pass.");
         if (pass == "tonemap" && _webTonemapArtifact is { } tonemap)
         {
             artifact = tonemap;
             return true;
         }
-        if (_webPipelineArtifacts is { } artifacts)
-            return artifacts.TryResolve(pass, out artifact);
-        artifact = null;
-        return false;
+        return base.TryGetWebPipelineArtifact(pass, out artifact);
     }
-
-    /// <summary>Reports an absent cooked program only when its pass is actually selected.</summary>
-    public ShaderProgramArtifact GetRequiredWebPipelineArtifact(string pass)
-        => TryGetWebPipelineArtifact(pass, out ShaderProgramArtifact? artifact) ? artifact
-            : throw new NotSupportedException($"WebGPU.DefaultPipeline.ArtifactMissing: selected pass '{pass}' requires its exact cooked package program.");
 
     /// <summary>
     /// Exact, verified package artifact used by the WebGPU output's Mobius tonemap pass.
@@ -84,7 +53,7 @@ public partial class DefaultRenderPipeline
     {
         if (artifact is null)
             throw new ArgumentNullException(nameof(artifact));
-        if (_webPipelineArtifacts is { } catalog && catalog.TryResolve("tonemap", out ShaderProgramArtifact? declared) &&
+        if (WebPipelineArtifacts is { } catalog && catalog.TryResolve("tonemap", out ShaderProgramArtifact? declared) &&
             declared.Identity != artifact.Identity)
             throw new InvalidOperationException("WebGPU.DefaultPipeline.TonemapIdentityChanged: the catalog owns a different output module.");
         if (_webTonemapArtifact is { } installed)

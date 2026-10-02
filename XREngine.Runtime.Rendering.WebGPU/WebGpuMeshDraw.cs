@@ -344,6 +344,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
         using (Utf8JsonWriter writer = new(bytes))
         {
             writer.WriteStartObject();
+            writer.WriteString("label", _program.Artifact.Name);
             writer.WriteStartArray("commands");
             writer.WriteStartObject();
             writer.WriteString("type", "render");

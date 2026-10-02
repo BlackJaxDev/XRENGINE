@@ -10,6 +10,8 @@ namespace XREngine.Editor.Publishing;
 internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactResolver? resolver)
 {
     private bool _hasCamera;
+    private readonly List<(int Pass, string Path, string Material, string? Mesh, string Source)> _sceneMaterialPasses = [];
+    internal List<RenderPipelineRequirements> PipelineRequirements { get; } = [];
 
     internal static void InspectStartup(GameStartupSettings settings)
     {
@@ -32,12 +34,6 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         // Resolve only packaged project/user selections. Desktop editor preferences and
         // desktop engine defaults are not authored requirements of a canvas output.
         UserSettings user = settings.DefaultUserSettings;
-        bool gpuDispatch = user.GPURenderDispatchOverride.HasOverride
-            ? user.GPURenderDispatchOverride.Value : settings.GPURenderDispatch;
-        if (gpuDispatch)
-            throw Unsupported(user.GPURenderDispatchOverride.HasOverride
-                ? "startup.asset/DefaultUserSettings/GPURenderDispatchOverride" : "startup.asset/GPURenderDispatch",
-                "mesh-submission", "GPU-driven render dispatch has no installed WebGPU route; the browser scene output requires CpuDirect submission.");
         EAntiAliasingMode? aa = user.AntiAliasingModeOverride.HasOverride
             ? user.AntiAliasingModeOverride.Value
             : settings.AntiAliasingModeOverride.HasOverride ? settings.AntiAliasingModeOverride.Value : null;
@@ -76,54 +72,38 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
 
         RenderPipeline? assigned = null;
         camera?.TryGetAssignedRenderPipeline(out assigned);
-        if (assigned is not null && assigned.GetType() != typeof(DefaultRenderPipeline))
-            throw Unsupported(path, "render-pipeline", $"Authored pipeline '{assigned.GetType().FullName}' has no installed WebGPU scene route.");
-
-        if (assigned is DefaultRenderPipeline { Stereo: true })
-            throw Unsupported(path, "camera-output", "The canvas pipeline admits a mono scene presentation.");
-        if (assigned is DefaultRenderPipeline pipeline && pipeline.GetWebPipelineFeatureRejection() is { } pipelineReason)
-            throw Unsupported(path, "render-pipeline", pipelineReason);
-
         PipelinePostProcessState? authored = null;
         if (assigned is not null)
             camera!.PostProcessStates.TryGetState(assigned.ID, out authored);
-        PipelinePostProcessState state = DefaultRenderPipeline.CreateWebPostProcessAdmissionState(authored);
-        InspectState(state, path);
+        InspectPipeline(assigned, authored, path);
     }
 
     internal void Complete(string worldPath)
     {
-        // Game code may supply the first camera during activation. Its missing
-        // settings still select the browser schema's enabled default effects.
+        // Only a genuinely unassigned output uses the host's default recipe.
         if (!_hasCamera)
-            InspectState(DefaultRenderPipeline.CreateWebPostProcessAdmissionState(null), worldPath);
+            InspectPipeline(null, null, worldPath);
+        foreach (var material in _sceneMaterialPasses)
+            if (!PipelineRequirements.Any(requirements => requirements.ScenePasses.Contains(material.Pass)))
+                throw Unsupported(material.Path, material.Pass.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    $"Mesh '{material.Mesh}' material '{material.Material}', source pass '{material.Source}' has no scene-mesh route declared by any published camera pipeline.");
     }
 
-    private void InspectState(PipelinePostProcessState state, string path)
+    private void InspectPipeline(RenderPipeline? pipeline, PipelinePostProcessState? authored, string path)
     {
-        if (DefaultRenderPipeline.GetWebPostProcessRejection(state, out string pass) is { } effectReason)
-            throw Unsupported(path, pass, effectReason);
-        AmbientOcclusionSettings? ao = GetSettings<AmbientOcclusionSettings>(state);
-        if (DefaultRenderPipeline.GetWebAmbientOcclusionRejection(ao) is { } aoReason)
-            throw Unsupported(path, CommonPostProcessStages.AmbientOcclusionStageKey, aoReason);
-        RequirePipelineArtifact("tonemap", path);
-        if (ao is { Enabled: true })
-        {
-            RequirePipelineArtifact("depth-normal", path);
-            RequirePipelineArtifact("gtao-generate", path);
-            RequirePipelineArtifact("gtao-blur-horizontal", path);
-            RequirePipelineArtifact("gtao-blur-vertical", path);
-        }
-        if (GetSettings<BloomSettings>(state) is { Enabled: true })
-        {
-            RequirePipelineArtifact("bloom-copy", path);
-            RequirePipelineArtifact("bloom-downsample", path);
-            RequirePipelineArtifact("bloom-upsample", path);
-            RequirePipelineArtifact("bloom-combine", path);
-        }
+        RenderPipelineRequirements requirements = pipeline?.CreateRequirements(RendererBackendId.WebGPU, authored)
+            ?? DefaultRenderPipeline.CreateWebDefaultRequirements(authored);
+        foreach (string diagnostic in requirements.Diagnostics)
+            throw Unsupported(path, "pipeline-requirement", diagnostic);
+        foreach (string operation in requirements.Operations)
+            if (WebGpuPipelineAdmission.GetOperationRejection(operation) is { } reason)
+                throw Unsupported(path, operation, reason);
+        foreach ((string pass, string? identity) in requirements.Programs)
+            RequirePipelineArtifact(pass, identity, path);
+        PipelineRequirements.Add(requirements);
     }
 
-    internal static void InspectMaterial(XRMaterial material, string path, string? meshName)
+    internal void InspectMaterial(XRMaterial material, string path, string? meshName, bool sceneRoute = true)
     {
         InspectPass(material.RenderPass, material.RenderOptions, "base");
         foreach (MaterialPassDefinition pass in material.PassSet.Passes)
@@ -132,23 +112,20 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
 
         void InspectPass(int pass, XREngine.Rendering.Models.Materials.RenderingParameters options, string source)
         {
-            if (!DefaultRenderPipeline.IsWebSceneMeshPassSupported(pass))
-                throw Unsupported(path, ((EDefaultRenderPass)pass).ToString(),
-                    $"Mesh '{meshName}' material '{material.Name}', source pass '{source}' has no cooked scene output route; display debug callbacks use a separate contract.");
-            if (DefaultRenderPipeline.GetWebRasterStateRejection(options) is { } reason)
-                throw Unsupported(path, ((EDefaultRenderPass)pass).ToString(),
+            if (sceneRoute)
+                _sceneMaterialPasses.Add((pass, path, material.Name ?? string.Empty, meshName, source));
+            if (WebGpuPipelineAdmission.GetRasterStateRejection(options) is { } reason)
+                throw Unsupported(path, pass.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     $"Mesh '{meshName}' material '{material.Name}', source pass '{source}': {reason}");
         }
     }
 
-    private void RequirePipelineArtifact(string pass, string path)
+    private void RequirePipelineArtifact(string pass, string? identity, string path)
     {
-        if (resolver is not BrowserShaderArtifactSource source || !source.PipelineCatalog.TryResolve(pass, out _))
+        if (resolver is not BrowserShaderArtifactSource source || !source.PipelineCatalog.TryResolve(pass, out var artifact) ||
+            identity is not null && artifact.Identity != identity)
             throw Unsupported(path, pass, "The selected camera pass requires its exact cooked artifact in BrowserShaderArtifactManifestPath.");
     }
-
-    private static T? GetSettings<T>(PipelinePostProcessState state) where T : class
-        => state.GetStage<T>()?.TryGetBacking(out T? settings) == true ? settings : null;
 
     private static NotSupportedException Unsupported(string path, string pass, string reason)
         => new($"BrowserCook.RenderingUnsupported: '{path}', pass '{pass}': {reason}");

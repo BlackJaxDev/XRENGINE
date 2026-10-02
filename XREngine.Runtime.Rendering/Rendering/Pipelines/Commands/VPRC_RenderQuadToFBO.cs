@@ -17,6 +17,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public partial class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("fullscreen-quad");
+
         private static bool DiagnosticsEnabled => RenderDiagnosticsFlags.DiagQuadBlit;
 
         /// <summary>

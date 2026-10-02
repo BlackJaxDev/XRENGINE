@@ -139,22 +139,27 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
 
     private void ReadPipelineArtifacts(JsonElement pipelines)
     {
-        if (pipelines.ValueKind != JsonValueKind.Array || pipelines.GetArrayLength() > 16)
+        if (pipelines.ValueKind != JsonValueKind.Array ||
+            pipelines.GetArrayLength() > WebPipelineArtifactCatalog.MaximumEntries)
             throw new InvalidDataException("AssetSource.PipelineArtifactBudgetExceeded.");
         HashSet<string> identities = _shaderArtifacts.Select(static artifact => artifact.Identity).ToHashSet(StringComparer.Ordinal);
         foreach (JsonElement pipeline in pipelines.EnumerateArray())
         {
-            if (pipeline.ValueKind != JsonValueKind.Object || pipeline.EnumerateObject().Count() != 2
+            if (pipeline.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("AssetSource.PipelineArtifactInvalid: expected pass, descriptorIdentity, and optional scope.");
+            bool hasScope = pipeline.TryGetProperty("scope", out JsonElement scope);
+            if (pipeline.EnumerateObject().Count() != (hasScope ? 3 : 2)
+                || hasScope && scope.ValueKind != JsonValueKind.String
                 || !pipeline.TryGetProperty("pass", out JsonElement pass) || pass.ValueKind != JsonValueKind.String
-                || !WebPipelineArtifactCatalog.IsSupportedPass(pass.GetString())
                 || !pipeline.TryGetProperty("descriptorIdentity", out JsonElement identityValue) || identityValue.ValueKind != JsonValueKind.String)
-                throw new InvalidDataException("AssetSource.PipelineArtifactInvalid: expected a known pass and descriptorIdentity.");
+                throw new InvalidDataException("AssetSource.PipelineArtifactInvalid: expected pass, descriptorIdentity, and optional scope.");
+            string bindingKey = WebPipelineArtifactCatalog.GetBindingKey(hasScope ? scope.GetString() : null, pass.GetString()!);
             string identity = ShaderProgramArtifactCatalog.ValidateIdentity(identityValue.GetString())
                 ?? throw new InvalidDataException("AssetSource.PipelineArtifactIdentityMissing.");
             if (!identities.Contains(identity))
                 throw new InvalidDataException($"AssetSource.PipelineArtifactMissing: '{identity}'.");
-            if (!_pipelineArtifactIdentities.TryAdd(pass.GetString()!, identity))
-                throw new InvalidDataException($"AssetSource.PipelineArtifactDuplicatePass: '{pass.GetString()}'.");
+            if (!_pipelineArtifactIdentities.TryAdd(bindingKey, identity))
+                throw new InvalidDataException($"AssetSource.PipelineArtifactDuplicateBinding: '{bindingKey}'.");
         }
     }
 

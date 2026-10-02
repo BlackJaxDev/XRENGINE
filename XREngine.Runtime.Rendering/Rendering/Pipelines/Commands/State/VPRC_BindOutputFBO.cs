@@ -13,9 +13,21 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_BindOutputFBO : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            requirements.RequireOperation("framebuffer");
+            if (ClearColor || ClearDepth) requirements.RequireOperation("attachment-clear");
+            if (ClearStencil) requirements.RequireOperation("stencil");
+            if (!Write) requirements.RequireOperation("framebuffer-read");
+        }
+
+        [System.ComponentModel.DefaultValue(true)]
         public bool Write { get; set; } = true;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ClearColor { get; set; } = true;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ClearDepth { get; set; } = true;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ClearStencil { get; set; } = true;
 
         public void SetOptions(bool write = true, bool clearColor = true, bool clearDepth = true, bool clearStencil = true)

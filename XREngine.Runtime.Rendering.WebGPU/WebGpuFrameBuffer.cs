@@ -4,8 +4,8 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.WebGPU;
 
-/// <summary>Retains an engine framebuffer's exact texture-view plan for one renderer generation.</summary>
-public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
+/// <summary>Retains an engine framebuffer's exact attachment-view plan for one renderer generation.</summary>
+public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
 {
     private readonly int[] _clearCommands = new int[4];
     private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[] _targets = [];
@@ -174,11 +174,17 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         DescribeAttachment(IFrameBufferAttachement attachment, int mip, int layer)
         => attachment switch
         {
+            XRRenderBuffer renderbuffer => Describe((WebGpuRenderBuffer)Renderer.GetOrCreateAPIRenderObject(renderbuffer, generateNow: true)!, mip, layer),
             XRTexture2D texture => Describe((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!, mip, layer),
             XRTexture2DArray array => Describe((WebGpuTexture2DArray)Renderer.GetOrCreateAPIRenderObject(array, generateNow: true)!, mip, layer),
             XRTextureCube cube => Describe((WebGpuTextureCube)Renderer.GetOrCreateAPIRenderObject(cube, generateNow: true)!, mip, layer),
             _ => throw Unsupported("View", $"attachment type '{attachment.GetType().Name}' has no exact WebGPU view"),
         };
+
+    private static (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
+        Describe(WebGpuRenderBuffer renderbuffer, int mip, int layer)
+        => (renderbuffer, renderbuffer.GetRenderView(mip, layer), renderbuffer.Width, renderbuffer.Height,
+            renderbuffer.SampleCount, renderbuffer.Format);
 
     private static (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
         Describe(WebGpuTexture2D texture, int mip, int layer)
@@ -188,15 +194,14 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         Describe<T>(WebGpuLayeredTexture<T> texture, int mip, int layer) where T : XRTexture
         => (texture, texture.GetRenderView(mip, layer), texture.Width, texture.Height, texture.SampleCount, texture.Format);
 
-    internal void MarkRecorded()
+    internal void MarkRecorded(bool color = true, bool depth = true)
     {
-        foreach (AbstractRenderAPIObject texture in _textures)
-            switch (texture)
-            {
-                case WebGpuTexture2D twoDimensional: twoDimensional.MarkProduced(); break;
-                case WebGpuTexture2DArray array: array.MarkProduced(); break;
-                case WebGpuTextureCube cube: cube.MarkProduced(); break;
-            }
+        for (int i = 0; i < _textures.Length; i++)
+        {
+            bool writes = ColorSlot(_targets[i].Attachment) >= 0 ? color : depth;
+            if (writes && _textures[i] is IWebGpuProducedTexture produced) produced.MarkProduced();
+            else MarkAttachmentRecorded(_textures[i]);
+        }
     }
 
     public bool DependsOn(AbstractRenderAPIObject resource)
@@ -238,6 +243,7 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
     public override void Destroy()
     {
         if (_plan is not null) Renderer.ReleaseEngineDrawDependencies(this);
+        ReleaseColorResolvesUsing(this);
         RetireClearCommands();
         if (_validationCommand != 0) Renderer.RetireEngineResourceAfterFrame(_validationCommand);
         _validationCommand = 0;

@@ -1,3 +1,5 @@
+import { GpuEngineFrameScopes } from './gpu-engine-frame-scopes.js';
+
 const headerBytes = 48;
 const recordBytes = 112;
 const maximumRecords = 4097;
@@ -19,11 +21,20 @@ export class GpuEngineFrame {
         this.storageBytes = new Uint8Array(storageCapacity);
         this.staging = null;
         this.lastSequence = 0;
+        this.scopes = new GpuEngineFrameScopes(commands.renderer);
+        this.encoderDescriptor = { label: 'Engine frame encoder' };
+        this.commandBufferDescriptor = { label: 'Engine frame commands' };
+        this.canvasViewDescriptor = { label: 'Engine canvas output' };
+        this.stats = { bridgeCalls: 0, submittedFrames: 0, records: 0, draws: 0, storageUploads: 0,
+            commandBytes: 0, uniformBytes: 0, storageBytes: 0, stagingBufferCreates: 0,
+            canvasTextureAcquisitions: 0, textureViewCreates: 0, commandEncoderCreates: 0,
+            commandBufferCreates: 0, renderPassCreates: 0, computePassCreates: 0 };
     }
 
     submit(memory, uniforms, storage) {
-        const c = this.commands, r = c.renderer;
-        r._setOperation('validate-engine-frame');
+        const c = this.commands, r = c.renderer, stats = this.stats;
+        stats.bridgeCalls++;
+        r._setOperation('validate-engine-frame', this.commandBufferDescriptor.label);
         r._requireOwner();
         const length = memory?.byteLength;
         if (!Number.isInteger(length) || length < headerBytes || length > this.bytes.length)
@@ -94,8 +105,10 @@ export class GpuEngineFrame {
             }
             let dynamicIndex = 0;
             if (operation.bindings) {
-                for (const group of operation.bindings) {
-                    for (const binding of group.dynamic) {
+                for (let groupIndex = 0; groupIndex < operation.bindings.length; groupIndex++) {
+                    const group = operation.bindings[groupIndex];
+                    for (let bindingIndex = 0; bindingIndex < group.dynamic.length; bindingIndex++) {
+                        const binding = group.dynamic[bindingIndex];
                         if (dynamicIndex >= offsetCount)
                             throw new Error('WebGPU.EngineFrame.DynamicOffsets: missing dynamic binding offset.');
                         const offset = data.getUint32(base + 8 + dynamicIndex++ * 4, true);
@@ -148,28 +161,29 @@ export class GpuEngineFrame {
 
         const guardCanvasCapture = presentsCanvas &&
             (r.readback.hasPendingCanvas(r._generation) || r.luminance.hasPendingCanvas(r._generation));
-        let producerScopesOpen = false;
+        let receipt = null;
         r._executing = true;
         try {
-            if (guardCanvasCapture) {
-                r.readback.beginCanvasProducerScopes();
-                producerScopesOpen = true;
-            }
+            receipt = this.scopes.begin(sequence, guardCanvasCapture);
             if (!this.staging) {
                 if (uniformCapacity + storageCapacity > r.device.limits.maxBufferSize)
                     throw new RangeError('WebGPU.EngineFrame.StagingCapacity: device buffer limit is too small.');
                 this.staging = r.device.createBuffer({ size: uniformCapacity + storageCapacity,
                     usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, label: 'Engine frame staging' });
+                stats.stagingBufferCreates++;
             }
-            r._setOperation('acquire-canvas');
+            r._setOperation('acquire-canvas', this.canvasViewDescriptor.label);
             const canvasTexture = r.context.getCurrentTexture();
-            c.canvasColor.view = canvasTexture.createView();
+            stats.canvasTextureAcquisitions++;
+            c.canvasColor.view = canvasTexture.createView(this.canvasViewDescriptor);
+            stats.textureViewCreates++;
             c.canvasColor.width = c.canvasDepth.width = r._width;
             c.canvasColor.height = c.canvasDepth.height = r._height;
             c.canvasColor.format = r.format;
             c.canvasDepth.view = r.depthView;
-            r._setOperation('create-command-encoder');
-            const encoder = r.device.createCommandEncoder();
+            r._setOperation('create-command-encoder', this.encoderDescriptor.label);
+            const encoder = r.device.createCommandEncoder(this.encoderDescriptor);
+            stats.commandEncoderCreates++;
             if (uniformLength) encoder.copyBufferToBuffer(this.staging, 0, arena.buffer, 0, uniformLength);
             let uploadIndex = 0;
             for (let record = 0; record < count; record++) {
@@ -180,17 +194,24 @@ export class GpuEngineFrame {
                 }
                 const base = headerBytes + record * recordBytes;
                 const operation = this.operations[record];
-                c.encodeOperation(encoder, operation, data, base + 8, record);
+                c.encodeOperation(encoder, operation, data, base + 8, record, stats);
             }
-            r._setOperation('finish-command-encoder');
-            r._submission[0] = encoder.finish();
+            r._setOperation('finish-command-encoder', this.commandBufferDescriptor.label);
+            r._submission[0] = encoder.finish(this.commandBufferDescriptor);
+            stats.commandBufferCreates++;
             if (uniformLength) r.device.queue.writeBuffer(this.staging, 0, this.uniformBytes, 0, uniformLength);
             if (storageLength) r.device.queue.writeBuffer(this.staging, uniformCapacity, this.storageBytes, 0, storageLength);
-            r._setOperation('submit-engine-frame');
+            r._setOperation('submit-engine-frame', this.commandBufferDescriptor.label);
             r.device.queue.submit(r._submission);
             this.lastSequence = sequence;
-            const producerGate = producerScopesOpen ? r.readback.endCanvasProducerScopes() : undefined;
-            producerScopesOpen = false;
+            stats.submittedFrames++;
+            stats.records += count;
+            stats.draws += drawCount;
+            stats.storageUploads += uploadCount;
+            stats.commandBytes += length;
+            stats.uniformBytes += uniformLength;
+            stats.storageBytes += storageLength;
+            const producerGate = receipt.close();
             // The accepted frame's commands precede these readback copies in queue order.
             // The acquired canvas texture is still current until this browser task returns.
             r.readback.captureCanvas(canvasTexture, r._generation, presentsCanvas, producerGate);
@@ -201,7 +222,7 @@ export class GpuEngineFrame {
             r._stats.uploadedBytes += uniformLength + storageLength;
             return presentsCanvas;
         } catch (error) {
-            if (producerScopesOpen) void r.readback.endCanvasProducerScopes();
+            receipt?.close();
             r._fail(error);
             throw error;
         }
@@ -217,5 +238,10 @@ export class GpuEngineFrame {
         }
     }
 
-    dispose() { this.staging?.destroy(); this.staging = null; }
+    getStatistics() {
+        // Object counts are API creation calls, not implementation-defined heap bytes.
+        return { ...this.stats, errorScopes: { ...this.scopes.stats } };
+    }
+
+    dispose() { this.scopes.dispose(); this.staging?.destroy(); this.staging = null; }
 }

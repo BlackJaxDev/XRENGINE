@@ -27,8 +27,25 @@ internal static class BrowserWorldCapabilityAudit
         foreach (XRScene scene in world.Scenes)
             foreach (SceneNode root in scene.RootNodes)
                 Visit(root, 0);
-        shadows.Complete();
         rendering.Complete(world.Name ?? "startup-world");
+        foreach (RenderPipelineRequirements requirements in rendering.PipelineRequirements)
+        {
+            foreach (XRMaterial material in requirements.Materials)
+                InspectMaterial(material, "pipeline-material", material.Name, sceneRoute: false);
+            foreach (XRRenderProgram program in requirements.RenderPrograms)
+                InspectPipelineProgram(program);
+            foreach (string identity in requirements.ProgramIdentities)
+            {
+                if (resolver is null || !resolver.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) || artifact is null ||
+                    artifact.Identity != identity || artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.DescriptorBytes.IsDefaultOrEmpty)
+                    throw new NotSupportedException($"BrowserCook.PipelineProgramMissing: exact declared descriptor '{identity}' is unavailable.");
+                ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
+                if (verified.Identity != identity)
+                    throw new InvalidDataException($"BrowserCook.PipelineProgramIdentityMismatch: '{identity}'.");
+                artifacts.TryAdd(verified.Identity, verified);
+            }
+        }
+        shadows.Complete();
         if (resolver is BrowserShaderArtifactSource shaderSource)
         {
             foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
@@ -51,6 +68,17 @@ internal static class BrowserWorldCapabilityAudit
             }
         }
         return artifacts.Values.OrderBy(artifact => artifact.Identity, StringComparer.Ordinal).ToArray();
+
+        void InspectPipelineProgram(XRRenderProgram program)
+        {
+            if (!program.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver, out ShaderProgramArtifact? selected) ||
+                selected.DescriptorBytes.IsDefaultOrEmpty)
+                throw new NotSupportedException($"BrowserCook.PipelineProgramMissing: '{program.Name}' requires its exact verified WebGPU descriptor.");
+            ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(selected.DescriptorBytes.AsSpan(), selected.Artifact.Bytes);
+            if (verified.Identity != selected.Identity)
+                throw new InvalidDataException($"BrowserCook.PipelineProgramIdentityMismatch: '{program.Name}'.");
+            artifacts.TryAdd(verified.Identity, verified);
+        }
 
         void Visit(SceneNode node, int depth)
         {
@@ -147,12 +175,12 @@ internal static class BrowserWorldCapabilityAudit
                 throw new NotSupportedException($"BrowserCook.UiVariantMissing: '{path}' requires '{key}' in the project shader manifest.");
         }
 
-        void InspectMaterial(XRMaterial? material, string path, string? meshName, XRMesh? geometry = null)
+        void InspectMaterial(XRMaterial? material, string path, string? meshName, XRMesh? geometry = null, bool sceneRoute = true)
         {
             shadows.InspectMaterial(material, path, meshName);
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
-            BrowserRenderingCapabilityAudit.InspectMaterial(material, path, meshName);
+            rendering.InspectMaterial(material, path, meshName, sceneRoute);
             if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
             {
                 if (material.Shaders.Count != 0)
@@ -218,6 +246,12 @@ internal static class BrowserWorldCapabilityAudit
                 artifacts.TryAdd(verified.Identity, verified);
             }
             string? authoredReason = null;
+            if (material.EngineSemantic.Semantic == EngineMaterialSemantic.None)
+            {
+                if (authored?.VertexEntryPoint is null || authored.FragmentEntryPoint is null || authored.ComputeEntryPoint is not null)
+                    throw new NotSupportedException($"BrowserCook.RasterProgramMissing: '{path}' material '{material.Name}' requires a complete cooked raster program.");
+                return;
+            }
             if (authored is null || !EngineAuthoredLitMaterialAdmission.TryAdmit(material, authored,
                 out _, out StandardLitTextureSurfaceBinding? texture, out authoredReason))
                 throw new NotSupportedException($"BrowserCook.AuthoredLitUnsupported: '{path}' material '{material.Name}': {authoredReason ?? "no complete cooked opaque PBR program"}.");
