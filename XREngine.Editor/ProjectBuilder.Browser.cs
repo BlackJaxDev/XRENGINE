@@ -61,7 +61,7 @@ internal static partial class ProjectBuilder
                 if (string.IsNullOrWhiteSpace(context.Project.BrowserSharedWorldPackageManifestPath))
                 {
                     XRWorld world = LoadStartupWorld(context);
-                    _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
+                    _recipePath = CookBrowserEngineWorld(world, context.Project, context.AssetsDirectory, SourceRoot,
                         Cancellation, out _includesDefaultUiFont, out _authoredFonts);
                 }
                 else
@@ -77,7 +77,7 @@ internal static partial class ProjectBuilder
                         throw new NotSupportedException("BrowserCook.SharedPackageProfileUnsupported: requires the exact base XRWorld type.");
                     world.FilePath = worldPath;
                     using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
-                    _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
+                    _recipePath = CookBrowserEngineWorld(world, context.Project, context.AssetsDirectory, SourceRoot,
                         Cancellation, out _includesDefaultUiFont, out _authoredFonts);
                     RequireSharedBrowserCook(_sharedWorldPackage, _recipePath);
                 }

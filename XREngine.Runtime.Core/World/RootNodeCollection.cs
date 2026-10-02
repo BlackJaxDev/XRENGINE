@@ -21,6 +21,8 @@ namespace XREngine
         public Action<SceneNode>? NodeUncacheAction { get; set; }
 
         private readonly List<SceneNode> _rootNodes = [];
+        private readonly HashSet<SceneNode> _removing = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<SceneNode, RemovalProgress> _removalProgress = new(ReferenceEqualityComparer.Instance);
 
         public SceneNode this[int index] => _rootNodes[index];
 
@@ -105,25 +107,56 @@ namespace XREngine
             if (node is null)
                 return false;
 
-            if (!_rootNodes.Remove(node))
+            if (!_rootNodes.Contains(node) || !_removing.Add(node))
                 return false;
-
-            node.Destroying -= RootNodeDestroying;
-
-            if (notifyLifecycle && _world.IsPlaySessionActive)
+            try
             {
-                if (node.IsActiveSelf)
-                    node.OnDeactivated();
-                if ((_participatesInPlay?.Invoke(node) ?? true) && node.HasBegunPlay)
-                    node.OnEndPlay();
+                if (!_removalProgress.TryGetValue(node, out RemovalProgress? progress))
+                    _removalProgress[node] = progress = new RemovalProgress();
+                if (!progress.Deactivated)
+                {
+                    if (notifyLifecycle && _world.IsPlaySessionActive && node.IsActiveSelf)
+                        node.OnDeactivated();
+                    progress.Deactivated = true;
+                }
+                if (!progress.EndedPlay)
+                {
+                    if (notifyLifecycle && _world.IsPlaySessionActive
+                        && (_participatesInPlay?.Invoke(node) ?? true) && node.HasBegunPlay)
+                        node.OnEndPlay();
+                    progress.EndedPlay = true;
+                }
+
+                if (!progress.Uncached)
+                {
+                    UncacheComponents(node);
+                    progress.Uncached = true;
+                }
+
+                if (!progress.WorldCleared)
+                {
+                    if (clearWorld && node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
+                        node.SetWorldContext(null);
+                    progress.WorldCleared = true;
+                }
+
+                node.Destroying -= RootNodeDestroying;
+                _rootNodes.Remove(node);
+                _removalProgress.Remove(node);
+                return true;
             }
+            finally
+            {
+                _removing.Remove(node);
+            }
+        }
 
-            UncacheComponents(node);
-
-            if (clearWorld && node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
-                node.SetWorldContext(null);
-
-            return true;
+        private sealed class RemovalProgress
+        {
+            public bool Deactivated { get; set; }
+            public bool EndedPlay { get; set; }
+            public bool Uncached { get; set; }
+            public bool WorldCleared { get; set; }
         }
 
         internal bool RemoveDuringNodeDestroy(SceneNode node)

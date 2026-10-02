@@ -31,11 +31,17 @@ internal partial class CodeManager
         GameCSProjLoader.LoadFromPath("GAME", gameAssembly);
         Assembly loaded = GameCSProjLoader.GetLoadedAssembly("GAME")
             ?? throw new InvalidOperationException("Browser game build did not load its compiled assembly.");
+        ValidateLoadedBrowserGameAssembly(gameAssembly, loaded);
+    }
+
+    private static void ValidateLoadedBrowserGameAssembly(string gameAssembly, Assembly loaded)
+    {
         using FileStream stream = File.OpenRead(gameAssembly);
         using PEReader image = new(stream);
         MetadataReader reader = image.GetMetadataReader();
         if (loaded.ManifestModule.ModuleVersionId != reader.GetGuid(reader.GetModuleDefinition().Mvid))
             throw new InvalidOperationException("Browser game build loaded an assembly different from its compiled target.");
+        BrowserGameAssemblyAudit.Validate(gameAssembly);
     }
 
     private static bool UseSingleNodeBrowserPublish()
@@ -52,9 +58,9 @@ internal partial class CodeManager
         string gameAssembly = GetBrowserGameAssemblyPath(configuration);
         if (!File.Exists(gameProject) || !File.Exists(gameAssembly))
             throw new FileNotFoundException("Build the portable game assembly before browser publishing.", gameAssembly);
-        BrowserGameAssemblyAudit.Validate(gameAssembly);
         Assembly activeGame = GameCSProjLoader.GetLoadedAssembly("GAME")
             ?? throw new InvalidOperationException("The browser game assembly is not loaded for bootstrap inspection.");
+        ValidateLoadedBrowserGameAssembly(gameAssembly, activeGame);
         string? bootstrapTypeName = ProjectBuilder.ResolveGameLaunchBootstrapTypeName(activeGame);
         string registrationSource = WriteBrowserGameRegistration(gameAssembly, publishDirectory, bootstrapTypeName);
         Dictionary<string, string?> properties = new()

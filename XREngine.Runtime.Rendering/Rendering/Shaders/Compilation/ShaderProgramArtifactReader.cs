@@ -186,7 +186,7 @@ public static class ShaderProgramArtifactReader
                 buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" },
                 "debug primitive variants require the fixed indexed position scaffold");
         if (materialVariant is { } uiStream &&
-            uiStream.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap))
+            uiStream.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap))
             Require(buffers.Count == 1 && buffers[0].Slot == 0 && buffers[0].Stride == 12 &&
                 buffers[0].StepMode == "vertex" && buffers[0].Attributes.Length == 1 &&
                 buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" },
@@ -244,13 +244,15 @@ public static class ShaderProgramArtifactReader
                     _ => "TrianglesBuffer",
                 });
             bool uiStorage = materialVariant is { } uiSelected &&
-                uiSelected.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap) &&
+                uiSelected.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap) &&
                 kind == "read-only-storage" && group == 1 && !dynamic &&
                 owner == ShaderAbiResourceOwner.Engine && frequency == ShaderAbiFrequency.Object &&
                 visibility == ShaderStageVisibility.Vertex &&
-                (uiSelected.Semantic.Semantic == EngineMaterialSemantic.UIQuadBatched
+                (uiSelected.Semantic.Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture
                     ? (binding, resourceName, size) is (0, "QuadTransformBuffer", 16) or
-                        (1, "QuadColorBuffer", 16) or (2, "QuadBoundsBuffer", 16)
+                        (1, "QuadColorBuffer", 16) or (2, "QuadBoundsBuffer", 16) ||
+                        uiSelected.Semantic.Semantic == EngineMaterialSemantic.UIQuadBatchedTexture &&
+                        (binding, resourceName, size) is (3, "QuadUvBuffer", 16)
                     : (binding, resourceName, size) is (0, "GlyphTransformsBuffer", 16) or
                         (1, "GlyphTexCoordsBuffer", 16) or (2, "TextInstanceBuffer", 16) or
                         (3, "GlyphTextIndexBuffer", 4));
@@ -321,25 +323,26 @@ public static class ShaderProgramArtifactReader
                 "debug primitive variants require exactly one raw storage binding");
         }
         if (materialVariant is { } uiVariant &&
-            uiVariant.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap))
+            uiVariant.Semantic.Semantic is (EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap))
         {
             bool text = uiVariant.Semantic.Semantic == EngineMaterialSemantic.UITextBatchedBitmap;
-            Require(resources.Count == (text ? 7 : 4) &&
-                resources.Count(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer) == (text ? 4 : 3),
+            bool texturedQuad = uiVariant.Semantic.Semantic == EngineMaterialSemantic.UIQuadBatchedTexture;
+            Require(resources.Count == (text ? 7 : texturedQuad ? 7 : 4) &&
+                resources.Count(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer) == (text || texturedQuad ? 4 : 3),
                 "screen UI variants require their exact storage and atlas bindings");
             Require(resources.Any(resource => resource.Contract.Name == "View" &&
                 resource.Contract.Set == 0 && resource.Contract.Binding == 0 &&
                 resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer &&
                 resource.Contract.ByteSize == 64 && resource.Visibility == ShaderStageVisibility.Vertex),
                 "screen UI variants require the exact camera projection binding");
-            if (text)
+            if (text || texturedQuad)
                 Require(resources.Any(resource => resource.Contract.Name == "Texture0" &&
                     resource.Contract.Set == 2 && resource.Contract.Binding == 0 &&
                     resource.BindingType == "texture-2d-float" && resource.Visibility == ShaderStageVisibility.Fragment) &&
                     resources.Any(resource => resource.Contract.Name == "Texture0" &&
                     resource.Contract.Set == 2 && resource.Contract.Binding == 1 &&
                     resource.BindingType == "filtering-sampler" && resource.Visibility == ShaderStageVisibility.Fragment),
-                    "bitmap text requires an exact atlas and sampler pair");
+                    "textured screen UI requires an exact image and sampler pair");
             CheckLimit(limits, "maxStorageBufferBindingSize", checked(65536 * (text ? 128 : 64)));
         }
         CheckLimit(limits, "maxDynamicStorageBuffersPerPipelineLayout", resources.Count(resource => resource.DynamicOffset && resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer));
@@ -403,7 +406,7 @@ public static class ShaderProgramArtifactReader
         Require(Enum.TryParse(semanticName, ignoreCase: false, out EngineMaterialSemantic semantic) &&
             semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
                 EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
-                EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap or
+                EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap or
                 EngineMaterialSemantic.SkyboxGradient or EngineMaterialSemantic.SkyboxEquirectangular or
                 EngineMaterialSemantic.SkyboxOctahedral or EngineMaterialSemantic.SkyboxCubemap or
                 EngineMaterialSemantic.SkyboxDynamicProcedural,

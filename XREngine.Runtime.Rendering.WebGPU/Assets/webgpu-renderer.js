@@ -1,6 +1,7 @@
 import { GpuResourceTable } from './gpu-resource-table.js';
 import { captureDeviceCapabilities } from './gpu-capabilities.js';
 import { GpuResources } from './gpu-resources.js';
+import { estimateRendererGpuMemory } from './gpu-memory.js';
 import { GpuPipelineCache } from './gpu-pipeline-cache.js';
 import { GpuReadback } from './gpu-readback.js';
 import { GpuLuminance } from './gpu-luminance.js';
@@ -973,6 +974,7 @@ export class WebGpuCanvasRenderer {
 
     getStatistics() {
         return { ...this._stats, lastPacketFailure: this._lastPacketFailure && { ...this._lastPacketFailure },
+            gpuMemory: estimateRendererGpuMemory(this),
             focusedPipeline: this.focusedPipeline?.getStatistics() ?? null,
             deformation: { mode: this.skinningMode, ...this.skinning.stats },
             resources: { live: this._resources.slots.reduce((count, entry) => count + (entry ? 1 : 0), 0),

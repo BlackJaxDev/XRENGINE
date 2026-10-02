@@ -134,6 +134,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
                 throw new InvalidDataException("AssetSource.DefaultUiFontInvalid: expected a standalone cooked engine FontGlyphSet.");
             DefaultUiFontPath = path;
         }
+        ReadDeliveryRoots(root);
     }
 
     private void ReadPipelineArtifacts(JsonElement pipelines)
@@ -185,11 +186,12 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
         List<ShaderProgramArtifact> artifacts = new(_shaderArtifacts.Count);
         foreach (BrowserShaderArtifactReference reference in _shaderArtifacts)
         {
-            byte[] descriptor = await ReadAllBytesAsync(reference.Descriptor, cancellationToken);
             byte[] source = await ReadAllBytesAsync(reference.Source, cancellationToken);
+            using BrowserAssetStagingLease sourceStaging = new(session, source.Length);
+            using RuntimeAssetIntegration descriptor = await ReadForIntegrationAsync(reference.Descriptor, reference.Source, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (session != RequireSession()) throw new OperationCanceledException("AssetSource.StaleSession.");
-            ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(descriptor, source);
+            ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(descriptor.Payload, source);
             if (!string.Equals(artifact.Identity, reference.Identity, StringComparison.Ordinal))
                 throw new InvalidDataException($"ShaderArtifact.IdentityMismatch: '{reference.Descriptor}'.");
             artifacts.Add(artifact);
@@ -313,6 +315,12 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
         _materialVariants.Clear();
         _pipelineArtifactIdentities.Clear();
         _computeArtifactIdentities.Clear();
+        _essentialPaths.Clear();
+        _retainedNativeSources.Clear();
+        _nativeSourceReferences.Clear();
+        _retainedNativeBytes = 0;
+        EssentialRoots = Array.Empty<string>();
+        StreamedRoots = Array.Empty<string>();
         DefaultUiFontPath = null;
         PublishedMetadataPath = null;
         PublishedMetadataFingerprint = null;

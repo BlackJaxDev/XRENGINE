@@ -98,15 +98,21 @@ export async function validateSharedWorldPackage(manifest) {
 }
 
 /** Verifies the complete shared package before exposing either its catalog or native admission identity. */
-export async function readSharedWorldPackage(loader, initialManifest) {
+export async function readSharedWorldPackage(loader, initialManifest, observeDescriptorLoader = null) {
     if (initialManifest?.worldPackage === undefined) return { manifest: initialManifest, worldPackage: null };
     if (initialManifest.worldPackage !== packageName
         || new URL(loader.manifestUrl).pathname.split('/').at(-1) !== catalogName)
         fail('unsupported package descriptor location');
     const descriptorLoader = new BrowserContentLoader(contentManifestUrl(packageName, loader.manifestUrl), loader.signal);
+    observeDescriptorLoader?.(descriptorLoader);
     let worldPackage;
+    let descriptorStatistics;
     try { worldPackage = await descriptorLoader.readManifest(); }
-    finally { descriptorLoader.dispose(); }
+    finally {
+        descriptorStatistics = descriptorLoader.getStatistics();
+        descriptorLoader.dispose();
+        observeDescriptorLoader?.(null);
+    }
     loader.signal.throwIfAborted();
     const files = await validateSharedWorldPackage(worldPackage);
     loader.signal.throwIfAborted();
@@ -129,5 +135,5 @@ export async function readSharedWorldPackage(loader, initialManifest) {
         expectedFiles.add(entry.url);
     }
     if (expectedFiles.size !== files.size) fail('shared package contains unreferenced payloads');
-    return { manifest, worldPackage };
+    return { manifest, worldPackage, descriptorStatistics };
 }

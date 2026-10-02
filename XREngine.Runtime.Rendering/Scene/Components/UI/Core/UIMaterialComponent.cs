@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
@@ -15,6 +16,9 @@ namespace XREngine.Rendering.UI
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UIMaterialComponentEditor")]
     public class UIMaterialComponent : UIRenderableComponent
     {
+        private static readonly Lazy<string?> CanonicalImageShaderSource = new(static () =>
+            XRShader.EngineShader(Path.Combine("Common", "UiTexturedForward.fs"), EShaderType.Fragment).Source.Text);
+
         private static bool UseWebGpuBatchOnly =>
             RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
             AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
@@ -33,6 +37,88 @@ namespace XREngine.Rendering.UI
             {
                 RenderPass = (int)EDefaultRenderPass.OpaqueForward
             };
+        }
+
+        /// <summary>Creates the shared tinted image material for desktop and cooked screen UI.</summary>
+        public static XRMaterial CreateImageMaterial(XRTexture2D texture, Vector4 tint)
+        {
+            ArgumentNullException.ThrowIfNull(texture);
+            XRShader[] shaders = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl =>
+                    [XRShader.EngineShader(Path.Combine("Common", "UiTexturedForward.fs"), EShaderType.Fragment)],
+                EngineMaterialConstructionTarget.WebGpuCooked => [],
+                _ => throw new InvalidOperationException("Unsupported UI image material construction target."),
+            };
+            return new XRMaterial([new ShaderVector4(tint, "MatColor")], [texture], shaders)
+            {
+                RenderPass = (int)EDefaultRenderPass.TransparentForward,
+                EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1
+            };
+        }
+
+        /// <summary>Checks that an authored desktop stage is exactly the engine's image shader.</summary>
+        public static bool HasCanonicalImageShader(XRMaterial material)
+        {
+            if (material.Shaders.Count == 0)
+                return true;
+            if (material.Shaders.Count != 1 || material.Shaders[0] is not XRShader shader ||
+                shader.Type != EShaderType.Fragment || shader.SourceLanguage != ShaderSourceLanguage.Glsl ||
+                shader.EntryPoint != "main")
+                return false;
+            string? canonical = CanonicalImageShaderSource.Value;
+            return !string.IsNullOrEmpty(canonical) &&
+                string.Equals(shader.Source.Text, canonical, StringComparison.Ordinal);
+        }
+
+        /// <summary>Checks the authored image and sampler against the sampled WebGPU UI binding.</summary>
+        public static bool TryGetWebGpuImageProfile(XRTexture2D texture, out string? reason)
+        {
+            reason = null;
+            if (texture.MultiSampleCount != 1 || texture.Width == 0 || texture.Height == 0 ||
+                texture.Mipmaps.Length == 0 || texture.AutoGenerateMipmaps ||
+                texture.SizedInternalFormat != ESizedInternalFormat.Rgba8)
+                reason = "the image must be a single-sample, display-space RGBA8 texture with explicit mips";
+            else if (texture.EnableComparison || texture.SamplerName is not (null or "Texture0") || texture.LodBias != 0 ||
+                texture.UWrap is not (ETexWrapMode.Repeat or ETexWrapMode.MirroredRepeat or ETexWrapMode.ClampToEdge) ||
+                texture.VWrap is not (ETexWrapMode.Repeat or ETexWrapMode.MirroredRepeat or ETexWrapMode.ClampToEdge) ||
+                texture.MinFilter is < ETexMinFilter.Nearest or > ETexMinFilter.LinearMipmapLinear ||
+                texture.MagFilter is not (ETexMagFilter.Nearest or ETexMagFilter.Linear))
+                reason = "the image requires the indexed Texture0 binding and an ordinary WebGPU-compatible sampler";
+            else if (texture.LargestMipmapLevel < 0 ||
+                texture.LargestMipmapLevel > Math.Min(texture.Mipmaps.Length - 1, texture.SmallestAllowedMipmapLevel) ||
+                texture.MinLOD > 32 || texture.MaxLOD < 0 || texture.MinLOD > texture.MaxLOD)
+                reason = "the image sampled mip or LOD range is empty";
+            else if (!float.IsFinite(texture.MaxAnisotropy) || texture.MaxAnisotropy < 1 ||
+                texture.MaxAnisotropy > 16 || texture.MaxAnisotropy != MathF.Truncate(texture.MaxAnisotropy) ||
+                texture.MaxAnisotropy > 1 && (texture.MinFilter != ETexMinFilter.LinearMipmapLinear ||
+                    texture.MagFilter != ETexMagFilter.Linear))
+                reason = "image anisotropy must be an integer from one to sixteen";
+            else
+            {
+                bool mipmapped = texture.MinFilter is not (ETexMinFilter.Nearest or ETexMinFilter.Linear);
+                if (mipmapped ? Math.Max(texture.MinLOD, 0) > Math.Min(texture.MaxLOD, 32) :
+                    texture.MinLOD > 0 || texture.MaxLOD < 0)
+                    reason = "the image sampler LOD clamp excludes its sampled levels";
+                for (int mip = 0; reason is null && mip < texture.Mipmaps.Length; mip++)
+                {
+                    Mipmap2D level = texture.Mipmaps[mip];
+                    if (level.Width != Math.Max(1u, texture.Width >> mip) ||
+                        level.Height != Math.Max(1u, texture.Height >> mip))
+                    {
+                        reason = "the image mips must form a complete 2D chain";
+                        break;
+                    }
+                    if (level.Data is null)
+                        continue;
+                    if (level.PixelFormat != EPixelFormat.Rgba || level.PixelType != EPixelType.UnsignedByte)
+                        reason = "the image mip bytes require the exact RGBA8 upload format";
+                    else if (level.Data.Address == VoidPtr.Zero ||
+                        level.Data.Length != (ulong)level.Width * level.Height * 4u)
+                        reason = "the image mip bytes are missing or do not match the declared extent";
+                }
+            }
+            return reason is null;
         }
 
         public UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false)
@@ -198,8 +284,8 @@ namespace XREngine.Rendering.UI
         #region Batched Rendering
 
         /// <summary>
-        /// Material quads support batching unless they have clip-to-bounds enabled
-        /// or use textures (which require per-instance texture binds).
+        /// Material quads support solid batching. Source-free image quads on the
+        /// cooked WebGPU target are grouped by their shared 2D texture.
         /// </summary>
         public override bool SupportsBatchedRendering
         {
@@ -208,9 +294,15 @@ namespace XREngine.Rendering.UI
                 XRMaterial? material = Material;
                 return !DisableBatching &&
                     (!ClipToBounds || UseWebGpuBatchOnly) &&
-                    (material?.Textures is null || material.Textures.Count == 0) &&
+                    (material?.Textures is null || material.Textures.Count == 0 ||
+                     UseWebGpuBatchOnly && material.Textures.Count == 1 &&
+                     material.Textures[0] is XRTexture2D image && TryGetWebGpuImageProfile(image, out _)) &&
                     (!UseWebGpuBatchOnly ||
-                     material is { HasEngineSemantic: false } && material.Shaders.Count == 0 &&
+                     material is not null &&
+                     (material.Textures.Count == 0
+                         ? !material.HasEngineSemantic && material.Shaders.Count == 0
+                         : material.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 &&
+                           HasCanonicalImageShader(material)) &&
                      material.Parameters.Length == 1 &&
                      material.Parameters[0] is ShaderVector4 { Name: "MatColor" } &&
                      UIBatchCollector.HasWebGpuRasterProfile(material.RenderOptions));
@@ -229,8 +321,13 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
+            XRTexture2D? texture = UseWebGpuBatchOnly && Material?.Textures.Count == 1
+                ? Material.Textures[0] as XRTexture2D : null;
+            Vector4 uv = new(0.0f, FlipVerticalUVCoord ? 1.0f : 0.0f,
+                1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
             collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds,
-                UseWebGpuBatchOnly && ClipToBounds ? tfm.AxisAlignedRegion.AsBoundingRectangle() : null);
+                UseWebGpuBatchOnly && ClipToBounds ? tfm.AxisAlignedRegion.AsBoundingRectangle() : null,
+                texture, uv);
             return true;
         }
 

@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Shaders.Generation;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.WebGPU;
 
@@ -25,6 +26,7 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
     internal WebGpuInstanceStorageContract? InstanceStorageContract => (_uiSemantic, _debugPrimitive) switch
     {
         (EngineMaterialSemantic.UIQuadBatched, _) => new("QuadTransformBuffer", 64, 65536),
+        (EngineMaterialSemantic.UIQuadBatchedTexture, _) => new("QuadTransformBuffer", 64, 65536),
         (EngineMaterialSemantic.UITextBatchedBitmap, _) => new("GlyphTransformsBuffer", 16, 65536),
         (_, EngineMaterialSemantic.DebugPoint) => new("PointsBuffer", 16, 65536),
         (_, EngineMaterialSemantic.DebugLine) => new("LinesBuffer", 28, 65536),
@@ -96,16 +98,22 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
                 SetField(ref _debugPrimitive, Data.EngineSemantic.Semantic);
             }
-            else if (Data.EngineSemantic.Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap)
+            else if (Data.EngineSemantic.Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap)
             {
                 bool text = Data.EngineSemantic.Semantic == EngineMaterialSemantic.UITextBatchedBitmap;
+                bool texturedQuad = Data.EngineSemantic.Semantic == EngineMaterialSemantic.UIQuadBatchedTexture;
                 if (Data.Shaders.Count != 0 ||
                     (text ? Data.Textures.Count != 1 || Data.Textures[0] is not XRTexture2D atlas ||
-                        atlas.SizedInternalFormat != ESizedInternalFormat.R8 : Data.Textures.Count != 0) ||
+                        atlas.SizedInternalFormat != ESizedInternalFormat.R8 :
+                        texturedQuad ? Data.Textures.Count != 1 || Data.Textures[0] is not XRTexture2D : Data.Textures.Count != 0) ||
                     (text ? !HasBitmapTextParameters() : Data.Parameters.Length != 0))
-                    throw new NotSupportedException("WebGPU.Material.UIUnsupported: screen UI requires the exact source-free quad or bitmap-text material profile.");
+                    throw new NotSupportedException("WebGPU.Material.UIUnsupported: screen UI requires the exact source-free solid, textured, or bitmap-text material profile.");
+                if (texturedQuad && Data.Textures[0] is XRTexture2D image &&
+                    !UIMaterialComponent.TryGetWebGpuImageProfile(image, out string? imageReason))
+                    throw new NotSupportedException($"WebGPU.Material.UITextureUnsupported: {imageReason}.");
                 EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
-                    "screen-ui", text ? "instanced-ui-bitmap-text-v1" : "instanced-ui-quad-v1", "display-rgba-v1");
+                    "screen-ui", text ? "instanced-ui-bitmap-text-v1" :
+                        texturedQuad ? "instanced-ui-quad-texture-v1" : "instanced-ui-quad-v1", "display-rgba-v1");
                 if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
                 SetField(ref _uiSemantic, Data.EngineSemantic.Semantic);
@@ -201,6 +209,9 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
             return;
         if (_uiSemantic != EngineMaterialSemantic.None)
         {
+            if (_uiSemantic == EngineMaterialSemantic.UIQuadBatchedTexture &&
+                (Data.Textures.Count != 1 || Data.Textures[0] is not XRTexture2D || Data.Parameters.Length != 0))
+                throw new NotSupportedException("WebGPU.Material.UITextureProfileUnsupported: textured screen UI requires one sampleable 2D image and no authored parameters.");
             if (_uiSemantic == EngineMaterialSemantic.UITextBatchedBitmap &&
                 (Data.Textures.Count != 1 || Data.Textures[0] is not XRTexture2D { SizedInternalFormat: ESizedInternalFormat.R8 } ||
                  Data.Parameters.Length != 7 ||

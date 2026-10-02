@@ -55,6 +55,7 @@ namespace XREngine
         private string? _desktopHostRegistrationType;
         private string? _browserShaderArtifactManifestPath;
         private string? _browserSharedWorldPackageManifestPath;
+        private List<string> _browserStreamedScenePaths = [];
 
         [MemoryPackConstructor]
         public XRProject() { }
@@ -145,6 +146,13 @@ namespace XREngine
         {
             get => _browserSharedWorldPackageManifestPath;
             set => SetField(ref _browserSharedWorldPackageManifestPath, value);
+        }
+
+        /// <summary>Optional scene assets beneath Assets to include for on-demand browser loading.</summary>
+        public List<string> BrowserStreamedScenePaths
+        {
+            get => _browserStreamedScenePaths;
+            set => SetField(ref _browserStreamedScenePaths, value);
         }
 
         /// <summary>

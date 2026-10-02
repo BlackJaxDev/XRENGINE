@@ -909,3 +909,87 @@ normal recipe recook; the narrow ShaderCooker rebuild passes 0/0 after the full
 gate. Independent emitted-WGSL review preserves implicit LOD and normal math.
 The [startup investigation](../../investigations/platform/browser-authored-mode-startup-2026-10-02.md)
 records exact failed/corrected hashes and keeps real first-frame acceptance open.
+
+### Physical authored-world acceptance (2026-10-02)
+
+The physical RenderingParity run at
+`7ba776cf223f0bc1fcf4e1e6b74e2c6b56ec5e9c` passes real Editor build, fresh
+shader cook and browser publication. Inspected captures show textured/shaded
+panels and an animated ribbon; Space pause/resume, R bind-pose reset, resize and
+two fresh startups pass. The non-fallback Intel Arc Xe-LPG adapter used driver
+32.0.101.8132 and Edge 154.0.4258.48 with the sandbox enabled. There were no
+console errors or HTTP failures; three canceled fetches are documented separately.
+Test-owned processes were closed and the isolated worktree remained clean.
+
+This is actual browser rendering of the saved authored game, including its game
+mode, pawn/camera, textured material and combined skeletal/morph animation. It
+closes the preceding first-frame failure, not desktop image parity, isolated
+CPU/GPU deformation comparison, performance budgets or the full device matrix.
+The shared-asset load acceptance row now closes, bringing the checklist to
+61/110 while broader remaining requirements stay open. Further implementation continues with authored asset
+streaming, bounded delivery/integration accounting and earlier game API admission.
+
+The exact Editor-published RenderingParity bundle also passes Linux Chromium in
+[run 37056066628](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37056066628).
+Its [capture artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37056066628/artifacts/11249716330)
+has SHA-256 `eaf277fe54c275b0b6b557246dd8161f9948d3e0f8d5dc83f679e18676ae95e8`.
+The downloaded archive matches that digest; the animated and reset captures were
+viewed and show the checker-textured ribbon bending and returning to its straight
+bind pose beside the rigid panel. The report records `passed: true`. All four
+jobs are now green: the real Windows Editor publisher, both exact-game browser
+lanes and the broad engine/native-physics baseline.
+
+The [baseline artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37056066628/artifacts/11249799018)
+was also downloaded and its SHA-256 matches
+`ac561182f0ae9bf52d54a2007ac84671617019925454103bdaef94989c20dd78`.
+All requested baseline checks pass: depth, texture/lifetime, lit/HDR/tonemap,
+GTAO/bloom, directional shadows, debug overlay, shared world lifecycle, queued
+audio samples, asset lifetime and native Jolt. The bare-host autostart/game
+checks are explicitly skipped there and covered by the separate real-game jobs.
+The software GPU GTAO/bloom matrix takes about 1,254 seconds of the 1,398-second
+baseline run; the separate RenderingParity game check takes about 59 seconds.
+These are CI execution costs, not representative hardware frame-time budgets.
+
+### Compiled streamed assets, delivery accounting and image UI (2026-10-02)
+
+The next source snapshot passes Editor, Server, VRClient, desktop WebGPU,
+RenderingParity, all nineteen portable compile rows and fresh native-Jolt WASM
+publication with zero compiler warnings/errors. The source hashes are frozen in
+the active run's `asset-ui-gate/`; the reused browser output is the latest
+`gpu-services-gate/browser-publish/` directory. Full-wording source review closes
+the generalized asset package, bounded delivery/integration and build-time game
+API diagnostics rows. Including the physical shared-asset load acceptance above,
+the checklist is **64/110**, with 46 open.
+
+- [Authored delivery](browser-authored-asset-delivery-2026-10-02.md) uses the same
+  XRAsset cooker for startup and declared lazy XRScene roots, with compatible
+  essential/streamed root partitions. Genuine saved textured-scene export and
+  hydration retain shared texture aliases and unchanged authored bytes. Real
+  world/scene-host checks cover shared handles, external ownership, failure retry
+  and disposal; incomplete root cleanup is no longer discarded prematurely
+- Global FIFO admission wraps actual synchronous hydration, with finite queue,
+  staging, per-frame starts/bytes and elapsed-time limits. An indivisible batch
+  can overrun its time target and is reported. Source ownership remains the sole
+  destruction owner; measurement uses weak allocation keys. Native shared-package
+  preflight still authenticates all files eagerly and is counted separately
+- [GPU estimates](browser-gpu-memory-2026-10-02.md) walk existing live and retiring
+  resource owners on demand, deduplicate shared objects, and distinguish logical
+  buffer size and texture descriptors from unmeasured driver residency. Shipping
+  progress wakes only during active delivery and has no idle memory-poll timer
+- [Game API admission](browser-game-assembly-audit-2026-10-02.md) verifies the exact
+  built/loaded DLL before cooking and again before publishing. Metadata-only
+  checks report bounded assembly/type/member findings, including available
+  browser-platform annotations and nested/generic signatures. Dynamic behavior
+  and unresolved third-party declarations are not claimed statically safe
+- [Image UI](../rendering/browser-ui-image-profile-2026-10-02.md) adds a shared,
+  batched display-space RGBA8 image quad with canonical desktop GLSL and exact
+  browser semantic projection. UV data uses retained instance storage and the
+  per-texture mesh cache is bounded. Cook, compile and independent source review
+  pass; browser image pixels, sRGB image semantics, rotated glyphs and MSDF remain
+  separate open coverage
+
+These source closures do not close browser streamed-scene playback, cold/warm or
+throttled delivery, cancel/restart, exact heap/device budgets, or general UI and
+accessibility acceptance. The next renderer source slice addresses renderbuffer
+ownership and explicit MSAA color resolve rather than enabling unsupported AA
+profiles silently.

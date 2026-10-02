@@ -103,3 +103,20 @@ and early return. The depth/normal WGSL now has SHA-256
 No uniformity diagnostic is disabled and no fixed-LOD sampling is substituted.
 Evidence is under the active run's `normal-uniformity/` directory. The real
 browser run still must qualify the first frame and later visual checks.
+
+## Physical browser result
+
+The real-PC rerun of `7ba776cf223f0bc1fcf4e1e6b74e2c6b56ec5e9c` passes the
+Editor build, fresh shader cook and genuine browser publication. The inspected
+Edge run displays textured and shaded panels and the animated ribbon, with
+skeletal and morph deformation enabled together. Space pauses/resumes, R resets
+to the bind pose, resizing preserves the visible world, and two fresh startups
+pass. The test used the non-fallback Intel Arc Xe-LPG adapter, driver
+32.0.101.8132, Edge 154.0.4258.48, with the browser sandbox enabled.
+
+No console errors or HTTP failures were reported. Three canceled fetches were
+recorded separately during successful lifecycle operations. Test-owned browser
+and server processes were closed afterward, and the isolated worktree stayed
+clean. This closes the observed startup blocker. It does not establish isolated
+skeletal-versus-morph numeric parity, desktop OpenGL/Vulkan image parity, mobile
+coverage, performance budgets or GPU recovery continuity.

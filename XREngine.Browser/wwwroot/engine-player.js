@@ -8,6 +8,8 @@ const enableAudio = document.querySelector('#enable-audio');
 const audioStatus = document.querySelector('#audio-status');
 const canvas = document.querySelector('#input-surface');
 const gamepad = document.querySelector('#gamepad');
+const contentProgress = document.querySelector('#content-progress');
+let progressTimer;
 
 let engine;
 let host;
@@ -18,6 +20,22 @@ function report(state, message) {
     status.textContent = message;
     retry.hidden = state !== 'failed';
 }
+
+function refreshDeliveryProgress() {
+    const current = engine && !pageHidden && host?.controller && !host.controller.signal.aborted
+        ? JSON.parse(engine.GetAssetDeliveryStatisticsJson()) : null;
+    const active = current && (current.state === 'opening' || current.activeRequests || current.queuedReads
+        || current.integrationQueued || current.integrating);
+    contentProgress.hidden = !active;
+    if (!active) { clearInterval(progressTimer); progressTimer = null; return; }
+    contentProgress.textContent = current.state === 'opening' ? 'Verifying the published package…'
+        : `Essential payloads verified: ${current.essentialVerifiedAssets}/${current.essentialAssets}; ` +
+            `${current.retainedAssets} assets ready; ${(current.receivedDecodedBytes / 1048576).toFixed(1)} MiB received`;
+}
+// Wake only while delivery is active. Warmed gameplay does not poll allocating snapshots.
+window.addEventListener('xrengine-assets-active', () => {
+    if (!progressTimer) progressTimer = setInterval(refreshDeliveryProgress, 250);
+});
 
 function refreshAudioStatus() {
     if (!engine) return;
@@ -80,6 +98,7 @@ window.addEventListener('pagehide', event => {
     // A cached document keeps the authored world and resumes its frame clock
     // on pageshow. A discarded document releases its engine ownership.
     if (event.persisted) return;
+    clearInterval(progressTimer);
     ++epoch;
     if (host) void host.stop().catch(error => console.error('Engine page teardown failed:', error));
 });
@@ -87,6 +106,8 @@ window.addEventListener('pageshow', event => {
     if (!event.persisted) return;
     pageHidden = false;
     host?.setPageHidden(false);
+    // A suspended fetch may resume without issuing another beginRead notification.
+    if (!progressTimer) progressTimer = setInterval(refreshDeliveryProgress, 250);
 });
 
 try {

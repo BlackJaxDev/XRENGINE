@@ -79,11 +79,13 @@ public static partial class BrowserEngineExports
             if (_source.PublishedMetadataPath is not { } metadataPath
                 || _source.PublishedMetadataFingerprint is not { } metadataFingerprint)
                 throw new InvalidDataException("PublishedMetadata.Missing: the browser world bundle has no published type metadata.");
-            byte[] metadataBytes = await _source.ReadAllBytesAsync(metadataPath, token);
-            token.ThrowIfCancellationRequested();
-            if (requestedEpoch != Volatile.Read(ref _epoch))
-                throw new OperationCanceledException("Browser world startup was superseded before type metadata installation.");
-            AotRuntimeMetadataStore.InstallVerifiedBrowserMetadata(metadataBytes, metadataFingerprint);
+            using (RuntimeAssetIntegration metadata = await _source.ReadForIntegrationAsync(metadataPath, token))
+            {
+                token.ThrowIfCancellationRequested();
+                if (requestedEpoch != Volatile.Read(ref _epoch))
+                    throw new OperationCanceledException("Browser world startup was superseded before type metadata installation.");
+                AotRuntimeMetadataStore.InstallVerifiedBrowserMetadata(metadata.Payload, metadataFingerprint);
+            }
             XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Published);
             stage = "install runtime asset services";
             _previousStorageSource = DirectStorageIO.Source;
@@ -135,6 +137,8 @@ public static partial class BrowserEngineExports
                 cookedSettings = BrowserEngineStartupPolicy.Instance.CreateDefaultGameSettings();
                 StartupObjects.Add(publication.CompleteWithOwnership());
             }
+            stage = "hydrate essential roots";
+            await _source.PreloadEssentialAssetsAsync(token);
             stage = "configure game bootstrap";
             GameStartupSettings configuredSettings;
             GameState initialState;

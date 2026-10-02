@@ -47,7 +47,7 @@ namespace XREngine
         private bool _runtimeSourceTeardown;
         private bool _runtimeSourceDisposing;
         private bool _runtimeSourceUnbinding;
-        private readonly List<ObjectCacheOwnership> _runtimeSourceObjects = [];
+        private readonly List<RuntimeSourceAssetOwnership> _runtimeSourceObjects = [];
         private readonly HashSet<XRAsset> _runtimeSourceAssets = new(ReferenceEqualityComparer.Instance);
         private readonly ConcurrentDictionary<string, byte> _pendingFeatureCacheImports =
             new(StringComparer.OrdinalIgnoreCase);

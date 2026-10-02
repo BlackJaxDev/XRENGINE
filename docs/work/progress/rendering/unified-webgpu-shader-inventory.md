@@ -160,6 +160,13 @@ selection; it eagerly warms several excluded desktop shaders.
 | `Common/Text.vs`; `TextRotatable.vs`; `Text.fs`; `TextMsdf.fs`; `TextMtsdf.fs`; `TextMtsdfScreen.fs` | S | Preserve both `UIText` and `UITextComponent` atlas mode and derivative-based edge treatment; glyph atlases should be cooked with the engine font route. Check rotated/scaled text, colored glyphs, clipping, and hit-test alignment. |
 | `UI/UIAlignedQuadTexture.fs` | S | Ordinary engine image quad. Check alpha/color encoding and texture origin. |
 | `UI/GrabpassGaussian.frag`; `UI/Backgrounds/Surf2.fs` | D initially | Optional custom UI effects require explicit future admission. |
+
+The first cooked screen-image implementation is the shared `UIMaterialComponent`
+batch, with a canonical desktop `Common/UiTexturedForward.fs` material and
+`WebGPU/UIQuadBatchedTexture.slang` for the exact single-image WebGPU profile.
+This does not admit arbitrary `UIAlignedQuadTexture.fs` or other custom image
+stages. The [image-profile progress record](browser-ui-image-profile-2026-10-02.md)
+documents the physical ABI and remaining known-value browser check.
 | Stereo text, `*Stereo*`, `*OVR*`, `*NV*`, `Common/VRDualRender.gs`, editor gizmos/debug geometry | D | Initial output is mono; WebXR and editor rendering are separate deliverables. |
 
 ### Reuse of deformation, visibility, and hierarchy compute
