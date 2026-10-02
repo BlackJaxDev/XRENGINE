@@ -13,6 +13,7 @@ XREngine.Runtime.AnimationIntegration
 XREngine.Runtime.InputIntegration
 XREngine.Runtime.ModelingIntegration
 XREngine.Runtime.Rendering.WebGPU
+XREngine.Runtime.Platform.Browser
 XREngine.Browser
 XREngine.Audio.WebAudio
 XREngine.Runtime.Net.WebSockets

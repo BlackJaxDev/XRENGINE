@@ -1,0 +1,10 @@
+<Project>
+  <!-- Keep the published player URL stable while the browser platform owns the canvas host. -->
+  <ItemGroup>
+    <Content Include="$(MSBuildThisFileDirectory)Assets/engine-canvas-host.js">
+      <Link>wwwroot/engine-canvas-host.js</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

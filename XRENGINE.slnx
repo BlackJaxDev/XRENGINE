@@ -50,6 +50,7 @@
   <Project Path="XREngine.Runtime.Media.FFmpeg/XREngine.Runtime.Media.FFmpeg.csproj" />
   <Project Path="XREngine.Runtime.Imaging.Magick/XREngine.Runtime.Imaging.Magick.csproj" />
   <Project Path="XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj" />
+  <Project Path="XREngine.Runtime.Platform.Browser/XREngine.Runtime.Platform.Browser.csproj" />
   <Project Path="XREngine.Input.Silk/XREngine.Input.Silk.csproj" />
   <Project Path="XREngine.Input.XInput/XREngine.Input.XInput.csproj" />
   <Project Path="XREngine.Runtime.XR.OpenVR/XREngine.Runtime.XR.OpenVR.csproj" />

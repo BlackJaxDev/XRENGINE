@@ -263,6 +263,13 @@ The constructor used `Average` metering (biased by bright sky), `ExposureDividen
 
 Aligned constructor defaults. Added `ColorGradingSettingsTests.Defaults_MatchPipelineSchemaDefaults` regression test.
 
+The browser-hosted default pipeline deliberately supplies manual exposure only
+for missing camera values, since its cooked output has no automatic-exposure
+producer. This schema choice uses the process's browser target rather than the
+ambient renderer: a shared pipeline's cached schema must remain stable across
+physical outputs. Stored or authored camera values remain authoritative and
+unsupported automatic-exposure selections report an explicit rejection.
+
 ---
 
 ## 6. FBO Texture-Identity Recreation Predicates

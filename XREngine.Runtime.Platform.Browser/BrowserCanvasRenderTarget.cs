@@ -3,7 +3,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering;
 
 /// <summary>A browser-owned canvas presentation target with host-supplied surface and input snapshots.</summary>
-public sealed class BrowserCanvasRenderTarget : IRendererPresentationTarget, IRuntimeSurfaceHost
+public sealed class BrowserCanvasRenderTarget : IBrowserCanvasPresentationTarget
 {
     private double? _lastFrameTimestampMilliseconds;
     private string? _colorEncoding;

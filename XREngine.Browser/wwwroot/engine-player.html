@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>XRENGINE</title>
   <script type="module" src="./engine-player.js"></script>
   <style>
-    body { margin: 2rem auto; padding: 0 1rem; max-width: 72rem; background: #10151d; color: #e4edf4; font: 16px/1.5 system-ui, sans-serif; }
+    body { margin: 2rem auto; padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); max-width: 72rem; background: #10151d; color: #e4edf4; font: 16px/1.5 system-ui, sans-serif; }
     button { padding: .6rem 1rem; }
     canvas { display: block; width: 100%; aspect-ratio: 16 / 9; background: #080d14; outline: 1px solid #526478; touch-action: none; }
     canvas:focus-visible { outline: 2px solid #90c9ef; }

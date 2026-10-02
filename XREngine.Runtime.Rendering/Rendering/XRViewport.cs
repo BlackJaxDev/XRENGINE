@@ -638,6 +638,13 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
+        /// <summary>Discards camera motion and pipeline temporal histories after a host frame-clock discontinuity.</summary>
+        public void InvalidateTemporalHistory()
+        {
+            ActiveCamera?.InvalidateTemporalHistory();
+            RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(_renderPipeline, "FrameClockDiscontinuity");
+        }
+
         /// <summary>
         /// Gets the monotonic revision of the viewport's published display/internal extent tuple.
         /// Interactive presentation-only changes advance this value without rebuilding resources.
