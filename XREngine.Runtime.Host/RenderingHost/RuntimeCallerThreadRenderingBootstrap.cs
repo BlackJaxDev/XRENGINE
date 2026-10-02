@@ -1,6 +1,7 @@
 using XREngine.Rendering;
 using XREngine.Scene.Physics;
 using XREngine.Components.Movement;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -13,32 +14,36 @@ public static class RuntimeCallerThreadRenderingBootstrap
     public static IDisposable Install(
         IRendererBackendCatalog renderers,
         PhysicsBackendCatalog physics,
-        Func<IRuntimeRenderPipelineHost?> createDefaultPipeline)
+        Func<RenderPipelineRequest, RenderPipeline> createPipeline)
     {
         ArgumentNullException.ThrowIfNull(renderers);
         ArgumentNullException.ThrowIfNull(physics);
-        ArgumentNullException.ThrowIfNull(createDefaultPipeline);
+        ArgumentNullException.ThrowIfNull(createPipeline);
 
         IRuntimeRenderObjectServices? previousRenderObjects = RuntimeRenderObjectServices.Current;
         IRuntimeCharacterMovementVisualizationServices? previousCharacterVisualization =
             RuntimeCharacterMovementVisualizationServices.Current;
         EngineRuntimeRenderObjectServices installedRenderObjects = new();
         RenderingCharacterMovementVisualizationServices installedCharacterVisualization = new();
-        EngineRuntimeRenderingHostServices renderingHost = new(renderers, physics, createDefaultPipeline);
+        EngineRuntimeRenderingHostServices renderingHost = new(renderers, physics,
+            () => createPipeline(RenderPipelineRequest.DesktopScene()));
         IDisposable? shaderLease = null;
         IDisposable? renderingLease = null;
+        IDisposable? pipelineFactoryLease = null;
         try
         {
             RuntimeRenderObjectServices.Current = installedRenderObjects;
             RuntimeCharacterMovementVisualizationServices.Current = installedCharacterVisualization;
             shaderLease = EngineRuntimeShaderServices.Install();
             renderingLease = RuntimeRenderingHostServices.Install(renderingHost);
-            return new Installation(renderingHost, renderingLease, shaderLease,
+            pipelineFactoryLease = RuntimeEngine.Rendering.InstallRenderPipelineFactory(createPipeline);
+            return new Installation(renderingHost, renderingLease, shaderLease, pipelineFactoryLease,
                 installedRenderObjects, previousRenderObjects,
                 installedCharacterVisualization, previousCharacterVisualization);
         }
         catch
         {
+            pipelineFactoryLease?.Dispose();
             renderingLease?.Dispose();
             shaderLease?.Dispose();
             if (ReferenceEquals(RuntimeRenderObjectServices.Current, installedRenderObjects))
@@ -54,6 +59,7 @@ public static class RuntimeCallerThreadRenderingBootstrap
         EngineRuntimeRenderingHostServices renderingHost,
         IDisposable renderingLease,
         IDisposable shaderLease,
+        IDisposable pipelineFactoryLease,
         IRuntimeRenderObjectServices installedRenderObjects,
         IRuntimeRenderObjectServices? previousRenderObjects,
         IRuntimeCharacterMovementVisualizationServices installedCharacterVisualization,
@@ -67,6 +73,7 @@ public static class RuntimeCallerThreadRenderingBootstrap
                 return;
 
             List<Exception>? failures = null;
+            Try(pipelineFactoryLease.Dispose, ref failures);
             Try(renderingLease.Dispose, ref failures);
             Try(shaderLease.Dispose, ref failures);
             if (ReferenceEquals(RuntimeRenderObjectServices.Current, installedRenderObjects))

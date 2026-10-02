@@ -91,6 +91,17 @@ pipeline factory. Every request carries an explicit output purpose:
 - offscreen-capture requests use the standard capability policy and are not
   redirected by desktop debug or RVC settings.
 
+Caller-thread hosts install their purpose-aware recipe in both the central
+runtime factory and the lazy camera factory for the same scoped lifetime.
+Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
+therefore resolve the same host recipe as an unconfigured camera. Browser hosts
+bind the cooked WebGPU programs to that shared default pipeline and reject
+stereo, XR, offscreen capture, and required Advanced profiles explicitly. Scoped
+recipes see every request before desktop offscreen selection. Teardown and
+startup rollback skip disposed installations, including out-of-order scopes,
+and preserve newer factories without restoring an expired callback. With no
+scope installed, the existing desktop selection policy remains unchanged.
+
 OpenXR does not clone the desktop pipeline type. It synchronizes compatible
 visual-feature configuration while keeping eye pipeline instances, temporal
 histories, and output topology independent. The standard and RVC pipelines

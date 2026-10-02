@@ -457,6 +457,9 @@ public static partial class RuntimeEngine
         /// </summary>
         public static RenderPipeline NewRenderPipeline(RenderPipelineRequest request)
         {
+            if (TryCreateScopedRenderPipeline(request, out RenderPipeline scopedPipeline))
+                return scopedPipeline;
+
             if (request.OffscreenIntent is { } offscreenIntent)
                 return CreateAdvancedOffscreenPipeline(request, offscreenIntent);
 

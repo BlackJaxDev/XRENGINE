@@ -84,6 +84,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     {
         XRRenderPipelineInstance? pipeline = _renderViewport?.RenderPipelineInstance;
         return $"Renderer={_renderer?.State.ToString() ?? "absent"}; " +
+            $"pipeline={pipeline?.Pipeline?.GetType().Name ?? "absent"}; " +
+            $"resource profile={(pipeline?.PendingGeneration ?? pipeline?.ActiveGeneration)?.Key.ToString() ?? "absent"}; " +
             $"draws={_renderer?.LastEngineMeshDrawCount ?? 0}; " +
             $"pipeline decline={pipeline?.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}.";
@@ -247,8 +249,17 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     private AbstractPhysicsScene CreatePhysicsScene()
         => _physicsBackends.CreateRequired(EPhysicsLibrary.Jolt);
 
-    private RenderPipeline CreateDefaultPipeline()
+    private RenderPipeline CreateDefaultPipeline(RenderPipelineRequest request)
     {
+        if (request.Stereo || request.Purpose != ERenderPipelinePurpose.DesktopScene ||
+            request.OffscreenIntent is not null)
+            throw new NotSupportedException("WebGPU.DefaultPipeline.ProfileUnsupported: the forward-lit output requires a mono scene presentation; stereo, XR, and offscreen capture are not supported.");
+        if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
+            throw new AdvancedRenderPipelineNotSupportedException(
+                AdvancedRenderPipelineSelectionResolver.Resolve(EAdvancedRenderPipelineMode.Required,
+                    _renderer?.GetAdvancedRenderPipelineCapabilities()
+                        ?? AdvancedRenderPipelineCapabilities.NoRenderer,
+                    stereo: false));
         DefaultRenderPipeline pipeline = new();
         if (_pipelineArtifacts is { } artifacts)
             pipeline.BindWebPipelineArtifacts(artifacts);
