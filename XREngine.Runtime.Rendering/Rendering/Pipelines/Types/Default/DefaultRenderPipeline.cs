@@ -1765,6 +1765,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     protected override void OnDestroying()
     {
+        DestroyWebDepthNormalPrePassMaterial();
         RuntimeEngine.Rendering.SettingsChanged -= HandleRenderingSettingsChanged;
         RuntimeEngine.Rendering.AntiAliasingSettingsChanged -= HandleAntiAliasingSettingsChanged;
         foreach (XRRenderPipelineInstance instance in Instances)
@@ -1893,7 +1894,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         => _motionVectorsMaterial.Value;
 
     public XRMaterial GetDepthNormalPrePassMaterial()
-        => _depthNormalPrePassMaterial.Value;
+        => UsesWebOutputTier ? GetWebDepthNormalPrePassMaterial() : _depthNormalPrePassMaterial.Value;
 
     public XRMaterial GetFullOverdrawCountMaterial()
         => _fullOverdrawCountMaterial.Value;

@@ -180,7 +180,11 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
                 PrepareForApiObjectTeardown();
                 DestroyCachedAPIRenderObjects();
             }
-            finally { DestroyDirectionalShadowDefaults(); }
+            finally
+            {
+                DestroyDirectionalShadowDefaults();
+                DestroyAmbientOcclusionDefaults();
+            }
         }
         finally
         {

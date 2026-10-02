@@ -42,6 +42,8 @@ public partial class DefaultRenderPipeline
         AoModeFieldBit3 = 1UL << 29,
         VelocityResourcesEnabled = 1UL << 30,
         WebForwardLit = 1UL << 31,
+        WebGtaoEnabled = 1UL << 32,
+        WebBloomEnabled = 1UL << 33,
     }
 
     private const ulong AoModeFieldMask = 0xFUL << 26;
@@ -93,7 +95,7 @@ public partial class DefaultRenderPipeline
     {
         RequireSupportedOutputResources();
         if (UsesWebOutputTier)
-            return (ulong)DefaultPipelineResourceFeature.WebForwardLit;
+            return BuildWebResourceFeatureMask(instance, viewport);
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
 
         if (viewport?.CapturePolicy.UsesMinimalDirectFboPath == true)

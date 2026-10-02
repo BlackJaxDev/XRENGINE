@@ -117,8 +117,20 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         if (billboardMode != EMeshBillboardMode.None || RuntimeEngine.Rendering.State.IsStereoPass)
             throw Unsupported("the current vertex profile admits rigid mono rendering without billboarding");
         ResolvedMeshRenderMaterial resolved = MeshRenderMaterialResolver.Resolve(Data.Parent, materialOverride, instances);
-        RenderingParameters selectedOptions = renderOptionsOverride ?? resolved.Material.RenderOptions;
+        bool depthNormalPrepass = resolved.IsDepthNormalVariant &&
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants == true;
+        RenderingParameters selectedOptions = depthNormalPrepass
+            ? resolved.Material.RenderOptions
+            : renderOptionsOverride ?? resolved.Material.RenderOptions;
         Renderer.ApplyRenderParameters(selectedOptions);
+        if (depthNormalPrepass)
+        {
+            // The depth/normal shader enforces its attachment state, but must cover the
+            // same authored faces as the subsequent color draw, including local overrides.
+            RenderingParameters coverage = renderOptionsOverride ??
+                (materialOverride ?? Data.Parent.Material)?.RenderOptions ?? selectedOptions;
+            Renderer.ApplyMeshFaceCoverage(coverage);
+        }
         int resolutionTraceIndex = -1;
         if (Renderer.EngineMeshResolutionTraceEnabled && Renderer.IsRecordingEngineFrame)
         {
@@ -168,8 +180,10 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         {
             WebGpuRenderProgram program = material.Program;
             XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
-            if (camera is null && (program.Artifact.Pass != "tonemap" || program.RequiresCameraUniforms))
-                throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: an engine camera must own the current mesh pass.");
+            // Fullscreen effect quads intentionally render without a mesh camera;
+            // lit and prepass programs still declare camera-provided uniforms.
+            if (camera is null && program.RequiresCameraUniforms)
+                throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: the cooked pass requires engine camera uniforms.");
             if (camera is not null && camera.DepthMode != XRCamera.EDepthMode.Normal)
                 throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
             program.BeginResourceBindings();

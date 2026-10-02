@@ -55,6 +55,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool MatchDestinationRenderArea { get; set; }
         /// <summary>Fails closed when a mandatory output pass loses its declared source or graph identity.</summary>
         public bool RequiredForOutput { get; set; }
+        /// <summary>Omits an optional pass from generation metadata when its owning target is absent.</summary>
+        public string? RequiredDeclaredResourceName { get; set; }
         /// <summary>
         /// Treats this draw as an intentional one-layer mono control rendered while
         /// the surrounding pipeline is stereo. This is reserved for validation

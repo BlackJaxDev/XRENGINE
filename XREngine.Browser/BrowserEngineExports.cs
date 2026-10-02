@@ -128,7 +128,7 @@ public static partial class BrowserEngineExports
             _session = new BrowserEngineSession(PhysicsBackends);
             stage = "start engine world";
             await _session.StartAsync(world, configuredSettings, initialState, token, canvasId, _shaderArtifacts,
-                _materialVariants, _source.LoadTonemapArtifact(_shaderArtifacts));
+                _materialVariants, _source.LoadTonemapArtifact(_shaderArtifacts), _source.LoadPipelineArtifacts(_shaderArtifacts));
             token.ThrowIfCancellationRequested();
             return $"{world.Name ?? "<unnamed>"}: {_session.World?.RootNodes.Count ?? 0} root nodes playing; " +
                 $"Jolt physics; fixed rate {configuredSettings.FixedFramesPerSecond:F0} Hz; " +

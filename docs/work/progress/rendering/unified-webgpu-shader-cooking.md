@@ -336,3 +336,52 @@ blending disabled in the repeated live-WASM cohort.
 Local no-incremental leaf builds pass without warnings/errors, and the raw
 storage ABI probe accepts six original and scalar-alias cases while rejecting fifteen
 float, vector, fixed-array, writable, or struct-wrapped alternatives.
+
+### Debug overlay live acceptance
+
+The first Chromium run of `f21abae82684ede95bef4734c23f8352f3ecdae6` rendered
+the real point, line and triangle correctly, including alternate positions and
+colors, then stopped on an incorrect smoke counter expectation. Frame submission
+has its own counter and does not add a control call. The renderer made exactly
+one warmed frame submission, with unchanged control/upload counters, command
+identities and resources. That assertion was corrected, and measured line-alpha
+tolerance was tightened from 60 to 12 byte values.
+
+Exact commit `a5762484b8c763fa59f8edb6000d0b61a455bf00` passed
+[run 36961007160](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36961007160).
+All fifteen case samples pass: blank baseline, one primitive of each type,
+same-count mutation, growth through 1,024 instances, shrink-within-capacity and
+repeated zero/visible changes. The fourteen samples after initial allocation
+all retain 68 live GPU resources, zero retiring resources and 24 descriptor-cache
+entries. A warmed frame advances only the frame-submission counter; no control
+call, separate upload submission, arena growth or command rebuild occurs.
+Non-square 640×320 output, return to 512×512, and a fresh stopped/restarted
+session preserve the correct pixels. Red/blue interiors are exact; the green
+line's 5×5 average is `(60.8, 194.2, 34.6)` over background `(145, 110, 82)`,
+consistent with its authored 0.6 alpha and edge antialiasing.
+
+The [qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36961007160/artifacts/11208145755)
+contains captures and counters. All prior depth, texture/sRGB, lit/HDR, PCSS,
+world/asset lifecycle, offline-audio and native Jolt checks also pass. Authored
+player autostart remains skipped for this bare host. This qualifies the shared
+debug primitive route on software WebGPU, not screen-space text/UI, full
+RollingBall gameplay, managed-heap budgets or physical-device performance.
+
+## Shared GTAO and bloom integration
+
+The next source slice adds exact cooked depth-normal, GTAO generation/horizontal/
+vertical blur, and bloom copy/downsample/upsample/combine programs. Fifteen
+shader artifacts and nine explicit pipeline mappings pass cooking and hash/ABI
+checks. The shared pipeline declares generation-owned RGBA16F normal/AO/bloom
+targets and sampled depth32, applies final powered/multibounce AO only to ambient
+lighting, and combines authored bloom before tonemapping. Disabled AO uses a
+renderer-owned white binding. Debug-bloom output bypasses tonemapping as on
+desktop; tiny bloom levels preserve logical weights and alias unavailable
+levels to the last physical mip.
+
+Actual published WASM records the full nineteen-draw effect chain, exact
+resource bindings, enabled/disabled generations, numeric changes without shader
+replacement, authored face coverage, and 1×1/odd-sized resource generations.
+Review repaired synthetic-pass ID reservation, depth-clear metadata, and
+depth-normal cull/winding preservation before that run. This remains recording
+boundary evidence; actual effect pixels and retirement on Chromium are pending.

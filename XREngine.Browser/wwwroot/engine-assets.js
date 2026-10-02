@@ -4,6 +4,8 @@ import { CONTENT_LIMITS, contentManifestUrl } from './content-manifest.js';
 const sources = new Map();
 let nextSource = 0;
 const validSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}(?![\s\S])/.test(value);
+const pipelinePasses = new Set(['tonemap', 'depth-normal', 'gtao-generate', 'gtao-blur-horizontal',
+    'gtao-blur-vertical', 'bloom-copy', 'bloom-downsample', 'bloom-upsample', 'bloom-combine']);
 
 function requireSource(id) {
     const source = sources.get(id);
@@ -98,7 +100,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const passes = new Set();
         for (const pipeline of value.pipelineArtifacts) {
             if (!pipeline || typeof pipeline !== 'object' || Array.isArray(pipeline)
-                || Object.keys(pipeline).length !== 2 || pipeline.pass !== 'tonemap'
+                || Object.keys(pipeline).length !== 2 || !pipelinePasses.has(pipeline.pass)
                 || !validSha256(pipeline.descriptorIdentity))
                 throw new Error('AssetSource.PipelineArtifactInvalid.');
             const descriptor = shaderDescriptors.get(pipeline.descriptorIdentity);
@@ -139,7 +141,12 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
         const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, pipeline.descriptorIdentity, entry.path);
         try {
             const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-            if (!descriptor || descriptor.pass !== pipeline.pass || descriptor.target !== 'WebGPUWgsl')
+            if (!descriptor || descriptor.pass !== pipeline.pass || descriptor.target !== 'WebGPUWgsl'
+                || !descriptor.entryPoints || typeof descriptor.entryPoints !== 'object'
+                || Object.keys(descriptor.entryPoints).length !== 2
+                || typeof descriptor.entryPoints.vertex !== 'string' || !descriptor.entryPoints.vertex
+                || typeof descriptor.entryPoints.fragment !== 'string' || !descriptor.entryPoints.fragment
+                || Object.hasOwn(descriptor, 'materialVariant'))
                 throw new Error('AssetSource.PipelineArtifactDescriptorMismatch.');
         } finally {
             loader.releasePayload(bytes);

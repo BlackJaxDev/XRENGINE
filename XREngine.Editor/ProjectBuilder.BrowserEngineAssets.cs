@@ -95,11 +95,11 @@ internal static partial class ProjectBuilder
                     descriptorIdentity = variant.DescriptorIdentity
                 });
             }
-            if (shaderSource.TonemapDescriptorIdentity is { } tonemapIdentity)
+            foreach ((string pass, string identity) in shaderSource.PipelineArtifacts)
             {
-                if (!shaderIdentities.Contains(tonemapIdentity))
-                    throw new InvalidDataException("The declared browser tonemap artifact was not packaged.");
-                pipelineArtifacts.Add(new { pass = "tonemap", descriptorIdentity = tonemapIdentity });
+                if (!shaderIdentities.Contains(identity))
+                    throw new InvalidDataException($"The declared browser pipeline artifact '{pass}' was not packaged.");
+                pipelineArtifacts.Add(new { pass, descriptorIdentity = identity });
             }
         }
         byte[] recipe = JsonSerializer.SerializeToUtf8Bytes(new

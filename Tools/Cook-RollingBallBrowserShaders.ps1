@@ -12,7 +12,15 @@ $recipes = @(
     'engine-debug-point.recipe.json',
     'engine-debug-line.recipe.json',
     'engine-debug-triangle.recipe.json',
-    'engine-tonemap.recipe.json'
+    'engine-tonemap.recipe.json',
+    'engine-depth-normal-prepass.recipe.json',
+    'engine-gtao-generate.recipe.json',
+    'engine-gtao-blur-horizontal.recipe.json',
+    'engine-gtao-blur-vertical.recipe.json',
+    'engine-bloom-copy.recipe.json',
+    'engine-bloom-downsample.recipe.json',
+    'engine-bloom-upsample.recipe.json',
+    'engine-bloom-combine.recipe.json'
 )
 
 $arguments = @('run', '--project', $cooker, '-c', 'Release', '--', '--source-root', $sourceRoot, '--output', $output)

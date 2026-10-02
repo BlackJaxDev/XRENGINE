@@ -52,12 +52,15 @@ struct LitLightingUniforms
     SPOT_FIELDS(5)
     SPOT_FIELDS(6)
     SPOT_FIELDS(7)
+    float4 ambientOcclusionControls; // enabled, power, multi-bounce, reserved
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<LitViewUniforms> view;
 [[vk::binding(1, 0)]] ConstantBuffer<LitObjectUniforms> object;
 [[vk::binding(0, 1)]] ConstantBuffer<LitMaterialUniforms> material;
 [[vk::binding(0, 2)]] ConstantBuffer<LitLightingUniforms> lighting;
+[[vk::binding(1, 2)]] Texture2D<float4> ambientOcclusionTexture;
+[[vk::binding(2, 2)]] SamplerState ambientOcclusionSampler;
 
 struct LitVertexInput
 {
@@ -86,6 +89,27 @@ LitVertexOutput standardLitVertex(LitVertexInput input)
 float3 safeNormalize(float3 value)
 {
     return value * rsqrt(max(dot(value, value), 1e-20));
+}
+
+float3 ambientVisibility(float2 framebufferPixel, float3 albedo)
+{
+    if (lighting.ambientOcclusionControls.x < 0.5)
+        return float3(1.0);
+
+    uint width;
+    uint height;
+    ambientOcclusionTexture.GetDimensions(width, height);
+    float2 uv = clamp(framebufferPixel / max(float2(width, height), float2(1.0)),
+        float2(0.0), float2(0.999999));
+    float visibility = pow(saturate(ambientOcclusionTexture.SampleLevel(
+        ambientOcclusionSampler, uv, 0.0).x), max(lighting.ambientOcclusionControls.y, 0.001));
+    if (lighting.ambientOcclusionControls.z < 0.5)
+        return float3(visibility);
+
+    float3 a = 2.0404 * albedo - 0.3324;
+    float3 b = -4.7951 * albedo + 0.6417;
+    float3 c = 2.7552 * albedo + 0.6903;
+    return max(float3(visibility), ((a * visibility + b) * visibility + c) * visibility);
 }
 
 float lightAttenuation(float distance, float radius)
@@ -192,6 +216,7 @@ float4 standardLitFragment(LitVertexOutput input) : SV_Target0
     float3 ambient = lighting.globalAmbient.xyz;
     float ambientMax = max(ambient.x, max(ambient.y, ambient.z));
     ambient = ambientMax <= 0.0001 ? float3(0.08) : ambient * max(1.0, 0.08 / ambientMax);
+    ambient *= ambientVisibility(input.position.xy, albedo);
     // Linear HDR color. The pipeline owns display tone mapping and encoding.
     return float4(color + ambient * albedo + albedo * surface.w, material.baseColorOpacity.w);
 }

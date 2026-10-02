@@ -76,6 +76,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     private int _resolvedRenderGraphPassIndex = int.MinValue;
     private IReadOnlyList<string> _sampledTextureNames = [];
+    private IReadOnlyList<string> _sampledTextureNamesWhenDeclared = [];
     private IReadOnlyList<string> _readWriteBufferNames = [];
     private IReadOnlyList<string> _readWriteTextureNames = [];
 
@@ -92,6 +93,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     /// </summary>
     public void SetSampledTextures(params string[] textureNames)
         => _sampledTextureNames = textureNames;
+
+    /// <summary>Declares samples owned only by resource profiles that materialize them.</summary>
+    public void SetSampledTexturesWhenDeclared(params string[] textureNames)
+        => _sampledTextureNamesWhenDeclared = textureNames;
 
     /// <summary>
     /// Declares storage buffers read and written by material shaders in this pass.
@@ -361,6 +366,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
         for (int i = 0; i < _sampledTextureNames.Count; i++)
             builder.SampleTexture(MakeTextureResource(_sampledTextureNames[i]));
+
+        for (int i = 0; i < _sampledTextureNamesWhenDeclared.Count; i++)
+            if (context.ResourceLayout is null || context.HasResource(_sampledTextureNamesWhenDeclared[i]))
+                builder.SampleTexture(MakeTextureResource(_sampledTextureNamesWhenDeclared[i]));
 
         for (int i = 0; i < _readWriteBufferNames.Count; i++)
             builder.ReadWriteBuffer(_readWriteBufferNames[i]);

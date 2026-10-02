@@ -11,7 +11,7 @@ dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj -- --recipe XREngine
 The default invocation packages the original explicit `browser-unlit` WGSL
 recipe as schema 1, byte compatible with the existing checked-in assets. Schema
 1, schema 2, and schema 3 recipes must be cooked in separate invocations. `--recipe` can
-be repeated up to 16 times; `--source-root` defaults to the WebGPU `Assets`
+be repeated up to 24 times; `--source-root` defaults to the WebGPU `Assets`
 directory, and `--output` defaults to its `shaders` directory. The source root
 and recipes must live under the same parent directory, so dependencies have
 stable, normalized paths such as `Assets/mesh.wgsl` and
@@ -66,10 +66,14 @@ unknown or custom materials remain unsupported without an explicit companion.
 
 A schema-three whole-program recipe can also declare
 `"pipelineArtifact": { "pass": "tonemap" }`. This explicitly binds the
-verified vertex/fragment program to the output pass in the manifest's
+verified vertex/fragment program to an engine-owned pass in the manifest's
 `pipelineArtifacts` array using the descriptor's SHA-256 identity. The cooker
 does not infer pipeline ownership from a shader name or source path. Duplicate
 pass declarations and a mismatched recipe pass fail before manifest publication.
+The bounded pass set is `tonemap`, `depth-normal`, `gtao-generate`,
+`gtao-blur-horizontal`, `gtao-blur-vertical`, `bloom-copy`,
+`bloom-downsample`, `bloom-upsample`, and `bloom-combine`. An absent pass is
+required only when the corresponding pipeline feature is selected.
 
 ```sh
 dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj -- --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --source-root Build/CommonAssets/Shaders/WebGPU --output <artifact-output>

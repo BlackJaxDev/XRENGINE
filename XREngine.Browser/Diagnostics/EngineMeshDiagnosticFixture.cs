@@ -32,11 +32,13 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     private readonly bool _lit;
     private readonly bool _shadow;
     private readonly bool _debug;
+    private readonly bool _effects;
     private XRTexture2D? _texture;
     private bool _disposed;
 
     public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height,
-        ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false)
+        ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false,
+        WebPipelineArtifactCatalog? effectArtifacts = null)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
@@ -45,6 +47,9 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _lit = tonemapArtifact is not null;
         _shadow = shadow;
         _debug = debug;
+        _effects = effectArtifacts is not null;
+        if (_effects && (shadow || debug))
+            throw new ArgumentException("The effects fixture uses its own unshadowed lit scene.", nameof(effectArtifacts));
         if (_shadow && !_lit)
             throw new ArgumentException("A directional shadow fixture requires the cooked HDR presentation artifact.", nameof(tonemapArtifact));
         if ((_lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe")) ||
@@ -63,6 +68,8 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             _material = XRMaterial.CreateColorMaterialDeferred(new ColorF4(0.4f, 0.2f, 0.1f, 0.7f));
             _material.Name = "Mutable standard lit engine surface";
             _pipeline = new DefaultRenderPipeline { WebTonemapArtifact = tonemapArtifact };
+            if (effectArtifacts is not null)
+                ((DefaultRenderPipeline)_pipeline).BindWebPipelineArtifacts(effectArtifacts);
         }
         else
         {
@@ -118,6 +125,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             if (_shadow) InitializeShadowScene();
             else InitializeLights();
             if (_debug) InitializeDebugScene();
+            if (_effects) InitializeEffectsScene();
         }
         else
         {
@@ -139,6 +147,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         {
             ConfigureLitCamera(camera);
             if (!_shadow) SetLitCase(0);
+            if (_effects) ConfigureEffectsCamera(camera);
         }
         if (_debug)
             camera.CullingMask = LayerMask.Everything;
@@ -221,7 +230,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
-            _renderer.IsBackendReplacementFrameReady && ((_shadow || _debug) ? _renderer.LastEngineMeshDrawCount >= 2 :
+            _renderer.IsBackendReplacementFrameReady && ((_shadow || _debug || _effects) ? _renderer.LastEngineMeshDrawCount >= 2 :
                 _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3)) &&
             (!_shadow || ShadowFrameReady());
     }
@@ -247,6 +256,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             $"HDR FBO={pipeline.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName) is not null}; " +
             (_shadow ? $"shadow requests={_directional?.StandaloneShadowRenderRequestCount}; shadow passes={_directional?.StandaloneShadowRenderPassCount}; shadow casters={_directional?.PrimaryShadowCasterCount}; {GetShadowRenderStatus()}; " : "") +
             (_debug ? $"debug callbacks={RuntimeEngine.Rendering.Debug.LastDebugDrawComponentCallbackCount}; case={_debugCase}; " : "") +
+            (_effects ? $"effects case={_effectsCase}; AO target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebGtaoFinalTextureName) is not null}; bloom target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebBloomCombinedTextureName) is not null}; " : "") +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }
@@ -266,6 +276,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _scene.Dispose();
         _mesh.Destroy();
         DisposeShadowScene();
+        DisposeEffectsScene();
         _material.Destroy();
         _texture?.Destroy();
         _vertex?.Destroy();

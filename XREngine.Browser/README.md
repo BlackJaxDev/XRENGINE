@@ -96,15 +96,27 @@ mismatched descriptors before activating the world. A missing catalog entry
 does not trigger a shader-name or authored-source fallback.
 
 Pipeline-owned shaders use a separate optional `pipelineArtifacts` array. An
-entry has exactly `pass: "tonemap"` and `descriptorIdentity` containing the
+entry has exactly a supported `pass` and `descriptorIdentity` containing the
 lowercase SHA-256 hash of a descriptor already listed in `shaderArtifacts`.
-Only `tonemap` is supported; unknown passes, duplicate passes, unknown fields,
+Supported passes are `tonemap`, `depth-normal`, `gtao-generate`,
+`gtao-blur-horizontal`, `gtao-blur-vertical`, `bloom-copy`,
+`bloom-downsample`, `bloom-upsample`, and `bloom-combine`. Unknown passes,
+duplicate passes, unknown fields,
 missing references, and arrays exceeding 16 entries are rejected. The cooker,
 browser loader, and managed source require the hash-owned descriptor to declare
 the same pass and the `WebGPUWgsl` target. The browser verifies these descriptor
-bytes before exposing the catalog, and managed startup resolves the module from
-the verified shader catalog. Absence leaves tonemapping unsupported; shader
+bytes before exposing the catalog, and managed startup resolves each module from
+the verified shader catalog. Tonemap absence leaves output unsupported; optional
+effect modules are required only when their corresponding graph branches are used. Shader
 names and source paths never select a pipeline artifact.
+
+The isolated `diagnostics/engine-mesh.html?probe=effects` page loads the verified
+package catalog and renders real static `ModelComponent` geometry through the
+shared `DefaultRenderPipeline`. It exposes generation-owned depth, oct-normal,
+GTAO, HDR, and bloom targets for bounded readback and numeric camera-setting
+changes. It does not start authored-world gameplay or physics. Depth32 readback
+copies the complete single-sample depth subresource before selecting pixels;
+other depth formats and multisampled depth are not enabled for copying.
 
 Keep hash-addressed cooked shader payloads under `Assets/shaders/` as LF bytes.
 Line-ending conversion changes their hashes and causes the loader to reject them.

@@ -46,11 +46,19 @@ public sealed partial class WebGpuRenderProgram
             throw UnsupportedBinding(artifact.Name, "the program exceeds the bounded dynamic-uniform snapshot capacity");
         foreach ((string name, SamplerSlots slots) in _samplers)
         {
-            if (slots.Texture < 0 || slots.Sampler < 0)
-                throw UnsupportedBinding(name, "texture and sampler bindings must explicitly share the same logical resource name");
+            if (slots.Texture < 0)
+                throw UnsupportedBinding(name, "samplers require an exact logical-name texture binding");
             ShaderAbiResourceContract texture = artifact.Resources[slots.Texture].Contract;
-            ShaderAbiResourceContract sampler = artifact.Resources[slots.Sampler].Contract;
             bool depth = artifact.Resources[slots.Texture].BindingType == "texture-depth-2d";
+            // Load-only depth resources intentionally have no sampler. Color textures and
+            // comparison-sampled depth resources retain their exact paired ABI.
+            if (slots.Sampler < 0)
+            {
+                if (!depth)
+                    throw UnsupportedBinding(name, "float textures require an explicitly paired filtering sampler");
+                continue;
+            }
+            ShaderAbiResourceContract sampler = artifact.Resources[slots.Sampler].Contract;
             bool comparison = artifact.Resources[slots.Sampler].BindingType == "comparison-sampler";
             if (depth != comparison)
                 throw UnsupportedBinding(name, "depth textures require comparison samplers and float textures require filtering samplers");
@@ -111,11 +119,14 @@ public sealed partial class WebGpuRenderProgram
         WebGpuTexture2D api = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture)!;
         bool depth = Artifact.Resources[slots.Texture].BindingType == "texture-depth-2d";
         int view = api.GetSampledView(depth);
-        int sampler = api.GetSampler(depth);
         _resourceHandles[slots.Texture] = view;
-        _resourceHandles[slots.Sampler] = sampler;
         _resourceOwners[slots.Texture] = api;
-        _resourceOwners[slots.Sampler] = api;
+        if (slots.Sampler >= 0)
+        {
+            int sampler = api.GetSampler(depth);
+            _resourceHandles[slots.Sampler] = sampler;
+            _resourceOwners[slots.Sampler] = api;
+        }
     }
 
     private void SetSamplerByLocation(int location, IRenderTextureResource texture, int textureUnit)
@@ -167,9 +178,12 @@ public sealed partial class WebGpuRenderProgram
         bindings = null;
         foreach ((string name, SamplerSlots slots) in _samplers)
         {
-            if (_resourceHandles[slots.Texture] != 0 && _resourceHandles[slots.Sampler] != 0) continue;
+            if (_resourceHandles[slots.Texture] != 0 &&
+                (slots.Sampler < 0 || _resourceHandles[slots.Sampler] != 0)) continue;
             if (deferMissingResources) return false;
-            throw UnsupportedBinding(name, "the draw did not publish its required texture and sampler");
+            throw UnsupportedBinding(name, slots.Sampler < 0
+                ? "the draw did not publish its required depth texture"
+                : "the draw did not publish its required texture and sampler");
         }
         for (int index = 0; index < Artifact.Resources.Length; index++)
             if (Artifact.Resources[index].Contract.Kind == ShaderAbiResourceKind.StorageBuffer &&

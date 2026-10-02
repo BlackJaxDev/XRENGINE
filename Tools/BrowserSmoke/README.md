@@ -28,6 +28,14 @@ recheck HDR/display pixels, and require retired GPU resources to drain without
 live-count growth before teardown. This establishes the bounded static rendering path, separately
 from RuntimeWorld/gameplay, shadows, probes, transparency and broader effects.
 
+The `engine-shared-gtao-bloom` check runs the static effects diagnostic through
+the real WebGPU default pipeline. It reads prepass depth and normal, GTAO stages,
+raw HDR, bloom mips and the combined target, then changes camera effects and
+authored mesh face coverage. Tiny and odd resizes plus stop/restart exercise
+resource generations. This check requires a package manifest containing the
+exact cooked pipeline artifacts and reports failures separately from the
+authored RollingBall world-play check.
+
 The directional-shadow diagnostic is a separate static fixture. It cooks the
 `StandardLitColorV1` HDR shadow receiver and `OpaqueShadowDepthV1` writer as
 distinct variants, then uses one registered `DirectionalLightComponent` and its

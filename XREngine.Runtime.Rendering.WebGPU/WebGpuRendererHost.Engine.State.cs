@@ -9,6 +9,14 @@ public sealed partial class WebGpuRendererHost
     private WebGpuFrameBuffer? _boundEngineFrameBuffer;
     internal WebGpuRasterState RasterState => _rasterState;
 
+    /// <summary>Preserves authored face coverage while an auxiliary shader owns the remaining raster state.</summary>
+    internal void ApplyMeshFaceCoverage(RenderingParameters parameters)
+        => SetField(ref _rasterState, _rasterState with
+        {
+            CullMode = parameters.CullMode,
+            Winding = parameters.Winding,
+        }, publishNotifications: false);
+
     internal WebGpuFrameBuffer? GetBoundEngineFrameBuffer()
     {
         _boundEngineFrameBuffer?.EnsureCurrent();

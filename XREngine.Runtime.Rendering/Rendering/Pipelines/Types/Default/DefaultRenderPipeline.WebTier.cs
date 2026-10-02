@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -16,6 +17,53 @@ public partial class DefaultRenderPipeline
 {
     private const string WebTonemapFBOName = "WebTonemapMaterial";
     private ShaderProgramArtifact? _webTonemapArtifact;
+    private WebPipelineArtifactCatalog? _webPipelineArtifacts;
+
+    /// <summary>Hash-verified package programs for the WebGPU pipeline's explicitly declared passes.</summary>
+    [YamlIgnore]
+    public WebPipelineArtifactCatalog? WebPipelineArtifacts
+    {
+        get => _webPipelineArtifacts;
+        init => BindWebPipelineArtifacts(value);
+    }
+
+    /// <summary>Binds one immutable package catalog without changing authored effect settings.</summary>
+    public void BindWebPipelineArtifacts(WebPipelineArtifactCatalog? artifacts)
+    {
+        ArgumentNullException.ThrowIfNull(artifacts);
+        if (_webPipelineArtifacts is { } installed)
+        {
+            if (ReferenceEquals(installed, artifacts))
+                return;
+            if (!installed.HasSameIdentities(artifacts))
+                throw new InvalidOperationException("WebGPU.DefaultPipeline.ArtifactIdentitiesChanged: replace the pipeline asset to install different pass programs.");
+            return;
+        }
+        if (artifacts.TryResolve("tonemap", out ShaderProgramArtifact? tonemap))
+            BindWebTonemapArtifact(tonemap);
+        SetField(ref _webPipelineArtifacts, artifacts, nameof(WebPipelineArtifacts));
+    }
+
+    /// <summary>Returns the exact program for a pipeline-owned pass when its optional feature is available.</summary>
+    public bool TryGetWebPipelineArtifact(string pass, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+    {
+        if (!WebPipelineArtifactCatalog.IsSupportedPass(pass))
+            throw new ArgumentOutOfRangeException(nameof(pass), "Unknown WebGPU pipeline pass.");
+        if (pass == "tonemap" && _webTonemapArtifact is { } tonemap)
+        {
+            artifact = tonemap;
+            return true;
+        }
+        if (_webPipelineArtifacts is { } artifacts)
+            return artifacts.TryResolve(pass, out artifact);
+        artifact = null;
+        return false;
+    }
+
+    /// <summary>Reports an absent cooked program only when its pass is actually selected.</summary>
+    public ShaderProgramArtifact GetRequiredWebPipelineArtifact(string pass)
+        => TryGetWebPipelineArtifact(pass, out ShaderProgramArtifact? artifact) ? artifact
+            : throw new NotSupportedException($"WebGPU.DefaultPipeline.ArtifactMissing: selected pass '{pass}' requires its exact cooked package program.");
 
     /// <summary>
     /// Exact, verified package artifact used by the WebGPU output's Mobius tonemap pass.
@@ -36,6 +84,9 @@ public partial class DefaultRenderPipeline
     {
         if (artifact is null)
             throw new ArgumentNullException(nameof(artifact));
+        if (_webPipelineArtifacts is { } catalog && catalog.TryResolve("tonemap", out ShaderProgramArtifact? declared) &&
+            declared.Identity != artifact.Identity)
+            throw new InvalidOperationException("WebGPU.DefaultPipeline.TonemapIdentityChanged: the catalog owns a different output module.");
         if (_webTonemapArtifact is { } installed)
         {
             if (installed.Identity != artifact.Identity)
@@ -80,7 +131,7 @@ public partial class DefaultRenderPipeline
             .Add();
         builder.Texture(DepthStencilTextureName)
             .Size(RenderResourceSizePolicy.Internal())
-            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
             .Format(EPixelInternalFormat.DepthComponent32, EPixelFormat.DepthComponent, EPixelType.Float)
             .SizedFormat(ESizedInternalFormat.DepthComponent32f)
             .Factory(CreateWebDepthTexture)
@@ -92,10 +143,11 @@ public partial class DefaultRenderPipeline
             .Depth(DepthStencilTextureName)
             .Factory(CreateWebForwardFbo)
             .Add();
-        builder.QuadMaterial(WebTonemapFBOName)
-            .DependsOn(HDRSceneTextureName)
-            .Factory(CreateWebTonemapMaterial)
-            .Add();
+        DeclareWebEffectResources(builder);
+        var tonemap = builder.QuadMaterial(WebTonemapFBOName).DependsOn(HDRSceneTextureName);
+        if (WebBloomEnabled(profile))
+            tonemap.DependsOn(WebBloomCombinedTextureName);
+        tonemap.Factory(CreateWebTonemapMaterial).Add();
         builder.External("$ExternalOutput")
             .Contract(ExternalRenderResourceKind.FrameBuffer,
                 profile.ExternalTargetKind == RenderPipelineExternalTargetKind.Window
@@ -159,7 +211,7 @@ public partial class DefaultRenderPipeline
             ?? throw new InvalidOperationException("WebGPU.DefaultPipeline.TonemapArtifactMissing: no cooked output program is installed.");
         XRShader vertex = new(EShaderType.Vertex) { CookedArtifact = artifact };
         XRShader fragment = new(EShaderType.Fragment) { CookedArtifact = artifact };
-        XRMaterial material = new([GetTexture<XRTexture2D>(HDRSceneTextureName)!], vertex, fragment)
+        XRMaterial material = new(Array.Empty<XRTexture?>(), vertex, fragment)
         {
             Name = WebTonemapFBOName,
             RenderOptions = new RenderingParameters
@@ -208,27 +260,70 @@ public partial class DefaultRenderPipeline
         commands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, EMeshSubmissionStrategy.CpuDirect);
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(command => command.UseInternalResolution = true))
-        using (commands.AddUsing<VPRC_BindFBOByName>(command => command.SetOptions(ForwardPassFBOName, clearStencil: false)))
         {
+            VPRC_IfElse aoChoice = commands.Add<VPRC_IfElse>();
+            aoChoice.Label = "WebGtao";
+            aoChoice.ConditionEvaluator = ShouldUseWebGtao;
+            ViewportRenderCommandContainer aoCommands = new(this);
+            AppendWebGtaoCommands(aoCommands);
+            aoChoice.TrueCommands = aoCommands;
+
+            using (commands.AddUsing<VPRC_BindFBOByName>(command =>
+            {
+                command.SetOptions(ForwardPassFBOName, clearColor: true, clearDepth: false, clearStencil: false);
+                command.DynamicClearDepth = () => !ShouldUseWebGtao();
+                command.DescribeClearDepth = context => context.ResourceLayout is null
+                    ? !ShouldUseWebGtao()
+                    : !context.HasResource(WebNormalFboName);
+            }))
+            {
             // Opaque materials may leave blend state unchanged. The preceding frame's
             // display overlays must not turn those surfaces into alpha-blended draws.
             commands.Add<VPRC_Manual>().ManualAction = static () => RuntimeEngine.Rendering.State.EnableBlend(false);
             commands.Add<VPRC_DepthTest>().Enable = true;
-            commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, EMeshSubmissionStrategy.CpuDirect);
-            commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, EMeshSubmissionStrategy.CpuDirect);
+            VPRC_RenderMeshesPass deferred = commands.Add<VPRC_RenderMeshesPass>();
+            deferred.SetOptions((int)EDefaultRenderPass.OpaqueDeferred, EMeshSubmissionStrategy.CpuDirect);
+            deferred.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
+            VPRC_RenderMeshesPass forward = commands.Add<VPRC_RenderMeshesPass>();
+            forward.SetOptions((int)EDefaultRenderPass.OpaqueForward, EMeshSubmissionStrategy.CpuDirect);
+            forward.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
             // A depth-tested debug primitive has no display-overlay equivalent. If one is
             // submitted, its explicit WebGPU material rejection preserves that distinction.
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = true;
+            }
+
+            VPRC_IfElse bloomChoice = commands.Add<VPRC_IfElse>();
+            bloomChoice.Label = "WebBloom";
+            bloomChoice.ConditionEvaluator = ShouldUseWebBloom;
+            ViewportRenderCommandContainer bloomCommands = new(this);
+            AppendWebBloomCommands(bloomCommands);
+            bloomChoice.TrueCommands = bloomCommands;
         }
         using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
         using (commands.AddUsing<VPRC_BindOutputFBO>(command => command.SetOptions(clearColor: false, clearDepth: false, clearStencil: false)))
         {
             commands.Add<VPRC_DepthTest>().Enable = false;
             commands.Add<VPRC_DepthWrite>().Allow = false;
-            VPRC_RenderQuadToFBO tonemap = commands.Add<VPRC_RenderQuadToFBO>();
+            VPRC_IfElse debugBloomChoice = commands.Add<VPRC_IfElse>();
+            debugBloomChoice.Label = "WebDebugBloomOnly";
+            debugBloomChoice.ConditionEvaluator = ShouldUseWebDebugBloomOnly;
+            ViewportRenderCommandContainer debugBloomCommands = new(this);
+            VPRC_RenderQuadToFBO debugBloom = debugBloomCommands.Add<VPRC_RenderQuadToFBO>();
+            debugBloom.RequiredForOutput = true;
+            debugBloom.RequiredDeclaredResourceName = WebBloomCombinedTextureName;
+            debugBloom.SetTargets(WebBloomDebugOutputQuadName)
+                .ConfigureRenderGraphResources(static resources => resources.SampleTexture(WebBloomCombinedTextureName));
+            debugBloomChoice.TrueCommands = debugBloomCommands;
+            ViewportRenderCommandContainer tonemapCommands = new(this);
+            VPRC_RenderQuadToFBO tonemap = tonemapCommands.Add<VPRC_RenderQuadToFBO>();
             tonemap.RequiredForOutput = true;
             tonemap.SetTargets(WebTonemapFBOName)
-                .ConfigureRenderGraphResources(static resources => resources.SampleTexture(HDRSceneTextureName));
+                .ConfigureRenderGraphResources(static resources =>
+                {
+                    resources.SampleTexture(HDRSceneTextureName);
+                    resources.SampleTextureWhenDeclared(WebBloomCombinedTextureName);
+                });
+            debugBloomChoice.FalseCommands = tonemapCommands;
             commands.Add<VPRC_Manual>().ManualAction = RenderWebDebugDrawCallbacks;
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = false;
         }
@@ -239,18 +334,44 @@ public partial class DefaultRenderPipeline
     private static void DescribeWebRenderPasses(RenderPassMetadataCollection metadata)
     {
         metadata.ForPass((int)EDefaultRenderPass.PreRender, nameof(EDefaultRenderPass.PreRender), ERenderGraphPassStage.Graphics);
+        int beforeForward = (int)EDefaultRenderPass.PreRender;
+        string prepass = $"ForwardDepthNormalPrePass_{WebNormalFboName}";
+        beforeForward = LinkWebPass(metadata, prepass, beforeForward);
+        beforeForward = LinkWebQuadPass(metadata, WebGtaoGenerateQuadName, WebGtaoRawFboName, beforeForward);
+        beforeForward = LinkWebQuadPass(metadata, WebGtaoHorizontalQuadName, WebGtaoHorizontalFboName, beforeForward);
+        beforeForward = LinkWebQuadPass(metadata, WebGtaoVerticalQuadName, WebGtaoFinalFboName, beforeForward);
         metadata.ForPass((int)EDefaultRenderPass.OpaqueDeferred, nameof(EDefaultRenderPass.OpaqueDeferred), ERenderGraphPassStage.Graphics)
-            .DependsOn((int)EDefaultRenderPass.PreRender);
+            .DependsOn(beforeForward);
         metadata.ForPass((int)EDefaultRenderPass.OpaqueForward, nameof(EDefaultRenderPass.OpaqueForward), ERenderGraphPassStage.Graphics)
             .DependsOn((int)EDefaultRenderPass.OpaqueDeferred);
-        string tonemap = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(WebTonemapFBOName, RenderGraphResourceNames.OutputRenderTarget);
-        if (metadata.TryGetPassIndex(tonemap, out int index))
-        {
-            metadata.ForPass(index, tonemap, ERenderGraphPassStage.Graphics).DependsOn((int)EDefaultRenderPass.OpaqueForward);
-            metadata.ForPass((int)EDefaultRenderPass.OnTopForward, nameof(EDefaultRenderPass.OnTopForward), ERenderGraphPassStage.Graphics).DependsOn(index);
-            metadata.ForPass((int)EDefaultRenderPass.PostRender, nameof(EDefaultRenderPass.PostRender), ERenderGraphPassStage.Graphics)
-                .DependsOn((int)EDefaultRenderPass.OnTopForward);
-        }
+
+        int beforeOutput = (int)EDefaultRenderPass.OpaqueForward;
+        beforeOutput = LinkWebQuadPass(metadata, WebBloomCopyQuadName, WebBloomMipFboNames[0], beforeOutput);
+        for (int level = 1; level <= 4; level++)
+            beforeOutput = LinkWebQuadPass(metadata, WebBloomDownQuadNames[level], WebBloomMipFboNames[level], beforeOutput);
+        for (int level = 3; level >= 1; level--)
+            beforeOutput = LinkWebQuadPass(metadata, WebBloomUpQuadNames[level], WebBloomMipFboNames[level], beforeOutput);
+        beforeOutput = LinkWebQuadPass(metadata, WebBloomCombineQuadName, WebBloomCombinedFboName, beforeOutput);
+        int tonemap = LinkWebQuadPass(metadata, WebTonemapFBOName, RenderGraphResourceNames.OutputRenderTarget, beforeOutput);
+        int debugBloom = LinkWebQuadPass(metadata, WebBloomDebugOutputQuadName, RenderGraphResourceNames.OutputRenderTarget, beforeOutput);
+        var overlay = metadata.ForPass((int)EDefaultRenderPass.OnTopForward, nameof(EDefaultRenderPass.OnTopForward), ERenderGraphPassStage.Graphics)
+            .DependsOn(tonemap);
+        if (debugBloom != beforeOutput)
+            overlay.DependsOn(debugBloom);
+        metadata.ForPass((int)EDefaultRenderPass.PostRender, nameof(EDefaultRenderPass.PostRender), ERenderGraphPassStage.Graphics)
+            .DependsOn((int)EDefaultRenderPass.OnTopForward);
+    }
+
+    private static int LinkWebQuadPass(RenderPassMetadataCollection metadata, string sourceQuad,
+        string destination, int dependency)
+        => LinkWebPass(metadata, VPRC_RenderQuadToFBO.BuildQuadBlitPassName(sourceQuad, destination), dependency);
+
+    private static int LinkWebPass(RenderPassMetadataCollection metadata, string name, int dependency)
+    {
+        if (!metadata.TryGetPassIndex(name, out int index))
+            return dependency;
+        metadata.ForPass(index, name, ERenderGraphPassStage.Graphics).DependsOn(dependency);
+        return index;
     }
 
     private static void RenderWebDebugDrawCallbacks()
@@ -261,8 +382,7 @@ public partial class DefaultRenderPipeline
         RequireSupportedOutputResources();
         if (MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
             throw new NotSupportedException("WebGPU.DefaultPipeline.SubmissionUnsupported: explicitly select CpuDirect for this output.");
-        if (GlobalIlluminationMode != EGlobalIlluminationMode.None)
-            throw new NotSupportedException("WebGPU.DefaultPipeline.GlobalIlluminationUnsupported: explicitly select global ambient lighting (GI None); probe, IBL, and advanced GI variants are not available.");
+        ValidateWebGlobalIllumination();
         XRRenderPipelineInstance instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline!;
         if (instance.RenderState.ScreenSpaceUserInterface is { IsActive: true })
             throw new NotSupportedException("WebGPU.DefaultPipeline.UiUnsupported: engine screen-space UI needs cooked WebGPU material variants.");
@@ -281,9 +401,7 @@ public partial class DefaultRenderPipeline
         instance.ActiveMeshRenderCommands.ValidatePublishedDebugDrawCallbacks();
 
         PipelinePostProcessState? state = (instance.RenderState.SceneCamera ?? instance.LastSceneCamera)?.GetPostProcessState(this);
-        if (GetSettings<BloomSettings>(state) is { Enabled: true } ||
-            GetSettings<AmbientOcclusionSettings>(state) is { Enabled: true } ||
-            GetSettings<MotionBlurSettings>(state) is { Enabled: true } ||
+        if (GetSettings<MotionBlurSettings>(state) is { Enabled: true } ||
             GetSettings<DepthOfFieldSettings>(state) is { Enabled: true } ||
             GetSettings<VolumetricFogSettings>(state) is { Enabled: true } ||
             GetSettings<VignetteSettings>(state) is { Enabled: true } ||
@@ -292,7 +410,7 @@ public partial class DefaultRenderPipeline
             GetSettings<LensDistortionSettings>(state) is { Intensity: not 0 } ||
             GetSettings<GpuBvhDebugSettings>(state) is { Enabled: true } or { MeshletDebugDisplayEnabled: true } or { FullOverdrawEnabled: true } ||
             ShouldRunAtmosphericScattering() || HasFullPipelineDebugVisualization())
-            throw new NotSupportedException("WebGPU.DefaultPipeline.EffectUnsupported: this output supports direct forward lighting and Mobius tonemapping; disable unsupported camera effects explicitly.");
+            throw new NotSupportedException("WebGPU.DefaultPipeline.EffectUnsupported: a selected camera effect has no cooked WebGPU pass.");
         ColorGradingSettings? color = GetSettings<ColorGradingSettings>(state);
         if (color is not null && (color.AutoExposure || color.ExposureMode != ColorGradingSettings.ExposureControlMode.Artist ||
             !float.IsFinite(color.Exposure) || !float.IsFinite(color.Gamma) || color.Exposure < 0 || color.Gamma <= 0 ||
@@ -310,5 +428,7 @@ public partial class DefaultRenderPipeline
         TonemappingSettings? tonemap = GetSettings<TonemappingSettings>(state);
         program.Uniform("TonemapParameters", new Vector4(color?.Exposure ?? 1.0f, color?.Gamma ?? 2.2f,
             tonemap?.MobiusTransition ?? TonemappingSettings.DefaultMobiusTransition, 0.0f));
+        program.Sampler("SourceTexture", RequireWebEffectTexture(
+            ShouldUseWebBloom() ? WebBloomCombinedTextureName : HDRSceneTextureName), 0);
     }
 }

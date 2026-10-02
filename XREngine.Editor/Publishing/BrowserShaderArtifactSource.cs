@@ -11,10 +11,12 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
     private readonly Dictionary<string, string> _descriptors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ShaderProgramArtifact> _loaded = new(StringComparer.Ordinal);
     private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
+    private readonly Dictionary<string, string> _pipelineArtifacts = new(StringComparer.Ordinal);
     private long _loadedBytes;
 
     internal IReadOnlyList<EngineMaterialVariantEntry> MaterialVariants => _materialVariants.AsReadOnly();
-    internal string? TonemapDescriptorIdentity { get; private set; }
+    internal IReadOnlyDictionary<string, string> PipelineArtifacts => _pipelineArtifacts;
+    internal string? TonemapDescriptorIdentity => _pipelineArtifacts.GetValueOrDefault("tonemap");
 
     internal BrowserShaderArtifactSource(string projectDirectory, string manifestPath)
     {
@@ -70,15 +72,20 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
             foreach (JsonElement pipeline in pipelines.EnumerateArray())
             {
                 if (pipeline.ValueKind != JsonValueKind.Object || pipeline.EnumerateObject().Count() != 2 ||
-                    pipeline.GetProperty("pass").GetString() != "tonemap" || TonemapDescriptorIdentity is not null)
-                    throw new InvalidDataException("Browser pipeline artifact must uniquely declare the tonemap pass.");
+                    !pipeline.TryGetProperty("pass", out JsonElement passValue) || passValue.ValueKind != JsonValueKind.String ||
+                    !WebPipelineArtifactCatalog.IsSupportedPass(passValue.GetString()) ||
+                    !pipeline.TryGetProperty("descriptorIdentity", out JsonElement identityValue) || identityValue.ValueKind != JsonValueKind.String)
+                    throw new InvalidDataException("Browser pipeline artifact must declare a known pass and descriptor identity.");
+                string pass = passValue.GetString()!;
                 string identity = ShaderProgramArtifactCatalog.ValidateIdentity(
-                    pipeline.GetProperty("descriptorIdentity").GetString())
-                    ?? throw new InvalidDataException("Browser tonemap artifact has no descriptor identity.");
+                    identityValue.GetString())
+                    ?? throw new InvalidDataException($"Browser pipeline artifact '{pass}' has no descriptor identity.");
                 if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) ||
-                    artifact.Pass != "tonemap" || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
-                    throw new InvalidDataException("Browser tonemap artifact is not a complete WebGPU tonemap program.");
-                TonemapDescriptorIdentity = identity;
+                    artifact.Pass != pass || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null ||
+                    artifact.ComputeEntryPoint is not null)
+                    throw new InvalidDataException($"Browser pipeline artifact '{pass}' is not a complete matching WebGPU raster program.");
+                if (!_pipelineArtifacts.TryAdd(pass, identity))
+                    throw new InvalidDataException($"Browser pipeline artifact pass '{pass}' is duplicated.");
             }
         }
     }
