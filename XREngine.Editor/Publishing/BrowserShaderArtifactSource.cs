@@ -93,8 +93,11 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
         }
         if (root.TryGetProperty("computeArtifacts", out JsonElement computes))
         {
-            if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 1)
-                throw new InvalidDataException("Browser compute artifact catalog exceeds one kernel.");
+            // The shared catalog determines the supported kernel set. Keep a
+            // separate input bound without baking one release's kernel count
+            // into the offline publisher.
+            if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 16)
+                throw new InvalidDataException("Browser compute artifact catalog exceeds 16 entries.");
             foreach (JsonElement compute in computes.EnumerateArray())
             {
                 if (compute.ValueKind != JsonValueKind.Object || compute.EnumerateObject().Count() != 2 ||
@@ -107,7 +110,7 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
                     ?? throw new InvalidDataException($"Browser compute artifact '{kernel}' has no descriptor identity.");
                 if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
                     throw new InvalidDataException($"Browser compute artifact '{kernel}' is unavailable.");
-                WebComputeArtifactCatalog.ValidatePackedSkinning(artifact);
+                WebComputeArtifactCatalog.ValidateKernel(kernel, artifact);
                 if (!_computeArtifacts.TryAdd(kernel, identity))
                     throw new InvalidDataException($"Browser compute artifact kernel '{kernel}' is duplicated.");
             }
