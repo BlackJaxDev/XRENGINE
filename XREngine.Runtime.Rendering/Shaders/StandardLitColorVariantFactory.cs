@@ -27,7 +27,9 @@ internal static class StandardLitColorVariantFactory
             XRShader? fragment = source.GetShader(EShaderType.Fragment);
             XRShader? shader = pass == EStandardLitColorAuxiliaryPass.DepthNormal
                 ? ShaderHelper.GetDepthNormalPrePassForwardVariant(fragment)
-                : ShaderHelper.GetShadowCasterForwardVariant(fragment);
+                : pass == EStandardLitColorAuxiliaryPass.PointShadowDepth
+                    ? ShaderHelper.GetPointShadowCasterForwardVariant(fragment)
+                    : ShaderHelper.GetShadowCasterForwardVariant(fragment);
             if (shader is null)
                 throw new NotSupportedException("StandardLitColor.SourceUnsupported: no coverage-preserving auxiliary shader is available.");
             variant = new XRMaterial(shader);
@@ -41,7 +43,8 @@ internal static class StandardLitColorVariantFactory
         variant.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitColorV2;
         variant.RenderOptions = new RenderingParameters
         {
-            CullMode = pass == EStandardLitColorAuxiliaryPass.ShadowDepth ? ECullMode.None : source.RenderOptions.CullMode,
+            CullMode = pass is EStandardLitColorAuxiliaryPass.ShadowDepth or EStandardLitColorAuxiliaryPass.PointShadowDepth or EStandardLitColorAuxiliaryPass.SpotShadowDepth
+                ? ECullMode.None : source.RenderOptions.CullMode,
             Winding = source.RenderOptions.Winding,
             AlphaToCoverage = ERenderParamUsage.Disabled,
             BlendModeAllDrawBuffers = BlendMode.Disabled(),

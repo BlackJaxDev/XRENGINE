@@ -6,4 +6,6 @@ public enum EStandardLitColorAuxiliaryPass
     None,
     DepthNormal,
     ShadowDepth,
+    PointShadowDepth,
+    SpotShadowDepth,
 }

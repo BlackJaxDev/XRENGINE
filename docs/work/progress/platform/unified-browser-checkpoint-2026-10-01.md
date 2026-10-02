@@ -366,3 +366,31 @@ only those existing gitlinks and verifies their exact recorded commits. No
 submodule revision, dependency supply or desktop/HMD validation scope changed.
 Actual Editor-published RollingBall pixels/gameplay and the newly implemented
 profiles remain unqualified until the next end-to-end run completes.
+
+## Sky, local shadows and authored fonts (2026-10-02)
+
+The subsequent integrated source group adds five exact built-in sky modes,
+RGBA16F sky texture uploads, bounded standalone point/spot shadows alongside the
+directional map, and project-authored FreeType bitmap-font cooking with explicit
+license notices and preactivation font binding. Desktop shader behavior is
+preserved. All 35 raster recipes plus the canonical compute recipe cook; the
+sample's production catalog contains 33 artifacts, 23 material variants, nine
+pipeline passes and one compute kernel. Editor and native-Jolt Browser Release
+builds pass with zero warnings/errors. Visual acceptance of these new profiles
+remains open; this source progress does not change the 45/110 checked count.
+
+Published commit `766b5e87468001be3e41bdd165696cc9048fbb54` passes the complete
+Linux browser job in
+[run 36977206462](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36977206462).
+The real Windows Editor CLI now passes its dependencies and game compilation,
+then reaches canonical world cooking. The new physics audit rejected the
+sample's compatible all-ones mask; the corrected exact effective-mask comparison
+and named existing friction mapping subsequently pass the unchanged canonical
+world through the compiled Editor's real cook and content packager.
+
+An unmodified native server-generated base world also passes the real compiled
+Editor shared-package path and the browser identity validator, preserving all
+1,406 world bytes. The [publisher evidence](../rendering/browser-project-publishing.md#native-shared-package-positive-publication)
+records hashes and boundaries. Windows full publication and rendered RollingBall
+remain end-to-end acceptance checks, while shared touch controls and remaining
+material coverage continue as code-first implementation work.

@@ -22,7 +22,7 @@ namespace XREngine.Components.Capture.Lights.Types
     [Category("Lighting")]
     [DisplayName("Point Light")]
     [Description("Emits omnidirectional light with optional shadow maps for local illumination.")]
-    public class PointLightComponent : LightComponent, IPostCookedBinaryDeserialize
+    public partial class PointLightComponent : LightComponent, IPostCookedBinaryDeserialize
     {
         public const int ShadowFaceCount = 6;
 
@@ -215,6 +215,8 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             get
             {
+                if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked && !UseShadowAtlas)
+                    return false;
                 if (!RuntimeEngine.Rendering.Settings.UsePointShadowAtlas)
                     return false;
 
@@ -238,7 +240,11 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private int CurrentShadowFaceRelevanceMask
-            => _shadowFaceRelevanceMask & LocalShadowFrustumRelevance.AllPointFacesMask;
+            // The bounded cooked cubemap receiver filters across face seams. Its
+            // six sequential producers must all refresh before it can be sampled.
+            => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked
+                ? LocalShadowFrustumRelevance.AllPointFacesMask
+                : _shadowFaceRelevanceMask & LocalShadowFrustumRelevance.AllPointFacesMask;
 
         private XRViewport CreateShadowViewport(uint resolution)
             => new(null, resolution, resolution)
@@ -269,6 +275,8 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 XRCamera cam = _shadowCameras[i];
                 _viewports[i].Camera = cam;
+                if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                    cam.RenderPipeline = _viewports[i].RenderPipeline!;
 
                 var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
                 if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
@@ -436,6 +444,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private PointShadowRenderPlan CreatePointShadowRenderPlan()
         {
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                ValidateCookedShadowConfiguration();
             EPointShadowRenderMode requestedMode = _shadowRenderMode;
             if (UsesPointShadowAtlasForCurrentEncoding)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.AtlasUsesSequentialTiles);
@@ -812,6 +822,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnComponentActivated()
         {
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked && CastsShadows)
+                ValidateCookedShadowConfiguration();
             base.OnComponentActivated();
             if (CastsShadows)
                 EnsureShadowResources();
@@ -1215,6 +1227,14 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
         {
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            {
+                // Source-free programs expose these providers through their cooked
+                // ABI, so GLSL source reflection cannot decide their presence.
+                program.Uniform("LightPos", Transform.RenderTranslation);
+                program.Uniform("FarPlaneDist", _influenceVolume.Radius);
+                return;
+            }
             ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
 
             // The shadow pass binds whatever program the mesh's material owns. Most material
@@ -1289,6 +1309,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                return CreateCookedShadowMaterial(width, height);
             uint cubeExtent = Math.Max(width, height);
             ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
             ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(selection.Format.StorageFormat);

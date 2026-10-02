@@ -26,9 +26,8 @@ internal static class BrowserPhysicsCapabilityAudit
                 Require(!body.SendSleepNotifies, nameof(body.SendSleepNotifies));
                 Require(body.DominanceGroup == 0, nameof(body.DominanceGroup));
                 Require(body.PhysxOwnerClient == 0, nameof(body.PhysxOwnerClient));
-                Require(body.CollisionGroup < 32, nameof(body.CollisionGroup));
-                Require(body.GroupsMask.Word1 == 0 && body.GroupsMask.Word2 == 0 && body.GroupsMask.Word3 == 0,
-                    nameof(body.GroupsMask));
+                Require(body.CollisionGroup < 16, nameof(body.CollisionGroup));
+                Require(HasEquivalentBrowserGroupMask(body.GroupsMask), nameof(body.GroupsMask));
                 Require((body.BodyFlags & ~(PhysicsRigidBodyFlags.Kinematic | PhysicsRigidBodyFlags.EnableCcd)) == 0,
                     nameof(body.BodyFlags));
                 Require(body.MassSpaceInertiaTensor == Vector3.One, nameof(body.MassSpaceInertiaTensor));
@@ -43,22 +42,22 @@ internal static class BrowserPhysicsCapabilityAudit
                 Require(body.SleepThreshold == 0.005f, nameof(body.SleepThreshold));
                 Require(body.ContactReportThreshold == 0.0f, nameof(body.ContactReportThreshold));
                 Require(body.WakeCounter == 0.1f, nameof(body.WakeCounter));
-                InspectShapes(body.Geometry, body.ColliderShapes, body.MaterialDefinition, body.Material, Require);
+                InspectShapes(body.Geometry, body.ColliderShapes, body.MaterialDefinition, body.Material, Require, ReportMapping);
                 break;
             case StaticRigidBodyComponent staticBody:
                 Require(staticBody.SimulationEnabled, nameof(staticBody.SimulationEnabled));
                 Require(!staticBody.SendSleepNotifies, nameof(staticBody.SendSleepNotifies));
                 Require(staticBody.DominanceGroup == 0, nameof(staticBody.DominanceGroup));
                 Require(staticBody.PhysxOwnerClient == 0, nameof(staticBody.PhysxOwnerClient));
-                Require(staticBody.CollisionGroup < 32, nameof(staticBody.CollisionGroup));
-                Require(staticBody.GroupsMask.Word1 == 0 && staticBody.GroupsMask.Word2 == 0 && staticBody.GroupsMask.Word3 == 0,
-                    nameof(staticBody.GroupsMask));
+                Require(staticBody.CollisionGroup < 16, nameof(staticBody.CollisionGroup));
+                Require(HasEquivalentBrowserGroupMask(staticBody.GroupsMask), nameof(staticBody.GroupsMask));
                 Require(!staticBody.AutoGenerateConvexCollidersFromSiblingModel,
                     nameof(staticBody.AutoGenerateConvexCollidersFromSiblingModel) + ": bake collision geometry before publishing");
-                InspectShapes(staticBody.Geometry, staticBody.ColliderShapes, staticBody.MaterialDefinition, staticBody.Material, Require);
+                InspectShapes(staticBody.Geometry, staticBody.ColliderShapes, staticBody.MaterialDefinition, staticBody.Material, Require, ReportMapping);
                 break;
             case CharacterControllerComponent controller:
                 Require(controller.MaterialDefinition is null, nameof(controller.MaterialDefinition));
+                Require(HasBrowserCollisionLayer(controller.CollisionLayerMask.Value), nameof(controller.CollisionLayerMask));
                 break;
         }
 
@@ -67,10 +66,30 @@ internal static class BrowserPhysicsCapabilityAudit
             if (!supported)
                 throw new NotSupportedException($"BrowserCook.PhysicsFeatureUnsupported: '{path}' component '{component.GetType().FullName}', feature '{feature}' is not preserved by the browser Jolt adapter.");
         }
+
+        void ReportMapping(string feature)
+            => Debug.LogWarning($"BrowserCook.PhysicsMaterialMapping: '{path}' component '{component.GetType().FullName}', '{feature}' uses Jolt's existing single dynamic-friction coefficient. The separate authored static coefficient is retained but has no separate Jolt solver parameter.");
+    }
+
+    private static bool HasBrowserCollisionLayer(int mask)
+        => mask == 0 || (mask & ushort.MaxValue) != 0;
+
+    private static bool HasEquivalentBrowserGroupMask(PhysicsGroupsMask mask)
+    {
+        // The pinned 32-bit Jolt object layer packs sixteen group bits and sixteen
+        // mask bits. PhysX packs four ushort words into its 64-bit filter mask.
+        // Compare their effective masks over every admitted group, including each
+        // backend's empty-mask sentinel, rather than rejecting neutral high words.
+        ulong nativeMask = (ushort)mask.Word0 | ((ulong)(ushort)mask.Word1 << 16)
+            | ((ulong)(ushort)mask.Word2 << 32) | ((ulong)(ushort)mask.Word3 << 48);
+        ushort nativeLow = nativeMask == 0 ? ushort.MaxValue : (ushort)nativeMask;
+        ushort browserLow = mask.Word0 == 0 ? ushort.MaxValue : (ushort)mask.Word0;
+        return nativeLow == browserLow;
     }
 
     private static void InspectShapes(IPhysicsGeometry? fallback, IReadOnlyList<PhysicsColliderShape> shapes,
-        PhysicsMaterialDefinition? material, AbstractPhysicsMaterial? runtimeMaterial, Action<bool, string> require)
+        PhysicsMaterialDefinition? material, AbstractPhysicsMaterial? runtimeMaterial,
+        Action<bool, string> require, Action<string> reportMapping)
     {
         // Native material objects belong to a desktop backend; the neutral definition
         // is the portable input. Do not publish a pointer-bearing backend object.
@@ -83,9 +102,8 @@ internal static class BrowserPhysicsCapabilityAudit
                     effectiveMaterial = shape.Material;
                     break;
                 }
-        if (effectiveMaterial is not null)
-            require(effectiveMaterial.StaticFriction == effectiveMaterial.DynamicFriction,
-                "MaterialDefinition.StaticFriction: separate static/dynamic friction");
+        if (effectiveMaterial is not null && effectiveMaterial.StaticFriction != effectiveMaterial.DynamicFriction)
+            reportMapping("MaterialDefinition.StaticFriction");
 
         bool hasGeometry = false;
         for (int index = 0; index < shapes.Count; index++)
@@ -98,6 +116,9 @@ internal static class BrowserPhysicsCapabilityAudit
             if (effectiveMaterial is not null)
             {
                 PhysicsMaterialDefinition? shapeMaterial = shape.Material ?? material;
+                if (shape.Material is { } authored && !ReferenceEquals(authored, effectiveMaterial)
+                    && authored.StaticFriction != authored.DynamicFriction)
+                    reportMapping($"ColliderShapes[{index}].Material.StaticFriction");
                 // A null per-shape definition without a body definition selects
                 // PhysX's default material; Jolt instead uses one body-wide material.
                 require(MatchesBodyMaterial(shapeMaterial, effectiveMaterial),
@@ -113,8 +134,7 @@ internal static class BrowserPhysicsCapabilityAudit
     }
 
     private static bool MatchesBodyMaterial(PhysicsMaterialDefinition? authored, PhysicsMaterialDefinition effective)
-        => (authored?.StaticFriction ?? 0.5f) == effective.DynamicFriction &&
-            (authored?.DynamicFriction ?? 0.5f) == effective.DynamicFriction &&
+        => (authored?.DynamicFriction ?? 0.5f) == effective.DynamicFriction &&
             (authored?.Restitution ?? 0.1f) == effective.Restitution &&
             (authored?.Damping ?? 0.0f) == effective.Damping;
 

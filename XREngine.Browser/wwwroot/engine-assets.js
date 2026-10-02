@@ -88,7 +88,9 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'OpaqueShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle', 'UIQuadBatched', 'UITextBatchedBitmap'].includes(variant.semantic)
+                || !['StandardLitColor', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
+                    'UIQuadBatched', 'UITextBatchedBitmap', 'SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral',
+                    'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
                 || !(variant.semanticVersion === 1 || variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2)
                 || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
@@ -96,14 +98,28 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2
                 && !(variant.pass === 'forward-coverage' && variant.vertexProfile === 'static-position-normal-v1'
-                    && ['linear-hdr-v1', 'linear-hdr-directional-shadow-v1'].includes(variant.outputProfile)
+                    && ['linear-hdr-v1', 'linear-hdr-directional-shadow-v1', 'linear-hdr-local-shadows-v1'].includes(variant.outputProfile)
                     || variant.pass === 'depth-normal' && variant.vertexProfile === 'static-position-normal-v1'
                     && variant.outputProfile === 'normal-rgba16f-v1'
                     || variant.pass === 'depth' && variant.vertexProfile === 'static-position-v1'
-                    && variant.outputProfile === 'depth-normal-v1'))
+                    && variant.outputProfile === 'depth-normal-v1'
+                    || variant.pass === 'point-shadow-depth' && variant.vertexProfile === 'static-position-v1'
+                    && variant.outputProfile === 'radial-r16f-v1'
+                    || variant.pass === 'spot-shadow-depth' && variant.vertexProfile === 'static-position-v1'
+                    && variant.outputProfile === 'projected-r16f-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.semantic === 'OpaqueShadowDepth' && (variant.pass !== 'depth'
                 || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'depth-normal-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'OpaquePointShadowDepth' && (variant.pass !== 'point-shadow-depth'
+                || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'radial-r16f-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'OpaqueSpotShadowDepth' && (variant.pass !== 'spot-shadow-depth'
+                || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'projected-r16f-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (['SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral', 'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
+                && (variant.pass !== 'background' || variant.vertexProfile !== 'fullscreen-sky-v1'
+                    || variant.outputProfile !== 'linear-hdr-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             const debugProfiles = { DebugPoint: 'instanced-debug-point-v1', DebugLine: 'instanced-debug-line-v1', DebugTriangle: 'instanced-debug-triangle-v1' };
             if (debugProfiles[variant.semantic] && (variant.pass !== 'debug-overlay'

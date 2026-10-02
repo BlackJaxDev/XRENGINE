@@ -54,6 +54,10 @@ public static class ShadowCasterVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 && kind == EPointShadowMaterialKind.None)
+            return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.PointShadowDepth);
+
         List<XRShader> shaders = [];
         if (kind == EPointShadowMaterialKind.GeometryShader)
         {

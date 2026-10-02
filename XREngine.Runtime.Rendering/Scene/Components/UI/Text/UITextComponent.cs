@@ -162,6 +162,14 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _font, value);
         }
 
+        private string? _publishedFontAssetPath;
+        /// <summary>Portable cooked font identity set by the browser publisher and resolved before UI activation.</summary>
+        public string? PublishedFontAssetPath
+        {
+            get => _publishedFontAssetPath;
+            set => SetField(ref _publishedFontAssetPath, value);
+        }
+
         private bool _animatableTransforms = false;
         /// <summary>
         /// When true, per-glyph adjustments from <see cref="GlyphRelativeTransforms"/> are applied during buffer writes.

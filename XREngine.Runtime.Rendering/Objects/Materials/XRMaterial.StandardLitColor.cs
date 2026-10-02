@@ -10,6 +10,23 @@ public partial class XRMaterial
 {
     private XRMaterial? _standardLitColorSourceMaterial;
     private EStandardLitColorAuxiliaryPass _standardLitColorAuxiliaryPass;
+    private XRMaterial? _standardLitSpotShadowVariant;
+
+    /// <summary>Owns the projected color-depth replay separately from depth-only replay.</summary>
+    internal XRMaterial GetStandardLitSpotShadowVariant()
+    {
+        if (_standardLitSpotShadowVariant is not null) return _standardLitSpotShadowVariant;
+        XRMaterial variant = Rendering.Shaders.StandardLitColorVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth)
+            ?? throw new NotSupportedException("StandardLitColor.SpotShadowUnsupported: an exact V2 coverage surface is required.");
+        SetField(ref _standardLitSpotShadowVariant, variant, publishNotifications: false);
+        return variant;
+    }
+
+    private void DestroyStandardLitSpotShadowVariant()
+    {
+        _standardLitSpotShadowVariant?.Destroy();
+        SetField(ref _standardLitSpotShadowVariant, null, publishNotifications: false);
+    }
 
     /// <summary>The live authored surface behind a lazily owned auxiliary material.</summary>
     [Browsable(false), YamlIgnore]

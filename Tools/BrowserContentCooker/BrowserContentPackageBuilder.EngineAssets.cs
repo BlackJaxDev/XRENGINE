@@ -106,7 +106,8 @@ public static partial class BrowserContentPackageBuilder
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
                 string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth",
-                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UITextBatchedBitmap");
+                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UITextBatchedBitmap", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
+                    "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
@@ -114,13 +115,25 @@ public static partial class BrowserContentPackageBuilder
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
                 if (semantic == "StandardLitColor" && semanticVersion == 2)
                     Require(pass == "forward-coverage" && vertexProfile == "static-position-normal-v1" &&
-                            outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" ||
+                            outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||
                         pass == "depth-normal" && vertexProfile == "static-position-normal-v1" && outputProfile == "normal-rgba16f-v1" ||
-                        pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1",
+                        pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1" ||
+                        pass == "point-shadow-depth" && vertexProfile == "static-position-v1" && outputProfile == "radial-r16f-v1" ||
+                        pass == "spot-shadow-depth" && vertexProfile == "static-position-v1" && outputProfile == "projected-r16f-v1",
                         "Lit-color coverage requires its exact color, normal, or depth profile.");
                 if (semantic == "OpaqueShadowDepth")
                     Require(pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1",
                         "Opaque shadow depth requires its exact pass and profiles.");
+                if (semantic == "OpaquePointShadowDepth")
+                    Require(pass == "point-shadow-depth" && vertexProfile == "static-position-v1" && outputProfile == "radial-r16f-v1",
+                        "Point shadow depth requires its exact radial color pass and profiles.");
+                if (semantic == "OpaqueSpotShadowDepth")
+                    Require(pass == "spot-shadow-depth" && vertexProfile == "static-position-v1" && outputProfile == "projected-r16f-v1",
+                        "Spot shadow depth requires its exact projected color pass and profiles.");
+                if (semantic is "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
+                    "SkyboxCubemap" or "SkyboxDynamicProcedural")
+                    Require(pass == "background" && vertexProfile == "fullscreen-sky-v1" && outputProfile == "linear-hdr-v1",
+                        "Skybox requires its exact HDR background pass and profiles.");
                 string? debugProfile = semantic switch
                 {
                     "DebugPoint" => "instanced-debug-point-v1",
@@ -155,6 +168,14 @@ public static partial class BrowserContentPackageBuilder
                     Members(entries, "vertex");
                     Require(entries.GetProperty("vertex").GetString() == "depthVertex",
                         "Opaque shadow depth requires a vertex-only depth entry point.");
+                }
+                if (semantic is "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or "SkyboxGradient" or "SkyboxEquirectangular" or
+                    "SkyboxOctahedral" or "SkyboxCubemap" or "SkyboxDynamicProcedural")
+                {
+                    JsonElement entries = descriptor.GetProperty("entryPoints");
+                    Members(entries, "vertex", "fragment");
+                    Require(entries.TryGetProperty("vertex", out _) && entries.TryGetProperty("fragment", out _),
+                        "Sky and local shadow variants require a vertex and fragment stage.");
                 }
                 Require(descriptor.TryGetProperty("materialVariant", out JsonElement declaration),
                     "Material variant is absent from its hash-owned shader descriptor.");

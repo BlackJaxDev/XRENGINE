@@ -18,7 +18,7 @@ namespace XREngine.Components.Capture.Lights.Types
     /// Shared runtime state for all scene lights, including dynamic-world registration,
     /// preview-volume rendering, shadow-map resources, and shader uniform publication.
     /// </summary>
-    public abstract class LightComponent : XRComponent, IRenderable
+    public abstract partial class LightComponent : XRComponent, IRenderable
     {
         /// <summary>
         /// Maximum supported sample count for Vogel-disk soft shadows.
@@ -203,6 +203,7 @@ namespace XREngine.Components.Capture.Lights.Types
                         UpdateLightMatrix(Transform.RenderMatrix);
                     break;
                 case nameof(ShadowMap):
+                    ReleaseCookedLocalShadowResources(prev as XRMaterialFrameBuffer);
                     if (prev is XRMaterialFrameBuffer previousShadowMap && previousShadowMap.Material is not null)
                         previousShadowMap.Material.SettingShadowUniforms -= SetShadowMapUniforms;
 
@@ -867,6 +868,12 @@ namespace XREngine.Components.Capture.Lights.Types
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
                 (!IsActiveInHierarchy || !CastsShadows))
                 return;
+
+            if (ShadowMap is null && UsesCookedLocalShadowResources)
+            {
+                CreateCookedLocalShadowResources(width, height);
+                return;
+            }
 
             if (ShadowMap is null)
                 ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(width, height))

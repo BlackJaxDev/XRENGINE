@@ -17,6 +17,21 @@ internal static partial class ProjectBuilder
 
         public IReadOnlyDictionary<string, (string TypeName, string Source, string[] Dependencies)> Entries => _entries;
 
+        /// <summary>Declares a publisher-generated standalone asset as a dependency of a cooked parent.</summary>
+        public void AddCookedLeaf(string parentPath, string catalogPath, Type assetType, string sourceName)
+        {
+            if (!_entries.TryGetValue(parentPath, out var parent) || _entries.ContainsKey(catalogPath)
+                || _entries.Count >= 4096 || parent.Dependencies.Length >= 64
+                || !File.Exists(Path.Combine(sourceDirectory, sourceName)))
+                throw new InvalidDataException($"BrowserCook.GeneratedDependencyInvalid: '{catalogPath}'.");
+            string typeName = assetType.AssemblyQualifiedName
+                ?? throw new InvalidOperationException($"BrowserCook.GeneratedDependencyTypeInvalid: '{catalogPath}'.");
+            _entries.Add(catalogPath, (typeName, sourceName, []));
+            _assetTypes.Add(catalogPath, assetType);
+            _entries[parentPath] = (parent.TypeName, parent.Source,
+                [.. parent.Dependencies.Append(catalogPath).Order(StringComparer.Ordinal)]);
+        }
+
         public string Cook(XRAsset asset, string catalogPath, string sourceName)
         {
             cancellationToken.ThrowIfCancellationRequested();

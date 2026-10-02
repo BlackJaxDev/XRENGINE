@@ -59,11 +59,13 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
         if (_handle != 0 && !_invalidated && _width == Data.Width && _height == Data.Height &&
             _samples == Data.MultiSampleCount && _mipCount == mips.Length && _format == Data.SizedInternalFormat)
             return;
-        if (_handle != 0) Destroy();
+        if (_handle != 0 && Renderer.IsRecordingEngineFrame && _lastRecordedFrame == Renderer.EngineFrameSequence)
+            throw Unsupported("InFrameMutation", "texture storage cannot change after a dependent pass was recorded");
 
         bool byteColor = format is "rgba8unorm" or "rgba8unorm-srgb";
+        bool halfColor = format == "rgba16float";
         bool redCoverage = format == "r8unorm";
-        bool color = byteColor || format == "rgba16float";
+        bool color = byteColor || format is "rgba16float" or "r16float";
         BrowserTextureUsage usage = BrowserTextureUsage.TextureBinding;
         if (!redCoverage)
             usage |= BrowserTextureUsage.RenderAttachment;
@@ -82,11 +84,12 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
                 throw Unsupported("Create", "the authored mip extents do not form a complete 2D chain");
             if (level.Data is not null)
             {
-                if (Data.MultiSampleCount != 1 || level.PixelType != EPixelType.UnsignedByte ||
-                    !(byteColor && level.PixelFormat == EPixelFormat.Rgba ||
-                      redCoverage && level.PixelFormat == EPixelFormat.Red))
-                    throw Unsupported("Upload", "only single-sample, tightly packed RGBA8 or R8 mip bytes can be uploaded");
-                int length = checked((int)((long)level.Width * level.Height * (redCoverage ? 1 : 4)));
+                if (Data.MultiSampleCount != 1 ||
+                    !(byteColor && level.PixelFormat == EPixelFormat.Rgba && level.PixelType == EPixelType.UnsignedByte ||
+                      redCoverage && level.PixelFormat == EPixelFormat.Red && level.PixelType == EPixelType.UnsignedByte ||
+                      halfColor && level.PixelFormat == EPixelFormat.Rgba && level.PixelType == EPixelType.HalfFloat))
+                    throw Unsupported("Upload", "only single-sample, tightly packed RGBA8, RGBA16F or R8 mip bytes can be uploaded");
+                int length = checked((int)((long)level.Width * level.Height * (redCoverage ? 1 : halfColor ? 8 : 4)));
                 if (level.Data.Address == VoidPtr.Zero || level.Data.Length != length)
                     throw Unsupported("Upload", "mip data has a missing or mismatched source length");
             }
@@ -94,6 +97,15 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 
         int handle = Renderer.CreateTexture(new BrowserTextureDescription(checked((int)Data.Width), checked((int)Data.Height),
             format, usage, mips.Length, checked((int)Data.MultiSampleCount), Data.Name ?? "Engine texture"));
+        // Validate and populate a replacement before retiring the active allocation.
+        // A failed HDR upload must not invalidate existing views and draw bindings.
+        try { UploadMipmaps(handle, Data.Width, Data.Height, Data.MultiSampleCount, Data.SizedInternalFormat, mips); }
+        catch
+        {
+            Renderer.RetireEngineResourceAfterFrame(handle);
+            throw;
+        }
+        if (_handle != 0) Destroy();
         SetField(ref _handle, handle);
         SetField(ref _width, Data.Width);
         SetField(ref _height, Data.Height);
@@ -101,8 +113,6 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
         SetField(ref _mipCount, mips.Length);
         SetField(ref _format, Data.SizedInternalFormat);
         _invalidated = false;
-        try { UploadMipmaps(); }
-        catch { Destroy(); throw; }
     }
 
     public int GetRenderView(int mip, int layer)
@@ -121,12 +131,12 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 
     public void PushData()
     {
-        int previous = _handle;
-        Generate();
         if (Renderer.IsRecordingEngineFrame && _lastRecordedFrame == Renderer.EngineFrameSequence)
             throw new NotSupportedException("WebGPU.Texture.InFrameMutationUnsupported: texture bytes cannot change after a dependent pass was recorded; publish updates before the next engine frame.");
+        int previous = _handle;
+        Generate();
         // Storage creation uploads all authored levels before publishing the new generation.
-        if (_handle == previous) UploadMipmaps();
+        if (_handle == previous) UploadMipmaps(_handle, _width, _height, _samples, _format, Data.Mipmaps);
     }
 
     internal void MarkRecorded()
@@ -134,26 +144,28 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 
     internal bool WasRecordedInFrame(uint frameSequence) => _lastRecordedFrame == frameSequence;
 
-    private void UploadMipmaps()
+    private void UploadMipmaps(int handle, uint width, uint height, uint samples,
+        ESizedInternalFormat format, Mipmap2D[] mips)
     {
-        Mipmap2D[] mips = Data.Mipmaps;
-        bool redCoverage = _format == ESizedInternalFormat.R8;
-        bool byteColor = _format is ESizedInternalFormat.Rgba8 or ESizedInternalFormat.Srgb8Alpha8;
+        bool redCoverage = format == ESizedInternalFormat.R8;
+        bool byteColor = format is ESizedInternalFormat.Rgba8 or ESizedInternalFormat.Srgb8Alpha8;
+        bool halfColor = format == ESizedInternalFormat.Rgba16f;
         for (int mip = 0; mip < mips.Length; mip++)
         {
             Mipmap2D level = mips[mip];
-            if (level.Width != Math.Max(1u, _width >> mip) || level.Height != Math.Max(1u, _height >> mip))
+            if (level.Width != Math.Max(1u, width >> mip) || level.Height != Math.Max(1u, height >> mip))
                 throw Unsupported("Upload", "the authored mip extents do not form a complete 2D chain");
             DataSource? source = level.Data;
             if (source is null) continue;
-            if (_samples != 1 || level.PixelType != EPixelType.UnsignedByte ||
-                !(byteColor && level.PixelFormat == EPixelFormat.Rgba ||
-                  redCoverage && level.PixelFormat == EPixelFormat.Red))
-                throw Unsupported("Upload", "only single-sample, tightly packed RGBA8 or R8 mip bytes can be uploaded");
-            int length = checked((int)((long)level.Width * level.Height * (redCoverage ? 1 : 4)));
+            if (samples != 1 ||
+                !(byteColor && level.PixelFormat == EPixelFormat.Rgba && level.PixelType == EPixelType.UnsignedByte ||
+                  redCoverage && level.PixelFormat == EPixelFormat.Red && level.PixelType == EPixelType.UnsignedByte ||
+                  halfColor && level.PixelFormat == EPixelFormat.Rgba && level.PixelType == EPixelType.HalfFloat))
+                throw Unsupported("Upload", "only single-sample, tightly packed RGBA8, RGBA16F or R8 mip bytes can be uploaded");
+            int length = checked((int)((long)level.Width * level.Height * (redCoverage ? 1 : halfColor ? 8 : 4)));
             if (source.Address == VoidPtr.Zero || source.Length != length)
                 throw Unsupported("Upload", "mip data has a missing or mismatched source length");
-            Renderer.UploadTextureMip(_handle, mip, 0, 0, checked((int)level.Width), checked((int)level.Height),
+            Renderer.UploadTextureMip(handle, mip, 0, 0, checked((int)level.Width), checked((int)level.Height),
                 new Span<byte>((void*)source.Address, length));
         }
     }
@@ -186,6 +198,7 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
         ESizedInternalFormat.Rgba8 => "rgba8unorm",
         ESizedInternalFormat.Srgb8Alpha8 => "rgba8unorm-srgb",
         ESizedInternalFormat.Rgba16f => "rgba16float",
+        ESizedInternalFormat.R16f => "r16float",
         ESizedInternalFormat.DepthComponent16 => "depth16unorm",
         ESizedInternalFormat.DepthComponent24 => "depth24plus",
         ESizedInternalFormat.DepthComponent32f => "depth32float",

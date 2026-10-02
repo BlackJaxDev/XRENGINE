@@ -26,20 +26,17 @@ public sealed partial class WebGpuRendererHost
                 throw ShadowUnsupported("the installed receiver profile supports one standalone directional shadow map");
             ValidateDirectionalShadowLight(light);
         }
-        for (int i = 0; i < world.Lights.DynamicPointLights.Count; i++)
-            RequireUnshadowedLight(world.Lights.DynamicPointLights[i]);
-        for (int i = 0; i < world.Lights.DynamicSpotLights.Count; i++)
-            RequireUnshadowedLight(world.Lights.DynamicSpotLights[i]);
-        if (count == 0) return;
+        bool local = ValidateLocalShadowProfile(world);
+        if (count == 0 && !local) return;
         EngineMaterialVariantKey depth = new(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1,
             ShaderCompileTarget.WebGPUWgsl, "depth", "static-position-v1", "depth-normal-v1");
         EngineMaterialVariantKey receiver = new(EngineMaterialSemanticIdentity.StandardLitColorV1,
-            ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", "linear-hdr-directional-shadow-v1");
+            ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
         EngineMaterialVariantKey coverageReceiver = new(EngineMaterialSemanticIdentity.StandardLitColorV2,
-            ShaderCompileTarget.WebGPUWgsl, "forward-coverage", "static-position-normal-v1", "linear-hdr-directional-shadow-v1");
-        if (_materialVariants?.TryResolve(depth, out _) != true ||
+            ShaderCompileTarget.WebGPUWgsl, "forward-coverage", "static-position-normal-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
+        if (_materialVariants is null || count > 0 && !_materialVariants.TryResolve(depth, out _) ||
             (_materialVariants.TryResolve(receiver, out _) != true && _materialVariants.TryResolve(coverageReceiver, out _) != true))
-            throw ShadowUnsupported("the package must supply both exact opaque caster and directional receiver variants");
+            throw ShadowUnsupported("the package must supply exact caster and selected local/directional receiver variants");
     }
 
     private static void ValidateDirectionalShadowLight(DirectionalLightComponent light)
@@ -135,12 +132,14 @@ public sealed partial class WebGpuRendererHost
 
     private void CommitDirectionalShadowDefaults()
     {
+        CommitLocalShadowDefaults();
         if (_defaultDirectionalShadowClearFrame == _engineFrameSequence)
             SetField(ref _defaultDirectionalShadowInitialized, true, publishNotifications: false);
     }
 
     private void DestroyDirectionalShadowDefaults()
     {
+        DestroyLocalShadowDefaults();
         _defaultDirectionalShadowOwnership?.Dispose();
         SetField(ref _defaultDirectionalShadowOwnership, null);
         SetField(ref _defaultDirectionalShadow, null);

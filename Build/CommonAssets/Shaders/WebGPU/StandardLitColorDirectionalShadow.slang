@@ -260,6 +260,10 @@ float selectedDirectionalVisibility(int index, float3 position, float3 normal, f
     return sampleDirectionalShadow(position, normal, pixel);
 }
 
+#ifdef XRE_LOCAL_SHADOWS
+#include "LocalShadowSampling.slang"
+#endif
+
 float3 directionalLight(float4 direction, float4 colorIntensity,
     float3 normal, float3 viewDirection, float3 albedo, float3 rms, float visibility)
 {
@@ -296,6 +300,12 @@ float3 spotLight(float4 positionRadius, float4 colorIntensity, float4 directionE
 #define ADD_DIRECTIONAL(N) if (lighting.lightCounts.x > N) color += directionalLight(lighting.directional##N##Direction, lighting.directional##N##ColorIntensity, normal, viewDirection, albedo, rms, selectedDirectionalVisibility(N, input.worldPosition, normal, input.position.xy));
 #define ADD_POINT(N) if (lighting.lightCounts.y > N) color += pointLight(lighting.point##N##PositionRadius, lighting.point##N##ColorIntensity, lighting.point##N##Brightness, input.worldPosition, normal, viewDirection, albedo, rms);
 #define ADD_SPOT(N) if (lighting.lightCounts.z > N) color += spotLight(lighting.spot##N##PositionRadius, lighting.spot##N##ColorIntensity, lighting.spot##N##DirectionExponent, lighting.spot##N##CutoffsBrightness, input.worldPosition, normal, viewDirection, albedo, rms);
+#ifdef XRE_LOCAL_SHADOWS
+#undef ADD_POINT
+#undef ADD_SPOT
+#define ADD_POINT(N) if (lighting.lightCounts.y > N) color += selectedPointVisibility(N, input.worldPosition, normal, input.position.xy) * pointLight(lighting.point##N##PositionRadius, lighting.point##N##ColorIntensity, lighting.point##N##Brightness, input.worldPosition, normal, viewDirection, albedo, rms);
+#define ADD_SPOT(N) if (lighting.lightCounts.z > N) color += selectedSpotVisibility(N, input.worldPosition, normal, input.position.xy) * spotLight(lighting.spot##N##PositionRadius, lighting.spot##N##ColorIntensity, lighting.spot##N##DirectionExponent, lighting.spot##N##CutoffsBrightness, input.worldPosition, normal, viewDirection, albedo, rms);
+#endif
 
 [shader("fragment")]
 float4 standardLitFragment(LitVertexOutput input) : SV_Target0

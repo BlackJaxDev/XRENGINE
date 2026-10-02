@@ -1625,6 +1625,7 @@ namespace XREngine.Rendering
             importOptions.MsdfOuterPixelPadding = importOptionsOverride.MsdfOuterPixelPadding;
             importOptions.MsdfThreadCount = importOptionsOverride.MsdfThreadCount;
             importOptions.AllowBitmapFallback = importOptionsOverride.AllowBitmapFallback;
+            importOptions.BrowserLicenseNoticePath = importOptionsOverride.BrowserLicenseNoticePath;
             return importOptions;
         }
 
@@ -1639,6 +1640,7 @@ namespace XREngine.Rendering
                 MsdfOuterPixelPadding = source.MsdfOuterPixelPadding,
                 MsdfThreadCount = source.MsdfThreadCount,
                 AllowBitmapFallback = source.AllowBitmapFallback,
+                BrowserLicenseNoticePath = source.BrowserLicenseNoticePath,
             };
 
         private static XRFontImportOptions CreateBitmapImportOptions(float drawSize)

@@ -85,6 +85,8 @@ public sealed partial class WebGpuRendererHost
         WebGpuRenderProgram api = (WebGpuRenderProgram)GetOrCreateAPIRenderObject(program)!;
         api.SetMatrix("ViewProjection", camera.ViewProjectionMatrix);
         api.SetVector4("CameraPosition", new Vector4(camera.Transform.RenderMatrix.Translation, 1));
+        api.SetMatrix("InverseViewMatrix", camera.Transform.RenderMatrix);
+        api.SetMatrix("InverseProjMatrix", camera.InverseProjectionMatrix);
     }
 
     public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)

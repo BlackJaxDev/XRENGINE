@@ -11,4 +11,11 @@ public enum EngineMaterialSemantic
     DebugTriangle = 5,
     UIQuadBatched = 6,
     UITextBatchedBitmap = 7,
+    OpaquePointShadowDepth = 8,
+    SkyboxGradient = 9,
+    SkyboxEquirectangular = 10,
+    SkyboxOctahedral = 11,
+    SkyboxCubemap = 12,
+    SkyboxDynamicProcedural = 13,
+    OpaqueSpotShadowDepth = 14,
 }

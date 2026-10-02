@@ -78,7 +78,7 @@ namespace XREngine.Components.Scene.Mesh
     [Category("Rendering")]
     [DisplayName("Skybox")]
     [Description("Renders a skybox background using equirectangular, octahedral, cubemap, or cubemap array textures.")]
-    public class SkyboxComponent : XRComponent, IRenderable
+    public partial class SkyboxComponent : XRComponent, IRenderable
     {
         private readonly record struct SkyboxBindingState(
             ESkyboxMode Mode,
@@ -1188,19 +1188,28 @@ namespace XREngine.Components.Scene.Mesh
 
         private void RebuildMaterial()
         {
-            XRShader? vertexShader = GetVertexShader();
-            XRShader? stereoVertexShader = GetStereoVertexShader();
-            XRShader? fragmentShader = _mode switch
-            {
-                ESkyboxMode.Texture => GetFragmentShaderForProjection(_projection),
-                ESkyboxMode.DynamicProcedural => GetDynamicShader(),
-                _ => GetGradientShader()
-            };
-            
-            if (vertexShader is null || stereoVertexShader is null || fragmentShader is null)
-            {
-                Debug.RenderingWarning($"SkyboxComponent: Failed to load shaders for projection {_projection}");
+            bool web = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked;
+            // Property hydration may visit projection before mode or texture. Admit
+            // the complete authored state at activation, never its transient order.
+            if (web && _mesh is null)
                 return;
+            XRShader[] shaders = [];
+            if (!web)
+            {
+                XRShader? vertexShader = GetVertexShader();
+                XRShader? stereoVertexShader = GetStereoVertexShader();
+                XRShader? fragmentShader = _mode switch
+                {
+                    ESkyboxMode.Texture => GetFragmentShaderForProjection(_projection),
+                    ESkyboxMode.DynamicProcedural => GetDynamicShader(),
+                    _ => GetGradientShader()
+                };
+                if (vertexShader is null || stereoVertexShader is null || fragmentShader is null)
+                {
+                    Debug.RenderingWarning($"SkyboxComponent: Failed to load shaders for projection {_projection}");
+                    return;
+                }
+                shaders = [vertexShader, stereoVertexShader, fragmentShader];
             }
 
             XRTexture? tex = _mode == ESkyboxMode.Texture ? (_texture ?? CreateDefaultTexture(_projection)) : null;
@@ -1222,7 +1231,7 @@ namespace XREngine.Components.Scene.Mesh
                 // Skybox uses a specialized vertex shader that outputs clip-space positions directly.
                 // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
                 ExcludeFromGpuIndirect = true,
-                WriteAlpha = false,
+                WriteAlpha = web,
                 StencilTest = new() { Enabled = ERenderParamUsage.Disabled },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 MissingTextureFallback = EMissingTextureFallback.Black,
@@ -1230,11 +1239,12 @@ namespace XREngine.Components.Scene.Mesh
 
             _material = new XRMaterial(
                 tex is not null ? [tex] : [],
-                [vertexShader, stereoVertexShader, fragmentShader])
+                shaders)
             {
                 Name = materialName,
                 RenderPass = (int)EDefaultRenderPass.Background,
                 RenderOptions = renderParams,
+                EngineSemantic = web ? GetWebGpuSemantic() : EngineMaterialSemanticIdentity.None,
             };
 
             _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: true, WritesOpaqueAlpha: true,
@@ -1291,6 +1301,14 @@ namespace XREngine.Components.Scene.Mesh
 
         private void PublishUniforms(XRRenderProgram program)
         {
+            if (_material?.EngineSemantic.IsSkybox() == true)
+            {
+                ValidateWebGpuProfile();
+                // The sky's texture slot is a semantic binding; an unrelated authored
+                // sampler alias must not leave its required cube or 2D input unbound.
+                if (_mode == ESkyboxMode.Texture)
+                    program.Sampler("Texture0", _texture!, 0);
+            }
             program.Uniform("SkyboxIntensity", _intensity);
             program.Uniform("SkyboxRotation", _rotation * MathF.PI / 180.0f);
 
