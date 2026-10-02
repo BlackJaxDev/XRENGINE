@@ -1,4 +1,7 @@
 using XREngine.Components;
+using XREngine.Components.Capture;
+using XREngine.Components.Lights;
+using XREngine.Components.Scene.Environment;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Mesh.Shapes;
 using XREngine.Components.VR;
@@ -17,10 +20,12 @@ internal static class BrowserWorldCapabilityAudit
     internal static IReadOnlyList<ShaderProgramArtifact> Inspect(XRWorld world, IShaderProgramArtifactResolver? resolver, CancellationToken cancellationToken)
     {
         Dictionary<string, ShaderProgramArtifact> artifacts = new(StringComparer.Ordinal);
+        BrowserShadowCapabilityAudit shadows = new(resolver);
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         foreach (XRScene scene in world.Scenes)
             foreach (SceneNode root in scene.RootNodes)
                 Visit(root, 0);
+        shadows.Complete();
         if (resolver is BrowserShaderArtifactSource shaderSource)
         {
             foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
@@ -55,6 +60,12 @@ internal static class BrowserWorldCapabilityAudit
             foreach (XRComponent component in node.Components)
             {
                 BrowserPhysicsCapabilityAudit.Inspect(component, path);
+                shadows.Inspect(component, path);
+                if (component is SceneCaptureComponentBase or AdvancedOffscreenTextureCaptureComponent or
+                    MirrorCaptureComponent or LightProbeGridSpawnerComponent)
+                    throw new NotSupportedException($"BrowserCook.EnvironmentCaptureUnsupported: '{path}' component '{component.GetType().FullName}' requires an explicit cooked capture and probe/IBL path.");
+                if (component is AtmosphericScatteringComponent)
+                    throw new NotSupportedException($"BrowserCook.AtmosphereUnsupported: '{path}' requires the planetary-atmosphere and aerial-perspective pass family; the procedural SkyboxComponent is a separate admitted profile.");
                 if (component is VRHeadsetComponent or VRDeviceModelComponent or VRPlayerCharacterComponent
                     or VRTrackerCollectionComponent or VRHeightScaleComponent or VRPlayerInputSet)
                     throw new NotSupportedException($"BrowserCook.XrUnsupported: '{path}' component '{component.GetType().FullName}' requires a browser XR service that is not enabled.");
@@ -73,6 +84,19 @@ internal static class BrowserWorldCapabilityAudit
                                 throw new NotSupportedException($"BrowserCook.ComputeArtifactMissing: '{path}' mesh '{mesh.Name}' requires packed-skinning in the project shader manifest.");
                             InspectMaterial(lod.Material, path, mesh.Name);
                         }
+                else if (component is SkyboxComponent sky)
+                {
+                    try { sky.ValidateWebGpuProfile(); }
+                    catch (NotSupportedException error)
+                    {
+                        throw new NotSupportedException($"BrowserCook.SkyboxUnsupported: '{path}': {error.Message}", error);
+                    }
+                    EngineMaterialVariantKey key = new(sky.GetWebGpuSemantic(), ShaderCompileTarget.WebGPUWgsl,
+                        "background", "fullscreen-sky-v1", "linear-hdr-v1");
+                    if (resolver is not BrowserShaderArtifactSource source ||
+                        !source.MaterialVariants.Any(variant => variant.Key == key))
+                        throw new NotSupportedException($"BrowserCook.SkyboxVariantMissing: '{path}' requires '{key}' in the project shader manifest.");
+                }
                 else if (component is ShapeMeshComponent shape)
                     InspectMaterial(shape.Material, path, shape.GetType().Name);
                 else if (component is UICanvasComponent canvas)
@@ -113,6 +137,7 @@ internal static class BrowserWorldCapabilityAudit
 
         void InspectMaterial(XRMaterial? material, string path, string? meshName)
         {
+            shadows.InspectMaterial(material);
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
             if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1 ||
@@ -128,7 +153,7 @@ internal static class BrowserWorldCapabilityAudit
                         variant.Key.Target == ShaderCompileTarget.WebGPUWgsl &&
                         variant.Key.Pass == (material.EngineSemantic.Version == 2 ? "forward-coverage" : "opaque-forward") &&
                         variant.Key.VertexProfile == "static-position-normal-v1" &&
-                        variant.Key.OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1"))
+                        variant.Key.OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1"))
                     throw new NotSupportedException($"BrowserCook.VariantMissing: '{path}' material '{material.Name}' requires its exact lit-color WebGPU forward variant in the project shader manifest.");
                 if (material.EngineSemantic.Version == 2 && !material.IsTransparentLike())
                 {

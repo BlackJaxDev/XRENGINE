@@ -15,6 +15,14 @@ the world. Material semantics and parameters are retained without loading
 desktop GLSL. Hash-owned `materialVariants` metadata is validated before play;
 it does not make an absent renderer variant available.
 
+The shared sky background route preserves authored gradient, solid-color,
+equirectangular, octahedral, cubemap and procedural skies in HDR before sorted
+transparency, bloom and tonemapping. Each mode needs its exact cooked material
+variant. RGBA16F environment images retain half-float data; cube arrays, live
+capture and probe/IBL lighting remain explicit exclusions. See the
+[sky background contract](../docs/architecture/rendering/webgpu-sky-background.md)
+for camera/depth conventions, shader recipes and acceptance boundaries.
+
 A rendered local player owns the same `XRViewport` used for camera and UI
 coordinates. `XRViewport.BindInputSource` accepts the externally owned browser
 snapshot source, and `BindLocalPlayer` maintains player/view ownership.
@@ -166,6 +174,14 @@ The offline packager accepts preconverted mesh/material/scene JSON and full raw
 texture mip chains. Supported device-enabled ASTC 4×4 or ETC2 RGBA8 variants can
 be selected with a matching RGBA8 fallback. Conversion, native imports, collision
 cooking and font generation stay offline; no runtime Basis transcoder is included.
+Authored screen UI bitmap fonts are rasterized with FreeType during ordinary browser
+publication and loaded as hash-verified cooked assets. A custom TTF/OTF source must
+be under the project's Assets tree, and its font import options must set
+`BrowserLicenseNoticePath` to a regular UTF-8 notice file relative to that tree.
+The project is responsible for confirming redistribution rights and supplying the
+required notice; setting this path is not a license grant. The native shared-world
+package profile still requires a self-contained world and rejects custom fonts.
+See [browser UI font cooking](../docs/developer-guides/runtime/browser-ui-fonts.md).
 The fixed material sampler is linear with clamp-to-edge addressing. Payloads use
 immutable hash URLs; the bootstrap is revalidated. Persistent browser storage is
 not required.

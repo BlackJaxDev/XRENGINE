@@ -15,6 +15,12 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity OpaqueShadowDepthV1 => new(EngineMaterialSemantic.OpaqueShadowDepth, 1);
 
+    /// <summary>Radial point-light distance with independent per-face raster depth.</summary>
+    public static EngineMaterialSemanticIdentity OpaquePointShadowDepthV1 => new(EngineMaterialSemantic.OpaquePointShadowDepth, 1);
+
+    /// <summary>Projected spot-light depth in the light's authored color storage.</summary>
+    public static EngineMaterialSemanticIdentity OpaqueSpotShadowDepthV1 => new(EngineMaterialSemantic.OpaqueSpotShadowDepth, 1);
+
     public static EngineMaterialSemanticIdentity DebugPointV1 => new(EngineMaterialSemantic.DebugPoint, 1);
 
     public static EngineMaterialSemanticIdentity DebugLineV1 => new(EngineMaterialSemantic.DebugLine, 1);
@@ -25,6 +31,17 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity UITextBatchedBitmapV1 => new(EngineMaterialSemantic.UITextBatchedBitmap, 1);
 
+    public static EngineMaterialSemanticIdentity SkyboxGradientV1 => new(EngineMaterialSemantic.SkyboxGradient, 1);
+    public static EngineMaterialSemanticIdentity SkyboxEquirectangularV1 => new(EngineMaterialSemantic.SkyboxEquirectangular, 1);
+    public static EngineMaterialSemanticIdentity SkyboxOctahedralV1 => new(EngineMaterialSemantic.SkyboxOctahedral, 1);
+    public static EngineMaterialSemanticIdentity SkyboxCubemapV1 => new(EngineMaterialSemantic.SkyboxCubemap, 1);
+    public static EngineMaterialSemanticIdentity SkyboxDynamicProceduralV1 => new(EngineMaterialSemantic.SkyboxDynamicProcedural, 1);
+
+    /// <summary>Exact built-in sky behavior with authored parameters published by SkyboxComponent.</summary>
+    public bool IsSkybox() => Version == 1 && Semantic is EngineMaterialSemantic.SkyboxGradient or
+        EngineMaterialSemantic.SkyboxEquirectangular or EngineMaterialSemantic.SkyboxOctahedral or
+        EngineMaterialSemantic.SkyboxCubemap or EngineMaterialSemantic.SkyboxDynamicProcedural;
+
     /// <summary>Rejects unknown semantics and revisions before they can select cooked code.</summary>
     public void Validate()
     {
@@ -34,9 +51,15 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
             return;
         if (Semantic == EngineMaterialSemantic.OpaqueShadowDepth && Version == 1)
             return;
+        if (Semantic == EngineMaterialSemantic.OpaquePointShadowDepth && Version == 1)
+            return;
+        if (Semantic == EngineMaterialSemantic.OpaqueSpotShadowDepth && Version == 1)
+            return;
         if (Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle && Version == 1)
             return;
         if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap && Version == 1)
+            return;
+        if (IsSkybox())
             return;
         throw new ArgumentException($"Unsupported engine material semantic '{Semantic}' version {Version}.");
     }

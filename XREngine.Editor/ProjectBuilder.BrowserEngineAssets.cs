@@ -13,7 +13,8 @@ internal static partial class ProjectBuilder
 {
     /// <summary>Cooks the authored engine world using the same registered format as desktop publishing.</summary>
     private static string CookBrowserEngineWorld(XRWorld world, string assetRoot, string sourceDirectory,
-        CancellationToken cancellationToken, out bool includesDefaultUiFont)
+        CancellationToken cancellationToken, out bool includesDefaultUiFont,
+        out IReadOnlyList<BrowserUiFontCookRequest> authoredFonts)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(sourceDirectory);
@@ -23,12 +24,17 @@ internal static partial class ProjectBuilder
             ? new BrowserShaderArtifactSource(projectDirectory, manifest) : null;
         string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
         string worldPath = "/game/" + relativeWorld;
-        includesDefaultUiFont = RequiresBrowserDefaultUiFont(world);
+        includesDefaultUiFont = PrepareBrowserUiFonts(world, assetRoot, out authoredFonts);
         if (string.Equals(worldPath, "/game/startup.asset", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Browser startup world conflicts with the cooked startup-settings identity.");
         BrowserAssetDependencyCooker dependencyCooker = new(
             assetRoot, Engine.Assets?.EngineAssetsPath, sourceDirectory, cancellationToken);
         dependencyCooker.Cook(world, worldPath, "startup-world.bin");
+        foreach (BrowserUiFontCookRequest font in authoredFonts)
+        {
+            CookBrowserUiFont(font, assetRoot, sourceDirectory, cancellationToken);
+            dependencyCooker.AddCookedLeaf(worldPath, font.CatalogPath, typeof(FontGlyphSet), font.SourceName);
+        }
         IReadOnlyList<ShaderProgramArtifact> shaderArtifacts;
         // Inspect what the browser will actually hydrate. A registered game serializer may
         // intentionally project desktop shader data into explicit cooked material semantics.
@@ -42,6 +48,7 @@ internal static partial class ProjectBuilder
                 File.ReadAllBytes(Path.Combine(sourceDirectory, "startup-world.bin")), typeof(XRWorld)) as XRWorld
                 ?? throw new InvalidDataException("The browser startup payload did not hydrate an XRWorld.");
             using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
+            VerifyPublishedUiFontReferences(world, runtimeWorld);
             shaderArtifacts = BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver, cancellationToken);
         }
         cancellationToken.ThrowIfCancellationRequested();

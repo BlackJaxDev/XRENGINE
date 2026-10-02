@@ -133,7 +133,8 @@ parallel engine material system.
 | `Scene3D/SkyboxCubemapArray.fs` | S, optional bounded variant | Requires explicit cube-array texture/view support and admission against device limits. Exclude until that profile exists. |
 | `Scene3D/BRDF.fs`; `IrradianceConvolution.fs`; `IrradianceConvolutionCubemapOcta.fs`; `IrradianceConvolutionEquirect.fs`; `IrradianceConvolutionEquirectOcta.fs`; `IrradianceConvolutionOcta.fs`; `Prefilter.fs`; `PrefilterCubemapOcta.fs`; `PrefilterEquirect.fs`; `PrefilterEquirectOcta.fs`; `PrefilterOcta.fs`; `CubemapToOctahedron.fs`; `Equirect.fs`; `Cubemap.vs`; `Cubemap.fs`; `OctahedralEnv.fs` | S, offline first | Prefer cooked engine environment/BRDF products for the initial web runtime. These become runtime shader requirements only if live probe/environment generation is admitted. Check diffuse/specular environment energy and roughness mip selection with known materials. |
 | `Snippets/OctahedralMapping.glsl`; `OctahedralBorderCopy.glsl`; `DDGIEnvironmentCapture.glsl` | S, bounded utility only | Preserve direction and seam conventions required by the admitted sky/environment path; utility reuse does not enable DDGI. |
-| `Scene3D/SkyboxDynamic.fs`; `Scene3D/Atmosphere/*`; `Scene3D/VolumetricFog/*` | D initially | Exclude dynamic atmosphere and volumetric chains explicitly rather than allocating neutral intermediate images. |
+| `Scene3D/SkyboxDynamic.fs` | S, bounded background | The complete procedural sky has an additive Slang counterpart using the shared sky component, parameters and HDR background pass. See the [sky background contract](../../../architecture/rendering/webgpu-sky-background.md); GPU known-value acceptance remains separate. |
+| `Scene3D/Atmosphere/*`; `Scene3D/VolumetricFog/*` | D initially | Exclude planetary atmosphere, aerial perspective and volumetric chains explicitly rather than allocating neutral intermediate images. |
 
 ### HDR, tonemapping, and bounded post processing
 

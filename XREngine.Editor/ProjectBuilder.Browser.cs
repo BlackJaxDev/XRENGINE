@@ -16,6 +16,7 @@ internal static partial class ProjectBuilder
         private string? _siteRoot;
         private string? _recipePath;
         private bool _includesDefaultUiFont;
+        private IReadOnlyList<BrowserUiFontCookRequest> _authoredFonts = [];
         private BrowserSharedWorldPackage? _sharedWorldPackage;
 
         private string SourceRoot => Path.Combine(_stageRoot, "content-source");
@@ -44,14 +45,14 @@ internal static partial class ProjectBuilder
                 {
                     XRWorld world = LoadStartupWorld(context);
                     _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
-                        Cancellation, out _includesDefaultUiFont);
+                        Cancellation, out _includesDefaultUiFont, out _authoredFonts);
                 }
                 else
                 {
                     string worldPath = ResolveBrowserStartupWorldPath(context);
                     _sharedWorldPackage = PrepareBrowserSharedWorldPackage(context.Project, worldPath, context.AssetsDirectory, Cancellation);
                     using XREngine.Data.Core.ObjectCachePublicationScope publication = XREngine.Data.Core.XRObjectBase.BeginIndependentObjectCachePublication();
-                    using StringReader reader = new(new System.Text.UTF8Encoding(false, true).GetString(_sharedWorldPackage.NativeWorldBytes));
+                    using StringReader reader = new(DecodeSharedNativeWorld(_sharedWorldPackage.NativeWorldBytes));
                     using var sourceContext = AssetDeserializationContext.Push(worldPath);
                     XRWorld world = AssetManager.Deserializer.Deserialize<XRWorld>(reader)
                         ?? throw new InvalidDataException("BrowserCook.SharedPackageWorldInvalid: retained native bytes did not hydrate an XRWorld.");
@@ -60,7 +61,7 @@ internal static partial class ProjectBuilder
                     world.FilePath = worldPath;
                     using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
                     _recipePath = CookBrowserEngineWorld(world, context.AssetsDirectory, SourceRoot,
-                        Cancellation, out _includesDefaultUiFont);
+                        Cancellation, out _includesDefaultUiFont, out _authoredFonts);
                     RequireSharedBrowserCook(_sharedWorldPackage, _recipePath);
                 }
             }
@@ -110,6 +111,7 @@ internal static partial class ProjectBuilder
                 InstallPlayerShell(site);
                 if (_includesDefaultUiFont)
                     InstallDefaultUiFontLicense(site);
+                InstallAuthoredFontLicenses(site, context.AssetsDirectory, _authoredFonts);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     schema = 2,
@@ -182,6 +184,32 @@ internal static partial class ProjectBuilder
             File.Copy(source, destination, overwrite: true);
         }
 
+        private static void InstallAuthoredFontLicenses(string site, string assetRoot,
+            IReadOnlyList<BrowserUiFontCookRequest> fonts)
+        {
+            if (fonts.Count == 0)
+                return;
+            string directory = Path.Combine(site, "licenses");
+            DirectoryInfo output = new(directory);
+            if (output.Exists && (output.LinkTarget is not null ||
+                (output.Attributes & FileAttributes.ReparsePoint) != 0))
+                throw new NotSupportedException("BrowserCook.FontNoticeOutputLinked: license directory cannot be linked.");
+            Directory.CreateDirectory(directory);
+            foreach (BrowserUiFontCookRequest font in fonts)
+            {
+                RequireBrowserRegularFile(font.NoticePath, assetRoot, 256 * 1024, "FontNotice");
+                byte[] notice = File.ReadAllBytes(font.NoticePath);
+                if (Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(notice)) != font.NoticeHash)
+                    throw new InvalidDataException("BrowserCook.FontNoticeChanged: notice changed during publication.");
+                string destination = Path.Combine(directory, font.NoticeOutputName);
+                FileInfo existing = new(destination);
+                if (existing.Exists && (existing.LinkTarget is not null ||
+                    (existing.Attributes & FileAttributes.ReparsePoint) != 0))
+                    throw new NotSupportedException("BrowserCook.FontNoticeOutputLinked: license output cannot be linked.");
+                File.WriteAllBytes(destination, notice);
+            }
+        }
+
         internal void Commit()
         {
             Cancellation.ThrowIfCancellationRequested();
@@ -189,7 +217,8 @@ internal static partial class ProjectBuilder
             if (!File.Exists(Path.Combine(site, "index.html")) ||
                 !File.Exists(Path.Combine(site, "browser-publish.json")) ||
                 !File.Exists(Path.Combine(site, "content", "manifest.json")) ||
-                (_includesDefaultUiFont && !File.Exists(Path.Combine(site, "licenses", "Roboto-LICENSE.txt"))))
+                (_includesDefaultUiFont && !File.Exists(Path.Combine(site, "licenses", "Roboto-LICENSE.txt"))) ||
+                _authoredFonts.Any(font => !File.Exists(Path.Combine(site, "licenses", font.NoticeOutputName))))
             {
                 Cleanup();
                 throw new InvalidOperationException("Browser output is incomplete; keeping the previous build.");

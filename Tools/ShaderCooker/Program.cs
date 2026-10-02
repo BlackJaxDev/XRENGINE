@@ -14,7 +14,7 @@ internal static class Program
 {
     private const int MaxSourceBytes = 1024 * 1024;
     private const int MaxJsonBytes = 64 * 1024;
-    private const int MaxArtifacts = 24;
+    private const int MaxArtifacts = 64;
     private const string Coordinates = BrowserShaderAbi.CoordinateConvention;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions JsonOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, WriteIndented = false };
@@ -60,7 +60,7 @@ internal static class Program
             if (recipes.Count == 0)
                 recipes.Add(Path.Combine(repository, "XREngine.Runtime.Rendering.WebGPU", "Shaders", "browser-unlit.recipe.json"));
             if (recipes.Count > MaxArtifacts)
-                throw new InvalidDataException("A package supports 1–24 recipes.");
+                throw new InvalidDataException("A package supports 1–64 recipes.");
             sourceRoot = Path.GetFullPath(sourceRoot);
             if (!Directory.Exists(sourceRoot)) throw new DirectoryNotFoundException($"Source root does not exist: {sourceRoot}");
             RejectLinks(sourceRoot, sourceRoot);
@@ -195,10 +195,25 @@ internal static class Program
                 string semantic = String(variant, "semantic");
                 int semanticVersion = Integer(variant, "semanticVersion");
                 Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
-                    "UIQuadBatched" or "UITextBatchedBitmap"
+                    "UIQuadBatched" or "UITextBatchedBitmap" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
+                    "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
+                    "SkyboxCubemap" or "SkyboxDynamicProcedural"
                     && (semanticVersion == 1 || semantic == "StandardLitColor" && semanticVersion == 2),
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
+                if (semantic is "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
+                    "SkyboxCubemap" or "SkyboxDynamicProcedural")
+                    Require(String(recipe, "pass") == "background" && vertexProfile == "fullscreen-sky-v1" &&
+                        outputProfile == "linear-hdr-v1" && engineLayout.VertexEntryPoint is not null && engineLayout.FragmentEntryPoint is not null,
+                        $"{stageContext}: skybox requires its exact HDR background pass and profiles.");
+                if (semantic == "OpaquePointShadowDepth")
+                    Require(String(recipe, "pass") == "point-shadow-depth" && vertexProfile == "static-position-v1" &&
+                        outputProfile == "radial-r16f-v1" && engineLayout.VertexEntryPoint is not null && engineLayout.FragmentEntryPoint is not null,
+                        $"{stageContext}: point shadows require the radial R16F vertex and fragment profile.");
+                if (semantic == "OpaqueSpotShadowDepth")
+                    Require(String(recipe, "pass") == "spot-shadow-depth" && vertexProfile == "static-position-v1" &&
+                        outputProfile == "projected-r16f-v1" && engineLayout.VertexEntryPoint is not null && engineLayout.FragmentEntryPoint is not null,
+                        $"{stageContext}: spot shadows require the projected R16F vertex and fragment profile.");
                 if (semantic == "OpaqueShadowDepth")
                     Require(String(recipe, "pass") == "depth" && vertexProfile == "static-position-v1" &&
                         outputProfile == "depth-normal-v1" &&

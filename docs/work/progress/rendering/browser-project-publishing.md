@@ -171,9 +171,9 @@ remain tracked in the [active runtime plan](../../todo/platform/unified-desktop-
 
 The source audit now examines configured backend-neutral rigid bodies and
 character controllers as well as desktop-only component assemblies. It rejects
-ignored PhysX body flags, dominance/owner metadata, high collision-filter words,
-contact/sleep and custom COM/inertia settings, separate static/dynamic or
-per-shape material behavior, unsupported geometry adapters, and native runtime
+ignored PhysX body flags, dominance/owner metadata, incompatible packed collision
+masks, contact/sleep and custom COM/inertia settings, distinct per-shape dynamic
+friction/restitution/damping, unsupported geometry adapters, and native runtime
 material objects. Character settings requiring controller materials, invisible
 walls, constrained climbing or custom PhysX scaling/cache growth also fail
 before package activation. Diagnostics identify the scene path, component and
@@ -184,3 +184,34 @@ Game code can still request a later unsupported runtime service, which retains
 its named runtime failure rather than being predicted by this authored-data
 audit. Integrated Editor compilation passes with zero warnings/errors. Representative
 negative-world cook acceptance remains for the end-to-end milestone.
+
+The real Windows Editor CLI subsequently reached canonical RollingBall cooking.
+Its all-ones collision mask exposed an overly strict high-word check. The audit
+now compares exact effective lower-sixteen-bit masks after each backend's empty
+sentinel, within Jolt's sixteen-group packed profile. Neutral high words no
+longer reject, while non-equivalent masks still do. Distinct neutral static and
+dynamic friction remains the existing approved Jolt single-dynamic-coefficient
+mapping, with a named cook warning; no physics runtime behavior changed.
+
+The corrected compiled Editor then passed `BrowserBuildState.Prepare`,
+`ExportAuthoredWorld`, and the real content packager against the unchanged
+canonical RollingBall snapshot containing those masks and friction values. Its
+existing fifteen-shader catalog produced 32 assets and 31 deduplicated payloads.
+This is a cook/package check, not another full WASM publication or rendered-game
+claim. The current expanded sample catalog separately contains 33 immutable
+artifacts, 23 material variants, nine pipeline passes and one compute kernel.
+
+### Native shared-package positive publication
+
+The corrected publisher also accepts the unmodified native server-generated
+base-world package. Its UTF-8 BOM is removed only for text inspection, and the
+typed inline game mode and owned ID-only transform retain their native meaning.
+The original package world, project world and emitted native world remain
+byte-identical: 1,406 bytes, SHA-256
+`18d9b1e092920c76fb92db098e66884fca67b4e2b2ce35bd4273f1c24b130e09`.
+The compiled Editor preparation, preflight/cook, content packaging and shared
+manifest publication all pass. Native manifest/file verification and the actual
+browser `readSharedWorldPackage`/`validateSharedWorldPackage` functions agree on
+`sha256:5f8c50a3a9b717f621ddcab2cd8eeb03c55dcff92ca3280fb855c5281789f9d0`.
+The browser validator checks four declared files with five read-only local fetches
+under Node; this does not claim a real server join or browser GPU execution.

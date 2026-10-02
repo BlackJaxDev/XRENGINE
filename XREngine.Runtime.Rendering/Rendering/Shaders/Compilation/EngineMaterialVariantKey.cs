@@ -23,6 +23,9 @@ public readonly record struct EngineMaterialVariantKey(
         ValidateProfile(Pass, nameof(Pass));
         ValidateProfile(VertexProfile, nameof(VertexProfile));
         ValidateProfile(OutputProfile, nameof(OutputProfile));
+        if (Semantic.IsSkybox() && (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "background" ||
+            VertexProfile != "fullscreen-sky-v1" || OutputProfile != "linear-hdr-v1"))
+            throw new ArgumentException("Skybox variants require WebGPU background/fullscreen-sky-v1/linear-hdr-v1.");
         if (Semantic == EngineMaterialSemanticIdentity.StandardLitColorV2 &&
             (Target != ShaderCompileTarget.WebGPUWgsl || !IsLitCoverageProfile()))
             throw new ArgumentException("StandardLitColorV2 requires an exact forward-coverage, depth-normal, or depth profile.");
@@ -30,6 +33,14 @@ public readonly record struct EngineMaterialVariantKey(
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "depth" ||
              VertexProfile != "static-position-v1" || OutputProfile != "depth-normal-v1"))
             throw new ArgumentException("OpaqueShadowDepthV1 requires the WebGPU depth/static-position-v1/depth-normal-v1 variant.");
+        if (Semantic == EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "point-shadow-depth" ||
+             VertexProfile != "static-position-v1" || OutputProfile != "radial-r16f-v1"))
+            throw new ArgumentException("OpaquePointShadowDepthV1 requires the WebGPU point-shadow-depth/static-position-v1/radial-r16f-v1 variant.");
+        if (Semantic == EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "spot-shadow-depth" ||
+             VertexProfile != "static-position-v1" || OutputProfile != "projected-r16f-v1"))
+            throw new ArgumentException("OpaqueSpotShadowDepthV1 requires the WebGPU spot-shadow-depth/static-position-v1/projected-r16f-v1 variant.");
         string? debugProfile = Semantic.Semantic switch
         {
             EngineMaterialSemantic.DebugPoint => "instanced-debug-point-v1",
@@ -57,9 +68,11 @@ public readonly record struct EngineMaterialVariantKey(
         => Pass switch
         {
             "forward-coverage" => VertexProfile == "static-position-normal-v1" &&
-                (OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1"),
+                (OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1"),
             "depth-normal" => VertexProfile == "static-position-normal-v1" && OutputProfile == "normal-rgba16f-v1",
             "depth" => VertexProfile == "static-position-v1" && OutputProfile == "depth-normal-v1",
+            "point-shadow-depth" => VertexProfile == "static-position-v1" && OutputProfile == "radial-r16f-v1",
+            "spot-shadow-depth" => VertexProfile == "static-position-v1" && OutputProfile == "projected-r16f-v1",
             _ => false,
         };
 

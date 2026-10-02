@@ -108,6 +108,8 @@ public static partial class BrowserEngineExports
             XRWorld world = await Engine.Assets.LoadFromRuntimeSourceAsync(
                 _source.StartupWorldPath, typeof(XRWorld), cancellationToken: token) as XRWorld
                 ?? throw new InvalidDataException("The cooked startup asset did not deserialize to XRWorld.");
+            stage = "bind authored UI fonts";
+            await _source.BindUiFontsAsync(world, token);
             _source.RegisterVerifiedWorldIdentity(world);
             AdmitMeshDeformation(world, computeArtifacts);
             stage = "load startup settings";

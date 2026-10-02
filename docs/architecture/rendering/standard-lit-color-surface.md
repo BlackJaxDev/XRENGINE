@@ -84,8 +84,8 @@ shadow-caster branches; original desktop GLSL files are unchanged.
 ### WebGPU programs and pass ordering
 
 V2 color uses the `forward-coverage` artifact key, with the existing
-`static-position-normal-v1` vertex profile and either `linear-hdr-v1` or
-`linear-hdr-directional-shadow-v1` output. One immutable program ABI supports
+`static-position-normal-v1` vertex profile and `linear-hdr-v1`,
+`linear-hdr-directional-shadow-v1`, or `linear-hdr-local-shadows-v1` output. One immutable program ABI supports
 all admitted modes; raster state remains keyed separately and material
 `RenderPass` remains authoritative. The actual engine buckets are
 `OpaqueForward`, `MaskedForward`, and `TransparentForward`. The latter retains
@@ -116,3 +116,51 @@ declare each required V2 variant.
 
 Source implementation and artifact cooking do not establish physical-device
 acceptance. Runtime/browser validation remains a separate milestone.
+
+### Bounded local-light shadows
+
+The `linear-hdr-local-shadows-v1` receiver retains the shared 4 directional,
+8 point and 8 spot direct-light capacities. It admits at most one shadowed light
+of each type: the existing standalone directional depth map, one spot projected
+R16Float color map, and one point radial R16Float color cube. The local color
+maps retain independent raster-depth attachments for nearest-surface selection.
+No shadow map or light is silently dropped when these limits are exceeded.
+
+Local shadow lights require depth encoding, authored R16Float storage, PCSS with
+8 blocker and 8 filter taps, no contact shadows, an explicit per-light
+`UseShadowAtlas = false`,
+and map dimensions at most 2048. Point maps are square and require an explicitly
+authored `Sequential` shadow render mode. The same light-owned perspective
+cameras and shared shadow collection/swap/render paths produce the maps. The
+cooked route honors that authored atlas opt-out without changing global atlas
+switches or desktop eligibility. All six
+point faces refresh together so filter taps crossing a seam cannot observe an
+unrefreshed neighbor. Normal-Z is the admitted camera depth convention.
+Both local profiles require a finite near distance of at least 0.001 and a
+finite radius/range that exceeds it by at least 0.001, avoiding implicit camera
+near/far adjustment. Spot outer angles must be strictly between zero and
+90 degrees, with a nonnegative inner angle no larger than the outer angle and
+a finite positive cone exponent. Invalid authored values reject at cook and
+activation admission rather than being clamped by this profile.
+The point vertex stage adjusts only framebuffer Y orientation for the shared
+cube camera axes. Radial distance remains separate from projected depth.
+
+`OpaquePointShadowDepthV1` uses
+`point-shadow-depth/static-position-v1/radial-r16f-v1` and
+`OpaqueSpotShadowDepthV1` uses
+`spot-shadow-depth/static-position-v1/projected-r16f-v1`. V2 adds the same two
+auxiliary profiles and preserves its exact uniform-alpha cutoff. V1's opaque
+caster semantics remain unchanged. Sorted transparent surfaces do not cast
+these shadows. The receiver ports the existing forward texel-relative normal,
+constant/slope bias and PCSS calculations; the spot compares its authored
+projected color encoding and the point compares radial distance.
+
+Package preflight checks capacities, authored profiles and required variants;
+activation and frame admission recheck the live lights. Required producer passes
+must finish before a frame is submitted. Disabled bindings have explicitly
+initialized small default textures, but a required unready map defers the frame
+instead of substituting one. Each light owns its complete target generation and
+retires its material, textures and per-face FBOs when replaced or deactivated.
+These source and cooking contracts still require physical WebGPU validation of
+shadow shape, moving lights/casters, six-face seams and coverage before runtime
+qualification is claimed.

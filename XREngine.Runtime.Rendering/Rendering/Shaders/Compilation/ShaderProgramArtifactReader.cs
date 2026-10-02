@@ -121,9 +121,18 @@ public static class ShaderProgramArtifactReader
         if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1)
             Require(vertex == "depthVertex" && fragment is null && compute is null,
                 "opaque shadow depth variant requires its vertex-only depth entry point");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1)
+            Require(vertex == "pointShadowDepthVertex" && fragment == "pointShadowDepthFragment" && compute is null,
+                "opaque point shadow distance requires its exact vertex and fragment entry points");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1)
+            Require(vertex == "spotShadowDepthVertex" && fragment == "spotShadowDepthFragment" && compute is null,
+                "opaque spot shadow depth requires its exact vertex and fragment entry points");
         if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
             Require(vertex is not null && fragment is not null && compute is null,
                 "lit-color coverage variants require vertex and fragment stages, including alpha-tested depth");
+        if (materialVariant?.Semantic.IsSkybox() == true)
+            Require(vertex == "skyVertex" && fragment == "skyFragment" && compute is null,
+                "skybox variants require their exact vertex and fragment entry points");
         if (materialVariant is { } debugEntries &&
             debugEntries.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle))
             Require(vertex is not null && fragment is not null && compute is null,
@@ -381,9 +390,12 @@ public static class ShaderProgramArtifactReader
     {
         string semanticName = Text(value, "semantic");
         Require(Enum.TryParse(semanticName, ignoreCase: false, out EngineMaterialSemantic semantic) &&
-            semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.OpaqueShadowDepth or
+            semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
                 EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
-                EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap,
+                EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UITextBatchedBitmap or
+                EngineMaterialSemantic.SkyboxGradient or EngineMaterialSemantic.SkyboxEquirectangular or
+                EngineMaterialSemantic.SkyboxOctahedral or EngineMaterialSemantic.SkyboxCubemap or
+                EngineMaterialSemantic.SkyboxDynamicProcedural,
             "unsupported material semantic");
         EngineMaterialVariantKey key = new(new EngineMaterialSemanticIdentity(semantic,
             Property(value, "semanticVersion", JsonValueKind.Number).GetInt32()), target, pass,

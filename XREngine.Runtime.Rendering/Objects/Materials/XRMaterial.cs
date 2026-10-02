@@ -771,6 +771,7 @@ namespace XREngine.Rendering
 
         public void InvalidateShadowCasterVariant()
         {
+            DestroyStandardLitSpotShadowVariant();
             _shadowCasterVariant?.Destroy();
             _shadowCasterVariant = null;
             _shadowCasterVariantResolved = false;

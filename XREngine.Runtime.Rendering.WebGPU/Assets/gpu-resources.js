@@ -1,8 +1,8 @@
 const maximumBufferBytes = 256 * 1024 * 1024;
 const maximumTextureBytes = 256 * 1024 * 1024;
 const maximumWriteBytes = 64 * 1024 * 1024;
-const uploadBytesPerPixel = new Map([['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4]]);
-const renderColorFormats = new Set(['rgba8unorm', 'rgba8unorm-srgb', 'rgba16float']);
+const uploadBytesPerPixel = new Map([['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4], ['rgba16float', 8]]);
+const renderColorFormats = new Set(['rgba8unorm', 'rgba8unorm-srgb', 'rgba16float', 'r16float']);
 const depthFormats = new Set(['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float']);
 
 function integer(value, minimum, maximum, name) {
@@ -129,7 +129,7 @@ export class GpuResources {
         if (sampleCount > 1 && (arrayLayerCount !== 1 || mipLevelCount !== 1 || !(usage & GPUTextureUsage.RENDER_ATTACHMENT) ||
             (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST))))
             throw new RangeError('Multisampled textures require one layer, attachment usage, one mip and no transfer usage.');
-        const bytesPerPixel = redCoverage ? 1 : uploadBytesPerPixel.has(format) ? 4 : 8;
+        const bytesPerPixel = uploadBytesPerPixel.get(format) ?? (format === 'r16float' ? 2 : 8);
         let estimatedBytes = 0;
         for (let mip = 0; mip < mipLevelCount; mip++)
             estimatedBytes += Math.max(1, Math.floor(width / 2 ** mip)) * Math.max(1, Math.floor(height / 2 ** mip)) * bytesPerPixel * sampleCount * arrayLayerCount;
@@ -156,7 +156,7 @@ export class GpuResources {
         const bytesPerPixel = uploadBytesPerPixel.get(entry.format);
         const length = width * height * bytesPerPixel;
         if (!bytesPerPixel || entry.sampleCount !== 1 || !(entry.usage & GPUTextureUsage.COPY_DST) || memory?.byteLength !== length)
-            throw new RangeError('Mip uploads require single-sample R8 or RGBA8, COPY_DST and tightly packed bytes.');
+            throw new RangeError('Mip uploads require single-sample R8, RGBA8 or RGBA16F, COPY_DST and tightly packed bytes.');
         this._bytes(memory);
         this.textureDestination.texture = entry.texture;
         this.textureDestination.mipLevel = mip;
@@ -195,7 +195,8 @@ export class GpuResources {
             { texture: destination.texture, mipLevel: destinationMip, origin: [0, 0, destinationLayer] },
             [width, height, 1]);
         this.submission[0] = encoder.finish();
-        try { r.device.queue.submit(this.submission); r._stats.gpuCopiedBytes += width * height * (source.format === 'r8unorm' ? 1 : source.format === 'rgba16float' ? 8 : 4); }
+        try { r.device.queue.submit(this.submission); r._stats.gpuCopiedBytes += width * height *
+            (uploadBytesPerPixel.get(source.format) ?? (source.format === 'r16float' ? 2 : 4)); }
         finally { this.submission[0] = null; }
     }
 

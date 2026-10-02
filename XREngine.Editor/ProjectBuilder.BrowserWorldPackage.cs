@@ -89,7 +89,13 @@ internal static partial class ProjectBuilder
             throw new InvalidDataException("BrowserCook.SharedPackageWorldMismatch: the cooked startup path changed.");
         foreach (JsonElement asset in recipe.RootElement.GetProperty("assets").EnumerateArray())
             if (asset.GetProperty("path").GetString() == package.BrowserWorldPath && asset.GetProperty("dependencies").GetArrayLength() != 0)
+            {
+                JsonElement dependencies = asset.GetProperty("dependencies");
+                if (dependencies.EnumerateArray().Any(static dependency =>
+                    dependency.GetString()?.StartsWith("/game/Fonts/Cooked/", StringComparison.Ordinal) == true))
+                    throw new NotSupportedException("BrowserCook.SharedPackageFontsUnsupported: authored fonts require typed native package dependencies; use the ordinary browser publication profile.");
                 throw new NotSupportedException("BrowserCook.SharedPackageDependenciesUnsupported: native game/engine dependency roots are not supported by the shared package profile.");
+            }
     }
 
     /// <summary>Extends the native manifest with the exact cooked catalog and payloads inside unpublished staging.</summary>
@@ -206,7 +212,7 @@ internal static partial class ProjectBuilder
     /// <summary>Rejects ambient path/GUID dependencies in the bounded native YAML representation.</summary>
     private static void RequireSelfContainedNativeWorld(byte[] bytes)
     {
-        string text = new UTF8Encoding(false, true).GetString(bytes);
+        string text = DecodeSharedNativeWorld(bytes);
         using (StringReader boundedReader = new(text))
         {
             YamlDotNet.Core.Parser parser = new(boundedReader);
@@ -229,15 +235,15 @@ internal static partial class ProjectBuilder
         yaml.Load(reader);
         if (yaml.Documents.Count != 1)
             throw new NotSupportedException("BrowserCook.SharedPackageDependenciesUnsupported: the native world must be one self-contained YAML document.");
-        Dictionary<YamlNode, HashSet<Type>> visited = new(ReferenceEqualityComparer.Instance);
+        Dictionary<YamlNode, HashSet<(Type Type, bool OwnedTransform)>> visited = new(ReferenceEqualityComparer.Instance);
         int visits = 0;
-        Stack<(YamlNode Node, Type Type, int Depth)> pending = new();
-        pending.Push((yaml.Documents[0].RootNode, typeof(XRWorld), 0));
+        Stack<(YamlNode Node, Type Type, int Depth, bool OwnedTransform)> pending = new();
+        pending.Push((yaml.Documents[0].RootNode, typeof(XRWorld), 0, false));
         while (pending.TryPop(out var next))
         {
-            if (!visited.TryGetValue(next.Node, out HashSet<Type>? seenTypes))
+            if (!visited.TryGetValue(next.Node, out HashSet<(Type Type, bool OwnedTransform)>? seenTypes))
                 visited.Add(next.Node, seenTypes = []);
-            if (!seenTypes.Add(next.Type))
+            if (!seenTypes.Add((next.Type, next.OwnedTransform)))
                 continue;
             if (next.Depth > 128 || ++visits > 100_000)
                 throw new NotSupportedException("BrowserCook.SharedPackageDependenciesUnsupported: the native YAML graph exceeds the inspection bound.");
@@ -246,7 +252,11 @@ internal static partial class ProjectBuilder
                 Type mappingType = ResolveSharedNativeMappingType(mapping, next.Type);
                 if (next.Depth == 0 && mappingType != typeof(XRWorld))
                     throw new NotSupportedException("BrowserCook.SharedPackageProfileUnsupported: the native source must declare the exact base XRWorld type.");
-                if (typeof(XRObjectBase).IsAssignableFrom(mappingType) && mapping.Children.Count > 0
+                bool ownedDefaultTransform = next.OwnedTransform && mappingType == typeof(Transform)
+                    && IsInlineDefaultTransformIdentity(mapping);
+                bool inlineAssetDiscriminator = typeof(XRAsset).IsAssignableFrom(mappingType)
+                    && HasLeadingNativeAssetDiscriminator(mapping);
+                if (!ownedDefaultTransform && !inlineAssetDiscriminator && typeof(XRObjectBase).IsAssignableFrom(mappingType) && mapping.Children.Count > 0
                     && mapping.Children.Keys.All(static key => key is YamlScalarNode field
                         && (string.Equals(field.Value, "ID", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(field.Value, "Path", StringComparison.OrdinalIgnoreCase)
@@ -275,7 +285,8 @@ internal static partial class ProjectBuilder
                         "$children" when typeof(TransformBase).IsAssignableFrom(mappingType) => typeof(TransformBase[]),
                         _ => dictionaryValue ?? ResolveSharedNativeMemberType(mappingType, field.Value),
                     };
-                    pending.Push((value, memberType, next.Depth + 1));
+                    pending.Push((value, memberType, next.Depth + 1,
+                        mappingType == typeof(SceneNode) && field.Value == nameof(SceneNode.Transform)));
                 }
             }
             else if (next.Node is YamlSequenceNode sequence)
@@ -284,7 +295,7 @@ internal static partial class ProjectBuilder
                     : GetSharedNativeGenericArgument(next.Type, typeof(IEnumerable<>), 0)
                         ?? throw new NotSupportedException("BrowserCook.SharedPackageDependenciesUnsupported: an unrecognized native sequence needs an explicit shared-package codec.");
                 foreach (YamlNode child in sequence.Children)
-                    pending.Push((child, itemType, next.Depth + 1));
+                    pending.Push((child, itemType, next.Depth + 1, false));
             }
             else if (next.Node is YamlScalarNode scalar && scalar.Value is { } value)
             {
@@ -297,6 +308,33 @@ internal static partial class ProjectBuilder
                     throw new NotSupportedException("BrowserCook.SharedPackageDependenciesUnsupported: path-valued native data requires explicit package-root support.");
             }
         }
+    }
+
+    private static bool IsInlineDefaultTransformIdentity(YamlMappingNode mapping)
+    {
+        if (mapping.Children.Count != 1)
+            return false;
+        foreach ((YamlNode key, YamlNode value) in mapping.Children)
+            return key is YamlScalarNode { Value: "ID" }
+                && value is YamlScalarNode scalar && Guid.TryParse(scalar.Value, out Guid id) && id != Guid.Empty;
+        return false;
+    }
+
+    private static bool HasLeadingNativeAssetDiscriminator(YamlMappingNode mapping)
+    {
+        // The native nested-asset reader replays discriminator-first mappings as
+        // inline objects. ID-first envelopes still use ambient reference lookup.
+        foreach (YamlNode key in mapping.Children.Keys)
+            return key is YamlScalarNode { Value: "__assetType" or "__type" };
+        return false;
+    }
+
+    private static string DecodeSharedNativeWorld(byte[] bytes)
+    {
+        // SaveImmediate writes UTF-8 with a BOM. Keep the exact bytes for package
+        // identity, while matching the native file reader's text interpretation.
+        int offset = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
+        return new UTF8Encoding(false, true).GetString(bytes.AsSpan(offset));
     }
 
     private static Type ResolveSharedNativeMappingType(YamlMappingNode mapping, Type expected)

@@ -16,10 +16,10 @@ public sealed unsafe partial class WebGpuTexture2D
     {
         Generate();
         bool depthFormat = Format is "depth16unorm" or "depth24plus" or "depth32float" or "depth24plus-stencil8";
-        if (_samples != 1 || depth != depthFormat || !depth && Format is not ("r8unorm" or "rgba8unorm" or "rgba8unorm-srgb" or "rgba16float"))
+        if (_samples != 1 || depth != depthFormat || !depth && Format is not ("r8unorm" or "rgba8unorm" or "rgba8unorm-srgb" or "rgba16float" or "r16float"))
             throw Unsupported("Sample", depth
                 ? "depth sampling requires a single-sample depth 2D texture"
-                : "the selected profile admits only single-sample R8, RGBA8 or RGBA16F color textures");
+                : "the selected profile admits only single-sample R8, RGBA8, RGBA16F or R16F color textures");
         int baseMip = Data.LargestMipmapLevel;
         int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
         if (baseMip < 0 || baseMip > finalMip)

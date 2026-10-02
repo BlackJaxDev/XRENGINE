@@ -117,8 +117,8 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
                 int slot = ColorSlot(target.Attachment);
                 if (slot >= 0)
                 {
-                    if (format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || formats[slot] is not null)
-                        throw Unsupported("Create", "color slots require distinct exact RGBA8 or RGBA16F texture views");
+                    if (format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float" or "r16float") || formats[slot] is not null)
+                        throw Unsupported("Create", "color slots require distinct exact RGBA8, RGBA16F or R16F texture views");
                     formats[slot] = format;
                     colorCount = Math.Max(colorCount, slot + 1);
                 }

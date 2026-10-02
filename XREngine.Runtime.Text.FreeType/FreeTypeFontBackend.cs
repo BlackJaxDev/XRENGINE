@@ -12,6 +12,6 @@ public static class FreeTypeFontBackend
     }
 
     /// <summary>Explicitly selects FreeType bitmap cooking without changing desktop startup's Skia choice.</summary>
-    public static void RegisterBitmapRasterizerForCooking()
-        => FontBitmapRasterizerRegistry.Current = new FreeTypeFontBitmapRasterizer();
+    public static void RegisterBitmapRasterizerForCooking(CancellationToken cancellationToken = default)
+        => FontBitmapRasterizerRegistry.Current = new FreeTypeFontBitmapRasterizer(cancellationToken);
 }

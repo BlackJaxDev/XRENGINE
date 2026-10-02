@@ -13,6 +13,11 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
     private const int AtlasPadding = 8;
     private const int MaxAtlasDimension = 8192;
     private const int MaxAtlasBytes = 64 * 1024 * 1024;
+    private const int MaxWorkingRgbaBytes = 64 * 1024 * 1024;
+    private readonly CancellationToken _cancellationToken;
+
+    public FreeTypeFontBitmapRasterizer(CancellationToken cancellationToken = default)
+        => _cancellationToken = cancellationToken;
 
     public FontBitmapAtlasResult Rasterize(string fontPath, IReadOnlyList<string> characters,
         string outputAtlasPath, float textSize)
@@ -31,8 +36,10 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
         List<GlyphBitmap> rendered = new(characters.Count);
         Dictionary<string, FontGlyphSet.Glyph> glyphs = new(StringComparer.Ordinal);
         long area = 0;
+        long coverageBytes = 0;
         foreach (string character in characters)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrEmpty(character) || !Rune.TryGetRuneAt(character, 0, out Rune rune) ||
                 rune.Utf16SequenceLength != character.Length)
                 throw new InvalidDataException("Bitmap font characters must each be one Unicode scalar.");
@@ -53,7 +60,9 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
                 AdvanceX = advance,
             };
             glyphs.Add(character, glyph);
-            byte[] coverage = CopyCoverage(bitmap, width, height);
+            if ((coverageBytes += (long)width * height) > MaxAtlasBytes)
+                throw new InvalidDataException("Bitmap font glyph coverage exceeds the cooking memory limit.");
+            byte[] coverage = CopyCoverage(bitmap, width, height, _cancellationToken);
             rendered.Add(new GlyphBitmap(glyph, width, height, coverage));
             if (width > 0 && height > 0)
                 area += (long)(width + AtlasPadding * 2) * (height + AtlasPadding * 2);
@@ -68,6 +77,7 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
         int usedWidth = 1;
         foreach (GlyphBitmap item in rendered)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             if (item.Width == 0 || item.Height == 0)
                 continue;
             int paddedWidth = checked(item.Width + AtlasPadding * 2);
@@ -89,15 +99,18 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
         }
         int atlasWidth = Math.Min(MaxAtlasDimension, Math.Max(1, usedWidth));
         int atlasHeight = Math.Max(1, checked(cursorY + rowHeight));
-        if (atlasHeight > MaxAtlasDimension || (long)atlasWidth * atlasHeight > MaxAtlasBytes)
+        if (atlasHeight > MaxAtlasDimension || (long)atlasWidth * atlasHeight > MaxAtlasBytes ||
+            (long)atlasWidth * atlasHeight * 4 > MaxWorkingRgbaBytes)
             throw new InvalidDataException("Bitmap font atlas exceeds the portable payload limit.");
         byte[] rgba = new byte[checked(atlasWidth * atlasHeight * 4)];
         foreach (GlyphBitmap item in rendered)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             int x = (int)item.Glyph.Position.X;
             int y = (int)item.Glyph.Position.Y;
             for (int row = 0; row < item.Height; row++)
             {
+                _cancellationToken.ThrowIfCancellationRequested();
                 for (int column = 0; column < item.Width; column++)
                 {
                     int target = ((y + row) * atlasWidth + x + column) * 4;
@@ -116,7 +129,7 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
         return new FontBitmapAtlasResult(glyphs);
     }
 
-    private static byte[] CopyCoverage(FTBitmap bitmap, int width, int height)
+    private static byte[] CopyCoverage(FTBitmap bitmap, int width, int height, CancellationToken cancellationToken)
     {
         if (width == 0 || height == 0)
             return [];
@@ -133,6 +146,7 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
                     throw new InvalidDataException("FreeType returned invalid grayscale glyph coverage.");
                 for (int row = 0; row < height; row++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int sourceRow = pitch < 0 ? height - row - 1 : row;
                     for (int column = 0; column < width; column++)
                     {
@@ -148,6 +162,7 @@ public sealed class FreeTypeFontBitmapRasterizer : IFontBitmapRasterizer
                     throw new InvalidDataException("FreeType returned invalid monochrome glyph coverage.");
                 for (int row = 0; row < height; row++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int sourceRow = pitch < 0 ? height - row - 1 : row;
                     for (int column = 0; column < width; column++)
                         pixels[row * width + column] =

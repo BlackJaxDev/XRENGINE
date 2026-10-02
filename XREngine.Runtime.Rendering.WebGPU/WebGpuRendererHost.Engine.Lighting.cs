@@ -28,7 +28,7 @@ public sealed partial class WebGpuRendererHost
     }
 
     /// <summary>Reads the same engine light collections and numeric fields as the desktop forward shader.</summary>
-    internal void PublishForwardLights(WebGpuRenderProgram program, bool directionalShadowReceiver)
+    internal void PublishForwardLights(WebGpuRenderProgram program, bool directionalShadowReceiver, bool localShadowReceiver)
     {
         IRuntimeRenderWorld world = RuntimeEngine.Rendering.State.RenderingWorld
             ?? throw new InvalidOperationException("WebGPU.Lighting.WorldMissing: forward lighting requires the active engine render world.");
@@ -50,7 +50,7 @@ public sealed partial class WebGpuRendererHost
         for (int i = 0; i < pointCount; i++)
         {
             PointLightComponent light = lights.DynamicPointLights[i];
-            RequireUnshadowedLight(light);
+            if (!localShadowReceiver) RequireUnshadowedLight(light);
             program.SetVector4(PointPositionNames[i], new Vector4(light.Transform.RenderTranslation, light.Radius));
             program.SetVector4(PointColorNames[i], new Vector4(light.Color, light.DiffuseIntensity));
             program.SetVector4(PointBrightnessNames[i], new Vector4(light.Brightness, 0, 0, 0));
@@ -58,7 +58,7 @@ public sealed partial class WebGpuRendererHost
         for (int i = 0; i < spotCount; i++)
         {
             SpotLightComponent light = lights.DynamicSpotLights[i];
-            RequireUnshadowedLight(light);
+            if (!localShadowReceiver) RequireUnshadowedLight(light);
             program.SetVector4(SpotPositionNames[i], new Vector4(light.Transform.RenderTranslation, light.Distance));
             program.SetVector4(SpotColorNames[i], new Vector4(light.Color, light.DiffuseIntensity));
             program.SetVector4(SpotDirectionNames[i], new Vector4(light.Transform.RenderForward, light.Exponent));
@@ -66,6 +66,8 @@ public sealed partial class WebGpuRendererHost
         }
         if (directionalShadowReceiver)
             PublishDirectionalShadow(program, world);
+        if (localShadowReceiver)
+            PublishLocalShadows(program, world);
     }
 
     private static void RequireUnshadowedLight(LightComponent light)

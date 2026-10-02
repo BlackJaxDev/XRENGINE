@@ -290,6 +290,9 @@ public partial class DefaultRenderPipeline
             VPRC_RenderMeshesPass masked = commands.Add<VPRC_RenderMeshesPass>();
             masked.SetOptions((int)EDefaultRenderPass.MaskedForward, EMeshSubmissionStrategy.CpuDirect);
             masked.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
+            // Far-depth backgrounds fill only uncovered pixels. They must precede
+            // sorted blending so transparent surfaces composite over authored HDR sky.
+            commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, EMeshSubmissionStrategy.CpuDirect);
             // The canonical pass collection owns stable far-to-near ordering and
             // authored sort priority. Blending occurs in HDR before bloom/tonemap.
             VPRC_RenderMeshesPass transparent = commands.Add<VPRC_RenderMeshesPass>();
@@ -355,8 +358,10 @@ public partial class DefaultRenderPipeline
             .DependsOn((int)EDefaultRenderPass.OpaqueDeferred);
         metadata.ForPass((int)EDefaultRenderPass.MaskedForward, nameof(EDefaultRenderPass.MaskedForward), ERenderGraphPassStage.Graphics)
             .DependsOn((int)EDefaultRenderPass.OpaqueForward);
-        metadata.ForPass((int)EDefaultRenderPass.TransparentForward, nameof(EDefaultRenderPass.TransparentForward), ERenderGraphPassStage.Graphics)
+        metadata.ForPass((int)EDefaultRenderPass.Background, nameof(EDefaultRenderPass.Background), ERenderGraphPassStage.Graphics)
             .DependsOn((int)EDefaultRenderPass.MaskedForward);
+        metadata.ForPass((int)EDefaultRenderPass.TransparentForward, nameof(EDefaultRenderPass.TransparentForward), ERenderGraphPassStage.Graphics)
+            .DependsOn((int)EDefaultRenderPass.Background);
 
         int beforeOutput = (int)EDefaultRenderPass.TransparentForward;
         beforeOutput = LinkWebQuadPass(metadata, WebBloomCopyQuadName, WebBloomMipFboNames[0], beforeOutput);
@@ -402,7 +407,7 @@ public partial class DefaultRenderPipeline
             throw new NotSupportedException("WebGPU.DefaultPipeline.UiSpaceUnsupported: this output admits screen-space UI only.");
         ReadOnlySpan<int> unsupportedPasses =
         [
-            (int)EDefaultRenderPass.Background, (int)EDefaultRenderPass.DeferredDecals,
+            (int)EDefaultRenderPass.DeferredDecals,
             (int)EDefaultRenderPass.WeightedBlendedOitForward, (int)EDefaultRenderPass.PerPixelLinkedListForward,
             (int)EDefaultRenderPass.DepthPeelingForward,
             (int)EDefaultRenderPass.PostBloomForward, (int)EDefaultRenderPass.PostMotionBlurForward,

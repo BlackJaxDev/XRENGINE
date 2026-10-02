@@ -129,8 +129,10 @@ warnings/errors. This closes the authored unsupported-physics cook audit
 Networking consumes a fresh trusted in-memory handoff and independently verified
 loaded package identity; suspension discards admission and requires a new manager
 and baseline. Optional voice remains explicitly unavailable. The opt-in shared
-package has a conservative self-contained base-world profile and still needs a
-positive publication/hydration run. Real-server play, new GPU deformation and
+package has a conservative self-contained base-world profile. Its unmodified
+server-generated world now passes the compiled Editor publication chain and the
+browser package validator with byte-identical native world bytes. Real-server
+play, new GPU deformation and
 coverage pixels, layered textures, UI/IME behavior, custom-font cooking, full
 recovery and production/device budgets remain open. Focused text accessibility
 and a finite blocked-API list do not by themselves close broader UI or game-API
