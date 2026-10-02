@@ -61,6 +61,19 @@ public static class WorldAssetIdentityProvider
         VerifiedIdentities.Add(world, Clone(identity));
     }
 
+    /// <summary>Returns only an identity bound by a verified package loader, never a generated local-world fingerprint.</summary>
+    public static bool TryGetVerifiedIdentity(XRWorld world, out WorldAssetIdentity? identity)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        if (VerifiedIdentities.TryGetValue(world, out WorldAssetIdentity? verified))
+        {
+            identity = Clone(verified);
+            return true;
+        }
+        identity = null;
+        return false;
+    }
+
     private static WorldAssetIdentity Clone(WorldAssetIdentity source)
         => new()
         {

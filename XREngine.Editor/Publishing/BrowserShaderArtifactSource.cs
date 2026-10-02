@@ -12,10 +12,12 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
     private readonly Dictionary<string, ShaderProgramArtifact> _loaded = new(StringComparer.Ordinal);
     private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
     private readonly Dictionary<string, string> _pipelineArtifacts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _computeArtifacts = new(StringComparer.Ordinal);
     private long _loadedBytes;
 
     internal IReadOnlyList<EngineMaterialVariantEntry> MaterialVariants => _materialVariants.AsReadOnly();
     internal IReadOnlyDictionary<string, string> PipelineArtifacts => _pipelineArtifacts;
+    internal IReadOnlyDictionary<string, string> ComputeArtifacts => _computeArtifacts;
     internal string? TonemapDescriptorIdentity => _pipelineArtifacts.GetValueOrDefault("tonemap");
 
     internal BrowserShaderArtifactSource(string projectDirectory, string manifestPath)
@@ -86,6 +88,27 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
                     throw new InvalidDataException($"Browser pipeline artifact '{pass}' is not a complete matching WebGPU raster program.");
                 if (!_pipelineArtifacts.TryAdd(pass, identity))
                     throw new InvalidDataException($"Browser pipeline artifact pass '{pass}' is duplicated.");
+            }
+        }
+        if (root.TryGetProperty("computeArtifacts", out JsonElement computes))
+        {
+            if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 1)
+                throw new InvalidDataException("Browser compute artifact catalog exceeds one kernel.");
+            foreach (JsonElement compute in computes.EnumerateArray())
+            {
+                if (compute.ValueKind != JsonValueKind.Object || compute.EnumerateObject().Count() != 2 ||
+                    !compute.TryGetProperty("kernel", out JsonElement kernelValue) || kernelValue.ValueKind != JsonValueKind.String ||
+                    !WebComputeArtifactCatalog.IsSupportedKernel(kernelValue.GetString()) ||
+                    !compute.TryGetProperty("descriptorIdentity", out JsonElement identityValue) || identityValue.ValueKind != JsonValueKind.String)
+                    throw new InvalidDataException("Browser compute artifact must declare a known kernel and descriptor identity.");
+                string kernel = kernelValue.GetString()!;
+                string identity = ShaderProgramArtifactCatalog.ValidateIdentity(identityValue.GetString())
+                    ?? throw new InvalidDataException($"Browser compute artifact '{kernel}' has no descriptor identity.");
+                if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
+                    throw new InvalidDataException($"Browser compute artifact '{kernel}' is unavailable.");
+                WebComputeArtifactCatalog.ValidatePackedSkinning(artifact);
+                if (!_computeArtifacts.TryAdd(kernel, identity))
+                    throw new InvalidDataException($"Browser compute artifact kernel '{kernel}' is duplicated.");
             }
         }
     }

@@ -7,12 +7,13 @@ using XREngine.Rendering;
 namespace XREngine.Browser;
 
 /// <summary>Fetch-backed engine asset catalog with immutable payloads and explicit async-only reads.</summary>
-public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAssetCatalog, IDisposable
+public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAssetCatalog, IDisposable
 {
     private int _session;
     private readonly List<BrowserShaderArtifactReference> _shaderArtifacts = [];
     private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
     private readonly Dictionary<string, string> _pipelineArtifactIdentities = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _computeArtifactIdentities = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RuntimeAssetCatalogEntry> _assets = new(StringComparer.Ordinal);
     private BrowserEngineAssetSource(int session) => _session = session;
     public bool SupportsSynchronousReads => false;
@@ -36,6 +37,7 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
             await BrowserEngineAssetImports.OpenAsync(source.RequireSession());
             cancellationToken.ThrowIfCancellationRequested();
             source.ReadManifest(BrowserEngineAssetImports.GetManifest(source.RequireSession()));
+            source.ReadVerifiedWorldPackage(BrowserEngineAssetImports.GetVerifiedWorldPackage(source.RequireSession()));
             return source;
         }
         catch
@@ -76,6 +78,8 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         }
         if (root.TryGetProperty("pipelineArtifacts", out JsonElement pipelines))
             ReadPipelineArtifacts(pipelines);
+        if (root.TryGetProperty("computeArtifacts", out JsonElement computes))
+            ReadComputeArtifacts(computes);
         foreach (JsonElement item in root.GetProperty("assets").EnumerateArray())
         {
             string path = item.GetProperty("path").GetString()!;
@@ -130,6 +134,27 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         }
     }
 
+    private void ReadComputeArtifacts(JsonElement computes)
+    {
+        if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 1)
+            throw new InvalidDataException("AssetSource.ComputeArtifactBudgetExceeded.");
+        HashSet<string> identities = _shaderArtifacts.Select(static artifact => artifact.Identity).ToHashSet(StringComparer.Ordinal);
+        foreach (JsonElement compute in computes.EnumerateArray())
+        {
+            if (compute.ValueKind != JsonValueKind.Object || compute.EnumerateObject().Count() != 2 ||
+                !compute.TryGetProperty("kernel", out JsonElement kernel) || kernel.ValueKind != JsonValueKind.String ||
+                !WebComputeArtifactCatalog.IsSupportedKernel(kernel.GetString()) ||
+                !compute.TryGetProperty("descriptorIdentity", out JsonElement identityValue) || identityValue.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("AssetSource.ComputeArtifactInvalid: expected a known kernel and descriptorIdentity.");
+            string identity = ShaderProgramArtifactCatalog.ValidateIdentity(identityValue.GetString())
+                ?? throw new InvalidDataException("AssetSource.ComputeArtifactIdentityMissing.");
+            if (!identities.Contains(identity))
+                throw new InvalidDataException($"AssetSource.ComputeArtifactMissing: '{identity}'.");
+            if (!_computeArtifactIdentities.TryAdd(kernel.GetString()!, identity))
+                throw new InvalidDataException($"AssetSource.ComputeArtifactDuplicateKernel: '{kernel.GetString()}'.");
+        }
+    }
+
     /// <summary>Loads exact cooked shader companions before world activation, independent of authored source text.</summary>
     public async Task<ShaderProgramArtifactCatalog> LoadShaderArtifactsAsync(CancellationToken cancellationToken = default)
     {
@@ -176,6 +201,13 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
     {
         RequireSession();
         return new WebPipelineArtifactCatalog(_pipelineArtifactIdentities, artifacts);
+    }
+
+    /// <summary>Resolves declared engine compute kernels against verified hash-owned modules.</summary>
+    public WebComputeArtifactCatalog LoadComputeArtifacts(ShaderProgramArtifactCatalog artifacts)
+    {
+        RequireSession();
+        return new WebComputeArtifactCatalog(_computeArtifactIdentities, artifacts);
     }
 
     /// <summary>Retains the existing exact-tonemap lookup for compatible diagnostic callers.</summary>
@@ -257,6 +289,9 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         _shaderArtifacts.Clear();
         _materialVariants.Clear();
         _pipelineArtifactIdentities.Clear();
+        _computeArtifactIdentities.Clear();
         DefaultUiFontPath = null;
+        _verifiedWorldIdentity = null;
+        _verifiedNativeWorldPath = null;
     }
 }

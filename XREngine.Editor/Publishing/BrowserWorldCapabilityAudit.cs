@@ -35,6 +35,12 @@ internal static class BrowserWorldCapabilityAudit
                     throw new InvalidDataException($"BrowserCook.PipelineArtifactMissing: '{pass}' descriptor is unavailable.");
                 artifacts.TryAdd(artifact.Identity, artifact);
             }
+            foreach ((string kernel, string identity) in shaderSource.ComputeArtifacts)
+            {
+                if (!shaderSource.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
+                    throw new InvalidDataException($"BrowserCook.ComputeArtifactMissing: '{kernel}' descriptor is unavailable.");
+                artifacts.TryAdd(artifact.Identity, artifact);
+            }
         }
         return artifacts.Values.OrderBy(artifact => artifact.Identity, StringComparer.Ordinal).ToArray();
 
@@ -48,6 +54,7 @@ internal static class BrowserWorldCapabilityAudit
                 throw new NotSupportedException($"BrowserCook.XrUnsupported: '{path}' transform '{node.Transform.GetType().FullName}' requires a browser XR service that is not enabled.");
             foreach (XRComponent component in node.Components)
             {
+                BrowserPhysicsCapabilityAudit.Inspect(component, path);
                 if (component is VRHeadsetComponent or VRDeviceModelComponent or VRPlayerCharacterComponent
                     or VRTrackerCollectionComponent or VRHeightScaleComponent or VRPlayerInputSet)
                     throw new NotSupportedException($"BrowserCook.XrUnsupported: '{path}' component '{component.GetType().FullName}' requires a browser XR service that is not enabled.");
@@ -59,7 +66,13 @@ internal static class BrowserWorldCapabilityAudit
                 if (component is ModelComponent { Model: { } model })
                     foreach (var mesh in model.Meshes)
                         foreach (var lod in mesh.LODs)
+                        {
+                            if (lod.Mesh is { } geometry && (geometry.HasSkinning || geometry.HasBlendshapes) &&
+                                (resolver is not BrowserShaderArtifactSource computeSource ||
+                                !computeSource.ComputeArtifacts.ContainsKey(WebComputeArtifactCatalog.PackedSkinningKernel)))
+                                throw new NotSupportedException($"BrowserCook.ComputeArtifactMissing: '{path}' mesh '{mesh.Name}' requires packed-skinning in the project shader manifest.");
                             InspectMaterial(lod.Material, path, mesh.Name);
+                        }
                 else if (component is ShapeMeshComponent shape)
                     InspectMaterial(shape.Material, path, shape.GetType().Name);
                 else if (component is UICanvasComponent canvas)
@@ -102,7 +115,8 @@ internal static class BrowserWorldCapabilityAudit
         {
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
-            if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1)
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1 ||
+                material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
             {
                 if (material.Shaders.Count != 0)
                     throw new NotSupportedException($"BrowserCook.SurfaceUnsupported: '{path}' material '{material.Name}' retains authored shader stages.");
@@ -112,10 +126,20 @@ internal static class BrowserWorldCapabilityAudit
                     !source.MaterialVariants.Any(variant =>
                         variant.Key.Semantic == material.EngineSemantic &&
                         variant.Key.Target == ShaderCompileTarget.WebGPUWgsl &&
-                        variant.Key.Pass == "opaque-forward" &&
+                        variant.Key.Pass == (material.EngineSemantic.Version == 2 ? "forward-coverage" : "opaque-forward") &&
                         variant.Key.VertexProfile == "static-position-normal-v1" &&
                         variant.Key.OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1"))
-                    throw new NotSupportedException($"BrowserCook.VariantMissing: '{path}' material '{material.Name}' requires an exact StandardLitColorV1 WebGPU forward variant in the project shader manifest.");
+                    throw new NotSupportedException($"BrowserCook.VariantMissing: '{path}' material '{material.Name}' requires its exact lit-color WebGPU forward variant in the project shader manifest.");
+                if (material.EngineSemantic.Version == 2 && !material.IsTransparentLike())
+                {
+                    EngineMaterialVariantKey normal = new(material.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        "depth-normal", "static-position-normal-v1", "normal-rgba16f-v1");
+                    EngineMaterialVariantKey depth = new(material.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        "depth", "static-position-v1", "depth-normal-v1");
+                    if (!source.MaterialVariants.Any(variant => variant.Key == normal) ||
+                        !source.MaterialVariants.Any(variant => variant.Key == depth))
+                        throw new NotSupportedException($"BrowserCook.CoverageVariantMissing: '{path}' material '{material.Name}' requires matching depth-normal and shadow-depth variants.");
+                }
                 return;
             }
             if (material.Shaders.Count == 0)

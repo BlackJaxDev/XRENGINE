@@ -24,6 +24,9 @@ public sealed record ShaderProgramArtifact(
     /// <summary>Exact validated descriptor bytes retained for content-addressed repackaging; absent for layout-only recipe objects.</summary>
     public ImmutableArray<byte> DescriptorBytes { get; internal init; } = [];
 
+    /// <summary>Declared local invocation dimensions; absent for raster programs.</summary>
+    public ShaderComputeWorkgroupSize? ComputeWorkgroupSize { get; internal init; }
+
     /// <summary>The format of the compiled module; authored shader language remains unchanged.</summary>
     public ShaderCompileTarget Target => Artifact.Target;
 }

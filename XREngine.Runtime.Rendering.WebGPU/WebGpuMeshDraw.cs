@@ -31,7 +31,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
     public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
         XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output,
         WebGpuFrameBuffer? frameBuffer, WebGpuInstanceStorageContract? instanceStorage,
-        WebGpuDataBuffer? instanceBuffer, uint instanceLimit)
+        WebGpuDataBuffer? instanceBuffer, uint instanceLimit, WebGpuMeshDeformation? deformation = null)
     {
         _renderer = renderer;
         _program = program;
@@ -46,7 +46,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
             throw Unsupported("only unsigned 16-bit and 32-bit indices are admitted");
         _indices = (WebGpuDataBuffer)renderer.GetOrCreateAPIRenderObject(indices, generateNow: true)!;
         _indexCount = indices.ElementCount;
-        _streams = ResolveStreams(renderer, program.Artifact, mesh);
+        _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation);
         _preparation = PrepareAsync();
     }
 
@@ -156,6 +156,14 @@ internal sealed class WebGpuMeshDraw : IDisposable
             foreach (WebGpuBindingSet bindings in removed) _commands.Remove(bindings);
     }
 
+    /// <summary>Releases one retired descriptor variant without rebuilding its mesh pipeline.</summary>
+    internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
+    {
+        if (!ReferenceEquals(_program, program) || !_commands.Remove(bindings, out int command))
+            return;
+        _renderer.RetireEngineResourceAfterFrame(command);
+    }
+
     private void ClearCommands()
     {
         foreach (int commands in _commands.Values) _renderer.RetireEngineResourceAfterFrame(commands);
@@ -173,14 +181,15 @@ internal sealed class WebGpuMeshDraw : IDisposable
         _pipeline = pipeline;
     }
 
-    private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh mesh)
+    private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh mesh,
+        WebGpuMeshDeformation? deformation)
     {
         List<WebGpuVertexStream> streams = [];
         foreach (ShaderVertexBufferLayout authored in artifact.VertexBuffers)
         {
             foreach (ShaderVertexAttribute attribute in authored.Attributes)
             {
-                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic);
+                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation);
                 if (attribute.Format != format || buffer.InstanceDivisor > 1)
                     throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible format or instance divisor");
                 string stepMode = buffer.InstanceDivisor == 0 ? "vertex" : "instance";
@@ -203,7 +212,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
         return streams.ToArray();
     }
 
-    private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh mesh, string semantic)
+    private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh mesh, string semantic,
+        WebGpuMeshDeformation? deformation)
     {
         string format = semantic switch
         {
@@ -212,6 +222,12 @@ internal sealed class WebGpuMeshDraw : IDisposable
             "uv0" => "float32x2",
             _ => throw Unsupported($"vertex semantic '{semantic}' has no engine stream mapping"),
         };
+        if (deformation is not null)
+        {
+            if (semantic == "position") return (deformation.Positions, 0, format);
+            if (semantic == "normal" && deformation.HasNormals) return (deformation.Attributes, 0, format);
+            if (semantic == "tangent" && deformation.HasTangents) return (deformation.Attributes, 16, format);
+        }
         if (mesh.Interleaved)
         {
             uint? offset = semantic switch

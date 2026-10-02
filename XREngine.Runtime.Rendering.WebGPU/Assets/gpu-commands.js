@@ -153,7 +153,10 @@ export class GpuCommands {
             } else {
                 object(e.texture, ['sampleType', 'viewDimension', 'multisampled']);
                 oneOf(e.texture.sampleType, ['float', 'unfilterable-float', 'depth'], 'texture sample type');
-                if (e.texture.viewDimension !== '2d' || (e.texture.multisampled !== undefined && typeof e.texture.multisampled !== 'boolean')) throw new TypeError('Only explicit 2D texture bindings are supported.');
+                if (!['2d', '2d-array', 'cube'].includes(e.texture.viewDimension) ||
+                    (e.texture.multisampled !== undefined && typeof e.texture.multisampled !== 'boolean') ||
+                    e.texture.multisampled === true && e.texture.viewDimension !== '2d')
+                    throw new TypeError('Texture binding dimension or multisample declaration is unsupported.');
             }
         }
         entries.sort((a, b) => a.binding - b.binding);
@@ -195,6 +198,7 @@ export class GpuCommands {
                     if (expected.texture) {
                         resources.push({ kind: 'texture', value, writable: false });
                         if ((expected.texture.multisampled ?? false) !== (value.sampleCount > 1)) throw new Error('Texture sample count does not match the binding layout.');
+                        if (expected.texture.viewDimension !== (value.dimension ?? '2d')) throw new Error('Texture view dimension does not match the binding layout.');
                         if ((expected.texture.sampleType === 'depth') !== value.format.startsWith('depth')) throw new Error('Texture format does not match the binding sample type.');
                         if (value.aspect === 'stencil-only' || value.format === 'depth24plus-stencil8' && value.aspect !== 'depth-only')
                             throw new Error('Depth/stencil texture sampling requires an explicit depth-only view.');

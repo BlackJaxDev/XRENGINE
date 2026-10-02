@@ -21,6 +21,7 @@ public sealed class StandardLitColorSurfaceBinding
     private const int MatColorBit = 1 << 7;
     private const int MatSpecularIntensityBit = 1 << 8;
     private const int MatShininessBit = 1 << 9;
+    private const int AlphaCutoffBit = 1 << 10;
     private const int DeferredCommonBits = BaseColorBit | OpacityBit | SpecularBit | RoughnessBit | MetallicBit;
     private const int ForwardBits = MatColorBit | MatSpecularIntensityBit | MatShininessBit;
 
@@ -32,12 +33,14 @@ public sealed class StandardLitColorSurfaceBinding
     private ShaderVar? _parameter3;
     private ShaderVar? _parameter4;
     private ShaderVar? _parameter5;
+    private ShaderVar? _parameter6;
     private string? _name0;
     private string? _name1;
     private string? _name2;
     private string? _name3;
     private string? _name4;
     private string? _name5;
+    private string? _name6;
     private ShaderVector3? _baseColor;
     private ShaderFloat? _opacity;
     private ShaderFloat? _specular;
@@ -47,12 +50,15 @@ public sealed class StandardLitColorSurfaceBinding
     private ShaderFloat? _indexOfRefraction;
     private ShaderVector4? _matColor;
     private ShaderFloat? _matSpecularIntensity;
+    private ShaderFloat? _alphaCutoff;
     private StandardLitColorSurfaceSchema _schema;
     private ulong _layoutVersion;
     private ulong _valueVersion;
     private bool _hasLayout;
     private bool _unversionedLayout;
     private StandardLitColorSurface _surface;
+
+    private bool HasCoverage => _material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
 
     private StandardLitColorSurfaceBinding(XRMaterial material)
         => _material = material;
@@ -104,12 +110,20 @@ public sealed class StandardLitColorSurfaceBinding
                 _unversionedLayout = false;
         }
 
-        int expectedPass = _schema == StandardLitColorSurfaceSchema.Forward
-            ? (int)EDefaultRenderPass.OpaqueForward
-            : (int)EDefaultRenderPass.OpaqueDeferred;
+        ETransparencyMode transparency = _material.GetEffectiveTransparencyMode();
+        int expectedPass = HasCoverage
+            ? (int)(transparency switch
+            {
+                ETransparencyMode.Opaque => EDefaultRenderPass.OpaqueForward,
+                ETransparencyMode.Masked => EDefaultRenderPass.MaskedForward,
+                _ => EDefaultRenderPass.TransparentForward,
+            })
+            : _schema == StandardLitColorSurfaceSchema.Forward
+                ? (int)EDefaultRenderPass.OpaqueForward
+                : (int)EDefaultRenderPass.OpaqueDeferred;
         if (_material.RenderPass != expectedPass)
         {
-            reason = "StandardLitColorV1 parameter schema does not match its opaque render pass.";
+            reason = "Standard lit-color parameter schema and coverage do not match the authored render pass.";
             return false;
         }
 
@@ -126,16 +140,25 @@ public sealed class StandardLitColorSurfaceBinding
             _valueVersion = _material.BindingValueVersion;
         }
 
-        surface = _surface;
+        if (HasCoverage && (!float.IsFinite(_surface.Opacity) || _surface.Opacity is < 0 or > 1 ||
+            _alphaCutoff is null || !float.IsFinite(_alphaCutoff.Value) || _alphaCutoff.Value is < 0 or > 1 ||
+            _alphaCutoff.Value != _material.AlphaCutoff))
+        {
+            reason = "StandardLitColorV2 requires finite opacity/cutoff in [0,1] and a cutoff parameter matching AlphaCutoff.";
+            return false;
+        }
+        surface = HasCoverage
+            ? _surface with { TransparencyMode = transparency, AlphaCutoff = _alphaCutoff!.Value }
+            : _surface;
         reason = null;
         return true;
     }
 
     private bool ValidateMaterial(out string? reason)
     {
-        if (_material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1)
+        if (_material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 && !HasCoverage)
         {
-            reason = "Material is not explicitly tagged StandardLitColorV1.";
+            reason = "Material is not explicitly tagged with a supported StandardLitColor semantic.";
             return false;
         }
 
@@ -149,9 +172,9 @@ public sealed class StandardLitColorSurfaceBinding
             return false;
         }
 
-        if (_material.TransparencyMode != ETransparencyMode.Opaque ||
-            _material.TransparentTechniqueOverride is not null ||
-            _material.AlphaCutoff != 0.5f ||
+        if ((!HasCoverage && (_material.TransparencyMode != ETransparencyMode.Opaque ||
+            _material.TransparentTechniqueOverride is not null || _material.AlphaCutoff != 0.5f)) ||
+            (HasCoverage && !XRMaterial.IsStandardLitColorCoverageMode(_material.GetEffectiveTransparencyMode())) ||
             _material.PassSet.Passes.Length != 0 ||
             _material.PassSet.DisabledSourcePasses.Length != 0 ||
             _material.PassSet.SourceRenderQueue != -1 ||
@@ -173,7 +196,7 @@ public sealed class StandardLitColorSurfaceBinding
     private bool MatchesCachedParameters(ShaderVar[] parameters)
     {
         if (!ReferenceEquals(parameters, _parameters) ||
-            parameters.Length != (_schema == StandardLitColorSurfaceSchema.Forward ? 3 : 6) ||
+            parameters.Length != (HasCoverage ? 7 : _schema == StandardLitColorSurfaceSchema.Forward ? 3 : 6) ||
             !ReferenceEquals(parameters[0], _parameter0) || parameters[0].Name != _name0 ||
             !ReferenceEquals(parameters[1], _parameter1) || parameters[1].Name != _name1 ||
             !ReferenceEquals(parameters[2], _parameter2) || parameters[2].Name != _name2)
@@ -182,14 +205,15 @@ public sealed class StandardLitColorSurfaceBinding
         return parameters.Length == 3 ||
             ReferenceEquals(parameters[3], _parameter3) && parameters[3].Name == _name3 &&
             ReferenceEquals(parameters[4], _parameter4) && parameters[4].Name == _name4 &&
-            ReferenceEquals(parameters[5], _parameter5) && parameters[5].Name == _name5;
+            ReferenceEquals(parameters[5], _parameter5) && parameters[5].Name == _name5 &&
+            (parameters.Length == 6 || ReferenceEquals(parameters[6], _parameter6) && parameters[6].Name == _name6);
     }
 
     private bool TryValidateLayout(ShaderVar[] parameters, out string? reason)
     {
-        if (parameters.Length is not (3 or 6))
+        if (HasCoverage ? parameters.Length != 7 : parameters.Length is not (3 or 6))
         {
-            reason = "StandardLitColorV1 requires exactly six deferred or three forward parameters.";
+            reason = "StandardLitColorV1 requires six deferred or three forward parameters; V2 requires its seven coverage parameters.";
             return false;
         }
 
@@ -203,6 +227,7 @@ public sealed class StandardLitColorSurfaceBinding
         ShaderFloat? indexOfRefraction = null;
         ShaderVector4? matColor = null;
         ShaderFloat? matSpecularIntensity = null;
+        ShaderFloat? alphaCutoff = null;
 
         for (int index = 0; index < parameters.Length; index++)
         {
@@ -219,6 +244,7 @@ public sealed class StandardLitColorSurfaceBinding
                 "MatColor" when parameter.GetType() == typeof(ShaderVector4) => MatColorBit,
                 "MatSpecularIntensity" when parameter.GetType() == typeof(ShaderFloat) => MatSpecularIntensityBit,
                 "MatShininess" when parameter.GetType() == typeof(ShaderFloat) => MatShininessBit,
+                "AlphaCutoff" when HasCoverage && parameter.GetType() == typeof(ShaderFloat) => AlphaCutoffBit,
                 _ => 0,
             };
 
@@ -240,15 +266,18 @@ public sealed class StandardLitColorSurfaceBinding
                 case IndexOfRefractionBit: indexOfRefraction = (ShaderFloat)parameter!; break;
                 case MatColorBit: matColor = (ShaderVector4)parameter!; break;
                 case MatSpecularIntensityBit: matSpecularIntensity = (ShaderFloat)parameter!; break;
+                case AlphaCutoffBit: alphaCutoff = (ShaderFloat)parameter!; break;
             }
         }
 
         StandardLitColorSurfaceSchema schema;
-        if (mask == (DeferredCommonBits | EmissionBit))
+        if (HasCoverage && mask == (DeferredCommonBits | EmissionBit | AlphaCutoffBit))
             schema = StandardLitColorSurfaceSchema.DeferredEmission;
-        else if (mask == (DeferredCommonBits | IndexOfRefractionBit))
+        else if (!HasCoverage && mask == (DeferredCommonBits | EmissionBit))
+            schema = StandardLitColorSurfaceSchema.DeferredEmission;
+        else if (!HasCoverage && mask == (DeferredCommonBits | IndexOfRefractionBit))
             schema = StandardLitColorSurfaceSchema.DeferredIndexOfRefraction;
-        else if (mask == ForwardBits)
+        else if (!HasCoverage && mask == ForwardBits)
             schema = StandardLitColorSurfaceSchema.Forward;
         else
         {
@@ -266,16 +295,19 @@ public sealed class StandardLitColorSurfaceBinding
         _indexOfRefraction = indexOfRefraction;
         _matColor = matColor;
         _matSpecularIntensity = matSpecularIntensity;
+        _alphaCutoff = alphaCutoff;
         _parameters = parameters;
         _parameter0 = parameters[0]; _name0 = parameters[0].Name;
         _parameter1 = parameters[1]; _name1 = parameters[1].Name;
         _parameter2 = parameters[2]; _name2 = parameters[2].Name;
-        _parameter3 = parameters.Length == 6 ? parameters[3] : null;
+        _parameter3 = parameters.Length >= 6 ? parameters[3] : null;
         _name3 = _parameter3?.Name;
-        _parameter4 = parameters.Length == 6 ? parameters[4] : null;
+        _parameter4 = parameters.Length >= 6 ? parameters[4] : null;
         _name4 = _parameter4?.Name;
-        _parameter5 = parameters.Length == 6 ? parameters[5] : null;
+        _parameter5 = parameters.Length >= 6 ? parameters[5] : null;
         _name5 = _parameter5?.Name;
+        _parameter6 = parameters.Length == 7 ? parameters[6] : null;
+        _name6 = _parameter6?.Name;
         _layoutVersion = _material.BindingLayoutVersion;
         _valueVersion = 0;
         _hasLayout = true;

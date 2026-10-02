@@ -4,6 +4,10 @@ struct DepthNormalView { float4x4 viewProjection; };
 struct DepthNormalObject { float4x4 modelMatrix; float4x4 normalMatrix; };
 [[vk::binding(0, 0)]] ConstantBuffer<DepthNormalView> view;
 [[vk::binding(1, 0)]] ConstantBuffer<DepthNormalObject> object;
+#ifdef XRE_STANDARD_LIT_COVERAGE
+struct CoverageNormalMaterial { float4 baseColorOpacity; float4 coverage; };
+[[vk::binding(0, 1)]] ConstantBuffer<CoverageNormalMaterial> material;
+#endif
 struct DepthNormalInput
 {
     [[vk::location(0)]] float3 position : POSITION;
@@ -25,6 +29,10 @@ DepthNormalOutput depthNormalVertex(DepthNormalInput input)
 [shader("fragment")]
 float4 depthNormalFragment(DepthNormalOutput input) : SV_Target0
 {
+#ifdef XRE_STANDARD_LIT_COVERAGE
+    if (material.coverage.x > 0.5 && material.baseColorOpacity.w < material.coverage.y)
+        discard;
+#endif
     float3 normal = input.worldNormal * rsqrt(max(dot(input.worldNormal, input.worldNormal), 1e-20));
     float3 n = normal / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6);
     float2 oct = n.xy;

@@ -5,4 +5,8 @@ public sealed record ShaderStageResourceLayout(
     ShaderAbiResourceContract Contract,
     ShaderStageVisibility Visibility,
     string BindingType,
-    bool DynamicOffset);
+    bool DynamicOffset)
+{
+    /// <summary>Storage is a runtime-sized array whose declared byte size and members describe one element.</summary>
+    public bool RuntimeArray { get; internal init; }
+}

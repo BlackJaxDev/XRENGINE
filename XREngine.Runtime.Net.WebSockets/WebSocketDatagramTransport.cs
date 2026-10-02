@@ -73,8 +73,9 @@ internal sealed class WebSocketDatagramTransport : IRealtimeWebSocketTransport
     public int Send(byte[] buffer, int count, IPEndPoint endpoint)
     {
         ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentNullException.ThrowIfNull(endpoint);
         if (!Connected)
-            throw new IOException(Failure ?? "Realtime WebSocket is closed.");
+            throw new NetworkTransportException(Failure ?? "Realtime WebSocket is closed.", 0);
         if (!endpoint.Equals(_peer) || count is < 1 or > RealtimeWebSocketProtocol.MaximumDatagramBytes || count > buffer.Length
             || !ManagedUdpEnvelope.TryRead(buffer.AsSpan(0, count), out var header, out _, out _)
             || header.Direction != ManagedUdpDirection.ClientToServer)
@@ -85,12 +86,12 @@ internal sealed class WebSocketDatagramTransport : IRealtimeWebSocketTransport
                 || _outbound.Reader.Count >= RealtimeWebSocketProtocol.MaximumQueuedDatagrams)
             {
                 Fail("Realtime WebSocket send backlog exceeded; fresh admission and state resynchronization are required.");
-                throw new IOException(Failure);
+                throw new NetworkTransportException(Failure!, 0);
             }
             // The caller owns its buffer and may reuse it after acceptance.
             byte[] owned = buffer.AsSpan(0, count).ToArray();
             if (!_outbound.Writer.TryWrite(owned))
-                throw new IOException("Realtime WebSocket is closed.");
+                throw new NetworkTransportException("Realtime WebSocket is closed.", 0);
             _outboundBytes += count;
         }
         return count;
@@ -123,7 +124,12 @@ internal sealed class WebSocketDatagramTransport : IRealtimeWebSocketTransport
             if (Volatile.Read(ref _disposed) == 0)
                 Interlocked.CompareExchange(ref _failure, "Realtime WebSocket disconnected; obtain fresh admission and resynchronize before continuing.", null);
         }
-        finally { Dispose(); }
+        finally
+        {
+            Dispose();
+            lock (_queueLock)
+                _stop.Dispose();
+        }
     }
 
     private async Task SendLoopAsync()
@@ -167,7 +173,11 @@ internal sealed class WebSocketDatagramTransport : IRealtimeWebSocketTransport
             {
                 if (_inboundBytes + count > RealtimeWebSocketProtocol.MaximumQueuedBytes
                     || _inbound.Reader.Count >= RealtimeWebSocketProtocol.MaximumQueuedDatagrams)
+                {
+                    Interlocked.CompareExchange(ref _failure,
+                        "Realtime WebSocket receive backlog exceeded; fresh admission and state resynchronization are required.", null);
                     throw new InvalidDataException("Realtime WebSocket receive backlog exceeded.");
+                }
                 if (!_inbound.Writer.TryWrite(buffer.AsSpan(0, count).ToArray()))
                     throw new IOException("Realtime WebSocket is closed.");
                 _inboundBytes += count;
@@ -184,15 +194,17 @@ internal sealed class WebSocketDatagramTransport : IRealtimeWebSocketTransport
     public void Close() => Dispose();
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        _stop.Cancel();
-        _outbound.Writer.TryComplete();
-        _inbound.Writer.TryComplete();
-        _connection.Abort();
-        _connection.Dispose();
+        // Share the queue lock with pump finalization so the winning close
+        // finishes cancellation before its token source can be disposed.
         lock (_queueLock)
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            _stop.Cancel();
+            _outbound.Writer.TryComplete();
+            _inbound.Writer.TryComplete();
+            _connection.Abort();
+            _connection.Dispose();
             while (_outbound.Reader.TryRead(out _)) { }
             while (_inbound.Reader.TryRead(out _)) { }
             _outboundBytes = _inboundBytes = 0;

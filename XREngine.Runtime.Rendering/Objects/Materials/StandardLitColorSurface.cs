@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
@@ -14,4 +15,6 @@ public readonly record struct StandardLitColorSurface(
     float Roughness,
     float Metallic,
     float Emission,
-    float IndexOfRefraction);
+    float IndexOfRefraction,
+    ETransparencyMode TransparencyMode = ETransparencyMode.Opaque,
+    float AlphaCutoff = 0.5f);

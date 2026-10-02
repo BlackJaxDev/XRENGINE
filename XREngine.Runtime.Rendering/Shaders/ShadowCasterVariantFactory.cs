@@ -10,6 +10,9 @@ public static class ShadowCasterVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
+        if (sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+            return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
+
         XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
         if (fragmentShader is null)
             return null;

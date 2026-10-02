@@ -67,6 +67,14 @@ cooked/YAML decoding paths. It does not fall back to desktop files or manufactur
 missing asset placeholders. Custom game codecs retain their own format and need
 their own allocation and platform-variant review.
 
+Projects may explicitly select `BrowserSharedWorldPackageManifestPath` to extend
+a verified self-contained native package with the cooked browser catalog and
+payloads. Both representations then use the same recomputed immutable package
+identity for managed admission. Ordinary local publishing does not opt in.
+See [shared world package publishing](../../../developer-guides/networking/browser-shared-world-package.md)
+for the bounded native profile, output handoff, integrity checks and remaining
+runtime qualification.
+
 Browser capability admission inspects the world after its registered serializer
 has cooked and hydrated it under a thread-local WebGPU material-construction
 target. The temporary graph has scoped object ownership and cannot create API
@@ -158,3 +166,21 @@ payload caching may be reused from [content delivery](browser-cooked-content.md)
 Production hosting, complete capability reporting, packaged-editor delivery,
 audio/input/UI coverage, desktop comparisons and physical-device qualification
 remain tracked in the [active runtime plan](../../todo/platform/unified-desktop-browser-runtime-todo.md).
+
+### Browser physics capability admission
+
+The source audit now examines configured backend-neutral rigid bodies and
+character controllers as well as desktop-only component assemblies. It rejects
+ignored PhysX body flags, dominance/owner metadata, high collision-filter words,
+contact/sleep and custom COM/inertia settings, separate static/dynamic or
+per-shape material behavior, unsupported geometry adapters, and native runtime
+material objects. Character settings requiring controller materials, invisible
+walls, constrained climbing or custom PhysX scaling/cache growth also fail
+before package activation. Diagnostics identify the scene path, component and
+feature. Defaults that the Jolt adapter intentionally replaces remain admitted;
+this does not claim numerical equality between physics backends. Collision
+geometry that needs native runtime generation must be baked before publishing.
+Game code can still request a later unsupported runtime service, which retains
+its named runtime failure rather than being predicted by this authored-data
+audit. Integrated Editor compilation passes with zero warnings/errors. Representative
+negative-world cook acceptance remains for the end-to-end milestone.

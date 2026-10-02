@@ -34,13 +34,29 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
         RequireReady();
         ArgumentNullException.ThrowIfNull(description);
         return Track(WebGpuImports.CreateTextureResource(_session, description.Width, description.Height,
-            description.MipLevelCount, description.SampleCount, description.Format, (int)description.Usage, description.Label));
+            description.MipLevelCount, description.SampleCount, description.Format, (int)description.Usage,
+            description.Label, description.ArrayLayerCount));
     }
 
     public void UploadTextureMip(int handle, int mip, int x, int y, int width, int height, Span<byte> bytes)
     {
         RequireOwnedResource(handle);
-        WebGpuImports.UploadTextureMip(_session, handle, mip, x, y, width, height, bytes);
+        WebGpuImports.UploadTextureMip(_session, handle, mip, x, y, width, height, bytes, 0);
+    }
+
+    public void UploadTextureLayerMip(int handle, int mip, int layer, int width, int height, Span<byte> bytes)
+    {
+        RequireOwnedResource(handle);
+        WebGpuImports.UploadTextureMip(_session, handle, mip, 0, 0, width, height, bytes, layer);
+    }
+
+    public void CopyTextureSubresource(int source, int destination, int sourceMip, int destinationMip,
+        int destinationLayer, int width, int height)
+    {
+        RequireOwnedResource(source);
+        RequireOwnedResource(destination);
+        WebGpuImports.CopyTextureSubresource(_session, source, destination, sourceMip, destinationMip,
+            destinationLayer, width, height);
     }
 
     public int CreateTextureView(BrowserTextureViewDescription description)
@@ -48,14 +64,15 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
         ArgumentNullException.ThrowIfNull(description);
         RequireOwnedResource(description.TextureHandle);
         return Track(WebGpuImports.CreateTextureView(_session, description.TextureHandle,
-            description.BaseMip, description.MipCount, description.Aspect, description.Label));
+            description.BaseMip, description.MipCount, description.Aspect, description.Label,
+            description.BaseArrayLayer, description.ArrayLayerCount, description.Dimension));
     }
 
     public int CreateSampler(BrowserSamplerDescription description)
     {
         RequireReady();
         ArgumentNullException.ThrowIfNull(description);
-        return Track(WebGpuImports.CreateSampler(_session, description.AddressU, description.AddressV,
+        return Track(WebGpuImports.CreateSampler(_session, description.AddressU, description.AddressV, description.AddressW,
             description.MinFilter, description.MagFilter, description.MipmapFilter, description.Label,
             description.LodMaxClamp, description.MaxAnisotropy, description.LodMinClamp, description.Compare ?? ""));
     }

@@ -186,6 +186,14 @@ namespace XREngine.Rendering.Commands
 
         private int CompareEntries(Entry x, Entry y)
         {
+            if (_farToNear)
+            {
+                // Higher authored priority draws later. Capture it with distance
+                // so another viewport or material edit cannot mutate this ordering.
+                int priority = x.TransparentSortPriority.CompareTo(y.TransparentSortPriority);
+                if (priority != 0)
+                    return priority;
+            }
             int result = x.RenderDistance.CompareTo(y.RenderDistance);
             if (_bucketOpaqueState)
             {
@@ -206,7 +214,8 @@ namespace XREngine.Rendering.Commands
             float RenderDistance,
             long SortOrderKey,
             int IdentityHash,
-            OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey StateBucket)
+            OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey StateBucket,
+            int TransparentSortPriority)
         {
             public static Entry Capture(RenderCommand command, float renderDistance, long sortOrderKey)
                 => new(
@@ -214,7 +223,19 @@ namespace XREngine.Rendering.Commands
                     renderDistance,
                     sortOrderKey,
                     RuntimeHelpers.GetHashCode(command),
-                    OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(command));
+                    OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(command),
+                    CaptureTransparentSortPriority(command));
+
+            private static int CaptureTransparentSortPriority(RenderCommand command)
+            {
+                if (command.RenderPass != (int)EDefaultRenderPass.TransparentForward || command is not IRenderCommandMesh mesh)
+                    return 0;
+                XRMaterial? material = mesh.MaterialOverride ?? mesh.Mesh?.Material;
+                // V1 and arbitrary shader materials retain their existing neutral
+                // CPU sort priority, including in mixed V1/V2 transparent lists.
+                return material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2
+                    ? material.TransparentSortPriority : 0;
+            }
         }
 
         private sealed class ReferenceRenderCommandComparer : IEqualityComparer<RenderCommand>

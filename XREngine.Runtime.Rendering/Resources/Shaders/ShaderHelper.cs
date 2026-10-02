@@ -789,6 +789,7 @@ public static class ShaderHelper
             "LitTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitColoredForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "StandardLitColorCoverageForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalSpecForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
@@ -819,6 +820,7 @@ public static class ShaderHelper
         return fileName switch
         {
             "LitTexturedAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            "StandardLitColorCoverageForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "LitTexturedSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
             "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
@@ -840,6 +842,7 @@ public static class ShaderHelper
         return fileName switch
         {
             "LitTexturedAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
+            "StandardLitColorCoverageForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
             "LitTexturedSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
             "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),
             "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, PointShadowCasterPassDefine),

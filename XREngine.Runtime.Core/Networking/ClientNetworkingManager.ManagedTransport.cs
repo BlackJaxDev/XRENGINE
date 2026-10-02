@@ -402,6 +402,10 @@ public partial class ClientNetworkingManager
 
     private void HandleManagedTerminalCleanup(string reason)
     {
+        // A queued callback from a retired manager must never clear a new
+        // connection's local-player assignment or replication ownership.
+        if (IsReplicationDisposed)
+            return;
         Debug.NetworkingWarning("[Client] Managed UDP session ended: {0}", reason);
         foreach (IPawnController? player in RuntimeNetworkingHostServices.Current.LocalPlayers)
             if (player?.PlayerInfo is { } playerInfo)

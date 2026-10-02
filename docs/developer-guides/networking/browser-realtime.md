@@ -96,6 +96,51 @@ it so its timer subscriptions cannot continue. Inspect
 `WebSocketTransportFailure`, `ManagedTransportFailure`, and `ReplicationFailure`
 for credential-free diagnostics.
 
+### Unified Browser Host
+
+The authored engine runtime installs the transport and production networking
+host services. After loading the world, the application's trusted page code can
+call `BrowserEngineExports.ConnectWebSocketAsync(handoffJson, requireVoice)`
+with a transient JSON serialization of the shared `RealtimeJoinHandoffPayload`.
+The application obtains that handoff through its own authenticated control-plane
+flow. The runtime does not infer an authentication endpoint, send cookies to a
+new origin, read credentials from query strings, or retry a stored admission.
+Do not put the handoff in the publish catalog, game settings, local/session
+storage, page URLs, or logs. Discard the caller's JSON after the call; the runtime
+clears the consumed payload's secret/token fields even when joining fails.
+
+The interop parser bounds the handoff to 16 KiB and eight JSON levels, rejects
+duplicate or unknown members, and uses generated metadata for the shared
+contract. Legacy session tokens are rejected. `Engine.ConnectWebSocketClientAsync`
+requires the active caller-owned engine thread and no existing network manager.
+It validates the handoff's endpoint, identity fields, build, and world against
+an independently verified loaded package before opening the connection. A
+generated local-world fingerprint is insufficient. Only the trusted package
+loader may register `WorldAssetIdentityProvider.RegisterVerifiedIdentity` and
+the verified asset-path set; the handoff is never used to bless loaded content.
+Package identity or asset-reference differences fail closed, without replacing
+the loaded world or downloading arbitrary server-referenced assets.
+
+Connection completion means admission has started. `GetNetworkState()` reports
+`local`, `connecting`, `authenticating`, `synchronizing`, `ready`, `suspended`, or
+`failed`. Gate gameplay on `IsNetworkGameplayReady()`, which reflects the shared
+managed assignment and baseline state. The world pauses before the asynchronous
+upgrade and is resumed only by the existing validated replication commit.
+Replication failures retain the production baseline-resync mechanism; transport
+or admission failure retires the manager and requires fresh admission.
+
+`engine-runtime.js` installs page visibility, freeze/resume, and pagehide/pageshow
+hooks independently of rendering. Hiding/freezing or caching a page immediately
+cancels an upgrade and suspends the manager. A non-drawable canvas and world
+shutdown do the same. Showing the page resumes its local frame clock but never
+reuses a grant or reconnects automatically. Call `SuspendNetwork()` explicitly
+before supplying another handoff. A late upgrade or queued terminal callback
+from the retired manager cannot publish into the replacement connection.
+
+`IsVoiceSupported()` returns false, and `requireVoice: true` rejects the join
+before connecting or requesting microphone permission. Audio output does not
+imply voice capture, encoding, transport, or mixing support.
+
 ## Bounds And Delivery Semantics
 
 - One message is one managed datagram, at most 65,507 bytes and 256 fragments
@@ -137,10 +182,11 @@ Hello/Challenge/Commit walkthrough, negative upgrade checks, corrected
 absolute-transform quaternion roundtrip, and rejection of recognized older
 wire traffic before admission or peer state changes.
 
-This is an implementation path, not production acceptance. Browser session
-composition must still obtain a trusted control-plane handoff, route it through
-the async start API, connect suspension/resume to the page lifecycle, and prove
-real-server join, baseline, gameplay, expiry and recovery. Local compilation or
-a transport loopback smoke cannot qualify those behaviors or physical mobile
-devices. The frozen reference `browser-network.js` is not this transport and is
-not extended by this work.
+This is an implementation path, not production acceptance. Applications must
+still supply their authenticated control-plane handoff flow and a verified
+package shared with the server, then prove real-browser join, baseline,
+gameplay, expiry and recovery. The asynchronous session and page-lifecycle
+integration do not establish those outcomes. Local compilation or a transport
+loopback smoke cannot qualify those behaviors or physical mobile devices. The
+frozen reference `browser-network.js` is not this transport and is not extended
+by this work.

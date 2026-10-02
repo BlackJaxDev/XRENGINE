@@ -154,6 +154,31 @@ public static class RealtimeJoinHandoff
         return RealtimeJoinHandoffContract.IsProtocolCompatible(expectedProtocolVersion, currentProtocolVersion);
     }
 
+    /// <summary>Validates a transient browser admission against an independently verified loaded world.</summary>
+    public static Uri ValidateWebSocketClientHandoff(RealtimeJoinHandoffPayload payload,
+        WorldAssetIdentity localWorldAsset, string currentProtocolVersion)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(localWorldAsset);
+        if (payload.Endpoint is not { Transport: RealtimeTransportKind.WebSocket } endpoint)
+            throw new NotSupportedException("Browser realtime admission requires the WebSocket transport.");
+        ValidateWebSocketAdmission(endpoint.Host, endpoint.Port, payload.SessionId, payload.WorkerGeneration,
+            payload.AccountId, payload.ClientId, payload.ReservationId, payload.AdmissionSecret, payload.CredentialEpoch);
+        if (!string.IsNullOrEmpty(payload.SessionToken))
+            throw new InvalidOperationException("Browser realtime admission does not accept legacy session tokens.");
+        if (!IsBoundedIdentity(endpoint.ProtocolVersion, 128)
+            || !IsProtocolCompatible(endpoint.ProtocolVersion, currentProtocolVersion))
+            throw new InvalidOperationException("Browser realtime admission has an incompatible build protocol.");
+        if (payload.WorldAsset is not { } expected
+            || !IsBoundedIdentity(expected.WorldId, 256) || !IsBoundedIdentity(expected.RevisionId, 256)
+            || !IsBoundedIdentity(expected.ContentHash, 256) || expected.AssetSchemaVersion < 1
+            || !IsBoundedIdentity(expected.RequiredBuildVersion, 128)
+            || !IsProtocolCompatible(expected.RequiredBuildVersion, currentProtocolVersion)
+            || !localWorldAsset.IsSameAssetAs(expected))
+            throw new InvalidOperationException("Browser realtime admission does not match the verified loaded world and build.");
+        return new UriBuilder("wss", endpoint.Host, endpoint.Port, RealtimeWebSocketProtocol.Path).Uri;
+    }
+
     private static void ValidateWebSocketAdmission(string host, int port, Guid? session, Guid? generation,
         string? account, string? client, string? reservation, string? admission, long credentialEpoch)
     {

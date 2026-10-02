@@ -17,6 +17,7 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
     private long _geometryRevision;
     private long _bufferRevision;
     private ulong _surfaceGeneration;
+    private WebGpuMeshDeformation? _deformation;
     private string _lastPrepareDetail = "NeverPrepared";
     private bool _generated;
 
@@ -35,31 +36,35 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true)
             material = MeshRenderMaterialResolver.Resolve(Data.Parent, null, 1).Material;
         Renderer.ApplyRenderParameters(material.RenderOptions);
-        return TryPrepareDraw(material, out _, out _);
+        return TryPrepareDraw(material, out _, out _, recordDeformation: false);
     }
 
-    private bool TryPrepareDraw(XRMaterial material, out WebGpuMaterial? apiMaterial, out WebGpuMeshDraw? draw)
+    private bool TryPrepareDraw(XRMaterial material, out WebGpuMaterial? apiMaterial, out WebGpuMeshDraw? draw, bool recordDeformation = true)
     {
         apiMaterial = null;
         draw = null;
         XRMesh? mesh = Data.Parent.Mesh;
         if (mesh is null)
             return Pending("MeshMissing");
-        if (mesh.Type != EPrimitiveType.Triangles || mesh.HasSkinning || mesh.HasBlendshapes)
-            throw Unsupported("the current engine vertex profile admits rigid indexed triangles only");
+        if (mesh.Type != EPrimitiveType.Triangles)
+            throw Unsupported("the current engine vertex profile admits indexed triangles only");
         if (Renderer.CurrentFrameOutput is not { } output)
             return Pending("OutputPending");
+        if (!Renderer.TryPrepareMeshDeformation(Data.Parent, out WebGpuMeshDeformation? deformation, recordDeformation))
+            return Pending("DeformationPending");
         WebGpuFrameBuffer? frameBuffer = Renderer.GetBoundEngineFrameBuffer();
         Renderer.ValidateEngineDrawArea();
         ulong attachmentRevision = frameBuffer?.Revision ?? 0;
         if (!ReferenceEquals(_mesh, mesh) || _geometryRevision != mesh.GeometryRevision ||
-            _bufferRevision != mesh.Buffers.MutationRevision || _surfaceGeneration != output.TargetGeneration)
+            _bufferRevision != mesh.Buffers.MutationRevision || _surfaceGeneration != output.TargetGeneration ||
+            !ReferenceEquals(_deformation, deformation))
         {
             DestroyDraws();
             SetField(ref _mesh, mesh);
             SetField(ref _geometryRevision, mesh.GeometryRevision);
             SetField(ref _bufferRevision, mesh.Buffers.MutationRevision);
             SetField(ref _surfaceGeneration, output.TargetGeneration);
+            SetField(ref _deformation, deformation);
         }
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
@@ -93,8 +98,7 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
                 buffer.Length % (uint)contract.StrideBytes != 0)
                 throw Unsupported("the UI instance storage length does not match its declared packed stride");
             instanceBuffer = (WebGpuDataBuffer)Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false)!;
-            ulong bindingBytes = instanceBuffer.IsGenerated ? instanceBuffer.BackendAllocatedByteSize : buffer.Length;
-            instanceLimit = (uint)Math.Min(contract.MaximumInstances, bindingBytes / (uint)contract.StrideBytes);
+            instanceLimit = (uint)Math.Min(contract.MaximumInstances, buffer.Length / (uint)contract.StrideBytes);
         }
         if (apiMaterial.Program.Artifact.Pass == "tonemap")
         {
@@ -113,7 +117,7 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             if (_draws.Count >= 32)
                 throw Unsupported("the mesh exceeds the bounded 32 material/raster variants for its current resource generation");
             draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State,
-                output, frameBuffer, instanceStorage, instanceBuffer, instanceLimit);
+                output, frameBuffer, instanceStorage, instanceBuffer, instanceLimit, deformation);
             _draws.Add(key, draw);
         }
         else draw.UpdateInstanceSource(instanceStorage, instanceBuffer, instanceLimit);
@@ -132,7 +136,7 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         if (instances == 0)
             return;
         if (billboardMode != EMeshBillboardMode.None || RuntimeEngine.Rendering.State.IsStereoPass)
-            throw Unsupported("the current vertex profile admits rigid mono rendering without billboarding");
+            throw Unsupported("the current vertex profile admits mono rendering without billboarding");
         ResolvedMeshRenderMaterial resolved = MeshRenderMaterialResolver.Resolve(Data.Parent, materialOverride, instances);
         bool depthNormalPrepass = resolved.IsDepthNormalVariant &&
             RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants == true;
@@ -298,6 +302,12 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
     {
         foreach (WebGpuMeshDraw draw in _draws.Values)
             draw.ReleaseCommandsUsingHandle(resource, handle);
+    }
+
+    internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
+    {
+        foreach (WebGpuMeshDraw draw in _draws.Values)
+            draw.ReleaseCommandUsing(program, bindings);
     }
 
     public override void Destroy() => DestroyDraws();

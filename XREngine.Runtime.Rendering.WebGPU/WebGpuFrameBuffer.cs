@@ -9,7 +9,7 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
 {
     private readonly int[] _clearCommands = new int[4];
     private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[] _targets = [];
-    private WebGpuTexture2D[] _textures = [];
+    private AbstractRenderAPIObject[] _textures = [];
     private int[] _views = [];
     private int _validationCommand;
     private BrowserFrameBufferPlan? _plan;
@@ -84,7 +84,7 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         if (current)
             for (int i = 0; i < targets.Length; i++)
             {
-                if (targets[i] != _targets[i] || _textures[i].GetRenderView(targets[i].MipLevel, targets[i].LayerIndex) != _views[i])
+                if (targets[i] != _targets[i] || ResolveView(targets[i].Target, targets[i].MipLevel, targets[i].LayerIndex) != _views[i])
                 {
                     current = false;
                     break;
@@ -95,7 +95,7 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         Destroy();
         try
         {
-            WebGpuTexture2D[] textures = new WebGpuTexture2D[targets.Length];
+            AbstractRenderAPIObject[] textures = new AbstractRenderAPIObject[targets.Length];
             int[] views = new int[targets.Length];
             var snapshot = new (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[targets.Length];
             string?[] formats = new string?[8];
@@ -105,33 +105,31 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
             for (int i = 0; i < targets.Length; i++)
             {
                 var target = targets[i];
-                if (target.Target is not XRTexture2D texture)
-                    throw Unsupported("Create", $"attachment type '{target.Target.GetType().Name}' is outside the 2D texture profile");
-                WebGpuTexture2D api = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!;
-                int view = api.GetRenderView(target.MipLevel, target.LayerIndex);
-                uint mipWidth = Math.Max(1u, api.Width >> target.MipLevel);
-                uint mipHeight = Math.Max(1u, api.Height >> target.MipLevel);
-                if (width != 0 && (width != mipWidth || height != mipHeight || samples != api.SampleCount))
+                var (api, view, textureWidth, textureHeight, textureSamples, format) = DescribeAttachment(target.Target,
+                    target.MipLevel, target.LayerIndex);
+                uint mipWidth = Math.Max(1u, textureWidth >> target.MipLevel);
+                uint mipHeight = Math.Max(1u, textureHeight >> target.MipLevel);
+                if (width != 0 && (width != mipWidth || height != mipHeight || samples != textureSamples))
                     throw Unsupported("Create", "all attachments must have identical extents and sample counts");
                 width = mipWidth;
                 height = mipHeight;
-                samples = api.SampleCount;
+                samples = textureSamples;
                 int slot = ColorSlot(target.Attachment);
                 if (slot >= 0)
                 {
-                    if (api.Format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || formats[slot] is not null)
+                    if (format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || formats[slot] is not null)
                         throw Unsupported("Create", "color slots require distinct exact RGBA8 or RGBA16F texture views");
-                    formats[slot] = api.Format;
+                    formats[slot] = format;
                     colorCount = Math.Max(colorCount, slot + 1);
                 }
                 else
                 {
                     if (depthFormat is not null || target.Attachment is not (EFrameBufferAttachment.DepthAttachment or EFrameBufferAttachment.DepthStencilAttachment))
                         throw Unsupported("Create", "one depth or combined depth/stencil attachment is admitted");
-                    if (target.Attachment == EFrameBufferAttachment.DepthStencilAttachment && api.Format != "depth24plus-stencil8" ||
-                        target.Attachment == EFrameBufferAttachment.DepthAttachment && api.Format is not ("depth16unorm" or "depth24plus" or "depth32float"))
+                    if (target.Attachment == EFrameBufferAttachment.DepthStencilAttachment && format != "depth24plus-stencil8" ||
+                        target.Attachment == EFrameBufferAttachment.DepthAttachment && format is not ("depth16unorm" or "depth24plus" or "depth32float"))
                         throw Unsupported("Create", "the depth attachment kind does not match its exact texture format");
-                    depthFormat = api.Format;
+                    depthFormat = format;
                 }
                 textures[i] = api;
                 views[i] = view;
@@ -170,22 +168,41 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
                 clearDepth: clearDepth, depthClearValue: depth, clearStencil: false));
 
     private int ResolveView(IFrameBufferAttachement attachment, int mip, int layer)
-    {
-        if (attachment is not XRTexture2D texture)
-            throw Unsupported("View", "only 2D texture attachments are admitted");
-        WebGpuTexture2D api = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!;
-        return api.GetRenderView(mip, layer);
-    }
+        => DescribeAttachment(attachment, mip, layer).View;
+
+    private (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
+        DescribeAttachment(IFrameBufferAttachement attachment, int mip, int layer)
+        => attachment switch
+        {
+            XRTexture2D texture => Describe((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!, mip, layer),
+            XRTexture2DArray array => Describe((WebGpuTexture2DArray)Renderer.GetOrCreateAPIRenderObject(array, generateNow: true)!, mip, layer),
+            XRTextureCube cube => Describe((WebGpuTextureCube)Renderer.GetOrCreateAPIRenderObject(cube, generateNow: true)!, mip, layer),
+            _ => throw Unsupported("View", $"attachment type '{attachment.GetType().Name}' has no exact WebGPU view"),
+        };
+
+    private static (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
+        Describe(WebGpuTexture2D texture, int mip, int layer)
+        => (texture, texture.GetRenderView(mip, layer), texture.Width, texture.Height, texture.SampleCount, texture.Format);
+
+    private static (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
+        Describe<T>(WebGpuLayeredTexture<T> texture, int mip, int layer) where T : XRTexture
+        => (texture, texture.GetRenderView(mip, layer), texture.Width, texture.Height, texture.SampleCount, texture.Format);
 
     internal void MarkRecorded()
     {
-        foreach (WebGpuTexture2D texture in _textures) texture.MarkRecorded();
+        foreach (AbstractRenderAPIObject texture in _textures)
+            switch (texture)
+            {
+                case WebGpuTexture2D twoDimensional: twoDimensional.MarkRecorded(); break;
+                case WebGpuTexture2DArray array: array.MarkRecorded(); break;
+                case WebGpuTextureCube cube: cube.MarkRecorded(); break;
+            }
     }
 
     public bool DependsOn(AbstractRenderAPIObject resource)
     {
         if (ReferenceEquals(this, resource)) return true;
-        foreach (WebGpuTexture2D texture in _textures)
+        foreach (AbstractRenderAPIObject texture in _textures)
             if (ReferenceEquals(texture, resource)) return true;
         return false;
     }

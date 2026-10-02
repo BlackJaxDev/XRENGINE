@@ -336,3 +336,33 @@ evidence, not full-game parity, universal deterministic replay, Chromium gamepla
 input, or hardware performance. The shared source, predeclared tolerances,
 native/WASM supply hashes, traces and commands are retained under
 `Build/_AgentValidation/20261001-225000-lit-surface/physics-parity/`.
+
+## Compiled shared rendering and networking group (2026-10-02)
+
+The current coherent source group passes Release builds of the desktop WebGPU
+closure, Editor, Server and VRClient; all eighteen portable browser compile rows;
+and a fresh browser interpreter/Jolt publish, with zero compiler warnings/errors.
+ShaderCooker and BrowserContentCooker also build cleanly. Twenty-four raster
+recipes, including the new explicit V2 alpha coverage and bitmap UI variants,
+and the canonical packed deformation kernel pass cooking. The sample catalog
+retains twenty-two hash-verified artifacts, twelve material variants, nine
+pipeline passes and one lazy compute kernel.
+
+Implementation now includes numeric shared compute dispatch, canonical GPU
+skinning/morph lowering, cube/array textures, explicit lit masked/sorted coverage,
+production browser WebSocket composition, conservative opt-in shared world
+identity, and authored Jolt-unsupported feature rejection at cook time. Reviews
+repaired native buffer disposal, producer ordering, cached-range retirement,
+value-only auxiliary lifetime, stale networking callbacks and cancellation races,
+and native package reference/snapshot admission. The TODO closes only four full
+implementation rows and now reads **45/110**, leaving live acceptance explicit.
+
+The latest published pre-group commit `b78c8101259d6707e2677a4356a63c40b0f42901`
+passes its Linux browser job in
+[run 36972866407](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36972866407).
+The Windows job reached the real Editor compile and exposed missing pinned OSC
+and OpenVR submodules in the clean runner. The reviewed workflow fix initializes
+only those existing gitlinks and verifies their exact recorded commits. No
+submodule revision, dependency supply or desktop/HMD validation scope changed.
+Actual Editor-published RollingBall pixels/gameplay and the newly implemented
+profiles remain unqualified until the next end-to-end run completes.

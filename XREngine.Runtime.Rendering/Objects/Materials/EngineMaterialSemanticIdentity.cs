@@ -10,6 +10,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity StandardLitColorV1 => new(EngineMaterialSemantic.StandardLitColor, 1);
 
+    /// <summary>Lit color with explicit uniform-alpha coverage and sorted blending.</summary>
+    public static EngineMaterialSemanticIdentity StandardLitColorV2 => new(EngineMaterialSemantic.StandardLitColor, 2);
+
     public static EngineMaterialSemanticIdentity OpaqueShadowDepthV1 => new(EngineMaterialSemantic.OpaqueShadowDepth, 1);
 
     public static EngineMaterialSemanticIdentity DebugPointV1 => new(EngineMaterialSemantic.DebugPoint, 1);
@@ -27,7 +30,7 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     {
         if (Semantic == EngineMaterialSemantic.None && Version == 0)
             return;
-        if (Semantic == EngineMaterialSemantic.StandardLitColor && Version == 1)
+        if (Semantic == EngineMaterialSemantic.StandardLitColor && Version is 1 or 2)
             return;
         if (Semantic == EngineMaterialSemantic.OpaqueShadowDepth && Version == 1)
             return;

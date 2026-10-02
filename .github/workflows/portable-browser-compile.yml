@@ -77,7 +77,10 @@ jobs:
         run: dotnet publish Tools/Dependencies/JoltBrowser/Spike/JoltBrowserSpike.csproj -c Release -m:1 --output "$VALIDATION_ROOT/jolt-spike" --artifacts-path "$VALIDATION_ROOT/jolt-spike-build" -p:WasmBuildNative=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
 
       - name: Cook engine raster diagnostic shaders
-        run: dotnet run --project Tools/ShaderCooker --configuration Release -- --source-root Build/CommonAssets/Shaders/WebGPU/ --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-probe.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-texture-probe.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-shadow-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-tonemap.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-point.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-line.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-triangle.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-normal-prepass.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-generate.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-blur-horizontal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-blur-vertical.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-copy.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-downsample.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-upsample.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-combine.recipe.json --output "$VALIDATION_ROOT/depth-shaders"
+        run: dotnet run --project Tools/ShaderCooker --configuration Release -- --source-root Build/CommonAssets/Shaders/WebGPU/ --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-probe.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-texture-probe.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-shadow-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-tonemap.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-point.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-line.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-triangle.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-normal-prepass.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-generate.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-blur-horizontal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-blur-vertical.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-copy.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-downsample.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-upsample.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-combine.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-ui-quad-batched.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-ui-text-batched-bitmap.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-depth.recipe.json --output "$VALIDATION_ROOT/depth-shaders"
+
+      - name: Cook canonical engine deformation kernel
+        run: dotnet run --project Tools/ShaderCooker --configuration Release -- --source-root XREngine.Runtime.Rendering.WebGPU --recipe Build/CommonAssets/Shaders/WebGPU/engine-packed-skinning.recipe.json --output "$VALIDATION_ROOT/compute-shaders"
 
       - name: Package canonical engine lifecycle world
         run: |
@@ -127,6 +130,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Initialize pinned Editor project submodules
+        shell: pwsh
+        run: |
+          $paths = @('Build/Submodules/OscCore-NET9', 'Build/Submodules/OpenVR.NET')
+          git submodule update --init --checkout -- Build/Submodules/OscCore-NET9 Build/Submodules/OpenVR.NET
+          if ($LASTEXITCODE -ne 0) { throw 'The recorded Editor submodules could not be checked out.' }
+          foreach ($path in $paths) {
+            $entry = (& git ls-tree HEAD -- $path).Trim()
+            if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s+') {
+              throw "No recorded gitlink commit for $path."
+            }
+            $expected = $Matches[1]
+            $actual = (& git -C $path rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+              throw "The $path checkout does not match its recorded gitlink commit."
+            }
+          }
+          foreach ($file in @(
+            'Build/Submodules/OscCore-NET9/OscCore.csproj',
+            'Build/Submodules/OpenVR.NET/OpenVR.NET/OpenVR.NET.csproj',
+            'Build/Submodules/OpenVR.NET/OpenVR.NET/openvr_api.dll')) {
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing pinned Editor dependency: $file" }
+          }
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6

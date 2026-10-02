@@ -54,6 +54,7 @@ namespace XREngine
         private string? _desktopHostProjectPath;
         private string? _desktopHostRegistrationType;
         private string? _browserShaderArtifactManifestPath;
+        private string? _browserSharedWorldPackageManifestPath;
 
         [MemoryPackConstructor]
         public XRProject() { }
@@ -137,6 +138,13 @@ namespace XREngine
         {
             get => _browserShaderArtifactManifestPath;
             set => SetField(ref _browserShaderArtifactManifestPath, value);
+        }
+
+        /// <summary>Optional project-relative verified native package to extend with browser representations for shared admission.</summary>
+        public string? BrowserSharedWorldPackageManifestPath
+        {
+            get => _browserSharedWorldPackageManifestPath;
+            set => SetField(ref _browserSharedWorldPackageManifestPath, value);
         }
 
         /// <summary>

@@ -20,6 +20,9 @@ struct LitMaterialUniforms
 {
     float4 baseColorOpacity;
     float4 roughnessMetallicSpecularEmission;
+#ifdef XRE_STANDARD_LIT_COVERAGE
+    float4 coverage;
+#endif
 };
 
 // Flat float4 fields keep the whole-program ABI explicit and portable without
@@ -297,6 +300,10 @@ float3 spotLight(float4 positionRadius, float4 colorIntensity, float4 directionE
 [shader("fragment")]
 float4 standardLitFragment(LitVertexOutput input) : SV_Target0
 {
+#ifdef XRE_STANDARD_LIT_COVERAGE
+    if (material.coverage.x > 0.5 && material.baseColorOpacity.w < material.coverage.y)
+        discard;
+#endif
     float3 normal = safeNormalize(input.worldNormal);
     float3 viewDirection = safeNormalize(view.cameraPosition.xyz - input.worldPosition);
     float3 albedo = material.baseColorOpacity.xyz;
@@ -329,5 +336,10 @@ float4 standardLitFragment(LitVertexOutput input) : SV_Target0
     ambient = ambientMax <= 0.0001 ? float3(0.08) : ambient * max(1.0, 0.08 / ambientMax);
     ambient *= ambientVisibility(input.position.xy, albedo);
     // Linear HDR color. The pipeline owns display tone mapping and encoding.
-    return float4(color + ambient * albedo + albedo * surface.w, material.baseColorOpacity.w);
+    float3 shaded = color + ambient * albedo + albedo * surface.w;
+#ifdef XRE_STANDARD_LIT_COVERAGE
+    if (material.coverage.z > 0.5)
+        shaded *= material.baseColorOpacity.w;
+#endif
+    return float4(shaded, material.baseColorOpacity.w);
 }

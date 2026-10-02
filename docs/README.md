@@ -119,6 +119,10 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 ## Browser runtime planning
 
+[Shared native/browser world packages](developer-guides/networking/browser-shared-world-package.md)
+documents the opt-in publisher contract that binds original native and cooked
+browser representations under one verified managed-admission identity.
+
 [Portable engine host ownership](work/progress/platform/portable-engine-host-ownership.md) records the shared facade, timer, services and desktop composition boundary. The [host validation record](work/investigations/platform/portable-engine-host-validation.md) contains the desktop/browser build gate, Editor camera/UI restore and Server/VRClient startup evidence, including current limitations. Browser engine composition is now present in source; the [unified runtime checklist](work/todo/platform/unified-desktop-browser-runtime-todo.md) and [2026-10-01 implementation checkpoint](work/progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguish that work from still-open live browser and renderer acceptance.
 
 [Portable browser engine boot qualification](work/progress/platform/portable-browser-engine-boot.md) records the current shared-engine startup source, earlier partial asset round-trips, and the remaining browser execution boundary. The effort resumed on 2026-10-01; source composition does not yet establish a live engine-world or rendered-game result. Browser Jolt's managed source supply and native/managed spike publish are approved and built, while browser physics execution remains unverified.

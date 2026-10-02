@@ -92,8 +92,10 @@ internal static class Program
             JsonArray artifacts = [];
             JsonArray materialVariants = [];
             JsonArray pipelineArtifacts = [];
+            JsonArray computeArtifacts = [];
             HashSet<string> variantKeys = new(StringComparer.Ordinal);
             HashSet<string> pipelinePasses = new(StringComparer.Ordinal);
+            HashSet<string> computeKernels = new(StringComparer.Ordinal);
             foreach (PreparedShader item in prepared.OrderBy(item => item.Name, StringComparer.Ordinal))
             {
                 cancellation.Token.ThrowIfCancellationRequested();
@@ -119,11 +121,20 @@ internal static class Program
                     Require(pipelinePasses.Add(pass), $"Duplicate pipeline artifact pass '{pass}'.");
                     pipelineArtifacts.Add(reference);
                 }
+                if (item.ComputeArtifact is { } compute)
+                {
+                    JsonObject reference = (JsonObject)compute.DeepClone();
+                    reference["descriptorIdentity"] = descriptorHash;
+                    string kernel = String(reference, "kernel");
+                    Require(computeKernels.Add(kernel), $"Duplicate compute artifact kernel '{kernel}'.");
+                    computeArtifacts.Add(reference);
+                }
             }
             int schema = ParseJson(prepared[0].Descriptor)["schemaVersion"]!.GetValue<int>();
             JsonObject manifestDocument = new() { ["schemaVersion"] = schema, ["backend"] = "WebGPU", ["packetVersion"] = 2, ["artifacts"] = artifacts };
             if (materialVariants.Count > 0) manifestDocument["materialVariants"] = materialVariants;
             if (pipelineArtifacts.Count > 0) manifestDocument["pipelineArtifacts"] = pipelineArtifacts;
+            if (computeArtifacts.Count > 0) manifestDocument["computeArtifacts"] = computeArtifacts;
             byte[] manifest = Canonical(manifestDocument);
             Require(manifest.Length <= MaxJsonBytes, "Manifest exceeds the JSON byte limit.");
             cancellation.Token.ThrowIfCancellationRequested();
@@ -156,6 +167,8 @@ internal static class Program
         if (schema == 3) keys.Add("pass");
         if (schema == 3 && recipe.ContainsKey("materialVariant")) keys.Add("materialVariant");
         if (schema == 3 && recipe.ContainsKey("pipelineArtifact")) keys.Add("pipelineArtifact");
+        if (schema == 3 && recipe.ContainsKey("computeArtifact")) keys.Add("computeArtifact");
+        if (schema == 3 && recipe.ContainsKey("workgroupSize")) keys.Add("workgroupSize");
         Require(recipe.Count == keys.Count && recipe.All(item => keys.Contains(item.Key)), "Recipe properties must match the shader recipe schema.");
         string name = String(recipe, "name");
         Require(Regex.IsMatch(name, "^[a-z][a-z0-9-]{0,63}$", RegexOptions.CultureInvariant), "Name must be a lowercase shader identifier.");
@@ -167,6 +180,7 @@ internal static class Program
         ShaderProgramArtifact? engineLayout = null;
         JsonObject? materialVariant = null;
         JsonObject? pipelineArtifact = null;
+        JsonObject? computeArtifact = null;
         if (schema == 3)
         {
             Require(language is "Slang" or "WGSL", $"{stageContext}: engine recipes require authored Slang or explicit WGSL; the frozen browser material generator is not an engine frontend.");
@@ -179,9 +193,10 @@ internal static class Program
                 Require(variant.Count == 4 && variant.ContainsKey("semantic") && variant.ContainsKey("semanticVersion")
                     && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
                 string semantic = String(variant, "semantic");
+                int semanticVersion = Integer(variant, "semanticVersion");
                 Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
                     "UIQuadBatched" or "UITextBatchedBitmap"
-                    && Integer(variant, "semanticVersion") == 1,
+                    && (semanticVersion == 1 || semantic == "StandardLitColor" && semanticVersion == 2),
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
                 if (semantic == "OpaqueShadowDepth")
@@ -213,7 +228,7 @@ internal static class Program
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");
-                materialVariant = new JsonObject { ["semantic"] = semantic, ["semanticVersion"] = 1,
+                materialVariant = new JsonObject { ["semantic"] = semantic, ["semanticVersion"] = semanticVersion,
                     ["target"] = "WebGPUWgsl", ["pass"] = String(recipe, "pass"),
                     ["vertexProfile"] = vertexProfile, ["outputProfile"] = outputProfile };
             }
@@ -227,6 +242,19 @@ internal static class Program
                     entries.ContainsKey("vertex") && entries.ContainsKey("fragment") && materialVariant is null,
                     $"{stageContext}: the pipeline artifact must explicitly select a supported complete raster program without a material variant.");
                 pipelineArtifact = new JsonObject { ["pass"] = pass };
+            }
+            if (recipe.TryGetPropertyValue("computeArtifact", out JsonNode? computeNode))
+            {
+                JsonObject compute = Object(computeNode, "computeArtifact");
+                JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
+                string kernel = String(compute, "kernel");
+                Require(compute.Count == 1 && WebComputeArtifactCatalog.IsSupportedKernel(kernel) &&
+                    String(recipe, "pass") == "skinning" && entries.Count == 1 &&
+                    String(entries, "compute") == "skin" && materialVariant is null && pipelineArtifact is null &&
+                    String(recipe, "semanticSchemaIdentity") == "xrengine.engine.compute.v1" &&
+                    CanonicalString(recipe["workgroupSize"]) == "[64,1,1]\n",
+                    $"{stageContext}: packed skinning requires its exact compute identity, entry, workgroup and semantic schema.");
+                computeArtifact = new JsonObject { ["kernel"] = kernel };
             }
         }
         else
@@ -308,6 +336,7 @@ internal static class Program
         foreach (string key in new[] { "schemaVersion", "name", "sourceLanguage", "target", "entryPoints", "defines", "specialization", "requiredLimits", "matrixLayout", "semanticSchemaIdentity", "layout", "pipeline" })
             descriptor[key] = recipe[key]!.DeepClone();
         if (schema == 3) descriptor["pass"] = recipe["pass"]!.DeepClone();
+        if (schema == 3 && recipe.ContainsKey("workgroupSize")) descriptor["workgroupSize"] = recipe["workgroupSize"]!.DeepClone();
         if (materialVariant is not null) descriptor["materialVariant"] = recipe["materialVariant"]!.DeepClone();
         descriptor["requiredFeatures"] = new JsonArray();
         descriptor["compilerIdentity"] = schema == 1 ? "xrengine-wgsl-packager/1" : compilerIdentity;
@@ -329,8 +358,12 @@ internal static class Program
         byte[] encoded = Canonical(descriptor);
         Require(dependencies.Count <= 512, $"{stageContext}: dependency count exceeds 512.");
         Require(encoded.Length <= MaxJsonBytes, $"{stageContext}: descriptor exceeds the JSON byte limit.");
-        if (schema == 3) _ = ShaderProgramArtifactReader.Read(encoded, source);
-        return new PreparedShader(name, encoded, source, materialVariant, pipelineArtifact);
+        if (schema == 3)
+        {
+            ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(encoded, source);
+            if (computeArtifact is not null) WebComputeArtifactCatalog.ValidatePackedSkinning(artifact);
+        }
+        return new PreparedShader(name, encoded, source, materialVariant, pipelineArtifact, computeArtifact);
     }
 
     private static byte[] GenerateMaterial(byte[] source, string name, string context)
