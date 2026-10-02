@@ -124,7 +124,7 @@ jobs:
           retention-days: 7
 
   windows-editor-browser:
-    name: Publish RollingBall with the Windows Editor CLI and qualify Chromium
+    name: Publish RollingBall with the Windows Editor CLI
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -162,25 +162,6 @@ jobs:
 
       - name: Install WebAssembly workload
         run: dotnet workload install wasm-tools
-
-      - name: Set up browser qualification tools
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
-
-      - name: Install pinned browser tooling
-        shell: pwsh
-        run: |
-          npm ci --prefix Tools/BrowserSmoke
-          if ($LASTEXITCODE -ne 0) { throw 'Browser tooling install failed.' }
-          Push-Location Tools/BrowserSmoke
-          try {
-            npx playwright install chromium
-            if ($LASTEXITCODE -ne 0) { throw 'Chromium install failed.' }
-          }
-          finally { Pop-Location }
 
       - name: Prepare pinned browser physics sources
         shell: pwsh
@@ -237,25 +218,66 @@ jobs:
           git diff --exit-code -- Samples/RollingBall
           if ($LASTEXITCODE -ne 0) { throw 'Canonical RollingBall inputs changed during CLI publishing.' }
 
-      - name: Qualify the Editor-published game in Chromium
-        shell: pwsh
-        run: |
-          $evidence = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/evidence'
-          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
-          node Tools/BrowserSmoke/run.mjs --game-only `
-            --game-publish "$env:VALIDATION_ROOT/rollingball-cli/project/Build/browser-game" `
-            --gpu-mode software --output $evidence 2>&1 | Tee-Object -FilePath (Join-Path $evidence 'browser-process.log')
-          if ($LASTEXITCODE -ne 0) { throw 'Chromium RollingBall qualification failed.' }
+      - name: Preserve exact Editor-published game bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-rollingball-bundle
+          path: ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Preserve Windows Editor CLI and browser evidence
+      - name: Preserve Windows Editor CLI evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-rollingball-qualification
           path: |
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
-            ${{ env.VALIDATION_ROOT }}/rollingball-cli/evidence
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game/browser-publish.json
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game/content/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  published-game:
+    name: Qualify the Windows Editor bundle in Linux Chromium
+    needs: windows-editor-browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download exact Editor-published game bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-editor-rollingball-bundle
+          path: ${{ env.VALIDATION_ROOT }}/rollingball-game
+
+      - name: Set up browser qualification tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
+
+      - name: Install pinned browser tooling
+        run: |
+          npm ci --prefix Tools/BrowserSmoke
+          cd Tools/BrowserSmoke
+          npx playwright install --with-deps chromium
+
+      - name: Qualify the Editor-published game in Chromium
+        env:
+          DEBUG: pw:browser
+        run: |
+          mkdir -p "$VALIDATION_ROOT/rollingball-evidence"
+          node Tools/BrowserSmoke/run.mjs --game-only --game-publish "$VALIDATION_ROOT/rollingball-game" --gpu-mode software --output "$VALIDATION_ROOT/rollingball-evidence" > >(tee "$VALIDATION_ROOT/rollingball-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/rollingball-evidence/browser-process-stderr.log" >&2)
+
+      - name: Preserve published game qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: editor-rollingball-browser-qualification
+          path: ${{ env.VALIDATION_ROOT }}/rollingball-evidence
           if-no-files-found: warn
           retention-days: 14
