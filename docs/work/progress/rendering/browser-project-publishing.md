@@ -88,6 +88,39 @@ pipeline mappings are explicit hash-bound artifacts. No arbitrary
 desktop GLSL translation or shader-name inference is performed.
 See [engine shader cooking](unified-webgpu-shader-cooking.md).
 
+Before activating content, rendering admission checks the packaged startup
+output, effective project/default-user AA and GI overrides, camera output and
+pipeline selections, material pass routing and canvas raster requirements.
+Failures identify the startup setting or scene path, material/source pass when
+applicable, and the unsupported requirement. An opaque deferred material remains
+admitted through the web command chain's explicit deferred-to-forward route.
+Stencil, multisample coverage, per-target blending, omitted scene pass families,
+and scene materials on the display-debug callback pass are rejected.
+
+Camera effect admission uses a detached WebGPU schema without constructing a
+desktop pipeline or rebinding the authored camera. Missing values select manual
+artist exposure and the schema's enabled GTAO/bloom defaults; explicit saved
+automatic exposure, alternate tonemapping, unsupported effects or AO methods
+remain publish errors. Selected effects require their exact manifest programs.
+Pipeline descriptors are checked by the same immutable catalog as runtime.
+The startup AA default is None only when both packaged overrides are absent.
+Packaged GPU-dispatch selection follows the same user-over-project cascade and
+rejects an effective GPU-driven request before publishing.
+The default probe/IBL mode still admits global ambient without actual probes.
+Runtime-created game features, launch-time quality selections, and dynamically
+changed settings remain subject to the runtime backend checks; this bounded
+preflight does not certify arbitrary game code or all renderer features.
+
+The 2026-10-02 bounded cook replay passed the Editor Release build with zero
+warnings/errors and reused the ordinary authored textured world unchanged
+(`08f7f9c9ce25523570a537e62b98f5190daf70b8605b94e789aabc0a87842589`).
+The existing production-cook driver retained its source fragment stage, produced
+the source-free textured carrier with all shared texture aliases, and packaged
+80 assets and 39 shaders. Copied startup fixtures rejected explicit MSAA and
+GPU dispatch with setting/pass/reason diagnostics; explicit default-user AA None
+over project MSAA remained admitted. These are cook-path checks, not new browser
+rendering acceptance.
+
 The canonical Rolling Ball world now passes the complete compiled Editor
 `BuildCurrentProjectSynchronously` chain through a portable Linux reflection
 runner: generated portable game compilation, authored world cooking, actual

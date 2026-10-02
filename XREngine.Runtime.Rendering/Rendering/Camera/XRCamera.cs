@@ -1762,6 +1762,13 @@ namespace XREngine.Rendering
         /// </summary>
         internal RenderPipeline? AssignedRenderPipeline => _renderPipeline;
 
+        /// <summary>Reads the authored pipeline without creating a host-dependent default.</summary>
+        public bool TryGetAssignedRenderPipeline(out RenderPipeline? pipeline)
+        {
+            pipeline = _renderPipeline;
+            return pipeline is not null;
+        }
+
         public RenderPipeline GetOrCreateRenderPipeline()
             => _renderPipeline ?? CreateAndAssignDefaultRenderPipeline();
 

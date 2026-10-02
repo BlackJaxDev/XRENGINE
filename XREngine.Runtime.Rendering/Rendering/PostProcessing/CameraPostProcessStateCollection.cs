@@ -119,9 +119,18 @@ public sealed class PipelinePostProcessState
 
         lock (_stagesSync)
         {
-            RenderPipelinePostProcessSchema schema = pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty;
             PipelineId = pipeline.ID;
             PipelineName = pipeline.DebugName;
+            BindToSchema(pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty);
+        }
+    }
+
+    /// <summary>Binds a detached target state without constructing a runtime pipeline.</summary>
+    internal void BindToSchema(RenderPipelinePostProcessSchema schema)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        lock (_stagesSync)
+        {
             SynchronizeStages(schema);
             Volatile.Write(ref _schema, schema);
         }

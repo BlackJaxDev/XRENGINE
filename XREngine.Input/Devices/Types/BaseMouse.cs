@@ -22,6 +22,7 @@ namespace XREngine.Input.Devices
 
         public void RegisterButtonPressed(EMouseButton button, DelButtonState func, bool unregister)
         {
+            OnInputRegistrationChanged();
             if (unregister)
                 _buttonStates[(int)button]?.RegisterPressedState(func, true);
             else
@@ -29,11 +30,20 @@ namespace XREngine.Input.Devices
         }
 
         public void RegisterButtonEvent(EMouseButton button, EButtonInputType type, Action func, bool unregister)
-            => RegisterButtonEvent(unregister ? _buttonStates[(int)button] : FindOrCacheButton(button), type, func, unregister);
+        {
+            OnInputRegistrationChanged();
+            RegisterButtonEvent(unregister ? _buttonStates[(int)button] : FindOrCacheButton(button), type, func, unregister);
+        }
         public void RegisterScroll(DelMouseScroll func, bool unregister)
-            => _wheel.Register(func, unregister);
+        {
+            OnInputRegistrationChanged();
+            _wheel.Register(func, unregister);
+        }
         public void RegisterMouseMove(DelCursorUpdate func, EMouseMoveType type, bool unregister)
-            => _cursor.Register(func, type, unregister);
+        {
+            OnInputRegistrationChanged();
+            _cursor.Register(func, type, unregister);
+        }
 
         /// <summary>Clears buffered scroll input without dispatching it.</summary>
         public virtual void ClearScrollBuffer() { }
@@ -47,10 +57,10 @@ namespace XREngine.Input.Devices
         public bool GetButtonState(EMouseButton button, EButtonInputType type)
             => FindOrCacheButton(button)?.GetState(type) ?? false;
         protected void TickCursorState(float x, float y)
-            => _cursor.Tick(x, y);
+            => _cursor.Tick(x, y, this, InputDispatchRevision);
         protected void TickScrollState(float delta)
-            => _wheel.Tick(delta);
+            => _wheel.Tick(delta, this, InputDispatchRevision);
         protected void TickMouseButtonState(EMouseButton button, bool isPressed, float delta)
-            => _buttonStates[(int)button]?.Tick(isPressed, delta);
+            => _buttonStates[(int)button]?.Tick(isPressed, delta, this, InputDispatchRevision);
     }
 }

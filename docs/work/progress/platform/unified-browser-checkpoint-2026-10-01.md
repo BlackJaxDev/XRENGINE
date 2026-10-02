@@ -502,3 +502,38 @@ although the local builds and publication used it. The corrected source adds an
 explicit browser-platform authored-asset exception and tracks that exact checked
 script. The browser output URL, code behavior and earlier local evidence are
 unchanged; the clean-checkout run is repeated for the corrected commit.
+
+### First Editor-published RollingBall frames (2026-10-02)
+
+Exact commit `adb0e9ef90ea9a88a7318e022567795ece7368fb` passed both the baseline
+Linux browser/rendering/physics job and the genuine Windows Editor CLI publisher
+in [run 36995649490](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36995649490).
+The exact Editor bundle now starts and presents the real lit course, ball,
+obstacles and authored HUD in Chromium/SwiftShader; the captures were inspected.
+The separate gameplay check advances through initial rendering and focused input
+but fails at the pause HUD transition, whose status bar remains green. Its
+[capture bundle](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36995649490/artifacts/11222715073)
+preserves playing, tilt, reset and attempted-pause images. Generic image changes
+alone do not prove a particular gameplay callback executed.
+
+Source inspection confirms a shared snapshot-input defect: down/up transitions
+are retained, but mapped keyboard button events consumed only the final held
+mask, losing a complete tap between frames. Mouse button transitions were also
+ignored by its state adapter. The implementation work preserves ordered edges
+and input-ownership boundaries rather than inserting smoke-test delays. Full
+pause/resume, reset/tilt semantics, resize, repeated start and broader game parity
+remain open until the corrected path runs. The checklist remains 49/110.
+
+The shared transient-input correction now passes independent read-back and a
+20-case production-assembly reproduction. Rapid Escape/R and physical mouse
+pulses dispatch ordered mapped edges exactly once; capture, mapping/source
+changes, nested fresh snapshots and touch/physical union preserve their declared
+ownership. A real state-change consumer receives its one ordinary release after
+same-owner capture. The InputIntegration Release build has zero warnings/errors,
+and 2,048 warmed keyboard/mouse ticks allocate zero managed bytes. This narrow
+CPU/input evidence does not replace the pending exact-commit Chromium gameplay
+check. Cook admission is also source-complete for the bounded startup/camera,
+effect, raster/pass and shadow cases recorded in the publisher progress report;
+its positive authored texture fixture and explicit unsupported-setting checks
+pass through the real compiled Editor methods. The larger audio ownership work
+remains a separate source group and is not part of this publication.

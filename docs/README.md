@@ -19,7 +19,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Rendering Architecture](architecture/rendering/README.md)
 - [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
 - [Advanced TSR Sampling, History, And Diagnostics](architecture/rendering/default-render-pipeline-notes.md#advanced-tsr-sample-and-history-contract)
-- [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+- [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md), including ordered snapshot-input edges and callback ownership
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [WebGPU Sky Backgrounds](architecture/rendering/webgpu-sky-background.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)

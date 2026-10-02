@@ -18,6 +18,7 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
     internal IReadOnlyList<EngineMaterialVariantEntry> MaterialVariants => _materialVariants.AsReadOnly();
     internal IReadOnlyDictionary<string, string> PipelineArtifacts => _pipelineArtifacts;
     internal IReadOnlyDictionary<string, string> ComputeArtifacts => _computeArtifacts;
+    internal WebPipelineArtifactCatalog PipelineCatalog { get; }
     internal string? TonemapDescriptorIdentity => _pipelineArtifacts.GetValueOrDefault("tonemap");
 
     internal BrowserShaderArtifactSource(string projectDirectory, string manifestPath)
@@ -111,6 +112,10 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
                     throw new InvalidDataException($"Browser compute artifact kernel '{kernel}' is duplicated.");
             }
         }
+        // Apply the runtime catalog's complete descriptor contract while all pass
+        // identities are still attributable to the authored publish manifest.
+        PipelineCatalog = new WebPipelineArtifactCatalog(_pipelineArtifacts,
+            new ShaderProgramArtifactCatalog(_loaded.Values));
     }
 
     public bool TryResolve(string identity, ShaderCompileTarget target, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)

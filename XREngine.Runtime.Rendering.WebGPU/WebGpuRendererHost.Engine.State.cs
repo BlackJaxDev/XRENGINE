@@ -51,9 +51,8 @@ public sealed partial class WebGpuRendererHost
     public override void ApplyRenderParameters(RenderingParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
-        if (parameters.StencilTest.IsEnabled || parameters.AlphaToCoverage == ERenderParamUsage.Enabled ||
-            parameters.BlendModesPerDrawBuffer is { Count: > 0 })
-            throw UnsupportedEngineOperation(nameof(ApplyRenderParameters), "stencil, multisample coverage and per-target blending are not admitted by the canvas profile");
+        if (DefaultRenderPipeline.GetWebRasterStateRejection(parameters) is { } reason)
+            throw UnsupportedEngineOperation(nameof(ApplyRenderParameters), reason);
         WebGpuRasterState state = _rasterState with
         {
             CullMode = parameters.CullMode,

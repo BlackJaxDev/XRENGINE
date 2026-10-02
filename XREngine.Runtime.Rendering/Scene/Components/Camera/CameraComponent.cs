@@ -57,6 +57,13 @@ namespace XREngine.Components
         private XRCameraParameters? _cameraParameters;
         public XRCamera Camera => _camera.Value;
 
+        /// <summary>Reads existing authored camera state without applying host-dependent construction defaults.</summary>
+        public bool TryGetCreatedCamera(out XRCamera? camera)
+        {
+            camera = _camera.IsValueCreated ? _camera.Value : null;
+            return camera is not null;
+        }
+
         /// <summary>
         /// Uses a fixed artist exposure for this camera. This is useful for
         /// deterministic captures where scene-adaptive exposure would obscure
