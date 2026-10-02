@@ -2,6 +2,7 @@ const maximumBufferBytes = 256 * 1024 * 1024;
 const maximumTextureBytes = 256 * 1024 * 1024;
 const maximumWriteBytes = 64 * 1024 * 1024;
 const colorFormats = new Set(['rgba8unorm', 'rgba8unorm-srgb']);
+const renderColorFormats = new Set([...colorFormats, 'rgba16float']);
 const depthFormats = new Set(['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float']);
 
 function integer(value, minimum, maximum, name) {
@@ -113,7 +114,7 @@ export class GpuResources {
         integer(height, 1, r.device.limits.maxTextureDimension2D, 'texture height');
         integer(mipLevelCount, 1, 1 + Math.floor(Math.log2(Math.max(width, height))), 'mip count');
         if (sampleCount !== 1 && sampleCount !== 4) throw new RangeError('Texture sample count must be one or four.');
-        const color = colorFormats.has(format);
+        const color = renderColorFormats.has(format);
         if (!color && !depthFormats.has(format)) throw new RangeError('Texture format is outside the baseline profile.');
         const supported = GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT;
         integer(usage, 1, supported, 'texture usage');

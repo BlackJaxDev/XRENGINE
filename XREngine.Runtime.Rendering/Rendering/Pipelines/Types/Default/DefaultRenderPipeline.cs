@@ -27,7 +27,7 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
 {
-    internal override bool RequiresCanonicalGpuScenePublication => true;
+    internal override bool RequiresCanonicalGpuScenePublication => !UsesWebOutputTier;
 
     public enum DeferredDebugViewMode
     {
@@ -1673,8 +1673,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
         RuntimeEngine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
-        if (!OperatingSystem.IsBrowser() && AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
-            InitializeCommandChain();
+        InitializeCommandChain();
     }
 
     private void WarmDeferredLightingShaders()
@@ -1916,6 +1915,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
     {
         base.DescribeRenderPasses(metadata);
+        if (UsesWebOutputTier)
+        {
+            DescribeWebRenderPasses(metadata);
+            return;
+        }
 
         static RenderPassBuilder Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
         {

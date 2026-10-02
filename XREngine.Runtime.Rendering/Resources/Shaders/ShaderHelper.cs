@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Models.Materials;
@@ -76,12 +77,25 @@ public static class ShaderHelper
         EngineShaderCacheKey key = CreateEngineShaderCacheKey(relativePath, shaderType);
         return EngineShaderLoadTasks.GetOrAdd(
             key,
-            static key => LoadAndWarmEngineShaderAsync(key, bypassJobThread: false));
+            static key => CreateEngineShaderLoadTask(key));
+    }
+
+    private static Task<XRShader> CreateEngineShaderLoadTask(EngineShaderCacheKey key)
+    {
+        // An inline asset job belongs to the shared shader cache, never to a
+        // caller's material-construction owner. Do not carry this thread-affine
+        // publication scope across the asynchronous load.
+        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        Task<XRShader> task = LoadAndWarmEngineShaderAsync(key, bypassJobThread: false);
+        publication.Complete();
+        return task;
     }
 
     private static XRShader LoadAndWarmEngineShader(EngineShaderCacheKey key, bool bypassJobThread)
     {
+        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
         XRShader source = Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath);
+        publication.Complete();
         source.Type = key.ShaderType;
         SlangShaderPilots.Configure(source, key.RelativePath);
         source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);

@@ -17,6 +17,8 @@ public static partial class EngineMeshDiagnosticExports
     private static BrowserCanvasRenderTarget? _target;
     private static WebGpuRendererHost? _renderer;
     private static ShaderProgramArtifact? _artifact;
+    private static ShaderProgramArtifact? _tonemapArtifact;
+    private static IDisposable? _materialConstruction;
     private static EngineMeshDiagnosticFixture? _fixture;
     private static RendererBackendCatalog? _catalog;
     private static IDisposable? _registration;
@@ -35,7 +37,16 @@ public static partial class EngineMeshDiagnosticExports
     private static int _creationEpoch;
 
     [JSExport]
-    public static async Task<int> CreateAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl)
+    public static Task<int> CreateAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, null, null);
+
+    [JSExport]
+    public static Task<int> CreateLitAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl);
+
+    private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string? tonemapDescriptorJson, string? tonemapWgsl)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
@@ -53,8 +64,13 @@ public static partial class EngineMeshDiagnosticExports
             ownsStartup = true;
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(descriptorJson), Encoding.UTF8.GetBytes(wgsl));
-            if (artifact.Pass is not ("depth-probe" or "texture-probe"))
+            bool lit = tonemapDescriptorJson is not null && tonemapWgsl is not null;
+            if (lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe"))
                 throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select a cooked engine raster diagnostic artifact.");
+            ShaderProgramArtifact? tonemap = lit ? ShaderProgramArtifactReader.Read(
+                Encoding.UTF8.GetBytes(tonemapDescriptorJson!), Encoding.UTF8.GetBytes(tonemapWgsl!)) : null;
+            if (tonemap is not null && tonemap.Pass != "tonemap")
+                throw new InvalidDataException("EngineMeshDiagnostic.TonemapRequired: select the cooked engine tonemap artifact.");
             stage = "open asset catalog";
             _assetSource = await BrowserEngineAssetSource.OpenAsync(assetManifestUrl, cancellation.Token);
             EnsureCurrentCreation(requestedEpoch, cancellation.Token);
@@ -73,6 +89,7 @@ public static partial class EngineMeshDiagnosticExports
             stage = "initialize engine";
             Engine.InitializeForCallerThread(BrowserEngineStartupPolicy.Instance.CreateDefaultGameSettings());
             _engineInitialized = true;
+            _materialConstruction = BrowserEngineMaterialConstruction.Install();
             Engine.Assets.BindRuntimeSource(_assetSource);
             _assetOwnerBound = true;
             stage = "register renderer";
@@ -87,8 +104,13 @@ public static partial class EngineMeshDiagnosticExports
             _renderer = (WebGpuRendererHost)_catalog.CreateRequired(RuntimeGraphicsApiKind.WebGPU,
                 new RendererBackendCreateContext(_target));
             stage = "bind shader artifact";
-            _renderer.BindShaderArtifacts(new ShaderProgramArtifactCatalog([artifact]));
+            ShaderProgramArtifactCatalog artifacts = new(tonemap is null ? [artifact] : [artifact, tonemap]);
+            EngineMaterialVariantCatalog? variants = lit ? new EngineMaterialVariantCatalog(
+                [new EngineMaterialVariantEntry(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.StandardLitColorV1,
+                    ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", "linear-hdr-v1"), artifact.Identity)], artifacts) : null;
+            _renderer.BindShaderArtifacts(artifacts, variants);
             _artifact = artifact;
+            _tonemapArtifact = tonemap;
             _session = checked(++_nextSession);
             return _session;
         }
@@ -143,7 +165,7 @@ public static partial class EngineMeshDiagnosticExports
             stage = "initialize renderer";
             _renderer.Initialize();
             stage = "construct engine fixture";
-            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height));
+            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height), _tonemapArtifact);
         }
         catch (Exception error)
         {
@@ -181,6 +203,29 @@ public static partial class EngineMeshDiagnosticExports
     }
 
     [JSExport]
+    public static void SetLitCase(int session, int sampleCase)
+    {
+        RequireSession(session);
+        (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).SetLitCase(sampleCase);
+    }
+
+    [JSExport]
+    public static string GetLitState(int session)
+    {
+        RequireSession(session);
+        return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetLitState();
+    }
+
+    [JSExport]
+    public static void ResizeGraphics(int session, int width, int height, int generation)
+    {
+        RequireSession(session);
+        _ = _fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.");
+        _target!.UpdateSurface(new RuntimeSurfaceState(width, height, width, height, 1, generation, true, true, true));
+        _renderer!.SynchronizeEngineViewport(invalidateResources: true);
+    }
+
+    [JSExport]
     public static void Stop(int session)
     {
         if (_session != 0 && session != 0)
@@ -213,6 +258,8 @@ public static partial class EngineMeshDiagnosticExports
         if (_engineInitialized)
             Attempt(Engine.StopCallerThreadSession, ref failures);
         _engineInitialized = false;
+        Attempt(() => _materialConstruction?.Dispose(), ref failures);
+        _materialConstruction = null;
         if (_assetOwnerBound && _assetSource is { } source)
             Attempt(() => Engine.Assets.UnbindRuntimeSource(source), ref failures);
         _assetOwnerBound = false;
@@ -232,6 +279,7 @@ public static partial class EngineMeshDiagnosticExports
         _assetSource = null;
         _target = null;
         _artifact = null;
+        _tonemapArtifact = null;
         _session = 0;
         if (failures is { Count: > 0 })
             throw new AggregateException("Engine mesh diagnostic teardown failed.", failures);

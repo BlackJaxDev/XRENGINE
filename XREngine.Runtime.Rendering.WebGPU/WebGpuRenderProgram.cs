@@ -39,6 +39,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
     public int ShaderHandle => _shaderHandle;
     public ReadOnlySpan<int> LayoutHandles => _layouts;
     public int UniformBlockCount => _blocks.Length;
+    internal bool RequiresCameraUniforms => _uniforms.ContainsKey("ViewProjection") || _uniforms.ContainsKey("CameraPosition");
     public override bool IsGenerated => _shaderHandle != 0 && _preparation?.IsCompletedSuccessfully == true;
     public bool IsPreparedForRendering => IsGenerated;
 

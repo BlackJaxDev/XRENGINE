@@ -813,8 +813,8 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-
-            EnsureShadowResources();
+            if (CastsShadows)
+                EnsureShadowResources();
 
             for (int i = 0; i < _viewports.Length; i++)
                 _viewports[i].WorldInstanceOverride = World.GetRenderWorld();

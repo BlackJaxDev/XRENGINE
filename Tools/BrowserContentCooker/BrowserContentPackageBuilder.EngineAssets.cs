@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "shaderArtifacts", "materialVariants"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "shaderArtifacts", "materialVariants", "pipelineArtifacts"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -118,9 +118,43 @@ public static partial class BrowserContentPackageBuilder
                 materialVariants.Add(new { semantic, semanticVersion, target, pass, vertexProfile, outputProfile, descriptorIdentity });
             }
         }
-        object manifestModel = materialVariants.Count == 0
-            ? new { schema = 1, format = "xrengine-assets", startupWorld, startupSettings, shaderArtifacts, assets = cookedAssets }
-            : new { schema = 1, format = "xrengine-assets", startupWorld, startupSettings, shaderArtifacts, materialVariants, assets = cookedAssets };
+        List<object> pipelineArtifacts = [];
+        if (recipe.TryGetProperty("pipelineArtifacts", out JsonElement pipelineValues))
+        {
+            Require(pipelineValues.ValueKind == JsonValueKind.Array && pipelineValues.GetArrayLength() <= 16,
+                "Pipeline artifact catalog exceeds its limit.");
+            HashSet<string> passes = new(StringComparer.Ordinal);
+            foreach (JsonElement pipeline in pipelineValues.EnumerateArray())
+            {
+                Members(pipeline, "pass", "descriptorIdentity");
+                string pass = Choice(pipeline, "pass", "tonemap");
+                Require(passes.Add(pass), "Duplicate pipeline artifact pass.");
+                JsonElement identityValue = pipeline.GetProperty("descriptorIdentity");
+                Require(identityValue.ValueKind == JsonValueKind.String, "Pipeline artifact identity must be a string.");
+                string descriptorIdentity = identityValue.GetString()!;
+                Require(Regex.IsMatch(descriptorIdentity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
+                    "Pipeline artifact identity must be a lowercase SHA-256 descriptor hash.");
+                if (!shaderDescriptors.TryGetValue(descriptorIdentity, out JsonElement descriptor))
+                    throw new InvalidDataException("Pipeline artifact references an absent shader descriptor.");
+                Require(descriptor.ValueKind == JsonValueKind.Object
+                    && descriptor.TryGetProperty("pass", out JsonElement descriptorPass) && descriptorPass.ValueKind == JsonValueKind.String
+                    && descriptorPass.GetString() == pass
+                    && descriptor.TryGetProperty("target", out JsonElement descriptorTarget) && descriptorTarget.ValueKind == JsonValueKind.String
+                    && descriptorTarget.GetString() == "WebGPUWgsl",
+                    "Pipeline artifact pass or target differs from its shader descriptor.");
+                pipelineArtifacts.Add(new { pass, descriptorIdentity });
+            }
+        }
+        Dictionary<string, object?> manifestModel = new(StringComparer.Ordinal)
+        {
+            ["schema"] = 1, ["format"] = "xrengine-assets", ["startupWorld"] = startupWorld,
+            ["startupSettings"] = startupSettings, ["shaderArtifacts"] = shaderArtifacts,
+        };
+        if (materialVariants.Count != 0)
+            manifestModel.Add("materialVariants", materialVariants);
+        if (pipelineArtifacts.Count != 0)
+            manifestModel.Add("pipelineArtifacts", pipelineArtifacts);
+        manifestModel.Add("assets", cookedAssets);
         byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestModel, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Engine asset manifest exceeds 1 MiB.");
         RejectLinks(outputDirectory);

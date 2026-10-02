@@ -18,13 +18,13 @@ export class EngineMeshDiagnosticHost {
     }
 
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
-        if (!['engine-depth-probe', 'engine-texture-probe'].includes(artifactName))
+        if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
         await this.stop(false);
         if (epoch !== this.epoch) return;
         this.failure = null;
-        this.kind = artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
+        this.kind = artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
         this.readyMessage = `Engine mesh ${this.kind} diagnostic rendered; RuntimeWorld play and physics are unverified`;
         this.stage = 'loading-shader-artifact';
         if (!assetManifestUrl) throw new Error('Engine mesh diagnostics require a cooked engine asset manifest.');
@@ -34,19 +34,26 @@ export class EngineMeshDiagnosticHost {
             const manifestResponse = await fetch(manifestUrl, { signal: controller.signal });
             if (!manifestResponse.ok) throw new Error(`Diagnostic shader manifest failed: ${manifestResponse.status}`);
             const manifest = await manifestResponse.json();
-            const selected = manifest.artifacts?.find(artifact => artifact.name === artifactName);
-            if (manifest.schemaVersion !== 3 || !selected) throw new Error(`Select a schema 3 manifest containing ${artifactName}.`);
-            const descriptorUrl = new URL(selected.descriptor, manifestResponse.url);
-            const descriptorResponse = await fetch(descriptorUrl, { signal: controller.signal });
-            if (!descriptorResponse.ok) throw new Error(`Diagnostic descriptor failed: ${descriptorResponse.status}`);
-            const descriptorJson = await descriptorResponse.text();
-            const descriptor = JSON.parse(descriptorJson);
-            const sourceResponse = await fetch(new URL(descriptor.source.url, descriptorUrl), { signal: controller.signal });
-            if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
-            const source = await sourceResponse.text();
+            const loadArtifact = async name => {
+                const selected = manifest.artifacts?.find(artifact => artifact.name === name);
+                if (manifest.schemaVersion !== 3 || !selected) throw new Error(`Select a schema 3 manifest containing ${name}.`);
+                const descriptorUrl = new URL(selected.descriptor, manifestResponse.url);
+                const descriptorResponse = await fetch(descriptorUrl, { signal: controller.signal });
+                if (!descriptorResponse.ok) throw new Error(`Diagnostic descriptor failed: ${descriptorResponse.status}`);
+                const descriptorJson = await descriptorResponse.text();
+                const descriptor = JSON.parse(descriptorJson);
+                const sourceResponse = await fetch(new URL(descriptor.source.url, descriptorUrl), { signal: controller.signal });
+                if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
+                return { descriptorJson, source: await sourceResponse.text() };
+            };
+            const artifact = await loadArtifact(artifactName);
+            const tonemap = this.kind === 'lit' ? await loadArtifact('engine-tonemap') : null;
             if (controller.signal.aborted || epoch !== this.epoch) return;
             this.stage = 'creating-engine-session';
-            const creation = this.exports.CreateAsync(this.canvas.id, String(assetManifestUrl), descriptorJson, source);
+            const creation = tonemap
+                ? this.exports.CreateLitAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+                    tonemap.descriptorJson, tonemap.source)
+                : this.exports.CreateAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source);
             this.creation = creation;
             let session;
             try { session = await creation; }
@@ -91,7 +98,7 @@ export class EngineMeshDiagnosticHost {
             this.stage = 'waiting-for-next-frame';
             if (ready) this.onState(this.readyMessage);
             else if (performance.now() - this.startedAt > 45000)
-                throw new Error(`Engine mesh ${this.kind} diagnostic did not submit all three expected mesh draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
+                throw new Error(`Engine mesh ${this.kind} diagnostic did not submit its expected engine draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
             this.request = requestAnimationFrame(this.frame);
         } catch (error) { this.fail(error); }
     }
@@ -103,6 +110,83 @@ export class EngineMeshDiagnosticHost {
         this.exports.SetTextureCase(this.session, sampleCase);
         this.startedAt = performance.now();
         this.onState('Preparing replacement engine texture resources');
+    }
+
+    setLitCase(sampleCase) {
+        if (!this.session || this.kind !== 'lit') throw new Error('An active engine lit diagnostic is required.');
+        this.exports.SetLitCase(this.session, sampleCase);
+        this.startedAt = performance.now();
+        this.onState('Preparing changed engine surface and light values');
+    }
+
+    litState() {
+        if (!this.session || this.kind !== 'lit') throw new Error('An active engine lit diagnostic is required.');
+        const shaders = [], pipelines = [], hdrTargets = [];
+        this.renderer._resources.slots.forEach((entry, slot) => {
+            if (entry?.owner !== this.session) return;
+            const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
+            if (entry.kind === 'shader') shaders.push(identity);
+            if (entry.kind === 'render-pipeline') pipelines.push(identity);
+            if (entry.kind === 'texture' && entry.value.format === 'rgba16float')
+                hdrTargets.push({ ...identity, width: entry.value.width, height: entry.value.height });
+        });
+        return { ...JSON.parse(this.exports.GetLitState(this.session)), shaders, pipelines, hdrTargets };
+    }
+
+    resize(width, height) {
+        if (!this.session || !this.renderer) throw new Error('An active engine diagnostic is required.');
+        if (![width, height].every(value => Number.isInteger(value) && value >= 64 && value <= 1024))
+            throw new Error('Diagnostic resize dimensions must be integers from 64 through 1024.');
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${height}px`;
+        const generation = this.renderer.resize(width, height);
+        this.exports.ResizeGraphics(this.session, width, height, generation);
+        this.startedAt = performance.now();
+        this.onState('Preparing resized engine render resources');
+    }
+
+    /** Explicit diagnostic-only readback of the actual engine-owned HDR target, including opaque material alpha. */
+    async readHdrCenter() {
+        if (!this.session || this.kind !== 'lit') throw new Error('An active engine lit diagnostic is required.');
+        const renderer = this.renderer;
+        const matches = renderer._resources.slots.filter(entry => entry?.owner === this.session &&
+            entry.kind === 'texture' && entry.value.format === 'rgba16float');
+        if (matches.length !== 1) throw new Error(`Expected one engine HDR target; found ${matches.length}.`);
+        const target = matches[0].value;
+        if (!(target.usage & GPUTextureUsage.COPY_SRC)) throw new Error('The engine HDR texture does not permit diagnostic readback.');
+        const buffer = renderer.device.createBuffer({ label: 'Engine HDR diagnostic readback', size: 256 * 5,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        let deadline;
+        try {
+            const encoder = renderer.device.createCommandEncoder({ label: 'Engine HDR diagnostic copy' });
+            encoder.copyTextureToBuffer({ texture: target.texture,
+                origin: [Math.floor(target.width / 2) - 2, Math.floor(target.height / 2) - 2, 0] },
+                { buffer, bytesPerRow: 256, rowsPerImage: 5 }, [5, 5, 1]);
+            renderer.device.queue.submit([encoder.finish()]);
+            await Promise.race([buffer.mapAsync(GPUMapMode.READ), new Promise((_, reject) => {
+                deadline = setTimeout(() => reject(new Error('Engine HDR diagnostic readback exceeded 15 seconds.')), 15000);
+            })]);
+            const view = new DataView(buffer.getMappedRange());
+            const decode = bits => {
+                const sign = bits & 0x8000 ? -1 : 1, exponent = (bits >> 10) & 31, fraction = bits & 1023;
+                return sign * (exponent === 0 ? fraction * 2 ** -24 : exponent === 31
+                    ? (fraction ? NaN : Infinity) : (1 + fraction / 1024) * 2 ** (exponent - 15));
+            };
+            const min = [Infinity, Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity, -Infinity], sum = [0, 0, 0, 0];
+            for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) for (let channel = 0; channel < 4; channel++) {
+                const value = decode(view.getUint16(y * 256 + x * 8 + channel * 2, true));
+                if (!Number.isFinite(value)) throw new Error('The engine HDR target contains a non-finite sample.');
+                min[channel] = Math.min(min[channel], value);
+                max[channel] = Math.max(max[channel], value);
+                sum[channel] += value;
+            }
+            return { label: target.label, format: target.format, width: target.width, height: target.height,
+                min, max, average: sum.map(value => value / 25) };
+        } finally {
+            clearTimeout(deadline);
+            if (buffer.mapState === 'mapped') buffer.unmap();
+            buffer.destroy();
+        }
     }
 
     fail(error) {

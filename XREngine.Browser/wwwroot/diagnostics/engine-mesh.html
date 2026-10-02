@@ -7,7 +7,7 @@
 body{font:16px system-ui;background:#181b22;color:#f5f6fa;margin:2rem}canvas{display:block;width:512px;height:512px;max-width:100%;background:#08090c;margin:1rem 0}input{width:min(70vw,52rem)}button,input{font:inherit;padding:.4rem}pre{white-space:pre-wrap}
 </style>
 <h1>Engine mesh depth diagnostic</h1>
-<p>Static engine ModelComponents, camera, viewport and cooked depth shader. No production world play or physics is started.</p>
+<p id="description">Static engine ModelComponents, camera, viewport and cooked depth shader. No production world play or physics is started.</p>
 <label>Schema 3 shader manifest <input id="manifest" type="url" placeholder="URL of the cooked depth artifact manifest"></label>
 <label>Cooked engine asset manifest <input id="assets" type="url" placeholder="URL of the packaged engine asset manifest"></label>
 <button id="start">Start</button><button id="stop">Stop</button>
@@ -19,16 +19,24 @@ import { createBrowserRuntime } from '../browser-runtime.js';
 const status=document.querySelector('#status'), manifest=document.querySelector('#manifest'), assets=document.querySelector('#assets');
 const params=new URLSearchParams(location.search);
 const texture=params.get('probe')==='texture';
+const lit=params.get('probe')==='lit';
 if(texture){
  document.title='Engine texture diagnostic';
  document.querySelector('h1').textContent='Engine texture diagnostic';
+ document.querySelector('#description').textContent='Static engine ModelComponents, camera, viewport and authored texture. No production world play or physics is started.';
  document.querySelector('#expected').textContent='Expected: two engine quads with red/green top corners and blue/white bottom corners. The sRGB midpoint replacement produces linear byte value 55.';
+}
+if(lit){
+ document.title='Engine lit surface diagnostic';
+ document.querySelector('h1').textContent='Engine lit surface diagnostic';
+ document.querySelector('#description').textContent='Static engine ModelComponent, normal-bearing mesh, lit material and light components rendered through the shared default pipeline. No production world play or physics is started.';
+ document.querySelector('#expected').textContent='StandardLitColorV1 ModelComponent with vertex normals and actual directional, point and spot engine lights. DefaultRenderPipeline writes linear RGBA16F then applies Mobius tonemapping. Numeric surface and light changes retain their material and shader identity. Shadows, RuntimeWorld play and gameplay are outside this diagnostic.';
 }
 manifest.value=params.get('manifest') ?? '';
 assets.value=params.get('assets') ?? '';
 const createHost=await createBrowserRuntime();
 const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
-document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null, texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
+document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null, lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
 document.querySelector('#stop').onclick=()=>host.stop().catch(error=>{status.textContent=String(error);});
 window.engineMeshDiagnostic=host;
 window.addEventListener('pagehide',()=>{void host.stop().catch(()=>{});});

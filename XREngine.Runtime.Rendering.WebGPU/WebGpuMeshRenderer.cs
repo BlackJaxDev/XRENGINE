@@ -47,6 +47,7 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         if (Renderer.CurrentFrameOutput is not { } output)
             return Pending("OutputPending");
         WebGpuFrameBuffer? frameBuffer = Renderer.GetBoundEngineFrameBuffer();
+        Renderer.ValidateEngineDrawArea();
         ulong attachmentRevision = frameBuffer?.Revision ?? 0;
         if (!ReferenceEquals(_mesh, mesh) || _geometryRevision != mesh.GeometryRevision ||
             _bufferRevision != mesh.Buffers.MutationRevision || _surfaceGeneration != output.TargetGeneration)
@@ -60,6 +61,14 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
             return Pending("ProgramsPending");
+        if (apiMaterial.Program.Artifact.Pass == "tonemap")
+        {
+            bool supported = frameBuffer is null
+                ? output.Properties.SampleCount == 1 && output.Properties.ColorEncoding is "rgba8unorm" or "bgra8unorm"
+                : frameBuffer.SampleCount == 1 && frameBuffer.ColorFormats.Length == 1 && frameBuffer.ColorFormats[0] == "rgba8unorm";
+            if (!supported)
+                throw Unsupported("the gamma-encoding tonemap requires one non-sRGB RGBA8/BGRA8 output attachment with one sample");
+        }
         XRDataBuffer? indices = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out var indexSize);
         if (indices is null)
             return Pending("IndicesPending");
@@ -97,19 +106,21 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             Renderer.MarkEngineDrawPending();
             return;
         }
-        XRCamera camera = RuntimeEngine.Rendering.State.RenderingCamera
-            ?? throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: an engine camera must own the current mesh pass.");
-        if (camera.DepthMode != XRCamera.EDepthMode.Normal)
-            throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
         WebGpuRenderProgram program = material.Program;
+        XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
+        if (camera is null && (program.Artifact.Pass != "tonemap" || program.RequiresCameraUniforms))
+            throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: an engine camera must own the current mesh pass.");
+        if (camera is not null && camera.DepthMode != XRCamera.EDepthMode.Normal)
+            throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
         program.BeginResourceBindings();
-        Renderer.SetEngineUniforms(program.Data, camera);
+        if (camera is not null) Renderer.SetEngineUniforms(program.Data, camera);
         program.SetMatrix("ModelMatrix", modelMatrix);
         program.SetMatrix("PreviousModelMatrix", previousModelMatrix);
         if (!Matrix4x4.Invert(modelMatrix, out Matrix4x4 inverseModel))
             throw Unsupported("the model transform is singular");
         program.SetMatrix("NormalMatrix", Matrix4x4.Transpose(inverseModel));
         Renderer.SetMaterialUniforms(resolved.Material, program.Data);
+        material.PublishSurface();
         Data.Parent.OnSettingUniforms(program.Data, program.Data);
         if (!ReferenceEquals(resolved.Material, Data.Parent.Material))
             resolved.Material.OnSettingVertexUniforms(program.Data);
@@ -146,6 +157,8 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
 
     private bool Pending(string reason)
     {
+        if (Renderer.IsRecordingEngineFrame)
+            Renderer.MarkEngineDrawPending();
         SetField(ref _lastPrepareDetail, reason);
         SetField(ref _generated, false);
         return false;

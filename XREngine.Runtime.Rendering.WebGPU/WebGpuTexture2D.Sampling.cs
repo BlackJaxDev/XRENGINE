@@ -14,8 +14,8 @@ public sealed unsafe partial class WebGpuTexture2D
     internal int GetSampledView()
     {
         Generate();
-        if (Format is not ("rgba8unorm" or "rgba8unorm-srgb") || _samples != 1)
-            throw Unsupported("Sample", "the selected profile admits only single-sample RGBA8 color textures");
+        if (Format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || _samples != 1)
+            throw Unsupported("Sample", "the selected profile admits only single-sample RGBA8 or RGBA16F color textures");
         int baseMip = Data.LargestMipmapLevel;
         int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
         if (baseMip < 0 || baseMip > finalMip)

@@ -138,7 +138,74 @@ compiles, and the browser publishes with the pinned native physics build.
 Published .NET WASM executes three texture cases with 39 recorded mesh draws,
 three texture uploads and three sampler creations through observed imports,
 and releases the recorded handles on stop. GPU imports in that local probe are
-mocked: this establishes managed/interop control flow only. Live corner pixels,
-sRGB decoding and repeated replacement remain pending in the new CI check.
-Arrays, cubes, HDR, depth sampling and storage-resource binding stay unsupported
-until their own engine paths and known-value output are qualified.
+mocked: this establishes managed/interop control flow only. The later
+[run 36940542409](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36940542409)
+qualified the real Chromium corner pixels, sRGB decoding and replacement/resource
+retirement path at `bac42c57d017f5c674092539eb5f8345fabfa755`.
+
+## Engine lit forward and HDR output
+
+The next source slice adds `StandardLitColor.slang` and `Tonemap.slang`, cooked
+by the same pinned compiler and strict schema-3 physical ABI verifier. The explicit
+material key is `StandardLitColor` revision 1, pass `opaque-forward`, vertex profile
+`static-position-normal-v1`, and output profile `linear-hdr-v1`. Selection uses the
+package's exact descriptor hash, without examining desktop shader names.
+
+The lit module consumes the engine factory's authored base color, opacity,
+roughness, metallic, specular intensity and emission. Direct GGX/Fresnel lighting,
+point/spot attenuation and the no-probe ambient term follow the desktop forward
+equations. Opaque index of refraction remains inactive, as on desktop. Object
+normals use the inverse-transpose transform. The bounded profile admits four
+directional, eight point and eight spot lights; excess lights fail instead of being
+dropped. Shadow-enabled lights remain unsupported by this initial receiver module.
+
+The shared `DefaultRenderPipeline` web route declares one RGBA16F scene texture,
+one depth32 attachment and an attachmentless fullscreen tonemap helper in its
+transactional resource generation. Both opaque material buckets render forward
+into that HDR target. The whole-program tonemap companion samples it and applies
+Mobius plus explicit display gamma to the browser's non-sRGB presentation target.
+Tonemap selection is an explicit `pipelineArtifacts` pass-to-descriptor mapping in
+the cooked package. Hydrated camera pipelines accept that immutable verified
+artifact without replacement of their authored settings.
+
+This initial profile requires mono SDR presentation, one sample, AA None and
+CpuDirect submission. GI/probes, active engine UI, nonopaque render buckets,
+unsupported camera effects, automatic exposure and nonneutral color grading fail
+diagnostically. It does not silently turn off those authored features. Desktop
+GLSL and desktop command selection are unchanged.
+
+Actual Slang compilation, physical ABI validation, exact catalog round trips and
+narrow managed builds pass. A valid flat lighting reflection is 100,226 bytes;
+the bounded compiler reflection budget is now 256 KiB, with an oversized 409,006-byte
+reflection rejected before manifest publication. Engine HDR/light/tonemap pixel
+qualification is added to the live browser diagnostic. Its exact-commit CI result
+must be recorded before claiming rendered acceptance. The published .NET WASM
+diagnostic now reaches real engine lit and tonemap draw imports by frame eight,
+then changes fourteen material/light cases without replacing either shader module
+or render pipeline. Recorded imports show the RGBA16F/depth32 scene pass and the
+non-sRGB output pass. These local GPU imports are observation shims, so this is
+control-flow/ABI evidence rather than GPU execution.
+
+That same published module also completes five viewport resizes. In a separate
+retirement-pressure run, three deliberately unresolved completion promises permit
+exactly three replacement HDR/depth pairs; three additional resize requests allocate
+no more textures. Releasing the completions allows the latest requested 608-pixel
+extent to render both passes and stop cleanly. Fourteen in-place cases preserve the
+two module/pipeline identities; resizing correctly replaces output-dependent
+resource generations. These checks use actual managed code with observed imports,
+not a software rendering substitute.
+
+The integration also connects the shared framebuffer bind/unbind events to the
+active WebGPU owner, validates scoped full-attachment viewport/crop state against
+the eventual target, rejects incomplete recorded frames, and adds real
+queue-completion receipts for generation retirement. Pending queue work defers
+further generation preparation at the retired-generation cap instead of blocking
+the browser event thread or allocating indefinitely. Physical destruction remains
+deferred through the JavaScript executor's dependency and submitted-work lifetime.
+Mandatory output resources/pass identities fail explicitly; the gamma-encoding
+tonemap rejects sRGB output attachments to prevent double encoding. Disabled light
+shadows no longer allocate their unused camera/viewport resources during activation.
+
+Arrays, cubes, depth
+comparison sampling, storage-resource binding and complete production/gameplay
+rendering remain separate work.

@@ -31,6 +31,8 @@ public partial class DefaultRenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
+        if (UsesWebOutputTier)
+            return CreateWebOutputCommands();
         ViewportRenderCommandContainer c = new(this);
         c.Add<VPRC_PrecomputeBRDF>();
         var ifElse = c.Add<VPRC_IfElse>();

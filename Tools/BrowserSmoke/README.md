@@ -10,7 +10,23 @@ path with canonical UV streams and an authored `XRTexture2D`. It checks four
 colored texture corners, the linear result of sampling an sRGB midpoint, and
 five alternating resource replacements. Retired resources must drain without
 growing the live GPU-resource count; reference-scene packets remain forbidden.
-Array/cube/depth sampling, HDR, and production lit materials are not implied.
+Array/cube/depth sampling is not implied.
+
+The separate lit diagnostic uses the built-in `StandardLitColorV1` material
+factory, a normal-bearing `ModelComponent` quad, actual directional/point/spot
+components and their engine light collections. The shared `DefaultRenderPipeline`
+writes RGBA16F scene color, then presents it with its cooked Mobius tonemap pass.
+Fourteen cases check ambient, each light type, combined lighting, BaseColor,
+Roughness, Metallic, Specular, Opacity, Emission, exposure and light intensity,
+then restore the baseline. The same material, shaders and GPU pipelines must
+survive every numeric update. An explicit diagnostic-only 5x5 HDR readback checks
+linear color and alpha (the opaque browser canvas cannot expose material alpha);
+separate canvas screenshots check display-encoded pixels. Above-one emission
+must survive in HDR. No replacement unlit fixture is admitted. All lights have
+shadows disabled. Five surface resizes rebuild the declared resource generation,
+recheck HDR/display pixels, and require retired GPU resources to drain without
+live-count growth before teardown. This establishes the bounded static rendering path, separately
+from RuntimeWorld/gameplay, shadows, probes, transparency and broader effects.
 
 The audio check imports the published Web Audio streaming scheduler and renders
 two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
@@ -36,7 +52,8 @@ node Tools/BrowserSmoke/run.mjs \
 ```
 
 Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
-`engine-depth-probe.recipe.json`, and `engine-texture-probe.recipe.json` with
+`engine-depth-probe.recipe.json`, `engine-texture-probe.recipe.json`,
+`engine-standard-lit-color.recipe.json`, and `engine-tonemap.recipe.json` with
 `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on
@@ -65,7 +82,8 @@ is exposed on a LAN interface.
 
 ## Checks and evidence
 
-- The real engine diagnostic must report all three mesh submissions. A clear-only
+- The depth/texture engine diagnostics must report all three mesh submissions; the
+  lit path must report its normal-bearing surface and tonemap submissions. A clear-only
   page cannot satisfy readiness
 - A 512x512 screenshot of the composited WebGPU canvas is decoded and sampled in
   5x5 interior patches. Near-left depth 0.25 must produce RGB approximately

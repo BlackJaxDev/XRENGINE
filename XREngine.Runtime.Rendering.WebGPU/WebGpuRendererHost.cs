@@ -180,6 +180,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
         finally
         {
             State = BrowserRendererState.Disposed;
+            ArmPendingEngineFences();
             DeviceCapabilities = null;
             SetField(ref _submittedFrame, false);
             try
@@ -195,6 +196,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
                 SetField(ref _engineUniformArena, null);
                 SetField(ref _engineViewport, null);
                 SetField(ref _shaderArtifacts, null);
+                SetField(ref _materialVariants, null);
                 SetField(ref _session, 0);
                 _onDisposed(this);
             }

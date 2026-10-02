@@ -40,22 +40,55 @@ namespace XREngine
 
         public void Add(SceneNode node)
         {
-            if (node is null)
+            if (node is null || _rootNodes.Contains(node))
                 return;
 
+            IRuntimeWorldContext? previousWorld = node.World;
+            bool cacheStarted = false;
             node.Destroying -= RootNodeDestroying;
             node.Destroying += RootNodeDestroying;
-            node.SetWorldContext(_world);
-
+            // Track the root before world binding can activate a component and throw.
+            // A failed rollback must remain reachable by the world's teardown owner.
             _rootNodes.Add(node);
-            CacheComponents(node);
-
-            if (_world.IsPlaySessionActive)
+            try
             {
-                if ((_participatesInPlay?.Invoke(node) ?? true) && !node.HasBegunPlay)
-                    node.OnBeginPlay();
-                if (node.IsActiveSelf)
-                    node.OnActivated();
+                node.SetWorldContext(_world);
+                cacheStarted = true;
+                CacheComponents(node);
+
+                if (_world.IsPlaySessionActive)
+                {
+                    if ((_participatesInPlay?.Invoke(node) ?? true) && !node.HasBegunPlay)
+                        node.OnBeginPlay();
+                    if (node.IsActiveSelf)
+                        node.OnActivated();
+                }
+            }
+            catch (Exception attachmentError)
+            {
+                List<Exception> failures = [attachmentError];
+                void Rollback(Action action)
+                {
+                    try { action(); }
+                    catch (Exception cleanupError) { failures.Add(cleanupError); }
+                }
+
+                if (_world.IsPlaySessionActive)
+                {
+                    if (node.IsActiveSelf)
+                        Rollback(node.OnDeactivated);
+                    if (node.HasBegunPlay)
+                        Rollback(node.OnEndPlay);
+                }
+                if (cacheStarted)
+                    Rollback(() => UncacheComponents(node));
+                Rollback(() => node.SetWorldContext(previousWorld));
+                if (failures.Count > 1)
+                    throw new AggregateException("Root attachment and rollback both failed.", failures);
+
+                node.Destroying -= RootNodeDestroying;
+                _rootNodes.Remove(node);
+                throw;
             }
         }
 

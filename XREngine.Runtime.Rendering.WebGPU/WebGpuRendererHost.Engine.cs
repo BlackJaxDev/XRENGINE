@@ -12,6 +12,12 @@ public sealed partial class WebGpuRendererHost
     private bool _engineClearPlanDirty = true;
     private int _engineClearCommands;
     private ulong _engineClearSurfaceGeneration;
+    private bool _engineClearColorEnabled;
+    private bool _engineClearDepthEnabled;
+    private int _engineClearStencil;
+    private BoundingRectangle? _engineRenderArea;
+    private BoundingRectangle? _engineCropArea;
+    private bool _engineCroppingEnabled;
 
     /// <summary>Uses browser-owned asynchronous device startup rather than a desktop window loop.</summary>
     public override void Initialize()
@@ -32,6 +38,7 @@ public sealed partial class WebGpuRendererHost
         using ThreadCurrentScope rendererScope = EnterThreadCurrentScope(this);
         using FrameOutputScope outputScope = PushFrameOutput(output);
         BeginEngineFrame();
+        bool submitted = false;
         try
         {
             if (_engineViewport is null)
@@ -43,36 +50,43 @@ public sealed partial class WebGpuRendererHost
             {
                 return;
             }
-            if (_engineCommandCount == 0)
+            // A consumer must never see a partially prepared producer (for example,
+            // a clear without its mesh draws, or HDR without a ready output pass).
+            if (_engineCommandCount == 0 || _engineDrawPending)
                 return;
             SubmitEngineFrame(output);
+            submitted = true;
         }
         finally
         {
             SetField(ref _engineRecording, false, publishNotifications: false);
+            ArmPendingEngineFences(submitted);
             for (int i = 0; i < _engineDeferredReleases.Count; i++)
                 RetireEngineResource(_engineDeferredReleases[i]);
             _engineDeferredReleases.Clear();
         }
     }
 
-    private void PrepareEngineClear(in RenderFrameOutputDescription output)
+    private void PrepareEngineClear(in RenderFrameOutputDescription output, bool color = true, bool depth = true)
     {
         if (!_engineClearPlanDirty && _engineClearCommands != 0 &&
-            _engineClearSurfaceGeneration == output.TargetGeneration)
+            _engineClearSurfaceGeneration == output.TargetGeneration &&
+            _engineClearColorEnabled == color && _engineClearDepthEnabled == depth)
             return;
 
         // Descriptions and arrays are cold state/generation work. Steady-state frames
         // replay the retained handle without serializing commands or allocating storage.
         BrowserFrameBufferPlan plan = new(
-            [new BrowserColorAttachmentPlan(0, clear: true, store: true, _engineClearColor)],
-            new BrowserDepthStencilAttachmentPlan(-1, depthClearValue: _engineClearDepth));
+            [new BrowserColorAttachmentPlan(0, clear: color, store: true, _engineClearColor)],
+            new BrowserDepthStencilAttachmentPlan(-1, clearDepth: depth, depthClearValue: _engineClearDepth));
         int replacement = PrepareCommands(
             "{\"label\":\"Engine canvas clear\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
         int previous = _engineClearCommands;
         SetField(ref _engineClearCommands, replacement);
         SetField(ref _engineClearSurfaceGeneration, output.TargetGeneration);
         SetField(ref _engineClearPlanDirty, false);
+        SetField(ref _engineClearColorEnabled, color);
+        SetField(ref _engineClearDepthEnabled, depth);
         if (previous != 0)
         {
             if (_engineRecording) _engineDeferredReleases.Add(previous);
@@ -98,9 +112,14 @@ public sealed partial class WebGpuRendererHost
             SetField(ref _engineClearPlanDirty, true);
     }
 
+    public override void ClearStencil(int value)
+        => SetField(ref _engineClearStencil, value);
+
     public override void Clear(bool color, bool depth, bool stencil)
     {
         RequireReady();
+        if (color || depth || stencil)
+            ValidateEngineDrawArea(validateViewport: false);
         if (_boundEngineFrameBuffer is { } framebuffer)
         {
             if (stencil)
@@ -112,11 +131,12 @@ public sealed partial class WebGpuRendererHost
             framebuffer.MarkRecorded();
             return;
         }
-        if (!color || !depth || stencil)
-            throw UnsupportedEngineOperation(nameof(Clear), "only a full color/depth canvas clear is admitted");
+        if (stencil)
+            throw UnsupportedEngineOperation(nameof(Clear), "the canvas has no stencil attachment");
+        if (!color && !depth) return;
         if (_engineRecording && CurrentFrameOutput is { } output)
         {
-            PrepareEngineClear(output);
+            PrepareEngineClear(output, color, depth);
             RecordEngineCommands(_engineClearCommands, []);
         }
     }
@@ -137,6 +157,32 @@ public sealed partial class WebGpuRendererHost
     public override void SetRenderArea(BoundingRectangle region)
     {
         RequireReady();
+        ValidateNonemptyArea(region);
+        SetField(ref _engineRenderArea, region, publishNotifications: false);
+    }
+
+    public override void ClearRenderArea()
+        => SetField(ref _engineRenderArea, null, publishNotifications: false);
+
+    public override void CropRenderArea(BoundingRectangle region)
+    {
+        RequireReady();
+        ValidateNonemptyArea(region);
+        SetField(ref _engineCropArea, region, publishNotifications: false);
+    }
+
+    public override void SetCroppingEnabled(bool enabled)
+        => SetField(ref _engineCroppingEnabled, enabled, publishNotifications: false);
+
+    private static void ValidateNonemptyArea(BoundingRectangle region)
+    {
+        if (region.X < 0 || region.Y < 0 || region.Width <= 0 || region.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(region), "A render area requires positive extents and nonnegative coordinates.");
+    }
+
+    /// <summary>Validates scoped viewport state when its render target is known, after binding transitions.</summary>
+    internal void ValidateEngineDrawArea(bool validateViewport = true)
+    {
         WebGpuFrameBuffer? framebuffer = GetBoundEngineFrameBuffer();
         uint width, height;
         if (framebuffer is not null)
@@ -151,16 +197,11 @@ public sealed partial class WebGpuRendererHost
         }
         else
             throw UnsupportedEngineOperation(nameof(SetRenderArea), "no drawable output is available");
-        if (region.X != 0 || region.Y != 0 || region.Width != width || region.Height != height)
+        if (validateViewport && _engineRenderArea is { } render && (render.X != 0 || render.Y != 0 || render.Width != width || render.Height != height))
             throw UnsupportedEngineOperation(nameof(SetRenderArea), "only the complete bound attachment extent is admitted");
-    }
-
-    public override void CropRenderArea(BoundingRectangle region) => SetRenderArea(region);
-
-    public override void SetCroppingEnabled(bool enabled)
-    {
-        if (enabled)
-            throw UnsupportedEngineOperation(nameof(SetCroppingEnabled), "scissored engine draws are not available");
+        if (_engineCroppingEnabled && (_engineCropArea is not { } crop ||
+            crop.X != 0 || crop.Y != 0 || crop.Width != width || crop.Height != height))
+            throw UnsupportedEngineOperation(nameof(CropRenderArea), "only complete-attachment cropping is admitted");
     }
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)

@@ -22,20 +22,23 @@ public sealed partial class WebGpuRendererHost
     private bool _engineDrawPending;
     private int _engineMeshDrawCount;
     private IShaderProgramArtifactResolver? _shaderArtifacts;
+    private EngineMaterialVariantCatalog? _materialVariants;
 
     /// <summary>Session-scoped cooked shader identities loaded through the engine asset source.</summary>
     public IShaderProgramArtifactResolver? ShaderArtifacts => _shaderArtifacts;
+    internal EngineMaterialVariantCatalog? MaterialVariants => _materialVariants;
     public int LastEngineMeshDrawCount => _engineMeshDrawCount;
     internal uint EngineFrameSequence => _engineFrameSequence;
     internal bool IsRecordingEngineFrame => _engineRecording;
 
     /// <summary>Installs the immutable shader catalog before engine program preparation begins.</summary>
-    public void BindShaderArtifacts(IShaderProgramArtifactResolver? artifacts)
+    public void BindShaderArtifacts(IShaderProgramArtifactResolver? artifacts, EngineMaterialVariantCatalog? materialVariants = null)
     {
         ObjectDisposedException.ThrowIf(State == BrowserRendererState.Disposed, this);
         if (_engineRecording || RenderObjectCache.Count != 0)
             throw new InvalidOperationException("WebGPU.Shaders.AlreadyActive: bind the shader catalog before creating engine API objects.");
         SetField(ref _shaderArtifacts, artifacts);
+        SetField(ref _materialVariants, materialVariants);
     }
 
     /// <summary>Binds a host-owned engine viewport without acquiring desktop window services.</summary>
@@ -45,6 +48,21 @@ public sealed partial class WebGpuRendererHost
         if (_engineRecording)
             throw new InvalidOperationException("WebGPU.Frame.Active: the engine viewport cannot change during recording.");
         SetField(ref _engineViewport, viewport);
+    }
+
+    /// <summary>Updates the bound engine viewport in its renderer's owner scope after the host changes the canvas surface.</summary>
+    public void SynchronizeEngineViewport(bool invalidateResources)
+    {
+        ObjectDisposedException.ThrowIf(State == BrowserRendererState.Disposed, this);
+        if (_engineRecording)
+            throw new InvalidOperationException("WebGPU.Frame.Active: canvas dimensions cannot change during recording.");
+        XRViewport viewport = _engineViewport
+            ?? throw new InvalidOperationException("WebGPU.Viewport.Required: bind the engine viewport before synchronizing its surface.");
+        using ThreadCurrentScope scope = EnterThreadCurrentScope(this);
+        if (invalidateResources)
+            viewport.RenderPipelineInstance.InvalidatePhysicalResources();
+        if (_target.Surface.CanRender)
+            viewport.Resize(checked((uint)_target.Surface.PhysicalWidth), checked((uint)_target.Surface.PhysicalHeight));
     }
 
     internal int EnsureEngineUniformBuffer()
@@ -75,6 +93,7 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineUniformBytes, 0, publishNotifications: false);
         SetField(ref _engineDrawPending, false, publishNotifications: false);
         SetField(ref _engineMeshDrawCount, 0, publishNotifications: false);
+        SetField(ref _submittedFrame, false, publishNotifications: false);
         SetField(ref _engineRecording, true, publishNotifications: false);
     }
 

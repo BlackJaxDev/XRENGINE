@@ -50,6 +50,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         if (!assets.has(value.startupSettings)) throw new Error('AssetSource.StartupSettingsMissing.');
     }
     const shaderIdentities = new Set();
+    const shaderDescriptors = new Map();
     if (value.shaderArtifacts !== undefined && value.shaderArtifacts !== null) {
         if (!Array.isArray(value.shaderArtifacts) || value.shaderArtifacts.length > 256)
             throw new Error('AssetSource.ShaderCatalogBudgetExceeded.');
@@ -62,6 +63,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                 || descriptor.hash !== shader.identity)
                 throw new Error('AssetSource.ShaderPayloadMissingOrMismatched.');
             shaderIdentities.add(shader.identity);
+            shaderDescriptors.set(shader.identity, descriptor);
         }
     }
     if (value.materialVariants !== undefined) {
@@ -81,6 +83,23 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                 variant.vertexProfile, variant.outputProfile].join('\u001f');
             if (keys.has(key)) throw new Error('AssetSource.MaterialVariantDuplicateKey.');
             keys.add(key);
+        }
+    }
+    if (value.pipelineArtifacts !== undefined) {
+        if (!Array.isArray(value.pipelineArtifacts) || value.pipelineArtifacts.length > 16)
+            throw new Error('AssetSource.PipelineArtifactBudgetExceeded.');
+        const passes = new Set();
+        for (const pipeline of value.pipelineArtifacts) {
+            if (!pipeline || typeof pipeline !== 'object' || Array.isArray(pipeline)
+                || Object.keys(pipeline).length !== 2 || pipeline.pass !== 'tonemap'
+                || !validSha256(pipeline.descriptorIdentity))
+                throw new Error('AssetSource.PipelineArtifactInvalid.');
+            const descriptor = shaderDescriptors.get(pipeline.descriptorIdentity);
+            if (!descriptor) throw new Error('AssetSource.PipelineArtifactMissing.');
+            if (descriptor.bytes > CONTENT_LIMITS.jsonBytes)
+                throw new Error('AssetSource.PipelineArtifactDescriptorBudgetExceeded.');
+            if (passes.has(pipeline.pass)) throw new Error('AssetSource.PipelineArtifactDuplicatePass.');
+            passes.add(pipeline.pass);
         }
     }
     const heights = new Map();
@@ -106,6 +125,21 @@ export function validateEngineAssetManifest(value, manifestUrl) {
     return { manifest: value, assets };
 }
 
+async function validatePipelineArtifactDescriptors(loader, { manifest, assets }) {
+    for (const pipeline of manifest.pipelineArtifacts ?? []) {
+        const shader = manifest.shaderArtifacts.find(artifact => artifact.identity === pipeline.descriptorIdentity);
+        const entry = assets.get(shader.descriptor);
+        const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, pipeline.descriptorIdentity, entry.path);
+        try {
+            const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+            if (!descriptor || descriptor.pass !== pipeline.pass || descriptor.target !== 'WebGPUWgsl')
+                throw new Error('AssetSource.PipelineArtifactDescriptorMismatch.');
+        } finally {
+            loader.releasePayload(bytes);
+        }
+    }
+}
+
 /** Imports retain owned bytes only; no managed memory view crosses an await. */
 export const engineAssetImports = {
     create(url) {
@@ -120,6 +154,8 @@ export const engineAssetImports = {
         const manifest = await source.loader.readManifest();
         source.loader.signal.throwIfAborted();
         const validated = validateEngineAssetManifest(manifest, source.loader.manifestUrl);
+        await validatePipelineArtifactDescriptors(source.loader, validated);
+        source.loader.signal.throwIfAborted();
         if (source !== requireSource(id)) throw new Error('AssetSource.StaleSession.');
         source.manifest = validated.manifest;
         source.assets = validated.assets;

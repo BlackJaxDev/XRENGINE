@@ -848,7 +848,7 @@ export class WebGpuCanvasRenderer {
                 directionalLights: 1, hdrIntermediate: 'rgba16float', presentation: 'sRGB',
                 exclusions: ['transparent shadows', 'PBR', 'normal maps', 'reversed Z', 'desktop GPUScene host', 'meshlets'],
                 experimentalComputeQualified: false },
-            textureDimensions: ['2d'], textureFormats: ['rgba8unorm', 'rgba8unorm-srgb',
+            textureDimensions: ['2d'], textureFormats: ['rgba8unorm', 'rgba8unorm-srgb', 'rgba16float',
                 'depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'],
             textureSampleCounts: [1, 4], optionalTextureFormats: [],
             cookedContent: { profile: 'browser-forward-v1', schema: 3, schemas: [1, 2, 3],
