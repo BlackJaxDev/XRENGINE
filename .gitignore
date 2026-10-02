@@ -482,3 +482,6 @@ Tools/BrowserSmoke/playwright-report/
 # Browser audio executor is authored source, not a generated asset folder.
 !XREngine.Audio.WebAudio/Assets/
 !XREngine.Audio.WebAudio/Assets/**
+# Browser canvas host is authored source, not a generated asset folder.
+!XREngine.Runtime.Platform.Browser/Assets/
+!XREngine.Runtime.Platform.Browser/Assets/**

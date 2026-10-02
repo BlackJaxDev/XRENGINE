@@ -495,3 +495,10 @@ correction. The published canvas host matches its relocated source byte-for-byte
 This closes the two platform surface/lifecycle implementation rows, bringing the
 checklist to 49/110. Live lifecycle, desktop pacing and rendered-game acceptance
 remain open. Logs are under the active validation run’s `browser-platform/` folder.
+
+The first clean-checkout run of `69d693c` exposed a publication omission: the
+repository-wide `Assets/` ignore rule had excluded the relocated canvas script,
+although the local builds and publication used it. The corrected source adds an
+explicit browser-platform authored-asset exception and tracks that exact checked
+script. The browser output URL, code behavior and earlier local evidence are
+unchanged; the clean-checkout run is repeated for the corrected commit.
