@@ -1,11 +1,13 @@
 # Browser project publishing
 
-**Status (2026-10-01):** shared-engine source integration and build qualification
-are in progress. The Editor cross-build, Server and control-plane builds pass
-with zero warnings/errors. The browser native physics diagnostic publishes.
-The local Chromium process cannot start because its Unix socket creation is
-denied; the approved Actions lane will provide live browser evidence. These
-results do not establish playable-project, GPU, device, or performance parity.
+**Status (2026-10-02):** shared-engine integration is in progress. The Editor
+cross-build, Server and control-plane builds pass with zero warnings/errors.
+Actual Chromium CI qualifies bounded depth, texture/sRGB, lit/HDR, standalone
+directional PCSS, native Jolt, asset/world lifecycle and offline-audio paths.
+The [shader acceptance record](unified-webgpu-shader-cooking.md) links exact
+commits and captures. Local Chromium still cannot create its required Unix
+socket. These results do not establish an editor-published playable project,
+physical-device acceptance or performance parity.
 
 ## Shared desktop entry point
 
@@ -23,6 +25,9 @@ asset with the existing registered codec, publishes the shared engine/game
 assemblies and platform leaves, packages immutable content, and activates the
 complete site atomically. It no longer calls `BrowserWorldPublishExporter` or
 translates gameplay into the frozen browser scene/component DTOs.
+When saved startup settings have no window target, the project may select a
+saved `.asset` beneath its Assets directory with `StartupScenePath`; existing
+single-window selection and conflicting-world checks remain in force.
 
 The current publisher requires a source checkout containing `XREngine.Browser`.
 Publishing from a packaged editor is still open. Use the pinned SDK/workload in
@@ -62,15 +67,37 @@ cooked/YAML decoding paths. It does not fall back to desktop files or manufactur
 missing asset placeholders. Custom game codecs retain their own format and need
 their own allocation and platform-variant review.
 
-Every selected shader needs an explicitly verified WGSL artifact identity.
-The cooker/resolver preserves that identity and serves its descriptor and source
-through the same asset source. No arbitrary desktop GLSL translation is inferred.
+Browser capability admission inspects the world after its registered serializer
+has cooked and hydrated it under a thread-local WebGPU material-construction
+target. The temporary graph has scoped object ownership and cannot create API
+wrappers on an active desktop editor renderer. This lets an explicit game codec
+reconstruct source-free built-in materials without editing its desktop YAML or
+persisted binary format. Such materials require an exact semantic/profile-to-
+descriptor variant in the project-relative shader manifest; custom shader
+stages still require explicit WGSL companion identities. The cooker/resolver
+serves verified descriptors and sources through the same asset source, and the
+tonemap output mapping is an explicit hash-bound pipeline artifact. No arbitrary
+desktop GLSL translation or shader-name inference is performed.
 See [engine shader cooking](unified-webgpu-shader-cooking.md).
+
+The canonical Rolling Ball world now passes the compiled Editor cook method and
+the production content packager in a portable local probe: the resulting catalog
+contains its game-owned version-five world payload, cooked startup settings,
+sixteen hash-addressed assets, seven shader artifacts, six material variants, and
+one exact tonemap mapping. The opt-in desktop diagnostics I/O has moved behind
+the desktop host, so the portable game assembly passes the production metadata
+audit. This probe does not execute the complete Windows Editor CLI, publish
+WebAssembly, or establish browser pixels/gameplay.
+The sample catalog includes the three exact debug primitive variants used by
+its shared-engine HUD. A fresh no-incremental Editor build and repeat of the
+compiled production cook method/content packager qualify this seven-artifact
+catalog, including each regenerated descriptor/source hash.
 
 ## Capability and startup policy
 
 The source audit rejects known desktop-only components, VR-dependent components
-and transforms, absent shader companions, and unsupported output requirements
+and transforms, absent shader companions or built-in variants, and unsupported
+output requirements
 with contextual diagnostics. It is not yet a complete feature classifier.
 The initial startup profile accepts one local mono output; VR, remote-client
 startup, HDR, transparent surfaces and multiple/split outputs fail explicitly.
@@ -94,14 +121,13 @@ without URL-entry controls or diagnostic query overrides. It shows loading,
 errors and gesture-driven audio activation. `engine-diagnostic.html` retains the
 manual development flow separately.
 
-**Current rendering limit:** production browser startup now connects the real
-world to an engine viewport and canvas renderer, but the required web-tier
-pipeline still fails by name until its lighting/material/presentation route is
-available. A blank input canvas is not success. The separate engine-mesh diagnostic uses
-real engine scene/camera/model objects to qualify depth and per-draw uniforms.
-It does not substitute for the web tier of `DefaultRenderPipeline`. Exact-format
-2D texture/framebuffer wrappers are compiled but still need live qualification;
-lighting, shadows, skinning, UI and full authored-world rendering remain open.
+**Current rendering limit:** production browser startup connects the real world
+to an engine viewport and canvas renderer. The shared `DefaultRenderPipeline`
+has a qualified bounded lit/HDR/tonemap and standalone directional-shadow route.
+Authored features outside that route still fail by name; a blank input canvas
+is not success. Engine-mesh diagnostics use real scene/camera/model objects and
+that shared pipeline, but do not establish full authored-world gameplay.
+Bloom, ambient occlusion, skinning, UI, and broader feature profiles remain open.
 
 The [browser smoke harness](../../../../Tools/BrowserSmoke/README.md) records
 actual captured pixels, export startup, optional asset lifecycle and native

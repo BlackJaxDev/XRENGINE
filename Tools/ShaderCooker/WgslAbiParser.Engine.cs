@@ -144,6 +144,20 @@ internal sealed partial class WgslAbiParser
     private void CheckEngineBuffer(string type, int offset, ShaderAbiResourceContract expected)
     {
         string resolved = ResolveAlias(type, new HashSet<string>(StringComparer.Ordinal), offset);
+        if (expected.Kind == ShaderAbiResourceKind.StorageBuffer && expected.ByteSize == 4 && expected.Members.IsEmpty)
+        {
+            // The descriptor's empty-member storage cohort is explicitly a raw
+            // runtime u32 array. Four bytes is its minimum binding size, not its
+            // runtime capacity. Fixed arrays and padded/vector elements are not
+            // interchangeable with the scalar-packed engine payload.
+            if (!resolved.StartsWith("array<", StringComparison.Ordinal) || !resolved.EndsWith('>'))
+                Fail(offset, "raw storage must use a runtime array<u32>");
+            string element = resolved[6..^1];
+            if (element.Contains(',') ||
+                ResolveAlias(element, new HashSet<string>(StringComparer.Ordinal), offset) != "u32")
+                Fail(offset, "raw storage must use a runtime array<u32> with four-byte scalar stride");
+            return;
+        }
         if (!_structs.TryGetValue(resolved, out WgslAbiStructure? structure)) Fail(offset, "buffer must use a named physical structure");
         if (structure.Members.Count != expected.Members.Length) Fail(offset, "buffer member count differs from declared ABI");
         int cursor = 0, alignment = 16;

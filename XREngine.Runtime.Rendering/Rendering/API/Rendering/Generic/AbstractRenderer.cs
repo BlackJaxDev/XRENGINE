@@ -73,6 +73,11 @@ namespace XREngine.Rendering
         public virtual RendererBackendId BackendId => default;
         public long BackendGeneration { get; }
         public virtual bool IsBackendReplacementFrameReady => true;
+        /// <summary>
+        /// Whether a render-command exception must abort the complete frame rather than
+        /// submit an incomplete output after the command container continues.
+        /// </summary>
+        public virtual bool RequiresAtomicFrameAuthoring => false;
         internal virtual bool AdvancedPickingSourceRequiresSubmissionAcceptance => false;
         private int _acceptsBackendWork = 1;
         private long _nextOutputCompletionReceiptId;

@@ -13,6 +13,15 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
     private StandardLitColorSurfaceBinding? _litSurface;
     private bool _directionalShadowReceiver;
     private bool _opaqueShadowDepth;
+    private EngineMaterialSemantic _debugPrimitive;
+
+    internal WebGpuInstanceStorageContract? InstanceStorageContract => _debugPrimitive switch
+    {
+        EngineMaterialSemantic.DebugPoint => new("PointsBuffer", 16, 65536),
+        EngineMaterialSemantic.DebugLine => new("LinesBuffer", 28, 65536),
+        EngineMaterialSemantic.DebugTriangle => new("TrianglesBuffer", 40, 65536),
+        _ => null,
+    };
 
     public WebGpuRenderProgram Program => _apiProgram
         ?? throw new InvalidOperationException("WebGPU.Material.ProgramPending: the material has not been prepared.");
@@ -36,6 +45,25 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
                 if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
                 SetField(ref _opaqueShadowDepth, true);
+            }
+            else if (Data.EngineSemantic.Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle)
+            {
+                if (Data.Shaders.Count != 0 ||
+                    (Data.EngineSemantic.Semantic == EngineMaterialSemantic.DebugTriangle
+                        ? Data.Parameters.Length != 0
+                        : Data.Parameters.Length != 1 || Data.Parameters[0] is not Rendering.Models.Materials.ShaderVector4))
+                    throw new NotSupportedException("WebGPU.Material.DebugUnsupported: the debug material must be source-free and have its exact numeric parameters.");
+                string vertexProfile = Data.EngineSemantic.Semantic switch
+                {
+                    EngineMaterialSemantic.DebugPoint => "instanced-debug-point-v1",
+                    EngineMaterialSemantic.DebugLine => "instanced-debug-line-v1",
+                    _ => "instanced-debug-triangle-v1",
+                };
+                EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                    "debug-overlay", vertexProfile, "display-rgba-v1");
+                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
+                    throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                SetField(ref _debugPrimitive, Data.EngineSemantic.Semantic);
             }
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
             {
@@ -69,6 +97,23 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
     /// <summary>Publishes the canonical surface without changing its authored parameters or render pass.</summary>
     internal void PublishSurface()
     {
+        if (_debugPrimitive != EngineMaterialSemantic.None)
+        {
+            XRCamera camera = RuntimeEngine.Rendering.State.RenderingCamera
+                ?? throw new InvalidOperationException("WebGPU.Material.DebugCameraMissing: debug primitives require a rendering camera.");
+            if (_debugPrimitive == EngineMaterialSemantic.DebugPoint)
+                Program.SetMatrix("InverseViewMatrix", camera.Transform.RenderMatrix);
+            else if (_debugPrimitive == EngineMaterialSemantic.DebugLine)
+            {
+                var area = RuntimeEngine.Rendering.State.RenderArea;
+                if (area.Width <= 0 || area.Height <= 0)
+                    throw new InvalidOperationException("WebGPU.Material.DebugViewportMissing: debug line width requires the output dimensions.");
+                Program.SetVector4("DebugViewport", new Vector4(area.Width, area.Height, 0, 0));
+            }
+            if (Renderer.GetBoundEngineFrameBuffer() is not null)
+                throw new NotSupportedException("WebGPU.Material.DebugOutputUnsupported: overlay primitives require the post-tonemap output target.");
+            return;
+        }
         if (_opaqueShadowDepth)
         {
             WebGpuFrameBuffer? depthTarget = Renderer.GetBoundEngineFrameBuffer();
@@ -97,5 +142,6 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
         SetField(ref _litSurface, null);
         SetField(ref _directionalShadowReceiver, false);
         SetField(ref _opaqueShadowDepth, false);
+        SetField(ref _debugPrimitive, EngineMaterialSemantic.None);
     }
 }

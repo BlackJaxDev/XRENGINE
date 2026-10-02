@@ -21,19 +21,26 @@ internal sealed class WebGpuMeshDraw : IDisposable
     private readonly RenderFrameOutputDescription _output;
     private readonly WebGpuFrameBuffer? _frameBuffer;
     private readonly Task _preparation;
+    private WebGpuInstanceStorageContract? _instanceStorage;
+    private WebGpuDataBuffer? _instanceBuffer;
+    private uint _instanceLimit;
     private int _pipeline;
     private readonly Dictionary<WebGpuBindingSet, int> _commands = [];
     private bool _disposed;
 
     public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
         XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output,
-        WebGpuFrameBuffer? frameBuffer)
+        WebGpuFrameBuffer? frameBuffer, WebGpuInstanceStorageContract? instanceStorage,
+        WebGpuDataBuffer? instanceBuffer, uint instanceLimit)
     {
         _renderer = renderer;
         _program = program;
         _state = state;
         _output = output;
         _frameBuffer = frameBuffer;
+        _instanceStorage = instanceStorage;
+        _instanceBuffer = instanceBuffer;
+        _instanceLimit = instanceLimit;
         _indexSize = indexSize;
         if (indexSize is not (IndexSize.TwoBytes or IndexSize.FourBytes))
             throw Unsupported("only unsigned 16-bit and 32-bit indices are admitted");
@@ -53,12 +60,17 @@ internal sealed class WebGpuMeshDraw : IDisposable
         }
     }
 
-    public void Record(WebGpuBindingSet bindings)
+    public void Record(WebGpuBindingSet bindings, uint instances)
     {
         if (!IsReady)
             throw new InvalidOperationException("WebGPU.Mesh.PipelinePending: defer the draw until asynchronous pipeline creation completes.");
         if (bindings.IsDisposed)
             throw new InvalidOperationException("WebGPU.Mesh.BindingsRetired: a draw cannot use a retired resource binding set.");
+        if ((_instanceLimit == 0 && instances != 1) || (_instanceLimit != 0 && instances > _instanceLimit))
+            throw Unsupported("the requested instance count exceeds the cooked storage binding range");
+        if (_instanceStorage is { } storage && _instanceBuffer is not null &&
+            instances > _instanceBuffer.Data.Length / (uint)storage.StrideBytes)
+            throw Unsupported("the requested instance count exceeds the published logical storage length");
         if (!_commands.TryGetValue(bindings, out int commands))
         {
             if (_commands.Count >= 64)
@@ -68,7 +80,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
         }
         Span<uint> offsets = stackalloc uint[16];
         int count = _program.SnapshotUniforms(offsets);
-        _renderer.RecordEngineCommands(commands, offsets[..count]);
+        _renderer.RecordEngineCommands(commands, offsets[..count], _instanceLimit == 0 ? null : instances);
         bindings.MarkRecorded();
         _frameBuffer?.MarkRecorded();
         _renderer.CountEngineMeshDraw();
@@ -82,9 +94,37 @@ internal sealed class WebGpuMeshDraw : IDisposable
             return true;
         foreach (WebGpuBindingSet bindings in _commands.Keys)
             if (bindings.DependsOn(resource)) return true;
+        if (ReferenceEquals(_instanceBuffer, resource)) return true;
         foreach (WebGpuVertexStream stream in _streams)
             if (ReferenceEquals(stream.Buffer, resource)) return true;
         return false;
+    }
+
+    internal void UpdateInstanceSource(WebGpuInstanceStorageContract? storage, WebGpuDataBuffer? buffer, uint limit)
+    {
+        if (_instanceLimit == limit && _instanceStorage == storage && ReferenceEquals(_instanceBuffer, buffer)) return;
+        _instanceStorage = storage;
+        _instanceBuffer = buffer;
+        _instanceLimit = limit;
+    }
+
+    internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
+    {
+        List<WebGpuBindingSet>? removed = null;
+        foreach (KeyValuePair<WebGpuBindingSet, int> item in _commands)
+            if (item.Key.UsesHandle(resource, handle))
+            {
+                _renderer.RetireEngineResourceAfterFrame(item.Value);
+                (removed ??= []).Add(item.Key);
+            }
+        if (removed is not null)
+            foreach (WebGpuBindingSet bindings in removed) _commands.Remove(bindings);
+    }
+
+    private void ClearCommands()
+    {
+        foreach (int commands in _commands.Values) _renderer.RetireEngineResourceAfterFrame(commands);
+        _commands.Clear();
     }
 
     private async Task PrepareAsync()
@@ -282,6 +322,25 @@ internal sealed class WebGpuMeshDraw : IDisposable
             writer.WriteNumber("buffer", _indices.ResourceHandle);
             writer.WriteString("format", _indexSize == IndexSize.TwoBytes ? "uint16" : "uint32");
             writer.WriteEndObject();
+            if (_instanceStorage is { } storage && _instanceBuffer is not null)
+            {
+                bool found = false;
+                foreach (ShaderStageResourceLayout resource in _program.Artifact.Resources)
+                {
+                    if (resource.Contract.Name != storage.Name ||
+                        resource.Contract.Kind != ShaderAbiResourceKind.StorageBuffer) continue;
+                    writer.WriteStartObject("engineInstanceStorage");
+                    writer.WriteNumber("group", resource.Contract.Set);
+                    writer.WriteNumber("binding", resource.Contract.Binding);
+                    writer.WriteNumber("buffer", _instanceBuffer.ResourceHandle);
+                    writer.WriteNumber("stride", storage.StrideBytes);
+                    writer.WriteNumber("limit", _instanceLimit);
+                    writer.WriteEndObject();
+                    found = true;
+                    break;
+                }
+                if (!found) throw Unsupported("the instance storage contract has no cooked program binding");
+            }
             writer.WriteStartArray("draws");
             writer.WriteStartObject();
             writer.WriteNumber("indexCount", _indexCount);
@@ -354,10 +413,9 @@ internal sealed class WebGpuMeshDraw : IDisposable
         _disposed = true;
         if (_renderer.State != BrowserRendererState.Disposed)
         {
-            foreach (int commands in _commands.Values) _renderer.RetireEngineResourceAfterFrame(commands);
+            ClearCommands();
             if (_pipeline != 0) _renderer.RetireEngineResourceAfterFrame(_pipeline);
         }
-        _commands.Clear();
         _pipeline = 0;
     }
 

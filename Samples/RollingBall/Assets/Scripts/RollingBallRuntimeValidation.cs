@@ -22,6 +22,7 @@ internal static class RollingBallRuntimeValidation
     private static int _started;
     private static int _completed;
     private static int _passed;
+    private static Timer? _watchdogTimer;
     private static long _startTimestamp;
     private static long _componentActivations;
     private static long _beginPlayCalls;
@@ -403,17 +404,12 @@ internal static class RollingBallRuntimeValidation
             return;
 
         _startTimestamp = Stopwatch.GetTimestamp();
-        Thread watchdog = new(Watchdog)
-        {
-            IsBackground = true,
-            Name = "Rolling Ball runtime validation watchdog",
-        };
-        watchdog.Start();
+        _watchdogTimer = new Timer(static _ => Watchdog(), null,
+            TimeSpan.FromSeconds(45.0), Timeout.InfiniteTimeSpan);
     }
 
     private static void Watchdog()
     {
-        Thread.Sleep(TimeSpan.FromSeconds(45.0));
         if (Volatile.Read(ref _completed) == 0)
             Finish(false, BuildFailure("45-second watchdog expired"));
     }
@@ -468,6 +464,8 @@ internal static class RollingBallRuntimeValidation
     {
         if (Interlocked.CompareExchange(ref _completed, 1, 0) != 0)
             return;
+
+        Interlocked.Exchange(ref _watchdogTimer, null)?.Dispose();
 
         if (passed)
             Interlocked.Exchange(ref _passed, 1);

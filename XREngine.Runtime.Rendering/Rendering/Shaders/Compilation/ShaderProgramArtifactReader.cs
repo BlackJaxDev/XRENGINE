@@ -100,6 +100,10 @@ public static class ShaderProgramArtifactReader
         if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1)
             Require(vertex == "depthVertex" && fragment is null && compute is null,
                 "opaque shadow depth variant requires its vertex-only depth entry point");
+        if (materialVariant is { } debugEntries &&
+            debugEntries.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle))
+            Require(vertex is not null && fragment is not null && compute is null,
+                "debug primitive variants require vertex and fragment entry points");
         Require(vertex is null || vertex != fragment, "stage entry points must be distinct");
         Require(Property(descriptor, "requiredFeatures", JsonValueKind.Array).GetArrayLength() == 0, "optional device features have not been admitted");
         Require(Property(descriptor, "pipeline", JsonValueKind.Object).EnumerateObject().Count() == 0, "pipeline state belongs to the engine material/pass, not the cooked module");
@@ -131,6 +135,12 @@ public static class ShaderProgramArtifactReader
         }
         Require(compute is null || buffers.Count == 0, "compute layouts cannot declare vertex streams");
         for (int index = 0; index < buffers.Count; index++) Require(slots.Contains(index), "vertex buffer slots must be contiguous from zero");
+        if (materialVariant is { } debugStream &&
+            debugStream.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle))
+            Require(buffers.Count == 1 && buffers[0].Slot == 0 && buffers[0].Stride == 12 &&
+                buffers[0].StepMode == "vertex" && buffers[0].Attributes.Length == 1 &&
+                buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" },
+                "debug primitive variants require the fixed indexed position scaffold");
         ImmutableArray<ShaderStageResourceLayout>.Builder resources = ImmutableArray.CreateBuilder<ShaderStageResourceLayout>();
         HashSet<(int, int)> bindings = [];
         foreach (JsonElement resource in Property(layout, "bindings", JsonValueKind.Array).EnumerateArray())
@@ -166,7 +176,19 @@ public static class ShaderProgramArtifactReader
             int size = Bounded(resource, "bytes", 0, 65536);
             bool dynamic = Property(resource, "dynamic").GetBoolean();
             bool isBuffer = resourceKind is ShaderAbiResourceKind.UniformBuffer or ShaderAbiResourceKind.StorageBuffer;
-            Require(isBuffer ? size > 0 && size % 16 == 0 : size == 0 && !dynamic, "invalid resource byte size or dynamic offset");
+            bool rawDebugStorage = materialVariant is { } selected &&
+                selected.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle) &&
+                kind == "read-only-storage" && group == 2 && binding == 0 && !dynamic && size == 4 &&
+                owner == ShaderAbiResourceOwner.Engine && frequency == ShaderAbiFrequency.Object &&
+                visibility == ShaderStageVisibility.Vertex &&
+                resourceName == (selected.Semantic.Semantic switch
+                {
+                    EngineMaterialSemantic.DebugPoint => "PointsBuffer",
+                    EngineMaterialSemantic.DebugLine => "LinesBuffer",
+                    _ => "TrianglesBuffer",
+                });
+            Require(isBuffer ? rawDebugStorage || size > 0 && size % 16 == 0 : size == 0 && !dynamic,
+                "invalid resource byte size or dynamic offset");
             ImmutableArray<ShaderAbiMemberContract>.Builder members = ImmutableArray.CreateBuilder<ShaderAbiMemberContract>();
             HashSet<string> names = new(StringComparer.Ordinal);
             uint end = 0;
@@ -183,7 +205,8 @@ public static class ShaderProgramArtifactReader
                 members.Add(new ShaderAbiMemberContract(memberName, provider, (uint)offset, (uint)memberSize, type,
                     MatrixOrder: matrix ? ShaderAbiMatrixOrder.ColumnMajor : ShaderAbiMatrixOrder.None, MatrixStride: matrix ? 16u : 0u));
             }
-            Require(isBuffer ? members.Count > 0 : members.Count == 0, "only buffer bindings declare members and buffers need explicit members");
+            Require(rawDebugStorage ? members.Count == 0 : isBuffer ? members.Count > 0 : members.Count == 0,
+                "only the exact debug runtime storage binding may omit fixed buffer members");
             ShaderAbiResourceContract contract = new(resourceName, physicalName, (uint)group, (uint)binding, resourceKind, owner, frequency, (uint)size, members.ToImmutable());
             resources.Add(new ShaderStageResourceLayout(contract, visibility, kind, dynamic));
         }
@@ -209,6 +232,19 @@ public static class ShaderProgramArtifactReader
             CheckLimit(limits, "maxStorageBuffersPerShaderStage", resources.Count(resource => (resource.Visibility & stage) != 0 && resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer));
         }
         CheckLimit(limits, "maxStorageBufferBindingSize", resources.Where(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer).Select(resource => (int)resource.Contract.ByteSize).DefaultIfEmpty().Max());
+        if (materialVariant is { } debugVariant &&
+            debugVariant.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle))
+        {
+            int stride = debugVariant.Semantic.Semantic switch
+            {
+                EngineMaterialSemantic.DebugPoint => 16,
+                EngineMaterialSemantic.DebugLine => 28,
+                _ => 40,
+            };
+            CheckLimit(limits, "maxStorageBufferBindingSize", checked(65536 * stride));
+            Require(resources.Count(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer) == 1,
+                "debug primitive variants require exactly one raw storage binding");
+        }
         CheckLimit(limits, "maxDynamicStorageBuffersPerPipelineLayout", resources.Count(resource => resource.DynamicOffset && resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer));
         string sourcePath = Property(descriptor, "source").ValueKind == JsonValueKind.String
             ? Text(descriptor, "source") : Text(Property(descriptor, "source"), "path");
@@ -266,10 +302,10 @@ public static class ShaderProgramArtifactReader
     private static EngineMaterialVariantKey BuildMaterialVariantKey(JsonElement value, string pass, ShaderCompileTarget target)
     {
         string semanticName = Text(value, "semantic");
-        Require(semanticName is nameof(EngineMaterialSemantic.StandardLitColor) or nameof(EngineMaterialSemantic.OpaqueShadowDepth), "unsupported material semantic");
-        EngineMaterialSemantic semantic = semanticName == nameof(EngineMaterialSemantic.OpaqueShadowDepth)
-            ? EngineMaterialSemantic.OpaqueShadowDepth
-            : EngineMaterialSemantic.StandardLitColor;
+        Require(Enum.TryParse(semanticName, ignoreCase: false, out EngineMaterialSemantic semantic) &&
+            semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.OpaqueShadowDepth or
+                EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle,
+            "unsupported material semantic");
         EngineMaterialVariantKey key = new(new EngineMaterialSemanticIdentity(semantic,
             Property(value, "semanticVersion", JsonValueKind.Number).GetInt32()), target, pass,
             Text(value, "vertexProfile"), Text(value, "outputProfile"));

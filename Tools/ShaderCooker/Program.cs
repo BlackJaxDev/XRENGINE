@@ -91,7 +91,9 @@ internal static class Program
             CheckAncestry(output);
             JsonArray artifacts = [];
             JsonArray materialVariants = [];
+            JsonArray pipelineArtifacts = [];
             HashSet<string> variantKeys = new(StringComparer.Ordinal);
+            HashSet<string> pipelinePasses = new(StringComparer.Ordinal);
             foreach (PreparedShader item in prepared.OrderBy(item => item.Name, StringComparer.Ordinal))
             {
                 cancellation.Token.ThrowIfCancellationRequested();
@@ -109,10 +111,19 @@ internal static class Program
                     Require(variantKeys.Add(key), $"Duplicate material variant key for '{item.Name}'.");
                     materialVariants.Add(reference);
                 }
+                if (item.PipelineArtifact is { } pipeline)
+                {
+                    JsonObject reference = (JsonObject)pipeline.DeepClone();
+                    reference["descriptorIdentity"] = descriptorHash;
+                    string pass = String(reference, "pass");
+                    Require(pipelinePasses.Add(pass), $"Duplicate pipeline artifact pass '{pass}'.");
+                    pipelineArtifacts.Add(reference);
+                }
             }
             int schema = ParseJson(prepared[0].Descriptor)["schemaVersion"]!.GetValue<int>();
             JsonObject manifestDocument = new() { ["schemaVersion"] = schema, ["backend"] = "WebGPU", ["packetVersion"] = 2, ["artifacts"] = artifacts };
             if (materialVariants.Count > 0) manifestDocument["materialVariants"] = materialVariants;
+            if (pipelineArtifacts.Count > 0) manifestDocument["pipelineArtifacts"] = pipelineArtifacts;
             byte[] manifest = Canonical(manifestDocument);
             Require(manifest.Length <= MaxJsonBytes, "Manifest exceeds the JSON byte limit.");
             cancellation.Token.ThrowIfCancellationRequested();
@@ -144,6 +155,7 @@ internal static class Program
         if (schema >= 2) keys.Add("coordinates");
         if (schema == 3) keys.Add("pass");
         if (schema == 3 && recipe.ContainsKey("materialVariant")) keys.Add("materialVariant");
+        if (schema == 3 && recipe.ContainsKey("pipelineArtifact")) keys.Add("pipelineArtifact");
         Require(recipe.Count == keys.Count && recipe.All(item => keys.Contains(item.Key)), "Recipe properties must match the shader recipe schema.");
         string name = String(recipe, "name");
         Require(Regex.IsMatch(name, "^[a-z][a-z0-9-]{0,63}$", RegexOptions.CultureInvariant), "Name must be a lowercase shader identifier.");
@@ -154,6 +166,7 @@ internal static class Program
         Require(String(recipe, "target") == "WebGPUWgsl", $"{stageContext}: target must be WebGPUWgsl.");
         ShaderProgramArtifact? engineLayout = null;
         JsonObject? materialVariant = null;
+        JsonObject? pipelineArtifact = null;
         if (schema == 3)
         {
             Require(language is "Slang" or "WGSL", $"{stageContext}: engine recipes require authored Slang or explicit WGSL; the frozen browser material generator is not an engine frontend.");
@@ -166,7 +179,8 @@ internal static class Program
                 Require(variant.Count == 4 && variant.ContainsKey("semantic") && variant.ContainsKey("semanticVersion")
                     && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
                 string semantic = String(variant, "semantic");
-                Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" && Integer(variant, "semanticVersion") == 1,
+                Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle"
+                    && Integer(variant, "semanticVersion") == 1,
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
                 if (semantic == "OpaqueShadowDepth")
@@ -174,12 +188,33 @@ internal static class Program
                         outputProfile == "depth-normal-v1" &&
                         CanonicalString(recipe["entryPoints"]) == "{\"vertex\":\"depthVertex\"}\n",
                         $"{stageContext}: opaque shadow depth requires its vertex-only depth recipe.");
+                string? debugProfile = semantic switch
+                {
+                    "DebugPoint" => "instanced-debug-point-v1",
+                    "DebugLine" => "instanced-debug-line-v1",
+                    "DebugTriangle" => "instanced-debug-triangle-v1",
+                    _ => null,
+                };
+                if (debugProfile is not null)
+                    Require(String(recipe, "pass") == "debug-overlay" && vertexProfile == debugProfile &&
+                        outputProfile == "display-rgba-v1",
+                        $"{stageContext}: debug primitive requires its exact overlay pass and profiles.");
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");
                 materialVariant = new JsonObject { ["semantic"] = semantic, ["semanticVersion"] = 1,
                     ["target"] = "WebGPUWgsl", ["pass"] = String(recipe, "pass"),
                     ["vertexProfile"] = vertexProfile, ["outputProfile"] = outputProfile };
+            }
+            if (recipe.TryGetPropertyValue("pipelineArtifact", out JsonNode? pipelineNode))
+            {
+                JsonObject pipeline = Object(pipelineNode, "pipelineArtifact");
+                string pass = String(pipeline, "pass");
+                JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
+                Require(pipeline.Count == 1 && pass == "tonemap" && pass == String(recipe, "pass") &&
+                    entries.ContainsKey("vertex") && entries.ContainsKey("fragment") && materialVariant is null,
+                    $"{stageContext}: the pipeline artifact must explicitly select a complete tonemap program without a material variant.");
+                pipelineArtifact = new JsonObject { ["pass"] = pass };
             }
         }
         else
@@ -283,7 +318,7 @@ internal static class Program
         Require(dependencies.Count <= 512, $"{stageContext}: dependency count exceeds 512.");
         Require(encoded.Length <= MaxJsonBytes, $"{stageContext}: descriptor exceeds the JSON byte limit.");
         if (schema == 3) _ = ShaderProgramArtifactReader.Read(encoded, source);
-        return new PreparedShader(name, encoded, source, materialVariant);
+        return new PreparedShader(name, encoded, source, materialVariant, pipelineArtifact);
     }
 
     private static byte[] GenerateMaterial(byte[] source, string name, string context)

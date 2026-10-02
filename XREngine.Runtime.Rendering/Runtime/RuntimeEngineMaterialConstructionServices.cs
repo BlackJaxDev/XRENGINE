@@ -7,13 +7,16 @@ namespace XREngine.Rendering;
 public static class RuntimeEngineMaterialConstructionServices
 {
     private static Installation? _current;
+    [ThreadStatic]
+    private static ThreadInstallation? _currentThread;
 
     /// <summary>
-    /// Gets the explicitly installed target, or the legacy desktop GLSL target on desktop.
-    /// Browser construction without a target installation fails before shader asset IO.
+    /// Gets the calling thread's scoped target, then the application target, or the
+    /// legacy desktop GLSL target. Browser construction without either installation
+    /// fails before shader asset IO.
     /// </summary>
     public static EngineMaterialConstructionTarget Target
-        => Volatile.Read(ref _current)?.Target ?? (OperatingSystem.IsBrowser()
+        => _currentThread?.Target ?? Volatile.Read(ref _current)?.Target ?? (OperatingSystem.IsBrowser()
             ? throw new InvalidOperationException(
                 "WebGPU.MaterialConstruction.TargetRequired: install the browser material target before asset deserialization.")
             : EngineMaterialConstructionTarget.DesktopGlsl);
@@ -32,6 +35,49 @@ public static class RuntimeEngineMaterialConstructionServices
             throw new InvalidOperationException(
                 "MaterialConstruction.TargetConflict: dispose the active installation before replacing its target.");
         return installation;
+    }
+
+    /// <summary>
+    /// Temporarily selects material construction on the calling thread only. Synchronous
+    /// editor cooking can inspect another target without changing live renderer threads.
+    /// Nested scopes restore the preceding target in stack order.
+    /// </summary>
+    public static IDisposable InstallForCurrentThread(EngineMaterialConstructionTarget target)
+    {
+        if (!Enum.IsDefined(target))
+            throw new ArgumentOutOfRangeException(nameof(target));
+        if (OperatingSystem.IsBrowser() && target != EngineMaterialConstructionTarget.WebGpuCooked)
+            throw new InvalidOperationException(
+                "WebGPU.MaterialConstruction.TargetMismatch: browser materials require the cooked WebGPU target.");
+
+        ThreadInstallation installation = new(target, _currentThread);
+        _currentThread = installation;
+        return installation;
+    }
+
+    private sealed class ThreadInstallation(
+        EngineMaterialConstructionTarget target,
+        ThreadInstallation? previous) : IDisposable
+    {
+        private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
+        private bool _disposed;
+
+        internal EngineMaterialConstructionTarget Target { get; } = target;
+
+        public void Dispose()
+        {
+            if (Environment.CurrentManagedThreadId != _ownerThreadId)
+                throw new InvalidOperationException(
+                    "MaterialConstruction.ThreadTargetThreadMismatch: dispose the scoped target on its creating thread.");
+            if (_disposed)
+                return;
+            if (!ReferenceEquals(_currentThread, this))
+                throw new InvalidOperationException(
+                    "MaterialConstruction.ThreadTargetOutOfOrder: dispose scoped targets in stack order.");
+
+            _currentThread = previous;
+            _disposed = true;
+        }
     }
 
     private sealed class Installation(EngineMaterialConstructionTarget target) : IDisposable

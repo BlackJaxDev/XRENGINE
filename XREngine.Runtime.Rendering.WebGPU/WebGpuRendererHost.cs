@@ -21,6 +21,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
     }
 
     public override RendererBackendId BackendId => RendererBackendId.WebGPU;
+    public override bool RequiresAtomicFrameAuthoring => true;
     public BrowserRendererState State
     {
         get => _state;

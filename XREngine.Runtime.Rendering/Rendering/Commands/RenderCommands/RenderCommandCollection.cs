@@ -14,6 +14,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
+using XREngine.Components;
 
 namespace XREngine.Rendering.Commands
 {
@@ -2190,6 +2191,42 @@ namespace XREngine.Rendering.Commands
             using var renderingBufferScope = EnterRenderingBufferReadScope();
             return _renderingPassCommandCounts.TryGetValue(renderPass, out int count) && count > 0;
         }
+
+        /// <summary>
+        /// The WebGPU display overlay admits only the shared debug-draw callback from a
+        /// published scene component. Other late callbacks and meshes need their own
+        /// explicit cooked route and must fail before executing any draw in this pass.
+        /// </summary>
+        internal void ValidatePublishedDebugDrawCallbacks()
+        {
+            const int pass = (int)EDefaultRenderPass.OnTopForward;
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!TryGetPublishedPassCommandsNoLock(pass, out ICollection<RenderCommand> commands))
+                return;
+            for (int index = 0; index < commands.Count; index++)
+                if (!IsPublishedDebugDrawCallback(GetCommandAt(commands, index), pass))
+                    throw new NotSupportedException("WebGPU.DefaultPipeline.PassUnsupported: OnTopForward contains a command outside the published DebugDrawComponent callback cohort.");
+        }
+
+        /// <summary>Runs the validated debug component callbacks in published pass order.</summary>
+        internal void RenderPublishedDebugDrawCallbacks()
+        {
+            const int pass = (int)EDefaultRenderPass.OnTopForward;
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!TryGetPublishedPassCommandsNoLock(pass, out ICollection<RenderCommand> commands))
+                return;
+            for (int index = 0; index < commands.Count; index++)
+            {
+                RenderCommand command = GetCommandAt(commands, index);
+                if (!IsPublishedDebugDrawCallback(command, pass))
+                    throw new NotSupportedException("WebGPU.DefaultPipeline.PassUnsupported: the published debug callback cohort changed before execution.");
+                RenderWithGpuScope(command, pass);
+            }
+        }
+
+        private static bool IsPublishedDebugDrawCallback(RenderCommand command, int pass)
+            => command.RenderPass == pass && command is RenderCommandMethod3D &&
+                command.OwnerRenderInfo?.Owner is DebugDrawComponent;
 
         public bool HasAnyRenderingCommands(ReadOnlySpan<int> renderPasses)
         {

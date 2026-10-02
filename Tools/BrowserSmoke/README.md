@@ -45,6 +45,16 @@ and caster counters plus the dedicated depth target must agree with those
 pixels; a mock shadow or reference-scene packet cannot pass. This qualifies the
 bounded shadow profile, not cascades, atlas, contact shadows or gameplay.
 
+The shared debug-overlay diagnostic uses a registered `DebugDrawComponent` and
+the `DefaultRenderPipeline` callback after tonemapping. Three cooked debug
+variants expand packed point, line, and triangle storage on the GPU. It checks
+colored and alpha-blended pixels, same-count value changes, count and capacity
+changes (including 256 to 384), repeated resource retirement, a non-square
+resize, warm single-frame submission, and stop/restart. Offscreen surplus shapes
+exercise buffer capacities without changing the visible reference primitives.
+The separate published-WASM recording probe covers ordered frame uploads and
+failure atomicity; browser smoke remains the pixel qualification.
+
 The audio check imports the published Web Audio streaming scheduler and renders
 two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
 sample at rates 1 and 2, processed-buffer order, and disposal. It requires no
@@ -72,8 +82,9 @@ Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
 `engine-depth-probe.recipe.json`, `engine-texture-probe.recipe.json`,
 `engine-standard-lit-color.recipe.json`,
 `engine-standard-lit-color-directional-shadow.recipe.json`,
-`engine-shadow-depth.recipe.json`, and `engine-tonemap.recipe.json` with
-`Tools/ShaderCooker`; supply the directory
+`engine-shadow-depth.recipe.json`, `engine-tonemap.recipe.json`,
+`engine-debug-point.recipe.json`, `engine-debug-line.recipe.json`, and
+`engine-debug-triangle.recipe.json` with `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on
 an ignored prior agent run. The browser publish must include

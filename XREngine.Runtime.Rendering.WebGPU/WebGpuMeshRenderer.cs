@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
@@ -63,6 +64,21 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
             return Pending("ProgramsPending");
+        WebGpuInstanceStorageContract? instanceStorage = apiMaterial.InstanceStorageContract;
+        WebGpuDataBuffer? instanceBuffer = null;
+        uint instanceLimit = 0;
+        if (instanceStorage is { } contract)
+        {
+            if (contract.StrideBytes <= 0 || contract.MaximumInstances == 0 || contract.MaximumInstances > 65536 ||
+                !Data.Parent.Buffers.TryGetValue(contract.Name, out XRDataBuffer? buffer) ||
+                !string.Equals(buffer.AttributeName, contract.Name, StringComparison.Ordinal) ||
+                buffer.Target != EBufferTarget.ShaderStorageBuffer ||
+                buffer.Length < contract.StrideBytes || !HasDeclaredStorage(apiMaterial.Program, contract.Name))
+                throw Unsupported("the cooked instance storage contract does not match an owned renderer buffer and shader binding");
+            instanceBuffer = (WebGpuDataBuffer)Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false)!;
+            ulong bindingBytes = instanceBuffer.IsGenerated ? instanceBuffer.BackendAllocatedByteSize : buffer.Length;
+            instanceLimit = (uint)Math.Min(contract.MaximumInstances, bindingBytes / (uint)contract.StrideBytes);
+        }
         if (apiMaterial.Program.Artifact.Pass == "tonemap")
         {
             bool supported = frameBuffer is null
@@ -79,9 +95,11 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         {
             if (_draws.Count >= 32)
                 throw Unsupported("the mesh exceeds the bounded 32 material/raster variants for its current resource generation");
-            draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State, output, frameBuffer);
+            draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State,
+                output, frameBuffer, instanceStorage, instanceBuffer, instanceLimit);
             _draws.Add(key, draw);
         }
+        else draw.UpdateInstanceSource(instanceStorage, instanceBuffer, instanceLimit);
         if (!draw.IsReady)
             return Pending("PipelinesPending");
         SetField(ref _generated, true);
@@ -96,47 +114,96 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         ValidateOwnerGeneration();
         if (instances == 0)
             return;
-        if (instances != 1 || billboardMode != EMeshBillboardMode.None || RuntimeEngine.Rendering.State.IsStereoPass)
-            throw Unsupported("the current vertex profile admits one rigid mono instance without billboarding");
+        if (billboardMode != EMeshBillboardMode.None || RuntimeEngine.Rendering.State.IsStereoPass)
+            throw Unsupported("the current vertex profile admits rigid mono rendering without billboarding");
         ResolvedMeshRenderMaterial resolved = MeshRenderMaterialResolver.Resolve(Data.Parent, materialOverride, instances);
-        Renderer.ApplyRenderParameters(renderOptionsOverride ?? resolved.Material.RenderOptions);
+        RenderingParameters selectedOptions = renderOptionsOverride ?? resolved.Material.RenderOptions;
+        Renderer.ApplyRenderParameters(selectedOptions);
+        int resolutionTraceIndex = -1;
+        if (Renderer.EngineMeshResolutionTraceEnabled && Renderer.IsRecordingEngineFrame)
+        {
+            XRMaterial? source = Data.Parent.Material;
+            XRMesh? sourceMesh = Data.Parent.Mesh;
+            var pass = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            XRMaterial? globalOverride = pass?.GlobalMaterialOverride;
+            XRMaterial? pipelineOverride = pass?.OverrideMaterial;
+            resolutionTraceIndex = Renderer.RecordEngineMeshResolution(new WebGpuMeshResolutionTrace(
+                Renderer.EngineFrameSequence,
+                Identity(Data.Parent), Data.Parent.Name,
+                Identity(sourceMesh), sourceMesh?.Name, sourceMesh?.VertexCount ?? 0, instances,
+                Data.Parent.HasRenderDataPreparation,
+                Identity(source), source?.Name, source?.EngineSemantic ?? default,
+                Identity(materialOverride), materialOverride?.EngineSemantic ?? default,
+                Identity(globalOverride), globalOverride?.EngineSemantic ?? default,
+                Identity(pipelineOverride), pipelineOverride?.EngineSemantic ?? default,
+                Identity(resolved.Material), resolved.Material.Name, resolved.Material.EngineSemantic,
+                resolved.Reason, pass?.ShadowPass ?? false, resolved.IsDepthNormalVariant,
+                Renderer.BoundEngineFrameBufferName ?? "canvas",
+                source?.RenderOptions.CullMode ?? ECullMode.None,
+                resolved.Material.RenderOptions.CullMode, selectedOptions.CullMode,
+                Renderer.RasterState.CullMode, renderOptionsOverride is not null, "RasterReady", null, null));
+        }
         if (Renderer.RasterState.CullMode == ECullMode.Both)
+        {
+            if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "CulledBoth");
             return;
+        }
+        if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "PreparingMaterial");
         WebGpuMaterial material = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(resolved.Material)!;
         if (!material.TryPrepareForRendering())
         {
+            if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "MaterialPending");
             Renderer.MarkEngineDrawPending();
             return;
         }
-        WebGpuRenderProgram program = material.Program;
-        XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
-        if (camera is null && (program.Artifact.Pass != "tonemap" || program.RequiresCameraUniforms))
-            throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: an engine camera must own the current mesh pass.");
-        if (camera is not null && camera.DepthMode != XRCamera.EDepthMode.Normal)
-            throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
-        program.BeginResourceBindings();
-        if (camera is not null) Renderer.SetEngineUniforms(program.Data, camera);
-        program.SetMatrix("ModelMatrix", modelMatrix);
-        program.SetMatrix("PreviousModelMatrix", previousModelMatrix);
-        if (!Matrix4x4.Invert(modelMatrix, out Matrix4x4 inverseModel))
-            throw Unsupported("the model transform is singular");
-        program.SetMatrix("NormalMatrix", Matrix4x4.Transpose(inverseModel));
-        Renderer.SetMaterialUniforms(resolved.Material, program.Data);
-        material.PublishSurface();
-        Data.Parent.OnSettingUniforms(program.Data, program.Data);
-        if (!ReferenceEquals(resolved.Material, Data.Parent.Material))
-            resolved.Material.OnSettingVertexUniforms(program.Data);
-        if (resolved.IsShadowVariant)
-            MeshRenderMaterialResolver.ApplyShadowUniforms(program.Data, resolved.Material);
-        bool deferMissingResources = PublishBindings(resolved.Material.BindingPublishers, program.Data);
-        deferMissingResources |= PublishBindings(Data.Parent.BindingPublishers, program.Data);
-        if (!program.TrySnapshotBindings(deferMissingResources, out WebGpuBindingSet? bindings) ||
-            !TryPrepareDraw(resolved.Material, out _, out WebGpuMeshDraw? draw))
+        if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "MaterialReady");
+        if (instances > 1 && material.InstanceStorageContract is null)
+            throw Unsupported("multiple instances require an explicit cooked storage profile");
+        if (instances > 65536)
+            throw Unsupported("the cooked instance profile admits at most 65536 instances per draw");
+        if (Data.Parent.HasRenderDataPreparation)
+            Data.Parent.OnPreparingRenderData();
+        if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "DataPrepared");
+        try
         {
-            Renderer.MarkEngineDrawPending();
-            return;
+            WebGpuRenderProgram program = material.Program;
+            XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
+            if (camera is null && (program.Artifact.Pass != "tonemap" || program.RequiresCameraUniforms))
+                throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: an engine camera must own the current mesh pass.");
+            if (camera is not null && camera.DepthMode != XRCamera.EDepthMode.Normal)
+                throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
+            program.BeginResourceBindings();
+            if (camera is not null) Renderer.SetEngineUniforms(program.Data, camera);
+            program.SetMatrix("ModelMatrix", modelMatrix);
+            program.SetMatrix("PreviousModelMatrix", previousModelMatrix);
+            if (!Matrix4x4.Invert(modelMatrix, out Matrix4x4 inverseModel))
+                throw Unsupported("the model transform is singular");
+            program.SetMatrix("NormalMatrix", Matrix4x4.Transpose(inverseModel));
+            Renderer.SetMaterialUniforms(resolved.Material, program.Data);
+            material.PublishSurface();
+            Data.Parent.OnSettingUniforms(program.Data, program.Data);
+            if (!ReferenceEquals(resolved.Material, Data.Parent.Material))
+                resolved.Material.OnSettingVertexUniforms(program.Data);
+            if (resolved.IsShadowVariant)
+                MeshRenderMaterialResolver.ApplyShadowUniforms(program.Data, resolved.Material);
+            bool deferMissingResources = PublishBindings(resolved.Material.BindingPublishers, program.Data);
+            deferMissingResources |= PublishBindings(Data.Parent.BindingPublishers, program.Data);
+            program.PublishStorageBindings(Data.Parent);
+            if (!program.TrySnapshotBindings(deferMissingResources, out WebGpuBindingSet? bindings) ||
+                !TryPrepareDraw(resolved.Material, out _, out WebGpuMeshDraw? draw))
+            {
+                if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "BindingsOrPipelinePending");
+                Renderer.MarkEngineDrawPending();
+                return;
+            }
+            draw!.Record(bindings!, instances);
+            if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "Recorded");
         }
-        draw!.Record(bindings!);
+        catch (Exception error)
+        {
+            if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionFailure(resolutionTraceIndex, error);
+            throw;
+        }
     }
 
     private static bool PublishBindings(RenderBindingPublisherCollection publishers, XRRenderProgram program)
@@ -156,6 +223,18 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         }
         return requiresReadyResources;
     }
+
+    private static bool HasDeclaredStorage(WebGpuRenderProgram program, string name)
+    {
+        foreach (var resource in program.Artifact.Resources)
+            if (resource.Contract.Kind == XREngine.Rendering.Shaders.Compilation.ShaderAbiResourceKind.StorageBuffer &&
+                resource.Contract.Name == name && resource.BindingType == "read-only-storage")
+                return true;
+        return false;
+    }
+
+    private static int Identity(object? value)
+        => value is null ? 0 : RuntimeHelpers.GetHashCode(value);
 
     private bool Pending(string reason)
     {
@@ -182,6 +261,12 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
             DestroyDraws();
             return;
         }
+    }
+
+    internal void ReleaseStorageCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
+    {
+        foreach (WebGpuMeshDraw draw in _draws.Values)
+            draw.ReleaseCommandsUsingHandle(resource, handle);
     }
 
     public override void Destroy() => DestroyDraws();

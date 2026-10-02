@@ -238,7 +238,13 @@ internal static partial class ProjectBuilder
             path = candidate;
         }
         if (path is null)
-            throw new InvalidOperationException("Select and save a startup window target world before browser publishing.");
+        {
+            string selectedWorld = context.Project.StartupScenePath;
+            if (string.IsNullOrWhiteSpace(selectedWorld) || Path.IsPathRooted(selectedWorld) ||
+                Uri.TryCreate(selectedWorld, UriKind.Absolute, out _))
+                throw new InvalidOperationException("Select and save a startup window target world or project StartupScenePath before browser publishing.");
+            path = Path.GetFullPath(Path.Combine(context.AssetsDirectory, selectedWorld));
+        }
         string assetRoot = Path.GetFullPath(context.AssetsDirectory);
         string relative = Path.GetRelativePath(assetRoot, path);
         if (Path.IsPathRooted(relative) || relative == ".." ||

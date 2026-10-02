@@ -9,18 +9,30 @@ public sealed partial class WebGpuRendererHost
     private const int EngineFrameRecordBytes = 80;
     private const int EngineFrameMaximumRecords = 4097;
     private const int EngineUniformCapacity = 4 * 1024 * 1024;
-    private readonly byte[] _engineCommandArena = new byte[EngineFrameHeaderBytes + EngineFrameMaximumRecords * EngineFrameRecordBytes];
+    private const int EngineStorageCapacity = 8 * 1024 * 1024;
+    private const int EngineMaximumUploads = 4096;
+    private const int EngineUploadRecordBytes = 24;
+    private readonly byte[] _engineCommandArena = new byte[EngineFrameHeaderBytes + EngineFrameMaximumRecords * EngineFrameRecordBytes + EngineMaximumUploads * EngineUploadRecordBytes];
+    private readonly byte[] _engineUploadArena = new byte[EngineMaximumUploads * EngineUploadRecordBytes];
+    private readonly byte[] _engineStorageArena = new byte[EngineStorageCapacity];
+    private readonly List<WebGpuDataBuffer> _enginePendingStorage = new(8);
     private readonly List<int> _engineDeferredReleases = new(EngineFrameMaximumRecords);
     private byte[]? _engineUniformArena;
     private int _engineUniformBuffer;
     private int _engineUniformBytes;
     private int _engineUniformAlignment;
     private int _engineCommandCount;
+    private int _engineUploadCount;
+    private int _engineStorageBytes;
     private uint _engineFrameSequence;
     private bool _engineRecording;
     private XRViewport? _engineViewport;
     private bool _engineDrawPending;
     private int _engineMeshDrawCount;
+    private WebGpuMeshResolutionTrace[]? _engineMeshResolutionTraces;
+    private bool _engineMeshResolutionTraceEnabled;
+    private int _engineMeshResolutionTraceCount;
+    private bool _engineMeshResolutionTraceTruncated;
     private IShaderProgramArtifactResolver? _shaderArtifacts;
     private EngineMaterialVariantCatalog? _materialVariants;
 
@@ -28,8 +40,31 @@ public sealed partial class WebGpuRendererHost
     public IShaderProgramArtifactResolver? ShaderArtifacts => _shaderArtifacts;
     internal EngineMaterialVariantCatalog? MaterialVariants => _materialVariants;
     public int LastEngineMeshDrawCount => _engineMeshDrawCount;
+    public int LastEngineMeshResolutionTraceCount => _engineMeshResolutionTraceCount;
+    public bool LastEngineMeshResolutionTraceTruncated => _engineMeshResolutionTraceTruncated;
+    public bool EngineMeshResolutionTraceEnabled => _engineMeshResolutionTraceEnabled;
+    public WebGpuMeshResolutionTrace GetEngineMeshResolutionTrace(int index)
+        => _engineMeshResolutionTraces is { } traces && (uint)index < (uint)_engineMeshResolutionTraceCount
+            ? traces[index]
+            : throw new ArgumentOutOfRangeException(nameof(index));
     internal uint EngineFrameSequence => _engineFrameSequence;
     internal bool IsRecordingEngineFrame => _engineRecording;
+    internal string? BoundEngineFrameBufferName => _boundEngineFrameBuffer?.Data.Name;
+
+    /// <summary>Enables bounded material-resolution snapshots for explicit diagnostics only.</summary>
+    public void ConfigureEngineMeshResolutionTrace(bool enabled)
+    {
+        ObjectDisposedException.ThrowIf(State == BrowserRendererState.Disposed, this);
+        if (_engineRecording)
+            throw new InvalidOperationException("WebGPU.Trace.ActiveFrame: change trace capture between frames.");
+        if (enabled && _engineMeshResolutionTraces is null)
+            SetField(ref _engineMeshResolutionTraces, new WebGpuMeshResolutionTrace[64], publishNotifications: false);
+        if (!enabled && _engineMeshResolutionTraces is { } traces)
+            Array.Clear(traces);
+        SetField(ref _engineMeshResolutionTraceEnabled, enabled, publishNotifications: false);
+        SetField(ref _engineMeshResolutionTraceCount, 0, publishNotifications: false);
+        SetField(ref _engineMeshResolutionTraceTruncated, false, publishNotifications: false);
+    }
 
     /// <summary>Installs the immutable shader catalog before engine program preparation begins.</summary>
     public void BindShaderArtifacts(IShaderProgramArtifactResolver? artifacts, EngineMaterialVariantCatalog? materialVariants = null)
@@ -91,8 +126,15 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineFrameSequence, _engineFrameSequence + 1, publishNotifications: false);
         SetField(ref _engineCommandCount, 0, publishNotifications: false);
         SetField(ref _engineUniformBytes, 0, publishNotifications: false);
+        SetField(ref _engineUploadCount, 0, publishNotifications: false);
+        SetField(ref _engineStorageBytes, 0, publishNotifications: false);
         SetField(ref _engineDrawPending, false, publishNotifications: false);
         SetField(ref _engineMeshDrawCount, 0, publishNotifications: false);
+        if (_engineMeshResolutionTraceEnabled)
+        {
+            SetField(ref _engineMeshResolutionTraceCount, 0, publishNotifications: false);
+            SetField(ref _engineMeshResolutionTraceTruncated, false, publishNotifications: false);
+        }
         SetField(ref _submittedFrame, false, publishNotifications: false);
         SetField(ref _engineRecording, true, publishNotifications: false);
     }
@@ -102,6 +144,38 @@ public sealed partial class WebGpuRendererHost
 
     internal void CountEngineMeshDraw()
         => SetField(ref _engineMeshDrawCount, _engineMeshDrawCount + 1, publishNotifications: false);
+
+    internal int RecordEngineMeshResolution(in WebGpuMeshResolutionTrace trace)
+    {
+        if (!_engineMeshResolutionTraceEnabled || _engineMeshResolutionTraces is not { } traces)
+            return -1;
+        if (_engineMeshResolutionTraceCount == traces.Length)
+        {
+            SetField(ref _engineMeshResolutionTraceTruncated, true, publishNotifications: false);
+            return -1;
+        }
+        int index = _engineMeshResolutionTraceCount;
+        traces[index] = trace;
+        SetField(ref _engineMeshResolutionTraceCount, _engineMeshResolutionTraceCount + 1, publishNotifications: false);
+        return index;
+    }
+
+    internal void UpdateEngineMeshResolutionStage(int index, string stage)
+    {
+        if (_engineMeshResolutionTraces is { } traces && (uint)index < (uint)_engineMeshResolutionTraceCount)
+            traces[index] = traces[index] with { Stage = stage };
+    }
+
+    internal void UpdateEngineMeshResolutionFailure(int index, Exception error)
+    {
+        if (_engineMeshResolutionTraces is { } traces && (uint)index < (uint)_engineMeshResolutionTraceCount)
+            traces[index] = traces[index] with
+            {
+                Stage = "Faulted",
+                FailureType = error.GetType().FullName,
+                FailureMessage = error.Message,
+            };
+    }
 
     internal uint SnapshotEngineUniforms(ReadOnlySpan<byte> data)
     {
@@ -115,7 +189,7 @@ public sealed partial class WebGpuRendererHost
         return (uint)offset;
     }
 
-    internal void RecordEngineCommands(int handle, ReadOnlySpan<uint> dynamicOffsets)
+    internal void RecordEngineCommands(int handle, ReadOnlySpan<uint> dynamicOffsets, uint? instanceCount = null)
     {
         if (!_engineRecording || !_resources.Contains(handle))
             throw new InvalidOperationException("WebGPU.Frame.CommandOwner: recording requires a command owned by the active renderer.");
@@ -128,16 +202,49 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteInt32LittleEndian(record[4..], dynamicOffsets.Length);
         for (int i = 0; i < dynamicOffsets.Length; i++)
             BinaryPrimitives.WriteUInt32LittleEndian(record[(8 + i * 4)..], dynamicOffsets[i]);
+        if (instanceCount.HasValue)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(record[72..], instanceCount.Value);
+            BinaryPrimitives.WriteUInt32LittleEndian(record[76..], 1);
+        }
         SetField(ref _engineCommandCount, _engineCommandCount + 1, publishNotifications: false);
+    }
+
+    internal void RegisterPendingStorage(WebGpuDataBuffer buffer)
+    {
+        if (!_enginePendingStorage.Contains(buffer))
+            _enginePendingStorage.Add(buffer);
+    }
+
+    internal void StageEngineStorageUpload(int handle, int destinationOffset, ReadOnlySpan<byte> bytes)
+    {
+        if (!_engineRecording || !_resources.Contains(handle))
+            throw new InvalidOperationException("WebGPU.Frame.StorageOwner: storage uploads require an active owned frame.");
+        if (bytes.IsEmpty || (destinationOffset | bytes.Length) % 4 != 0 ||
+            _engineUploadCount == EngineMaximumUploads || bytes.Length > EngineStorageCapacity - _engineStorageBytes)
+            throw new InvalidOperationException("WebGPU.Frame.StorageCapacity: the aligned storage upload exceeds the bounded frame arena.");
+        bytes.CopyTo(_engineStorageArena.AsSpan(_engineStorageBytes, bytes.Length));
+        Span<byte> upload = _engineUploadArena.AsSpan(_engineUploadCount * EngineUploadRecordBytes, EngineUploadRecordBytes);
+        upload.Clear();
+        BinaryPrimitives.WriteInt32LittleEndian(upload, handle);
+        BinaryPrimitives.WriteInt32LittleEndian(upload[4..], destinationOffset);
+        BinaryPrimitives.WriteInt32LittleEndian(upload[8..], _engineStorageBytes);
+        BinaryPrimitives.WriteInt32LittleEndian(upload[12..], bytes.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(upload[16..], _engineCommandCount);
+        SetField(ref _engineStorageBytes, _engineStorageBytes + bytes.Length, publishNotifications: false);
+        SetField(ref _engineUploadCount, _engineUploadCount + 1, publishNotifications: false);
     }
 
     private void SubmitEngineFrame(in RenderFrameOutputDescription output)
     {
-        int length = EngineFrameHeaderBytes + _engineCommandCount * EngineFrameRecordBytes;
+        int uploadStart = EngineFrameHeaderBytes + _engineCommandCount * EngineFrameRecordBytes;
+        int uploadLength = _engineUploadCount * EngineUploadRecordBytes;
+        int length = uploadStart + uploadLength;
+        _engineUploadArena.AsSpan(0, uploadLength).CopyTo(_engineCommandArena.AsSpan(uploadStart, uploadLength));
         Span<byte> header = _engineCommandArena.AsSpan(0, EngineFrameHeaderBytes);
         header.Clear();
         BinaryPrimitives.WriteUInt32LittleEndian(header, 0x45475258);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 2);
         BinaryPrimitives.WriteInt32LittleEndian(header[8..], length);
         BinaryPrimitives.WriteInt32LittleEndian(header[12..], _engineCommandCount);
         BinaryPrimitives.WriteInt32LittleEndian(header[16..], _session);
@@ -147,8 +254,15 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteInt32LittleEndian(header[32..], _engineUniformBuffer);
         BinaryPrimitives.WriteInt32LittleEndian(header[36..], _engineUniformBytes);
         BinaryPrimitives.WriteUInt32LittleEndian(header[40..], _engineFrameSequence);
+        BinaryPrimitives.WriteInt32LittleEndian(header[44..], _engineUploadCount);
         Span<byte> uniforms = _engineUniformArena is null ? Span<byte>.Empty : _engineUniformArena.AsSpan(0, _engineUniformBytes);
-        bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms);
+        bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms,
+            _engineStorageArena.AsSpan(0, _engineStorageBytes));
+        for (int index = _enginePendingStorage.Count - 1; index >= 0; index--)
+        {
+            if (_enginePendingStorage[index].AcceptSubmittedUploads())
+                _enginePendingStorage.RemoveAt(index);
+        }
         CommitDirectionalShadowDefaults();
         SetField(ref _submittedFrame, presented && !_engineDrawPending);
     }

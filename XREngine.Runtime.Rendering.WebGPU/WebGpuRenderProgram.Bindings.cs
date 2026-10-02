@@ -1,4 +1,5 @@
 using System.Text.Json;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.WebGPU;
@@ -25,8 +26,12 @@ public sealed partial class WebGpuRenderProgram
                 uniforms++;
                 continue;
             }
+            if (resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer &&
+                resource.BindingType == "read-only-storage" && !resource.DynamicOffset &&
+                resource.Contract.ByteSize >= 4)
+                continue;
             if (resource.DynamicOffset || resource.BindingType is not ("texture-2d-float" or "filtering-sampler" or "texture-depth-2d" or "comparison-sampler"))
-                throw UnsupportedBinding(resource.Contract.Name, "only dynamic uniforms and exact 2D float/filtering or depth/comparison sampler pairs are admitted");
+                throw UnsupportedBinding(resource.Contract.Name, "only dynamic uniforms, read-only storage and exact 2D float/filtering or depth/comparison sampler pairs are admitted");
             bool texture = resource.Contract.Kind == ShaderAbiResourceKind.SampledImage;
             if (texture != (resource.BindingType is "texture-2d-float" or "texture-depth-2d") ||
                 !texture && resource.Contract.Kind != ShaderAbiResourceKind.Sampler)
@@ -63,6 +68,13 @@ public sealed partial class WebGpuRenderProgram
             writer.WriteStartObject("buffer");
             writer.WriteString("type", "uniform");
             writer.WriteBoolean("hasDynamicOffset", true);
+            writer.WriteNumber("minBindingSize", resource.Contract.ByteSize);
+        }
+        else if (resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer)
+        {
+            writer.WriteStartObject("buffer");
+            writer.WriteString("type", "read-only-storage");
+            writer.WriteBoolean("hasDynamicOffset", false);
             writer.WriteNumber("minBindingSize", resource.Contract.ByteSize);
         }
         else if (resource.Contract.Kind == ShaderAbiResourceKind.SampledImage)
@@ -109,6 +121,47 @@ public sealed partial class WebGpuRenderProgram
     private void SetSamplerByLocation(int location, IRenderTextureResource texture, int textureUnit)
         => throw UnsupportedBinding(Data.Name ?? "program", "numeric sampler locations have no declared whole-program resource identity");
 
+    /// <summary>Resolves only declared storage names against this mesh renderer's exact buffer keys.</summary>
+    internal void PublishStorageBindings(XRMeshRenderer owner)
+    {
+        for (int index = 0; index < Artifact.Resources.Length; index++)
+        {
+            ShaderStageResourceLayout resource = Artifact.Resources[index];
+            if (resource.Contract.Kind != ShaderAbiResourceKind.StorageBuffer)
+                continue;
+            string name = resource.Contract.Name;
+            if (!owner.Buffers.TryGetValue(name, out XRDataBuffer? buffer) ||
+                !string.Equals(buffer.AttributeName, name, StringComparison.Ordinal))
+                throw UnsupportedBinding(name, "the renderer did not publish an exact logical-name XRDataBuffer");
+            if (buffer.Target != EBufferTarget.ShaderStorageBuffer || buffer.Length < resource.Contract.ByteSize)
+                throw UnsupportedBinding(name, "the buffer target or byte length is incompatible with its declared storage binding");
+            WebGpuDataBuffer api = (WebGpuDataBuffer)Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true)!;
+            api.Generate();
+            if (!api.BackendIsReadyForGpuUse || api.ResourceHandle == 0)
+                throw UnsupportedBinding(name, "the owner-scoped storage buffer is not ready for GPU use");
+            api.StagePendingUpload();
+            if (Renderer.DeviceCapabilities is not { } capabilities ||
+                !capabilities.Limits.TryGetValue("maxStorageBufferBindingSize", out long limit) ||
+                api.BackendAllocatedByteSize > (ulong)limit)
+                throw UnsupportedBinding(name, "the physical storage binding exceeds the selected device's range limit");
+            _resourceHandles[index] = api.ResourceHandle;
+            _resourceOwners[index] = api;
+        }
+    }
+
+    internal bool TryGetStorageBinding(string name, out WebGpuDataBuffer? buffer)
+    {
+        for (int index = 0; index < Artifact.Resources.Length; index++)
+            if (Artifact.Resources[index].Contract.Kind == ShaderAbiResourceKind.StorageBuffer &&
+                string.Equals(Artifact.Resources[index].Contract.Name, name, StringComparison.Ordinal))
+            {
+                buffer = _resourceOwners[index] as WebGpuDataBuffer;
+                return buffer is not null;
+            }
+        buffer = null;
+        return false;
+    }
+
     internal bool TrySnapshotBindings(bool deferMissingResources, out WebGpuBindingSet? bindings)
     {
         bindings = null;
@@ -118,6 +171,10 @@ public sealed partial class WebGpuRenderProgram
             if (deferMissingResources) return false;
             throw UnsupportedBinding(name, "the draw did not publish its required texture and sampler");
         }
+        for (int index = 0; index < Artifact.Resources.Length; index++)
+            if (Artifact.Resources[index].Contract.Kind == ShaderAbiResourceKind.StorageBuffer &&
+                (_resourceHandles[index] == 0 || _resourceOwners[index] is not WebGpuDataBuffer))
+                throw UnsupportedBinding(Artifact.Resources[index].Contract.Name, "the draw did not publish its required storage buffer");
         if (_lastBindingSet?.Matches(_resourceHandles) == true)
         {
             bindings = _lastBindingSet;
@@ -156,6 +213,19 @@ public sealed partial class WebGpuRenderProgram
         {
             WebGpuBindingSet bindings = _bindingSets[index];
             if (!bindings.DependsOn(resource)) continue;
+            bindings.Dispose();
+            _bindingSets.RemoveAt(index);
+            if (ReferenceEquals(bindings, _lastBindingSet))
+                SetField(ref _lastBindingSet, null);
+        }
+    }
+
+    internal void ReleaseBindingSetsUsingHandle(AbstractRenderAPIObject resource, int handle)
+    {
+        for (int index = _bindingSets.Count - 1; index >= 0; index--)
+        {
+            WebGpuBindingSet bindings = _bindingSets[index];
+            if (!bindings.UsesHandle(resource, handle)) continue;
             bindings.Dispose();
             _bindingSets.RemoveAt(index);
             if (ReferenceEquals(bindings, _lastBindingSet))

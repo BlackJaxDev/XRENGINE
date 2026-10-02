@@ -287,6 +287,31 @@ values above one and authored opacity; inspected captures and exact values are
 recorded in the [lit shader acceptance](../rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance).
 Full shadows, engine UI and rendered RollingBall remain the next required work.
 
+The subsequent standalone directional-shadow implementation and restart repair
+are qualified at `3d18468ebdf1115b431743c56ce0f345d8c3235d` by
+[run 36954020671](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36954020671).
+Actual Chromium executes the shared shadow viewport, PCSS receiver and HDR output
+for moving casters/lights, near/far penumbra, disabled/re-enabled shadows, 256/512
+map resize, repeated resource retirement and session restart. The
+[shader record](../rendering/unified-webgpu-shader-cooking.md#standalone-directional-shadow-integration)
+preserves exact pixels, the first failed restart check, and the final complete
+evidence. This does not qualify cascades, atlases, spot/point-light shadows,
+contact shadows, UI, or the rendered canonical game. Shared DebugDraw primitives,
+the game's authored GTAO/bloom and the full project publish/play route remain open.
+
+The following shared-debug slice passes published-WASM/import-boundary execution:
+real registered callbacks feed the engine point/line/triangle visualizer, whose
+cooked vertex shaders consume ordered frame-packet storage snapshots. Zero to
+512-instance cohorts, capacity growth and same-count mutations pass. GPU pixels
+remain pending. A fresh Editor build has zero warnings/errors; its actual
+compiled cook method hydrates the canonical game-owned world under an isolated
+browser material target, and the production content packager emits sixteen
+assets, seven shader artifacts, six material variants and the exact tonemap
+mapping. This is a local method-level publisher probe, not the complete Windows
+Editor CLI or a rendered browser-game acceptance result. See the
+[publisher record](../rendering/browser-project-publishing.md) and
+[debug overlay record](../rendering/unified-webgpu-shader-cooking.md#shared-debug-primitive-overlays).
+
 ## Bounded native and WebAssembly physics comparison
 
 On 2026-10-02, the unchanged desktop Linux Jolt packages and the reviewed browser

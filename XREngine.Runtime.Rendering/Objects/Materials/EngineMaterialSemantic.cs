@@ -6,4 +6,7 @@ public enum EngineMaterialSemantic
     None = 0,
     StandardLitColor = 1,
     OpaqueShadowDepth = 2,
+    DebugPoint = 3,
+    DebugLine = 4,
+    DebugTriangle = 5,
 }

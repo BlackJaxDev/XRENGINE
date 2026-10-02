@@ -185,7 +185,8 @@ export class GpuCommands {
                     const offset = e.offset ?? 0, size = e.size ?? b.size - offset;
                     resource = r.resources.bufferBinding(e.resource, offset, size, expected.buffer.type !== 'uniform');
                     if (size < (expected.buffer.minBindingSize ?? 0)) throw new Error('Buffer binding is smaller than the layout minimum.');
-                    resources.push({ kind: 'buffer', value: b, writable: expected.buffer.type === 'storage', role: expected.buffer.type });
+                    resources.push({ kind: 'buffer', binding: e.binding, value: b, offset, size,
+                        writable: expected.buffer.type === 'storage', role: expected.buffer.type });
                     if (expected.buffer.hasDynamicOffset) dynamic.push({ binding: e.binding, buffer: b, offset, size, alignment: expected.buffer.type === 'uniform' ? r.device.limits.minUniformBufferOffsetAlignment : r.device.limits.minStorageBufferOffsetAlignment });
                 } else {
                     if (e.offset !== undefined || e.size !== undefined) throw new Error('Only buffers accept binding ranges.');
@@ -348,7 +349,7 @@ export class GpuCommands {
             for (const command of input) {
                 if (command.type === 'render' || command.type === 'clear') {
                     const clearOnly = command.type === 'clear';
-                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference']);
+                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage']);
                     const pipeline = clearOnly ? undefined : hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
                     const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
                     const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata);
@@ -399,6 +400,23 @@ export class GpuCommands {
                         scope.buffer(indexBuffer, false, 'index');
                     }
                     const drawList = array(command.draws, maxCommands - draws, 'draws');
+                    let engineInstanceCountLimit = 0;
+                    if (command.engineInstanceStorage !== undefined) {
+                        const source = object(command.engineInstanceStorage, ['group', 'binding', 'buffer', 'stride', 'limit']);
+                        const groupIndex = integer(source.group, 0, bindings.length - 1, 'instance storage group');
+                        const bindingIndex = integer(source.binding, 0, r.device.limits.maxBindingsPerBindGroup - 1, 'instance storage binding');
+                        const buffer = this.get(source.buffer, 'buffer');
+                        const stride = integer(source.stride, 4, 256, 'instance storage stride');
+                        engineInstanceCountLimit = integer(source.limit, 1, 65536, 'engine instance count limit');
+                        const resolved = bindings[groupIndex].resources.find(value =>
+                            value.kind === 'buffer' && value.binding === bindingIndex && value.role === 'read-only-storage');
+                        if (!resolved || resolved.value !== buffer || stride % 4 ||
+                            engineInstanceCountLimit > Math.floor(resolved.size / stride))
+                            throw new Error('WebGPU.Commands.InstanceStorage: the declared read-only binding cannot cover its immutable instance ceiling.');
+                    }
+                    if (engineInstanceCountLimit && (drawList.length !== 1 ||
+                        (drawList[0].type !== undefined && drawList[0].type !== 'drawIndexed' && drawList[0].type !== 'draw')))
+                        throw new Error('WebGPU.Commands.InstanceOverride: only one direct draw may opt into a dynamic instance count.');
                     for (const draw of drawList) {
                         const type = oneOf(draw.type ?? 'drawIndexed', ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'], 'draw type');
                         const indexed = type === 'drawIndexed' || type === 'drawIndexedIndirect';
@@ -423,6 +441,8 @@ export class GpuCommands {
                         draw.type = type;
                         draw.instanceCount = integer(draw.instanceCount ?? 1, 0, 0xffffffff, 'instance count');
                         draw.firstInstance = integer(draw.firstInstance ?? 0, 0, 0xffffffff, 'first instance');
+                        if (engineInstanceCountLimit && (draw.firstInstance !== 0 || draw.instanceCount > engineInstanceCountLimit))
+                            throw new RangeError('WebGPU.Commands.InstanceOverride: the retained direct draw exceeds its immutable instance ceiling.');
                         if (indexed) {
                             integer(draw.indexCount, 0, 0xffffffff, 'index count');
                             draw.firstIndex = integer(draw.firstIndex ?? 0, 0, 0xffffffff, 'first index');
@@ -434,13 +454,13 @@ export class GpuCommands {
                         }
                         for (let slot = 0; slot < vertexBuffers.length; slot++) {
                             const layout = pipeline.descriptor.vertex.buffers[slot];
-                            if (layout.stepMode === 'instance' && (draw.firstInstance + draw.instanceCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound instance range.');
+                            if (layout.stepMode === 'instance' && (draw.firstInstance + (engineInstanceCountLimit || draw.instanceCount)) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound instance range.');
                             if (!indexed && layout.stepMode === 'vertex' && (draw.firstVertex + draw.vertexCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound vertex range.');
                         }
                     }
                     draws += drawList.length;
                     const stencilReference = integer(command.stencilReference ?? 0, 0, 0xffffffff, 'stencil reference');
-                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, stencilReference });
+                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, engineInstanceCountLimit, stencilReference });
                 } else if (command.type === 'compute') {
                     object(command, ['type', 'pipeline', 'bindings', 'workgroups']);
                     const pipeline = hold(dependencies, this.get(command.pipeline, 'compute-pipeline'));
@@ -523,6 +543,8 @@ export class GpuCommands {
 
     encodeOperation(encoder, operation, packet = null, offsetBase = 0, commandIndex = -1) {
         const r = this.renderer;
+        const engineInstanceCount = packet && operation.engineInstanceCountLimit && (packet.getUint32(offsetBase + 68, true) & 1)
+            ? packet.getUint32(offsetBase + 64, true) : undefined;
         r._setOperation('encode-operation', operation.type, commandIndex);
         if (operation.type === 'copyBuffer') {
             encoder.copyBufferToBuffer(operation.source, operation.sourceOffset, operation.destination, operation.destinationOffset, operation.size);
@@ -574,17 +596,18 @@ export class GpuCommands {
                 r._setOperation('draw', value.type, commandIndex, draw);
                 if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
                 else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
-                else if (value.type === 'draw') pass.draw(value.vertexCount, value.instanceCount, value.firstVertex, value.firstInstance);
-                else pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
+                else if (value.type === 'draw') pass.draw(value.vertexCount, engineInstanceCount ?? value.instanceCount, value.firstVertex, value.firstInstance);
+                else pass.drawIndexed(value.indexCount, engineInstanceCount ?? value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
             }
         }
         r._setOperation('end-pass', operation.type, commandIndex);
         pass.end();
     }
 
-    submitEngineFrame(commands, uniforms) { return this.engineFrame.submit(commands, uniforms); }
+    submitEngineFrame(commands, uniforms, storage) { return this.engineFrame.submit(commands, uniforms, storage); }
 
     dispose() {
+        this.engineFrame.dispose();
         for (const cancel of this.pending) cancel();
         this.pending.clear();
         this.canvasColor.view = this.canvasDepth.view = undefined;

@@ -281,6 +281,17 @@ public sealed partial class WebGpuRendererHost
                 program.ReleaseBindingSetsUsing(resource);
     }
 
+    /// <summary>Invalidates physical storage descriptor users without discarding immutable pipelines.</summary>
+    internal void ReleaseEngineStorageGeneration(AbstractRenderAPIObject resource, int handle)
+    {
+        foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
+            if (api is WebGpuMeshRenderer mesh)
+                mesh.ReleaseStorageCommandsUsingHandle(resource, handle);
+        foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
+            if (api is WebGpuRenderProgram program)
+                program.ReleaseBindingSetsUsingHandle(resource, handle);
+    }
+
     private static NotSupportedException UnsupportedEngineOperation(string operation,
         string reason = "the selected engine renderer profile does not implement this operation")
         => new($"WebGPU.Renderer.OperationUnsupported: {operation}: {reason}.");

@@ -31,11 +31,12 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     private readonly RenderPipeline _pipeline;
     private readonly bool _lit;
     private readonly bool _shadow;
+    private readonly bool _debug;
     private XRTexture2D? _texture;
     private bool _disposed;
 
     public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height,
-        ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false)
+        ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
@@ -43,12 +44,15 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         bool textured = artifact.Pass == "texture-probe";
         _lit = tonemapArtifact is not null;
         _shadow = shadow;
+        _debug = debug;
         if (_shadow && !_lit)
             throw new ArgumentException("A directional shadow fixture requires the cooked HDR presentation artifact.", nameof(tonemapArtifact));
         if ((_lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe")) ||
             artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
             throw new ArgumentException("The fixture requires an explicitly cooked engine raster diagnostic artifact.", nameof(artifact));
         _renderer = renderer;
+        if (_debug)
+            _renderer.ConfigureEngineMeshResolutionTrace(true);
         // The shadow viewport captures its mesh-submission command chain when
         // the light activates, before the diagnostic camera is configured.
         if (_shadow)
@@ -113,6 +117,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             AddModel(_shadow ? "Directional shadow receiver" : "Standard lit normal quad", new Vector3(0, 0, -2));
             if (_shadow) InitializeShadowScene();
             else InitializeLights();
+            if (_debug) InitializeDebugScene();
         }
         else
         {
@@ -135,6 +140,8 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             ConfigureLitCamera(camera);
             if (!_shadow) SetLitCase(0);
         }
+        if (_debug)
+            camera.CullingMask = LayerMask.Everything;
         _viewport = new XRViewport(null, width, height)
         {
             Camera = camera,
@@ -214,7 +221,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
-            _renderer.IsBackendReplacementFrameReady && (_shadow ? _renderer.LastEngineMeshDrawCount >= 2 :
+            _renderer.IsBackendReplacementFrameReady && ((_shadow || _debug) ? _renderer.LastEngineMeshDrawCount >= 2 :
                 _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3)) &&
             (!_shadow || ShadowFrameReady());
     }
@@ -239,6 +246,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             $"forward={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueForward)}; " +
             $"HDR FBO={pipeline.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName) is not null}; " +
             (_shadow ? $"shadow requests={_directional?.StandaloneShadowRenderRequestCount}; shadow passes={_directional?.StandaloneShadowRenderPassCount}; shadow casters={_directional?.PrimaryShadowCasterCount}; {GetShadowRenderStatus()}; " : "") +
+            (_debug ? $"debug callbacks={RuntimeEngine.Rendering.Debug.LastDebugDrawComponentCallbackCount}; case={_debugCase}; " : "") +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }
@@ -252,6 +260,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         Engine.Time.Timer.SwapBuffers -= SwapFrame;
         Engine.Time.Timer.RenderFrame -= RenderFrame;
         _renderer.BindEngineViewport(null);
+        RestoreDebugPreferences();
         _viewport.Destroy();
         _renderWorld.Dispose();
         _scene.Dispose();

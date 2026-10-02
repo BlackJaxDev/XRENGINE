@@ -51,7 +51,7 @@ export function installWebGpuImports(runtime, renderers) {
         createComputePipeline: (id, json) => renderer(id).commands.createComputePipeline(json),
         prepareCommands: (id, json) => renderer(id).commands.prepareCommands(json),
         submitPreparedCommands: (id, handle) => renderer(id).commands.submitPreparedCommands(handle),
-        submitEngineFrame: (id, commands, uniforms) => renderer(id).commands.submitEngineFrame(commands, uniforms),
+        submitEngineFrame: (id, commands, uniforms, storage) => renderer(id).commands.submitEngineFrame(commands, uniforms, storage),
         retireResource: (id, handle) => renderer(id).retireResource(handle),
         disposeRenderer: id => renderers.get(id)?.dispose()
     });

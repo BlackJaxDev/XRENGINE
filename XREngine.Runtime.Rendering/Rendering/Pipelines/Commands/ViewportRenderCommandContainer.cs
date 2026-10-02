@@ -433,6 +433,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     instance.RenderState.RejectRequiredOffscreenAuthoring(
                         $"Command [{i}] {_commands[i].GetType().Name} threw {ex.GetType().Name}: {ex.Message}");
+                    // Canvas command packets are submitted atomically. An offscreen-only
+                    // rejection receipt cannot protect the browser output from a partial
+                    // frame, so preserve the original exception and abort recording.
+                    if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                        throw;
                     // Device loss is already diagnosed by the backend. Continuing the
                     // pipeline only turns the remaining commands into redundant
                     // descriptor/resource exceptions and delays renderer recovery.
