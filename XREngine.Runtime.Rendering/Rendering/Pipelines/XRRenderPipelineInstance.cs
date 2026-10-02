@@ -241,9 +241,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             if (_pipeline is { } pipeline)
                 return pipeline;
 
-            RenderPipeline created = CreateDefaultRenderPipeline();
-            RequestPipelineChange(created, LastWindowViewport);
-            return _pipeline ?? created;
+            // A request made off the render thread stays queued until the render thread applies
+            // it. Report that request instead of superseding it with the default pipeline;
+            // offscreen shadow viewports otherwise lose their ShadowRenderPipeline to any early read.
+            if (EffectiveRequestedPipeline is { } requested)
+                return requested;
+
+            return RequestDefaultPipelineIfUnassigned(CreateDefaultRenderPipeline());
         }
         set => RequestPipelineChange(value, LastWindowViewport);
     }

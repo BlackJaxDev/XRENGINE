@@ -17,6 +17,7 @@ public static class RenderingSerializationRegistration
     public static IDisposable Install()
         => RegistrationLeaseGroup.Create(static leases =>
         {
+            leases.Add(global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Runtime_Rendering.Install());
             leases.Add(ThirdPartyCacheCodecRegistry.Install(new TextureStreamingCacheCodec()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRTexture2D)));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRShader)));
@@ -28,7 +29,6 @@ public static class RenderingSerializationRegistration
                 EMeshSubmissionStrategyExtensions.LegacyGpuMeshletName,
                 EMeshSubmissionStrategy.GpuMeshletZeroReadback));
             leases.Add(RenderingPolymorphicYamlFallbacks.Install());
-            leases.Add(RenderingPublishedCookedAssetRegistration.Install());
         });
 
     private sealed class RenderingYamlContribution : IYamlSerializationContribution

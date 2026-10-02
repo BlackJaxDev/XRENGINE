@@ -394,7 +394,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
 
         string bootstrapProject = File.ReadAllText(Path.Combine(
             root, "XREngine.Runtime.Bootstrap", "XREngine.Runtime.Bootstrap.csproj"));
-        string aotGenerator = File.ReadAllText(Path.Combine(root, "Tools", "Generate-AotFactoryRegistrations.ps1"));
+        string aotGenerator = File.ReadAllText(Path.Combine(root, "XREngine.SourceGenerators", "RuntimeFactoryGenerator.cs"));
         string editorCodeManager = File.ReadAllText(Path.Combine(root, "XREngine.Editor", "CodeManager.cs"));
         string editorProjectInitializer = File.ReadAllText(Path.Combine(root, "XREngine.Editor", "EditorProjectInitializer.cs"));
         Assert.That(bootstrapProject, Does.Not.Contain("..\\XRENGINE\\**\\*.cs"));
@@ -431,7 +431,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             "XREngine.Editor/CodeManager.cs",
             "XREngine.Editor/EditorProjectInitializer.cs",
             "XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj",
-            "Tools/Generate-AotFactoryRegistrations.ps1",
+            "XREngine.SourceGenerators/RuntimeFactoryGenerator.cs",
         ];
         foreach (string relativePath in discoveryAndGenerationInputs)
         {

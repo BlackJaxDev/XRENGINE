@@ -81,6 +81,10 @@ namespace XREngine.Components
             if (t is null || !t.IsSubclassOf(typeof(XRComponent)))
                 return null;
 
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(t,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                "XRComponent.New", "Register a generated component factory that preserves scene-node construction semantics.");
+
             //Specific order of operations to ensure the component is properly constructed:
             //1. Get uninitialized object
             //2. Call the private method to set the scene node

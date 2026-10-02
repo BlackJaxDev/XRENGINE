@@ -126,10 +126,13 @@ public readonly record struct AdvancedGlobalResourceCapture(
         };
     }
 
+    private const int DirectionalShadowRecordCapacity = 8;
+    private const float DirectionalShadowFilterRadiusTexels = 1.0f;
+
     private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)
     {
         int startCount = rows.Count;
-        DirectionalShadowGpuRecord[] records = new DirectionalShadowGpuRecord[8];
+        Span<DirectionalShadowGpuRecord> records = stackalloc DirectionalShadowGpuRecord[DirectionalShadowRecordCapacity];
         CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Desktop, false);
         CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Hmd, true);
         if (rows.Count == startCount && light.CastsShadows)
@@ -138,7 +141,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
         }
     }
 
-    private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, DirectionalShadowGpuRecord[] records, ShadowRequestSource source, bool hmd)
+    private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, Span<DirectionalShadowGpuRecord> records, ShadowRequestSource source, bool hmd)
     {
         light.CopyPublishedDirectionalShadowRecords(source, true, records, out int count);
         for (int cascade = 0; cascade < count; ++cascade)
@@ -161,7 +164,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 WorldToShadow = published.RenderedWorldToLight,
                 PreviousWorldToShadow = published.RenderedWorldToLight,
                 UvScaleBias = published.AtlasUvScaleBias != Vector4.Zero ? published.AtlasUvScaleBias : allocation.UvScaleBias,
-                DepthBiasAndFilter = new(published.RenderedSplitBlendBias.Z, published.RenderedSplitBlendBias.W, published.ReceiverOffsetsAge.Y, 1.0f),
+                DepthBiasAndFilter = CreateDirectionalDepthBiasAndFilter(published),
                 MomentParameters = new(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, light.ShadowMomentPositiveExponent, light.ShadowMomentNegativeExponent),
                 DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
                 TextureLayer = checked((uint)Math.Max(0, allocation.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
@@ -188,13 +191,54 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 WorldToShadow = published.RenderedWorldToLight,
                 PreviousWorldToShadow = published.RenderedWorldToLight,
                 UvScaleBias = published.AtlasUvScaleBias != Vector4.Zero ? published.AtlasUvScaleBias : primaryAlloc.UvScaleBias,
-                DepthBiasAndFilter = new(published.RenderedSplitBlendBias.Z, published.RenderedSplitBlendBias.W, published.ReceiverOffsetsAge.Y, 1.0f),
+                DepthBiasAndFilter = CreateDirectionalDepthBiasAndFilter(published),
                 MomentParameters = new(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, light.ShadowMomentPositiveExponent, light.ShadowMomentNegativeExponent),
                 DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
                 TextureLayer = checked((uint)Math.Max(0, primaryAlloc.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
                 CascadeCount = 1u, LastRenderedFrameLo = (uint)primaryAlloc.LastRenderedFrame, LastRenderedFrameHi = (uint)(primaryAlloc.LastRenderedFrame >> 32),
             }, primaryTexture));
         }
+    }
+
+    /// <summary>
+    /// Converts the directional receiver bias contract into native-shading units.
+    /// Directional publishers store a constant depth floor in
+    /// <c>RenderedSplitBlendBias.Z</c> and the receiver slope scale in authored
+    /// shadow-map texels in <c>.W</c>, which raster receivers resolve with
+    /// screen-space derivatives. Native shading has no derivatives, so the slope
+    /// scale is published as normalized depth per authored texel of receiver slope
+    /// and multiplied by the receiver's tan(theta) in <c>StandardShadow.glslinc</c>.
+    /// </summary>
+    private static Vector4 CreateDirectionalDepthBiasAndFilter(in DirectionalShadowGpuRecord published)
+    {
+        float constantDepthBias = MathF.Max(published.RenderedSplitBlendBias.Z, 0.0f);
+        float slopeBiasTexels = MathF.Max(published.RenderedSplitBlendBias.W, 0.0f);
+        float slopeDepthPerTexel = slopeBiasTexels * ResolveDirectionalDepthPerAuthoredTexel(published);
+        return new(constantDepthBias, slopeDepthPerTexel, published.ReceiverOffsetsAge.Y, DirectionalShadowFilterRadiusTexels);
+    }
+
+    /// <summary>
+    /// Returns the normalized depth spanned by one authored texel of a receiver
+    /// inclined 45 degrees to the light. The rendered matrix is an orthographic
+    /// row-vector world-to-clip transform, so its column lengths are clip units per
+    /// world unit; a tile spans two clip units and the zero-to-one depth range spans
+    /// one. The authored texel follows the atlas resolution-scale convention so
+    /// demoted tiles keep the bias tuned for the requested resolution.
+    /// </summary>
+    private static float ResolveDirectionalDepthPerAuthoredTexel(in DirectionalShadowGpuRecord published)
+    {
+        Matrix4x4 worldToLight = published.RenderedWorldToLight;
+        float clipPerWorldX = new Vector3(worldToLight.M11, worldToLight.M21, worldToLight.M31).Length();
+        float clipPerWorldY = new Vector3(worldToLight.M12, worldToLight.M22, worldToLight.M32).Length();
+        float depthPerWorld = new Vector3(worldToLight.M13, worldToLight.M23, worldToLight.M33).Length();
+        float clipPerWorld = MathF.Min(clipPerWorldX, clipPerWorldY);
+        float authoredTexelUv = published.AtlasDepthParams.Z / MathF.Max(published.AtlasDepthParams.W, 1.0f);
+        if (!(clipPerWorld > 0.0f) || !(authoredTexelUv > 0.0f) || !float.IsFinite(depthPerWorld))
+            return 0.0f;
+
+        float texelWorldSize = 2.0f * authoredTexelUv / clipPerWorld;
+        float depthPerTexel = texelWorldSize * depthPerWorld;
+        return float.IsFinite(depthPerTexel) ? depthPerTexel : 0.0f;
     }
 
     private static void CapturePointAtlasShadows(Lights3DCollection lights, PointLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)

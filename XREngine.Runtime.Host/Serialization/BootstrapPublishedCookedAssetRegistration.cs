@@ -17,7 +17,7 @@ public static class BootstrapPublishedCookedAssetRegistration
     private static IDisposable RegisterMemoryPackAsset<T>() where T : XRAsset
         => PublishedCookedAssetRegistry.Register(
             typeof(T),
-            static asset => MemoryPackSerializer.Serialize((T)asset),
+            static (asset, writer) => MemoryPackSerializer.Serialize(writer, (T)asset),
             static (payload, _) => MemoryPackSerializer.Deserialize<T>(payload),
             "XREngine.Runtime.Host");
 }

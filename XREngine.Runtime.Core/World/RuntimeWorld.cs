@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
@@ -197,7 +198,11 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         => _lifecycle.UnregisterTick(group, order, tick);
 
     public void TickGroup(ETickGroup group)
-        => _lifecycle.TickGroup(group);
+    {
+        using var parityScope = PlayState is RuntimeWorldPlayState.Playing or RuntimeWorldPlayState.BeginningPlay
+            ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
+        _lifecycle.TickGroup(group);
+    }
 
     public void PausePlay()
     {
@@ -226,6 +231,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             return;
 
         PlayState = RuntimeWorldPlayState.BeginningPlay;
+        using var parityScope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PlayMode);
         PreBeginPlay?.Invoke(this);
         if (beforeNodeActivation is not null)
             await beforeNodeActivation();
@@ -258,6 +264,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         if (PlayState == RuntimeWorldPlayState.Stopped)
             return;
 
+        using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode);
         PlayState = RuntimeWorldPlayState.EndingPlay;
         PreEndPlay?.Invoke(this);
         foreach (SceneNode node in RootNodes.ToArray())
@@ -280,10 +287,11 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         PhysicsEnabled = false;
         _physicsResetCacheValid = false;
         _initialDynamicBodyPoses.Clear();
-        _invalidTransforms.Clear();
+        TransformHierarchy.ClearDirty();
         ClearPendingPhysicsRequests();
         PostEndPlay?.Invoke(this);
         PlayState = RuntimeWorldPlayState.Stopped;
+
     }
 
     public void FixedUpdate()
@@ -528,6 +536,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         }
         _capabilities.Clear();
         _scenePolicy = null;
+        TransformHierarchy.Dispose();
         GameMode = null;
         _disposed = true;
     }

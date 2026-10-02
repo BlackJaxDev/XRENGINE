@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <Platforms>AnyCPU;x64</Platforms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -42,4 +43,5 @@
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>

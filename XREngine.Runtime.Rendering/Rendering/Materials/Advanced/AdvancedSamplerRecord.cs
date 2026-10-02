@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Stable logical sampler metadata.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedSamplerRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedSamplerRecord
 {

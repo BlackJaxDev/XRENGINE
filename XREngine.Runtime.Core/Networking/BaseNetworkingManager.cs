@@ -1,1669 +1,1279 @@
 using MemoryPack;
-using System;
-using System.Diagnostics;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Numerics;
-using System.Text;
+using System.Runtime.InteropServices;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
-using XREngine.Scene.Transforms;
 using XREngine.Networking;
+using XREngine.Scene.Transforms;
 using XREngine.Timers;
 
-namespace XREngine
+namespace XREngine;
+
+/// <summary>
+/// Shared realtime transport: datagram framing, per-peer sequencing and acknowledgement, the
+/// reliable control lane, and inbound dispatch. State-change payload handling lives in the
+/// state-change partial and the allocation-free unreliable lane in the high-rate partial.
+/// </summary>
+public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 {
-    public abstract class BaseNetworkingManager : XRBase, IDisposable
-        {
-            internal static long CurrentEngineTicks()
-                => RuntimeTimingServices.Current.ElapsedTicks;
-
-            internal static long SecondsToStopwatchTicks(double seconds)
-                => (long)Math.Round(seconds * Stopwatch.Frequency, MidpointRounding.AwayFromZero);
-
-            internal static double TickDeltaToSeconds(long currentTicks, long previousTicks)
-                => Math.Max(0L, currentTicks - previousTicks) / (double)Stopwatch.Frequency;
-
-            internal static bool HasElapsed(long currentTicks, long previousTicks, double intervalSeconds)
-                => Math.Max(0L, currentTicks - previousTicks) >= SecondsToStopwatchTicks(intervalSeconds);
-
-            internal static bool HasElapsed(long currentTicks, long previousTicks, long intervalTicks)
-                => Math.Max(0L, currentTicks - previousTicks) >= Math.Max(0L, intervalTicks);
-
-            internal static long GetWindowStartTicks(long currentTicks, double windowSeconds)
-                => Math.Max(0L, currentTicks - SecondsToStopwatchTicks(windowSeconds));
-
-            private readonly ConcurrentDictionary<string, UdpPeerState> _udpPeers = new(StringComparer.Ordinal);
-            private readonly object _sendTargetSync = new();
-            private readonly List<IPEndPoint> _sendTargetsScratch = new(8);
-            private long _badMacRejects;
-            private long _badSourceRejects;
-            private long _replayRejects;
-            private long _unauthorizedRejects;
-            private long _rateLimitedRejects;
-
-            public RealtimeTransportRejectionSnapshot RealtimeTransportRejections
-                => new(Volatile.Read(ref _badMacRejects), Volatile.Read(ref _badSourceRejects), Volatile.Read(ref _replayRejects), Volatile.Read(ref _unauthorizedRejects), Volatile.Read(ref _rateLimitedRejects), _udpPeers.Count);
-
-            protected void RecordBadMacRejection() => Interlocked.Increment(ref _badMacRejects);
-            protected void RecordBadSourceRejection() => Interlocked.Increment(ref _badSourceRejects);
-            protected void RecordReplayRejection() => Interlocked.Increment(ref _replayRejects);
-            protected void RecordUnauthorizedRejection() => Interlocked.Increment(ref _unauthorizedRejects);
-
-            /// <summary>Upper bound for one UDP datagram accepted by the realtime framing layer.</summary>
-            public const int MaxInboundDatagramBytes = 65_507;
-            /// <summary>Upper bound for one encoded frame, excluding its fixed header.</summary>
-            public const int MaxInboundFrameBytes = 65_491;
-            /// <summary>Upper bound for a decompressed frame, including its object identifier.</summary>
-            public const int MaxInboundDecompressedBytes = 400_000;
-            public const int MaxTrackedInboundUdpPeers = 256;
-            public const int DefaultMaxInboundPacketsPerSecond = 120;
-            public const int DefaultMaxInboundBytesPerSecond = 1_048_576;
-
-            public abstract bool IsServer { get; }
-            public abstract bool IsClient { get; }
-
-            /// <summary>
-            /// Gets whether this manager currently has at least one confirmed remote peer that
-            /// can exchange application data. A bound or configured socket alone is not a
-            /// connection.
-            /// </summary>
-            public abstract bool HasConnectedRemotePeer { get; }
-
-            public bool UDPServerConnectionEstablished
-                => UdpReceiver is { } transport && (transport.Connected || transport.IsBound);
-            public string LocalPeerId { get; }
-            protected static string CurrentProtocolVersion => RuntimeNetworkingHostServices.Current.ProtocolVersion;
-            public event Func<RemoteJobRequest, Task<RemoteJobResponse?>>? RemoteJobRequestReceived;
-            public event Action<RemoteJobResponse>? RemoteJobResponseReceived;
-            public event Action<ServerErrorMessage>? ServerErrorReceived;
-            public event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived;
-            public event Action<NetworkAuthorityLease>? AuthorityLeaseUpdated;
-            public event Action<ClockSyncMessage>? ClockSyncReceived;
-            public event Action<NetworkSnapshotEnvelope>? ReplicationSnapshotReceived;
-            public event Action<NetworkDeltaEnvelope>? ReplicationDeltaReceived;
-
-            /// <summary>Disabled by default because remote jobs execute application-defined work.</summary>
-            protected virtual bool AllowsRemoteJobTraffic => false;
-
-            private readonly CancellationTokenSource _consumeCts = new();
-            private Task _consumeTask = Task.CompletedTask;
-            private bool _disposed;
-
-            protected BaseNetworkingManager(string? peerId = null)
-            {
-                LocalPeerId = string.IsNullOrWhiteSpace(peerId) ? Guid.NewGuid().ToString("N") : peerId;
-                RuntimeTimingServices.Current.Update += OnUpdateFrame;
-            }
-            ~BaseNetworkingManager()
-                => Dispose(false);
-
-            public void Dispose()
-            {
-                Dispose(true);
-                GC.SuppressFinalize(this);
-            }
-
-            protected virtual void Dispose(bool disposing)
-            {
-                if (_disposed)
-                    return;
-
-                _disposed = true;
-                if (disposing)
-                {
-                    _consumeCts.Cancel();
-                    RuntimeTimingServices.Current.Update -= OnUpdateFrame;
-
-                    _consumeCts.Dispose();
-
-                    try
-                    {
-                        _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
-                    }
-                    catch
-                    {
-                        // ignore wait failures
-                    }
-
-                    DisposeSockets();
-                }
-                else
-                {
-                    RuntimeTimingServices.Current.Update -= OnUpdateFrame;
-                    DisposeSockets();
-                }
-            }
-            
-            /// <summary>
-            /// Sends from server to all connected clients, or from client to all other p2p clients.
-            /// </summary>
-            public IDatagramTransport? UdpMulticastSender { get; set; }
-            /// <summary>
-            /// Receives from server or from other p2p clients.
-            /// </summary>
-            public IDatagramTransport? UdpReceiver { get; set; }
-            public IPEndPoint? MulticastEndPoint { get; set; }
-
-            protected virtual void DisposeSockets()
-            {
-                IDatagramTransport? receiver = UdpReceiver;
-                IDatagramTransport? sender = UdpMulticastSender;
-
-                try
-                {
-                    receiver?.Close();
-                    receiver?.Dispose();
-                }
-                catch { }
-
-                if (!ReferenceEquals(sender, receiver))
-                {
-                    try
-                    {
-                        sender?.Close();
-                        sender?.Dispose();
-                    }
-                    catch { }
-                }
-
-                UdpReceiver = null;
-                UdpMulticastSender = null;
-                _udpPeers.Clear();
-            }
-
-            public static bool IsConnected()
-                => NetworkTransportServices.Required.IsNetworkAvailable();
-
-            public static string[] GetAllLocalIPv4(NetworkInterfaceType type)
-                => NetworkTransportServices.Required.GetLocalIPv4((int)type);
-
-            protected abstract Task SendUDP();
-            protected virtual async Task ReadUDP()
-            {
-                var receiver = UdpReceiver;
-                bool anyAcked = false;
-                while ((receiver?.Available ?? 0) > 0)
-                {
-                    DatagramReceiveResult result = await receiver!.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
-                    if (result.Buffer.Length > MaxInboundDatagramBytes)
-                    {
-                        Debug.NetworkingWarning("[Net] Dropped oversized UDP datagram ({0} bytes) from {1}.", result.Buffer.Length, result.RemoteEndPoint);
-                        continue;
-                    }
-
-                    ReadOnlyMemory<byte> acceptedDatagram = result.Buffer;
-                    bool isManagedEnvelope = ManagedUdpEnvelope.TryRead(result.Buffer, out _, out _, out _);
-                    if ((RequiresManagedUdpTransport && !isManagedEnvelope)
-                        || (isManagedEnvelope && !TryUnwrapManagedDatagram(result.Buffer, result.RemoteEndPoint, out acceptedDatagram)))
-                    {
-                        Debug.NetworkingWarning("[Net] Dropped unauthenticated managed UDP envelope from {0}.", result.RemoteEndPoint);
-                        continue;
-                    }
-
-                    ReadReceivedData(acceptedDatagram.ToArray(), acceptedDatagram.Length, _decompBuffer, ref anyAcked, result.RemoteEndPoint);
-                }
-                //TODO: verify this is correct and not ruining the average
-                if (!anyAcked)
-                    UpdateRTT(0.0f);
-            }
-            private void OnUpdateFrame()
-            {
-                if (_disposed || _consumeCts.IsCancellationRequested)
-                    return;
-
-                if (!_consumeTask.IsCompleted)
-                    return;
-
-                _consumeTask = ConsumeQueuesAsync();
-            }
-
-            public virtual void ConsumeQueues() => OnUpdateFrame();
-
-            private async Task ConsumeQueuesAsync()
-            {
-                try
-                {
-                    await ReadUDP().ConfigureAwait(false);
-                    await SendUDP().ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    //ignore cancellation
-                }
-                catch (Exception ex)
-                {
-                    Debug.Log(ELogCategory.Networking, $"[Net] ConsumeQueues exception: {ex}");
-                }
-            }
-
-            /// <summary>
-            /// Run on server or p2p client - sends to all clients
-            /// </summary>
-            /// <param name="udpMulticastIP"></param>
-            /// <param name="udpMulticastPort"></param>
-            protected void StartUdpMulticastSender(IPAddress udpMulticastIP, int udpMulticastPort)
-            {
-                IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("multicast sender");
-                UdpMulticastSender = udpClient;
-                MulticastEndPoint = new IPEndPoint(udpMulticastIP, udpMulticastPort);
-                //UdpMulticastSender.Connect(MulticastEndPoint);
-            }
-
-            /// <summary>
-            /// Run on client or p2p client - receives from server
-            /// </summary>
-            /// <param name="udpMulticastServerIP"></param>
-            /// <param name="upMulticastServerPort"></param>
-            protected void StartUdpMulticastReceiver(IPAddress serverIP, IPAddress udpMulticastServerIP, int upMulticastServerPort)
-            {
-                // Multiple local clients need to share the same multicast port.
-                // On Windows this requires ReuseAddress + ExclusiveAddressUse=false before binding.
-                IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("multicast receiver");
-                udpClient.MulticastLoopback = false;
-                udpClient.ExclusiveAddressUse = false;
-                udpClient.ReuseAddress = true;
-                udpClient.Bind(new IPEndPoint(IPAddress.Any, upMulticastServerPort));
-                udpClient.JoinMulticastGroup(udpMulticastServerIP);
-                UdpReceiver = udpClient;
-            }
-
-            private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes, long FirstSendTicks, long TimeoutTicks);
-            private readonly record struct QueuedUdpPacket(ushort SequenceNum, byte[] Bytes);
-
-            private sealed class UdpPeerState
-            {
-                public UdpPeerState(IPEndPoint endPoint)
-                {
-                    EndPoint = endPoint;
-                    LastTokenUpdateTicks = CurrentEngineTicks();
-                }
-
-                public IPEndPoint EndPoint { get; set; }
-                public ConcurrentQueue<QueuedUdpPacket> SendQueue { get; } = new();
-                public ConcurrentDictionary<ushort, PendingAckPacket> MustAck { get; } = new();
-                public ConcurrentDictionary<ushort, long> RttBuffer { get; } = new();
-                public Deque<ushort> ReceivedRemoteSequences { get; } = [];
-                public ushort LocalSequence;
-                public double PacketTokens;
-                public long LastTokenUpdateTicks;
-                public double InboundPacketTokens;
-                public double InboundByteTokens;
-                public long LastInboundTokenUpdateTicks;
-            }
-
-            private UdpPeerState RegisterUdpPeer(IPEndPoint endPoint)
-            {
-                string key = CreatePeerKey(endPoint);
-                return _udpPeers.AddOrUpdate(
-                    key,
-                    static (_, endpoint) => new UdpPeerState(endpoint),
-                    static (_, peer, endpoint) =>
-                    {
-                        peer.EndPoint = endpoint;
-                        return peer;
-                    },
-                    endPoint);
-            }
-
-            private int _maxInboundPacketsPerSecond = DefaultMaxInboundPacketsPerSecond;
-            /// <summary>Per-peer receive packet rate. Zero disables only this rate limit.</summary>
-            public int MaxInboundPacketsPerSecond
-            {
-                get => _maxInboundPacketsPerSecond;
-                set => SetField(ref _maxInboundPacketsPerSecond, Math.Max(0, value));
-            }
-
-            private int _maxInboundBytesPerSecond = DefaultMaxInboundBytesPerSecond;
-            /// <summary>Per-peer receive byte rate. Zero disables only this rate limit.</summary>
-            public int MaxInboundBytesPerSecond
-            {
-                get => _maxInboundBytesPerSecond;
-                set => SetField(ref _maxInboundBytesPerSecond, Math.Max(0, value));
-            }
-
-            private bool TryRegisterInboundUdpPeer(IPEndPoint endPoint, out UdpPeerState peer)
-            {
-                string key = CreatePeerKey(endPoint);
-                if (_udpPeers.TryGetValue(key, out peer!))
-                    return true;
-
-                if (_udpPeers.Count >= MaxTrackedInboundUdpPeers)
-                {
-                    peer = null!;
-                    Debug.NetworkingWarning("[Net] Dropped inbound peer {0}; the {1}-peer transport limit is reached.", endPoint, MaxTrackedInboundUdpPeers);
-                    return false;
-                }
-
-                peer = RegisterUdpPeer(endPoint);
-                return true;
-            }
-
-            private bool TryConsumeInboundBudget(UdpPeerState peer, int byteCount)
-            {
-                int packetLimit = MaxInboundPacketsPerSecond;
-                int byteLimit = MaxInboundBytesPerSecond;
-                if (packetLimit == 0 && byteLimit == 0)
-                    return true;
-
-                long nowTicks = CurrentEngineTicks();
-                double elapsedSeconds = TickDeltaToSeconds(nowTicks, peer.LastInboundTokenUpdateTicks);
-                if (peer.LastInboundTokenUpdateTicks == 0L)
-                {
-                    peer.InboundPacketTokens = packetLimit;
-                    peer.InboundByteTokens = byteLimit;
-                }
-                else
-                {
-                    peer.InboundPacketTokens = Math.Min(packetLimit, peer.InboundPacketTokens + elapsedSeconds * packetLimit);
-                    peer.InboundByteTokens = Math.Min(byteLimit, peer.InboundByteTokens + elapsedSeconds * byteLimit);
-                }
-                peer.LastInboundTokenUpdateTicks = nowTicks;
-
-                if ((packetLimit > 0 && peer.InboundPacketTokens < 1.0d)
-                    || (byteLimit > 0 && peer.InboundByteTokens < byteCount))
-                {
-                    return false;
-                }
-
-                if (packetLimit > 0)
-                    peer.InboundPacketTokens -= 1.0d;
-                if (byteLimit > 0)
-                    peer.InboundByteTokens -= byteCount;
-                return true;
-            }
-
-            protected void UnregisterUdpPeer(IPEndPoint? endPoint)
-            {
-                if (endPoint is null)
-                    return;
-
-                _udpPeers.TryRemove(CreatePeerKey(endPoint), out _);
-            }
-
-            private static string CreatePeerKey(IPEndPoint endPoint)
-                => $"{endPoint.Address}|{endPoint.Port}";
-
-            private void EnqueueForPeer(UdpPeerState peer, ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, long? firstSendTicks = null)
-            {
-                peer.SendQueue.Enqueue(new QueuedUdpPacket(sequenceNum, bytes));
-                if (resendOnFailedAck)
-                {
-                    long firstSend = firstSendTicks ?? CurrentEngineTicks();
-                    peer.MustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
-                }
-            }
-
-            private static bool ShouldResendRequiredPacket(Guid ownerId)
-            {
-                if (ownerId == Guid.Empty)
-                    return true;
-
-                if (!XRObjectBase.ObjectsCache.TryGetValue(ownerId, out XRObjectBase? obj))
-                    return false;
-
-                if (obj is XRComponent component)
-                    return component.IsActiveInHierarchy;
-
-                return true;
-            }
-            
-            private const float DefaultAckTimeoutSec = 5.0f;
-
-            private float _maxRoundTripSec = 1.0f;
-            public float MaxRoundTripSec
-            {
-                get => _maxRoundTripSec;
-                set => SetField(ref _maxRoundTripSec, value);
-            }
-
-            private int? _maxSendablePacketsPerSecond = null;
-            public int? MaxSendablePacketsPerSecond
-            {
-                get => _maxSendablePacketsPerSecond;
-                set => SetField(ref _maxSendablePacketsPerSecond, value);
-            }
-
-            private void UpdatePacketTokens(UdpPeerState peer)
-            {
-                var perSec = MaxSendablePacketsPerSecond;
-                if (perSec is null)
-                    return;
-
-                long nowTicks = CurrentEngineTicks();
-                double elapsedSeconds = TickDeltaToSeconds(nowTicks, peer.LastTokenUpdateTicks);
-                peer.PacketTokens += elapsedSeconds * perSec.Value;
-                if (peer.PacketTokens > perSec.Value)
-                    peer.PacketTokens = perSec.Value;
-                peer.LastTokenUpdateTicks = nowTicks;
-            }
-
-            // Add the following field and property near _totalBytesSent:
-            private readonly ConcurrentQueue<(long timestampTicks, int bytes)> _bytesSentLog = new();
-
-            public bool HasSentBytesInTheLastSecond
-            {
-                get
-                {
-                    TrimBytesSentLog(CurrentEngineTicks());
-                    return !_bytesSentLog.IsEmpty;
-                }
-            }
-
-            public float PacketsPerSecond
-            {
-                get
-                {
-                    TrimBytesSentLog(CurrentEngineTicks());
-                    return _bytesSentLog.Count;
-                }
-            }
-
-            /// <summary>
-            /// Gets the total number of bytes sent during the last 1 second.
-            /// </summary>
-            public int BytesSentLastSecond
-            {
-                get
-                {
-                    long nowTicks = CurrentEngineTicks();
-                    TrimBytesSentLog(nowTicks);
-                    int sum = 0;
-                    foreach (var (_, bytes) in _bytesSentLog)
-                        sum += bytes;
-                    return sum;
-                    
-                }
-            }
-            public float KBytesSentLastSecond => BytesSentLastSecond / 1024.0f;
-            public float MBytesSentLastSecond => KBytesSentLastSecond / 1024.0f;
-
-            private void TrimBytesSentLog(long nowTicks)
-            {
-                long oldestAllowedTicks = GetWindowStartTicks(nowTicks, 1.0);
-                while (_bytesSentLog.TryPeek(out (long timestampTicks, int bytes) entry) && entry.timestampTicks < oldestAllowedTicks)
-                    _bytesSentLog.TryDequeue(out _);
-            }
-
-            public string DataPerSecondString
-            {
-                get
-                {
-                    float bytes = BytesSentLastSecond;
-                    if (bytes < 1024)
-                        return $"{bytes}b/s";
-                    float kbytes = bytes / 1024.0f;
-                    if (kbytes < 1024)
-                        return $"{MathF.Round(kbytes)}Kb/s";
-                    float mbytes = kbytes / 1024.0f;
-                    return $"{MathF.Round(mbytes)}Mb/s";
-                }
-            }
-
-            protected async Task ConsumeAndSendUDPQueue(IDatagramTransport? client, IPEndPoint? endPoint)
-            {
-                if (endPoint is null)
-                    return;
-
-                UdpPeerState peer = RegisterUdpPeer(endPoint);
-                await ConsumeAndSendUDPQueue(client, peer).ConfigureAwait(false);
-            }
-
-            protected async Task ConsumeAndSendUDPQueues(IDatagramTransport? client)
-            {
-                foreach (UdpPeerState peer in _udpPeers.Values)
-                    await ConsumeAndSendUDPQueue(client, peer).ConfigureAwait(false);
-            }
-
-            private async Task ConsumeAndSendUDPQueue(IDatagramTransport? client, UdpPeerState peer)
-            {
-                ClearOldRTTs(peer);
-
-                if (peer.SendQueue.IsEmpty)
-                    return;
-
-                long nowTicks = CurrentEngineTicks();
-                TrimBytesSentLog(nowTicks);
-
-                int packetsAllowed = int.MaxValue;
-                if (MaxSendablePacketsPerSecond is not null)
-                {
-                    UpdatePacketTokens(peer);
-                    packetsAllowed = (int)Math.Floor(peer.PacketTokens);
-                }
-
-                int packetsSent = 0;
-                while (packetsSent < packetsAllowed && peer.SendQueue.TryDequeue(out QueuedUdpPacket data))
-                {
-                    if (!peer.RttBuffer.ContainsKey(data.SequenceNum))
-                        peer.RttBuffer[data.SequenceNum] = CurrentEngineTicks();
-
-                    if (client is null)
-                        continue;
-
-                    byte[]? protectedBytes = ProtectOutboundDatagram(data.Bytes, peer.EndPoint);
-                    if (protectedBytes is null)
-                    {
-                        // A managed association can be provisional while its simulation-thread
-                        // admission publishes. Retain the inner reliable frame until a transport
-                        // key is routable instead of silently losing its first assignment.
-                        peer.SendQueue.Enqueue(data);
-                        break;
-                    }
-
-                    await client.SendAsync(protectedBytes, protectedBytes.Length, peer.EndPoint);
-                    long timestampTicks = CurrentEngineTicks();
-                    _bytesSentLog.Enqueue((timestampTicks, protectedBytes.Length));
-                    TrimBytesSentLog(timestampTicks);
-                    packetsSent++;
-                }
-
-                peer.PacketTokens -= packetsSent;
-                if (peer.PacketTokens < 0)
-                    peer.PacketTokens = 0.0;
-            }
-
-            private void ClearOldRTTs(UdpPeerState peer)
-            {
-                if (peer.RttBuffer.IsEmpty)
-                    return;
-
-                long nowTicks = CurrentEngineTicks();
-                long oldestTicks = GetWindowStartTicks(nowTicks, MaxRoundTripSec);
-                foreach (ushort key in peer.RttBuffer.Keys)
-                {
-                    if (!peer.RttBuffer.TryGetValue(key, out long timeTicks) || timeTicks >= oldestTicks)
-                        continue;
-                    
-                    peer.RttBuffer.TryRemove(key, out _);
-                    if (peer.MustAck.TryRemove(key, out PendingAckPacket pending))
-                    {
-                        if (pending.TimeoutTicks > 0L && nowTicks - pending.FirstSendTicks >= pending.TimeoutTicks)
-                        {
-                            double timeoutSeconds = TickDeltaToSeconds(pending.TimeoutTicks, 0L);
-                            Debug.Out($"Required packet sequence {key} to {peer.EndPoint} timed out after {timeoutSeconds:0.###}s, dropping...");
-                            continue;
-                        }
-
-                        if (ShouldResendRequiredPacket(pending.OwnerId))
-                        {
-                            Debug.Out($"Required packet sequence {key} to {peer.EndPoint} failed to return, resending...");
-                            EnqueueForPeer(peer, key, pending.Bytes, true, pending.OwnerId, (float)TickDeltaToSeconds(pending.TimeoutTicks, 0L), pending.FirstSendTicks);
-                        }
-                    }
-                }
-            }
-
-            //3 bits
-            public enum EBroadcastType : byte
-            {
-                StateChange,
-                Object,
-                Property,
-                Data,
-                Transform,
-                Unused5,
-                Unused6,
-                Unused7,
-            }
-
-            //protocol header is only 3 bytes so the flag can come right after to align back to 4 bytes
-            private static readonly byte[] Protocol = [0x46, 0x52, 0x4B]; // "FRK"
-            private const ushort _halfMaxSeq = 32768;
-            /// <summary>
-            /// Compares two sequence numbers, accounting for the wrap-around point at half the maximum value.
-            /// Returns true if left is greater than right, false otherwise.
-            /// </summary>
-            /// <param name="left"></param>
-            /// <param name="right"></param>
-            /// <returns></returns>
-            private static bool SeqGreater(ushort left, ushort right) =>
-                ((left > right) && (left - right <= _halfMaxSeq)) ||
-                ((left < right) && (right - left > _halfMaxSeq));
-            /// <summary>
-            /// Returns the difference between two sequence numbers, accounting for the wrap-around point at half the maximum value.
-            /// If left is greater than right, returns left - right.
-            /// Else, returns the wrapped-around difference.
-            /// </summary>
-            /// <param name="left"></param>
-            /// <param name="right"></param>
-            /// <returns></returns>
-            private static int DiffSeq(ushort left, ushort right)
-                => left > right 
-                ? left - right 
-                : (left - 0) + (ushort.MaxValue - right) + 1; //+1, because if right is ushort.MaxValue and left is 0, the difference is 1
-
-            /// <summary>
-            /// Broadcasts the entire object to all connected clients.
-            /// </summary>
-            /// <param name="obj"></param>
-            /// <param name="compress"></param>
-            public void ReplicateObject(RuntimeWorldObjectBase obj, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                var bytes = MemoryPackSerializer.Serialize(obj);
-                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(obj));
-                Send(obj.ID, compress, bytes, EBroadcastType.Object, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            /// <summary>
-            /// Broadcasts arbitrary data to all connected clients.
-            /// </summary>
-            /// <param name="obj"></param>
-            /// <param name="value"></param>
-            /// <param name="idStr"></param>
-            /// <param name="compress"></param>
-            public void ReplicateData(RuntimeWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                IdValue data = new(idStr, value);
-                var bytes = MemoryPackSerializer.Serialize(data);
-                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
-                Send(obj.ID, compress, bytes, EBroadcastType.Data, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            /// <summary>
-            /// Broadcasts a property update to all connected clients.
-            /// </summary>
-            /// <typeparam name="T"></typeparam>
-            /// <param name="obj"></param>
-            /// <param name="propName"></param>
-            /// <param name="value"></param>
-            /// <param name="compress"></param>
-            public void ReplicatePropertyUpdated<T>(RuntimeWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                var bytes1 = MemoryPackSerializer.Serialize(value);
-                IdValue data = new(propName ?? string.Empty, bytes1);
-                var bytes = MemoryPackSerializer.Serialize(data);
-                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
-                Send(obj.ID, compress, bytes, EBroadcastType.Property, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            /// <summary>
-            /// Broadcasts a transform update to all connected clients.
-            /// The transform handles the encoding and decoding of its own data.
-            /// </summary>
-            /// <param name="transform"></param>
-            public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            /// <summary>
-            /// This is a special method that broadcasts engine state changes that aren't tied to GUIDs between clients and the server.
-            /// </summary>
-            /// <param name="data"></param>
-            /// <param name="compress"></param>
-            public void ReplicateStateChange(StateChangeInfo data, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                var bytes = MemoryPackSerializer.Serialize(data);
-                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
-                Send(Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            public void BroadcastRemoteJobRequest(RemoteJobRequest request, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(request);
-                if (!AllowsRemoteJobTraffic || !IsValidRemoteJob(request))
-                    throw new InvalidOperationException("Remote jobs are not enabled or exceed realtime transport limits.");
-                string serialized = StateChangePayloadSerializer.Serialize(request);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobRequest, serialized), compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            public void BroadcastRemoteJobResponse(RemoteJobResponse response, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(response);
-                if (!AllowsRemoteJobTraffic || !IsValidRemoteJob(response))
-                    throw new InvalidOperationException("Remote jobs are not enabled or exceed realtime transport limits.");
-                string serialized = StateChangePayloadSerializer.Serialize(response);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobResponse, serialized), compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            public void BroadcastServerError(ServerErrorMessage error, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(error);
-                string serialized = StateChangePayloadSerializer.Serialize(error);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.ServerError, serialized), compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            public void BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(frame);
-                PrepareOutgoingHumanoidPoseFrame(frame);
-                string serialized = StateChangePayloadSerializer.Serialize(frame);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, serialized), compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            protected virtual void PrepareOutgoingHumanoidPoseFrame(HumanoidPoseFrame frame)
-            {
-            }
-
-            protected void BroadcastAuthorityLeaseUpdate(NetworkAuthorityLease lease, bool compress = true, bool resendOnFailedAck = true, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(lease);
-                BroadcastStateChange(EStateChangeType.AuthorityLeaseUpdate, lease, compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            protected void BroadcastClockSync(ClockSyncMessage message, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(message);
-                BroadcastStateChange(EStateChangeType.ClockSync, message, compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            protected void SendClockSyncTo(IPEndPoint target, ClockSyncMessage message, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(message);
-                SendStateChangeTo(target, EStateChangeType.ClockSync, message, compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            public void BroadcastReplicationSnapshot(NetworkSnapshotEnvelope envelope, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(envelope);
-                BroadcastStateChange(EStateChangeType.ReplicationSnapshot, envelope, compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            public void BroadcastReplicationDelta(NetworkDeltaEnvelope envelope, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                ArgumentNullException.ThrowIfNull(envelope);
-                BroadcastStateChange(EStateChangeType.ReplicationDelta, envelope, compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                string serialized = StateChangePayloadSerializer.Serialize(payload);
-                ReplicateStateChange(new StateChangeInfo(type, serialized), compress, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            protected void SendStateChangeTo<TPayload>(IPEndPoint target, EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                string serialized = StateChangePayloadSerializer.Serialize(payload);
-                StateChangeInfo change = new(type, serialized);
-                byte[] bytes = MemoryPackSerializer.Serialize(change);
-                SendToTarget(target, Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            protected void BroadcastStateChangeToTargets<TPayload>(IReadOnlyList<IPEndPoint> targets, EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                string serialized = StateChangePayloadSerializer.Serialize(payload);
-                StateChangeInfo change = new(type, serialized);
-                byte[] bytes = MemoryPackSerializer.Serialize(change);
-                SendToTargets(targets, Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck, maxAckWaitSec);
-            }
-
-            private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
-            private const int GuidLen = 16; //Guid is always 16 bytes
-            private SevenZip.Compression.LZMA.Encoder _encoder = new();
-            private SevenZip.Compression.LZMA.Decoder _decoder = new();
-            private MemoryStream _compStreamIn = new();
-            private MemoryStream _compStreamOut = new();
-            private MemoryStream _decompStreamIn = new();
-            private MemoryStream _decompStreamOut = new();
-            private readonly object _compressionStateSync = new();
-            private readonly object _decompressionStateSync = new();
-
-            /// <summary>
-            /// Sends a broadcast packet to send over the established UDP connection.
-            /// </summary>
-            /// <param name="id">The id of the object to replicate information to.</param>
-            /// <param name="compress">If the packet's data should be compressed - adds latency.</param>
-            /// <param name="data">The data to send.</param>
-            /// <param name="type">The type of replication this is - each type is optimized for its use case.</param>
-            /// <param name="resendOnFailedAck">If the packet MUST be recieved - if it fails to be acknowledged by the receiver, it will be sent again until it is.</param>
-            /// <param name="maxAckWaitSec">Maximum total time to wait for an ack before giving up.</param>
-            /// <returns></returns>
-            protected void Send(Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                lock (_sendTargetSync)
-                {
-                    _sendTargetsScratch.Clear();
-                    CollectUdpSendTargets(_sendTargetsScratch);
-                    SendToTargets(_sendTargetsScratch, id, compress, data, type, resendOnFailedAck, maxAckWaitSec);
-                    _sendTargetsScratch.Clear();
-                }
-            }
-
-            protected void SendToTarget(IPEndPoint target, Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-                => SendToTargets([target], id, compress, data, type, resendOnFailedAck, maxAckWaitSec);
-
-            protected void SendToTargets(IReadOnlyList<IPEndPoint> targets, Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
-            {
-                if (targets.Count == 0)
-                    return;
-
-                ArgumentNullException.ThrowIfNull(data);
-                if (data.Length > MaxInboundFrameBytes)
-                    throw new ArgumentOutOfRangeException(nameof(data), $"Realtime payload exceeds the {MaxInboundFrameBytes}-byte transport limit.");
-
-                byte flags = EncodeFlags(compress, type);
-                int uncompDataLen = data.Length;
-                byte[]? compData = null;
-                int payloadDataLen = uncompDataLen;
-
-                if (compress)
-                {
-                    byte[] uncompData = new byte[GuidLen + uncompDataLen];
-                    int offset = 0;
-                    SetGuidAndData(id, data, uncompData, ref offset);
-                    lock (_compressionStateSync)
-                        compData = Compression.Compress(uncompData, ref _encoder, ref _compStreamIn, ref _compStreamOut);
-                    payloadDataLen = compData.Length;
-                }
-
-                int wirePayloadLength = compress ? payloadDataLen : GuidLen + uncompDataLen;
-                if (wirePayloadLength > MaxInboundFrameBytes || HeaderLen + wirePayloadLength > MaxInboundDatagramBytes)
-                    throw new InvalidOperationException("Compressed realtime payload exceeds the transport datagram limit.");
-
-                foreach (IPEndPoint target in targets)
-                {
-                    UdpPeerState peer = RegisterUdpPeer(target);
-                    ushort[] acks = ReadRemoteSeqs(peer);
-                    peer.LocalSequence = peer.LocalSequence == ushort.MaxValue ? (ushort)0 : (ushort)(peer.LocalSequence + 1);
-                    ushort seq = peer.LocalSequence;
-                    bool noSeq = acks.Length == 0;
-                    ushort maxAck = noSeq ? (ushort)0 : acks[^1];
-                    uint prevAckBitfield = 0;
-                    if (!noSeq)
-                    {
-                        foreach (ushort ack in acks)
-                        {
-                            if (ack == maxAck)
-                                continue;
-                            int diff = DiffSeq(maxAck, ack);
-                            if (diff > 32)
-                                break;
-                            prevAckBitfield |= (uint)(1 << (diff - 1));
-                        }
-                    }
-
-                    byte[] allData = compress
-                        ? new byte[HeaderLen + payloadDataLen]
-                        : new byte[HeaderLen + GuidLen + uncompDataLen];
-                    SetHeader(flags, allData, payloadDataLen, seq, maxAck, prevAckBitfield);
-
-                    if (compress)
-                    {
-                        Buffer.BlockCopy(compData!, 0, allData, HeaderLen, payloadDataLen);
-                    }
-                    else
-                    {
-                        int offset = HeaderLen;
-                        SetGuidAndData(id, data, allData, ref offset);
-                    }
-
-                    EnqueueForPeer(peer, seq, allData, resendOnFailedAck, id, maxAckWaitSec);
-                }
-            }
-
-            protected virtual void CollectUdpSendTargets(List<IPEndPoint> targets)
-            {
-                if (MulticastEndPoint is not null)
-                    targets.Add(MulticastEndPoint);
-            }
-
-            private static byte EncodeFlags(bool compress, EBroadcastType type)
-            {
-                byte flags = 0;
-                if (compress)
-                    flags |= 1;
-                flags |= (byte)((byte)type << 1);
-                return flags;
-            }
-            private static void DecodeFlags(out bool compressed, out EBroadcastType type, byte flags)
-            {
-                compressed = (flags & 1) == 1;
-                type = (EBroadcastType)((flags >> 1) & 0b111);
-            }
-
-            private ushort[] ReadRemoteSeqs(UdpPeerState peer)
-            {
-                ushort[] acks;
-                lock (peer.ReceivedRemoteSequences)
-                    acks = [.. peer.ReceivedRemoteSequences];
-                return acks;
-            }
-            /// <summary>
-            /// Writes the sequence number to the received remote sequence queue.
-            /// If the sequence is more recent than the last one we received, update the last received sequence and return true.
-            /// Else, ignore the sequence and return false.
-            /// </summary>
-            /// <param name="seq"></param>
-            /// <returns></returns>
-            private bool WriteToRemoteSeqs(UdpPeerState peer, ushort seq)
-            {
-                //If the sequence is more recent than the last one we received, update the last received sequence
-                lock (peer.ReceivedRemoteSequences)
-                {
-                    // If we have no sequences yet, or this sequence is greater than our max sequence
-                    if (peer.ReceivedRemoteSequences.Count == 0 || SeqGreater(seq, peer.ReceivedRemoteSequences.PeekBack()))
-                    {
-                        peer.ReceivedRemoteSequences.PushBack(seq);
-                        if (peer.ReceivedRemoteSequences.Count > 33) //32 bits + 1 for max ack
-                            peer.ReceivedRemoteSequences.PopFront();
-
-                        return true; // This is a new sequence we haven't seen before
-                    }
-
-                    //Sequence as not greater than the last one we received, but it could still be a *new* sequence
-
-                    // If we've already received this sequence before, don't process it again
-                    if (peer.ReceivedRemoteSequences.Contains(seq))
-                        return false;
-                    
-                    // Insert the sequence in the right position to maintain order
-                    // This handles out-of-order packet reception
-                    var tempList = new List<ushort>(peer.ReceivedRemoteSequences.Cast<ushort>());
-
-                    // Find the insertion point to maintain ordered sequences
-                    int insertIndex = 0;
-                    for (; insertIndex < tempList.Count; insertIndex++)
-                    {
-                        if (SeqGreater(tempList[insertIndex], seq))
-                            break;
-                    }
-
-                    tempList.Insert(insertIndex, seq);
-
-                    // Clear and rebuild the queue with the new ordered sequences
-                    peer.ReceivedRemoteSequences.Clear();
-                    foreach (var s in tempList)
-                        peer.ReceivedRemoteSequences.PushBack(s);
-
-                    if (peer.ReceivedRemoteSequences.Count > 33)
-                        peer.ReceivedRemoteSequences.PopFront();
-
-                    // We want to store this sequence for acknowledgment purposes
-                    // but since it's out of order, we don't want to process its data
-                    return false;
-                }
-            }
-
-            private static void SetHeader(byte flags, byte[] allData, int dataLen, ushort seq, ushort ack, uint ackBitfield)
-            {
-                //When we compose packet headers,
-                //the local sequence becomes the sequence number of the packet,
-                //and the remote sequence becomes the ack.
-                //The ack bitfield is calculated by looking into a queue of up to 33 packets,
-                //containing sequence numbers in the range [remote sequence - 32, remote sequence].
-                //We set bit n (in [1,32]) in ack bits to 1 if the sequence number remote sequence - n is in the received queue.
-                for (int i = 0; i < 3; i++)
-                    Buffer.SetByte(allData, i, Protocol[i]);
-                Buffer.SetByte(allData, 3, flags);
-                //set sequence
-                Buffer.BlockCopy(BitConverter.GetBytes(seq), 0, allData, 4, 2);
-                //set ack
-                Buffer.BlockCopy(BitConverter.GetBytes(ack), 0, allData, 6, 2);
-                //set ack bitfield
-                Buffer.BlockCopy(BitConverter.GetBytes(ackBitfield), 0, allData, 8, 4);
-                //set data length
-                Buffer.BlockCopy(BitConverter.GetBytes(dataLen), 0, allData, 12, 4);
-            }
-
-            protected static void SetGuidAndData(Guid id, byte[] data, byte[] allData, ref int offset)
-            {
-                Buffer.BlockCopy(id.ToByteArray(), 0, allData, offset, 16);
-                offset += 16;
-                Buffer.BlockCopy(data, 0, allData, offset, data.Length);
-                offset += data.Length;
-            }
-
-            protected byte[] _decompBuffer = new byte[MaxInboundDecompressedBytes];
-            //private (bool compress, EBroadcastType type, ushort seq, ushort ack, uint ackBitfield, int dataLength)? _lastConsumedHeader;
-            
-            protected int ReadReceivedData(byte[] inBuf, int availableDataLen, byte[] decompBuffer, ref bool anyAcked, IPEndPoint? sender)
-            {
-                if (inBuf is null || availableDataLen < 0 || availableDataLen > inBuf.Length || availableDataLen > MaxInboundDatagramBytes)
-                    return 0;
-
-                int offset = 0;
-                while (availableDataLen >= HeaderLen && offset < availableDataLen)
-                {
-                    //Search for protocol
-                    byte[] protocol = new byte[3];
-                    for (int i = 0; i < 3; i++)
-                        protocol[i] = inBuf[offset + i];
-                    if (!protocol.SequenceEqual(Protocol))
-                    {
-                        //Skip to next byte
-                        offset++;
-                        continue;
-                    }
-
-                    //We have a protocol match
-                    offset += 3;
-
-                    ReadHeader(
-                        inBuf,
-                        ref offset,
-                        out bool compressed,
-                        out EBroadcastType type,
-                        out ushort seq,
-                        out ushort ack,
-                        out uint ackBitfield,
-                        out int dataLength);
-
-                    if (type > EBroadcastType.Transform || dataLength < 0 || dataLength > MaxInboundFrameBytes)
-                    {
-                        Debug.NetworkingWarning("[Net] Dropped malformed realtime frame from {0}: type={1}, length={2}.", sender?.ToString() ?? "<unknown>", type, dataLength);
-                        return 0;
-                    }
-
-                    // Do not create peer/ACK/replay state for an endpoint that the role has not
-                    // authorized for this frame class. Server admission may explicitly allow a
-                    // join state frame, while all later messages require its admitted binding.
-                    if (!IsAllowedInboundSender(sender, type))
-                        return 0;
-
-                    if (!TryRegisterInboundUdpPeer(sender!, out UdpPeerState peer))
-                        return 0;
-
-                    int wirePayloadLength = compressed ? dataLength : dataLength + GuidLen;
-                    if (!TryConsumeInboundBudget(peer, HeaderLen + wirePayloadLength))
-                    {
-                        Interlocked.Increment(ref _rateLimitedRejects);
-                        Debug.NetworkingWarning("[Net] Dropped rate-limited realtime frame from {0}.", sender?.ToString() ?? "<unknown>");
-                        return 0;
-                    }
-
-                    bool shouldRead = WriteToRemoteSeqs(peer, seq);
-
-                    //When a packet is received,
-                    //ack bitfield is scanned and if bit n is set,
-                    //then we acknowledge sequence number packet sequence - n,
-                    //if it has not been acked already.
-                    if (ack != 0 || ackBitfield != 0)
-                        anyAcked |= AcknowledgeSeq(peer, ack);
-                    for (int i = 0; i < 32; i++)
-                        if ((ackBitfield & (1 << i)) != 0)
-                            anyAcked |= AcknowledgeSeq(peer, (ushort)(ack - i - 1));
-
-                    if (availableDataLen >= offset + wirePayloadLength)
-                    {
-                        //if (shouldRead)
-                        //    Debug.Out($"Received packet with sequence number: {seq}");
-                        offset += ReadPacketData(compressed, type, inBuf, decompBuffer, offset, dataLength, shouldRead, sender);
-                    }
-                    else
-                        return 0; //Not enough data to read packet, don't progress offset
-                }
-                return offset;
-            }
-
-            /// <summary>
-            /// Applies role-specific source/direction policy before a datagram can mutate peer
-            /// sequencing, acknowledgements, RTT, or application state. Implementations must
-            /// not derive authorization from an application payload identifier.
-            /// </summary>
-            protected virtual bool IsAllowedInboundSender(IPEndPoint? sender, EBroadcastType type)
-                => sender is not null;
-
-            /// <summary>
-            /// Verifies an outer managed UDP envelope before the inner FRK packet can update peer
-            /// state. Roles own handshake and association state; the default is fail-closed.
-            /// </summary>
-            protected virtual bool TryUnwrapManagedDatagram(ReadOnlyMemory<byte> datagram, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
-            {
-                innerDatagram = default;
-                return false;
-            }
-
-            /// <summary>When enabled, bare legacy FRK packets are rejected before they can create peer or ACK state.</summary>
-            protected virtual bool RequiresManagedUdpTransport => false;
-
-            /// <summary>
-            /// Decodes exactly one complete state-change FRK frame without touching peer,
-            /// reliability, acknowledgement, or application state. Managed transports use
-            /// this before committing their outer replay counter.
-            /// </summary>
-            protected bool TryDecodeStateChangeFrame(ReadOnlySpan<byte> frame, out StateChangeInfo change)
-            {
-                change = null!;
-                const int frameHeaderLength = 16;
-                const int guidLength = 16;
-                if (frame.Length < frameHeaderLength || !frame[..3].SequenceEqual(Protocol))
-                    return false;
-
-                byte flags = frame[3];
-                bool compressed = (flags & 1) != 0;
-                if ((EBroadcastType)((flags >> 1) & 0b111) != EBroadcastType.StateChange)
-                    return false;
-
-                int wireLength = BitConverter.ToInt32(frame.Slice(12, sizeof(int)));
-                if (wireLength < 0 || wireLength > MaxInboundFrameBytes
-                    || frame.Length != frameHeaderLength + wireLength + (compressed ? 0 : guidLength))
-                {
-                    return false;
-                }
-
-                byte[] decoded;
-                int dataOffset;
-                int dataLength;
-                if (compressed)
-                {
-                    byte[] encoded = frame.ToArray();
-                    decoded = new byte[MaxInboundDecompressedBytes];
-                    try
-                    {
-                        lock (_decompressionStateSync)
-                            dataLength = Compression.Decompress(encoded, frameHeaderLength, wireLength, decoded, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-
-                    if (dataLength < guidLength || dataLength > decoded.Length || new Guid(decoded.AsSpan(0, guidLength)) != Guid.Empty)
-                        return false;
-                    dataOffset = guidLength;
-                    dataLength -= guidLength;
-                }
-                else
-                {
-                    if (new Guid(frame.Slice(frameHeaderLength, guidLength)) != Guid.Empty)
-                        return false;
-                    decoded = frame.Slice(frameHeaderLength + guidLength, wireLength).ToArray();
-                    dataOffset = 0;
-                    dataLength = decoded.Length;
-                }
-
-                if (dataLength <= 0 || dataLength > MaxInboundDecompressedBytes)
-                    return false;
-                try
-                {
-                    change = MemoryPackSerializer.Deserialize<StateChangeInfo>(decoded.AsSpan(dataOffset, dataLength))!;
-                    return change is not null && change.Data.Length <= StateChangePayloadSerializer.MaxEncodedPayloadCharacters;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-
-            /// <summary>Wraps a queued inner FRK datagram immediately before transmission so retries receive fresh outer counters.</summary>
-            protected virtual byte[]? ProtectOutboundDatagram(byte[] innerDatagram, IPEndPoint target)
-                => innerDatagram;
-
-            private bool AcknowledgeSeq(UdpPeerState peer, ushort ackedSeq)
-            {
-                if (!peer.RttBuffer.TryRemove(ackedSeq, out long timeTicks))
-                    return false;
-                
-                UpdateRTT((float)TickDeltaToSeconds(CurrentEngineTicks(), timeTicks));
-
-                if (peer.MustAck.TryRemove(ackedSeq, out _))
-                    Debug.Out($"Acknowledged required sequence number {ackedSeq} from {peer.EndPoint}");
-
-                //Can't print here otherwise because it will be repeated up to 32 extra times according to the ack bitfield
-                return true; //We acknowledged the sequence number
-            }
-
-            private float _averageRTT = 0.0f;
-            public float AverageRoundTripTimeSec
-            {
-                get => _averageRTT;
-                private set => SetField(ref _averageRTT, value);
-            }
-
-            public float AverageRoundTripTimeMs => MathF.Round(AverageRoundTripTimeSec * 1000.0f);
-
-            private float _rttSmoothingPercent = 0.1f;
-            public float RTTSmoothingPercent
-            {
-                get => _rttSmoothingPercent;
-                set => SetField(ref _rttSmoothingPercent, value);
-            }
-
-            private void UpdateRTT(float rttSec)
-            {
-                AverageRoundTripTimeSec = Interp.Lerp(AverageRoundTripTimeSec, rttSec, RTTSmoothingPercent);
-                //Debug.Out($"RTT: {MathF.Round(AverageRoundTripTimeSec * 1000.0f)}ms");
-            }
-
-            private static void ReadHeader(
-                byte[] inBuf,
-                ref int offset,
-                out bool compressed,
-                out EBroadcastType type,
-                out ushort seq,
-                out ushort ack,
-                out uint ackBitfield,
-                out int dataLength)
-            {
-                DecodeFlags(out compressed, out type, inBuf[offset++]);
-
-                seq = BitConverter.ToUInt16(inBuf, offset);
-                offset += 2;
-
-                ack = BitConverter.ToUInt16(inBuf, offset);
-                offset += 2;
-
-                ackBitfield = BitConverter.ToUInt32(inBuf, offset);
-                offset += 4;
-
-                dataLength = BitConverter.ToInt32(inBuf, offset);
-                offset += 4;
-            }
-
-            private int ReadPacketData(
-                bool compressed,
-                EBroadcastType type,
-                byte[] inBuf,
-                byte[] decompBuffer,
-                int dataOffset, //Already offset by header length
-                int dataLength,
-                bool propogateData,
-                IPEndPoint? sender)
-            {
-                int readLen = dataLength;
-                if (!compressed)
-                    readLen += GuidLen;
-
-                // Only propagate data if this sequence should be processed (in order)
-                if (propogateData)
-                {
-                    if (compressed)
-                        ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength, sender);
-                    else
-                        ReadUncompressed(type, inBuf, dataOffset, dataLength, sender);
-                }
-
-                return readLen;
-            }
-
-            private void ReadUncompressed(EBroadcastType type, byte[] inBuf, int dataOffset, int dataLength, IPEndPoint? sender)
-            {
-                Propogate(
-                    new Guid([.. inBuf.Skip(dataOffset).Take(GuidLen)]),
-                    type,
-                    inBuf,
-                    dataOffset + GuidLen,
-                    dataLength,
-                    sender);
-            }
-
-            private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength, IPEndPoint? sender)
-            {
-                int decompLen;
-                try
-                {
-                    lock (_decompressionStateSync)
-                        decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
-                }
-                catch (Exception ex)
-                {
-                    Debug.NetworkingWarning("[Net] Dropped malformed compressed realtime frame from {0}: {1}", sender?.ToString() ?? "<unknown>", ex.Message);
-                    return;
-                }
-
-                if (decompLen < GuidLen || decompLen > decompBuffer.Length)
-                {
-                    Debug.NetworkingWarning("[Net] Dropped invalid decompressed realtime frame from {0}: {1} bytes.", sender?.ToString() ?? "<unknown>", decompLen);
-                    return;
-                }
-                Propogate(
-                    new Guid([.. decompBuffer.Take(GuidLen)]),
-                    type,
-                    decompBuffer,
-                    GuidLen,
-                    decompLen - GuidLen,
-                    sender);
-            }
-
-            //protected static void ReadHeader(
-            //    byte[] header,
-            //    out bool compress,
-            //    out EBroadcastType type,
-            //    out int dataLength,
-            //    out float elapsed,
-            //    int offset = 0)
-            //{
-            //    byte flag = header[offset];
-            //    compress = (flag & 1) == 1;
-            //    type = (EBroadcastType)((flag >> 1) & 3);
-            //    dataLength = BitConverter.ToInt32(header, offset) & 0x00FFFFFF;
-            //    elapsed = BitConverter.ToSingle(header, offset + 4);
-            //}
-
-            /// <summary>
-            /// Finds the target object in the cache and applies the data to it.
-            /// </summary>
-            /// <param name="id">The GUID of the object to update.</param>
-            /// <param name="type">The type of update to propogate.</param>
-            /// <param name="data">The full allocated data buffer. Use data offset to skip to data.</param>
-            /// <param name="dataOffset">The offset to the data for this object.</param>
-            /// <param name="dataLen">The length of data for this object.</param>
-            protected void Propogate(Guid id, EBroadcastType type, byte[] data, int dataOffset, int dataLen, IPEndPoint? sender)
-            {
-                if (type == EBroadcastType.StateChange)
-                {
-                    if (dataLen <= 0 || dataLen > MaxInboundDecompressedBytes)
-                        return;
-
-                    StateChangeInfo? change;
-                    try
-                    {
-                        change = MemoryPackSerializer.Deserialize<StateChangeInfo>(data.AsSpan(dataOffset, dataLen));
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.NetworkingWarning("[Net] Dropped malformed state-change frame from {0}: {1}", sender?.ToString() ?? "<unknown>", ex.Message);
-                        return;
-                    }
-
-                    if (change?.Data.Length > StateChangePayloadSerializer.MaxEncodedPayloadCharacters)
-                        return;
-                    if (change is not null)
-                        HandleStateChange(change, sender);
-                    return;
-                }
-
-                if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not RuntimeWorldObjectBase worldObj)
-                    return;
-
-                switch (type)
-                {
-                    case EBroadcastType.Object:
-                        {
-                            //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            //var newObj = AssetManager.Deserializer.Deserialize(dataStr, worldObj.GetType()) as RuntimeWorldObjectBase;
-                            var newObj = MemoryPackSerializer.Deserialize<RuntimeWorldObjectBase>(data.AsSpan(dataOffset, dataLen));
-
-                            if (newObj is not null)
-                                worldObj.CopyFrom(newObj);
-                            break;
-                        }
-                    case EBroadcastType.Property:
-                        {
-                            //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            //var (propName, value) = AssetManager.Deserializer.Deserialize<(string propName, object value)>(dataStr);
-                            IdValue d = MemoryPackSerializer.Deserialize<IdValue>(data.AsSpan(dataOffset, dataLen));
-
-                            worldObj.SetReplicatedProperty(d.key, d.value);
-                            break;
-                        }
-                    case EBroadcastType.Data:
-                        {
-                            //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            //var (id2, value2) = AssetManager.Deserializer.Deserialize<(string id, object data)>(dataStr);
-                            IdValue d = MemoryPackSerializer.Deserialize<IdValue>(data.AsSpan(dataOffset, dataLen));
-
-                            worldObj.ReceiveData(d.key, d.value);
-                            break;
-                        }
-                    case EBroadcastType.Transform:
-                        {
-                            if (worldObj is TransformBase transform)
-                            {
-                                byte[] slice = new byte[dataLen];
-                                Buffer.BlockCopy(data, dataOffset, slice, 0, dataLen);
-                                transform.DecodeFromBytes(slice);
-                            }
-                            break;
-                        }
-                }
-            }
-
-            protected virtual void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
-            {
-                if (change.Type == EStateChangeType.HumanoidPoseFrame)
-                {
-                    if (StateChangePayloadSerializer.TryDeserialize<HumanoidPoseFrame>(change.Data, out var frame) && frame is not null)
-                        HumanoidPoseFrameReceived?.Invoke(frame);
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.AuthorityLeaseUpdate)
-                {
-                    if (StateChangePayloadSerializer.TryDeserialize<NetworkAuthorityLease>(change.Data, out var lease) && lease is not null)
-                        AuthorityLeaseUpdated?.Invoke(lease);
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.ClockSync)
-                {
-                    if (StateChangePayloadSerializer.TryDeserialize<ClockSyncMessage>(change.Data, out var clock) && clock is not null)
-                        ClockSyncReceived?.Invoke(clock);
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.ReplicationSnapshot)
-                {
-                    if (StateChangePayloadSerializer.TryDeserialize<NetworkSnapshotEnvelope>(change.Data, out var snapshot) && snapshot is not null)
-                        ReplicationSnapshotReceived?.Invoke(snapshot);
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.ReplicationDelta)
-                {
-                    if (StateChangePayloadSerializer.TryDeserialize<NetworkDeltaEnvelope>(change.Data, out var delta) && delta is not null)
-                        ReplicationDeltaReceived?.Invoke(delta);
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.RemoteJobRequest)
-                {
-                    if (!AllowsRemoteJobTraffic)
-                        return;
-                    if (StateChangePayloadSerializer.TryDeserialize<RemoteJobRequest>(change.Data, out var request) && request is not null)
-                    {
-                        if (!IsValidRemoteJob(request))
-                            return;
-                        if (!string.IsNullOrWhiteSpace(request.TargetId) && !string.Equals(request.TargetId, LocalPeerId, StringComparison.OrdinalIgnoreCase))
-                            return;
-
-                        _ = DispatchRemoteJobRequestAsync(request);
-                    }
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.RemoteJobResponse)
-                {
-                    if (!AllowsRemoteJobTraffic)
-                        return;
-                    if (StateChangePayloadSerializer.TryDeserialize<RemoteJobResponse>(change.Data, out var response) && response is not null)
-                    {
-                        if (!IsValidRemoteJob(response))
-                            return;
-                        if (!string.IsNullOrWhiteSpace(response.TargetId) && !string.Equals(response.TargetId, LocalPeerId, StringComparison.OrdinalIgnoreCase))
-                            return;
-
-                        RemoteJobResponseReceived?.Invoke(response);
-                    }
-                    return;
-                }
-
-                if (change.Type == EStateChangeType.ServerError)
-                {
-                    if (StateChangePayloadSerializer.TryDeserialize<ServerErrorMessage>(change.Data, out var error) && error is not null)
-                    {
-                        ServerErrorReceived?.Invoke(error);
-                    }
-                    return;
-                }
-            }
-
-            private async Task DispatchRemoteJobRequestAsync(RemoteJobRequest request)
-            {
-                var handler = RemoteJobRequestReceived;
-                if (handler is null)
-                    return;
-
-                try
-                {
-                    var response = await handler(request).ConfigureAwait(false);
-                    if (response != null)
-                    {
-                        var enriched = new RemoteJobResponse
-                        {
-                            JobId = response.JobId,
-                            Success = response.Success,
-                            Payload = response.Payload,
-                            Error = response.Error,
-                            Metadata = response.Metadata,
-                            SenderId = LocalPeerId,
-                            TargetId = request.SenderId,
-                        };
-                        BroadcastRemoteJobResponse(enriched);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    BroadcastRemoteJobResponse(new RemoteJobResponse
-                    {
-                        JobId = request.JobId,
-                        Success = false,
-                        Error = ex.Message,
-                        SenderId = LocalPeerId,
-                        TargetId = request.SenderId,
-                    });
-                }
-            }
-
-            private static bool IsValidRemoteJob(RemoteJobRequest request)
-                => request.JobId != Guid.Empty
-                    && request.Operation.Length is > 0 and <= 128
-                    && IsValidRemoteJobPayload(request.Payload)
-                    && IsValidRemoteJobMetadata(request.Metadata)
-                    && IsBoundedPeerId(request.SenderId)
-                    && IsBoundedPeerId(request.TargetId);
-
-            private static bool IsValidRemoteJob(RemoteJobResponse response)
-                => response.JobId != Guid.Empty
-                    && (response.Error?.Length ?? 0) <= 1_024
-                    && IsValidRemoteJobPayload(response.Payload)
-                    && IsValidRemoteJobMetadata(response.Metadata)
-                    && IsBoundedPeerId(response.SenderId)
-                    && IsBoundedPeerId(response.TargetId);
-
-            private static bool IsValidRemoteJobPayload(byte[]? payload)
-                => payload is null || payload.Length <= 128 * 1024;
-
-            private static bool IsValidRemoteJobMetadata(IReadOnlyDictionary<string, string>? metadata)
-                => metadata is null || (metadata.Count <= 32 && metadata.All(pair => pair.Key.Length <= 128 && pair.Value.Length <= 1_024));
-
-            private static bool IsBoundedPeerId(string? value)
-                => value is null || value.Length <= 128;
-
-            [Flags]
-            protected enum ETransformValueFlags
-            {
-                Quats = 1,
-                Vector3s = 2,
-                Rotators = 4,
-                Scalars = 8,
-                Ints = 16
-            }
-
-            protected static ETransformValueFlags MakeFlags((object value, int bitsPerComponent)[] values)
-            {
-                ETransformValueFlags flags = 0;
-                foreach (var value in values)
-                {
-                    if (value.value is Quaternion)
-                        flags |= ETransformValueFlags.Quats;
-                    else if (value.value is Vector3)
-                        flags |= ETransformValueFlags.Vector3s;
-                    else if (value.value is Rotator)
-                        flags |= ETransformValueFlags.Rotators;
-                    else if (value.value is float)
-                        flags |= ETransformValueFlags.Scalars;
-                    else if (value.value is int)
-                        flags |= ETransformValueFlags.Ints;
-                }
-                return flags;
-            }
-
-            #region TCP
-            public static async Task SendFileAsync(string filePath, string targetIP, int port, IProgress<double> progress)
-            {
-                var fileInfo = new FileInfo(filePath);
-                long fileLength = fileInfo.Length;
-
-                using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
-
-                byte[] lengthBytes = BitConverter.GetBytes(fileLength);
-                await ns.WriteAsync(lengthBytes);
-
-                byte[] buffer = new byte[8192];
-                long totalSent = 0;
-                using FileStream fs = File.OpenRead(filePath);
-                int bytesRead;
-                while ((bytesRead = await fs.ReadAsync(buffer)) > 0)
-                {
-                    await ns.WriteAsync(buffer.AsMemory(0, bytesRead));
-                    totalSent += bytesRead;
-                    progress.Report((double)totalSent / fileLength * 100);
-                }
-            }
-
-            public static async Task SendStreamAsync(Stream stream, string targetIP, int port, IProgress<double> progress)
-            {
-                long fileLength = stream.Length;
-                using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
-                byte[] lengthBytes = BitConverter.GetBytes(fileLength);
-                await ns.WriteAsync(lengthBytes);
-                byte[] buffer = new byte[8192];
-                long totalSent = 0;
-                int bytesRead;
-                while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
-                {
-                    await ns.WriteAsync(buffer.AsMemory(0, bytesRead));
-                    totalSent += bytesRead;
-                    progress.Report((double)totalSent / fileLength * 100);
-                }
-            }
-
-            public static async Task ReceiveFileAsync(string filePath, int port, IProgress<double> progress)
-            {
-                using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
-                byte[] lengthBytes = new byte[8];
-                await ns.ReadExactlyAsync(lengthBytes);
-                long fileLength = BitConverter.ToInt64(lengthBytes);
-                byte[] buffer = new byte[8192];
-                long totalReceived = 0;
-                using FileStream fs = File.OpenWrite(filePath);
-                int bytesRead;
-                while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)
-                {
-                    await fs.WriteAsync(buffer.AsMemory(0, bytesRead));
-                    totalReceived += bytesRead;
-                    progress.Report((double)totalReceived / fileLength * 100);
-                }
-            }
-
-            public static async Task ReceiveStreamAsync(Stream stream, int port, IProgress<double> progress)
-            {
-                using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
-                byte[] lengthBytes = new byte[8];
-                await ns.ReadExactlyAsync(lengthBytes);
-                long fileLength = BitConverter.ToInt64(lengthBytes);
-                byte[] buffer = new byte[8192];
-                long totalReceived = 0;
-                int bytesRead;
-                while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)
-                {
-                    await stream.WriteAsync(buffer.AsMemory(0, bytesRead));
-                    totalReceived += bytesRead;
-                    progress.Report((double)totalReceived / fileLength * 100);
-                }
-            }
-
-            #endregion
-        }
-
-    [MemoryPackable]
-    internal partial record struct IdValue(string key, byte[] value)
+    internal static long CurrentEngineTicks()
+        => RuntimeTimingServices.Current.ElapsedTicks;
+
+    internal static long SecondsToStopwatchTicks(double seconds)
+        => (long)Math.Round(seconds * Stopwatch.Frequency, MidpointRounding.AwayFromZero);
+
+    internal static double TickDeltaToSeconds(long currentTicks, long previousTicks)
+        => Math.Max(0L, currentTicks - previousTicks) / (double)Stopwatch.Frequency;
+
+    internal static bool HasElapsed(long currentTicks, long previousTicks, double intervalSeconds)
+        => Math.Max(0L, currentTicks - previousTicks) >= SecondsToStopwatchTicks(intervalSeconds);
+
+    internal static bool HasElapsed(long currentTicks, long previousTicks, long intervalTicks)
+        => Math.Max(0L, currentTicks - previousTicks) >= Math.Max(0L, intervalTicks);
+
+    internal static long GetWindowStartTicks(long currentTicks, double windowSeconds)
+        => Math.Max(0L, currentTicks - SecondsToStopwatchTicks(windowSeconds));
+
+    private readonly ConcurrentDictionary<IPEndPoint, UdpPeerState> _udpPeers = new();
+    private readonly object _peerListSync = new();
+    /// <summary>Copy-on-write view of <see cref="_udpPeers"/> so the per-frame send loop iterates without allocating.</summary>
+    private volatile UdpPeerState[] _peerSnapshot = [];
+    private readonly object _sendTargetSync = new();
+    private readonly List<IPEndPoint> _sendTargetsScratch = new(8);
+    private long _badMacRejects;
+    private long _badSourceRejects;
+    private long _replayRejects;
+    private long _unauthorizedRejects;
+    private long _rateLimitedRejects;
+
+    public RealtimeTransportRejectionSnapshot RealtimeTransportRejections
+        => new(Volatile.Read(ref _badMacRejects), Volatile.Read(ref _badSourceRejects), Volatile.Read(ref _replayRejects), Volatile.Read(ref _unauthorizedRejects), Volatile.Read(ref _rateLimitedRejects), _udpPeers.Count);
+
+    protected void RecordBadMacRejection() => Interlocked.Increment(ref _badMacRejects);
+    protected void RecordBadSourceRejection() => Interlocked.Increment(ref _badSourceRejects);
+    protected void RecordReplayRejection() => Interlocked.Increment(ref _replayRejects);
+    protected void RecordUnauthorizedRejection() => Interlocked.Increment(ref _unauthorizedRejects);
+
+    /// <summary>Upper bound for one UDP datagram accepted by the realtime framing layer.</summary>
+    public const int MaxInboundDatagramBytes = 65_507;
+    /// <summary>Upper bound for one encoded frame, excluding its fixed header.</summary>
+    public const int MaxInboundFrameBytes = 65_491;
+    /// <summary>Upper bound for a decompressed frame, including its object identifier.</summary>
+    public const int MaxInboundDecompressedBytes = 400_000;
+    public const int MaxTrackedInboundUdpPeers = 256;
+    public const int DefaultMaxInboundPacketsPerSecond = 120;
+    public const int DefaultMaxInboundBytesPerSecond = 1_048_576;
+
+    /// <summary>Bounds one receive pump so a flood cannot starve the frame that drives it.</summary>
+    private const int MaxDatagramsPerPump = 4096;
+
+    public abstract bool IsServer { get; }
+    public abstract bool IsClient { get; }
+
+    /// <summary>
+    /// Gets whether this manager currently has at least one confirmed remote peer that
+    /// can exchange application data. A bound or configured socket alone is not a
+    /// connection.
+    /// </summary>
+    public abstract bool HasConnectedRemotePeer { get; }
+
+    public bool UDPServerConnectionEstablished
+        => UdpReceiver is { } transport && (transport.Connected || transport.IsBound);
+    public string LocalPeerId { get; }
+    protected static string CurrentProtocolVersion => RuntimeNetworkingHostServices.Current.ProtocolVersion;
+
+    /// <summary>Disabled by default because remote jobs execute application-defined work.</summary>
+    protected virtual bool AllowsRemoteJobTraffic => false;
+
+    private readonly CancellationTokenSource _consumeCts = new();
+    private Task _consumeTask = Task.CompletedTask;
+    private bool _disposed;
+
+    /// <summary>Reused for every inbound datagram. Only the receive pump touches it.</summary>
+    private readonly byte[] _receiveBuffer = new byte[MaxInboundDatagramBytes];
+    /// <summary>Reused for the protected form of every outbound datagram. Only the send pump touches it.</summary>
+    private readonly byte[] _sendScratch = new byte[MaxInboundDatagramBytes];
+
+    protected BaseNetworkingManager(string? peerId = null)
     {
-        public static implicit operator (string idStr, byte[] value)(IdValue value)
-        {
-            return (value.key, value.value);
-        }
+        LocalPeerId = string.IsNullOrWhiteSpace(peerId) ? Guid.NewGuid().ToString("N") : peerId;
+        RuntimeTimingServices.Current.Update += OnUpdateFrame;
+    }
+    ~BaseNetworkingManager()
+        => Dispose(false);
 
-        public static implicit operator IdValue((string idStr, byte[] value) value)
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        if (disposing)
         {
-            return new IdValue(value.idStr, value.value);
+            _consumeCts.Cancel();
+            RuntimeTimingServices.Current.Update -= OnUpdateFrame;
+
+            _consumeCts.Dispose();
+
+            try
+            {
+                _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
+            }
+            catch
+            {
+                // ignore wait failures
+            }
+
+            DisposeSockets();
+        }
+        else
+        {
+            RuntimeTimingServices.Current.Update -= OnUpdateFrame;
+            DisposeSockets();
         }
     }
+
+    /// <summary>
+    /// Sends from server to all connected clients, or from client to all other p2p clients.
+    /// </summary>
+    public IDatagramTransport? UdpMulticastSender { get; set; }
+    /// <summary>
+    /// Receives from server or from other p2p clients.
+    /// </summary>
+    public IDatagramTransport? UdpReceiver { get; set; }
+    public IPEndPoint? MulticastEndPoint { get; set; }
+
+    protected virtual void DisposeSockets()
+    {
+        IDatagramTransport? receiver = UdpReceiver;
+        IDatagramTransport? sender = UdpMulticastSender;
+
+        try
+        {
+            receiver?.Close();
+            receiver?.Dispose();
+        }
+        catch { }
+
+        if (!ReferenceEquals(sender, receiver))
+        {
+            try
+            {
+                sender?.Close();
+                sender?.Dispose();
+            }
+            catch { }
+        }
+
+        UdpReceiver = null;
+        UdpMulticastSender = null;
+        lock (_peerListSync)
+        {
+            _udpPeers.Clear();
+            _peerSnapshot = [];
+        }
+    }
+
+    public static bool IsConnected()
+        => NetworkTransportServices.Required.IsNetworkAvailable();
+
+    public static string[] GetAllLocalIPv4(NetworkInterfaceType type)
+        => NetworkTransportServices.Required.GetLocalIPv4((int)type);
+
+    protected abstract Task SendUDP();
+
+    /// <summary>
+    /// Drains pending datagrams. Transports with span support are read synchronously into one
+    /// reusable buffer, so the steady-state receive path performs no heap allocation.
+    /// </summary>
+    protected virtual Task ReadUDP()
+    {
+        IDatagramTransport? receiver = UdpReceiver;
+        if (receiver is null)
+            return Task.CompletedTask;
+
+        if (!receiver.SupportsSpanDatagrams)
+            return ReadUdpAllocatingAsync(receiver);
+
+        bool anyAcked = false;
+        byte[] buffer = _receiveBuffer;
+        for (int received = 0; received < MaxDatagramsPerPump && !_disposed; received++)
+        {
+            if (!receiver.TryReceive(buffer, out int length, out IPEndPoint? remote))
+                break;
+
+            if (length < 0 || remote is null)
+            {
+                Debug.NetworkingWarning("[Net] Dropped oversized UDP datagram from {0}.", remote?.ToString() ?? "<unknown>");
+                continue;
+            }
+
+            ProcessDatagram(buffer, length, remote, ref anyAcked);
+        }
+
+        //TODO: verify this is correct and not ruining the average
+        if (!anyAcked)
+            UpdateRTT(0.0f);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Receive path for transports that only expose the allocating asynchronous API.</summary>
+    private async Task ReadUdpAllocatingAsync(IDatagramTransport receiver)
+    {
+        bool anyAcked = false;
+        while (receiver.Available > 0)
+        {
+            DatagramReceiveResult result = await receiver.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
+            if (result.Buffer.Length > MaxInboundDatagramBytes)
+            {
+                Debug.NetworkingWarning("[Net] Dropped oversized UDP datagram ({0} bytes) from {1}.", result.Buffer.Length, result.RemoteEndPoint);
+                continue;
+            }
+
+            ProcessDatagram(result.Buffer, result.Buffer.Length, result.RemoteEndPoint, ref anyAcked);
+        }
+
+        if (!anyAcked)
+            UpdateRTT(0.0f);
+    }
+
+    private void ProcessDatagram(byte[] buffer, int length, IPEndPoint remote, ref bool anyAcked)
+    {
+        ReadOnlyMemory<byte> datagram = buffer.AsMemory(0, length);
+        ReadOnlyMemory<byte> accepted = datagram;
+        bool isManagedEnvelope = ManagedUdpEnvelope.TryRead(datagram.Span, out _, out _, out _);
+        if ((RequiresManagedUdpTransport && !isManagedEnvelope)
+            || (isManagedEnvelope && !TryUnwrapManagedDatagram(datagram, remote, out accepted)))
+        {
+            Debug.NetworkingWarning("[Net] Dropped unauthenticated managed UDP envelope from {0}.", remote);
+            return;
+        }
+
+        // An unwrapped datagram is a slice of the receive buffer, never a copy.
+        if (!MemoryMarshal.TryGetArray(accepted, out ArraySegment<byte> segment) || segment.Array is null)
+            return;
+
+        ReadReceivedData(segment.Array, segment.Offset, segment.Count, _decompBuffer, ref anyAcked, remote);
+    }
+
+    private void OnUpdateFrame()
+    {
+        if (_disposed || _consumeCts.IsCancellationRequested)
+            return;
+
+        if (!_consumeTask.IsCompleted)
+            return;
+
+        _consumeTask = ConsumeQueuesAsync();
+    }
+
+    public virtual void ConsumeQueues() => OnUpdateFrame();
+
+    private async Task ConsumeQueuesAsync()
+    {
+        try
+        {
+            await ReadUDP().ConfigureAwait(false);
+            await SendUDP().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            //ignore cancellation
+        }
+        catch (Exception ex)
+        {
+            Debug.Log(ELogCategory.Networking, $"[Net] ConsumeQueues exception: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Run on server or p2p client - sends to all clients
+    /// </summary>
+    protected void StartUdpMulticastSender(IPAddress udpMulticastIP, int udpMulticastPort)
+    {
+        IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("multicast sender");
+        UdpMulticastSender = udpClient;
+        MulticastEndPoint = new IPEndPoint(udpMulticastIP, udpMulticastPort);
+    }
+
+    /// <summary>
+    /// Run on client or p2p client - receives from server
+    /// </summary>
+    protected void StartUdpMulticastReceiver(IPAddress serverIP, IPAddress udpMulticastServerIP, int upMulticastServerPort)
+    {
+        // Multiple local clients need to share the same multicast port.
+        // On Windows this requires ReuseAddress + ExclusiveAddressUse=false before binding.
+        IDatagramTransport udpClient = NetworkTransportServices.Required.CreateDatagram("multicast receiver");
+        udpClient.MulticastLoopback = false;
+        udpClient.ExclusiveAddressUse = false;
+        udpClient.ReuseAddress = true;
+        udpClient.Bind(new IPEndPoint(IPAddress.Any, upMulticastServerPort));
+        udpClient.JoinMulticastGroup(udpMulticastServerIP);
+        UdpReceiver = udpClient;
+    }
+
+    private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes, long FirstSendTicks, long TimeoutTicks);
+
+    /// <summary>
+    /// A reliable-lane frame awaiting transmission. Its sequence and acknowledgement fields are
+    /// stamped when it is sent, so sequence order always matches wire order across both lanes.
+    /// </summary>
+    private readonly record struct QueuedUdpPacket(byte[] Bytes, bool ResendOnFailedAck, Guid OwnerId, long FirstSendTicks, long TimeoutTicks);
+
+    private sealed class UdpPeerState
+    {
+        public UdpPeerState(IPEndPoint endPoint)
+        {
+            EndPoint = endPoint;
+            LastTokenUpdateTicks = CurrentEngineTicks();
+        }
+
+        public IPEndPoint EndPoint { get; }
+        public ConcurrentQueue<QueuedUdpPacket> SendQueue { get; } = new();
+        public ConcurrentDictionary<ushort, PendingAckPacket> MustAck { get; } = new();
+        public ConcurrentDictionary<ushort, long> RttBuffer { get; } = new();
+
+        /// <summary>Guards sequencing, the receive window, and the high-rate ring.</summary>
+        public readonly object Sync = new();
+
+        /// <summary>Unreliable lane storage. Created on the first high-rate send to this peer.</summary>
+        public RealtimePacketSendRing? HighRateRing;
+        public long[]? HighRateSendTicks;
+        public ushort[]? HighRateSendSequences;
+
+        public ushort LocalSequence;
+        public bool HasRemoteSequence;
+        public ushort MaxRemoteSequence;
+        /// <summary>Bit n-1 is set when sequence <c>MaxRemoteSequence - n</c> was received (n in 1..32).</summary>
+        public uint RemoteSequenceBits;
+
+        public double PacketTokens;
+        public long LastTokenUpdateTicks;
+        public double InboundPacketTokens;
+        public double InboundByteTokens;
+        public long LastInboundTokenUpdateTicks;
+    }
+
+    private UdpPeerState RegisterUdpPeer(IPEndPoint endPoint)
+    {
+        if (_udpPeers.TryGetValue(endPoint, out UdpPeerState? existing))
+            return existing;
+
+        lock (_peerListSync)
+        {
+            if (_udpPeers.TryGetValue(endPoint, out existing))
+                return existing;
+
+            // Key on a private copy so a caller mutating its endpoint cannot corrupt the table.
+            IPEndPoint key = new(endPoint.Address, endPoint.Port);
+            UdpPeerState peer = new(key);
+            _udpPeers[key] = peer;
+            _peerSnapshot = [.. _udpPeers.Values];
+            return peer;
+        }
+    }
+
+    private int _maxInboundPacketsPerSecond = DefaultMaxInboundPacketsPerSecond;
+    /// <summary>Per-peer receive packet rate. Zero disables only this rate limit.</summary>
+    public int MaxInboundPacketsPerSecond
+    {
+        get => _maxInboundPacketsPerSecond;
+        set => SetField(ref _maxInboundPacketsPerSecond, Math.Max(0, value));
+    }
+
+    private int _maxInboundBytesPerSecond = DefaultMaxInboundBytesPerSecond;
+    /// <summary>Per-peer receive byte rate. Zero disables only this rate limit.</summary>
+    public int MaxInboundBytesPerSecond
+    {
+        get => _maxInboundBytesPerSecond;
+        set => SetField(ref _maxInboundBytesPerSecond, Math.Max(0, value));
+    }
+
+    private bool TryRegisterInboundUdpPeer(IPEndPoint endPoint, out UdpPeerState peer)
+    {
+        if (_udpPeers.TryGetValue(endPoint, out peer!))
+            return true;
+
+        if (_udpPeers.Count >= MaxTrackedInboundUdpPeers)
+        {
+            peer = null!;
+            Debug.NetworkingWarning("[Net] Dropped inbound peer {0}; the {1}-peer transport limit is reached.", endPoint, MaxTrackedInboundUdpPeers);
+            return false;
+        }
+
+        peer = RegisterUdpPeer(endPoint);
+        return true;
+    }
+
+    private bool TryConsumeInboundBudget(UdpPeerState peer, int byteCount)
+    {
+        int packetLimit = MaxInboundPacketsPerSecond;
+        int byteLimit = MaxInboundBytesPerSecond;
+        if (packetLimit == 0 && byteLimit == 0)
+            return true;
+
+        long nowTicks = CurrentEngineTicks();
+        double elapsedSeconds = TickDeltaToSeconds(nowTicks, peer.LastInboundTokenUpdateTicks);
+        if (peer.LastInboundTokenUpdateTicks == 0L)
+        {
+            peer.InboundPacketTokens = packetLimit;
+            peer.InboundByteTokens = byteLimit;
+        }
+        else
+        {
+            peer.InboundPacketTokens = Math.Min(packetLimit, peer.InboundPacketTokens + elapsedSeconds * packetLimit);
+            peer.InboundByteTokens = Math.Min(byteLimit, peer.InboundByteTokens + elapsedSeconds * byteLimit);
+        }
+        peer.LastInboundTokenUpdateTicks = nowTicks;
+
+        if ((packetLimit > 0 && peer.InboundPacketTokens < 1.0d)
+            || (byteLimit > 0 && peer.InboundByteTokens < byteCount))
+        {
+            return false;
+        }
+
+        if (packetLimit > 0)
+            peer.InboundPacketTokens -= 1.0d;
+        if (byteLimit > 0)
+            peer.InboundByteTokens -= byteCount;
+        return true;
+    }
+
+    protected void UnregisterUdpPeer(IPEndPoint? endPoint)
+    {
+        if (endPoint is null)
+            return;
+
+        lock (_peerListSync)
+        {
+            if (_udpPeers.TryRemove(endPoint, out _))
+                _peerSnapshot = [.. _udpPeers.Values];
+        }
+    }
+
+    private static bool ShouldResendRequiredPacket(Guid ownerId)
+    {
+        if (ownerId == Guid.Empty)
+            return true;
+
+        if (!XRObjectBase.ObjectsCache.TryGetValue(ownerId, out XRObjectBase? obj))
+            return false;
+
+        if (obj is XRComponent component)
+            return component.IsActiveInHierarchy;
+
+        return true;
+    }
+
+    private const float DefaultAckTimeoutSec = 5.0f;
+
+    private float _maxRoundTripSec = 1.0f;
+    public float MaxRoundTripSec
+    {
+        get => _maxRoundTripSec;
+        set => SetField(ref _maxRoundTripSec, value);
+    }
+
+    private int? _maxSendablePacketsPerSecond = null;
+    public int? MaxSendablePacketsPerSecond
+    {
+        get => _maxSendablePacketsPerSecond;
+        set => SetField(ref _maxSendablePacketsPerSecond, value);
+    }
+
+    private void UpdatePacketTokens(UdpPeerState peer)
+    {
+        var perSec = MaxSendablePacketsPerSecond;
+        if (perSec is null)
+            return;
+
+        long nowTicks = CurrentEngineTicks();
+        double elapsedSeconds = TickDeltaToSeconds(nowTicks, peer.LastTokenUpdateTicks);
+        peer.PacketTokens += elapsedSeconds * perSec.Value;
+        if (peer.PacketTokens > perSec.Value)
+            peer.PacketTokens = perSec.Value;
+        peer.LastTokenUpdateTicks = nowTicks;
+    }
+
+    private const int SendTelemetryBucketCount = 101;
+    private static readonly long SendTelemetryBucketTicks = Math.Max(1L, (Stopwatch.Frequency + 99L) / 100L);
+    private readonly object _sendTelemetrySync = new();
+    private readonly long[] _sendTelemetryEpochs = new long[SendTelemetryBucketCount];
+    private readonly long[] _sendTelemetryBytes = new long[SendTelemetryBucketCount];
+    private readonly long[] _sendTelemetryPackets = new long[SendTelemetryBucketCount];
+
+    /// <summary>Whether the rolling send window contains a packet, at 10 ms bucket precision.</summary>
+    public bool HasSentBytesInTheLastSecond => ReadSendTelemetry().Packets != 0;
+
+    /// <summary>Packet count over the last second, including at most one extra 10 ms boundary bucket.</summary>
+    public float PacketsPerSecond => ReadSendTelemetry().Packets;
+
+    /// <summary>Byte count over the last second, including at most one extra 10 ms boundary bucket.</summary>
+    public int BytesSentLastSecond => (int)Math.Min(int.MaxValue, ReadSendTelemetry().Bytes);
+    public float KBytesSentLastSecond => BytesSentLastSecond / 1024.0f;
+    public float MBytesSentLastSecond => KBytesSentLastSecond / 1024.0f;
+
+    private (long Packets, long Bytes) ReadSendTelemetry()
+    {
+        lock (_sendTelemetrySync)
+        {
+            long epoch = Math.Max(0L, CurrentEngineTicks()) / SendTelemetryBucketTicks;
+            long packets = 0;
+            long bytes = 0;
+            for (int i = 0; i < SendTelemetryBucketCount; i++)
+            {
+                long storedEpoch = _sendTelemetryEpochs[i] - 1L;
+                if (storedEpoch < 0 || storedEpoch > epoch || epoch - storedEpoch >= SendTelemetryBucketCount)
+                    continue;
+                packets += _sendTelemetryPackets[i];
+                bytes += _sendTelemetryBytes[i];
+            }
+            return (packets, bytes);
+        }
+    }
+
+    private void RecordBytesSent(int byteCount)
+    {
+        lock (_sendTelemetrySync)
+        {
+            long epoch = Math.Max(0L, CurrentEngineTicks()) / SendTelemetryBucketTicks;
+            int index = (int)(epoch % SendTelemetryBucketCount);
+            if (_sendTelemetryEpochs[index] != epoch + 1L)
+            {
+                _sendTelemetryEpochs[index] = epoch + 1L;
+                _sendTelemetryBytes[index] = 0;
+                _sendTelemetryPackets[index] = 0;
+            }
+            _sendTelemetryBytes[index] += byteCount;
+            _sendTelemetryPackets[index]++;
+        }
+    }
+
+    public string DataPerSecondString
+    {
+        get
+        {
+            float bytes = BytesSentLastSecond;
+            if (bytes < 1024)
+                return $"{bytes}b/s";
+            float kbytes = bytes / 1024.0f;
+            if (kbytes < 1024)
+                return $"{MathF.Round(kbytes)}Kb/s";
+            float mbytes = kbytes / 1024.0f;
+            return $"{MathF.Round(mbytes)}Mb/s";
+        }
+    }
+
+    protected void ConsumeAndSendUDPQueue(IDatagramTransport? client, IPEndPoint? endPoint)
+    {
+        if (endPoint is null)
+            return;
+
+        ConsumeAndSendUDPQueue(client, RegisterUdpPeer(endPoint));
+    }
+
+    protected void ConsumeAndSendUDPQueues(IDatagramTransport? client)
+    {
+        UdpPeerState[] peers = _peerSnapshot;
+        for (int i = 0; i < peers.Length; i++)
+            ConsumeAndSendUDPQueue(client, peers[i]);
+    }
+
+    private void ConsumeAndSendUDPQueue(IDatagramTransport? client, UdpPeerState peer)
+    {
+        ClearOldRTTs(peer);
+
+        bool hasHighRate = peer.HighRateRing is { Count: > 0 };
+        if (peer.SendQueue.IsEmpty && !hasHighRate)
+            return;
+
+        int packetsAllowed = int.MaxValue;
+        if (MaxSendablePacketsPerSecond is not null)
+        {
+            UpdatePacketTokens(peer);
+            packetsAllowed = (int)Math.Floor(peer.PacketTokens);
+        }
+
+        // The reliable lane drains first so a control frame queued during admission is the first
+        // datagram a newly routable peer receives.
+        int packetsSent = 0;
+        byte[] scratch = _sendScratch;
+        while (packetsSent < packetsAllowed && peer.SendQueue.TryDequeue(out QueuedUdpPacket data))
+        {
+            if (client is null)
+                continue;
+
+            ushort sequence;
+            lock (peer.Sync)
+            {
+                NextSequence_NoLock(peer, out sequence, out ushort ack, out uint ackBits);
+                WriteSequenceFields(data.Bytes, sequence, ack, ackBits);
+            }
+
+            if (!TryProtectOutboundDatagram(data.Bytes, peer.EndPoint, scratch, out int written))
+            {
+                // A managed association can be provisional while its simulation-thread
+                // admission publishes. Retain the inner reliable frame until a transport
+                // key is routable instead of silently losing its first assignment.
+                peer.SendQueue.Enqueue(data);
+                break;
+            }
+
+            long sentTicks = CurrentEngineTicks();
+            peer.RttBuffer[sequence] = sentTicks;
+            if (data.ResendOnFailedAck)
+                peer.MustAck[sequence] = new PendingAckPacket(data.OwnerId, data.Bytes, data.FirstSendTicks == 0L ? sentTicks : data.FirstSendTicks, data.TimeoutTicks);
+
+            client.Send(scratch.AsSpan(0, written), peer.EndPoint);
+            RecordBytesSent(written);
+            packetsSent++;
+        }
+
+        if (packetsSent < packetsAllowed)
+            packetsSent += DrainHighRateRing(client, peer, packetsAllowed - packetsSent);
+
+        peer.PacketTokens -= packetsSent;
+        if (peer.PacketTokens < 0)
+            peer.PacketTokens = 0.0;
+    }
+
+    private void ClearOldRTTs(UdpPeerState peer)
+    {
+        if (peer.RttBuffer.IsEmpty)
+            return;
+
+        long nowTicks = CurrentEngineTicks();
+        long oldestTicks = GetWindowStartTicks(nowTicks, MaxRoundTripSec);
+        foreach (KeyValuePair<ushort, long> entry in peer.RttBuffer)
+        {
+            if (entry.Value >= oldestTicks)
+                continue;
+
+            ushort key = entry.Key;
+            if (!peer.RttBuffer.TryRemove(key, out _))
+                continue;
+
+            if (!peer.MustAck.TryRemove(key, out PendingAckPacket pending))
+                continue;
+
+            if (pending.TimeoutTicks > 0L && nowTicks - pending.FirstSendTicks >= pending.TimeoutTicks)
+            {
+                double timeoutSeconds = TickDeltaToSeconds(pending.TimeoutTicks, 0L);
+                Debug.Out($"Required packet sequence {key} to {peer.EndPoint} timed out after {timeoutSeconds:0.###}s, dropping...");
+                continue;
+            }
+
+            if (ShouldResendRequiredPacket(pending.OwnerId))
+            {
+                // The resend takes a fresh sequence when it is transmitted, so the receiver
+                // processes it instead of discarding it as an out-of-order duplicate.
+                Debug.Out($"Required packet sequence {key} to {peer.EndPoint} failed to return, resending...");
+                peer.SendQueue.Enqueue(new QueuedUdpPacket(pending.Bytes, true, pending.OwnerId, pending.FirstSendTicks, pending.TimeoutTicks));
+            }
+        }
+    }
+
+    //3 bits
+    public enum EBroadcastType : byte
+    {
+        StateChange,
+        Object,
+        Property,
+        Data,
+        Transform,
+        Unused5,
+        Unused6,
+        Unused7,
+    }
+
+    //protocol header is only 3 bytes so the flag can come right after to align back to 4 bytes
+    private static ReadOnlySpan<byte> Protocol => "FRK"u8;
+    private const ushort _halfMaxSeq = 32768;
+    /// <summary>
+    /// Compares two sequence numbers, accounting for the wrap-around point at half the maximum value.
+    /// Returns true if left is greater than right, false otherwise.
+    /// </summary>
+    private static bool SeqGreater(ushort left, ushort right) =>
+        ((left > right) && (left - right <= _halfMaxSeq)) ||
+        ((left < right) && (right - left > _halfMaxSeq));
+    /// <summary>
+    /// Returns the difference between two sequence numbers, accounting for the wrap-around point at half the maximum value.
+    /// If left is greater than right, returns left - right.
+    /// Else, returns the wrapped-around difference.
+    /// </summary>
+    private static int DiffSeq(ushort left, ushort right)
+        => left > right
+        ? left - right
+        : (left - 0) + (ushort.MaxValue - right) + 1; //+1, because if right is ushort.MaxValue and left is 0, the difference is 1
+
+    /// <summary>
+    /// Broadcasts the entire object to all connected clients.
+    /// </summary>
+    public void ReplicateObject(RuntimeWorldObjectBase obj, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        var bytes = MemoryPackSerializer.Serialize(obj);
+        Send(obj.ID, compress, bytes, EBroadcastType.Object, resendOnFailedAck, maxAckWaitSec);
+    }
+
+    /// <summary>
+    /// Broadcasts arbitrary data to all connected clients.
+    /// </summary>
+    public void ReplicateData(RuntimeWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        IdValue data = new(idStr, value);
+        var bytes = MemoryPackSerializer.Serialize(data);
+        Send(obj.ID, compress, bytes, EBroadcastType.Data, resendOnFailedAck, maxAckWaitSec);
+    }
+
+    /// <summary>
+    /// Broadcasts a property update to all connected clients.
+    /// </summary>
+    public void ReplicatePropertyUpdated<T>(RuntimeWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        var bytes1 = MemoryPackSerializer.Serialize(value);
+        IdValue data = new(propName ?? string.Empty, bytes1);
+        var bytes = MemoryPackSerializer.Serialize(data);
+        Send(obj.ID, compress, bytes, EBroadcastType.Property, resendOnFailedAck, maxAckWaitSec);
+    }
+
+    /// <summary>
+    /// Broadcasts a transform update to all connected clients.
+    /// The transform handles the encoding and decoding of its own data.
+    /// </summary>
+    public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
+    }
+
+    private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
+    private const int GuidLen = 16; //Guid is always 16 bytes
+    private SevenZip.Compression.LZMA.Encoder _encoder = new();
+    private SevenZip.Compression.LZMA.Decoder _decoder = new();
+    private MemoryStream _compStreamIn = new();
+    private MemoryStream _compStreamOut = new();
+    private MemoryStream _decompStreamIn = new();
+    private MemoryStream _decompStreamOut = new();
+    private readonly object _compressionStateSync = new();
+    private readonly object _decompressionStateSync = new();
+
+    /// <summary>
+    /// Queues a reliable-lane frame for every current send target.
+    /// </summary>
+    /// <param name="id">The id of the object to replicate information to.</param>
+    /// <param name="compress">If the packet's data should be compressed - adds latency.</param>
+    /// <param name="data">The data to send. It is copied before this method returns.</param>
+    /// <param name="type">The type of replication this is - each type is optimized for its use case.</param>
+    /// <param name="resendOnFailedAck">If the packet MUST be recieved - if it fails to be acknowledged by the receiver, it will be sent again until it is.</param>
+    /// <param name="maxAckWaitSec">Maximum total time to wait for an ack before giving up.</param>
+    protected void Send(Guid id, bool compress, ReadOnlySpan<byte> data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        lock (_sendTargetSync)
+        {
+            _sendTargetsScratch.Clear();
+            CollectUdpSendTargets(_sendTargetsScratch);
+            SendToTargets(_sendTargetsScratch, id, compress, data, type, resendOnFailedAck, maxAckWaitSec);
+            _sendTargetsScratch.Clear();
+        }
+    }
+
+    protected void SendToTarget(IPEndPoint target, Guid id, bool compress, ReadOnlySpan<byte> data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        byte[]? compressed = PrepareReliablePayload(id, compress, data, out int payloadDataLen, out int wirePayloadLength);
+        EnqueueReliableFrame(target, id, compress, data, compressed, payloadDataLen, wirePayloadLength, type, resendOnFailedAck, maxAckWaitSec);
+    }
+
+    protected void SendToTargets(IReadOnlyList<IPEndPoint> targets, Guid id, bool compress, ReadOnlySpan<byte> data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+    {
+        if (targets.Count == 0)
+            return;
+
+        byte[]? compressed = PrepareReliablePayload(id, compress, data, out int payloadDataLen, out int wirePayloadLength);
+        for (int i = 0; i < targets.Count; i++)
+            EnqueueReliableFrame(targets[i], id, compress, data, compressed, payloadDataLen, wirePayloadLength, type, resendOnFailedAck, maxAckWaitSec);
+    }
+
+    /// <summary>Validates the payload size and, when requested, compresses the object id plus data once for all targets.</summary>
+    private byte[]? PrepareReliablePayload(Guid id, bool compress, ReadOnlySpan<byte> data, out int payloadDataLen, out int wirePayloadLength)
+    {
+        if (data.Length > MaxInboundFrameBytes)
+            throw new ArgumentOutOfRangeException(nameof(data), $"Realtime payload exceeds the {MaxInboundFrameBytes}-byte transport limit.");
+
+        byte[]? compressed = null;
+        payloadDataLen = data.Length;
+        if (compress)
+        {
+            byte[] uncompressed = new byte[GuidLen + data.Length];
+            id.TryWriteBytes(uncompressed);
+            data.CopyTo(uncompressed.AsSpan(GuidLen));
+            lock (_compressionStateSync)
+                compressed = Compression.Compress(uncompressed, ref _encoder, ref _compStreamIn, ref _compStreamOut);
+            payloadDataLen = compressed.Length;
+        }
+
+        wirePayloadLength = compress ? payloadDataLen : GuidLen + data.Length;
+        if (wirePayloadLength > MaxInboundFrameBytes || HeaderLen + wirePayloadLength > MaxInboundDatagramBytes)
+            throw new InvalidOperationException("Compressed realtime payload exceeds the transport datagram limit.");
+
+        return compressed;
+    }
+
+    private void EnqueueReliableFrame(IPEndPoint target, Guid id, bool compress, ReadOnlySpan<byte> data, byte[]? compressed, int payloadDataLen, int wirePayloadLength, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec)
+    {
+        UdpPeerState peer = RegisterUdpPeer(target);
+        byte[] frame = new byte[HeaderLen + wirePayloadLength];
+        WriteFrameHeader(frame, EncodeFlags(compress, type), payloadDataLen);
+        if (compress)
+        {
+            compressed!.CopyTo(frame.AsSpan(HeaderLen));
+        }
+        else
+        {
+            id.TryWriteBytes(frame.AsSpan(HeaderLen, GuidLen));
+            data.CopyTo(frame.AsSpan(HeaderLen + GuidLen));
+        }
+
+        peer.SendQueue.Enqueue(new QueuedUdpPacket(frame, resendOnFailedAck, id, 0L, resendOnFailedAck ? SecondsToStopwatchTicks(maxAckWaitSec) : 0L));
+    }
+
+    protected virtual void CollectUdpSendTargets(List<IPEndPoint> targets)
+    {
+        if (MulticastEndPoint is not null)
+            targets.Add(MulticastEndPoint);
+    }
+
+    private static byte EncodeFlags(bool compress, EBroadcastType type)
+    {
+        byte flags = 0;
+        if (compress)
+            flags |= 1;
+        flags |= (byte)((byte)type << 1);
+        return flags;
+    }
+    private static void DecodeFlags(out bool compressed, out EBroadcastType type, byte flags)
+    {
+        compressed = (flags & 1) == 1;
+        type = (EBroadcastType)((flags >> 1) & 0b111);
+    }
+
+    /// <summary>
+    /// Assigns the next outbound sequence and snapshots the acknowledgement state. The ack is the
+    /// highest remote sequence seen, and bit n-1 of the bitfield acknowledges remote sequence
+    /// <c>ack - n</c>.
+    /// </summary>
+    private static void NextSequence_NoLock(UdpPeerState peer, out ushort sequence, out ushort ack, out uint ackBits)
+    {
+        peer.LocalSequence = peer.LocalSequence == ushort.MaxValue ? (ushort)0 : (ushort)(peer.LocalSequence + 1);
+        sequence = peer.LocalSequence;
+        ack = peer.HasRemoteSequence ? peer.MaxRemoteSequence : (ushort)0;
+        ackBits = peer.HasRemoteSequence ? peer.RemoteSequenceBits : 0u;
+    }
+
+    /// <summary>
+    /// Records a received sequence in the fixed 33-entry window. Returns true only when the
+    /// sequence is newer than everything seen so far; an older or duplicate sequence is still
+    /// acknowledged but its data is not processed.
+    /// </summary>
+    private static bool RecordRemoteSequence(UdpPeerState peer, ushort sequence)
+    {
+        lock (peer.Sync)
+        {
+            if (!peer.HasRemoteSequence)
+            {
+                peer.HasRemoteSequence = true;
+                peer.MaxRemoteSequence = sequence;
+                peer.RemoteSequenceBits = 0u;
+                return true;
+            }
+
+            if (SeqGreater(sequence, peer.MaxRemoteSequence))
+            {
+                int shift = DiffSeq(sequence, peer.MaxRemoteSequence);
+                peer.RemoteSequenceBits = shift > 32
+                    ? 0u
+                    : (shift == 32 ? 0u : peer.RemoteSequenceBits << shift) | (1u << (shift - 1));
+                peer.MaxRemoteSequence = sequence;
+                return true;
+            }
+
+            if (sequence == peer.MaxRemoteSequence)
+                return false;
+
+            int distance = DiffSeq(peer.MaxRemoteSequence, sequence);
+            if (distance <= 32)
+                peer.RemoteSequenceBits |= 1u << (distance - 1);
+            return false;
+        }
+    }
+
+    private static void WriteFrameHeader(Span<byte> frame, byte flags, int dataLen)
+    {
+        //When we compose packet headers,
+        //the local sequence becomes the sequence number of the packet,
+        //and the remote sequence becomes the ack.
+        //The ack bitfield covers the 32 sequences before the ack:
+        //bit n-1 is set if sequence number (remote sequence - n) was received.
+        Protocol.CopyTo(frame);
+        frame[3] = flags;
+        frame.Slice(4, 8).Clear();
+        BinaryPrimitives.WriteInt32LittleEndian(frame[12..], dataLen);
+    }
+
+    private static void WriteSequenceFields(Span<byte> frame, ushort sequence, ushort ack, uint ackBits)
+    {
+        BinaryPrimitives.WriteUInt16LittleEndian(frame[4..], sequence);
+        BinaryPrimitives.WriteUInt16LittleEndian(frame[6..], ack);
+        BinaryPrimitives.WriteUInt32LittleEndian(frame[8..], ackBits);
+    }
+
+    /// <summary>
+    /// Scratch for decompressed inbound frames. It is reused by every receive-loop decode, so a
+    /// span into it is valid only until the next frame is decoded.
+    /// </summary>
+    protected byte[] _decompBuffer = new byte[MaxInboundDecompressedBytes];
+
+    /// <summary>Parses every frame in one accepted datagram and dispatches the in-order ones.</summary>
+    protected int ReadReceivedData(byte[] inBuf, int start, int length, byte[] decompBuffer, ref bool anyAcked, IPEndPoint? sender)
+    {
+        if (inBuf is null || start < 0 || start > inBuf.Length || length < 0 || length > inBuf.Length - start || length > MaxInboundDatagramBytes)
+            return 0;
+
+        int end = start + length;
+        int offset = start;
+        while (end - offset >= HeaderLen)
+        {
+            //Search for protocol
+            if (!inBuf.AsSpan(offset, 3).SequenceEqual(Protocol))
+            {
+                //Skip to next byte
+                offset++;
+                continue;
+            }
+
+            ReadOnlySpan<byte> header = inBuf.AsSpan(offset, HeaderLen);
+            DecodeFlags(out bool compressed, out EBroadcastType type, header[3]);
+            ushort seq = BinaryPrimitives.ReadUInt16LittleEndian(header[4..]);
+            ushort ack = BinaryPrimitives.ReadUInt16LittleEndian(header[6..]);
+            uint ackBitfield = BinaryPrimitives.ReadUInt32LittleEndian(header[8..]);
+            int dataLength = BinaryPrimitives.ReadInt32LittleEndian(header[12..]);
+            offset += HeaderLen;
+
+            if (type > EBroadcastType.Transform || dataLength < 0 || dataLength > MaxInboundFrameBytes)
+            {
+                Debug.NetworkingWarning("[Net] Dropped malformed realtime frame from {0}: type={1}, length={2}.", sender?.ToString() ?? "<unknown>", type, dataLength);
+                return 0;
+            }
+
+            // Do not create peer/ACK/replay state for an endpoint that the role has not
+            // authorized for this frame class. Server admission may explicitly allow a
+            // join state frame, while all later messages require its admitted binding.
+            if (!IsAllowedInboundSender(sender, type))
+                return 0;
+
+            int wirePayloadLength = compressed ? dataLength : dataLength + GuidLen;
+            if (end - offset < wirePayloadLength)
+                return 0;
+
+            if (!TryRegisterInboundUdpPeer(sender!, out UdpPeerState peer))
+                return 0;
+
+            if (!TryConsumeInboundBudget(peer, HeaderLen + wirePayloadLength))
+            {
+                Interlocked.Increment(ref _rateLimitedRejects);
+                Debug.NetworkingWarning("[Net] Dropped rate-limited realtime frame from {0}.", sender?.ToString() ?? "<unknown>");
+                return 0;
+            }
+
+            bool shouldRead = RecordRemoteSequence(peer, seq);
+
+            //When a packet is received,
+            //ack bitfield is scanned and if bit n is set,
+            //then we acknowledge sequence number packet sequence - n,
+            //if it has not been acked already.
+            if (ack != 0 || ackBitfield != 0)
+                anyAcked |= AcknowledgeSeq(peer, ack);
+            for (int i = 0; i < 32; i++)
+                if ((ackBitfield & (1u << i)) != 0)
+                    anyAcked |= AcknowledgeSeq(peer, (ushort)(ack - i - 1));
+
+            // Only propagate data if this sequence should be processed (in order)
+            if (shouldRead)
+            {
+                if (compressed)
+                    ReadCompressed(type, inBuf, decompBuffer, offset, dataLength, sender);
+                else
+                    Propogate(new Guid(inBuf.AsSpan(offset, GuidLen)), type, inBuf.AsSpan(offset + GuidLen, dataLength), sender);
+            }
+
+            offset += wirePayloadLength;
+        }
+        return offset - start;
+    }
+
+    /// <summary>
+    /// Applies role-specific source/direction policy before a datagram can mutate peer
+    /// sequencing, acknowledgements, RTT, or application state. Implementations must
+    /// not derive authorization from an application payload identifier.
+    /// </summary>
+    protected virtual bool IsAllowedInboundSender(IPEndPoint? sender, EBroadcastType type)
+        => sender is not null;
+
+    /// <summary>
+    /// Verifies an outer managed UDP envelope before the inner FRK packet can update peer
+    /// state. Roles own handshake and association state; the default is fail-closed. A successful
+    /// unwrap returns a slice of <paramref name="datagram"/>, not a copy.
+    /// </summary>
+    protected virtual bool TryUnwrapManagedDatagram(ReadOnlyMemory<byte> datagram, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
+    {
+        innerDatagram = default;
+        return false;
+    }
+
+    /// <summary>When enabled, bare legacy FRK packets are rejected before they can create peer or ACK state.</summary>
+    protected virtual bool RequiresManagedUdpTransport => false;
+
+    /// <summary>
+    /// Writes the wire form of a queued inner FRK datagram into <paramref name="destination"/>
+    /// immediately before transmission, so retries receive fresh outer counters. The default
+    /// copies the datagram unchanged. Returns false when the target is not routable yet.
+    /// </summary>
+    protected virtual bool TryProtectOutboundDatagram(ReadOnlySpan<byte> innerDatagram, IPEndPoint target, Span<byte> destination, out int bytesWritten)
+    {
+        bytesWritten = 0;
+        if (innerDatagram.Length > destination.Length)
+            return false;
+
+        innerDatagram.CopyTo(destination);
+        bytesWritten = innerDatagram.Length;
+        return true;
+    }
+
+    private bool AcknowledgeSeq(UdpPeerState peer, ushort ackedSeq)
+    {
+        if (peer.RttBuffer.TryRemove(ackedSeq, out long timeTicks))
+        {
+            UpdateRTT((float)TickDeltaToSeconds(CurrentEngineTicks(), timeTicks));
+
+            if (peer.MustAck.TryRemove(ackedSeq, out _))
+                Debug.Out($"Acknowledged required sequence number {ackedSeq} from {peer.EndPoint}");
+
+            //Can't print here otherwise because it will be repeated up to 32 extra times according to the ack bitfield
+            return true; //We acknowledged the sequence number
+        }
+
+        return TryAcknowledgeHighRateSequence(peer, ackedSeq);
+    }
+
+    private float _averageRTT = 0.0f;
+    public float AverageRoundTripTimeSec
+    {
+        get => _averageRTT;
+        // Updated for every acknowledged packet, so it opts out of change-event publication.
+        private set => SetField(ref _averageRTT, value, publishNotifications: false);
+    }
+
+    public float AverageRoundTripTimeMs => MathF.Round(AverageRoundTripTimeSec * 1000.0f);
+
+    private float _rttSmoothingPercent = 0.1f;
+    public float RTTSmoothingPercent
+    {
+        get => _rttSmoothingPercent;
+        set => SetField(ref _rttSmoothingPercent, value);
+    }
+
+    private void UpdateRTT(float rttSec)
+        => AverageRoundTripTimeSec = Interp.Lerp(AverageRoundTripTimeSec, rttSec, RTTSmoothingPercent);
+
+    private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength, IPEndPoint? sender)
+    {
+        int decompLen;
+        try
+        {
+            lock (_decompressionStateSync)
+                decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
+        }
+        catch (Exception ex)
+        {
+            Debug.NetworkingWarning("[Net] Dropped malformed compressed realtime frame from {0}: {1}", sender?.ToString() ?? "<unknown>", ex.Message);
+            return;
+        }
+
+        if (decompLen < GuidLen || decompLen > decompBuffer.Length)
+        {
+            Debug.NetworkingWarning("[Net] Dropped invalid decompressed realtime frame from {0}: {1} bytes.", sender?.ToString() ?? "<unknown>", decompLen);
+            return;
+        }
+
+        Propogate(new Guid(decompBuffer.AsSpan(0, GuidLen)), type, decompBuffer.AsSpan(GuidLen, decompLen - GuidLen), sender);
+    }
+
+    /// <summary>
+    /// Finds the target object in the cache and applies the data to it.
+    /// </summary>
+    /// <param name="id">The GUID of the object to update.</param>
+    /// <param name="type">The type of update to propogate.</param>
+    /// <param name="data">The frame data for this object. Valid only for the duration of the call.</param>
+    /// <param name="sender">The endpoint the frame arrived from.</param>
+    protected void Propogate(Guid id, EBroadcastType type, ReadOnlySpan<byte> data, IPEndPoint? sender)
+    {
+        if (type == EBroadcastType.StateChange)
+        {
+            DispatchStateChangeFrame(data, sender);
+            return;
+        }
+
+        if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not RuntimeWorldObjectBase worldObj)
+            return;
+
+        switch (type)
+        {
+            case EBroadcastType.Object:
+                {
+                    var newObj = MemoryPackSerializer.Deserialize<RuntimeWorldObjectBase>(data);
+
+                    if (newObj is not null)
+                        worldObj.CopyFrom(newObj);
+                    break;
+                }
+            case EBroadcastType.Property:
+                {
+                    IdValue d = MemoryPackSerializer.Deserialize<IdValue>(data);
+
+                    worldObj.SetReplicatedProperty(d.key, d.value);
+                    break;
+                }
+            case EBroadcastType.Data:
+                {
+                    IdValue d = MemoryPackSerializer.Deserialize<IdValue>(data);
+
+                    worldObj.ReceiveData(d.key, d.value);
+                    break;
+                }
+            case EBroadcastType.Transform:
+                {
+                    if (worldObj is TransformBase transform)
+                        transform.DecodeFromBytes(data.ToArray());
+                    break;
+                }
+        }
+    }
+
+    [Flags]
+    protected enum ETransformValueFlags
+    {
+        Quats = 1,
+        Vector3s = 2,
+        Rotators = 4,
+        Scalars = 8,
+        Ints = 16
+    }
+
+    protected static ETransformValueFlags MakeFlags((object value, int bitsPerComponent)[] values)
+    {
+        ETransformValueFlags flags = 0;
+        foreach (var value in values)
+        {
+            if (value.value is Quaternion)
+                flags |= ETransformValueFlags.Quats;
+            else if (value.value is Vector3)
+                flags |= ETransformValueFlags.Vector3s;
+            else if (value.value is Rotator)
+                flags |= ETransformValueFlags.Rotators;
+            else if (value.value is float)
+                flags |= ETransformValueFlags.Scalars;
+            else if (value.value is int)
+                flags |= ETransformValueFlags.Ints;
+        }
+        return flags;
+    }
+
+    #region TCP
+    public static async Task SendFileAsync(string filePath, string targetIP, int port, IProgress<double> progress)
+    {
+        var fileInfo = new FileInfo(filePath);
+        long fileLength = fileInfo.Length;
+
+        using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
+
+        byte[] lengthBytes = BitConverter.GetBytes(fileLength);
+        await ns.WriteAsync(lengthBytes);
+
+        byte[] buffer = new byte[8192];
+        long totalSent = 0;
+        using FileStream fs = File.OpenRead(filePath);
+        int bytesRead;
+        while ((bytesRead = await fs.ReadAsync(buffer)) > 0)
+        {
+            await ns.WriteAsync(buffer.AsMemory(0, bytesRead));
+            totalSent += bytesRead;
+            progress.Report((double)totalSent / fileLength * 100);
+        }
+    }
+
+    public static async Task SendStreamAsync(Stream stream, string targetIP, int port, IProgress<double> progress)
+    {
+        long fileLength = stream.Length;
+        using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
+        byte[] lengthBytes = BitConverter.GetBytes(fileLength);
+        await ns.WriteAsync(lengthBytes);
+        byte[] buffer = new byte[8192];
+        long totalSent = 0;
+        int bytesRead;
+        while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
+        {
+            await ns.WriteAsync(buffer.AsMemory(0, bytesRead));
+            totalSent += bytesRead;
+            progress.Report((double)totalSent / fileLength * 100);
+        }
+    }
+
+    public static async Task ReceiveFileAsync(string filePath, int port, IProgress<double> progress)
+    {
+        using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
+        byte[] lengthBytes = new byte[8];
+        await ns.ReadExactlyAsync(lengthBytes);
+        long fileLength = BitConverter.ToInt64(lengthBytes);
+        byte[] buffer = new byte[8192];
+        long totalReceived = 0;
+        using FileStream fs = File.OpenWrite(filePath);
+        int bytesRead;
+        while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)
+        {
+            await fs.WriteAsync(buffer.AsMemory(0, bytesRead));
+            totalReceived += bytesRead;
+            progress.Report((double)totalReceived / fileLength * 100);
+        }
+    }
+
+    public static async Task ReceiveStreamAsync(Stream stream, int port, IProgress<double> progress)
+    {
+        using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
+        byte[] lengthBytes = new byte[8];
+        await ns.ReadExactlyAsync(lengthBytes);
+        long fileLength = BitConverter.ToInt64(lengthBytes);
+        byte[] buffer = new byte[8192];
+        long totalReceived = 0;
+        int bytesRead;
+        while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)
+        {
+            await stream.WriteAsync(buffer.AsMemory(0, bytesRead));
+            totalReceived += bytesRead;
+            progress.Report((double)totalReceived / fileLength * 100);
+        }
+    }
+
+    #endregion
 }

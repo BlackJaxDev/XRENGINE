@@ -20,6 +20,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Serialization;
 using XREngine.Core;
 
@@ -970,7 +971,8 @@ public static partial class CookedBinarySerializer
     {
         string listTypeName = reader.ReadString();
         Type listType = ResolveType(listTypeName) ?? typeof(List<object?>);
-        IList list = (IList)(CreateInstance(listType) ?? new List<object?>());
+        IList list = (IList)(CookedBinaryFormatterRegistry.TryCreateCollection(listType, out object? generated)
+            ? generated! : CreateInstance(listType) ?? new List<object?>());
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
         {
@@ -987,7 +989,8 @@ public static partial class CookedBinarySerializer
     {
         string dictTypeName = reader.ReadString();
         Type dictType = ResolveType(dictTypeName) ?? typeof(Dictionary<object, object?>);
-        IDictionary dictionary = (IDictionary)(CreateInstance(dictType) ?? new Dictionary<object, object?>());
+        IDictionary dictionary = (IDictionary)(CookedBinaryFormatterRegistry.TryCreateCollection(dictType, out object? generated)
+            ? generated! : CreateInstance(dictType) ?? new Dictionary<object, object?>());
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
         {
@@ -1334,7 +1337,12 @@ public static partial class CookedBinarySerializer
             throw CreatePublishedAotUnsupportedException($"generic XREvent<{elementType.Name}> deserialization");
 
         Type eventType = typeof(XREvent<>).MakeGenericType(elementType);
-        
+        AotParityDiagnostics.Report(
+            eventType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadXREventGeneric)}",
+            "Register a published cooked codec for the owning asset type so generic events are deserialized without Activator.CreateInstance.");
+
         var evt = Activator.CreateInstance(eventType)!;
         var calls = ReadXRPersistentCallList(reader);
         
@@ -1421,6 +1429,8 @@ public static partial class CookedBinarySerializer
     {
         string underlyingTypeName = reader.ReadString();
         Type underlyingType = ResolveType(underlyingTypeName);
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild && !CookedBinaryFormatterRegistry.IsNullableRegistered(underlyingType))
+            throw CreatePublishedAotUnsupportedException($"Nullable<{underlyingType.Name}> deserialization");
         bool hasValue = reader.ReadBoolean();
         
         if (!hasValue)
@@ -1477,9 +1487,6 @@ public static partial class CookedBinarySerializer
         if (count == 0)
             return default(ValueTuple);
 
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-            throw CreatePublishedAotUnsupportedException("ValueTuple deserialization");
-
         Type[] typeArgs = new Type[count];
         object?[] values = new object?[count];
 
@@ -1489,6 +1496,11 @@ public static partial class CookedBinarySerializer
             typeArgs[i] = ResolveType(typeName);
             values[i] = ReadValue(reader, typeArgs[i], callbacks);
         }
+
+        if (CookedBinaryFormatterRegistry.TryCreateTuple(typeArgs, values, out object? generatedTuple))
+            return generatedTuple!;
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw CreatePublishedAotUnsupportedException("ValueTuple deserialization");
 
         // Create the appropriate ValueTuple type and instantiate it
         Type tupleType = count switch
@@ -1504,6 +1516,11 @@ public static partial class CookedBinarySerializer
             _ => throw new NotSupportedException($"ValueTuple with {count} elements is not supported.")
         };
 
+        AotParityDiagnostics.Report(
+            tupleType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadValueTuple)}",
+            "Register a published cooked codec for the owning asset type so value tuples are deserialized without Activator.CreateInstance.");
         return Activator.CreateInstance(tupleType, values)!;
     }
 
@@ -1545,12 +1562,23 @@ public static partial class CookedBinarySerializer
     {
         string elementTypeName = reader.ReadString();
         Type elementType = ResolveType(elementTypeName);
+        int count = reader.ReadInt32();
+        if (CookedBinaryFormatterRegistry.TryCreateHashSet(elementType, count, out object? generatedSet, out Action<object, object?>? addGenerated))
+        {
+            for (int i = 0; i < count; i++)
+                addGenerated!(generatedSet!, ReadValue(reader, elementType, callbacks));
+            return generatedSet!;
+        }
         if (XRRuntimeEnvironment.IsAotRuntimeBuild)
             throw CreatePublishedAotUnsupportedException($"HashSet<{elementType.Name}> deserialization");
 
         Type hashSetType = typeof(HashSet<>).MakeGenericType(elementType);
+        AotParityDiagnostics.Report(
+            hashSetType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadHashSet)}",
+            "Register a published cooked codec for the owning asset type so hash sets are deserialized without Activator.CreateInstance.");
 
-        int count = reader.ReadInt32();
         object hashSet = Activator.CreateInstance(hashSetType)!;
         var addMethod = hashSetType.GetMethod("Add")!;
 
@@ -1711,7 +1739,14 @@ public static partial class CookedBinarySerializer
             {
                 resolved = assembly.GetType(key, throwOnError: false, ignoreCase: false);
                 if (resolved is not null)
+                {
+                    AotParityDiagnostics.Report(
+                        resolved,
+                        EAotParityCategory.TypeResolutionScan,
+                        $"{nameof(CookedBinarySerializer)}.{nameof(ResolveType)}",
+                        "Add the type to the published runtime metadata known-type table so cooked payloads resolve it without scanning assemblies.");
                     return resolved;
+                }
             }
 
             throw new InvalidOperationException($"Unable to resolve type '{key}'.");

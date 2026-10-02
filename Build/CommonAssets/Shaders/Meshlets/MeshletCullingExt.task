@@ -22,56 +22,7 @@ const uint MESHLET_PASS_TRANSPARENT = 1u << 4u;
 const uint MESHLET_PASS_VELOCITY = 1u << 5u;
 const uint MESHLET_PASS_STEREO = 1u << 6u;
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
-
-struct MeshDataEntry
-{
-    uint IndexCount;
-    uint FirstIndex;
-    uint FirstVertex;
-    uint Flags;
-};
-
-struct GpuMeshletTaskRecord
-{
-    uint MeshletIndex;
-    uint DrawID;
-    uint TransformID;
-    uint MaterialID;
-};
-
-struct GpuMeshletDescriptor
-{
-    vec4 BoundsSphere;
-    uint VertexOffset;
-    uint TriangleByteOffset;
-    uint VertexCount;
-    uint TriangleCount;
-    vec4 Cone;
-    vec4 ConeApex;
-    uint PackedCone;
-    uint Reserved0;
-    uint Reserved1;
-    uint Reserved2;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 layout(std430, binding = 3) readonly buffer MeshDataBuffer { MeshDataEntry MeshData[]; };
 layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor Meshlets[]; };

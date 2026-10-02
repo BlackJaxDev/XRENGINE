@@ -1,62 +1,138 @@
 # Transform Architecture
 
-XRENGINE stores spatial state inside `TransformBase` derivatives that hang off every `SceneNode`. Transforms maintain the local/world matrix stack, publish render-thread data, and coordinate hierarchy changes across gameplay, editor, and render threads. This guide explains how the pieces fit together so you can extend or consume the transform system safely.
+`TransformBase` remains the authoring, serialization, animation and editor API.
+A `RuntimeWorld` owns the runtime-only `TransformHierarchyStore` that holds its
+attached transforms' local, world and published render matrices.
 
-## Core Responsibilities
-- Own the local transform state (position, rotation, scale) relative to the parent and expose recalculated matrices without exposing raw setters.
-- Produce the world matrix that includes every ancestor transform and notify the active `XRWorldInstance` when that result changes.
-- Publish a render-safe matrix snapshot so the render thread can fetch transform data without locking gameplay code.
-- Relay lifecycle events (`RenderMatrixChanged`, `WorldMatrixChanged`, etc.) so components and systems can respond as soon as matrices are updated.
+## Storage and lifetime
 
-## Matrix Stack
-**Local Matrix**
-- `LocalMatrix` represents the transform relative to the parent. Subclasses implement `CreateLocalMatrix` to build their TRS (translation/rotation/scale) or custom layouts.
-- `MarkLocalModified` flags the local matrix as dirty. If `ImmediateLocalMatrixRecalculation` is true (default), `RecalcLocal` runs immediately and also propagates `MarkWorldModified`.
+The store uses growable structure-of-arrays storage, initially 256 slots and
+geometrically enlarged at attachment boundaries. This keeps the expected
+hundreds-to-tens-of-thousands population contiguous and avoids a pointer lookup
+for every matrix read. It does not assume a fixed maximum avatar population.
+Growth and hierarchy edits can allocate; warmed propagation and publication
+reuse their bitsets, ranges, changed lists and worker synchronization objects.
+The population/latency tradeoff still requires measured qualification.
 
-**World Matrix**
-- `WorldMatrix` multiplies the local matrix against the parent via `CreateWorldMatrix` (default: `LocalMatrix * Parent.WorldMatrix`).
-- `MarkWorldModified` queues the transform with `XRWorldInstance.AddDirtyTransform`, which groups dirty transforms by depth. `XRWorldInstance.PostUpdate` consumes that queue and executes `RecalculateMatrixHierarchy` for each depth bucket.
-- `OnWorldMatrixChanged` pushes the result to the render queue (`XRWorldInstance.EnqueueRenderTransformChange`) and fires `WorldMatrixChanged` so dependent systems can respond.
+A `TransformHandle` contains a world-local slot and generation. Attachment
+acquires a slot; detach, destruction and world transfer invalidate it by
+incrementing its generation. Stale access throws a diagnostic. A handle must
+always be used with its owning store. Detached transforms retain three matrices
+in one small state object; attached objects release that state. Bind matrices
+remain authored object state. Inverses and directional snapshots are computed
+on demand, rather than reserving inverse matrices and six locks per transform.
+Legacy replication baselines are created lazily by `TransformReplicationState`,
+whose weak ownership cannot retain a destroyed transform.
 
-**Render Matrix**
-- The render thread consumes `RenderMatrix`, a cached snapshot written during `XRWorldInstance.GlobalSwapBuffers`. That method dequeues pending tuples and calls `TransformBase.SetRenderMatrix`, ensuring render data updates only when the engine swaps frame buffers.
-- `SetRenderMatrix` optionally cascades updates to children using the loop type configured in `Engine.Rendering.Settings.RecalcChildMatricesLoopType`, keeping render matrices in sync throughout the hierarchy.
-- Helpers such as `GetWorldTranslation`, `GetWorldForward`, and `GetWorldRotation` automatically switch between `WorldMatrix` and `RenderMatrix` depending on `Engine.IsRenderThread`, which avoids branching in calling code.
+Hierarchy insertion, removal and reparenting invalidate a parent-first depth-first
+order. Each subtree has a contiguous half-open range. Mutation batches flush the
+order at disposal; ordinary edits rebuild before the next pass. Parenting cycles
+are rejected. Reparenting into a different world's hierarchy transfers the
+transform and its descendants. Immediate hierarchy edits inside a matrix
+evaluator are rejected; schedule them through deferred `SetParent` instead.
 
-**Inverse Matrices and Direction Vectors**
-- `InverseLocalMatrix` and `InverseWorldMatrix` are regenerated alongside their forward counterparts (`RecalcLocalInv`, `RecalcWorldInv`) and fire change events for systems that need quick inverse access (physics, skeletal animation).
-- Convenience vectors (`LocalForward`, `WorldUp`, `RenderRight`, etc.) are derived from the respective matrices and normalised for fast directional queries.
+## Simulation and notifications
 
-## Dirty Flag and Recalculation Flow
-1. Gameplay or editor code mutates transform properties and calls `MarkLocalModified` or `MarkWorldModified`.
-2. The transform is added to `_invalidTransforms` inside `XRWorldInstance`. Depth bucketing guarantees parents process before children.
-3. During `PostUpdate`, the engine iterates each depth and calls `RecalculateMatrixHierarchy` using the configured loop strategy (sequential, parallel, or asynchronous). That method recalculates this transform and optionally its children.
-4. `OnWorldMatrixChanged` enqueues the world matrix for render publication. During `GlobalSwapBuffers`, the engine applies all queued render matrices, fires `RenderMatrixChanged`, and propagates children if requested.
-5. Systems that depend on transform data (rendering, physics, UI) listen to these events or access the thread-appropriate helpers.
+`MarkLocalModified` preserves immediate local recalculation by default. Deferred
+local changes are evaluated during propagation. Dirty registration sets a slot
+bit, so duplicate registrations require neither hash sets nor ancestor walks.
+`RuntimeWorld.ProcessDirtyTransforms` merges ancestor/descendant work into
+subtree ranges and walks those ranges once. Ordinary world composition reads
+`local * parentWorld` from the arrays. Custom world owners retain their explicit
+virtual evaluator.
 
-When immediate results are required (for example, before physics queries), you can call `RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true)` directly. This forces recalculation on the current thread and updates the render matrix synchronously for the current transform only.
+`Sequential` processes ranges on the caller. `Parallel` and `Asynchronous` both
+join persistent world-owned workers at the simulation barrier, rather than
+creating per-root tasks. They parallelize disjoint ranges only when all included
+transforms use ordinary parent composition. Passes containing custom world
+owners remain ordered because those evaluators can depend on other roots. The
+asynchronous setting deliberately means joined parallel work for this bulk API;
+existing explicit hierarchy methods retain their task-returning API.
 
-## Parenting and Hierarchy Management
-- `SetParent` optionally preserves the world matrix. Deferred changes enqueue into a static `_parentsToReassign` queue so any thread can request re-parenting. The queue is processed on the main update when the engine is in a safe state.
-- `ProcessParentReassignments` should be called during world maintenance (the engine does this automatically) to finalise pending parent swaps.
-- `SceneNode.SetTransform` replaces the transform instance attached to a node. Flags such as `RetainCurrentParent`, `RetainCurrentChildren`, and `RetainedChildrenMaintainWorldTransform` let you migrate relationships without teleporting nodes or losing hierarchy data.
+Matrix callbacks are collected while the bulk pass runs and dispatched after
+all descendants finish. Subscriber counts update only on event subscription
+changes. Inverse notifications calculate inverses only when subscribed. Render
+events only run for subscribers. Local/world virtual hooks still execute because
+UI bounds and rigid-body reset checks own required side effects there. Mutations
+from callbacks remain dirty for the next pass. Explicit immediate recalculation
+outside a bulk pass continues to notify synchronously. Diagnostic evaluation
+suppresses external matrix notifications and publication.
 
-## Render Publication and Thread Safety
-- World matrices are produced on the simulation thread; render matrices update on the render thread during buffer swaps. This separation prevents contention while still delivering deterministic snapshots per frame.
-- Components and subsystems subscribe to `RenderMatrixChanged` to receive the frame-ready value. For example, render components update vertex buffers using this event without polling the transform every frame.
-- Use `TransformBase.ProcessParentReassignments` and the render queue from the engine rather than writing ad-hoc threading code; these built-in mechanisms guarantee consistent sequencing across gameplay and rendering.
+## Snapshot and render publication contract
 
-## Creating Custom Transforms
-- Derive from `TransformBase` (or existing subclasses like `Transform`, `UITransform`, `OrbitTransform`) and override `CreateLocalMatrix`. For specialised behaviour you can also override `CreateWorldMatrix`, `TryCreateInverseLocalMatrix`, or `RenderDebug`.
-- Whenever you mutate internal state, call `MarkLocalModified` or `MarkWorldModified` so the engine can enqueue recalculations. Skipping these calls will leave world/render matrices stale.
-- If you maintain additional gizmos or cached data, hook into the matrix change events (`OnLocalMatrixChanged`, `OnWorldMatrixChanged`) to synchronise them.
+Matrix accessors return the latest complete matrix; reading does not recalculate
+or wait for the next simulation tick. Store writers serialize array edits and
+publish an even sequence after the transaction. Readers retry if a concurrent
+write crossed their copy, preventing torn 64-byte matrices. Separate accessor
+calls are individually coherent, not a combined multi-transform snapshot.
 
-## Tips for Consumers
-- Prefer the thread-aware helpers (`GetWorldTranslation`, `GetWorldRotation`, etc.) when code may execute on either simulation or render threads.
-- Use `FindChild`, `FindDescendant`, and `Children` only within locks or by relying on engine-provided iterators; the underlying `EventList` is thread-safe but still requires careful traversal in multithreaded code.
-- When preserving world space during parent changes, use the `preserveWorldTransform` flag provided by `SetParent` rather than manually computing inverse matrices.
+`PublishRenderMatrices` copies pending world entries into the render array in
+one transaction. `RuntimeWorldRenderer` invokes it before visibility collection
+and at buffer swap. It no longer applies each stored transform through the
+object-level render setter. `TransformPublicationRecords` consumes changed slots
+directly into `TransformGpu` and `AdvancedTransformRecord` arrays. GPU scene
+conversion and canonical scene publication copy those rows when their identity
+and exact captured matrix agree. Canonical current/previous handles remain owned
+by their existing transaction and retirement machinery. Procedural model
+matrices, skinning's identity model matrix, previous-frame history and late
+render overrides use their exact captured values when they differ from the
+hierarchy row; no canonical temporal state is overwritten by a simulation row.
 
-## Related Documentation
-- [Scene Architecture](overview.md)
+Physics simulation and interpolation update simulation world space before the
+ordinary propagation/publication boundary. `RigidBodyTransform` explicitly owns
+world space; children consume that world matrix after it is evaluated. VR device
+and action transforms generate tracking-local poses in simulation. Their draw
+callbacks remain render-only late overrides, after ordinary publication, and
+compose against `ParentRenderMatrix`. `SetRenderMatrix` keeps its descendant
+cascade, including the OpenXR headset exception. An immediate render write
+clears older pending simulation publication for that slot, preventing a stale
+queued pose from replacing a later draw pose. It does not write simulation world
+space. New simulation changes can publish at the next frame boundary.
+
+## Subclass audit
+
+The runtime subclasses were classified by their matrix creation methods:
+
+| Family | Authority |
+|---|---|
+| `Transform`, `TransformNone`, `RectTransform` | Local matrix and ordinary parent composition |
+| `OrbitTransform`, `BoomTransform`, `DrivenLocalTransform` | Local matrix and ordinary parent composition |
+| `NoiseRotationTransform`, `ScreenShakeTransform` | Local noise; ordinary parent composition |
+| `LaggedTranslationTransform`, `SmoothedTransform`, `Spline3DTransform` | Local evaluation; ordinary parent composition |
+| `RigidBodyTransform`, `DrivenWorldTransform` | Explicit world owner |
+| `CopyTransform`, `MultiCopyTransform`, `MirroredTransform`, `LookatTransform`, `PositionOnlyTransform` | Custom world evaluator, potentially depending on another root |
+| `WorldTranslationLaggedTransform`, `SmoothedParentConstraintTransform` | Custom world evaluator with smoothing state |
+| `BillboardTransform` | Custom camera-dependent world evaluator |
+| `VRDeviceTransformBase` and device subclasses; `VRActionTransformBase` and action subclasses; `VREyeTransform` | Tracking-local simulation pose; render-only draw override where implemented |
+| `UITransform` and layout subclasses | Local layout; `UICanvasTransform` additionally supplies a custom world evaluator |
+| `SerializedModelSkeletonTransform`, `BrowserBoneTransform` | Inherit their existing local transform behavior |
+
+New subclasses that override `CreateWorldMatrix` must also override
+`HasCustomWorldMatrix` to return true. Their dependent local state and ordinary
+property setters still use `MarkLocalModified`/`MarkWorldModified`.
+
+## Editor, serialization and diagnostics
+
+Gizmos, transform editors, undo and inspector changes continue through the
+existing pose setters, `DeriveLocalMatrix`, immediate recalculation and
+`SetParent`. These methods now address the store automatically. The runtime
+handle and matrices remain excluded from authored serialization; authored TRS,
+parent relationships and bind matrices keep their existing contracts.
+
+`TransformHierarchy.Counters` is a value snapshot. Registered is the current
+population; dirty-local and dirty-world are cumulative invalidation counts;
+propagated, published records and events are cumulative work counts. Timings and
+allocated bytes describe the most recent pass (including callbacks and worker
+allocations), so capture them immediately after the pass under measurement.
+Cold array growth and worker startup are deliberately visible in those scopes.
+The benchmark must warm up before making steady-state claims.
+
+Live avatar, physics, gizmo, OpenGL/Vulkan and VR qualification remains required.
+A build is not evidence of visual parity or zero allocation; unavailable VR
+hardware remains explicitly unqualified.
+
+## Related documentation
+
+- [Scene architecture](overview.md)
 - [Component API](../../developer-guides/components/component-api.md)
-- [Rendering Runtime Overview](../rendering/runtime-overview.md)
+- [Rendering runtime overview](../rendering/runtime-overview.md)

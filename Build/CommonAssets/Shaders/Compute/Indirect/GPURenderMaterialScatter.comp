@@ -39,37 +39,13 @@ const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS_BASE_VERTEX = 56u;
 const uint METADATA_UINTS = 4u;
 const uint DOMAIN_EXACT = 3u;
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 // Mirrors GPUScene.GpuMeshletRange.  Material scatter reads this only when the
 // direct task/mesh path was sealed ready for the current pass; meshlet-resident
 // rows are then omitted from the traditional indirect output so each draw is
 // submitted by exactly one primitive path.
-struct GpuMeshletRange
-{
-    uint MeshletOffset;
-    uint MeshletCount;
-    uint VertexIndexOffset;
-    uint TriangleIndexOffset;
-};
+
 
 layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };

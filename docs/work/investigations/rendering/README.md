@@ -7,6 +7,10 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Advanced pipeline (Vulkan) directional shadows missing](advanced-vulkan-dirlight-shadows-2026-10-02.md)
+  records the cascade slope-bias unit mismatch that made every receiver lit, the
+  back-facing and footprint bias corrections, and the still-intermittent
+  CastsShadows re-enable failure.
 - [Production component-profile admission and output](2026-10-01-component-profile-production.md)
   records construction publication, cold shader admission, exact output evidence,
   and GPU topology validation for the presentationless production fixture.

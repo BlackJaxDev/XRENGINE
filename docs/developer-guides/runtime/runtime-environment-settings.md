@@ -44,3 +44,9 @@ Unsupported required diagnostics fail preparation. Optional diagnostics publish
 unsupported status; they do not synthesize calibration or hardware counters.
 Use the [profiler recipes](../diagnostics/profiler.md#dedicated-vulkan-renderbench)
 to select these observers rather than inheriting editor environment settings.
+
+## AOT Parity Diagnostics
+
+| Variable | Values | Behavior |
+| --- | --- | --- |
+| `XRE_AOT_PARITY` | `off`, `warn`, `error` | Development-only. Reports player-path resolutions that succeed only through a reflective fallback NativeAOT cannot provide. Defaults to `off` in interactive editor sessions and `error` in the unit-test lane and headless validation. Published builds ignore it. See [AOT Final Game Builds](aot-final-game-builds.md#development-parity-diagnostics). |

@@ -17,28 +17,10 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <XREngineFactoryRegistrationMode>Desktop</XREngineFactoryRegistrationMode>
-    <GeneratedAotFactoryRegistrations>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', '$(TargetFramework)', 'Generated', 'AotFactoryRegistrations.g.cs'))</GeneratedAotFactoryRegistrations>
-    <XREngineFactoryRegistrationOutput>$(GeneratedAotFactoryRegistrations)</XREngineFactoryRegistrationOutput>
-    <XREngineFactoryRegistrationStamp>$(GeneratedAotFactoryRegistrations).stamp</XREngineFactoryRegistrationStamp>
-    <XREngineEmitPortableFactoryRegistrations>false</XREngineEmitPortableFactoryRegistrations>
+    <XREngineRuntimeContractMode>Desktop</XREngineRuntimeContractMode>
   </PropertyGroup>
 
-  <Import Project="../Build/Portable/PortableFactorySources.props" />
-  <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
-    <XREngineFactoryRegistrationInput Include="$(MSBuildProjectDirectory)/**/*.cs" Exclude="$(MSBuildProjectDirectory)/bin/**;$(MSBuildProjectDirectory)/obj/**;$(MSBuildProjectDirectory)/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.Bootstrap" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.ModelAssetPipeline/**/*.cs" Exclude="../XREngine.Runtime.ModelAssetPipeline/bin/**;../XREngine.Runtime.ModelAssetPipeline/obj/**;../XREngine.Runtime.ModelAssetPipeline/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.ModelAssetPipeline" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.ModelingIntegration/**/*.cs" Exclude="../XREngine.Runtime.ModelingIntegration/bin/**;../XREngine.Runtime.ModelingIntegration/obj/**;../XREngine.Runtime.ModelingIntegration/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.ModelingIntegration" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.UI.Skia/**/*.cs" Exclude="../XREngine.Runtime.UI.Skia/bin/**;../XREngine.Runtime.UI.Skia/obj/**;../XREngine.Runtime.UI.Skia/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.UI.Skia" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.UI.Rive/**/*.cs" Exclude="../XREngine.Runtime.UI.Rive/bin/**;../XREngine.Runtime.UI.Rive/obj/**;../XREngine.Runtime.UI.Rive/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.UI.Rive" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Audio.Audio2Face/**/*.cs" Exclude="../XREngine.Audio.Audio2Face/bin/**;../XREngine.Audio.Audio2Face/obj/**;../XREngine.Audio.Audio2Face/**/*.g.cs" RegistrationAssembly="XREngine.Audio.Audio2Face" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Audio.SteamAudio/**/*.cs" Exclude="../XREngine.Audio.SteamAudio/bin/**;../XREngine.Audio.SteamAudio/obj/**;../XREngine.Audio.SteamAudio/**/*.g.cs" RegistrationAssembly="XREngine.Audio.SteamAudio" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.Physics.PhysX/**/*.cs" Exclude="../XREngine.Runtime.Physics.PhysX/bin/**;../XREngine.Runtime.Physics.PhysX/obj/**;../XREngine.Runtime.Physics.PhysX/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.Physics.PhysX" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.Net.Osc/**/*.cs" Exclude="../XREngine.Runtime.Net.Osc/bin/**;../XREngine.Runtime.Net.Osc/obj/**;../XREngine.Runtime.Net.Osc/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.Net.Osc" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Include="../XREngine.Runtime.Net.Sockets/**/*.cs" Exclude="../XREngine.Runtime.Net.Sockets/bin/**;../XREngine.Runtime.Net.Sockets/obj/**;../XREngine.Runtime.Net.Sockets/**/*.g.cs" RegistrationAssembly="XREngine.Runtime.Net.Sockets" EmitRegistration="true" />
-    <XREngineFactoryRegistrationInput Remove="**/bin/**;**/obj/**;**/*.g.cs" />
-  </ItemGroup>
-  <Import Project="../Build/Registration/FactoryRegistrations.targets" />
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 
   <ItemGroup>
     <ProjectReference Include="../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />

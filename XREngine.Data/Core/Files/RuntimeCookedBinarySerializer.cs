@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 
@@ -391,6 +392,30 @@ public static class RuntimeCookedBinarySerializer
         WriteValue(writer, value);
 
         return buffer;
+    }
+
+    /// <summary>
+    /// Serializes directly into the caller's buffer writer. The exact size is computed first so the
+    /// writer hands back a single span and no intermediate array is allocated.
+    /// </summary>
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    public static void Serialize(object? value, System.Buffers.IBufferWriter<byte> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        long length = CalculateSize(value);
+        if (length > int.MaxValue)
+            throw new InvalidOperationException($"Runtime cooked payload exceeds maximum supported size ({length} bytes).");
+
+        int size = (int)length;
+        if (size == 0)
+            return;
+
+        Span<byte> span = destination.GetSpan(size)[..size];
+        RuntimeCookedBinaryWriter writer = new(span);
+        WriteValue(writer, value);
+        destination.Advance(size);
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -887,17 +912,26 @@ public static class RuntimeCookedBinarySerializer
             throw new InvalidOperationException($"Unable to resolve runtime cooked type '{name}' from published metadata.");
 
         resolved = Type.GetType(name, throwOnError: false, ignoreCase: false);
-        if (resolved is not null)
-            return resolved;
-
-        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        if (resolved is null)
         {
-            resolved = assembly.GetType(name, throwOnError: false, ignoreCase: false);
-            if (resolved is not null)
-                return resolved;
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                resolved = assembly.GetType(name, throwOnError: false, ignoreCase: false);
+                if (resolved is not null)
+                    break;
+            }
         }
 
-        return null;
+        if (resolved is not null)
+        {
+            AotParityDiagnostics.Report(
+                resolved,
+                EAotParityCategory.TypeResolutionScan,
+                $"{nameof(RuntimeCookedBinarySerializer)}.{nameof(ResolveType)}",
+                "Add the type to the published runtime metadata known-type table so runtime cooked payloads resolve it without Type.GetType or an assembly scan.");
+        }
+
+        return resolved;
     }
 
     private static Type? UnwrapNullable(Type? type)
@@ -915,6 +949,12 @@ public static class RuntimeCookedBinarySerializer
 
             if (XRRuntimeEnvironment.IsAotRuntimeBuild)
                 throw CreatePublishedAotUnsupportedException($"object construction for '{type.FullName}'");
+
+            AotParityDiagnostics.Report(
+                type,
+                EAotParityCategory.ReflectiveFactory,
+                $"{nameof(RuntimeCookedBinarySerializer)}.{nameof(CreateInstance)}",
+                $"Register a runtime factory with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RegisterRuntimeFactory)} or generate one so the object is constructed without a reflected constructor.");
 
             ConstructorInfo? ctor = type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, Type.EmptyTypes, modifiers: null);
             return ctor?.Invoke(null);

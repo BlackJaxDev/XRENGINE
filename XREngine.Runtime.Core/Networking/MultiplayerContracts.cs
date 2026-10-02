@@ -71,7 +71,10 @@ public sealed partial class RealtimeEndpointDescriptor
     public RealtimeTransportKind Transport { get; set; } = RealtimeTransportKind.NativeUdp;
     public string Host { get; set; } = "127.0.0.1";
     public int Port { get; set; }
+    /// <summary>Build compatibility identifier, independent of the binary wire protocol.</summary>
     public string ProtocolVersion { get; set; } = "dev";
+    /// <summary>Binary realtime protocol advertised by this endpoint.</summary>
+    public int WireProtocolVersion { get; set; } = RealtimeProtocol.WireVersion;
     public Dictionary<string, string> Metadata { get; set; } = [];
 }
 

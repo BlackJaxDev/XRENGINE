@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -49,4 +50,5 @@
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>

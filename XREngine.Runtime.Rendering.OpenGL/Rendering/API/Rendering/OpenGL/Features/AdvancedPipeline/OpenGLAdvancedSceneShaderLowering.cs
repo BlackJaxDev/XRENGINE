@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Runtime.CompilerServices;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.OpenGL;
@@ -78,21 +80,30 @@ internal static class OpenGLAdvancedSceneShaderLowering
                 ComputeLayout(record, structs, new HashSet<string>(StringComparer.Ordinal));
             uint expectedSize = binding switch
             {
-                0u or 17u => 80u,
-                1u => 224u,
-                2u => 320u,
-                3u or 7u or 8u or 21u => 64u,
-                4u => AdvancedShaderRecordLayout.ViewSize,
-                5u or 14u => 128u,
-                6u => 272u,
-                9u or 22u => 48u,
-                11u => 4u,
-                12u or 18u or 23u => 32u,
-                13u => 176u,
-                15u => 192u,
-                16u => 208u,
-                19u or 20u => 16u,
-                27u => 8u,
+                AdvancedGlobalResourceBindings.Draws => SizeOf<AdvancedDrawRecord>(),
+                AdvancedGlobalResourceBindings.Instances => SizeOf<AdvancedInstanceRecord>(),
+                AdvancedGlobalResourceBindings.Meshes => SizeOf<AdvancedGeometryRecord>(),
+                AdvancedGlobalResourceBindings.Materials => SizeOf<AdvancedMaterialRecord>(),
+                AdvancedGlobalResourceBindings.Views => SizeOf<AdvancedViewRecord>(),
+                AdvancedGlobalResourceBindings.Lights => SizeOf<AdvancedLightRecord>(),
+                AdvancedGlobalResourceBindings.Shadows => SizeOf<AdvancedShadowRecord>(),
+                AdvancedGlobalResourceBindings.Textures => SizeOf<AdvancedTextureRecord>(),
+                AdvancedGlobalResourceBindings.Samplers => SizeOf<AdvancedSamplerRecord>(),
+                AdvancedGlobalResourceBindings.Deformations => SizeOf<AdvancedDeformationRecord>(),
+                AdvancedGlobalResourceBindings.MaterialConstants => sizeof(uint),
+                AdvancedGlobalResourceBindings.MaterialTextureBindings => SizeOf<AdvancedMaterialTextureBinding>(),
+                AdvancedGlobalResourceBindings.Probes => SizeOf<AdvancedProbeRecord>(),
+                AdvancedGlobalResourceBindings.Environments => SizeOf<AdvancedEnvironmentRecord>(),
+                AdvancedGlobalResourceBindings.Decals => SizeOf<AdvancedDecalRecord>(),
+                AdvancedGlobalResourceBindings.GiResources => SizeOf<AdvancedGiResourceRecord>(),
+                AdvancedGlobalResourceBindings.Transforms => SizeOf<AdvancedTransformRecord>(),
+                AdvancedGlobalResourceBindings.RenderStates => SizeOf<AdvancedRenderStateRecord>(),
+                AdvancedGlobalResourceBindings.EncodedTextures => SizeOf<AdvancedEncodedTextureReference>(),
+                AdvancedGlobalResourceBindings.EncodedSamplers => SizeOf<AdvancedEncodedSamplerReference>(),
+                AdvancedGlobalResourceBindings.ShadingKernels => SizeOf<AdvancedShadingKernelRecord>(),
+                AdvancedGlobalResourceBindings.MaterialLayouts => SizeOf<AdvancedMaterialLayoutRecord>(),
+                AdvancedGlobalResourceBindings.EditorIdentities => SizeOf<AdvancedEditorIdentityRecord>(),
+                AdvancedGlobalResourceBindings.HandleLookups => SizeOf<AdvancedGpuHandleLookup>(),
                 _ => throw new NotSupportedException($"Advanced GL arena has no record ABI for binding {binding}."),
             };
             if (layout.Size != expectedSize)
@@ -102,6 +113,8 @@ internal static class OpenGLAdvancedSceneShaderLowering
         }
         return tables;
     }
+
+    private static uint SizeOf<T>() where T : unmanaged => (uint)Unsafe.SizeOf<T>();
 
     private static string ReplaceTableUses(string source, List<Table> tables)
     {

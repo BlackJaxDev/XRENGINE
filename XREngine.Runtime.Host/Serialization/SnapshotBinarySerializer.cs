@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Core.Files;
 using XREngine.Scene;
 
@@ -32,6 +33,7 @@ internal static class SnapshotBinarySerializer
 
     public static T? Deserialize<T>(byte[]? payload) where T : class
     {
+        using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.CookedSnapshotLoad);
         if (payload is null || payload.Length == 0)
             return null;
 

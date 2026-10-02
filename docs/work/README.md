@@ -32,6 +32,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
+| Shadow and pipeline validation failures | Open | [todo/rendering/shadow-and-pipeline-validation-failures-todo.md](todo/rendering/shadow-and-pipeline-validation-failures-todo.md) | All 50 failed cases from the October 2 shadow and pipeline validation runs, observed diagnostics, rerun commands, and the strict shader-loading parity prerequisite. |
 | Control plane managed server instances | Planned | [todo/networking/control-plane-managed-server-instances-todo.md](todo/networking/control-plane-managed-server-instances-todo.md) | Service/host supervision, verified world startup, player admission/accounting, authoritative synchronization, client workflow, restart recovery, and public hosting. |
 | Default render pipeline V2 | Active | [todo/COMPLETED/default-render-pipeline-v2-todo.md](todo/COMPLETED/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
 | Default pipeline depth of field | Active | [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md) | Optimization and feature roadmap for CoC, half-res near/far blur, stereo policy, debug views, and cinematic controls. |
@@ -43,6 +44,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 | Vulkan core hardening and frame-wide render loop | Active | [code changes](todo/rendering/vulkan-core-hardening-and-device-loss-todo.md), [testing](testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md), [target design](design/rendering/vulkan-render-loop-target-architecture.md), [multi-view design](design/rendering/vulkan-render-loop-design.md) | Consolidated program for production-grade lifecycle hardening, a smaller Vulkan ownership surface, zero-allocation CPU hot paths, complete slow-frame attribution, frame-plan recording, graph simplification, and render-tail work. |
 | Advanced visibility renderer | Active; replaces Deferred+ proposal | [XR/Advanced TODO](todo/rendering/vulkan-xr-and-advanced-rendering-todo.md), [historical design](design/rendering/deferred-plus-render-path-design.md) | Current visibility, native shading, temporal and stereo acceptance; superseded proposal TODOs removed. |
 | Runtime modularization | Active | [todo/COMPLETED/runtime-modularization-phase3-todo.md](todo/COMPLETED/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
+| Runtime data layout and generated contracts | Planned | [todo/runtime/runtime-data-layout-and-generated-contracts-todo.md](todo/runtime/runtime-data-layout-and-generated-contracts-todo.md), [design/runtime/runtime-data-layout-and-generated-contracts-design.md](design/runtime/runtime-data-layout-and-generated-contracts-design.md) | Copy-free cooked asset loads, binary realtime payloads, AOT parity diagnostics, a Roslyn contract generator, reflected GPU layout validation, dense transform storage, and a data-only downloaded-content policy. Gated changes approved 2026-10-02. |
 | GC and hot-path memory control | Stable doc + testing | [../developer-guides/runtime/hot-path-memory.md](../developer-guides/runtime/hot-path-memory.md), [runtime/gc-hot-path-memory-control-2026-07-02.md](runtime/gc-hot-path-memory-control-2026-07-02.md), [testing/memory-control-investigation-template.md](testing/memory-control-investigation-template.md) | Runtime memory profiles, scratch/pool helpers, allocation scopes, ECS/network allocation tests, and validation template are in place. Hardware VR/editor profiler captures remain follow-up validation. |
 | Finalized game builds and asset cooking | Stable doc | [../user-guide/finalized-game-builds.md](../user-guide/finalized-game-builds.md) | User-facing guide for cooked AOT and explicitly non-AOT finalized game builds. |
 | Physics-chain performance | Stable doc + testing | [../developer-guides/rendering/physics-chain-performance.md](../developer-guides/rendering/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
@@ -105,6 +107,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 ## Active TODOs
 
+- [todo/runtime/runtime-data-layout-and-generated-contracts-todo.md](todo/runtime/runtime-data-layout-and-generated-contracts-todo.md)
 - [todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md](todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [todo/avatar/avatar-analyzer-reporting-and-ux-todo.md](todo/avatar/avatar-analyzer-reporting-and-ux-todo.md)
 - [todo/avatar/avatar-lod-meshlet-cooked-variant-todo.md](todo/avatar/avatar-lod-meshlet-cooked-variant-todo.md)
@@ -199,6 +202,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 - [design/VR/openxr-implementation-comparison.md](design/VR/openxr-implementation-comparison.md)
 - [design/rendering/shadows/post-v1-advanced-shadow-features-plan.md](design/rendering/shadows/post-v1-advanced-shadow-features-plan.md)
 - [design/runtime/editor-crash-telemetry-design.md](design/runtime/editor-crash-telemetry-design.md)
+- [design/runtime/runtime-data-layout-and-generated-contracts-design.md](design/runtime/runtime-data-layout-and-generated-contracts-design.md)
 - [design/runtime-modularization-plan.md](design/runtime-modularization-plan.md)
 - [design/rendering/shadows/shadow-pass-material-binding-optimization-plan.md](design/rendering/shadows/shadow-pass-material-binding-optimization-plan.md)
 - [design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md](design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md)

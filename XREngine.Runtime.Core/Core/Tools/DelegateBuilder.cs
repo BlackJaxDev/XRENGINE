@@ -10,6 +10,9 @@ namespace XREngine.Core.Tools
             if (missingParamValues.Length == 0 && TryCreateDirectDelegate(method, out T? directDelegate))
                 return directDelegate!;
 
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(method.DeclaringType ?? typeof(T),
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveMemberBinding,
+                nameof(DelegateBuilder), "Register a typed delegate adapter for the runtime member signature.");
             var queueMissingParams = new Queue<object>(missingParamValues);
 
             var dgtMi = typeof(T).GetMethod("Invoke") ?? throw new InvalidOperationException($"Type {typeof(T)} does not have an Invoke method");
@@ -77,7 +80,7 @@ namespace XREngine.Core.Tools
                 return Expression.Constant(queueMissingParams.Dequeue());
 
             if (callParamType.ParameterType.IsValueType)
-                return Expression.Constant(Activator.CreateInstance(callParamType.ParameterType));
+                return Expression.Default(callParamType.ParameterType);
 
             return Expression.Constant(null);
         }

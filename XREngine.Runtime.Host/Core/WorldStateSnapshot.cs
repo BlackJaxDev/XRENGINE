@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -106,7 +107,7 @@ namespace XREngine
                             SnapshotDiagnostics.Warning($"Scene '{scene.Name ?? "<unnamed>"}' serialized to a null payload.");
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
                         Debug.LogWarning($"Failed to serialize scene '{scene.Name}': {ex.Message}");
                         SnapshotDiagnostics.Warning($"Failed to serialize scene '{scene.Name ?? "<unnamed>"}': {ex}");
@@ -120,7 +121,7 @@ namespace XREngine
                     settingsData = SerializeObject(world.Settings);
                     SnapshotDiagnostics.Log($"Serialized world settings payloadBytes={settingsData?.Length ?? 0}");
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not AotParityViolationException)
                 {
                     Debug.LogWarning($"Failed to serialize world settings: {ex.Message}");
                     SnapshotDiagnostics.Warning($"Failed to serialize world settings: {ex}");
@@ -135,7 +136,7 @@ namespace XREngine
                         gameModeData = SerializeObject(world.DefaultGameMode);
                         SnapshotDiagnostics.Log($"Serialized default game mode type={world.DefaultGameMode.GetType().FullName} payloadBytes={gameModeData?.Length ?? 0}");
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
                         Debug.LogWarning($"Failed to serialize game mode: {ex.Message}");
                         SnapshotDiagnostics.Warning($"Failed to serialize game mode '{world.DefaultGameMode.GetType().FullName}': {ex}");
@@ -153,7 +154,7 @@ namespace XREngine
                     capturedRuntimeOnlyRootIds,
                     isValid);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
                 Debug.LogException(ex, "Failed to capture world state snapshot");
                 // Return a minimal snapshot that can still be used for reference
@@ -182,6 +183,7 @@ namespace XREngine
         /// </summary>
         public bool Restore()
         {
+            using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.CookedSnapshotLoad);
             if (SourceWorld is null)
                 return false;
 
@@ -225,7 +227,7 @@ namespace XREngine
                             SnapshotDiagnostics.Log($"Restored world settings payloadBytes={SerializedSettings.Length}");
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
                         Debug.LogWarning($"Failed to restore world settings: {ex.Message}");
                         SnapshotDiagnostics.Warning($"Failed to restore world settings: {ex}");
@@ -244,7 +246,7 @@ namespace XREngine
                             SnapshotDiagnostics.Log($"Restored default game mode type={gameMode.GetType().FullName} payloadBytes={SerializedGameMode.Length}");
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
                         Debug.LogWarning($"Failed to restore game mode: {ex.Message}");
                         SnapshotDiagnostics.Warning($"Failed to restore game mode: {ex}");
@@ -267,7 +269,7 @@ namespace XREngine
                             SnapshotDiagnostics.Log($"Restoring existing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length} currentRoots={scene.RootNodes?.Count ?? 0}");
                             RestoreScene(scene, kvp.Value, runtimeInstance);
                         }
-                        catch (Exception ex)
+                        catch (Exception ex) when (ex is not AotParityViolationException)
                         {
                             Debug.LogWarning($"Failed to restore scene '{kvp.Key}': {ex.Message}");
                             SnapshotDiagnostics.Warning($"Failed to restore existing scene '{kvp.Key}': {ex}");
@@ -359,7 +361,7 @@ namespace XREngine
                 Debug.Out($"World state restored from snapshot taken at {CaptureTime}");
                 return true;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
                 Debug.LogException(ex, "Failed to restore world state from snapshot");
                 SnapshotDiagnostics.Warning($"Failed to restore world state from snapshot: {ex}");
@@ -402,7 +404,7 @@ namespace XREngine
             {
                 return SnapshotBinarySerializer.Serialize(obj);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
                 Debug.LogWarning($"Snapshot serialization failed for {typeof(T).Name}: {ex.Message}");
                 return null;
@@ -418,7 +420,7 @@ namespace XREngine
             {
                 return SnapshotBinarySerializer.Deserialize<T>(data);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
                 Debug.LogWarning($"Snapshot deserialization failed for {typeof(T).Name}: {ex.Message}");
                 return null;

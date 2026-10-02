@@ -246,6 +246,8 @@ namespace XREngine.Rendering.UI
             }
         }
 
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
         {
             switch (DrawSpace)

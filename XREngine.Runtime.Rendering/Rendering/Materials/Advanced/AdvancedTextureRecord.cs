@@ -8,6 +8,7 @@ namespace XREngine.Rendering;
 /// Stable logical texture metadata. Backend descriptors live in the encoded
 /// resource table rather than this record.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedTextureRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedTextureRecord
 {

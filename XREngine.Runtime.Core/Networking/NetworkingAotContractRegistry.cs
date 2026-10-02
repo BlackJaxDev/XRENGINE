@@ -6,7 +6,8 @@ public static class NetworkingAotContractRegistry
 {
     public static Type[] ContractTypes { get; } =
     [
-        typeof(StateChangeInfo),
+        typeof(RemoteJobRequest),
+        typeof(RemoteJobResponse),
         typeof(PlayerJoinRequest),
         typeof(PlayerAssignment),
         typeof(PlayerInputSnapshot),

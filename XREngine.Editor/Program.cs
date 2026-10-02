@@ -112,6 +112,9 @@ internal partial class Program
         WriteBootstrapTrace("Editor process entry.");
         InstallGlobalCrashDiagnostics();
 
+        if (TryRunGpuRecordLayoutCommand(args))
+            return;
+
         if (TryRunCookCommonAssetsCommand(args))
             return;
 
@@ -126,6 +129,8 @@ internal partial class Program
 
         if (TryRunDefaultRenderPipelineScriptExportCommand(args))
             return;
+
+        ValidateDebugGpuRecordLayouts();
 
         //Begin tracking how long editor startup takes, preferring the first non-black frame but
         //falling back to the first stable rendered frame so dark scenes do not keep the timer running indefinitely.

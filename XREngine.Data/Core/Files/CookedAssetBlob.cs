@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
-using MemoryPack;
 using XREngine.Core;
+using XREngine.Data.Runtime.AotParity;
 
 namespace XREngine.Core.Files
 {
@@ -10,23 +10,26 @@ namespace XREngine.Core.Files
         RuntimeBinaryV1 = 2,
     }
 
-    [MemoryPackable]
-    public partial struct CookedAssetBlob(string typeName, CookedAssetFormat format, byte[] payload)
-    {
-        public string TypeName { get; set; } = typeName;
+    /// <summary>
+    /// Authoring-side value for one cooked asset: the encoded type reference, the payload format,
+    /// and the payload bytes. Cooking writes it through <see cref="CookedAssetEnvelope"/>; the
+    /// runtime never materializes this struct because it slices the payload from the envelope span.
+    /// </summary>
+    public readonly record struct CookedAssetBlob(string TypeReference, CookedAssetFormat Format, byte[] Payload);
 
-        public CookedAssetFormat Format { get; set; } = format;
-
-        public byte[] Payload { get; set; } = payload;
-    }
-
+    /// <summary>
+    /// Authoring and development reader. It accepts both the registry-backed
+    /// <see cref="CookedAssetFormat.RuntimeBinaryV1"/> payloads and the reflective
+    /// <see cref="CookedAssetFormat.BinaryV1"/> payloads, so it carries reflection annotations.
+    /// Published runtimes use <see cref="PublishedCookedAssetReader"/>, which has none.
+    /// </summary>
     public static class CookedAssetReader
     {
-        internal const string ReflectionWarningMessage = "Cooked cooked asset loading relies on reflection and cannot be statically analyzed for trimming or AOT";
+        internal const string ReflectionWarningMessage = "Authoring cooked asset loading relies on reflection and cannot be statically analyzed for trimming or AOT";
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
-        public static T? LoadAsset<T>(byte[] cookedData)
+        public static T? LoadAsset<T>(ReadOnlySpan<byte> cookedData)
         {
             object? value = LoadAsset(cookedData, typeof(T));
             return value is T typed ? typed : default;
@@ -34,45 +37,26 @@ namespace XREngine.Core.Files
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
-        public static object? LoadAsset(byte[] cookedData, Type? expectedType = null)
-        {
-            ArgumentNullException.ThrowIfNull(cookedData);
-
-            var blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(cookedData);
-            return blob.Format switch
-            {
-                CookedAssetFormat.BinaryV1 => DeserializeBinary(blob, expectedType),
-                CookedAssetFormat.RuntimeBinaryV1 => DeserializeRuntimeBinary(blob, expectedType),
-                _ => throw new NotSupportedException($"Unsupported cooked asset format '{blob.Format}'.")
-            };
-        }
-
-        /// <summary>
-        /// Loads a cooked asset from a <see cref="ReadOnlySpan{T}"/> without requiring
-        /// a <c>byte[]</c> allocation for the outer envelope.  The decompressed bytes
-        /// from the archive can be passed directly here.
-        /// </summary>
-        [RequiresUnreferencedCode(ReflectionWarningMessage)]
-        [RequiresDynamicCode(ReflectionWarningMessage)]
         public static object? LoadAsset(ReadOnlySpan<byte> cookedData, Type? expectedType = null)
         {
             if (cookedData.IsEmpty)
                 throw new ArgumentException("Cooked data is empty.", nameof(cookedData));
 
-            var blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(cookedData);
-            return blob.Format switch
+            CookedAssetEnvelopeHeader header = CookedAssetEnvelope.ParseHeader(cookedData);
+            return header.Format switch
             {
-                CookedAssetFormat.BinaryV1 => DeserializeBinary(blob, expectedType),
-                CookedAssetFormat.RuntimeBinaryV1 => DeserializeRuntimeBinary(blob, expectedType),
-                _ => throw new NotSupportedException($"Unsupported cooked asset format '{blob.Format}'.")
+                CookedAssetFormat.BinaryV1 => DeserializeBinary(cookedData, header, expectedType),
+                CookedAssetFormat.RuntimeBinaryV1 => PublishedCookedAssetReader.LoadAsset(cookedData, header, expectedType),
+                _ => throw new NotSupportedException($"Unsupported cooked asset format '{header.Format}'."),
             };
         }
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
-        private static object? DeserializeBinary(CookedAssetBlob blob, Type? expectedType)
+        private static object? DeserializeBinary(ReadOnlySpan<byte> envelope, in CookedAssetEnvelopeHeader header, Type? expectedType)
         {
-            Type resolvedType = ResolveAssetType(blob.TypeName, expectedType);
+            string typeReference = header.DecodeTypeReference(envelope);
+            Type resolvedType = ResolveAssetType(typeReference, expectedType);
 
             if (XRRuntimeEnvironment.IsAotRuntimeBuild)
             {
@@ -80,33 +64,21 @@ namespace XREngine.Core.Files
                     $"Cooked asset type '{resolvedType}' was published with legacy '{CookedAssetFormat.BinaryV1}', which is not supported in published AOT runtime builds. Register the asset type with {nameof(PublishedCookedAssetRegistry)} and republish content so it uses '{CookedAssetFormat.RuntimeBinaryV1}'.");
             }
 
-            return CookedBinarySerializer.Deserialize(resolvedType, blob.Payload);
+            AotParityDiagnostics.Report(
+                resolvedType,
+                EAotParityCategory.ReflectiveCookedDeserialization,
+                $"{nameof(CookedAssetReader)}.{nameof(DeserializeBinary)}",
+                $"Register the asset type with {nameof(PublishedCookedAssetRegistry)} so it cooks and loads as '{CookedAssetFormat.RuntimeBinaryV1}' instead of the reflective '{CookedAssetFormat.BinaryV1}' reader.");
+
+            return CookedBinarySerializer.Deserialize(resolvedType, header.Payload(envelope));
         }
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
-        private static object? DeserializeRuntimeBinary(CookedAssetBlob blob, Type? expectedType)
+        private static Type ResolveAssetType(string? typeReference, Type? expectedType)
         {
-            Type resolvedType = ResolveAssetType(blob.TypeName, expectedType);
-
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild && !AotRuntimeMetadataStore.IsPublishedRuntimeAssetType(resolvedType))
-            {
-                throw new NotSupportedException(
-                    $"Cooked asset type '{resolvedType}' is not registered in published AOT runtime metadata for format '{CookedAssetFormat.RuntimeBinaryV1}'.");
-            }
-
-            if (!PublishedCookedAssetRegistry.TryDeserialize(resolvedType, blob.Payload, out object? asset))
-                throw new NotSupportedException($"No published cooked asset serializer is registered for '{resolvedType}'.");
-
-            return asset;
-        }
-
-        [RequiresUnreferencedCode(ReflectionWarningMessage)]
-        [RequiresDynamicCode(ReflectionWarningMessage)]
-        private static Type ResolveAssetType(string? typeName, Type? expectedType)
-        {
-            Type resolvedType = CookedAssetTypeReference.Resolve(typeName, expectedType)
-                ?? throw new InvalidOperationException($"Unable to resolve cooked asset type '{typeName}'.");
+            Type resolvedType = CookedAssetTypeReference.Resolve(typeReference, expectedType)
+                ?? throw new InvalidOperationException($"Unable to resolve cooked asset type '{typeReference}'.");
 
             if (expectedType is not null && !expectedType.IsAssignableFrom(resolvedType))
                 throw new InvalidOperationException($"Cooked asset type '{resolvedType}' does not match expected type '{expectedType}'.");

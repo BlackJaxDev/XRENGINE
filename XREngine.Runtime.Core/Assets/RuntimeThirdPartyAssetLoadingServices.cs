@@ -94,6 +94,11 @@ public static class RuntimeThirdPartyAssetLoadingServices
 
             if (asset is null)
             {
+                XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                    assetType,
+                    XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                    $"{nameof(RuntimeThirdPartyAssetLoadingServices)}.Load",
+                    $"Register a runtime factory for the asset type with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RuntimeCookedBinarySerializer.RegisterRuntimeFactory)} so third-party assets are constructed without Activator.CreateInstance.");
                 asset = Activator.CreateInstance(assetType) as XRAsset
                     ?? throw new InvalidOperationException($"Unable to construct third-party asset type '{assetType.FullName}'.");
             }

@@ -165,8 +165,9 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
 
     private static bool TryDeserializeBinaryAsset(string filePath, out XRTexture2D? texture)
     {
-        byte[] bytes = File.ReadAllBytes(filePath);
-        if (!XRTexture2D.TryDeserializeTextureStreamingPayload(bytes, out texture))
+        // The cache file is mapped for the duration of the parse; the texture copies only its mip data.
+        using CookedPayloadOwner bytes = CookedPayloadOwner.MapFile(filePath);
+        if (!XRTexture2D.TryDeserializeTextureStreamingPayload(bytes.Span, out texture))
             return false;
 
         texture.FilePath = Path.GetFullPath(filePath);

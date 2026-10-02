@@ -32,6 +32,9 @@ public static class RealtimeJoinHandoff
         RealtimeEndpointDescriptor endpoint = payload.Endpoint
             ?? throw new InvalidOperationException("Realtime handoff payload is missing endpoint.");
 
+        if (!RealtimeProtocol.IsCompatible(endpoint.WireProtocolVersion))
+            throw new InvalidOperationException(RealtimeProtocol.DescribeMismatch(endpoint.WireProtocolVersion));
+
         if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
             throw new NotSupportedException($"Realtime transport '{endpoint.Transport}' is not supported by this runtime.");
 

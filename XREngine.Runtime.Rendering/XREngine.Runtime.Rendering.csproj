@@ -5,12 +5,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
-    <RenderCommandRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</RenderCommandRegistrationGenerator>
-    <GeneratedRenderCommandRegistrations>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\RenderCommandRegistrations.g.cs</GeneratedRenderCommandRegistrations>
-    <RenderCommandRegistrationStamp>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\RenderCommandRegistrations.stamp</RenderCommandRegistrationStamp>
-    <!-- Windows builds use the inbox PowerShell host, like the other desktop build steps; other hosts need PowerShell 7. -->
-    <RenderCommandRegistrationHost Condition="'$(OS)' == 'Windows_NT'">powershell -NoProfile -ExecutionPolicy Bypass</RenderCommandRegistrationHost>
-    <RenderCommandRegistrationHost Condition="'$(OS)' != 'Windows_NT'">pwsh -NoProfile</RenderCommandRegistrationHost>
+    <XREngineRuntimeContractMode>CommandsOnly</XREngineRuntimeContractMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -38,19 +33,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="$(GeneratedRenderCommandRegistrations)" />
-    <RenderCommandRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
   </ItemGroup>
 
-  <Target Name="InvalidateMissingRenderCommandRegistrations" BeforeTargets="GenerateRenderCommandRegistrations" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedRenderCommandRegistrations)') and Exists('$(RenderCommandRegistrationStamp)')">
-    <Delete Files="$(RenderCommandRegistrationStamp)" />
-  </Target>
-
-  <Target Name="GenerateRenderCommandRegistrations" BeforeTargets="ValidateXREnginePortableProject;CoreCompile" Inputs="$(RenderCommandRegistrationGenerator);$(MSBuildProjectFullPath);@(RenderCommandRegistrationInput)" Outputs="$(RenderCommandRegistrationStamp)" Condition="'$(DesignTimeBuild)' != 'true'">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedRenderCommandRegistrations)'))" />
-    <Exec Command="$(RenderCommandRegistrationHost) -File &quot;$(RenderCommandRegistrationGenerator)&quot; -CommandsOnly -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedRenderCommandRegistrations)&quot;" />
-    <Touch Files="$(RenderCommandRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
-  </Target>
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />

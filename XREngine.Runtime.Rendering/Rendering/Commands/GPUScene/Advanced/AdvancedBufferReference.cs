@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Commands;
 /// Backend-neutral immutable buffer slice. Backends may encode
 /// <see cref="Buffer"/> as a descriptor row, binding-table row, or device address.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedBufferReference")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedBufferReference(
     AdvancedGpuHandle Buffer,

@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// Sparse per-vertex blendshape record. Delta index zero is the shared zero
 /// vector, so absent normal or tangent deltas require no special allocation.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("BlendshapeRecord", PreserveMemberCase = true)]
 [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 16)]
 public readonly record struct AdvancedBlendshapeSparseRecord(
     uint VertexIndex,

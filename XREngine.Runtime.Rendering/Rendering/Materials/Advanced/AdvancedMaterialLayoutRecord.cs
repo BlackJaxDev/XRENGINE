@@ -5,6 +5,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Stable declaration for one packed material layout.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedMaterialLayoutRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedMaterialLayoutRecord
 {

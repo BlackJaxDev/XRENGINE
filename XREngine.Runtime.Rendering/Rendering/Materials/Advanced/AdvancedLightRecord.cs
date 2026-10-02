@@ -7,6 +7,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Unified native-shading light record.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedLightRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedLightRecord
 {

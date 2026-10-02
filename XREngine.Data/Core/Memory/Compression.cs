@@ -685,6 +685,7 @@ namespace XREngine.Data
         {
             return codec switch
             {
+                CompressionCodec.Stored => source.ToArray(),
                 CompressionCodec.Lzma => Compress(source.ToArray(), longSize: true),
                 CompressionCodec.Lz4 => CompressLz4(source),
                 CompressionCodec.Zstd => CompressZstd(source),
@@ -703,6 +704,7 @@ namespace XREngine.Data
         {
             return codec switch
             {
+                CompressionCodec.Stored => compressed.ToArray(),
                 CompressionCodec.Lzma => Decompress(compressed, longLength: true),
                 CompressionCodec.Lz4 => DecompressLz4(compressed),
                 CompressionCodec.Zstd => DecompressZstd(compressed),

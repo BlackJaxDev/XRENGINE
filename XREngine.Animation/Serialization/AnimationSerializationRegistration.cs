@@ -16,8 +16,8 @@ public static class AnimationSerializationRegistration
 
         return RegistrationLeaseGroup.Create(static leases =>
         {
+            leases.Add(global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Animation.Install());
             leases.Add(AnimationCookedBinaryCodecs.Install());
-            leases.Add(AnimationPublishedCookedAssetRegistration.Install());
             leases.Add(ThirdPartyCacheCodecRegistry.Install(new AnimationClipBinaryCacheCodec()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install(nameof(XREngine.Animation), typeof(AnimationClip)));
             leases.Add(YamlSerializationContributions.Install(new AnimationYamlContribution()));

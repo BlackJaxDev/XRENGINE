@@ -103,6 +103,8 @@ namespace XREngine.Components.Scene.Transforms
             return Matrix4x4.Identity;
         }
 
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
         {
             //CalcCurrentMatrix();

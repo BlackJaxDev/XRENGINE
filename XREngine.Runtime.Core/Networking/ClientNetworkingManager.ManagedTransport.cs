@@ -188,32 +188,33 @@ public partial class ClientNetworkingManager
                 return false;
             }
 
-            innerDatagram = payload.ToArray();
+            innerDatagram = datagram.Slice(ManagedUdpEnvelopeHeader.UnsignedHeaderLength, payload.Length);
             return true;
         }
     }
 
-    protected override byte[]? ProtectOutboundDatagram(byte[] innerDatagram, IPEndPoint target)
+    protected override bool TryProtectOutboundDatagram(ReadOnlySpan<byte> innerDatagram, IPEndPoint target, Span<byte> destination, out int bytesWritten)
     {
+        bytesWritten = 0;
         lock (_managedTransportLock)
         {
             if (!IsManagedTransportRequested)
-                return innerDatagram;
+                return base.TryProtectOutboundDatagram(innerDatagram, target, destination, out bytesWritten);
             ManagedUdpAssociation? association = _managedAssociation;
             if (_managedHandshakeState != ManagedClientHandshakeState.Established || association is null || association.Closed
                 || ServerIP is null || !ServerIP.Equals(target) || !association.TryNextSendCounter(out ulong counter))
             {
-                return null;
+                return false;
             }
 
-            return ManagedUdpEnvelope.Create(new ManagedUdpEnvelopeHeader(
+            return ManagedUdpEnvelope.TryWrite(destination, new ManagedUdpEnvelopeHeader(
                 ManagedUdpMessageKind.Data,
                 ManagedUdpDirection.ClientToServer,
                 association.Identity.SessionId,
                 association.Identity.Generation,
                 association.AssociationId,
                 association.Identity.CredentialEpoch,
-                counter), innerDatagram, association.SendKey);
+                counter), innerDatagram, association.SendKey, out bytesWritten);
         }
     }
 
@@ -333,6 +334,7 @@ public partial class ClientNetworkingManager
             ClientId = identity.ClientId,
             DisplayName = Environment.UserName,
             BuildVersion = CurrentProtocolVersion,
+            WireProtocolVersion = RealtimeProtocol.WireVersion,
             WorldName = ResolvePrimaryWorldInstance()?.TargetWorld?.Name,
             ClientWorldAsset = _localWorldAsset ??= CreateLocalWorldAsset(),
             SessionId = identity.SessionId,

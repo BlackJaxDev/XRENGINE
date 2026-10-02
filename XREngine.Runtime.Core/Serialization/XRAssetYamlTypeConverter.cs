@@ -355,6 +355,9 @@ namespace XREngine
             if (!typeof(TextFile).IsAssignableFrom(expectedType))
                 return false;
 
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(expectedType,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                nameof(XRAssetDeserializer), "Register a cooked asset factory instead of constructing YAML runtime references reflectively.");
             try
             {
                 if (Activator.CreateInstance(expectedType) is not TextFile textFile)
@@ -668,6 +671,9 @@ namespace XREngine
                 return null;
             if (!typeof(XRAsset).IsAssignableFrom(expectedType))
                 return null;
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(expectedType,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                nameof(XRAssetDeserializer), "Register a cooked asset factory instead of constructing YAML runtime references reflectively.");
             try
             {
                 if (Activator.CreateInstance(expectedType) is not XRAsset asset)

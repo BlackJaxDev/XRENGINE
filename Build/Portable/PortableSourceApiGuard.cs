@@ -139,6 +139,10 @@ namespace XREngine.Build
         {
             foreach (ITaskItem reference in ProjectReferences)
             {
+                // Analyzer-only projects contribute compiler tooling, not runtime references.
+                if (reference.GetMetadata("OutputItemType").Equals("Analyzer", StringComparison.OrdinalIgnoreCase) &&
+                    reference.GetMetadata("ReferenceOutputAssembly").Equals("false", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 string name = Path.GetFileNameWithoutExtension(reference.ItemSpec);
                 if (!portableProjects.Contains(name))
                     Log.LogError("Portable project {0} references nonportable project {1}.", ProjectName, reference.ItemSpec);
@@ -151,45 +155,8 @@ namespace XREngine.Build
         private void ValidateWholeProjectSourceSet()
         {
             string project = File.ReadAllText(ProjectFile);
-            if (ProjectName == "XREngine.Runtime.Host")
-                ValidateGeneratedSource(GeneratedAotFactoryRegistrations, "AotFactoryRegistrations.g.cs");
             if (ProjectName == "XREngine.Browser")
                 ValidateGeneratedSource(GeneratedBrowserStaticRegistrations, "BrowserStaticRegistrations.g.cs");
-            if (ProjectName == "XREngine.Runtime.Rendering")
-            {
-                const string generatedItem = "<Compile Include=\"$(GeneratedRenderCommandRegistrations)\" />";
-                // Inline build tasks compile against netstandard2.0, which lacks the
-                // StringComparison overloads of Contains and Replace.
-                if (project.IndexOf(generatedItem, StringComparison.Ordinal) >= 0)
-                {
-                    bool generatedSourcePresent = false;
-                    if (string.IsNullOrWhiteSpace(GeneratedRenderCommandRegistrations))
-                        Log.LogError("Portable project {0} has no evaluated render command registration path.", ProjectName);
-                    string expectedPath = string.Empty;
-                    if (!string.IsNullOrWhiteSpace(GeneratedRenderCommandRegistrations))
-                    {
-                        string candidate = Path.IsPathRooted(GeneratedRenderCommandRegistrations)
-                            ? GeneratedRenderCommandRegistrations
-                            : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ProjectFile)) ?? string.Empty,
-                                GeneratedRenderCommandRegistrations);
-                        expectedPath = Path.GetFullPath(candidate);
-                    }
-                    foreach (ITaskItem source in Sources)
-                    {
-                        string path = Path.GetFullPath(source.GetMetadata("FullPath"));
-                        if (path.Equals(expectedPath,
-                                Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) &&
-                            Path.GetFileName(path).Equals("RenderCommandRegistrations.g.cs", StringComparison.Ordinal))
-                        {
-                            generatedSourcePresent = true;
-                            break;
-                        }
-                    }
-                    if (!generatedSourcePresent)
-                        Log.LogError("Portable project {0} omits its generated render command source from Compile.", ProjectName);
-                    project = project.Replace(generatedItem, string.Empty);
-                }
-            }
             if (CreateRegex(@"<Compile\s+[^>]*(?:Include|Remove)\s*=").IsMatch(project) ||
                 CreateRegex(@"<(?:DefaultItemExcludes|DefaultItemExcludesInProjectFolder|EnableDefaultCompileItems|OverrideDefaultCompileItems)\b").IsMatch(project))
             {

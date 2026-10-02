@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Commands
 {
+    [XREngine.Rendering.Shaders.GpuRecord("GpuMeshletTaskRecord", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct GpuMeshletTaskRecord
     {
