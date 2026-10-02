@@ -264,3 +264,18 @@ resources. Local builds, exact package/ABI probes, and two canonical RollingBall
 WASM headless plus two canvas-composed lifecycle cycles pass, with the same 35
 post-stop registry objects. GPU pixels, PCSS edge widths, and resource counts still
 require the exact-commit Chromium run; import observations are not GPU evidence.
+
+The first live run of `7f79535a1fd426734538577f70b7d2c327453a21`,
+[run 36952723468](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36952723468),
+passed all seven shadow cases and both 256/512 map resizes before the diagnostic
+restart waiter failed. Actual HDR shadow/lit samples were `0.04800415` and
+`0.564453125`; presented red values were 97 and 227. The near/far PCSS edge
+transition widened from 9 to 21 pixels. Baseline, near, far and disabled captures
+were inspected; the shadow page logged no browser/GPU error. Existing lit,
+depth, texture, world/asset, audio and Jolt checks also passed. The run remains
+failed: stale completion text allowed the restart waiter to query a session
+before asynchronous creation finished. The repair clears readiness synchronously
+and requires a new session, matching epoch and completed frame. Repeated
+disable/restore checks additionally verify stable queue-drained resource counts.
+The [first qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36952723468/artifacts/11204788286)
+retains the actual pixels and failure. A subsequent complete run is still required.
