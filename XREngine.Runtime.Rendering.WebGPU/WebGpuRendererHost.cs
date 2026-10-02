@@ -5,7 +5,7 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Owns the managed half of one WebGPU session and its resource identities.</summary>
 public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRendererHost
 {
-    private readonly BrowserCanvasRenderTarget _target;
+    private readonly IBrowserCanvasPresentationTarget _target;
     private readonly Action<WebGpuRendererHost> _onDisposed;
     private readonly HashSet<int> _resources = [];
     private int _session;
@@ -13,7 +13,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
     private bool _deviceLost;
     private BrowserRendererState _state = BrowserRendererState.Pending;
 
-    internal WebGpuRendererHost(BrowserCanvasRenderTarget target, long generation, Action<WebGpuRendererHost> onDisposed)
+    internal WebGpuRendererHost(IBrowserCanvasPresentationTarget target, long generation, Action<WebGpuRendererHost> onDisposed)
         : base(new RendererHostContext(target, backendGeneration: generation))
     {
         _target = target;

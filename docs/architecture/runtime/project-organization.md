@@ -24,7 +24,7 @@ These projects target `net10.0` and compile their full source set for desktop an
 | `XREngine.Runtime.InputIntegration` | Player, pawn, and scene integration for input. |
 | `XREngine.Runtime.ModelingIntegration` | Runtime scene integration for modeling. |
 
-`XREngine.Runtime.Rendering.WebGPU` and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer and host; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
+`XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and application composition; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
 
 ## Backend modules
 
@@ -46,6 +46,7 @@ Most desktop modules currently use Windows-targeted project configurations. Some
 | `XREngine.Input.Silk` | Silk input device wrappers. |
 | `XREngine.Input.XInput` | Windows XInput devices. |
 | `XREngine.Runtime.Platform.Desktop` | Window creation/event pumping, native handles, input acquisition, filesystem discovery/watching/mapping, platform paths, clipboard, processes, development assembly loading, and the native-callable renderer and ImGui viewport callback entry points. |
+| `XREngine.Runtime.Platform.Browser` | Browser canvas presentation target and production page-owned surface, visibility, and frame-cadence host. Its canvas script is linked at the existing published player URL. Neutral surface contracts remain in Rendering so the WebGPU renderer does not depend on this platform leaf. |
 | `XREngine.Runtime.XR.OpenVR` | OpenVR devices, actions, compositor, and render models. |
 | `XREngine.Runtime.XR.OpenXR` | Renderer-neutral OpenXR instance/session, action, pose, swapchain, and frame lifecycle. |
 | `XREngine.Runtime.Rendering.OpenGL` | OpenGL objects, renderer-specific UI/XR bridges, and native ReSTIR execution. |
@@ -82,7 +83,7 @@ Image consumers exchange neutral buffers with dimensions, format, stride, origin
 | `XREngine.Editor` | Editor executable, authoring services, ImGui integration, model import, tooling, and unit-world bootstrap. |
 | `XREngine.Server` | Dedicated server executable using desktop bootstrap with headless renderer selection. |
 | `XREngine.VRClient` | OpenVR companion executable with its own runtime lifetime and interprocess frame/input exchange. |
-| `XREngine.Browser` | Browser composition and canvas host; independent of desktop Bootstrap. |
+| `XREngine.Browser` | Browser composition and authored-world session; installs the browser platform and WebGPU leaves independently of desktop Bootstrap. |
 | `XREngine.Runtime.ModelAssetPipeline` | Aggregate authoring/import adapter constructing scenes, meshes, materials, skinning, and animation. Owns Assimp-based import and consumes FBX/glTF support projects. |
 | `XREngine.Fbx` | Managed FBX parser/writer and import data model. |
 | `XREngine.Gltf` | glTF support with the native FastGltfBridge; outside the portable compile closure. |

@@ -140,7 +140,9 @@ public partial class DefaultRenderPipeline
 
     protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
     {
-        CommonPostProcessStages.AddStandardPipelineSchema(builder);
+        // The canvas route has no automatic-exposure producer. Schema defaults fill
+        // only missing camera values, so explicit authored selections still reject.
+        CommonPostProcessStages.AddStandardPipelineSchema(builder, defaultAutoExposure: !OperatingSystem.IsBrowser());
     }
     private static MotionBlurSettings? GetMotionBlurSettings()
     {

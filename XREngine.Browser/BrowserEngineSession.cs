@@ -115,6 +115,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
             GameStartupSettings settings = OwnConstruction(() => ProjectBrowserStartup(authoredSettings, world,
                 out _canvasWidth, out _canvasHeight));
+            if (canvasId is not null)
+                ConfigureCanvasResourceProfileDefaults(settings);
             _tonemapArtifact = tonemapArtifact;
             _pipelineArtifacts = pipelineArtifacts;
 
@@ -316,17 +318,20 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     {
         if (_canvas is null || _renderViewport is null || _renderer is null)
             throw new InvalidOperationException("WebGPU.EngineCanvas.Required: start a canvas world first.");
-        bool replaced = surface.Generation != _canvas.Surface.Generation;
-        if (replaced || !surface.CanRender || surface.PhysicalWidth != _canvas.Surface.PhysicalWidth ||
-            surface.PhysicalHeight != _canvas.Surface.PhysicalHeight)
+        RuntimeSurfaceState previous = _canvas.Surface;
+        bool replaced = surface.Generation != previous.Generation;
+        bool extentChanged = surface.PhysicalWidth != previous.PhysicalWidth ||
+            surface.PhysicalHeight != previous.PhysicalHeight;
+        bool drawableChanged = surface.CanRender != previous.CanRender;
+        if (replaced || extentChanged || (previous.CanRender && !surface.CanRender))
             ResetInput();
         _canvas.UpdateSurface(surface);
-        _renderer.SynchronizeEngineViewport(replaced);
-        if (!surface.CanRender)
-        {
-            SuspendNetwork();
+        if (replaced || extentChanged || (drawableChanged && surface.CanRender))
+            _renderer.SynchronizeEngineViewport(replaced || extentChanged);
+        if (replaced || drawableChanged || extentChanged)
             ResetFrameTiming();
-        }
+        if (!surface.CanRender)
+            SuspendNetwork();
     }
 
     public void RendererFailed(bool deviceLost) => _renderer?.MarkFailed(deviceLost);
@@ -365,11 +370,14 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public bool ActOnTextInput(int generation, bool submit)
         => _textInput.Action(generation, _localPlayer?.FocusedInteractable, submit);
 
-    /// <summary>Discards a suspended page's elapsed time without a physics catch-up burst.</summary>
+    /// <summary>Discards elapsed time and temporal history after suspension or a frame-clock gap.</summary>
     public void ResetFrameTiming()
     {
         if (_running)
+        {
             Engine.Time.Timer.ResetFrameTiming();
+            _renderViewport?.InvalidateTemporalHistory();
+        }
     }
 
     /// <summary>Invalidates pending startup and tears down after it has released ownership.</summary>

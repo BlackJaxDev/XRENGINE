@@ -458,3 +458,40 @@ fixture catalog produces 80 assets and 39 shader artifacts. The targeted driver
 uses the genuine CPU headless rendering-host services; it does not render or
 claim GPU acceptance. Both final Editor and native-Jolt Browser builds pass with
 zero warnings/errors after the alias, YAML type and canonical-expansion fixes.
+
+### Browser platform ownership and startup profile repair (2026-10-02)
+
+`XREngine.Runtime.Platform.Browser` now owns the concrete canvas presentation
+target and production canvas host. Neutral surface contracts stay in Rendering;
+WebGPU consumes the shared interface rather than depending on the platform leaf.
+The script remains linked at the same published URL. The portable closure and
+solution include the new leaf (19 portable projects). CSS/backing extents, DPR
+caps, orientation, safe-area layout, attachment and output generations remain
+owned by the page host. Visibility, freeze and page-cache transitions preserve
+session ownership and reset elapsed time and camera/pipeline temporal history.
+Focus-only and unchanged-size events no longer reset frame cadence; gaps over
+250 ms discard simulation debt without rebuilding physical resources.
+
+Exact commit `9dd4b065c98847cf9ad85368a42fe6cbec25d75d` passed the full baseline
+Linux browser qualification and genuine Windows Editor CLI publisher in
+[run 36990713888](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36990713888).
+The separate exact-bundle game check now selects `DefaultRenderPipeline`, but
+could not prepare its first frame: absent game/user AA overrides inherited the
+desktop FXAA default. Web resource layout rejected that profile, and the layout
+exception was only logged, hiding the cause behind the startup timeout. The
+canvas startup projection now supplies AA None only for absent overrides. The
+browser-targeted Default schema supplies manual exposure only for missing camera
+values, independent of ambient renderer binding. Authored AA/exposure selections
+remain authoritative and desktop defaults are unchanged. Layout-description
+failures retain their named diagnostic and existing per-key retry backoff.
+Independent review cleared the corrected schema-lifetime choice. No smoke
+assertions or tests changed; actual rendered game acceptance awaits this fix's
+approved browser run.
+
+The integrated Editor, Server, VRClient and desktop WebGPU builds, all nineteen
+portable compile rows and fresh native-Jolt browser publication pass with zero
+compiler warnings/errors. Editor was rerun after the final process-stable schema
+correction. The published canvas host matches its relocated source byte-for-byte.
+This closes the two platform surface/lifecycle implementation rows, bringing the
+checklist to 49/110. Live lifecycle, desktop pacing and rendered-game acceptance
+remain open. Logs are under the active validation run’s `browser-platform/` folder.

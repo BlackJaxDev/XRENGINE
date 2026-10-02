@@ -21,6 +21,7 @@
     <ProjectReference Include="../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="../XREngine.Runtime.Platform.Browser/XREngine.Runtime.Platform.Browser.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" />
     <ProjectReference Include="../XREngine.Animation/XREngine.Animation.csproj" />
     <ProjectReference Include="../XREngine.Audio.WebAudio/XREngine.Audio.WebAudio.csproj" />
@@ -41,6 +42,7 @@
   </Target>
 
   <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
+  <Import Project="../XREngine.Runtime.Platform.Browser/BrowserAssets.props" />
   <Import Project="../XREngine.Audio.WebAudio/BrowserAssets.props" />
   <Import Project="../Tools/Dependencies/JoltBrowser/JoltBrowserNative.targets" />
   <Import Project="../Build/Registration/FactoryRegistrations.targets" />

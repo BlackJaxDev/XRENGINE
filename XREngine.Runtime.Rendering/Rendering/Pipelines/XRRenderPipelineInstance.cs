@@ -1472,6 +1472,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
         catch (Exception ex)
         {
+            RegisterPendingGenerationFailure(key,
+                $"Resource layout description threw {ex.GetType().Name}: {ex.Message}");
             Debug.RenderingWarning(
                 "[RenderResources] Failed to describe pending generation. Pipeline={0} Target={1} Reason={2}",
                 ProfilerKey,

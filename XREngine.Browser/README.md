@@ -47,6 +47,19 @@ The host asks the engine for the resolved canvas sizing policy rather than
 maintaining a separate set of quality numbers. Choose a profile before world
 startup; change it by restarting the browser world.
 
+The production canvas host and `BrowserCanvasRenderTarget` belong to
+`XREngine.Runtime.Platform.Browser`; the published `engine-canvas-host.js` URL and
+page-facing exports remain unchanged. The host measures the canvas's CSS bounds,
+applies the selected DPR/resolution/backing limits, and publishes a new output
+generation when WebGPU changes the backing extent. Orientation and viewport
+resize refresh those bounds. The player shell uses browser safe-area insets so
+the canvas and its input coordinates stay inside the visible page area. Hidden,
+frozen, zero-sized, or detached canvases suspend rendering; reattachment or
+visibility restoration resumes the same session with a reset frame clock.
+`pagehide` stops discarded pages while a back/forward-cached page resumes on
+`pageshow`. A frame gap over 250 ms also resets timing and temporal histories.
+Focus-only and unchanged-size events preserve frame cadence.
+
 Lower profiles reduce the backing resolution, cap admitted directional/point/
 spot light counts and texture dimensions, and cap authored standalone shadow-map
 dimensions. Excess required lights, textures, or shadow sizes fail visibly;
