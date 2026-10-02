@@ -16,8 +16,14 @@ async function inspectCanvas(page, before, after) {
         }
         const current = await pixels(newPng);
         const prior = oldPng ? await pixels(oldPng) : null;
+        // Element screenshots may include fractional CSS outline pixels. Those
+        // belong to the page, not the authored canvas, and cannot prove a frame.
+        const bounds = document.querySelector('#input-surface').getBoundingClientRect();
+        const inset = Math.max(2, Math.ceil(2 * current.width / Math.max(1, bounds.width)));
         let colorful = 0, yellow = 0, green = 0, changed = 0;
         for (let index = 0; index < current.data.length; index += 4) {
+            const pixel = index / 4, x = pixel % current.width, y = Math.floor(pixel / current.width);
+            if (x < inset || y < inset || x >= current.width - inset || y >= current.height - inset) continue;
             const red = current.data[index], greenChannel = current.data[index + 1];
             const blue = current.data[index + 2];
             if (Math.max(red, greenChannel, blue) > 70 &&
@@ -75,7 +81,7 @@ export async function rollingBallGameCheck(browser, origin, report, config, inst
             'BrowserSmoke.RollingBallDiagnosticShell: the game did not use the shipping player.');
             const detail = await waitRunning(page);
             const baseline = await captureUntil(page, config, `rollingball-${iteration}-playing`, null,
-                pixels => pixels.colorful > 200,
+                pixels => pixels.colorful > 200 && pixels.green > 100,
                 'BrowserSmoke.RollingBallClearOnly: the published game canvas contains no substantial authored color.');
             const result = { iteration, detail, playing: baseline.pixels };
 
@@ -121,7 +127,7 @@ export async function rollingBallGameCheck(browser, origin, report, config, inst
             }, originalSize);
             await waitRunning(page);
             const resized = await captureUntil(page, config, `rollingball-${iteration}-resized`, null,
-                pixels => pixels.colorful > 200,
+                pixels => pixels.colorful > 200 && pixels.green > 100,
                 'BrowserSmoke.RollingBallResizeClearOnly: the resized game canvas lost its rendered world.');
             result.resized = resized.pixels;
             result.canvasSizes = { before: originalSize,

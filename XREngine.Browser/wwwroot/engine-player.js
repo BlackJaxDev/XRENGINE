@@ -19,6 +19,19 @@ function report(state, message) {
     retry.hidden = state !== 'failed';
 }
 
+function refreshAudioStatus() {
+    if (!engine) return;
+    const state = engine.GetAudioState();
+    audioStatus.dataset.state = state;
+    enableAudio.disabled = state === 'ready' || state === 'pending';
+    if (state === 'failed') audioStatus.textContent = `Audio failed: ${engine.GetAudioFailure()}`;
+    else if (state === 'ready') audioStatus.textContent = 'Audio ready';
+    else if (engine.IsAudioRequired()) audioStatus.textContent = 'Audio required. Enable audio to start gameplay';
+    else if (state === 'pending') audioStatus.textContent = 'Audio becomes available when the world creates a listener';
+    else audioStatus.textContent = 'Audio suspended. Enable audio to hear sound';
+}
+window.addEventListener('xrengine-audio-statechange', refreshAudioStatus);
+
 async function publishedManifestUrl() {
     const descriptorUrl = new URL('./browser-publish.json', import.meta.url);
     const response = await fetch(descriptorUrl, {
@@ -40,6 +53,7 @@ async function start() {
         if (mine !== epoch) return;
         host.setPageHidden(pageHidden);
         await host.start(launch.manifest, launch.quality);
+        if (mine === epoch) refreshAudioStatus();
     } catch (error) {
         if (mine !== epoch) return;
         report('failed', `Engine startup failed: ${error.message ?? error}`);
@@ -54,8 +68,8 @@ retry.addEventListener('click', () => {
 enableAudio.addEventListener('click', () => {
     if (!engine) return;
     const mine = epoch;
-    void engine.UnlockAudioAsync().then(ready => {
-        if (mine === epoch) audioStatus.textContent = ready ? 'Audio ready' : `Audio ${engine.GetAudioState()}`;
+    void engine.UnlockAudioAsync().then(() => {
+        if (mine === epoch) refreshAudioStatus();
     }, error => {
         if (mine === epoch) audioStatus.textContent = `Audio activation failed: ${error.message ?? error}`;
     });
@@ -78,6 +92,7 @@ window.addEventListener('pageshow', event => {
 try {
     const renderers = new Map();
     engine = await createEngineRuntime(renderers);
+    refreshAudioStatus();
     const input = new BrowserEngineInput(canvas, engine, gamepad);
     input.install();
     host = new EngineCanvasHost(engine, renderers, canvas, input, report);

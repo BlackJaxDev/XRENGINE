@@ -3,6 +3,7 @@ import { engineAssetImports } from './engine-assets.js';
 import { engineAudioImports } from './engine-audio.js';
 import { installWebGpuImports } from './webgpu-executor-imports.js';
 import { installEngineNetworkLifecycle } from './engine-network.js';
+import { installEngineAudioLifecycle } from './engine-audio-lifecycle.js';
 
 /** Boots the shared Engine and RuntimeWorld exports without constructing the reference scene. */
 export async function createEngineRuntime(renderers = new Map()) {
@@ -14,5 +15,6 @@ export async function createEngineRuntime(renderers = new Map()) {
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
     const engine = exports.XREngine.Browser.BrowserEngineExports;
     installEngineNetworkLifecycle(engine);
+    installEngineAudioLifecycle(engine);
     return engine;
 }

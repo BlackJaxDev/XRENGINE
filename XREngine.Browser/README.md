@@ -60,6 +60,16 @@ visibility restoration resumes the same session with a reset frame clock.
 `pageshow`. A frame gap over 250 ms also resets timing and temporal histories.
 Focus-only and unchanged-size events preserve frame cadence.
 
+The audio unlock button drives the shared Web Audio leaf directly from a trusted
+gesture. Page/freeze/cache visibility and canvas visibility compose separate
+suspension blockers; restoring only one cannot resume a still-hidden output.
+`XRWorld.RequiresAudio` is an authored declaration, defaulting to false. Required
+worlds retain their own activation output and pause fixed/variable simulation
+until current output is ready while still presenting the world and processing
+activation input. Optional audio never blocks simulation. See the
+[audio transport contract](../XREngine.Audio.WebAudio/README.md) for supported
+spatial, queue, looping and ownership behavior and remaining device validation.
+
 Lower profiles reduce the backing resolution, cap admitted directional/point/
 spot light counts and texture dimensions, and cap authored standalone shadow-map
 dimensions. Excess required lights, textures, or shadow sizes fail visibly;

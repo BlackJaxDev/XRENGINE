@@ -54,9 +54,13 @@ does not construct the course geometry in code. The optional
 before desktop play. The authored world contains no VR nodes, so the same world
 is usable in desktop and browser builds. Published builds convert it to a
 strict `RuntimeBinaryV1` payload inside `GameContent.pak` using the game's
-reflection-free cooked-world serializer. The serializer retains its original
-version-5 signature and can read existing cooked worlds containing VR nodes;
-the desktop host reuses those nodes rather than duplicating them.
+reflection-free cooked-world serializer. Ordinary worlds retain their original
+byte-identical version-5 output, and existing version-5 worlds remain readable,
+including older worlds containing VR nodes. Explicit `RequiresAudio=true` worlds
+use version 6 with one additional declaration; older engines do not understand
+that new required-audio feature. The outer `RuntimeBinaryV1` envelope and type
+registration stay unchanged. No authored asset rewrite or migration is needed.
+The desktop host reuses existing VR nodes rather than duplicating them.
 
 ## Development Build
 

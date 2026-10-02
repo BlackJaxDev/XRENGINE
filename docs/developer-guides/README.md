@@ -24,6 +24,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Runtime](runtime/engine-api.md)
 - [Runtime Project Organization](../architecture/runtime/project-organization.md)
 - [Portable Project Rules](runtime/portable-projects.md)
+- [Browser Static Hosting](runtime/browser-static-hosting.md): production static delivery requirements for the BrowserWebGPU player.
 - [Runtime Environment Settings](runtime/runtime-environment-settings.md)
 - [AOT Final Game Builds](runtime/aot-final-game-builds.md)
 - [Hot-Path Memory Control](runtime/hot-path-memory.md)

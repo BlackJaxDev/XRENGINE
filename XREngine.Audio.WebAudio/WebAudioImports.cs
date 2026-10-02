@@ -18,6 +18,36 @@ internal static partial class WebAudioImports
     internal static partial Task<bool> UnlockAsync();
     [JSImport("state", "xrengine.engineAudio")]
     internal static partial string State();
+    [JSImport("isReady", "xrengine.engineAudio")]
+    internal static partial bool IsReady();
+    [JSImport("hasActivationFailure", "xrengine.engineAudio")]
+    internal static partial bool HasActivationFailure();
+    [JSImport("activationFailure", "xrengine.engineAudio")]
+    internal static partial string ActivationFailure();
+    [JSImport("setPageActive", "xrengine.engineAudio")]
+    internal static partial void SetPageActive(bool active);
+    [JSImport("setSurfaceActive", "xrengine.engineAudio")]
+    internal static partial void SetSurfaceActive(bool active);
+    [JSImport("beginSpatialUpdates", "xrengine.engineAudio")]
+    internal static partial int BeginSpatialUpdates();
+    [JSImport("endSpatialUpdates", "xrengine.engineAudio")]
+    internal static partial void EndSpatialUpdates(int batch);
+    [JSImport("listenerProperty", "xrengine.engineAudio")]
+    internal static partial double ListenerProperty(int context, int property);
+    [JSImport("setListenerProperty", "xrengine.engineAudio")]
+    internal static partial void SetListenerProperty(int context, int property, double value);
+    [JSImport("sourceFloatProperty", "xrengine.engineAudio")]
+    internal static partial double SourceFloatProperty(int context, int source, int property);
+    [JSImport("setSourceFloatProperty", "xrengine.engineAudio")]
+    internal static partial void SetSourceFloatProperty(int context, int source, int property, double value);
+    [JSImport("sourceQueueOffset", "xrengine.engineAudio")]
+    internal static partial double SourceQueueOffset(int context, int source, int unit);
+    [JSImport("seekSource", "xrengine.engineAudio")]
+    internal static partial void SeekSource(int context, int source, int unit, double value);
+    [JSImport("sourceRelative", "xrengine.engineAudio")]
+    internal static partial void SourceRelative(int context, int source, bool relative);
+    [JSImport("sourceDirection", "xrengine.engineAudio")]
+    internal static partial void SourceDirection(int context, int source, float x, float y, float z);
     [JSImport("listenerPosition", "xrengine.engineAudio")]
     internal static partial void ListenerPosition(int context, float x, float y, float z);
     [JSImport("listenerVelocity", "xrengine.engineAudio")]

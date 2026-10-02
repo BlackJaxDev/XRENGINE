@@ -1,6 +1,7 @@
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Audio;
+using XREngine.Audio.WebAudio;
 using XREngine.Input;
 using XREngine.Networking;
 using System.Runtime.ExceptionServices;
@@ -63,11 +64,11 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     public RuntimeWorld? World => _runtimeWorld;
     public bool IsRunning => _running;
-    public bool HasEngineOwnership => _engineInitialized || _sessionObjects.Count != 0 || HasPendingBrowserQualityRestoration;
+    public bool HasEngineOwnership => _engineInitialized || _sessionObjects.Count != 0 || HasPendingBrowserQualityRestoration || HasAudioOwnership;
     public int CanvasWidth => _canvasWidth;
     public int CanvasHeight => _canvasHeight;
     public int RendererSession => _rendererSession;
-    public bool HasPresentedCanvasFrame => _renderer?.IsBackendReplacementFrameReady ?? false;
+    public bool HasPresentedCanvasFrame => _renderer?.IsEngineOutputFrameReady ?? false;
     public int CanvasPreparationState => HasPresentedCanvasFrame ? 1
         : _renderViewport?.RenderPipelineInstance.LastResourceGenerationFailure is not null ? -1 : 0;
 
@@ -178,6 +179,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             AudioSettings.DefaultEffects = EAudioEffects.Passthrough;
             AudioSettings.ApplyTo(Engine.Audio);
             _audioConfigured = true;
+            WebAudioTransport.SetSurfaceActive(_canvas is null);
             _assets = RuntimeAssetBootstrap.InstallEngineAssetServices();
             _adapters = RuntimeAdapterBootstrap.InstallEngineHostServices(
                 RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.Input,
@@ -194,6 +196,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             // Capture synchronous activation allocations, then close the thread-affine
             // publication boundary before awaiting any game-provided async startup work.
             await OwnConstruction(() => Engine.PlayMode.BeginStandalonePlayAsync());
+            InitializeAudioRequirement(world);
             if (requestedEpoch != Volatile.Read(ref _epoch) || cancellationToken.IsCancellationRequested)
             {
                 StopCore();
@@ -277,7 +280,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         if (!_running)
             return false;
         RefreshCamera();
-        bool stepped = Engine.Time.Timer.StepFrame(elapsedSeconds);
+        bool stepped = StepWithAudioUpdates(elapsedSeconds, dispatchSimulation: !UpdateAudioSimulationGate());
         ObserveNetworkFailure();
         return stepped;
     }
@@ -326,6 +329,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         if (replaced || extentChanged || (previous.CanRender && !surface.CanRender))
             ResetInput();
         _canvas.UpdateSurface(surface);
+        WebAudioTransport.SetSurfaceActive(surface.CanRender);
         if (replaced || extentChanged || (drawableChanged && surface.CanRender))
             _renderer.SynchronizeEngineViewport(replaced || extentChanged);
         if (replaced || drawableChanged || extentChanged)
@@ -412,6 +416,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         }
 
         _running = false;
+        Capture(errors, ReleaseAudioRequirement);
         Capture(errors, SuspendNetwork);
         _textInput.Clear();
         if (_renderer is not null)
