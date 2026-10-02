@@ -40,6 +40,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return this;
             }
 
+            /// <summary>Samples a texture only in resource generations that declare it.</summary>
+            public RenderGraphResourceDescriptor SampleTextureWhenDeclared(string textureName)
+            {
+                _sampledTextures.Add(new(textureName, EDescriptorResourceKind.Texture, null, 0u, true));
+                return this;
+            }
+
             /// <summary>
             /// Adds a sampled texture to the render-graph pass descriptor, specifying a mip level to sample.
             /// The texture will be bound as a sampled texture in the shader.
@@ -259,11 +266,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             /// Describes the inputs of the render-graph pass to the render-pass builder.
             /// </summary>
             /// <param name="builder">The render-pass builder.</param>
-            internal void DescribeInputs(RenderPassBuilder builder)
+            internal void DescribeInputs(RenderGraphDescribeContext context, RenderPassBuilder builder)
             {
                 for (int i = 0; i < _sampledTextures.Count; i++)
                 {
                     SampledTextureUsage usage = _sampledTextures[i];
+                    if (usage.WhenDeclared && context.ResourceLayout is not null && !context.HasResource(usage.Name))
+                        continue;
                     string resourceName = ResolveDescriptorResourceName(usage.Kind, usage.Name);
                     if (usage.BaseMipLevel.HasValue)
                     {
@@ -327,7 +336,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 string Name,
                 EDescriptorResourceKind Kind,
                 uint? BaseMipLevel,
-                uint MipLevelCount);
+                uint MipLevelCount,
+                bool WhenDeclared = false);
 
             /// <summary>
             /// Describes a buffer usage in the render-graph pass descriptor.

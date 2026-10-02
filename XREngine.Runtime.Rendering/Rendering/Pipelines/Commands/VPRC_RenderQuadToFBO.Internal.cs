@@ -430,13 +430,21 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant));
+            string passName = BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant);
+            if (RequiredDeclaredResourceName is not null && context.ResourceLayout is not null &&
+                !context.HasResource(RequiredDeclaredResourceName))
+            {
+                context.ReserveSyntheticPassIndex(passName);
+                return;
+            }
+
+            var builder = context.GetOrCreateSyntheticPass(passName);
             RenderGraphResourceDescriptor? resources = RenderGraphResources;
             builder.WithStage(resources?.Stage ?? ERenderGraphPassStage.Graphics);
             if (resources is not null)
             {
                 resources.DescribeDependencies(context, builder);
-                resources.DescribeInputs(builder);
+                resources.DescribeInputs(context, builder);
             }
             else
             {

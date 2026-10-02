@@ -76,7 +76,7 @@ framework-dependent development build under `Samples/RollingBall/Build/Game`.
 The project selects the saved `Worlds/RollingBallWorld.asset` through
 `StartupScenePath`. The browser shader catalog is project-relative under
 `Assets/Shaders/WebGPU`. Regenerate its checked-in, hash-addressed artifacts from
-the seven explicit engine recipes with pinned Slang 2026.8 before publishing:
+the fifteen explicit engine recipes with pinned Slang 2026.8 before publishing:
 
 ```powershell
 pwsh Tools/Cook-RollingBallBrowserShaders.ps1
@@ -96,9 +96,12 @@ The staged publisher writes the static player to
 `Samples/RollingBall/Build/BrowserWebGPU` only after world cooking, game assembly
 audit, WebAssembly publish, content packaging, and launch configuration succeed.
 Serve that directory over localhost HTTP or HTTPS for browser validation. This
-recipe does not claim rendered game acceptance: the production WebGPU pipeline
-still has named unsupported routes for authored effects and the scoreboard's
-debug-shape pass until those are implemented and tested in a browser.
+recipe does not claim rendered game acceptance. The shared lit, directional
+shadow and debug-shape routes pass Chromium diagnostics; the authored GTAO and
+bloom routes pass cooking, compilation and actual-WASM command qualification,
+with their GPU qualification still pending. The actual Editor build chain has
+produced a complete browser game bundle in a portable validation runner; its
+Windows CLI entry point and browser gameplay remain separate acceptance checks.
 
 ## Release Package
 

@@ -148,7 +148,9 @@ public static partial class BrowserContentPackageBuilder
             foreach (JsonElement pipeline in pipelineValues.EnumerateArray())
             {
                 Members(pipeline, "pass", "descriptorIdentity");
-                string pass = Choice(pipeline, "pass", "tonemap");
+                string pass = Choice(pipeline, "pass", "tonemap", "depth-normal", "gtao-generate",
+                    "gtao-blur-horizontal", "gtao-blur-vertical", "bloom-copy", "bloom-downsample",
+                    "bloom-upsample", "bloom-combine");
                 Require(passes.Add(pass), "Duplicate pipeline artifact pass.");
                 JsonElement identityValue = pipeline.GetProperty("descriptorIdentity");
                 Require(identityValue.ValueKind == JsonValueKind.String, "Pipeline artifact identity must be a string.");
@@ -161,8 +163,15 @@ public static partial class BrowserContentPackageBuilder
                     && descriptor.TryGetProperty("pass", out JsonElement descriptorPass) && descriptorPass.ValueKind == JsonValueKind.String
                     && descriptorPass.GetString() == pass
                     && descriptor.TryGetProperty("target", out JsonElement descriptorTarget) && descriptorTarget.ValueKind == JsonValueKind.String
-                    && descriptorTarget.GetString() == "WebGPUWgsl",
-                    "Pipeline artifact pass or target differs from its shader descriptor.");
+                    && descriptorTarget.GetString() == "WebGPUWgsl"
+                    && descriptor.TryGetProperty("entryPoints", out JsonElement entries) && entries.ValueKind == JsonValueKind.Object
+                    && entries.EnumerateObject().Count() == 2
+                    && entries.TryGetProperty("vertex", out JsonElement vertex) && vertex.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(vertex.GetString())
+                    && entries.TryGetProperty("fragment", out JsonElement fragment) && fragment.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(fragment.GetString())
+                    && !descriptor.TryGetProperty("materialVariant", out _),
+                    "Pipeline artifact descriptor must be a complete matching WebGPU raster program.");
                 pipelineArtifacts.Add(new { pass, descriptorIdentity });
             }
         }

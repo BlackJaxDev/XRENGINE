@@ -119,8 +119,9 @@ export class GpuResources {
         const supported = GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT;
         integer(usage, 1, supported, 'texture usage');
         if (usage & ~supported) throw new RangeError('Texture usage is outside the baseline profile.');
-        if (!color && (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST)))
-            throw new RangeError('Depth/stencil transfers are outside the baseline texture profile.');
+        if (!color && ((usage & GPUTextureUsage.COPY_DST) ||
+            ((usage & GPUTextureUsage.COPY_SRC) && (format !== 'depth32float' || sampleCount !== 1))))
+            throw new RangeError('Depth transfers require a single-sample depth32float copy source; depth/stencil copy destinations are unsupported.');
         if (sampleCount > 1 && (mipLevelCount !== 1 || !(usage & GPUTextureUsage.RENDER_ATTACHMENT) ||
             (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST))))
             throw new RangeError('Multisampled textures require attachment usage, one mip and no transfer usage.');

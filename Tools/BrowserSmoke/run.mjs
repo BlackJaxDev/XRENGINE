@@ -376,6 +376,211 @@ async function litCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
+async function effectsCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-shared-gtao-bloom', config);
+    try {
+        await page.goto(`${origin}/diagnostics/engine-mesh.html?probe=effects&manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
+            `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
+        await page.locator('#start').click();
+        const waitReady = async previous => {
+            await page.waitForFunction(before => {
+                const host = window.engineMeshDiagnostic;
+                return !!host.failure || (host.session > 0 && host.readyFrames > before);
+            }, previous, { timeout: Math.min(config.timeout, 120000) });
+            const failure = await page.evaluate(() => window.engineMeshDiagnostic.failure);
+            assert(!failure, `BrowserSmoke.EffectsFrameFailed: ${JSON.stringify(failure)}`);
+            await page.waitForFunction(() => window.engineMeshDiagnostic.statistics()?.resources?.retiring === 0,
+                null, { timeout: Math.min(config.timeout, 30000) });
+        };
+        const read = (name, u, v) => page.evaluate(({ name, u, v }) =>
+            window.engineMeshDiagnostic.readEffectTarget(name, u, v), { name, u, v });
+        const depth = (u, v) => page.evaluate(({ u, v }) =>
+            window.engineMeshDiagnostic.readEffectDepthAt(u, v), { u, v });
+        const sample = async (sampleCase, full) => {
+            const state = await page.evaluate(() => window.engineMeshDiagnostic.effectsState());
+            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            const result = { sampleCase, state, statistics, targets: {} };
+            const names = full
+                ? ['HDRSceneTex', 'WebNormalTexture', 'WebGtaoRawTexture', 'WebGtaoHorizontalTexture',
+                    'WebGtaoFinalTexture', 'WebBloomMip0', 'WebBloomMip1', 'WebBloomMip2',
+                    'WebBloomMip3', 'WebBloomMip4', 'WebBloomCombinedTexture']
+                : ['HDRSceneTex', 'WebGtaoFinalTexture', 'WebBloomMip0', 'WebBloomMip1', 'WebBloomCombinedTexture'];
+            for (const name of names) {
+                if (!state.targets.some(target => target.label === name)) continue;
+                result.targets[name] = {};
+                for (const [site, u, v] of [['contact', .36, .60], ['flat', .75, .75],
+                    ['emitter', .71, .44], ['halo', .78, .44]])
+                    result.targets[name][site] = await read(name, u, v);
+            }
+            if (full) {
+                result.depth = { occluder: await depth(.36, .5), flat: await depth(.75, .75) };
+                const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `effects-${sampleCase}.png`) });
+                result.display = await capturePixels(page, png, [
+                    { name: 'occluder', x: 184, y: 256 },
+                    { name: 'contact', x: 184, y: 307 }, { name: 'emitter', x: 364, y: 225 },
+                    { name: 'halo', x: 399, y: 225 }]);
+            }
+            return result;
+        };
+        await waitReady(0);
+        report.effectsCases = [await sample(0, true)];
+        const first = report.effectsCases[0];
+        assert(first.state.normal && first.state.gtaoRaw && first.state.gtaoHorizontal &&
+            first.state.gtaoFinal && first.state.bloomCombined && first.state.authoredShaderCount === 0 &&
+            first.state.shaderRevision === first.state.initialShaderRevision,
+            'BrowserSmoke.EffectsSceneMissing: expected generation-owned prepass, GTAO and bloom outputs from real models.');
+        assert(first.depth.occluder.average < first.depth.flat.average - .02,
+            'BrowserSmoke.EffectsDepthMissing: the foreground occluder did not write nearer depth.');
+        for (const name of ['WebGtaoRawTexture', 'WebGtaoHorizontalTexture', 'WebGtaoFinalTexture'])
+            for (const reading of Object.values(first.targets[name]))
+                assert(reading.min[0] >= -.005 && reading.max[0] <= 1.005,
+                    `BrowserSmoke.EffectsAoBounds: ${name} left normalized visibility.`);
+        assert(first.targets.HDRSceneTex.emitter.min[0] > 1 &&
+            Math.abs(first.targets.WebBloomMip0.emitter.average[0] - first.targets.HDRSceneTex.emitter.average[0]) < .03,
+            'BrowserSmoke.EffectsBloomMip0: raw HDR emission was clamped or thresholded before downsampling.');
+        for (const sampleCase of [1,2,3,0,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,0]) {
+            const before = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+            await page.evaluate(value => window.engineMeshDiagnostic.setEffectsCase(value), sampleCase);
+            await waitReady(before);
+            report.effectsCases.push(await sample(sampleCase, sampleCase === 3 || sampleCase === 9 || sampleCase >= 12));
+        }
+        const cases = report.effectsCases;
+        const disabled = cases.find(value => value.sampleCase === 3);
+        assert(!disabled.state.gtaoFinal && !disabled.state.bloomCombined &&
+            cases.find(value => value.sampleCase === 1).state.bloomCombined &&
+            cases.find(value => value.sampleCase === 2).state.gtaoFinal,
+            'BrowserSmoke.EffectsToggle: camera feature changes did not replace declared resources.');
+        const restored = cases.find((value, index) => index > 3 && value.sampleCase === 0);
+        const numeric = cases.filter((value, index) => index > 3 && value.sampleCase >= 4 && value.sampleCase <= 11);
+        assert(numeric.every(value => value.state.resourceGeneration === restored.state.resourceGeneration &&
+            value.state.shaderRevision === restored.state.shaderRevision),
+            'BrowserSmoke.EffectsNumericIdentity: numeric camera updates replaced the resource or authored shader generation.');
+        const stable = numeric.filter(value => value.sampleCase <= 8);
+        const gpuIdentity = value => JSON.stringify({ shaders:value.state.shaders,
+            pipelines:value.state.pipelines, targets:value.state.targets });
+        assert(stable.every(value => gpuIdentity(value) === gpuIdentity(stable[0])),
+            'BrowserSmoke.EffectsGpuIdentity: numeric AO and bloom updates replaced GPU resource handles.');
+        const both = cases.find(value => value.sampleCase === 14);
+        assert(both.state.occluderCull === 'Both' && both.state.renderDraws === first.state.renderDraws - 2,
+            'BrowserSmoke.EffectsFaceCoverage: Cull Both did not omit the same prepass and lit draws.');
+        const foregroundDepth = first.depth.occluder.average;
+        const receiverDepth = first.depth.flat.average;
+        assert(Math.abs(cases.find(value => value.sampleCase === 12).depth.occluder.average - foregroundDepth) < .01,
+            'BrowserSmoke.EffectsFaceNone: clockwise winding with Cull None lost the foreground occluder.');
+        for (const sampleCase of [13,14,15]) {
+            const exposed = cases.find(value => value.sampleCase === sampleCase).depth.occluder.average;
+            assert(exposed > foregroundDepth + .02 && Math.abs(exposed - receiverDepth) < .01,
+                `BrowserSmoke.EffectsFaceCoverage: case ${sampleCase} did not expose the receiver in prepass depth.`);
+        }
+        const byCase = number => cases.find(value => value.sampleCase === number);
+        const hdr = (number, site) => byCase(number).targets.HDRSceneTex[site].average;
+        const aoContact = first.targets.WebGtaoFinalTexture.contact.average[0];
+        const aoFlat = first.targets.WebGtaoFinalTexture.flat.average[0];
+        assert(aoContact < aoFlat - .005 && hdr(0,'contact')[0] < hdr(1,'contact')[0] - .0005,
+            'BrowserSmoke.EffectsAmbientOcclusion: the foreground contact did not darken ambient lighting.');
+        assert(Math.abs(byCase(5).targets.WebGtaoFinalTexture.contact.average[0] - aoContact) < .003 &&
+            hdr(5,'contact')[0] < hdr(0,'contact')[0] - .0005,
+            'BrowserSmoke.EffectsPower: AO Power changed the generator instead of the ambient consumer.');
+        assert(byCase(6).state.multiBounce === false && hdr(6,'contact')[0] < hdr(0,'contact')[0] - .0005,
+            'BrowserSmoke.EffectsMultiBounce: the ambient-only multibounce control had no visible effect.');
+        for (const site of ['contact','flat']) for (let channel = 0; channel < 3; channel++) {
+            const directWithAo = hdr(11,site)[channel] - hdr(0,site)[channel];
+            const directWithoutAo = hdr(17,site)[channel] - hdr(1,site)[channel];
+            assert(directWithAo > .001 && Math.abs(directWithAo - directWithoutAo) < Math.max(.015, directWithAo * .03),
+                `BrowserSmoke.EffectsDirectOcclusion: AO altered direct channel ${channel} at ${site}.`);
+        }
+        for (let channel = 0; channel < 3; channel++) {
+            const emissionWithAo = hdr(0,'emitter')[channel] - hdr(16,'emitter')[channel];
+            const emissionWithoutAo = hdr(1,'emitter')[channel] - hdr(18,'emitter')[channel];
+            assert(emissionWithAo > 1 && Math.abs(emissionWithAo - emissionWithoutAo) < Math.max(.04, emissionWithAo * .01),
+                `BrowserSmoke.EffectsEmissionOcclusion: AO altered emission channel ${channel}.`);
+        }
+        const rawBloom = byCase(0).targets.WebBloomMip1.emitter.average[0];
+        const thresholdBloom = byCase(7).targets.WebBloomMip1.emitter.average[0];
+        assert(thresholdBloom < rawBloom * .1,
+            'BrowserSmoke.EffectsBrightPass: high threshold did not suppress the first downsample.');
+        const strengthOff = byCase(8).targets;
+        assert(Math.abs(strengthOff.WebBloomCombinedTexture.halo.average[0] -
+            strengthOff.HDRSceneTex.halo.average[0]) < .015,
+            'BrowserSmoke.EffectsStrengthZero: zero bloom strength still added halo energy.');
+        assert(byCase(0).targets.WebBloomCombinedTexture.halo.average[0] >
+            byCase(0).targets.HDRSceneTex.halo.average[0] + .001,
+            'BrowserSmoke.EffectsHalo: bright emission produced no off-geometry bloom.');
+        assert(byCase(9).state.bloomDebugOnly &&
+            byCase(9).display.samples[1].average[0] < first.display.samples[1].average[0] - 10,
+            'BrowserSmoke.EffectsDebugOnly: raw bloom did not bypass the scene tonemap output.');
+        report.effectsResizes = [];
+        const baselineLive = cases.at(-1).statistics.resources.live;
+        for (const [width, height] of [[1,1],[3,5],[17,13],[65,67],[129,93],[384,256],[640,320],[512,512]]) {
+            const before = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+            await page.evaluate(([w,h]) => window.engineMeshDiagnostic.resize(w,h), [width,height]);
+            await waitReady(before);
+            const state = await page.evaluate(() => window.engineMeshDiagnostic.effectsState());
+            assert(state.targets.some(target => target.label === 'HDRSceneTex' &&
+                target.width === width && target.height === height),
+                `BrowserSmoke.EffectsResize: HDR extent did not commit at ${width}×${height}.`);
+            const mipCount = state.targets.filter(target => /^WebBloomMip[0-4]$/.test(target.label)).length;
+            assert(mipCount >= 1 && mipCount <= 5 && (width > 3 || mipCount < 5),
+                `BrowserSmoke.EffectsMipCap: invalid bloom allocation at ${width}×${height}.`);
+            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            assert(statistics.resources.live <= baselineLive,
+                `BrowserSmoke.EffectsRetirement: resize ${width}×${height} retained more live resources than the initial frame.`);
+            report.effectsResizes.push({ width, height, mipCount, state, statistics });
+        }
+        report.effectsOccludedEmission = {};
+        for (const [label, effectCase] of [['withAo',2],['withoutAo',3]]) {
+            let before = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+            await page.evaluate(value => window.engineMeshDiagnostic.setEffectsCase(value), effectCase);
+            await waitReady(before);
+            if (effectCase === 2) {
+                const contactVisibility = await read('WebGtaoFinalTexture',.36,.60);
+                report.effectsOccludedEmission.contactVisibility = contactVisibility;
+                assert(contactVisibility.average[0] < .98,
+                    'BrowserSmoke.EffectsEmissionContact: the receiver sample is not meaningfully occluded.');
+            }
+            const readings = {};
+            for (const litCase of [13,10]) {
+                before = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+                await page.evaluate(value => {
+                    const host = window.engineMeshDiagnostic;
+                    host.exports.SetLitCase(host.session,value);
+                }, litCase);
+                await waitReady(before);
+                readings[litCase] = await read('HDRSceneTex',.36,.60);
+            }
+            report.effectsOccludedEmission[label] = readings;
+        }
+        for (let channel = 0; channel < 3; channel++) {
+            const expected = [0.4,0.2,0.1][channel] * 7.75;
+            const withAo = report.effectsOccludedEmission.withAo[10].average[channel] -
+                report.effectsOccludedEmission.withAo[13].average[channel];
+            const withoutAo = report.effectsOccludedEmission.withoutAo[10].average[channel] -
+                report.effectsOccludedEmission.withoutAo[13].average[channel];
+            assert(Math.abs(withAo - expected) < Math.max(.025,expected*.025) &&
+                Math.abs(withoutAo - expected) < Math.max(.025,expected*.025) &&
+                Math.abs(withAo - withoutAo) < Math.max(.02,expected*.015),
+                `BrowserSmoke.EffectsOccludedEmission: GTAO altered receiver emission channel ${channel}.`);
+        }
+        const oldSession = await page.evaluate(() => window.engineMeshDiagnostic.session);
+        await page.locator('#stop').click();
+        assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 &&
+            window.engineMeshDiagnostic.statistics() === null), 'BrowserSmoke.EffectsStop: resources survived stop.');
+        await page.locator('#start').click();
+        await waitReady(0);
+        report.effectsRestart = { state: await page.evaluate(() => window.engineMeshDiagnostic.effectsState()),
+            statistics: await page.evaluate(() => window.engineMeshDiagnostic.statistics()) };
+        assert(await page.evaluate(previous => window.engineMeshDiagnostic.session !== previous, oldSession),
+            'BrowserSmoke.EffectsRestart: prior session identity was reused.');
+        await page.locator('#stop').click();
+        assertNoBrowserErrors(events);
+    } catch (error) {
+        report.effectsFailure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
+        await page.screenshot({ path: path.join(config.output, 'effects-failure.png'), fullPage: true }).catch(() => {});
+        throw error;
+    } finally { await context.close(); }
+}
+
 // World x in the centered, two-unit orthographic camera maps to canvas x by
 // (x + 1) / 2. The light points 0.35 radians across the one-unit caster to
 // receiver gap, placing the baseline shadow near x=-tan(0.35), clear of the
@@ -962,9 +1167,11 @@ async function main() {
         else report.checks.push({ name: 'engine-texture-sampling-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.engineManifest) {
             await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
+            await check('engine-shared-gtao-bloom', () => effectsCheck(browser, hosted.origin, report, config));
             await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
             await check('engine-shared-debug-overlay', () => debugOverlayCheck(browser, hosted.origin, report, config));
-        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-directional-shadow', 'engine-shared-debug-overlay'])
+        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-shared-gtao-bloom',
+            'engine-directional-shadow', 'engine-shared-debug-overlay'])
             report.checks.push({ name, status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {
             await captureGpuProcessState(browser, report, 'after-engine-depth');

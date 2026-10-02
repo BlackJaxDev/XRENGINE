@@ -18,10 +18,12 @@
     "maxVertexBuffers": 2,
     "maxVertexBufferArrayStride": 24,
     "maxBindGroups": 3,
-    "maxBindingsPerBindGroup": 2,
-    "maxUniformBufferBindingSize": 1056,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 1072,
     "maxDynamicUniformBuffersPerPipelineLayout": 4,
-    "maxUniformBuffersPerShaderStage": 3
+    "maxUniformBuffersPerShaderStage": 3,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
   },
   "matrixLayout": "column-major",
   "semanticSchemaIdentity": "xrengine.engine.raster.v1",
@@ -157,7 +159,7 @@
         ],
         "owner": "Engine",
         "frequency": "View",
-        "bytes": 1056,
+        "bytes": 1072,
         "dynamic": true,
         "members": [
           {
@@ -621,8 +623,45 @@
             "offset": 1040,
             "bytes": 16,
             "type": "vec4<f32>"
+          },
+          {
+            "name": "ambientOcclusionControls_0",
+            "provider": "AmbientOcclusionControls",
+            "offset": 1056,
+            "bytes": 16,
+            "type": "vec4<f32>"
           }
         ]
+      },
+      {
+        "name": "AmbientOcclusionTexture",
+        "physicalName": "ambientOcclusionTexture_0",
+        "group": 2,
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AmbientOcclusionTexture",
+        "physicalName": "ambientOcclusionSampler_0",
+        "group": 2,
+        "binding": 2,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
       }
     ]
   },

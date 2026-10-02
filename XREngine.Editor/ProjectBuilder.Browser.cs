@@ -1,4 +1,5 @@
 using System.Text.Json;
+using XREngine.Core.Files;
 using XREngine.Diagnostics;
 using XREngine.Editor.Publishing;
 using XREngine.Publishing;
@@ -253,7 +254,8 @@ internal static partial class ProjectBuilder
             throw new NotSupportedException("Browser startup world must be a saved project .asset inside Assets.");
         if (!File.Exists(path)) throw new FileNotFoundException("Saved browser startup world was not found.", path);
         // Deserialize afresh from the authored asset; AssetManager.Load may return the editor's mutable cache.
-        XRWorld world = AssetManager.DeserializeAssetFile(path, typeof(XRWorld)) as XRWorld
+        // The abstract base lets the saved type hint select a game-owned XRWorld subclass.
+        XRWorld world = AssetManager.DeserializeAssetFile(path, typeof(XRAsset)) as XRWorld
             ?? throw new InvalidOperationException("Startup target asset did not deserialize as XRWorld.");
         world.FilePath = path;
         return world;

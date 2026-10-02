@@ -14,7 +14,7 @@ internal static class Program
 {
     private const int MaxSourceBytes = 1024 * 1024;
     private const int MaxJsonBytes = 64 * 1024;
-    private const int MaxArtifacts = 16;
+    private const int MaxArtifacts = 24;
     private const string Coordinates = BrowserShaderAbi.CoordinateConvention;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions JsonOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, WriteIndented = false };
@@ -60,7 +60,7 @@ internal static class Program
             if (recipes.Count == 0)
                 recipes.Add(Path.Combine(repository, "XREngine.Runtime.Rendering.WebGPU", "Shaders", "browser-unlit.recipe.json"));
             if (recipes.Count > MaxArtifacts)
-                throw new InvalidDataException("A package supports 1–16 recipes.");
+                throw new InvalidDataException("A package supports 1–24 recipes.");
             sourceRoot = Path.GetFullPath(sourceRoot);
             if (!Directory.Exists(sourceRoot)) throw new DirectoryNotFoundException($"Source root does not exist: {sourceRoot}");
             RejectLinks(sourceRoot, sourceRoot);
@@ -211,9 +211,10 @@ internal static class Program
                 JsonObject pipeline = Object(pipelineNode, "pipelineArtifact");
                 string pass = String(pipeline, "pass");
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
-                Require(pipeline.Count == 1 && pass == "tonemap" && pass == String(recipe, "pass") &&
+                Require(pipeline.Count == 1 && WebPipelineArtifactCatalog.IsSupportedPass(pass) &&
+                    pass == String(recipe, "pass") && entries.Count == 2 &&
                     entries.ContainsKey("vertex") && entries.ContainsKey("fragment") && materialVariant is null,
-                    $"{stageContext}: the pipeline artifact must explicitly select a complete tonemap program without a material variant.");
+                    $"{stageContext}: the pipeline artifact must explicitly select a supported complete raster program without a material variant.");
                 pipelineArtifact = new JsonObject { ["pass"] = pass };
             }
         }

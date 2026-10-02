@@ -33,6 +33,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public Func<bool>? DynamicClearDepth { get; set; }
 
+        /// <summary>Describes the depth load operation for one immutable resource profile.</summary>
+        public Func<RenderGraphDescribeContext, bool>? DescribeClearDepth { get; set; }
+
         private sealed class TopologicalPassOrderCacheEntry
         {
             public TopologicalPassOrderCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
@@ -222,7 +225,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
             if (FrameBufferName is not null)
-                context.PushRenderTarget(FrameBufferName, Write, ClearColor, ClearDepth, ClearStencil);
+                context.PushRenderTarget(FrameBufferName, Write, ClearColor,
+                    DescribeClearDepth?.Invoke(context) ?? ClearDepth, ClearStencil);
         }
     }
 }

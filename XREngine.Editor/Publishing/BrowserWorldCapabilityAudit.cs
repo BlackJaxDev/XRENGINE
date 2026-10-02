@@ -28,11 +28,11 @@ internal static class BrowserWorldCapabilityAudit
                     throw new InvalidDataException($"BrowserCook.VariantMissing: '{variant.Key}'.");
                 artifacts.TryAdd(artifact.Identity, artifact);
             }
-            if (shaderSource.TonemapDescriptorIdentity is { } tonemapIdentity)
+            foreach ((string pass, string identity) in shaderSource.PipelineArtifacts)
             {
-                if (!shaderSource.TryResolve(tonemapIdentity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? tonemap))
-                    throw new InvalidDataException("BrowserCook.TonemapArtifactMissing: the declared descriptor is unavailable.");
-                artifacts.TryAdd(tonemap.Identity, tonemap);
+                if (!shaderSource.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
+                    throw new InvalidDataException($"BrowserCook.PipelineArtifactMissing: '{pass}' descriptor is unavailable.");
+                artifacts.TryAdd(artifact.Identity, artifact);
             }
         }
         return artifacts.Values.OrderBy(artifact => artifact.Identity, StringComparer.Ordinal).ToArray();

@@ -131,6 +131,7 @@ public sealed class WebGpuMaterial(WebGpuRendererHost renderer, XRMaterial data)
         Program.SetVector4("StandardLitRoughnessMetallicSpecularEmission",
             new Vector4(surface.Roughness, surface.Metallic, surface.Specular, surface.Emission));
         Renderer.PublishForwardLights(Program, _directionalShadowReceiver);
+        Renderer.PublishAmbientOcclusion(Program);
     }
 
     public override void Destroy()

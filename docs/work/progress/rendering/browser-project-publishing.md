@@ -76,22 +76,35 @@ persisted binary format. Such materials require an exact semantic/profile-to-
 descriptor variant in the project-relative shader manifest; custom shader
 stages still require explicit WGSL companion identities. The cooker/resolver
 serves verified descriptors and sources through the same asset source, and the
-tonemap output mapping is an explicit hash-bound pipeline artifact. No arbitrary
+pipeline mappings are explicit hash-bound artifacts. No arbitrary
 desktop GLSL translation or shader-name inference is performed.
 See [engine shader cooking](unified-webgpu-shader-cooking.md).
 
-The canonical Rolling Ball world now passes the compiled Editor cook method and
-the production content packager in a portable local probe: the resulting catalog
-contains its game-owned version-five world payload, cooked startup settings,
-sixteen hash-addressed assets, seven shader artifacts, six material variants, and
-one exact tonemap mapping. The opt-in desktop diagnostics I/O has moved behind
-the desktop host, so the portable game assembly passes the production metadata
-audit. This probe does not execute the complete Windows Editor CLI, publish
-WebAssembly, or establish browser pixels/gameplay.
-The sample catalog includes the three exact debug primitive variants used by
-its shared-engine HUD. A fresh no-incremental Editor build and repeat of the
-compiled production cook method/content packager qualify this seven-artifact
-catalog, including each regenerated descriptor/source hash.
+The canonical Rolling Ball world now passes the complete compiled Editor
+`BuildCurrentProjectSynchronously` chain through a portable Linux reflection
+runner: generated portable game compilation, authored world cooking, actual
+`CodeManager.PublishBrowserApplication`, content packaging, player-shell
+installation, and atomic output activation. This is the real publisher and its
+failure checks, not a replacement packaging implementation. It is not execution
+of the Windows-only Editor CLI process.
+
+That run exposed a startup-load defect missed by the earlier method-only cook
+probe: requesting the concrete `XRWorld` base ignored the saved derived world
+type. The publisher now requests abstract `XRAsset` through the existing
+polymorphic deserializer and still requires an `XRWorld` result. The saved
+`RollingBallWorldAsset` type and its registered version-five codec are preserved.
+The source project, Assets and Config copies remain byte-identical to the
+canonical sample. An initial WebAssembly task-host socket failure was resolved
+with the same in-process MSBuild override already used by this restricted
+validation host; the production publisher was not bypassed.
+
+The activated static bundle contains the game WebCIL/bootstrap, 32 hash-verified
+assets, fifteen shader artifacts, six material variants, and nine exact pipeline
+mappings for tonemap, depth-normal, GTAO and bloom. Its published JavaScript
+admits the manifest. The opt-in desktop diagnostics I/O remains behind the
+desktop host, and the game passes the production metadata audit. Editor Release
+builds have zero warnings/errors. Actual browser gameplay and the Windows CLI
+entry point remain separate acceptance checks.
 
 ## Capability and startup policy
 
@@ -123,11 +136,14 @@ manual development flow separately.
 
 **Current rendering limit:** production browser startup connects the real world
 to an engine viewport and canvas renderer. The shared `DefaultRenderPipeline`
-has a qualified bounded lit/HDR/tonemap and standalone directional-shadow route.
+has qualified bounded lit/HDR/tonemap, standalone directional-shadow and shared
+debug-primitive routes. GTAO and bloom also compile and execute their actual-WASM
+command path; GPU effect pixels are being qualified separately.
 Authored features outside that route still fail by name; a blank input canvas
 is not success. Engine-mesh diagnostics use real scene/camera/model objects and
 that shared pipeline, but do not establish full authored-world gameplay.
-Bloom, ambient occlusion, skinning, UI, and broader feature profiles remain open.
+Skinning, screen-space UI, broader feature profiles and complete gameplay
+acceptance remain open.
 
 The [browser smoke harness](../../../../Tools/BrowserSmoke/README.md) records
 actual captured pixels, export startup, optional asset lifecycle and native

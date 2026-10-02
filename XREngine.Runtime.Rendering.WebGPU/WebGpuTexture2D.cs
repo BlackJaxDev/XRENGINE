@@ -62,6 +62,8 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
         BrowserTextureUsage usage = BrowserTextureUsage.RenderAttachment | BrowserTextureUsage.TextureBinding;
         if (color && Data.MultiSampleCount == 1)
             usage |= BrowserTextureUsage.CopySource | BrowserTextureUsage.CopyDestination;
+        else if (format == "depth32float" && Data.MultiSampleCount == 1)
+            usage |= BrowserTextureUsage.CopySource;
         if (Data.MultiSampleCount > 1 && mips.Length != 1)
             throw Unsupported("Create", "multisampled textures cannot have a mip chain");
         for (int mip = 0; mip < mips.Length; mip++)

@@ -23,7 +23,8 @@ export class EngineMeshDiagnosticHost {
 
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
-            'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug'].includes(artifactName))
+            'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
+            'engine-standard-lit-color-effects'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
         // Invalidate the previous visible completion before the first await.
@@ -37,7 +38,8 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
-        this.kind = artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
+        this.kind = artifactName === 'engine-standard-lit-color-effects' ? 'effects' :
+            artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
             artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
             artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
         if (this.kind === 'debug') this.settleFrames = 2;
@@ -62,8 +64,8 @@ export class EngineMeshDiagnosticHost {
                 if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
                 return { descriptorJson, source: await sourceResponse.text() };
             };
-            const artifact = await loadArtifact(this.kind === 'debug' ? 'engine-standard-lit-color' : artifactName);
-            const tonemap = ['lit', 'shadow', 'debug'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
+            const artifact = await loadArtifact(['debug', 'effects'].includes(this.kind) ? 'engine-standard-lit-color' : artifactName);
+            const tonemap = ['lit', 'shadow', 'debug', 'effects'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
             const shadowDepth = this.kind === 'shadow' ? await loadArtifact('engine-shadow-depth') : null;
             const debug = this.kind === 'debug' ? {
                 point: await loadArtifact('engine-debug-point'),
@@ -72,7 +74,10 @@ export class EngineMeshDiagnosticHost {
             } : null;
             if (controller.signal.aborted || epoch !== this.epoch) return;
             this.stage = 'creating-engine-session';
-            const creation = debug
+            const creation = this.kind === 'effects'
+                ? this.exports.CreateEffectsAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+                    tonemap.descriptorJson, tonemap.source)
+                : debug
                 ? this.exports.CreateDebugAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source, debug.point.descriptorJson, debug.point.source,
                     debug.line.descriptorJson, debug.line.source, debug.triangle.descriptorJson, debug.triangle.source)
@@ -157,6 +162,27 @@ export class EngineMeshDiagnosticHost {
         this.onState('Preparing changed engine surface and light values');
     }
 
+    setEffectsCase(sampleCase) {
+        if (!this.session || this.kind !== 'effects') throw new Error('An active engine effects diagnostic is required.');
+        this.exports.SetEffectsCase(this.session, sampleCase);
+        this.startedAt = performance.now();
+        this.onState('Preparing changed engine effects settings');
+    }
+
+    effectsState() {
+        if (!this.session || this.kind !== 'effects') throw new Error('An active engine effects diagnostic is required.');
+        const shaders = [], pipelines = [], targets = [];
+        this.renderer._resources.slots.forEach((entry, slot) => {
+            if (entry?.owner !== this.session) return;
+            const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
+            if (entry.kind === 'shader') shaders.push(identity);
+            if (entry.kind === 'render-pipeline') pipelines.push(identity);
+            if (entry.kind === 'texture') targets.push({ ...identity, width: entry.value.width,
+                height: entry.value.height, format: entry.value.format });
+        });
+        return { ...JSON.parse(this.exports.GetEffectsState(this.session)), shaders, pipelines, targets };
+    }
+
     setShadowCase(sampleCase) {
         if (!this.session || this.kind !== 'shadow') throw new Error('An active engine shadow diagnostic is required.');
         this.exports.SetShadowCase(this.session, sampleCase);
@@ -216,7 +242,7 @@ export class EngineMeshDiagnosticHost {
     }
 
     litState() {
-        if (!this.session || this.kind !== 'lit') throw new Error('An active engine lit diagnostic is required.');
+        if (!this.session || !['lit', 'effects'].includes(this.kind)) throw new Error('An active engine lit diagnostic is required.');
         const shaders = [], pipelines = [], hdrTargets = [];
         this.renderer._resources.slots.forEach((entry, slot) => {
             if (entry?.owner !== this.session) return;
@@ -231,8 +257,9 @@ export class EngineMeshDiagnosticHost {
 
     resize(width, height) {
         if (!this.session || !this.renderer) throw new Error('An active engine diagnostic is required.');
-        if (![width, height].every(value => Number.isInteger(value) && value >= 64 && value <= 1024))
-            throw new Error('Diagnostic resize dimensions must be integers from 64 through 1024.');
+        const minimum = this.kind === 'effects' ? 1 : 64;
+        if (![width, height].every(value => Number.isInteger(value) && value >= minimum && value <= 1024))
+            throw new Error(`Diagnostic resize dimensions must be integers from ${minimum} through 1024.`);
         this.canvas.style.width = `${width}px`;
         this.canvas.style.height = `${height}px`;
         const generation = this.renderer.resize(width, height);
@@ -250,24 +277,87 @@ export class EngineMeshDiagnosticHost {
 
     /** Reads a five-pixel square at normalized canvas coordinates from the engine-owned HDR texture. */
     async readHdrAt(u, v) {
-        if (!this.session || !['lit', 'shadow'].includes(this.kind))
+        if (!this.session || !['lit', 'shadow', 'effects'].includes(this.kind))
             throw new Error('An active engine HDR diagnostic is required.');
+        return this.readColorTargetAt('HDRSceneTex', u, v);
+    }
+
+    /** Readback of a declared engine effects target by its generation-owned resource name. */
+    async readEffectTarget(name, u, v) {
+        if (!this.session || this.kind !== 'effects') throw new Error('An active engine effects diagnostic is required.');
+        const targets = new Set(['HDRSceneTex', 'WebNormalTexture', 'WebGtaoRawTexture',
+            'WebGtaoHorizontalTexture', 'WebGtaoFinalTexture', 'WebBloomCombinedTexture',
+            'WebBloomMip0', 'WebBloomMip1', 'WebBloomMip2', 'WebBloomMip3', 'WebBloomMip4']);
+        if (!targets.has(name)) throw new Error(`Unknown engine effects target: ${name}`);
+        return this.readColorTargetAt(name, u, v);
+    }
+
+    /** Copies the complete depth32float subresource, as required by WebGPU, then samples a bounded neighborhood. */
+    async readEffectDepthAt(u, v) {
+        if (!this.session || this.kind !== 'effects') throw new Error('An active engine effects diagnostic is required.');
         if (![u, v].every(value => Number.isFinite(value) && value >= 0.02 && value <= 0.98))
-            throw new Error('HDR sample coordinates must lie inside the render target.');
+            throw new Error('Engine depth sample coordinates must lie inside the render target.');
         const renderer = this.renderer;
         const matches = renderer._resources.slots.filter(entry => entry?.owner === this.session &&
-            entry.kind === 'texture' && entry.value.format === 'rgba16float');
-        if (matches.length !== 1) throw new Error(`Expected one engine HDR target; found ${matches.length}.`);
+            entry.kind === 'texture' && entry.value.label === 'DepthStencil' &&
+            entry.value.format === 'depth32float');
+        if (matches.length !== 1) throw new Error(`Expected one engine depth32float target; found ${matches.length}.`);
+        const target = matches[0].value;
+        if (!(target.usage & GPUTextureUsage.COPY_SRC) || target.width < 1 || target.height < 1 ||
+            target.width > 1024 || target.height > 1024)
+            throw new Error('Engine depth target is not an admitted bounded diagnostic copy source.');
+        const bytesPerRow = Math.ceil(target.width * 4 / 256) * 256;
+        const byteLength = bytesPerRow * target.height;
+        if (byteLength > 4 * 1024 * 1024) throw new Error('Engine depth diagnostic readback budget exceeded.');
+        const buffer = renderer.device.createBuffer({ label:'Engine depth diagnostic readback', size:byteLength,
+            usage:GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        let deadline;
+        try {
+            const encoder = renderer.device.createCommandEncoder({ label:'Engine whole-depth diagnostic copy' });
+            encoder.copyTextureToBuffer({ texture:target.texture, aspect:'depth-only', origin:[0,0,0] },
+                { buffer, bytesPerRow, rowsPerImage:target.height }, [target.width,target.height,1]);
+            renderer.device.queue.submit([encoder.finish()]);
+            await Promise.race([buffer.mapAsync(GPUMapMode.READ), new Promise((_, reject) => {
+                deadline = setTimeout(() => reject(new Error('Engine depth diagnostic readback exceeded 15 seconds.')), 15000);
+            })]);
+            const view = new DataView(buffer.getMappedRange());
+            const size = Math.min(5, target.width, target.height);
+            const left = Math.max(0, Math.min(target.width - size, Math.floor(target.width * u) - Math.floor(size / 2)));
+            const top = Math.max(0, Math.min(target.height - size, Math.floor(target.height * v) - Math.floor(size / 2)));
+            let min = Infinity, max = -Infinity, sum = 0;
+            for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+                const value = view.getFloat32((top + y) * bytesPerRow + (left + x) * 4, true);
+                if (!Number.isFinite(value)) throw new Error('The engine depth target contains a non-finite sample.');
+                min = Math.min(min, value); max = Math.max(max, value); sum += value;
+            }
+            return { label:target.label, format:target.format, width:target.width, height:target.height,
+                min, max, average:sum / (size * size) };
+        } finally {
+            clearTimeout(deadline);
+            if (buffer.mapState === 'mapped') buffer.unmap();
+            buffer.destroy();
+        }
+    }
+
+    async readColorTargetAt(name, u, v) {
+        if (![u, v].every(value => Number.isFinite(value) && value >= 0.02 && value <= 0.98))
+            throw new Error('Engine target sample coordinates must lie inside the render target.');
+        const renderer = this.renderer;
+        const matches = renderer._resources.slots.filter(entry => entry?.owner === this.session &&
+            entry.kind === 'texture' && entry.value.format === 'rgba16float' && entry.value.label === name);
+        if (matches.length !== 1) throw new Error(`Expected one engine color target '${name}'; found ${matches.length}.`);
         const target = matches[0].value;
         if (!(target.usage & GPUTextureUsage.COPY_SRC)) throw new Error('The engine HDR texture does not permit diagnostic readback.');
-        const buffer = renderer.device.createBuffer({ label: 'Engine HDR diagnostic readback', size: 256 * 5,
+        const size = Math.min(5, target.width, target.height);
+        const buffer = renderer.device.createBuffer({ label: 'Engine color diagnostic readback', size: 256 * size,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         let deadline;
         try {
-            const encoder = renderer.device.createCommandEncoder({ label: 'Engine HDR diagnostic copy' });
+            const encoder = renderer.device.createCommandEncoder({ label: 'Engine color diagnostic copy' });
             encoder.copyTextureToBuffer({ texture: target.texture,
-                origin: [Math.floor(target.width * u) - 2, Math.floor(target.height * v) - 2, 0] },
-                { buffer, bytesPerRow: 256, rowsPerImage: 5 }, [5, 5, 1]);
+                origin: [Math.max(0, Math.min(target.width - size, Math.floor(target.width * u) - Math.floor(size / 2))),
+                    Math.max(0, Math.min(target.height - size, Math.floor(target.height * v) - Math.floor(size / 2))), 0] },
+                { buffer, bytesPerRow: 256, rowsPerImage: size }, [size, size, 1]);
             renderer.device.queue.submit([encoder.finish()]);
             await Promise.race([buffer.mapAsync(GPUMapMode.READ), new Promise((_, reject) => {
                 deadline = setTimeout(() => reject(new Error('Engine HDR diagnostic readback exceeded 15 seconds.')), 15000);
@@ -279,7 +369,7 @@ export class EngineMeshDiagnosticHost {
                     ? (fraction ? NaN : Infinity) : (1 + fraction / 1024) * 2 ** (exponent - 15));
             };
             const min = [Infinity, Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity, -Infinity], sum = [0, 0, 0, 0];
-            for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) for (let channel = 0; channel < 4; channel++) {
+            for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) for (let channel = 0; channel < 4; channel++) {
                 const value = decode(view.getUint16(y * 256 + x * 8 + channel * 2, true));
                 if (!Number.isFinite(value)) throw new Error('The engine HDR target contains a non-finite sample.');
                 min[channel] = Math.min(min[channel], value);
@@ -287,7 +377,7 @@ export class EngineMeshDiagnosticHost {
                 sum[channel] += value;
             }
             return { label: target.label, format: target.format, width: target.width, height: target.height,
-                min, max, average: sum.map(value => value / 25) };
+                min, max, average: sum.map(value => value / (size * size)) };
         } finally {
             clearTimeout(deadline);
             if (buffer.mapState === 'mapped') buffer.unmap();

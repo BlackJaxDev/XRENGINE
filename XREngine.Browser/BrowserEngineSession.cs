@@ -54,6 +54,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     private bool _running;
     private bool _disposed;
     private ShaderProgramArtifact? _tonemapArtifact;
+    private WebPipelineArtifactCatalog? _pipelineArtifacts;
     private readonly List<ObjectCacheOwnership> _sessionObjects = [];
     private GameStartupSettings? _previousGameSettings;
     private UserSettings? _previousUserSettings;
@@ -82,7 +83,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     public async Task StartAsync(XRWorld world, GameStartupSettings authoredSettings, GameState initialState,
         CancellationToken cancellationToken = default, string? canvasId = null,
         IShaderProgramArtifactResolver? shaderArtifacts = null, EngineMaterialVariantCatalog? materialVariants = null,
-        ShaderProgramArtifact? tonemapArtifact = null)
+        ShaderProgramArtifact? tonemapArtifact = null, WebPipelineArtifactCatalog? pipelineArtifacts = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(authoredSettings);
@@ -102,6 +103,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
             GameStartupSettings settings = OwnConstruction(() => ProjectBrowserStartup(authoredSettings, world,
                 out _canvasWidth, out _canvasHeight));
             _tonemapArtifact = tonemapArtifact;
+            _pipelineArtifacts = pipelineArtifacts;
 
             _capabilities = RuntimeApplicationCapabilityServices.Install(new RuntimeApplicationCapabilities(
                 IsConfigured: true,
@@ -234,6 +236,8 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     private RenderPipeline CreateDefaultPipeline()
     {
         DefaultRenderPipeline pipeline = new();
+        if (_pipelineArtifacts is { } artifacts)
+            pipeline.BindWebPipelineArtifacts(artifacts);
         if (_tonemapArtifact is { } artifact)
             pipeline.BindWebTonemapArtifact(artifact);
         return pipeline;
@@ -254,8 +258,13 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
             return;
         CameraComponent? camera = (_localPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)
             ?.RuntimeCameraComponent as CameraComponent;
-        if (camera?.Camera.RenderPipeline is DefaultRenderPipeline pipeline && _tonemapArtifact is { } artifact)
-            pipeline.BindWebTonemapArtifact(artifact);
+        if (camera?.Camera.RenderPipeline is DefaultRenderPipeline pipeline)
+        {
+            if (_pipelineArtifacts is { } artifacts)
+                pipeline.BindWebPipelineArtifacts(artifacts);
+            if (_tonemapArtifact is { } artifact)
+                pipeline.BindWebTonemapArtifact(artifact);
+        }
         if (camera is not null && !ReferenceEquals(_renderViewport.CameraComponent, camera))
             _renderViewport.CameraComponent = camera;
     }
@@ -388,6 +397,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         _canvas = null;
         _rendererSession = 0;
         _tonemapArtifact = null;
+        _pipelineArtifacts = null;
         if (_gameState?.Worlds is { } worlds)
             Capture(errors, () => worlds.RemoveAll(candidate => ReferenceEquals(candidate, _runtimeWorld)));
         _runtimeWorld = null;

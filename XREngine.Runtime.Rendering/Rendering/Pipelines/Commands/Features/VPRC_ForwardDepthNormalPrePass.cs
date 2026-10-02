@@ -119,6 +119,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (_renderPasses.Count == 0 || context.CurrentRenderTarget is not { } target)
                 return;
+            if (context.ResourceLayout is not null && !context.HasResource(target.Name))
+            {
+                context.ReserveSyntheticPassIndex($"ForwardDepthNormalPrePass_{target.Name}");
+                return;
+            }
 
             var builder = context.GetOrCreateSyntheticPass(
                 $"ForwardDepthNormalPrePass_{target.Name}",

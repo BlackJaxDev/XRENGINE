@@ -11,7 +11,7 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
     private int _session;
     private readonly List<BrowserShaderArtifactReference> _shaderArtifacts = [];
     private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
-    private string? _tonemapArtifactIdentity;
+    private readonly Dictionary<string, string> _pipelineArtifactIdentities = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RuntimeAssetCatalogEntry> _assets = new(StringComparer.Ordinal);
     private BrowserEngineAssetSource(int session) => _session = session;
     public bool SupportsSynchronousReads => false;
@@ -103,16 +103,15 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         {
             if (pipeline.ValueKind != JsonValueKind.Object || pipeline.EnumerateObject().Count() != 2
                 || !pipeline.TryGetProperty("pass", out JsonElement pass) || pass.ValueKind != JsonValueKind.String
-                || pass.GetString() != "tonemap"
+                || !WebPipelineArtifactCatalog.IsSupportedPass(pass.GetString())
                 || !pipeline.TryGetProperty("descriptorIdentity", out JsonElement identityValue) || identityValue.ValueKind != JsonValueKind.String)
-                throw new InvalidDataException("AssetSource.PipelineArtifactInvalid: expected a tonemap pass and descriptorIdentity.");
+                throw new InvalidDataException("AssetSource.PipelineArtifactInvalid: expected a known pass and descriptorIdentity.");
             string identity = ShaderProgramArtifactCatalog.ValidateIdentity(identityValue.GetString())
                 ?? throw new InvalidDataException("AssetSource.PipelineArtifactIdentityMissing.");
             if (!identities.Contains(identity))
                 throw new InvalidDataException($"AssetSource.PipelineArtifactMissing: '{identity}'.");
-            if (_tonemapArtifactIdentity is not null)
-                throw new InvalidDataException("AssetSource.PipelineArtifactDuplicatePass: 'tonemap'.");
-            _tonemapArtifactIdentity = identity;
+            if (!_pipelineArtifactIdentities.TryAdd(pass.GetString()!, identity))
+                throw new InvalidDataException($"AssetSource.PipelineArtifactDuplicatePass: '{pass.GetString()}'.");
         }
     }
 
@@ -142,12 +141,19 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         return new EngineMaterialVariantCatalog(_materialVariants, artifacts);
     }
 
-    /// <summary>Resolves the explicit hash-owned WebGPU tonemap module; absence remains unsupported.</summary>
+    /// <summary>Resolves exact pass declarations against verified modules without inferring from names or source paths.</summary>
+    public WebPipelineArtifactCatalog LoadPipelineArtifacts(ShaderProgramArtifactCatalog artifacts)
+    {
+        RequireSession();
+        return new WebPipelineArtifactCatalog(_pipelineArtifactIdentities, artifacts);
+    }
+
+    /// <summary>Retains the existing exact-tonemap lookup for compatible diagnostic callers.</summary>
     public ShaderProgramArtifact? LoadTonemapArtifact(ShaderProgramArtifactCatalog artifacts)
     {
         RequireSession();
         ArgumentNullException.ThrowIfNull(artifacts);
-        if (_tonemapArtifactIdentity is not { } identity)
+        if (!_pipelineArtifactIdentities.TryGetValue("tonemap", out string? identity))
             return null;
         if (!artifacts.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
             throw new InvalidDataException($"AssetSource.PipelineArtifactMissing: '{identity}' is not a verified WebGPUWgsl artifact.");
@@ -220,6 +226,6 @@ public sealed class BrowserEngineAssetSource : IRuntimeAssetSource, IRuntimeAsse
         _assets.Clear();
         _shaderArtifacts.Clear();
         _materialVariants.Clear();
-        _tonemapArtifactIdentity = null;
+        _pipelineArtifactIdentities.Clear();
     }
 }

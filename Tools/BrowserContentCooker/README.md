@@ -49,9 +49,12 @@ shaders use the separate optional `pipelineArtifacts` array:
 ```
 
 The placeholder must be replaced by the 64-character descriptor hash in
-`shaderArtifacts`. Only the `tonemap` pass is supported. Entries have exactly
+`shaderArtifacts`. Supported passes are `tonemap`, `depth-normal`,
+`gtao-generate`, `gtao-blur-horizontal`, `gtao-blur-vertical`, `bloom-copy`,
+`bloom-downsample`, `bloom-upsample`, and `bloom-combine`. Entries have exactly
 these two fields, no repeated passes, and at most 16 entries. The referenced
-hash-owned descriptor must declare `pass: "tonemap"` and `target: "WebGPUWgsl"`.
+hash-owned descriptor must declare the matching pass, `target: "WebGPUWgsl"`,
+and complete vertex and fragment entry points.
 Unknown passes, malformed entries, missing references, and mismatched descriptor
 metadata fail before output files are written. Omitted or empty catalogs do not
 select a shader implicitly by its name or source path. These engine catalogs
