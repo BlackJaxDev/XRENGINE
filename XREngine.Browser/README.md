@@ -78,12 +78,41 @@ snapshot source, and `BindLocalPlayer` maintains player/view ownership.
 Unbound desktop viewports still read their window's input. Browser pointer
 publication converts CSS coordinates to canvas backing pixels.
 
+The browser input bridge keeps native DOM editing attached to the currently
+focused engine text component. Completed IME compositions and selected-range
+edits pass through that component's validation path; stale generations or
+intervening engine edits are rejected. When an active text control is removed,
+keyboard focus returns to the canvas. A focused, visible engine button also
+receives a native DOM button proxy for its label, keyboard activation, and
+screen-reader role. These proxies use the same projected canvas coordinates
+as the engine UI and do not replace the rendered UI. Other engine controls
+and nonfocused UI are not yet represented in a browsable DOM accessibility tree.
+
 Startup failures include their managed stage and full exception. An initial
 resource-generation failure is reported immediately. If a visible canvas
 otherwise cannot present its first frame after 45 seconds of active frame time,
 the shell reports the renderer, pipeline-decline, and resource-failure state
 instead of waiting indefinitely. Restart creates a fresh owner; unsupported
 passes do not select a substitute renderer or simplified game runtime.
+
+Unexpected WebGPU device loss in the authored player now starts bounded device
+replacement without reloading the world. Gameplay and simulation time remain
+paused while a fresh renderer reacquires its device/capabilities, rebinds the
+retained cooked artifacts and rebuilds output resources. Recovery accepts the
+first complete current-output frame only after WebGPU error-scope validation
+and queue completion. Hidden or detached canvases wait for a drawable output;
+resize during completion requires a newly rendered output. Intentional Stop
+cancels recovery and rejects late callbacks.
+
+Each world session permits three replacement attempts in total. Device
+acquisition is bounded to 20 seconds, replacement frame preparation to 45
+active seconds, and validation/completion to 10 seconds per operation. Exhausted
+recovery reports the retained failure diagnostics and leaves the world paused;
+the player's **Retry** action explicitly reloads it. There is no WebGL or CPU
+rendering fallback. A stopped caller-thread lifecycle cannot be revived by
+device replacement. These paths have source/build and controlled host-boundary
+evidence, with live GPU/mobile qualification still open; see the
+[device recovery record](../docs/work/progress/platform/browser-webgpu-device-recovery-2026-10-02.md).
 
 The authored engine output reads `RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality`.
 Its default preserves the currently admitted WebGPU light, shadow, texture, and

@@ -133,7 +133,11 @@ public sealed partial class WebGpuRendererHost
     {
         RequireReady();
         if (color || depth || stencil)
-            ValidateEngineDrawArea(validateViewport: false);
+        {
+            BoundingRectangle? scissor = ResolveEngineDrawArea(validateViewport: false).Scissor;
+            if (scissor is not null)
+                throw UnsupportedEngineOperation(nameof(Clear), "scissored attachment clears are not admitted by the engine framebuffer profile");
+        }
         if (_boundEngineFrameBuffer is { } framebuffer)
         {
             if (stencil)
@@ -171,7 +175,7 @@ public sealed partial class WebGpuRendererHost
     public override void SetRenderArea(BoundingRectangle region)
     {
         RequireReady();
-        ValidateNonemptyArea(region);
+        ValidatePositiveArea(region);
         SetField(ref _engineRenderArea, region, publishNotifications: false);
     }
 
@@ -181,14 +185,15 @@ public sealed partial class WebGpuRendererHost
     public override void CropRenderArea(BoundingRectangle region)
     {
         RequireReady();
-        ValidateNonemptyArea(region);
+        if (region.Width < 0 || region.Height < 0)
+            throw new ArgumentOutOfRangeException(nameof(region), "A crop area cannot have negative extents.");
         SetField(ref _engineCropArea, region, publishNotifications: false);
     }
 
     public override void SetCroppingEnabled(bool enabled)
         => SetField(ref _engineCroppingEnabled, enabled, publishNotifications: false);
 
-    private static void ValidateNonemptyArea(BoundingRectangle region)
+    private static void ValidatePositiveArea(BoundingRectangle region)
     {
         if (region.X < 0 || region.Y < 0 || region.Width <= 0 || region.Height <= 0)
             throw new ArgumentOutOfRangeException(nameof(region), "A render area requires positive extents and nonnegative coordinates.");
@@ -196,6 +201,10 @@ public sealed partial class WebGpuRendererHost
 
     /// <summary>Validates scoped viewport state when its render target is known, after binding transitions.</summary>
     internal void ValidateEngineDrawArea(bool validateViewport = true)
+        => _ = ResolveEngineDrawArea(validateViewport);
+
+    /// <summary>Resolves engine bottom-left draw regions against the bound target into WebGPU top-left pixels.</summary>
+    internal (BoundingRectangle? Viewport, BoundingRectangle? Scissor) ResolveEngineDrawArea(bool validateViewport = true)
     {
         WebGpuFrameBuffer? framebuffer = GetBoundEngineFrameBuffer();
         uint width, height;
@@ -211,11 +220,38 @@ public sealed partial class WebGpuRendererHost
         }
         else
             throw UnsupportedEngineOperation(nameof(SetRenderArea), "no drawable output is available");
-        if (validateViewport && _engineRenderArea is { } render && (render.X != 0 || render.Y != 0 || render.Width != width || render.Height != height))
-            throw UnsupportedEngineOperation(nameof(SetRenderArea), "only the complete bound attachment extent is admitted");
-        if (_engineCroppingEnabled && (_engineCropArea is not { } crop ||
-            crop.X != 0 || crop.Y != 0 || crop.Width != width || crop.Height != height))
-            throw UnsupportedEngineOperation(nameof(CropRenderArea), "only complete-attachment cropping is admitted");
+        int targetWidth = checked((int)width);
+        int targetHeight = checked((int)height);
+        BoundingRectangle? viewport = null;
+        BoundingRectangle? scissor = null;
+        int viewportLeft = 0, viewportBottom = 0, viewportRight = targetWidth, viewportTop = targetHeight;
+        if (validateViewport && _engineRenderArea is { } render)
+        {
+            long right = (long)render.X + render.Width;
+            long top = (long)render.Y + render.Height;
+            if (render.X < 0 || render.Y < 0 || render.Width <= 0 || render.Height <= 0 ||
+                right > targetWidth || top > targetHeight)
+                throw UnsupportedEngineOperation(nameof(SetRenderArea), "the viewport must fit inside the bound attachment");
+            viewportLeft = render.X;
+            viewportBottom = render.Y;
+            viewportRight = (int)right;
+            viewportTop = (int)top;
+            if (viewportLeft != 0 || viewportBottom != 0 || viewportRight != targetWidth || viewportTop != targetHeight)
+                viewport = new BoundingRectangle(viewportLeft, targetHeight - viewportTop, render.Width, render.Height);
+        }
+        if (_engineCroppingEnabled)
+        {
+            if (_engineCropArea is not { } crop)
+                throw UnsupportedEngineOperation(nameof(CropRenderArea), "cropping is enabled without a crop region");
+            // Use 64-bit edges before clamping so off-target and empty UI clips cannot wrap.
+            int left = (int)Math.Clamp((long)crop.MinX, viewportLeft, viewportRight);
+            int bottom = (int)Math.Clamp((long)crop.MinY, viewportBottom, viewportTop);
+            int right = (int)Math.Clamp((long)crop.MinX + crop.Width, viewportLeft, viewportRight);
+            int top = (int)Math.Clamp((long)crop.MinY + crop.Height, viewportBottom, viewportTop);
+            if (left != 0 || bottom != 0 || right != targetWidth || top != targetHeight)
+                scissor = new BoundingRectangle(left, targetHeight - top, right - left, top - bottom);
+        }
+        return (viewport, scissor);
     }
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)

@@ -40,10 +40,13 @@ public static class ShaderProgramArtifactReader
         if (descriptor.TryGetProperty("materialVariant", out JsonElement variant))
             _ = ReadMaterialVariantKey(variant, Text(descriptor, "pass"), ShaderCompileTarget.WebGPUWgsl);
         string language = Text(descriptor, "sourceLanguage"), compiler = Text(descriptor, "compilerIdentity");
-        Require(language is "Slang" or "WGSL", "engine artifacts require Slang or WGSL sources");
-        Require(language == "Slang"
-            ? Regex.IsMatch(compiler, "^slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant)
-            : compiler == "xrengine-wgsl-packager/2", "unrecognized compiler identity");
+        Require(language is "Slang" or "WGSL" or "MaterialRecipe", "engine artifacts require Slang, WGSL, or an authored material source");
+        Require(language switch
+        {
+            "Slang" => Regex.IsMatch(compiler, "^slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant),
+            "MaterialRecipe" => Regex.IsMatch(compiler, "^xrengine-material-slang/1\\+slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant),
+            _ => compiler == "xrengine-wgsl-packager/2",
+        }, "unrecognized compiler identity");
         Require(Property(descriptor, "specialization", JsonValueKind.Object).EnumerateObject().Count() == 0, "specialization requires separately cooked variants");
         JsonElement dependencies = Property(descriptor, "dependencies", JsonValueKind.Array);
         Require(dependencies.GetArrayLength() is > 0 and <= 512, "invalid dependency count");
@@ -57,7 +60,12 @@ public static class ShaderProgramArtifactReader
         }
         JsonElement sourceMap = Property(descriptor, "sourceMap", JsonValueKind.Object);
         ExactKeys(sourceMap, "kind", "path");
-        Require(Text(sourceMap, "kind") is "identity" or "unmapped" && RelativePath(Text(sourceMap, "path")), "invalid source map");
+        Require(Text(sourceMap, "kind") == (language switch
+        {
+            "Slang" => "unmapped",
+            "MaterialRecipe" => "generated",
+            _ => "identity",
+        }) && RelativePath(Text(sourceMap, "path")), "invalid source map");
         JsonElement source = Property(descriptor, "source", JsonValueKind.Object);
         ExactKeys(source, "path", "sha256", "byteLength", "url");
         Require(Int(source, "byteLength") == wgslBytes.Length, "WGSL byte length does not match the descriptor");
@@ -341,7 +349,7 @@ public static class ShaderProgramArtifactReader
         Require(RelativePath(sourcePath), "source path must be relative and normalized");
         return new ShaderProgramArtifact(identity, name, pass, sourcePath, artifact, schema, CoordinateConvention, vertex, fragment, compute,
             buffers.OrderBy(buffer => buffer.Slot).ToImmutableArray(), resources.ToImmutable(), limits.ToImmutable())
-            { ComputeWorkgroupSize = workgroupSize };
+            { ComputeWorkgroupSize = workgroupSize, SourceLanguage = Text(descriptor, "sourceLanguage") };
     }
 
     internal static int VertexFormatBytes(string format) => format switch

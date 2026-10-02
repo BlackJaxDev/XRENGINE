@@ -15,6 +15,8 @@ public static class AssetManagerPrefabLoadingExtensions
         bool bypassJobThread = false)
     {
         ArgumentNullException.ThrowIfNull(assets);
+        if (assets.UsesRuntimeAssetCatalog)
+            throw new NotSupportedException("AssetSource.PartialYamlUnavailable: packaged prefabs are cooked graphs; use LoadPrefabWithReferencesAsync to load their catalog dependency closure.");
 
         if (!File.Exists(filePath))
             _ = await assets.LoadAsync<XRPrefabSource>(filePath, priority, bypassJobThread).ConfigureAwait(false);
@@ -34,10 +36,15 @@ public static class AssetManagerPrefabLoadingExtensions
         CancellationToken cancellationToken = default,
         int maxConcurrentReferenceLoads = 4)
     {
+        ArgumentNullException.ThrowIfNull(assets);
         if (maxConcurrentReferenceLoads <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxConcurrentReferenceLoads));
 
         cancellationToken.ThrowIfCancellationRequested();
+        if (assets.UsesRuntimeAssetCatalog)
+            return (XRPrefabSource?)await assets.LoadFromRuntimeSourceAsync(
+                filePath, typeof(XRPrefabSource), cancellationToken: cancellationToken).ConfigureAwait(false);
+
         PrefabPartialLoadPlan? plan = await assets.PreparePrefabPartialLoadAsync(
             filePath,
             priority,

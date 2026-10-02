@@ -265,6 +265,16 @@ namespace XREngine.Rendering
                     parameter.ValueChanged -= ParameterValueChanged;
         }
 
+        /// <summary>Restores value subscriptions after a cooked reflection load suppressed property callbacks.</summary>
+        protected void RestoreCookedParameterSubscriptions()
+        {
+            DetachParameterHandlers(_parameters);
+            AttachParameterHandlers(_parameters);
+            ResetNameIndexCache();
+            IncrementBindingLayoutVersion();
+            IncrementBindingValueVersion();
+        }
+
         private void ParameterValueChanged(ShaderVar _)
             => IncrementBindingValueVersion();
 

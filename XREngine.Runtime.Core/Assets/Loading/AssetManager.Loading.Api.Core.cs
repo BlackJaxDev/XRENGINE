@@ -23,7 +23,7 @@ public partial class AssetManager
         bool bypassJobThread = false)
         where T : XRAsset, new()
     {
-        if (_runtimeCatalogOwner)
+        if (UsesRuntimeAssetCatalog)
             return (T?)await LoadFromRuntimeSourceAsync(filePath, typeof(T), progressCallback).ConfigureAwait(false);
 
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
@@ -58,7 +58,7 @@ public partial class AssetManager
         bool bypassJobThread = false)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (_runtimeCatalogOwner)
+        if (UsesRuntimeAssetCatalog)
             return await LoadFromRuntimeSourceAsync(filePath, type, progressCallback).ConfigureAwait(false);
 
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
@@ -84,7 +84,7 @@ public partial class AssetManager
         bool bypassJobThread = false)
         where T : XRAsset, new()
     {
-        if (_runtimeCatalogOwner || _runtimeAssetSource is { SupportsSynchronousReads: false })
+        if (UsesRuntimeAssetCatalog || _runtimeAssetSource is { SupportsSynchronousReads: false })
             return (T?)RequireCachedRuntimeAsset(filePath, typeof(T));
 
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
@@ -107,7 +107,7 @@ public partial class AssetManager
         bool bypassJobThread = false)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (_runtimeCatalogOwner || _runtimeAssetSource is { SupportsSynchronousReads: false })
+        if (UsesRuntimeAssetCatalog || _runtimeAssetSource is { SupportsSynchronousReads: false })
             return RequireCachedRuntimeAsset(filePath, type);
 
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())

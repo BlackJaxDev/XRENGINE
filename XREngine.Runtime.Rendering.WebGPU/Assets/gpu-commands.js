@@ -26,6 +26,14 @@ function parse(json, keys) {
     if (typeof json !== 'string' || !json.length || json.length > maxDescription) throw new RangeError('GPU description exceeds its bounded size.');
     return object(JSON.parse(json), keys);
 }
+function drawRectangle(value, width, height, allowEmpty, name) {
+    object(value, ['x', 'y', 'width', 'height']);
+    const x = integer(value.x, 0, width, `${name} x`);
+    const y = integer(value.y, 0, height, `${name} y`);
+    const rectWidth = integer(value.width, allowEmpty ? 0 : 1, width - x, `${name} width`);
+    const rectHeight = integer(value.height, allowEmpty ? 0 : 1, height - y, `${name} height`);
+    return Object.freeze({ x, y, width: rectWidth, height: rectHeight });
+}
 function label(value = '') {
     if (typeof value !== 'string' || value.length > 128) throw new RangeError('GPU debug names are limited to 128 characters.');
     return value;
@@ -348,16 +356,20 @@ export class GpuCommands {
         const input = array(d.commands, maxCommands, 'commands');
         if (!input.length) throw new Error('Command sequences must not be empty.');
         const dependencies = [], operations = [];
-        let draws = 0, hasCanvas = false, presentsCanvas = false;
+        let draws = 0, encodedDraws = 0, hasCanvas = false, presentsCanvas = false;
         try {
             for (const command of input) {
                 if (command.type === 'render' || command.type === 'clear') {
                     const clearOnly = command.type === 'clear';
-                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage']);
+                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage', 'viewport', 'scissor']);
                     const pipeline = clearOnly ? undefined : hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
                     const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
                     const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata);
                     if (pipeline) plan.assertPipeline(pipeline.descriptor);
+                    const viewport = clearOnly || command.viewport === undefined ? undefined :
+                        drawRectangle(command.viewport, plan.signature.width, plan.signature.height, false, 'viewport');
+                    const scissor = clearOnly || command.scissor === undefined ? undefined :
+                        drawRectangle(command.scissor, plan.signature.width, plan.signature.height, true, 'scissor');
                     for (const attachment of command.pass.colors) {
                         if (!attachment) continue;
                         for (const handle of [attachment.viewHandle, attachment.resolveTargetHandle]) {
@@ -463,8 +475,10 @@ export class GpuCommands {
                         }
                     }
                     draws += drawList.length;
+                    if (!scissor || (scissor.width !== 0 && scissor.height !== 0))
+                        encodedDraws += drawList.length;
                     const stencilReference = integer(command.stencilReference ?? 0, 0, 0xffffffff, 'stencil reference');
-                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, engineInstanceCountLimit, stencilReference });
+                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, engineInstanceCountLimit, stencilReference, viewport, scissor });
                 } else if (command.type === 'compute') {
                     object(command, ['type', 'pipeline', 'bindings', 'workgroups']);
                     const pipeline = hold(dependencies, this.get(command.pipeline, 'compute-pipeline'));
@@ -503,7 +517,7 @@ export class GpuCommands {
                         destination: { texture: destination.texture, mipLevel: destinationMip, origin: [destinationX, destinationY, 0] }, size: [width, height, 1] });
                 } else throw new Error('Unsupported ordered command type.');
             }
-            return this.publish('commands', { label: label(d.label), operations, hasCanvas, presentsCanvas, generation: r._generation, width: r._width, height: r._height, draws }, dependencies);
+            return this.publish('commands', { label: label(d.label), operations, hasCanvas, presentsCanvas, generation: r._generation, width: r._width, height: r._height, draws, encodedDraws }, dependencies);
         } catch (error) { release(dependencies); throw error; }
     }
 
@@ -533,7 +547,7 @@ export class GpuCommands {
             r._submission[0] = encoder.finish();
             r._setOperation('submit-commands', commands.label);
             r.device.queue.submit(r._submission);
-            r._stats.draws += commands.draws;
+            r._stats.draws += commands.encodedDraws;
             r._stats.frameSubmitCalls++;
             return commands.presentsCanvas;
         } catch (error) { r._fail(error); throw error; }
@@ -547,6 +561,7 @@ export class GpuCommands {
 
     encodeOperation(encoder, operation, packet = null, offsetBase = 0, commandIndex = -1) {
         const r = this.renderer;
+        const recordBase = offsetBase;
         const engineInstanceCount = packet && operation.engineInstanceCountLimit && (packet.getUint32(offsetBase + 68, true) & 1)
             ? packet.getUint32(offsetBase + 64, true) : undefined;
         r._setOperation('encode-operation', operation.type, commandIndex);
@@ -584,6 +599,25 @@ export class GpuCommands {
             pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
         }
         else {
+            const flags = packet ? packet.getUint32(recordBase + 68, true) : 0;
+            let suppressDraw = false;
+            const viewport = operation.viewport;
+            if (flags & 2) {
+                const at = recordBase + 72;
+                pass.setViewport(packet.getUint32(at, true), packet.getUint32(at + 4, true),
+                    packet.getUint32(at + 8, true), packet.getUint32(at + 12, true), 0, 1);
+            } else if (viewport) pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+            const scissor = operation.scissor;
+            if (flags & 4) {
+                const at = recordBase + 88;
+                const width = packet.getUint32(at + 8, true), height = packet.getUint32(at + 12, true);
+                suppressDraw = width === 0 || height === 0;
+                if (!suppressDraw)
+                    pass.setScissorRect(packet.getUint32(at, true), packet.getUint32(at + 4, true), width, height);
+            } else if (scissor) {
+                suppressDraw = scissor.width === 0 || scissor.height === 0;
+                if (!suppressDraw) pass.setScissorRect(scissor.x, scissor.y, scissor.width, scissor.height);
+            }
             r._setOperation('set-stencil-reference', operation.type, commandIndex);
             pass.setStencilReference(operation.stencilReference);
             for (let slot = 0; slot < operation.vertexBuffers.length; slot++) {
@@ -595,7 +629,7 @@ export class GpuCommands {
                 r._setOperation('set-index-buffer', operation.type, commandIndex);
                 pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
             }
-            for (let draw = 0; draw < operation.draws.length; draw++) {
+            for (let draw = 0; !suppressDraw && draw < operation.draws.length; draw++) {
                 const value = operation.draws[draw];
                 r._setOperation('draw', value.type, commandIndex, draw);
                 if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);

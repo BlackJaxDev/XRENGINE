@@ -204,9 +204,9 @@ public static partial class BrowserEngineExports
         => _session?.GetRenderingStatus() ?? "No active engine canvas session.";
 
     [JSExport]
-    public static void InitializeCanvasGraphics(string colorFormat)
+    public static void InitializeCanvasGraphics(int session, string colorFormat)
         => (_session ?? throw new InvalidOperationException("WebGPU.EngineCanvas.Required: no active engine world."))
-            .InitializeGraphics(colorFormat);
+            .InitializeGraphics(session, colorFormat);
 
     [JSExport]
     public static void UpdateCanvasSurface(double logicalWidth, double logicalHeight, int physicalWidth,
@@ -216,7 +216,7 @@ public static partial class BrowserEngineExports
                 physicalHeight, pixelRatio, generation, visible, focused, attached));
 
     [JSExport]
-    public static void CanvasRendererFailed(bool deviceLost) => _session?.RendererFailed(deviceLost);
+    public static void CanvasRendererFailed(int session, bool deviceLost) => _session?.RendererFailed(session, deviceLost);
 
     /// <summary>Call directly from a trusted page gesture to resume browser output.</summary>
     [JSExport]
@@ -253,6 +253,8 @@ public static partial class BrowserEngineExports
     [JSExport]
     public static string GetTextInputLabel() => _session?.TextInputLabel ?? string.Empty;
     [JSExport]
+    public static int GetTextInputLabelVersion() => _session?.TextInputLabelVersion ?? 0;
+    [JSExport]
     public static int GetTextInputCursor() => _session?.TextInputCursor ?? 0;
     [JSExport]
     public static bool GetTextInputSingleLine() => _session?.TextInputSingleLine ?? true;
@@ -267,14 +269,31 @@ public static partial class BrowserEngineExports
     [JSExport]
     public static float GetTextInputHeight() => _session?.TextInputHeight ?? 0;
     [JSExport]
-    public static bool EditTextInput(int generation, string value, int selectionStart, int selectionEnd)
-        => _session?.EditTextInput(generation, value, selectionStart, selectionEnd) ?? false;
+    public static bool EditTextInput(int generation, int expectedVersion, string value, int selectionStart, int selectionEnd)
+        => _session?.EditTextInput(generation, expectedVersion, value, selectionStart, selectionEnd) ?? false;
     [JSExport]
-    public static bool SelectTextInput(int generation, int cursor)
-        => _session?.SelectTextInput(generation, cursor) ?? false;
+    public static bool SelectTextInput(int generation, int expectedVersion, int cursor)
+        => _session?.SelectTextInput(generation, expectedVersion, cursor) ?? false;
     [JSExport]
-    public static bool ActOnTextInput(int generation, bool submit)
-        => _session?.ActOnTextInput(generation, submit) ?? false;
+    public static bool ActOnTextInput(int generation, int expectedVersion, bool submit)
+        => _session?.ActOnTextInput(generation, expectedVersion, submit) ?? false;
+    [JSExport]
+    public static int RefreshAccessibleControl() => _session?.RefreshAccessibleControl() ?? 0;
+    [JSExport]
+    public static string GetAccessibleControlLabel() => _session?.AccessibleControlLabel ?? string.Empty;
+    [JSExport]
+    public static int GetAccessibleControlLabelVersion() => _session?.AccessibleControlLabelVersion ?? 0;
+    [JSExport]
+    public static float GetAccessibleControlX() => _session?.AccessibleControlX ?? -1;
+    [JSExport]
+    public static float GetAccessibleControlY() => _session?.AccessibleControlY ?? -1;
+    [JSExport]
+    public static float GetAccessibleControlWidth() => _session?.AccessibleControlWidth ?? 0;
+    [JSExport]
+    public static float GetAccessibleControlHeight() => _session?.AccessibleControlHeight ?? 0;
+    [JSExport]
+    public static bool ActivateAccessibleControl(int generation)
+        => _session?.ActivateAccessibleControl(generation) ?? false;
     [JSExport]
     public static void PublishInput(bool focused, bool captured, bool gamepadConnected, int gamepadButtonMask,
         float leftTrigger, float rightTrigger, float leftX, float leftY, float rightX, float rightY)

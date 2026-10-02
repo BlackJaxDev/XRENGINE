@@ -5,24 +5,27 @@ using XREngine.Rendering;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Shaders;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 using System.Text.RegularExpressions;
 
 namespace XREngine.Editor.Publishing;
 
 /// <summary>
-/// Projects explicitly tagged built-in desktop surfaces while the browser serializer walks
-/// an ordinary engine world. Authored objects remain borrowed and are never rewritten.
+/// Projects built-in or exact-companion authored lit textures while the browser serializer
+/// walks an ordinary engine world. Authored objects remain borrowed and are never rewritten.
 /// </summary>
 internal sealed class BrowserMaterialCookProjection : IDisposable
 {
     private readonly string? _engineRoot;
+    private readonly BrowserShaderArtifactSource? _shaderSource;
     private readonly Dictionary<XRMaterial, XRMaterial> _copies = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, string> _canonicalSources = new(StringComparer.Ordinal);
     private bool _disposed;
 
-    public BrowserMaterialCookProjection(string? engineRoot)
+    public BrowserMaterialCookProjection(string? engineRoot, BrowserShaderArtifactSource? shaderSource)
     {
         _engineRoot = engineRoot;
+        _shaderSource = shaderSource;
         Callbacks = new CookedBinarySerializationCallbacks { OnSerializingValue = Project };
     }
 
@@ -31,12 +34,19 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
     private object? Project(object? value)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (value is not XRMaterial source || source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1 || source is PublishedStandardLitTextureMaterial)
+        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial)
+            return value;
+        if (source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+            return ProjectAuthored(source);
+        if (source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1)
             return value;
         if (_copies.TryGetValue(source, out XRMaterial? existing)) return existing;
         if (source.GetType() != typeof(XRMaterial))
             throw new NotSupportedException($"BrowserCook.TexturedProjectionUnsupported: '{source.Name}' requires the exact built-in material type.");
-        if (!StandardLitTextureSurfaceBinding.TryReadForCook(source, EquivalentTexture, out StandardLitTextureSurface surface, out string? reason))
+        StandardLitTextureSurface surface;
+        string? reason;
+        bool readable = StandardLitTextureSurfaceBinding.TryReadForCook(source, EquivalentTexture, out surface, out reason);
+        if (!readable)
             throw new NotSupportedException($"BrowserCook.TexturedProjectionUnsupported: '{source.Name}': {reason}");
         if (source.Shaders.Count != 0) VerifyStage(source, surface);
         (XRTexture?[] textures, MaterialSurfaceTextureBinding[] bindings) = CanonicalizeTextureAliases(source);
@@ -61,6 +71,66 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
             copy.EngineSemantic = source.EngineSemantic;
             if (!StandardLitTextureSurfaceBinding.TryCreate(copy, out _, out reason))
                 throw new InvalidDataException($"BrowserCook.TexturedProjectionMismatch: '{source.Name}': {reason}");
+            _copies.Add(source, copy);
+            return copy;
+        }
+        catch
+        {
+            Release(copy);
+            throw;
+        }
+    }
+
+    private XRMaterial ProjectAuthored(XRMaterial source)
+    {
+        if (_copies.TryGetValue(source, out XRMaterial? existing)) return existing;
+        if (source.GetType() != typeof(XRMaterial))
+            throw new NotSupportedException($"BrowserCook.AuthoredLitTypeUnsupported: '{source.Name}' requires the engine XRMaterial type.");
+        if (!EngineLitMaterialShaderGenerator.TryPlanForCook(source, ShaderCompileTarget.WebGPUWgsl,
+            EquivalentTexture, out EngineLitMaterialShaderPlan plan, out string? reason))
+            throw new NotSupportedException($"BrowserCook.AuthoredLitSurfaceUnsupported: '{source.Name}': {reason}");
+        if (source.Shaders.Count != 1 || source.Shaders[0].Type != EShaderType.Fragment)
+            throw new NotSupportedException($"BrowserCook.AuthoredLitStageUnsupported: '{source.Name}' requires its canonical desktop PBR fragment stage.");
+        bool textured = plan.UsesBaseColorTexture;
+        StandardLitTextureSurface surface = default;
+        if (textured)
+        {
+            if (!StandardLitTextureSurfaceBinding.TryReadAuthoredForCook(source, EquivalentTexture, out surface, out reason))
+                throw new NotSupportedException($"BrowserCook.AuthoredLitTextureUnsupported: '{source.Name}': {reason}");
+            VerifyStage(source, surface);
+        }
+        else VerifyColorStage(source);
+        if (_shaderSource is null || !_shaderSource.TryResolveAuthoredLit(source, plan, out ShaderProgramArtifact? artifact))
+            throw new NotSupportedException($"BrowserCook.AuthoredLitCookMissing: '{source.Name}' ({source.ID}) needs schema-3 MaterialRecipe '{EngineLitMaterialShaderGenerator.CookName(source.ID)}' for '{plan.SemanticSchemaIdentity}' in BrowserShaderArtifactManifestPath.");
+        string? existingIdentity = source.Shaders[0].CookedArtifactIdentity;
+        if (existingIdentity is not null && existingIdentity != artifact.Identity)
+            throw new NotSupportedException($"BrowserCook.AuthoredLitCompanionStale: '{source.Name}' retains '{existingIdentity}' but the selected material cook is '{artifact.Identity}'.");
+
+        (XRTexture?[] textures, MaterialSurfaceTextureBinding[] bindings) = textured
+            ? CanonicalizeTextureAliases(source) : ([], []);
+        // This detached WebGPU-target copy owns its minimal exact companion; the
+        // desktop material, shader source, parameters, and images remain borrowed.
+        using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+        using IDisposable cache = XRObjectBase.SuppressObjectCacheRegistration();
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(EngineMaterialConstructionTarget.WebGpuCooked);
+        XRMaterial copy = textured ? new PublishedStandardLitTextureMaterial() : new XRMaterial();
+        try
+        {
+            copy.AdoptPersistentID(source.ID);
+            copy.Name = source.Name;
+            copy.Shaders = [new XRShader(EShaderType.Fragment) { CookedArtifactIdentity = artifact.Identity }];
+            copy.Parameters = source.Parameters;
+            if (textured)
+            {
+                copy.Textures = [.. textures];
+                copy.SurfaceTextureBindings = bindings;
+            }
+            copy.RenderOptions = source.RenderOptions;
+            copy.RenderPass = source.RenderPass;
+            copy.TransparentSortPriority = source.TransparentSortPriority;
+            copy.EngineSemantic = EngineMaterialSemanticIdentity.AuthoredLitV1;
+            if (!EngineAuthoredLitMaterialAdmission.TryAdmit(copy, artifact, out _, out _, out reason))
+                throw new InvalidDataException($"BrowserCook.AuthoredLitProjectionMismatch: '{source.Name}': {reason}");
             _copies.Add(source, copy);
             return copy;
         }
@@ -119,6 +189,31 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
         if (!leftPayload.AsSpan().SequenceEqual(rightPayload))
             throw new NotSupportedException($"BrowserCook.TexturedProjectionTextureAliasMismatch: texture '{left.ID}' has conflicting serialized metadata or image bytes.");
         return true;
+    }
+
+    private void VerifyColorStage(XRMaterial material)
+    {
+        if (_engineRoot is null || material.Shaders.Count != 1)
+            throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' has no canonical desktop stage.");
+        XRShader shader = material.Shaders[0];
+        if (shader.Type != EShaderType.Fragment || shader.SourceLanguage != ShaderSourceLanguage.Glsl ||
+            shader.EntryPoint != "main" || shader.IsGeneratedUberVariant || shader.GeneratedUberVariantHash != 0 ||
+            !shader.SlangOptions.Defines.IsDefaultOrEmpty || !shader.SlangOptions.Includes.IsDefaultOrEmpty ||
+            !shader.SlangOptions.RequiredCapabilities.IsDefaultOrEmpty || !shader.SlangOptions.Resources.IsDefaultOrEmpty)
+            throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' requires the canonical engine GLSL PBR fragment without extensions.");
+        string path = Path.GetFullPath(Path.Combine(_engineRoot, "Shaders", "Common", "ColoredDeferred.fs"));
+        string? sourcePath = shader.Source?.FilePath ?? shader.FilePath;
+        if (sourcePath is null || !string.Equals(Path.GetFullPath(sourcePath), path,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' has a noncanonical desktop GLSL source path.");
+        if (!_canonicalSources.TryGetValue(path, out string? canonical))
+        {
+            canonical = File.ReadAllText(path);
+            _canonicalSources.Add(path, canonical);
+        }
+        if (!string.Equals(shader.Source?.Text, canonical, StringComparison.Ordinal))
+            throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' desktop GLSL source differs from the engine PBR fragment.");
+        VerifySnippets(material, shader, canonical);
     }
 
     private void VerifyStage(XRMaterial material, in StandardLitTextureSurface surface)
@@ -187,6 +282,7 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
         copy.Parameters = [];
         copy.Textures = [];
         copy.SurfaceTextureBindings = [];
+        copy.Shaders.Clear();
         copy.DestroyShaderPipelineProgram();
         copy.Destroy(now: true);
     }

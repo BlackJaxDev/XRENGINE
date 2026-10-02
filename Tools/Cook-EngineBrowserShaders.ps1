@@ -31,7 +31,8 @@ try {
     Copy-Item -LiteralPath $canonicalRoot -Destination $sourceRoot -Recurse
     $computeDirectory = Join-Path $sourceRoot 'Assets'
     New-Item -ItemType Directory -Path $computeDirectory | Out-Null
-    foreach ($kernel in @('gpu-skinning.wgsl', 'gpu-luminance.wgsl')) {
+    foreach ($kernel in @('gpu-skinning.wgsl', 'gpu-luminance.wgsl',
+        'gpu-luminance-2d.wgsl', 'gpu-luminance-mipmap.wgsl')) {
         Copy-Item -LiteralPath (Join-Path $repositoryRoot "XREngine.Runtime.Rendering.WebGPU/Assets/$kernel") `
             -Destination (Join-Path $computeDirectory $kernel)
     }

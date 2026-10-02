@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using XREngine.Data;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Compilation;
@@ -73,6 +74,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
             throw Unsupported("the requested instance count exceeds the published logical storage length");
         if (_instanceStorage is { } uiStorage)
             ValidateUIStorageExtent(uiStorage.Name, instances);
+        (BoundingRectangle? viewport, BoundingRectangle? scissor) = _renderer.ResolveEngineDrawArea();
+        bool croppedOut = scissor is { Width: 0 } or { Height: 0 };
         if (!_commands.TryGetValue(bindings, out int commands))
         {
             if (_commands.Count >= 64)
@@ -82,10 +85,14 @@ internal sealed class WebGpuMeshDraw : IDisposable
         }
         Span<uint> offsets = stackalloc uint[16];
         int count = _program.SnapshotUniforms(offsets);
-        _renderer.RecordEngineCommands(commands, offsets[..count], _instanceLimit == 0 ? null : instances);
+        _renderer.RecordEngineCommands(commands, offsets[..count], _instanceLimit == 0 ? null : instances,
+            viewport, scissor);
         bindings.MarkRecorded();
-        _frameBuffer?.MarkRecorded();
-        _renderer.CountEngineMeshDraw();
+        if (!croppedOut)
+        {
+            _frameBuffer?.MarkRecorded();
+            _renderer.CountEngineMeshDraw();
+        }
     }
 
     private void ValidateUIStorageExtent(string sourceName, uint instances)

@@ -2,13 +2,15 @@ using System.Reflection;
 using XREngine.Core.Files;
 using XREngine.Components.Scripting;
 using XREngine.Scene;
+using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Editor;
 
 internal static partial class ProjectBuilder
 {
     /// <summary>Cooks the serializer-declared external asset graph into browser catalog identities.</summary>
-    private sealed class BrowserAssetDependencyCooker(string gameRoot, string? engineRoot, string sourceDirectory, CancellationToken cancellationToken) : IDisposable
+    private sealed class BrowserAssetDependencyCooker(string gameRoot, string? engineRoot, string sourceDirectory,
+        IShaderProgramArtifactResolver? resolver, CancellationToken cancellationToken) : IDisposable
     {
         private readonly string _gameRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gameRoot));
         private readonly string? _engineRoot = engineRoot is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(engineRoot));
@@ -16,7 +18,7 @@ internal static partial class ProjectBuilder
         private readonly Dictionary<string, Type> _assetTypes = new(StringComparer.Ordinal);
         private readonly HashSet<string> _visiting = new(StringComparer.Ordinal);
         private int _nextSourceOrdinal;
-        private readonly Publishing.BrowserMaterialCookProjection _materialProjection = new(engineRoot);
+        private readonly Publishing.BrowserMaterialCookProjection _materialProjection = new(engineRoot, resolver as Publishing.BrowserShaderArtifactSource);
         private readonly Assembly _gameAssembly = GameCSProjLoader.GetLoadedAssembly("GAME")
             ?? throw new InvalidOperationException("BrowserCook.GameAssemblyMissing: the compiled game must be loaded before cooking.");
         private CookedBinarySerializationCallbacks? _cookCallbacks;

@@ -159,7 +159,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
 
     private void ReadComputeArtifacts(JsonElement computes)
     {
-        if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 2)
+        if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 4)
             throw new InvalidDataException("AssetSource.ComputeArtifactBudgetExceeded.");
         HashSet<string> identities = _shaderArtifacts.Select(static artifact => artifact.Identity).ToHashSet(StringComparer.Ordinal);
         foreach (JsonElement compute in computes.EnumerateArray())

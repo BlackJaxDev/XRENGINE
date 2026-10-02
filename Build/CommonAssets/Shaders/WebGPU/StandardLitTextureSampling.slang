@@ -14,12 +14,13 @@
 
 float3 mappedTextureNormal(float2 uv, float3 normal, float3 tangent, float3 bitangent)
 {
+    // Implicit-LOD sampling needs uniform control flow before per-fragment fallback guards.
+    float3 sample = normalTexture.Sample(normalSampler, uv).rgb * 2.0 - 1.0;
     float3 n = normalize(normal);
     if (!all(isfinite(n))) return float3(0.0, 0.0, 1.0);
     float3 t = tangent - n * dot(n, tangent);
     float3 b = bitangent - n * dot(n, bitangent);
     if (!all(isfinite(t)) || !all(isfinite(b)) || dot(t, t) < 1e-10 || dot(b, b) < 1e-10) return n;
-    float3 sample = normalTexture.Sample(normalSampler, uv).rgb * 2.0 - 1.0;
     sample.y = -sample.y;
     if (dot(sample, sample) <= 1e-6) return n;
     sample = normalize(sample);

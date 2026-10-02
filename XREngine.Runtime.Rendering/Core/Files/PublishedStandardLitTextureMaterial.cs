@@ -8,9 +8,10 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Source-free authored material with a bounded typed payload. Images are serialized once;
-/// both semantic roles and legacy sampler slots are reconstructed from those same objects.
-/// This carrier does not change ordinary desktop XRMaterial serialization.
+/// Bounded typed payload for an engine lit texture or an authored cooked lit texture.
+/// Images are serialized once and sampler roles are reconstructed from those objects.
+/// Authored stages retain their type and exact cooked descriptor identity; ordinary
+/// desktop XRMaterial and its GLSL source remain unchanged.
 /// </summary>
 public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBinarySerializable
 {
@@ -21,7 +22,8 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
     {
         StandardLitTextureSurface surface = ReadSurface();
         (XRTexture2D[] textures, int[] roles) = DescribeTextures(surface);
-        writer.Write(1);
+        bool authored = EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1;
+        writer.Write(authored ? 2 : 1);
         writer.WriteValue(ID);
         writer.WriteValue(Name);
         writer.Write(surface.Values.BaseColor.X);
@@ -42,6 +44,19 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
         }
         foreach (int role in roles) writer.Write(role);
         writer.Write(surface.BaseColor.IsSrgb);
+        if (authored)
+        {
+            if (Shaders.Count is < 1 or > 2 || Shaders.Count(shader => shader.Type == EShaderType.Fragment) != 1)
+                throw Invalid("an authored texture carrier requires one fragment stage and at most one vertex stage");
+            writer.Write((byte)Shaders.Count);
+            foreach (XRShader shader in Shaders)
+            {
+                if (shader.Type is not (EShaderType.Vertex or EShaderType.Fragment) || shader.CookedArtifactIdentity is null)
+                    throw Invalid("an authored stage requires a vertex/fragment type and an exact descriptor identity");
+                writer.Write((byte)shader.Type);
+                writer.WriteValue(shader.CookedArtifactIdentity);
+            }
+        }
     }
 
     [RequiresUnreferencedCode(ReflectionWarning), RequiresDynamicCode(ReflectionWarning)]
@@ -56,6 +71,14 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
         {
             _ = PublishedStandardLitTextureSettings.Capture(texture);
             size = checked(size + CookedBinarySerializer.CalculateSize(texture) + PublishedStandardLitTextureSettings.SerializedSize);
+        }
+        if (EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+        {
+            if (Shaders.Count is < 1 or > 2 || Shaders.Count(shader => shader.Type == EShaderType.Fragment) != 1)
+                throw Invalid("an authored texture carrier requires one fragment stage and at most one vertex stage");
+            size = checked(size + sizeof(byte));
+            foreach (XRShader shader in Shaders)
+                size = checked(size + sizeof(byte) + CookedBinarySerializer.CalculateSize(shader.CookedArtifactIdentity));
         }
         return size;
     }
@@ -84,7 +107,8 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
     [RequiresUnreferencedCode(ReflectionWarning), RequiresDynamicCode(ReflectionWarning)]
     private void ReadPayload(CookedBinaryReader reader)
     {
-        if (reader.ReadInt32() != 1) throw Invalid("unsupported payload version");
+        int version = reader.ReadInt32();
+        if (version is not (1 or 2)) throw Invalid("unsupported payload version");
         Guid id = reader.ReadValue<Guid>();
         string? name = reader.ReadValue<string>();
         Vector3 color = new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
@@ -113,6 +137,26 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
         }
         if (used != (1 << textureCount) - 1) throw Invalid("the unique texture table contains an unreferenced image");
         bool baseColorSrgb = reader.ReadBoolean();
+        XRShader[] authoredStages = [];
+        if (version == 2)
+        {
+            int stageCount = reader.ReadByte();
+            if (stageCount is < 1 or > 2) throw Invalid("authored stage count must be one or two");
+            authoredStages = new XRShader[stageCount];
+            string? programIdentity = null;
+            for (int index = 0; index < stageCount; index++)
+            {
+                EShaderType type = (EShaderType)reader.ReadByte();
+                string identity = reader.ReadValue<string>() ?? throw Invalid("an authored descriptor identity is missing");
+                if (type is not (EShaderType.Vertex or EShaderType.Fragment) ||
+                    programIdentity is not null && programIdentity != identity)
+                    throw Invalid("authored stage types or whole-program identities disagree");
+                programIdentity = identity;
+                authoredStages[index] = new XRShader(type) { CookedArtifactIdentity = identity };
+            }
+            if (authoredStages.Count(shader => shader.Type == EShaderType.Fragment) != 1)
+                throw Invalid("the authored texture carrier requires exactly one fragment stage");
+        }
         XRTexture2D albedo = textures[roles[0]];
         XRTexture2D? normalMap = roles[1] < 0 ? null : textures[roles[1]];
         XRTexture2D? metallicMap = roles[2] < 0 ? null : textures[roles[2]];
@@ -139,7 +183,8 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
         TransparentSortPriority = priority;
         Name = name;
         AdoptPersistentID(id);
-        EngineSemantic = EngineMaterialSemanticIdentity.StandardLitTextureV1;
+        if (version == 2) Shaders = [.. authoredStages];
+        EngineSemantic = version == 1 ? EngineMaterialSemanticIdentity.StandardLitTextureV1 : EngineMaterialSemanticIdentity.AuthoredLitV1;
         _ = ReadSurface();
     }
 
@@ -148,8 +193,16 @@ public sealed class PublishedStandardLitTextureMaterial : XRMaterial, ICookedBin
 
     private StandardLitTextureSurface ReadSurface()
     {
+        if (EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+        {
+            if (!StandardLitTextureSurfaceBinding.TryCreateAuthoredCooked(this,
+                out StandardLitTextureSurfaceBinding? binding, out _) ||
+                !binding!.TryRead(out StandardLitTextureSurface authored, out _))
+                throw Invalid("the authored carrier must contain exact opaque PBR texture inputs and cooked stages");
+            return authored;
+        }
         if (Shaders.Count != 0 || !StandardLitTextureSurfaceBinding.TryRead(this, out StandardLitTextureSurface surface, out _))
-            throw Invalid("the carrier must contain an exact source-free opaque texture surface");
+            throw Invalid("the built-in carrier must contain an exact source-free opaque texture surface");
         return surface;
     }
 

@@ -816,3 +816,96 @@ surfaces, motion, pause/reset, resize and two fresh contexts. Manifest presence
 and moving pixels alone cannot prove mapped-lighting semantics or GPU skinning
 execution; those acceptance claims remain open. No new GPU readback, luminance,
 shadow-cadence or authored-world rendering result is claimed before CI evidence.
+
+### Metadata-bearing game acceptance and compute publisher correction (2026-10-02)
+
+Commit `d986055df320ea626666e018d3ab53f5d4e90a70` passes the genuine Windows
+Editor CLI RollingBall publisher and exact-bundle Chromium game job in
+[run 37040914825](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37040914825).
+The [game capture artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37040914825/artifacts/11243401005)
+was hash-verified (`dbcb9f0613b9320570482665f5e0a9f8d4c6350c5e9485b62d000909fe6d6c00`)
+and both resized plus pause/resume captures were viewed: they show the real course,
+ball, obstacles and green/yellow HUD. This extends the bounded game evidence to
+published-metadata startup. Source/headless validation alone was not used to claim
+that browser result.
+
+The same Windows job successfully cooked 42 RenderingParity shader artifacts,
+then its real publisher rejected the two compute entries at an obsolete
+one-kernel guard. Therefore no RenderingParity bundle or browser run was produced
+by that snapshot. Commit `266392a25a9c5c0d3ec9b1fe73646c6ba8c8bf8e` corrects only
+that Editor admission: the shared supported-kernel set and per-kernel ABI validator
+now control admission within a bounded catalog. Editor compilation passes 0/0;
+the production constructor admits the actual 42-artifact/two-kernel and
+44-artifact/four-kernel manifests, while unknown, duplicate and mismatched entries
+still fail. This fix does not weaken the browser artifact or pixel assertions.
+The fresh milestone run is
+[37044552081](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37044552081).
+
+### Authored-world startup diagnosis (2026-10-02)
+
+The real Windows Editor publisher and RollingBall browser job pass in both
+run 37044552081 and
+[run 37048210271](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37048210271).
+The reported physical Intel Arc/Edge RollingBall run also renders, responds to
+tilt/reset/pause/resume and survives two fresh starts and resizes. This is bounded
+desktop-browser evidence, not the complete mobile/device matrix.
+
+RenderingParity exposed two separate startup faults. The first run failed to
+resolve a standalone `System.Single` array element under published metadata.
+The finite framework-data resolver in `d8e4c748` removes that exception. The
+next exact bundle reaches a Ready renderer but times out at zero draws in both
+software Chromium and the physical PC. Shared standalone play had discarded the
+authored game mode, so its saved pawn was never possessed and the viewport had
+no camera. The mode is now preserved without creating the unwanted editor
+fallback. The reviewed correction and production native lifecycle evidence are
+in the [startup investigation](../../investigations/platform/browser-authored-mode-startup-2026-10-02.md).
+Commit `83de01a5e8bd8e4b490b0ff869fd39263b93f377` is published for the existing
+browser acceptance rerun; native possession/camera evidence does not establish
+the first rendered textured/deformed frame.
+
+### Compiled GPU services, material recipes and UI input (2026-10-02)
+
+The final coherent source passes Editor, Server, VRClient, desktop WebGPU,
+RenderingParity, all nineteen portable compile rows and fresh native-Jolt WASM
+publication with zero compiler warnings/errors. The refreshed gate includes the
+final content-version/label input changes and standalone-mode lifecycle fix.
+Evidence is under the active run's `gpu-services-gate/`; narrow runtime probes
+and source reviews are recorded in each linked report.
+
+Independent full-wording source review closes the non-blocking renderer,
+device-state/reconstruction and complete input leaf implementation rows. The
+checklist is now **60/110**, with 50 open. This does not close device/pixel,
+desktop parity, complete UI or performance verification.
+
+- [GPU luminance](browser-webgpu-luminance-2026-10-02.md) now generates real mip
+  levels and preserves encoded sRGB sampling through a raw copy-compatible
+  texture. The shared cook produces 44 artifacts, nine raster pipelines and four
+  compute entries. Unsupported scalar-mip cases remain named contracts
+- [Device replacement](browser-webgpu-device-recovery-2026-10-02.md) reconstructs
+  only the retired GPU owner and pipeline resources, retaining the game session
+  and rejecting stale callbacks. Controlled boundary probes pass; forced-loss
+  actual GPU continuity still needs the milestone run
+- [Authored PBR recipes](browser-authored-lit-material-cooking-2026-10-02.md)
+  originate from shared engine material parameters, with exact cooked source/ABI
+  identities. Real authored YAML projection, dynamic parameter changes and
+  unchanged legacy cache bytes pass. Automatic Editor Slang invocation and
+  arbitrary shader/profile coverage remain open
+- [UI clip/input](browser-ui-clip-input-2026-10-02.md) carries engine viewport and
+  scissor through version-3 reusable commands, retains clipped quad/text batches,
+  and bridges focused text/button controls with IME and content-version guards.
+  General UI profiles and the whole accessibility tree remain open
+- [Catalog routing](browser-catalog-prefab-routing-2026-10-02.md) fixes virtual
+  prefab loads, preserves cached fast paths, and rejects blocking runtime-source
+  operations and writes. Full runtime I/O/thread closure is still incomplete
+
+No new live GPU acceptance is inferred from the full build gate. The current
+published-world run remains the required next check for RenderingParity pixels.
+
+The physical `83de01a5` rerun confirms startup now reaches shader creation, where
+the mapped-normal prepass exposes a real derivative-uniformity error. The final
+source addition samples before varying fallback guards and updates the canonical
+authored-material include pin. All four affected variants and the authored
+normal recipe recook; the narrow ShaderCooker rebuild passes 0/0 after the full
+gate. Independent emitted-WGSL review preserves implicit LOD and normal math.
+The [startup investigation](../../investigations/platform/browser-authored-mode-startup-2026-10-02.md)
+records exact failed/corrected hashes and keeps real first-frame acceptance open.

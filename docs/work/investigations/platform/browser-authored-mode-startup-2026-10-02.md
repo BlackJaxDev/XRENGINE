@@ -77,3 +77,29 @@ teardown; browser startup/shutdown uses the corrected standalone pair.
 
 These native lifecycle checks do not establish the first rendered
 textured/deformed frame. The real browser acceptance rerun remains required.
+
+## Follow-on mapped-normal shader failure
+
+The physical-PC rerun of `83de01a5` passes real Editor publication and advances
+past the previous zero-draw/camera timeout to WebGPU shader creation. Its first
+shader failure is `engine-standard-lit-texture-normal-depth-normal`: WGSL
+`textureSample` was reached only after input-dependent early returns in
+`mappedTextureNormal`. The exact failed cooked source has SHA-256
+`11d325e38d46340340f6a62e89f17ec7935ff71b819e5bf90dc9a424dc6c5712`;
+the retained local artifact has the identical hash.
+
+The canonical Slang helper now samples before all per-fragment fallback guards.
+The derivative-based implicit LOD, normal decoding, handedness and degenerate
+tangent/normal fallbacks are preserved. Its callers remain unconditional; sibling
+coverage conditions depend only on uniform material values. The correction is
+shared by the normal-mapped depth/normal, plain forward, directional-shadow and
+local-shadow variants. The authored-material frontend's canonical include hash
+is updated along with the source, retaining exact-source admission.
+
+Pinned Slang 2026.8 recooks all four canonical variants. Independent source and
+emitted-WGSL review verifies that the sample precedes every varying-input branch
+and early return. The depth/normal WGSL now has SHA-256
+`5f3c453a9719c278612b7177a8924ceb85b74df37e58ff95c248851982e8a72f`.
+No uniformity diagnostic is disabled and no fixed-LOD sampling is substituted.
+Evidence is under the active run's `normal-uniformity/` directory. The real
+browser run still must qualify the first frame and later visual checks.

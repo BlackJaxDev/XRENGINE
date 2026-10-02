@@ -7,6 +7,9 @@ namespace XREngine;
 
 public partial class AssetManager
 {
+    /// <summary>Whether this owner loads virtual packaged identities rather than host files.</summary>
+    internal bool UsesRuntimeAssetCatalog => _runtimeCatalogOwner || _runtimeAssetSource is IRuntimeAssetCatalog;
+
     /// <summary>Binds a replacement catalog after the previous world's assets have been released.</summary>
     public void BindRuntimeSource(IRuntimeAssetSource source)
     {

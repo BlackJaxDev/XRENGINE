@@ -37,6 +37,7 @@
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiMatrixOrder.cs" Link="Shared/ShaderAbiMatrixOrder.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserMaterialShaderDefinition.cs" Link="Shared/BrowserMaterialShaderDefinition.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserMaterialShaderGenerator.cs" Link="Shared/BrowserMaterialShaderGenerator.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineLitMaterialShaderGenerator.cs" Link="Shared/EngineLitMaterialShaderGenerator.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserShaderAbi.cs" Link="Shared/BrowserShaderAbi.cs" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />

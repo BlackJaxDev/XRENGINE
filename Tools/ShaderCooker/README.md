@@ -50,14 +50,13 @@ checks; successful cooking alone does not qualify browser rendering.
 
 Schema 3 adds an explicit engine whole-program ABI. Existing schema 1/2 recipes
 remain compatibility fixtures and retain their descriptor shape. Cook each schema
-in a separate invocation. An engine recipe must use authored `Slang` or explicit
-`WGSL`; `MaterialRecipe` remains the frozen fixture generator and is rejected for
-engine artifacts.
+in a separate invocation. An engine recipe uses authored `Slang`, explicit
+`WGSL`, or the bounded opaque-PBR `MaterialRecipe` frontend described below.
 
 Engine recipes may declare an exact cooked material selector with an optional
 `materialVariant` object containing `semantic`, `semanticVersion`,
 `vertexProfile`, and `outputProfile`. The recipe's `target` and `pass` complete
-the key. Only the supported `StandardLitColor` revision 1 semantic is admitted.
+the key. Supported engine variants use explicit versioned semantics and physical profiles.
 The declaration is copied into the hash-owned shader descriptor and emitted as
 an explicit `materialVariants` reference in the cooker manifest. Recipes without
 the declaration emit no variant reference. Browser publishing carries these
@@ -99,6 +98,47 @@ visibility through reachable functions. Scalar/vector/mat4 members and fixed
 structures are admitted; runtime-sized storage arrays, other vertex formats,
 optional device features, and unlisted layouts fail explicitly. This is a bounded
 ABI verifier, not a WGSL semantic compiler.
+
+Schema-3 `MaterialRecipe` is the target-aware engine lit frontend. Its source is
+a UTF-8 `.material.json` object with `schemaVersion: 2`, a name matching the
+shader recipe, `shadingModel: "lit"`, `surface: "opaque"`, `baseColor: "tint"`
+or `"texture"`, and optional `normal: "vertex"` or `"texture"`. The latter
+requires textured base color. The shader recipe retains the physical layout,
+pass `opaque-forward`, and `standardLitVertex`/`standardLitFragment` entries
+from the matching canonical engine lit-color, lit-texture, or normal-texture
+recipe, but omits `materialVariant` and declares respectively
+`xrengine.engine.authored-lit-color.v1`,
+`xrengine.engine.authored-lit-texture.v1`, or
+`xrengine.engine.authored-lit-texture-normal.v1`. The cooker selects the
+canonical PBR Slang frontend, compiles it to WGSL, records the authored recipe
+and compiler dependencies, and verifies the emitted physical ABI. The material
+recipe and selected engine Slang sources must be staged together beneath one
+`--source-root`; author assets need not be moved or changed. The versioned
+frontend pins canonical Slang input hashes so a same-named staged source
+cannot silently replace the engine PBR lowering during the cook.
+
+The engine's `CreateAuthoredLitPbrColorMaterial` and
+`CreateAuthoredLitPbrTextureMaterial` factories produce an ordinary
+`XRMaterial` with canonical desktop GLSL and explicit `AuthoredLitV1` intent.
+`EngineLitMaterialShaderGenerator.TryPlan` reads its actual PBR parameters,
+surface texture roles, and Uber authored state; `MaterialRecipeJson` emits the
+corresponding source named `mat-<persistent-material-guid>`. Each matching
+schema-3 shader recipe uses that same name. The project shader manifest must
+contain the generated material's cooked descriptor before world export; the
+editor does not run the standalone pinned Slang cooker implicitly. During
+export the publisher resolves that descriptor by persistent material identity
+and profile, then attaches its exact identity to a detached browser-target
+stage. It never edits the original material's YAML or desktop GLSL.
+
+The current modeled surface is
+six deferred PBR factors: BaseColor, Opacity, Specular, Roughness, Metallic,
+and Emission; opaque opacity is one. A texture surface additionally uses the
+existing base-color, optional normal, metallic, and roughness surface bindings.
+These same modeled inputs are used by the desktop GLSL material. The publisher
+requires the canonical desktop fragment source; arbitrary custom GLSL is
+rejected by name rather than inferred as PBR. Other Uber features, masked or blended
+passes, material shadow casting, and skinning remain unsupported by this
+authored profile and fail explicitly during publication.
 
 `ShaderProgramArtifactReader.Read` loads the descriptor and WGSL bytes, checks the
 source SHA-256 and length, and returns a target-tagged `ShaderProgramArtifact`.

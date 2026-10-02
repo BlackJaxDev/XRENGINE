@@ -17,6 +17,13 @@ namespace XREngine
     {
         private async Task<T?> LoadAssetRemoteAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, RemoteAssetLoadMode mode, JobPriority priority, CancellationToken cancellationToken, IReadOnlyDictionary<string, string>? additionalMetadata = null) where T : XRAsset, new()
         {
+            if (UsesRuntimeAssetCatalog)
+            {
+                if (mode != RemoteAssetLoadMode.None)
+                    throw new NotSupportedException("AssetSource.RemoteJobUnavailable: published catalog assets do not use authoring remote jobs; load the catalog path asynchronously with RemoteAssetLoadMode.None.");
+                return (T?)await LoadFromRuntimeSourceAsync(filePath, typeof(T), cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+
             if (mode == RemoteAssetLoadMode.None || _jobManagerProvider().RemoteTransport?.IsConnected != true)
                 return await LoadLocalOnlyAsync<T>(filePath, priority, cancellationToken).ConfigureAwait(false);
 

@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-luminance-mipmap",
+  "pass": "luminance-mipmap",
+  "source": "Assets/gpu-luminance-mipmap.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "generate"
+  },
+  "computeArtifact": {
+    "kernel": "luminance-mipmap"
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 32,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 1,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 16,
+    "maxComputeWorkgroupSizeY": 16,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "Source",
+        "physicalName": "source",
+        "group": 0,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Output",
+        "physicalName": "output",
+        "group": 0,
+        "binding": 1,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 2,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 32,
+        "dynamic": false,
+        "members": [
+          {
+            "name": "srcMip",
+            "provider": "SrcMip",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "dstWidth",
+            "provider": "DstWidth",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "dstHeight",
+            "provider": "DstHeight",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "srcWidth",
+            "provider": "SrcWidth",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "srcHeight",
+            "provider": "SrcHeight",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "rowWords",
+            "provider": "RowWords",
+            "offset": 20,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "encoding",
+            "provider": "Encoding",
+            "offset": 24,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "mode",
+            "provider": "Mode",
+            "offset": 28,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {}
+}

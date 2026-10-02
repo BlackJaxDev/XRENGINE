@@ -170,13 +170,13 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         }
     }
     if (value.computeArtifacts !== undefined) {
-        if (!Array.isArray(value.computeArtifacts) || value.computeArtifacts.length > 2)
+        if (!Array.isArray(value.computeArtifacts) || value.computeArtifacts.length > 4)
             throw new Error('AssetSource.ComputeArtifactBudgetExceeded.');
         const kernels = new Set();
         for (const compute of value.computeArtifacts) {
             if (!compute || typeof compute !== 'object' || Array.isArray(compute)
                 || Object.keys(compute).length !== 2
-                || !['packed-skinning', 'luminance-reduction'].includes(compute.kernel)
+                || !['packed-skinning', 'luminance-reduction', 'luminance-reduction-2d', 'luminance-mipmap'].includes(compute.kernel)
                 || !validSha256(compute.descriptorIdentity) || kernels.has(compute.kernel))
                 throw new Error('AssetSource.ComputeArtifactInvalid.');
             kernels.add(compute.kernel);
@@ -233,10 +233,11 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
         const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, compute.descriptorIdentity, entry.path);
         try {
             const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-            if (compute.kernel === 'luminance-reduction') {
+            if (compute.kernel === 'luminance-reduction' || compute.kernel === 'luminance-reduction-2d') {
                 const names = ['Source', 'Partials', 'Result', 'Parameters'];
                 const physical = ['source', 'partials', 'result', 'parameters'];
-                const kinds = ['texture-2d-array-float', 'storage', 'storage', 'uniform'];
+                const kinds = [compute.kernel === 'luminance-reduction-2d' ? 'texture-2d-float' : 'texture-2d-array-float',
+                    'storage', 'storage', 'uniform'];
                 const sizes = [0, 8, 4, 64];
                 const bindings = descriptor?.layout?.bindings;
                 const members = bindings?.[3]?.members;
@@ -245,7 +246,7 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
                 const types = ['vec2<u32>', 'vec2<u32>', 'u32', 'u32', 'u32', 'u32', 'u32', 'u32', 'vec4<f32>'];
                 const offsets = [0, 8, 16, 20, 24, 28, 32, 36, 48];
                 const bytesPerMember = [8, 8, 4, 4, 4, 4, 4, 4, 16];
-                if (descriptor?.pass !== 'luminance-reduction' || descriptor.target !== 'WebGPUWgsl'
+                if (descriptor?.pass !== compute.kernel || descriptor.target !== 'WebGPUWgsl'
                     || descriptor.semanticSchemaIdentity !== 'xrengine.engine.compute.v1'
                     || !descriptor.entryPoints || Object.keys(descriptor.entryPoints).length !== 1
                     || descriptor.entryPoints.compute !== 'reduce'
@@ -263,6 +264,36 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
                         || !Array.isArray(binding.members) || binding.members.length !== (i === 3 ? 9 : 0))
                     || members.some((member, i) => member.name !== memberNames[i] || member.provider !== providers[i]
                         || member.type !== types[i] || member.offset !== offsets[i] || member.bytes !== bytesPerMember[i]))
+                    throw new Error('AssetSource.ComputeArtifactDescriptorMismatch.');
+                continue;
+            }
+            if (compute.kernel === 'luminance-mipmap') {
+                const names = ['Source', 'Output', 'Parameters'];
+                const physical = ['source', 'output', 'parameters'];
+                const kinds = ['texture-2d-float', 'storage', 'uniform'];
+                const sizes = [0, 4, 32];
+                const bindings = descriptor?.layout?.bindings;
+                const members = bindings?.[2]?.members;
+                const memberNames = ['srcMip', 'dstWidth', 'dstHeight', 'srcWidth', 'srcHeight', 'rowWords', 'encoding', 'mode'];
+                const providers = ['SrcMip', 'DstWidth', 'DstHeight', 'SrcWidth', 'SrcHeight', 'RowWords', 'Encoding', 'Mode'];
+                if (descriptor?.pass !== 'luminance-mipmap' || descriptor.target !== 'WebGPUWgsl'
+                    || descriptor.semanticSchemaIdentity !== 'xrengine.engine.compute.v1'
+                    || !descriptor.entryPoints || Object.keys(descriptor.entryPoints).length !== 1
+                    || descriptor.entryPoints.compute !== 'generate'
+                    || !Array.isArray(descriptor.workgroupSize)
+                    || descriptor.workgroupSize.length !== 3 || descriptor.workgroupSize.some((size, i) => size !== [16, 16, 1][i])
+                    || Object.hasOwn(descriptor, 'materialVariant')
+                    || !descriptor.pipeline || typeof descriptor.pipeline !== 'object'
+                    || Array.isArray(descriptor.pipeline) || Object.keys(descriptor.pipeline).length !== 0
+                    || !Array.isArray(bindings) || bindings.length !== 3
+                    || bindings.some((binding, i) => binding.name !== names[i] || binding.physicalName !== physical[i]
+                        || binding.kind !== kinds[i] || binding.group !== 0 || binding.binding !== i
+                        || binding.bytes !== sizes[i] || binding.owner !== 'Engine' || binding.frequency !== 'Object'
+                        || binding.dynamic !== false || (binding.runtimeArray === true) !== (i === 1)
+                        || !Array.isArray(binding.visibility) || binding.visibility.length !== 1 || binding.visibility[0] !== 'compute'
+                        || !Array.isArray(binding.members) || binding.members.length !== (i === 2 ? 8 : 0))
+                    || members.some((member, i) => member.name !== memberNames[i] || member.provider !== providers[i]
+                        || member.type !== 'u32' || member.offset !== i * 4 || member.bytes !== 4))
                     throw new Error('AssetSource.ComputeArtifactDescriptorMismatch.');
                 continue;
             }
