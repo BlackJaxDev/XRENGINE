@@ -48,8 +48,9 @@ New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 if ([string]::IsNullOrWhiteSpace($SourceDirectory)) {
     $SourceDirectory = Join-Path $outputRoot 'sources/JoltPhysicsSharp'
     if (-not (Test-Path -LiteralPath $SourceDirectory)) {
-        Invoke-CheckedGit @('clone', '--no-checkout', '--filter=blob:none', $pin.managedRepository, $SourceDirectory)
-        Invoke-CheckedGit @('-C', $SourceDirectory, 'checkout', '--detach', $pin.managedCommit)
+        # Raw source hashes require the upstream LF bytes even when the host Git defaults to CRLF.
+        Invoke-CheckedGit @('-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'clone', '--no-checkout', '--filter=blob:none', $pin.managedRepository, $SourceDirectory)
+        Invoke-CheckedGit @('-C', $SourceDirectory, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'checkout', '--detach', $pin.managedCommit)
     }
 }
 $SourceDirectory = [IO.Path]::GetFullPath($SourceDirectory)
@@ -102,24 +103,24 @@ Assert-FileHash $stagedApi $pin.managedContactListenerPatchedApiSha256
 
 # Preserve typed callbacks while passing pointer-sized tokens across the browser native ABI.
 $stagedRelative = [IO.Path]::GetRelativePath($repositoryRoot, $stagedRoot).Replace('\', '/')
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $callbackAbiPatch)
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $callbackAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', '--check', "--directory=$stagedRelative", $callbackAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', "--directory=$stagedRelative", $callbackAbiPatch)
 Assert-FileHash $stagedApi $pin.managedCallbackPatchedApiSha256
 
 # Match the pinned native body's scalar argument and void return contracts.
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $bodyPropertiesAbiPatch)
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $bodyPropertiesAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', '--check', "--directory=$stagedRelative", $bodyPropertiesAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', "--directory=$stagedRelative", $bodyPropertiesAbiPatch)
 Assert-FileHash $stagedApi $pin.managedBodyPropertiesPatchedApiSha256
 
 # Keep native object-layer/body identifiers scalar and match the area-activation return.
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $bodyQueryAbiPatch)
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $bodyQueryAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', '--check', "--directory=$stagedRelative", $bodyQueryAbiPatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', "--directory=$stagedRelative", $bodyQueryAbiPatch)
 Assert-FileHash $stagedApi $pin.managedPatchedApiSha256
 
 # Apply only the separately reviewed lifetime correction to the staged tree.
 # The pristine source checkout and the desktop NuGet supply remain untouched.
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', '--check', "--directory=$stagedRelative", $lifetimePatch)
-Invoke-CheckedGit @('-C', $repositoryRoot, 'apply', "--directory=$stagedRelative", $lifetimePatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', '--check', "--directory=$stagedRelative", $lifetimePatch)
+Invoke-CheckedGit @('-C', $repositoryRoot, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', "--directory=$stagedRelative", $lifetimePatch)
 foreach ($sourcePin in $pin.managedLifetimeSources) {
     Assert-FileHash (Join-Path $stagedRoot $sourcePin.path) $sourcePin.patchedSha256
 }

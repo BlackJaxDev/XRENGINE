@@ -81,8 +81,9 @@ function Invoke-CheckedNativeCommand {
 function Get-PinnedNativeSource {
     param([string]$Url, [string]$Commit, [string]$Destination)
     if (-not (Test-Path -LiteralPath $Destination)) {
-        Invoke-CheckedNativeCommand git @('clone', '--no-checkout', '--filter=blob:none', $Url, $Destination)
-        Invoke-CheckedNativeCommand git @('-C', $Destination, 'checkout', '--detach', $Commit)
+        # Keep pinned native source bytes stable across hosts with different Git line-ending defaults.
+        Invoke-CheckedNativeCommand git @('-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'clone', '--no-checkout', '--filter=blob:none', $Url, $Destination)
+        Invoke-CheckedNativeCommand git @('-C', $Destination, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'checkout', '--detach', $Commit)
     }
     $actualCommit = (& git -C $Destination rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $Commit) { throw 'Native source checkout does not match the committed pin.' }
