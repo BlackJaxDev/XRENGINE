@@ -30,21 +30,29 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     private readonly XRShader? _fragment;
     private readonly RenderPipeline _pipeline;
     private readonly bool _lit;
+    private readonly bool _shadow;
     private XRTexture2D? _texture;
     private bool _disposed;
 
     public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height,
-        ShaderProgramArtifact? tonemapArtifact = null)
+        ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
         _ = RuntimeRenderingHostServices.Factories;
         bool textured = artifact.Pass == "texture-probe";
         _lit = tonemapArtifact is not null;
+        _shadow = shadow;
+        if (_shadow && !_lit)
+            throw new ArgumentException("A directional shadow fixture requires the cooked HDR presentation artifact.", nameof(tonemapArtifact));
         if ((_lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe")) ||
             artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
             throw new ArgumentException("The fixture requires an explicitly cooked engine raster diagnostic artifact.", nameof(artifact));
         _renderer = renderer;
+        // The shadow viewport captures its mesh-submission command chain when
+        // the light activates, before the diagnostic camera is configured.
+        if (_shadow)
+            RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
         using IDisposable suppressWrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
         if (_lit)
         {
@@ -83,7 +91,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             _texture = CreateTexture(0);
             _material.Textures.Add(_texture);
         }
-        _mesh = _lit ? new XRMesh(
+        _mesh = _shadow ? CreateShadowReceiverMesh() : _lit ? new XRMesh(
             [new Vertex(new Vector3(-0.75f, -0.75f, 0), Vector3.UnitZ),
              new Vertex(new Vector3(0.75f, -0.75f, 0), Vector3.UnitZ),
              new Vertex(new Vector3(0.75f, 0.75f, 0), Vector3.UnitZ),
@@ -102,8 +110,9 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _renderWorld = new RuntimeWorldRenderer(_scene, visual);
         if (_lit)
         {
-            AddModel("Standard lit normal quad", new Vector3(0, 0, -2));
-            InitializeLights();
+            AddModel(_shadow ? "Directional shadow receiver" : "Standard lit normal quad", new Vector3(0, 0, -2));
+            if (_shadow) InitializeShadowScene();
+            else InitializeLights();
         }
         else
         {
@@ -124,7 +133,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         if (_lit)
         {
             ConfigureLitCamera(camera);
-            SetLitCase(0);
+            if (!_shadow) SetLitCase(0);
         }
         _viewport = new XRViewport(null, width, height)
         {
@@ -205,7 +214,9 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
-            _renderer.IsBackendReplacementFrameReady && _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3);
+            _renderer.IsBackendReplacementFrameReady && (_shadow ? _renderer.LastEngineMeshDrawCount >= 2 :
+                _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3)) &&
+            (!_shadow || ShadowFrameReady());
     }
 
     private void CollectFrame()
@@ -227,6 +238,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             $"deferred={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueDeferred)}; " +
             $"forward={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueForward)}; " +
             $"HDR FBO={pipeline.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName) is not null}; " +
+            (_shadow ? $"shadow requests={_directional?.StandaloneShadowRenderRequestCount}; shadow passes={_directional?.StandaloneShadowRenderPassCount}; shadow casters={_directional?.PrimaryShadowCasterCount}; {GetShadowRenderStatus()}; " : "") +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }
@@ -244,6 +256,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _renderWorld.Dispose();
         _scene.Dispose();
         _mesh.Destroy();
+        DisposeShadowScene();
         _material.Destroy();
         _texture?.Destroy();
         _vertex?.Destroy();

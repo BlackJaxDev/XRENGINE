@@ -23,6 +23,10 @@ public readonly record struct EngineMaterialVariantKey(
         ValidateProfile(Pass, nameof(Pass));
         ValidateProfile(VertexProfile, nameof(VertexProfile));
         ValidateProfile(OutputProfile, nameof(OutputProfile));
+        if (Semantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "depth" ||
+             VertexProfile != "static-position-v1" || OutputProfile != "depth-normal-v1"))
+            throw new ArgumentException("OpaqueShadowDepthV1 requires the WebGPU depth/static-position-v1/depth-normal-v1 variant.");
     }
 
     private static void ValidateProfile(string value, string parameterName)

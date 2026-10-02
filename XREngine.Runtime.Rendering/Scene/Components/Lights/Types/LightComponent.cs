@@ -862,6 +862,12 @@ namespace XREngine.Components.Capture.Lights.Types
             SetField(ref _shadowMapResolutionWidth, width, nameof(ShadowMapResolutionWidth));
             SetField(ref _shadowMapResolutionHeight, height, nameof(ShadowMapResolutionHeight));
 
+            // Browser assets are configured before activation. Defer runtime targets until
+            // the authored shadow settings have been restored and can be validated.
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                (!IsActiveInHierarchy || !CastsShadows))
+                return;
+
             if (ShadowMap is null)
                 ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(width, height))
                 {
@@ -890,7 +896,13 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <param name="format">The shadow-map storage format to check for support.</param>
         /// <returns>True if the light supports the specified shadow-map storage format; otherwise, false.</returns>
         protected EShadowMapStorageFormat NormalizeShadowMapStorageFormat(EShadowMapStorageFormat format)
-            => SupportsShadowMapStorageFormat(format) ? format : DefaultShadowMapStorageFormat;
+        {
+            if (SupportsShadowMapStorageFormat(format))
+                return format;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                throw new NotSupportedException($"WebGPU.ShadowMap.StorageFormatUnsupported: {format}.");
+            return DefaultShadowMapStorageFormat;
+        }
 
         /// <summary>
         /// Recreates the light's shadow map by destroying the existing one and allocating a new one with the current resolution.

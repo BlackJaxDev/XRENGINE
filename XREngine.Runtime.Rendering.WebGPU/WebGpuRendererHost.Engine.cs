@@ -39,20 +39,24 @@ public sealed partial class WebGpuRendererHost
         using FrameOutputScope outputScope = PushFrameOutput(output);
         BeginEngineFrame();
         bool submitted = false;
+        IRuntimeRenderWorld? world = _engineViewport?.World;
         try
         {
-            if (_engineViewport is null)
+            bool ready;
+            if (world is not null)
             {
-                PrepareEngineClear(output);
-                RecordEngineCommands(_engineClearCommands, []);
+                ValidateDirectionalShadowProfile(world);
+                try
+                {
+                    world.GlobalPreRender();
+                    ready = RecordEngineViewport(output);
+                }
+                finally { world.GlobalPostRender(); }
             }
-            else if (!_engineViewport.TryRender())
-            {
-                return;
-            }
+            else ready = RecordEngineViewport(output);
             // A consumer must never see a partially prepared producer (for example,
             // a clear without its mesh draws, or HDR without a ready output pass).
-            if (_engineCommandCount == 0 || _engineDrawPending)
+            if (!ready || _engineCommandCount == 0 || _engineDrawPending)
                 return;
             SubmitEngineFrame(output);
             submitted = true;
@@ -65,6 +69,14 @@ public sealed partial class WebGpuRendererHost
                 RetireEngineResource(_engineDeferredReleases[i]);
             _engineDeferredReleases.Clear();
         }
+    }
+
+    private bool RecordEngineViewport(in RenderFrameOutputDescription output)
+    {
+        if (_engineViewport is not null) return _engineViewport.TryRender();
+        PrepareEngineClear(output);
+        RecordEngineCommands(_engineClearCommands, []);
+        return true;
     }
 
     private void PrepareEngineClear(in RenderFrameOutputDescription output, bool color = true, bool depth = true)

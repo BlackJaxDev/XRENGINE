@@ -276,3 +276,32 @@ narrow managed builds pass. The [shader record](../rendering/unified-webgpu-shad
 lists the supported cohort and explicit rejection boundaries. The corresponding
 live browser pixel qualification is still pending; full shadows, UI and rendered
 RollingBall acceptance remain open.
+
+The renderer slice was then published as
+`047bb7f1126f9fa6272325ace84446b3c9f7e1b9` and passed
+[run 36947665282](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282).
+Real Chromium/SwiftShader verifies fourteen lit material/light/HDR/tonemap cases
+and five resizes, with 30 live GPU resources after every case/resize, zero retiring
+resources after drain, and no browser console errors. Known HDR samples preserve
+values above one and authored opacity; inspected captures and exact values are
+recorded in the [lit shader acceptance](../rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance).
+Full shadows, engine UI and rendered RollingBall remain the next required work.
+
+## Bounded native and WebAssembly physics comparison
+
+On 2026-10-02, the unchanged desktop Linux Jolt packages and the reviewed browser
+Jolt build ran the same shared ball-and-tilting-course probe for 240 fixed steps
+at 120 Hz. Eighteen paired checkpoints across two independent WASM cycles matched
+all sampled position, linear/angular velocity, contact-added/contact-persisted
+counts and ray-hit/body/fraction values. First contact occurred on step 35 in
+both runners; equivalent quaternion-angle noise was at most 4.3e-8 radians.
+The tolerance specification preceded both traces. No fallback solver or desktop
+physics-default change was involved.
+
+The real cooked RollingBall world remained active around the browser measurement,
+but the measured scene was an independently owned physics probe rather than the
+canonical game's actors. Consequently this is bounded backend compatibility
+evidence, not full-game parity, universal deterministic replay, Chromium gameplay
+input, or hardware performance. The shared source, predeclared tolerances,
+native/WASM supply hashes, traces and commands are retained under
+`Build/_AgentValidation/20261001-225000-lit-surface/physics-parity/`.

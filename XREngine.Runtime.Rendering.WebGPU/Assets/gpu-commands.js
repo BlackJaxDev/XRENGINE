@@ -149,7 +149,7 @@ export class GpuCommands {
                 integer(e.buffer.minBindingSize ?? 0, 0, e.buffer.type === 'uniform' ? r.device.limits.maxUniformBufferBindingSize : r.device.limits.maxStorageBufferBindingSize, 'minimum binding size');
             } else if (e.sampler) {
                 object(e.sampler, ['type']);
-                oneOf(e.sampler.type, ['filtering', 'non-filtering'], 'sampler binding type');
+                oneOf(e.sampler.type, ['filtering', 'non-filtering', 'comparison'], 'sampler binding type');
             } else {
                 object(e.texture, ['sampleType', 'viewDimension', 'multisampled']);
                 oneOf(e.texture.sampleType, ['float', 'unfilterable-float', 'depth'], 'texture sample type');
@@ -197,7 +197,12 @@ export class GpuCommands {
                         if ((expected.texture.sampleType === 'depth') !== value.format.startsWith('depth')) throw new Error('Texture format does not match the binding sample type.');
                         if (value.aspect === 'stencil-only' || value.format === 'depth24plus-stencil8' && value.aspect !== 'depth-only')
                             throw new Error('Depth/stencil texture sampling requires an explicit depth-only view.');
-                    } else if (expected.sampler.type === 'non-filtering' && value.filtering) throw new Error('Filtering sampler cannot fill a non-filtering binding.');
+                    } else if (expected.sampler.type === 'comparison' && value.compare !== 'less-equal')
+                        throw new Error('Comparison sampler binding requires a less-equal comparison sampler.');
+                    else if (expected.sampler.type !== 'comparison' && value.compare)
+                        throw new Error('Comparison sampler cannot fill an ordinary sampler binding.');
+                    else if (expected.sampler.type === 'non-filtering' && value.filtering)
+                        throw new Error('Filtering sampler cannot fill a non-filtering binding.');
                     resource = expected.texture ? value.view : value.sampler;
                 }
                 entries.push({ binding: e.binding, resource });

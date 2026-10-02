@@ -93,7 +93,11 @@ namespace XREngine.Components.Capture.Lights.Types
 
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters())
             {
-                CullingMask = DefaultLayers.EverythingExceptGizmos
+                CullingMask = DefaultLayers.EverythingExceptGizmos,
+                // The shadow viewport owns the pass contract. Do not lazily allocate
+                // an unrelated scene-color pipeline while querying camera settings.
+                RenderPipeline = viewport.RenderPipeline
+                    ?? throw new InvalidOperationException("ShadowCamera.PipelineMissing: the primary viewport requires its shadow pipeline."),
             };
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
             if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)

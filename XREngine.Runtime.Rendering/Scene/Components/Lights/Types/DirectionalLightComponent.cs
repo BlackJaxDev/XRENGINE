@@ -45,6 +45,28 @@ namespace XREngine.Components.Lights
         private long _standaloneShadowRenderPassCount;
         private int _primaryShadowCasterCount;
         private readonly Matrix4x4[] _uniformRenderedCascadeMatrices = new Matrix4x4[MaxCascadeRenderCount];
+        private bool _constructingCookedShadowTarget;
+        private XRMaterial? _pendingCookedShadowMaterial;
+        private XRTexture2D? _pendingCookedShadowDepth;
+        private XRMaterial? _ownedCookedShadowMaterial;
+        private XRTexture2D? _ownedCookedShadowDepth;
+
+        private static bool UsesCookedWebGpuShadowMaterial
+            => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked;
+
+        private void ValidateCookedWebGpuShadowConfiguration()
+        {
+            if (!UsesCookedWebGpuShadowMaterial || !CastsShadows)
+                return;
+            if (EnableCascadedShadows)
+                throw new NotSupportedException("WebGPU.DirectionalShadow.CascadesUnsupported: use one primary shadow map.");
+            if (UseShadowAtlas)
+                throw new NotSupportedException("WebGPU.DirectionalShadow.AtlasUnsupported: disable the directional shadow atlas.");
+            if (ShadowMapEncoding != EShadowMapEncoding.Depth)
+                throw new NotSupportedException($"WebGPU.DirectionalShadow.EncodingUnsupported: {ShadowMapEncoding}.");
+            if (!IsDepthShadowMapStorageFormat(ShadowMapStorageFormat))
+                throw new NotSupportedException($"WebGPU.DirectionalShadow.StorageFormatUnsupported: {ShadowMapStorageFormat}.");
+        }
 
         /// <summary>
         /// Creates a directional light with tuned default shadow filtering and contact-shadow settings.
@@ -435,6 +457,49 @@ namespace XREngine.Components.Lights
         /// <returns>The material configured for rendering the directional light's shadow map.</returns>
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
+            if (UsesCookedWebGpuShadowMaterial)
+            {
+                if (!CastsShadows)
+                    throw new NotSupportedException("WebGPU.DirectionalShadow.Disabled: an unshadowed light has no shadow material.");
+                ValidateCookedWebGpuShadowConfiguration();
+                if (width == 0u || height == 0u)
+                    throw new ArgumentOutOfRangeException(nameof(width), "WebGPU.DirectionalShadow.InvalidResolution: shadow dimensions must be positive.");
+
+                ShadowMapTextureFormat format = GetShadowMapTextureFormat(ShadowMapStorageFormat);
+                XRTexture2D depth = XRTexture2D.CreateFrameBufferTexture(width, height,
+                    format.InternalFormat, format.PixelFormat, format.PixelType,
+                    EFrameBufferAttachment.DepthAttachment);
+                depth.Name = GetDirectionalShadowResourceName("PrimaryRasterDepth");
+                depth.SamplerName = "ShadowRasterDepth";
+                depth.SizedInternalFormat = format.SizedInternalFormat;
+                depth.MinFilter = ETexMinFilter.Nearest;
+                depth.MagFilter = ETexMagFilter.Nearest;
+                depth.UWrap = ETexWrapMode.ClampToEdge;
+                depth.VWrap = ETexWrapMode.ClampToEdge;
+                depth.AutoGenerateMipmaps = false;
+                depth.LargestMipmapLevel = 0;
+                depth.SmallestAllowedMipmapLevel = 0;
+                depth.EnableComparison = true;
+                depth.CompareFunc = ETextureCompareFunc.LessOrEqual;
+
+                XRMaterial cooked = new([depth]);
+                cooked.EngineSemantic = EngineMaterialSemanticIdentity.OpaqueShadowDepthV1;
+                cooked.RenderOptions.CullMode = ECullMode.None;
+                cooked.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+                cooked.RenderOptions.DepthTest = new DepthTest
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Lequal,
+                    UpdateDepth = true,
+                };
+                if (_constructingCookedShadowTarget)
+                {
+                    SetField(ref _pendingCookedShadowMaterial, cooked, publishNotifications: false);
+                    SetField(ref _pendingCookedShadowDepth, depth, publishNotifications: false);
+                }
+                return cooked;
+            }
+
             EShadowMapStorageFormat depthStorageFormat = IsDepthShadowMapStorageFormat(ShadowMapStorageFormat)
                 ? ShadowMapStorageFormat
                 : DefaultShadowMapStorageFormat;
@@ -514,7 +579,7 @@ namespace XREngine.Components.Lights
         /// </summary>
         /// <returns>The selected shadow map format for directional sampling.</returns>
         private ShadowMapFormatSelection ResolveDirectionalSamplingShadowMapFormat()
-            => ResolveShadowMapFormat(preferredStorageFormat: null);
+            => ResolveShadowMapFormat(preferredStorageFormat: UsesCookedWebGpuShadowMaterial ? ShadowMapStorageFormat : null);
 
         /// <summary>
         /// Determines whether the current directional shadow backend is using Vulkan.
@@ -538,7 +603,7 @@ namespace XREngine.Components.Lights
         /// <returns>The primary shadow receiver texture if available; otherwise, null.</returns>
         internal XRTexture? PrimaryShadowReceiverTexture
             => FindShadowMapMaterialTexture(
-                ShouldUseVulkanRasterDepthReceiverTexture()
+                UsesCookedWebGpuShadowMaterial || ShouldUseVulkanRasterDepthReceiverTexture()
                     ? "ShadowRasterDepth"
                     : "ShadowMap");
 
@@ -580,9 +645,35 @@ namespace XREngine.Components.Lights
         /// <param name="field">The new value of the property.</param>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            if (UsesCookedWebGpuShadowMaterial && IsActiveInHierarchy && propName is (
+                nameof(CastsShadows) or nameof(UseShadowAtlas) or nameof(EnableCascadedShadows) or
+                nameof(ShadowMapEncoding) or nameof(ShadowMapStorageFormat)))
+                ValidateCookedWebGpuShadowConfiguration();
+
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(ShadowMap):
+                    if (prev is XRMaterialFrameBuffer oldMap &&
+                        ReferenceEquals(oldMap.Material, _ownedCookedShadowMaterial) &&
+                        !ReferenceEquals(ShadowMap?.Material, _ownedCookedShadowMaterial))
+                    {
+                        // The framebuffer owns neither object. Retire only this light's
+                        // factory-created pair, never a borrowed or shader-cache asset.
+                        _ownedCookedShadowDepth?.Destroy();
+                        _ownedCookedShadowMaterial?.Destroy();
+                        SetField(ref _ownedCookedShadowDepth, null, publishNotifications: false);
+                        SetField(ref _ownedCookedShadowMaterial, null, publishNotifications: false);
+                    }
+                    if (ReferenceEquals(ShadowMap?.Material, _pendingCookedShadowMaterial) &&
+                        _pendingCookedShadowMaterial is not null)
+                    {
+                        SetField(ref _ownedCookedShadowMaterial, _pendingCookedShadowMaterial, publishNotifications: false);
+                        SetField(ref _ownedCookedShadowDepth, _pendingCookedShadowDepth, publishNotifications: false);
+                        SetField(ref _pendingCookedShadowMaterial, null, publishNotifications: false);
+                        SetField(ref _pendingCookedShadowDepth, null, publishNotifications: false);
+                    }
+                    break;
                 case nameof(Transform):
                     _shadowCameraTransform?.Parent = Transform;
                     break;

@@ -18,6 +18,7 @@ public static partial class EngineMeshDiagnosticExports
     private static WebGpuRendererHost? _renderer;
     private static ShaderProgramArtifact? _artifact;
     private static ShaderProgramArtifact? _tonemapArtifact;
+    private static bool _shadow;
     private static IDisposable? _materialConstruction;
     private static EngineMeshDiagnosticFixture? _fixture;
     private static RendererBackendCatalog? _catalog;
@@ -38,15 +39,21 @@ public static partial class EngineMeshDiagnosticExports
 
     [JSExport]
     public static Task<int> CreateAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl)
-        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, null, null);
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, null, null, null, null);
 
     [JSExport]
     public static Task<int> CreateLitAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
         string tonemapDescriptorJson, string tonemapWgsl)
-        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl);
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl, null, null);
+
+    [JSExport]
+    public static Task<int> CreateShadowAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl, string shadowDepthDescriptorJson, string shadowDepthWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            shadowDepthDescriptorJson, shadowDepthWgsl);
 
     private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
-        string? tonemapDescriptorJson, string? tonemapWgsl)
+        string? tonemapDescriptorJson, string? tonemapWgsl, string? shadowDepthDescriptorJson, string? shadowDepthWgsl)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
@@ -65,12 +72,18 @@ public static partial class EngineMeshDiagnosticExports
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(descriptorJson), Encoding.UTF8.GetBytes(wgsl));
             bool lit = tonemapDescriptorJson is not null && tonemapWgsl is not null;
+            bool shadow = shadowDepthDescriptorJson is not null && shadowDepthWgsl is not null;
             if (lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe"))
                 throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select a cooked engine raster diagnostic artifact.");
             ShaderProgramArtifact? tonemap = lit ? ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(tonemapDescriptorJson!), Encoding.UTF8.GetBytes(tonemapWgsl!)) : null;
             if (tonemap is not null && tonemap.Pass != "tonemap")
                 throw new InvalidDataException("EngineMeshDiagnostic.TonemapRequired: select the cooked engine tonemap artifact.");
+            ShaderProgramArtifact? shadowDepth = shadow ? ShaderProgramArtifactReader.Read(
+                Encoding.UTF8.GetBytes(shadowDepthDescriptorJson!), Encoding.UTF8.GetBytes(shadowDepthWgsl!)) : null;
+            if (shadow && (artifact.Name != "engine-standard-lit-color-directional-shadow" ||
+                shadowDepth?.Name != "engine-shadow-depth" || shadowDepth.Pass != "depth" || tonemap is null))
+                throw new InvalidDataException("EngineMeshDiagnostic.ShadowArtifactsRequired: select exact cooked receiver, depth writer, and tonemap artifacts.");
             stage = "open asset catalog";
             _assetSource = await BrowserEngineAssetSource.OpenAsync(assetManifestUrl, cancellation.Token);
             EnsureCurrentCreation(requestedEpoch, cancellation.Token);
@@ -104,13 +117,19 @@ public static partial class EngineMeshDiagnosticExports
             _renderer = (WebGpuRendererHost)_catalog.CreateRequired(RuntimeGraphicsApiKind.WebGPU,
                 new RendererBackendCreateContext(_target));
             stage = "bind shader artifact";
-            ShaderProgramArtifactCatalog artifacts = new(tonemap is null ? [artifact] : [artifact, tonemap]);
-            EngineMaterialVariantCatalog? variants = lit ? new EngineMaterialVariantCatalog(
+            ShaderProgramArtifactCatalog artifacts = new(shadowDepth is not null ? [artifact, tonemap!, shadowDepth] :
+                tonemap is not null ? [artifact, tonemap] : [artifact]);
+            EngineMaterialVariantCatalog? variants = lit ? new EngineMaterialVariantCatalog(shadowDepth is not null ?
+                [new EngineMaterialVariantEntry(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.StandardLitColorV1,
+                    ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", "linear-hdr-directional-shadow-v1"), artifact.Identity),
+                 new EngineMaterialVariantEntry(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1,
+                    ShaderCompileTarget.WebGPUWgsl, "depth", "static-position-v1", "depth-normal-v1"), shadowDepth.Identity)] :
                 [new EngineMaterialVariantEntry(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.StandardLitColorV1,
                     ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", "linear-hdr-v1"), artifact.Identity)], artifacts) : null;
             _renderer.BindShaderArtifacts(artifacts, variants);
             _artifact = artifact;
             _tonemapArtifact = tonemap;
+            _shadow = shadow;
             _session = checked(++_nextSession);
             return _session;
         }
@@ -165,7 +184,7 @@ public static partial class EngineMeshDiagnosticExports
             stage = "initialize renderer";
             _renderer.Initialize();
             stage = "construct engine fixture";
-            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height), _tonemapArtifact);
+            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height), _tonemapArtifact, _shadow);
         }
         catch (Exception error)
         {
@@ -214,6 +233,27 @@ public static partial class EngineMeshDiagnosticExports
     {
         RequireSession(session);
         return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetLitState();
+    }
+
+    [JSExport]
+    public static void SetShadowCase(int session, int sampleCase)
+    {
+        RequireSession(session);
+        (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).SetShadowCase(sampleCase);
+    }
+
+    [JSExport]
+    public static void SetShadowMapSize(int session, int size)
+    {
+        RequireSession(session);
+        (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).SetShadowMapSize(size);
+    }
+
+    [JSExport]
+    public static string GetShadowState(int session)
+    {
+        RequireSession(session);
+        return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetShadowState();
     }
 
     [JSExport]
@@ -280,6 +320,7 @@ public static partial class EngineMeshDiagnosticExports
         _target = null;
         _artifact = null;
         _tonemapArtifact = null;
+        _shadow = false;
         _session = 0;
         if (failures is { Count: > 0 })
             throw new AggregateException("Engine mesh diagnostic teardown failed.", failures);

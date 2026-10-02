@@ -75,8 +75,9 @@ public static class ShaderProgramArtifactReader
         string schema = Text(descriptor, "semanticSchemaIdentity");
         Require(Regex.IsMatch(schema, "^xrengine\\.engine\\.[a-z][a-z0-9.-]*\\.v[1-9][0-9]*$", RegexOptions.CultureInvariant), "semantic schema must identify a versioned engine ABI");
         string name = Text(descriptor, "name"), pass = Text(descriptor, "pass");
-        if (descriptor.TryGetProperty("materialVariant", out JsonElement variant))
-            _ = ReadMaterialVariantKey(variant, pass, artifact.Target);
+        EngineMaterialVariantKey? materialVariant = descriptor.TryGetProperty("materialVariant", out JsonElement variant)
+            ? ReadMaterialVariantKey(variant, pass, artifact.Target)
+            : null;
         Require(Identifier(name, allowDash: true) && (Identifier(pass, allowDash: true)
             || Regex.IsMatch(pass, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)),
             "material and pass names must be bounded identifiers");
@@ -96,6 +97,9 @@ public static class ShaderProgramArtifactReader
             }
         }
         Require((vertex is not null && compute is null) || (compute is not null && vertex is null && fragment is null), "provide a vertex stage with optional fragment, or one compute stage");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1)
+            Require(vertex == "depthVertex" && fragment is null && compute is null,
+                "opaque shadow depth variant requires its vertex-only depth entry point");
         Require(vertex is null || vertex != fragment, "stage entry points must be distinct");
         Require(Property(descriptor, "requiredFeatures", JsonValueKind.Array).GetArrayLength() == 0, "optional device features have not been admitted");
         Require(Property(descriptor, "pipeline", JsonValueKind.Object).EnumerateObject().Count() == 0, "pipeline state belongs to the engine material/pass, not the cooked module");
@@ -262,8 +266,11 @@ public static class ShaderProgramArtifactReader
     private static EngineMaterialVariantKey BuildMaterialVariantKey(JsonElement value, string pass, ShaderCompileTarget target)
     {
         string semanticName = Text(value, "semantic");
-        Require(semanticName == nameof(EngineMaterialSemantic.StandardLitColor), "unsupported material semantic");
-        EngineMaterialVariantKey key = new(new EngineMaterialSemanticIdentity(EngineMaterialSemantic.StandardLitColor,
+        Require(semanticName is nameof(EngineMaterialSemantic.StandardLitColor) or nameof(EngineMaterialSemantic.OpaqueShadowDepth), "unsupported material semantic");
+        EngineMaterialSemantic semantic = semanticName == nameof(EngineMaterialSemantic.OpaqueShadowDepth)
+            ? EngineMaterialSemantic.OpaqueShadowDepth
+            : EngineMaterialSemantic.StandardLitColor;
+        EngineMaterialVariantKey key = new(new EngineMaterialSemanticIdentity(semantic,
             Property(value, "semanticVersion", JsonValueKind.Number).GetInt32()), target, pass,
             Text(value, "vertexProfile"), Text(value, "outputProfile"));
         key.Validate();
