@@ -9,6 +9,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
     private bool _physicsInitialized;
     private bool _timeCallbacksLinked;
     private bool _disposed;
+    private bool _endingPlay;
     private XRWorld? _subscribedWorld;
 
     public HeadlessRuntimeWorldHost(AbstractPhysicsScene physicsScene)
@@ -74,11 +75,19 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
 
     public void EndPlay()
     {
-        if (_disposed || !CoreWorld.IsPlaySessionActive)
+        if (_disposed || _endingPlay || CoreWorld.PlayState == RuntimeWorldPlayState.Stopped)
             return;
 
-        UnlinkTimeCallbacks();
-        CoreWorld.EndPlay(afterNodeDeactivation: TearDownPhysics);
+        _endingPlay = true;
+        try
+        {
+            UnlinkTimeCallbacks();
+            CoreWorld.EndPlay(afterNodeDeactivation: TearDownPhysics);
+        }
+        finally
+        {
+            _endingPlay = false;
+        }
     }
 
     public void Retarget(XRWorld targetWorld, Action? afterTargetAssigned = null)
