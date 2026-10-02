@@ -13,11 +13,11 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Publishes generation-owned GTAO visibility, or a neutral renderer-owned binding when AO is disabled.</summary>
     internal void PublishAmbientOcclusion(WebGpuRenderProgram program)
     {
-        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is not DefaultRenderPipeline pipeline)
-            throw new NotSupportedException("WebGPU.AmbientOcclusion.PipelineUnsupported: standard lit AO requires the active default render pipeline.");
-
-        bool enabled = pipeline.TryGetWebAmbientOcclusion(out XRTexture2D? finalAo,
-            out float power, out bool multiBounce);
+        XRTexture2D? finalAo = null;
+        float power = 1.0f;
+        bool multiBounce = false;
+        bool enabled = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IRenderPipelineAmbientOcclusionProvider provider &&
+            provider.TryGetAmbientOcclusion(out finalAo, out power, out multiBounce);
         XRTexture2D texture = enabled
             ? finalAo ?? throw new InvalidOperationException("WebGPU.AmbientOcclusion.FinalMissing: enabled GTAO has no committed final visibility texture.")
             : EnsureDisabledAmbientOcclusion();

@@ -51,7 +51,7 @@ public sealed partial class WebGpuRendererHost
     public override void ApplyRenderParameters(RenderingParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
-        if (DefaultRenderPipeline.GetWebRasterStateRejection(parameters) is { } reason)
+        if (WebGpuPipelineAdmission.GetRasterStateRejection(parameters) is { } reason)
             throw UnsupportedEngineOperation(nameof(ApplyRenderParameters), reason);
         WebGpuRasterState state = _rasterState with
         {

@@ -993,3 +993,46 @@ throttled delivery, cancel/restart, exact heap/device budgets, or general UI and
 accessibility acceptance. The next renderer source slice addresses renderbuffer
 ownership and explicit MSAA color resolve rather than enabling unsupported AA
 profiles silently.
+
+The published snapshot `4c91e14708bdbf053d17aea19feda08db7a4fbfb` now passes
+all four jobs in [run 37063133078](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37063133078):
+the portable/browser/native-physics baseline, genuine Windows Editor publication,
+and separate Chromium runs of the exact RollingBall and RenderingParity bundles.
+This preserves the preceding end-to-end baseline while the next source group is
+implemented. It does not establish live streamed-scene, image-UI, or Advanced
+coverage that those checks do not exercise.
+
+### Modular pipeline scope clarification (2026-10-02)
+
+The owner requires browser support for Default, Advanced and other authored
+modular pipeline assets, preserving their selected commands, settings and
+submission modes. CPU-direct, GPU-driven indirect and compute/indirect meshlet
+zero-readback paths are in scope. The [shared implementation plan](../../design/platform/modular-browser-render-pipelines-2026-10-02.md)
+distinguishes algorithm support from unavailable hardware task/mesh shader
+extensions and prohibits silent CPU fallback or count readback in zero-readback
+modes.
+
+Four explicitly open acceptance/implementation rows extend the checklist to
+**64/114 complete, 50 open**. The historical 64/110 published result remains
+valid. The completed initial safety rejection of Advanced does not count as
+Advanced rendering support, and removing a type gate alone cannot close the new
+requirements.
+
+### Shared modular contracts and backend recording (2026-10-02)
+
+The frozen implementation passes Editor, Server, VRClient, desktop WebGPU, all
+nineteen portable compile rows and fresh native-Jolt browser publication with
+zero compiler warnings/errors. The [modular contract record](../rendering/browser-modular-pipeline-contracts-2026-10-02.md)
+documents saved/reloaded clear and unrelated quad assets, exact scoped shader
+dependencies and compute identities through the real publisher audit. This closes
+the generic-contract implementation row: **65/114 complete, 49 open**. Browser
+output for the new custom assets and the Advanced stage family remain open.
+
+The same group implements [engine renderbuffers and retained color resolve](../rendering/browser-color-msaa-resolve-2026-10-02.md)
+and [pipeline-independent frame diagnostics](../rendering/browser-engine-frame-diagnostics-2026-10-02.md).
+Their narrow lifetime/allocation probes pass, including 271 JavaScript boundary
+assertions, but do not establish new live MSAA pixels or whole-world allocation
+budgets. The missing shared compute-program event connection is also repaired,
+so declared buffer-only command dispatch reaches the existing ordered recorder
+rather than silently doing no work. Storage-image operations remain explicit
+until their subsequent resource implementation is installed.

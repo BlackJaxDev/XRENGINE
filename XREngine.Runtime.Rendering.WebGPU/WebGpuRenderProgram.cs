@@ -33,6 +33,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         data.SamplerRequested += SetSampler;
         data.SamplerRequestedByLocation += SetSamplerByLocation;
         data.BindBufferRequested += SetBuffer;
+        data.DispatchComputeRequested += DispatchCompute;
     }
 
     public ShaderProgramArtifact Artifact => _artifact
@@ -212,6 +213,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         Data.SamplerRequested -= SetSampler;
         Data.SamplerRequestedByLocation -= SetSamplerByLocation;
         Data.BindBufferRequested -= SetBuffer;
+        Data.DispatchComputeRequested -= DispatchCompute;
         base.OnRetiring();
     }
 

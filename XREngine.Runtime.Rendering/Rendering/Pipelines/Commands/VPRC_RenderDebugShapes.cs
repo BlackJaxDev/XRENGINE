@@ -10,6 +10,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("debug-shapes");
+
         public string? RenderGraphPassName { get; set; }
         public bool DepthTested { get; set; }
 

@@ -297,8 +297,10 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteUInt32LittleEndian(header[40..], _engineFrameSequence);
         BinaryPrimitives.WriteInt32LittleEndian(header[44..], _engineUploadCount);
         Span<byte> uniforms = _engineUniformArena is null ? Span<byte>.Empty : _engineUniformArena.AsSpan(0, _engineUniformBytes);
+        CountEngineFrameSubmission(length, uniforms.Length, _engineStorageBytes);
         bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms,
             _engineStorageArena.AsSpan(0, _engineStorageBytes));
+        CountEngineFrameSubmissionResult(presented);
         for (int index = _enginePendingStorage.Count - 1; index >= 0; index--)
         {
             if (_enginePendingStorage[index].AcceptSubmittedUploads())
@@ -312,6 +314,6 @@ public sealed partial class WebGpuRendererHost
             SetField(ref _submittedEngineSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
             SetField(ref _submittedEngineOutputProperties, output.Properties, publishNotifications: false);
         }
-        SetField(ref _submittedFrame, presented && !_engineDrawPending);
+        SetField(ref _submittedFrame, presented && !_engineDrawPending, publishNotifications: false);
     }
 }

@@ -9,12 +9,63 @@ public partial class DefaultRenderPipeline
 {
     /// <summary>Checks the canvas raster contract without changing the authored material state.</summary>
     public static string? GetWebRasterStateRejection(RenderingParameters parameters)
+        => WebGpuPipelineAdmission.GetRasterStateRejection(parameters);
+
+    protected override PipelinePostProcessState CreatePostProcessAdmissionState(RendererBackendId backend, PipelinePostProcessState? authored)
+        => backend == RendererBackendId.WebGPU ? CreateWebPostProcessAdmissionState(authored)
+            : base.CreatePostProcessAdmissionState(backend, authored);
+
+    /// <summary>Describes the selected shared WebGPU chain without executing desktop resource factories.</summary>
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
     {
-        ArgumentNullException.ThrowIfNull(parameters);
-        return parameters.StencilTest.IsEnabled || parameters.AlphaToCoverage == ERenderParamUsage.Enabled ||
-            parameters.BlendModesPerDrawBuffer is { Count: > 0 }
-            ? "Stencil, multisample coverage and per-target blending are not admitted by the canvas profile."
-            : null;
+        if (requirements.Backend != RendererBackendId.WebGPU)
+        {
+            base.DescribeRequirements(requirements);
+            return;
+        }
+        if (Stereo)
+            requirements.Diagnostics.Add("Stereo scene output requires a browser XR service that is not installed.");
+        if (GetWebPipelineFeatureRejection() is { } feature)
+            requirements.Diagnostics.Add(feature);
+        DescribeWebEffectRequirements(requirements);
+    }
+
+    /// <summary>Describes the unassigned browser output without creating a live desktop pipeline.</summary>
+    public static RenderPipelineRequirements CreateWebDefaultRequirements(PipelinePostProcessState? authored = null)
+    {
+        RenderPipelineRequirements requirements = new(RendererBackendId.WebGPU, CreateWebPostProcessAdmissionState(authored));
+        DescribeWebEffectRequirements(requirements);
+        return requirements;
+    }
+
+    private static void DescribeWebEffectRequirements(RenderPipelineRequirements requirements)
+    {
+        PipelinePostProcessState state = requirements.PostProcessState;
+        if (GetWebPostProcessRejection(state, out string pass) is { } effect)
+            requirements.Diagnostics.Add($"Pass '{pass}': {effect}");
+        AmbientOcclusionSettings? ao = GetSettings<AmbientOcclusionSettings>(state);
+        if (GetWebAmbientOcclusionRejection(ao) is { } aoReason)
+            requirements.Diagnostics.Add(aoReason);
+        requirements.RequireOperation("cpu-direct-meshes");
+        requirements.RequireOperation("fullscreen-quad");
+        requirements.RequireProgram("tonemap");
+        foreach (EDefaultRenderPass scenePass in Enum.GetValues<EDefaultRenderPass>())
+            if (IsWebSceneMeshPassSupported((int)scenePass))
+                requirements.ScenePasses.Add((int)scenePass);
+        if (ao is { Enabled: true })
+        {
+            requirements.RequireProgram("depth-normal");
+            requirements.RequireProgram("gtao-generate");
+            requirements.RequireProgram("gtao-blur-horizontal");
+            requirements.RequireProgram("gtao-blur-vertical");
+        }
+        if (GetSettings<BloomSettings>(state) is { Enabled: true })
+        {
+            requirements.RequireProgram("bloom-copy");
+            requirements.RequireProgram("bloom-downsample");
+            requirements.RequireProgram("bloom-upsample");
+            requirements.RequireProgram("bloom-combine");
+        }
     }
 
     /// <summary>Creates a cold, detached target state; authored values win over browser defaults.</summary>

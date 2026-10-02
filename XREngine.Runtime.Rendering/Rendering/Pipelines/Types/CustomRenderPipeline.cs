@@ -57,6 +57,15 @@ public class CustomRenderPipeline : RenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
         => _commands ?? [];
+
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        // Serialized authoring properties can arrive after the base constructor built
+        // an empty chain. Publication inspects the authored graph without rebinding it.
+        requirements.Include(Commands ?? CommandChain);
+        if (CustomInvalidMaterial is { } material)
+            requirements.RequireMaterial(material);
+    }
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => _renderPasses ?? [];
 }

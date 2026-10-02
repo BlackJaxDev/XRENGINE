@@ -101,6 +101,27 @@ public sealed class PipelinePostProcessState
 {
     private readonly object _stagesSync = new();
     private Dictionary<string, PostProcessStageState> _stages = new(StringComparer.OrdinalIgnoreCase);
+    private ulong _schemaVersion;
+    private static long _nextChangeVersion;
+
+    internal static ulong NextChangeVersion()
+        => unchecked((ulong)Interlocked.Increment(ref _nextChangeVersion));
+
+    /// <summary>Allocation-free change stamp for output admission caches.</summary>
+    [YamlIgnore]
+    public ulong ChangeVersion
+    {
+        get
+        {
+            lock (_stagesSync)
+            {
+                ulong version = _schemaVersion;
+                foreach (PostProcessStageState stage in _stages.Values)
+                    version = Math.Max(version, stage.ChangeVersion);
+                return version;
+            }
+        }
+    }
 
     public Guid PipelineId { get; private set; }
     public string PipelineName { get; private set; } = string.Empty;
@@ -133,6 +154,7 @@ public sealed class PipelinePostProcessState
         {
             SynchronizeStages(schema);
             Volatile.Write(ref _schema, schema);
+            _schemaVersion = NextChangeVersion();
         }
     }
 
@@ -231,6 +253,9 @@ public sealed class PostProcessStageState : IDisposable
     private IXRNotifyPropertyChanged? _backingNotifier;
     private string? _suppressedBackingPropertyName;
 
+    [YamlIgnore]
+    public ulong ChangeVersion { get; private set; }
+
     public string StageKey { get; private set; } = string.Empty;
 
     [YamlIgnore]
@@ -282,8 +307,12 @@ public sealed class PostProcessStageState : IDisposable
 
     public void SetValue<T>(string parameterName, T value)
     {
-        _values[parameterName] = value;
+        object? boxed = value;
+        bool changed = !_values.TryGetValue(parameterName, out object? previous) || !Equals(previous, boxed);
+        _values[parameterName] = boxed;
         PushValueToBacking(parameterName, value);
+        if (changed)
+            ChangeVersion = PipelinePostProcessState.NextChangeVersion();
     }
 
     private void EnsureParameters(PostProcessStageDescriptor descriptor)
@@ -416,6 +445,7 @@ public sealed class PostProcessStageState : IDisposable
         lock (_backingSync)
         {
             _values[args.PropertyName] = value;
+            ChangeVersion = PipelinePostProcessState.NextChangeVersion();
         }
     }
 

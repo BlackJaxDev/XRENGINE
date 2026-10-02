@@ -12,6 +12,7 @@ using XREngine.Components;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Data.Rendering;
 using XREngine.Data.Core;
+using XREngine.Rendering.PostProcessing;
 
 namespace XREngine.Browser;
 
@@ -58,6 +59,11 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     private bool _disposed;
     private ShaderProgramArtifact? _tonemapArtifact;
     private WebPipelineArtifactCatalog? _pipelineArtifacts;
+    private XRCamera? _admittedCamera;
+    private RenderPipeline? _admittedPipeline;
+    private PipelinePostProcessState? _admittedPostProcessState;
+    private ulong _admittedPostProcessVersion;
+    private ulong _admittedCommandGeneration;
     private IDisposable? _defaultUiFontScope;
     private readonly List<ObjectCacheOwnership> _sessionObjects = [];
     private GameStartupSettings? _previousGameSettings;
@@ -171,13 +177,6 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
                     debugOptions.UseDebugOpaquePipeline = false;
                     _debugOpaquePipelineChanged = true;
                 }
-            }
-            if (Engine.EffectiveSettings.GPURenderDispatch ||
-                Engine.EffectiveSettings.ForceMeshSubmissionStrategy is { } forced &&
-                forced != XREngine.Data.Rendering.EMeshSubmissionStrategy.CpuDirect)
-            {
-                throw new NotSupportedException(
-                    "WebGPU.MeshSubmission.Unsupported: this browser engine profile requires CpuDirect scene submission.");
             }
             _previousAudioV2 = AudioSettings.AudioArchitectureV2;
             _previousAudioTransport = AudioSettings.DefaultTransport;
@@ -312,12 +311,27 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             return;
         CameraComponent? camera = (_localPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)
             ?.RuntimeCameraComponent as CameraComponent;
-        if (camera?.Camera.RenderPipeline is DefaultRenderPipeline pipeline)
+        if (camera?.Camera.RenderPipeline is { } pipeline)
         {
             if (_pipelineArtifacts is { } artifacts)
                 pipeline.BindWebPipelineArtifacts(artifacts);
-            if (_tonemapArtifact is { } artifact)
-                pipeline.BindWebTonemapArtifact(artifact);
+            if (pipeline is DefaultRenderPipeline defaultPipeline && _tonemapArtifact is { } artifact)
+                defaultPipeline.BindWebTonemapArtifact(artifact);
+            camera.Camera.PostProcessStates.TryGetState(pipeline.ID, out var authored);
+            if (!pipeline.IsWebOutputPrepared)
+                pipeline.PrepareForWebOutput(authored, _rendererShaderArtifacts);
+            ulong version = authored?.ChangeVersion ?? 0;
+            if (!ReferenceEquals(_admittedCamera, camera.Camera) || !ReferenceEquals(_admittedPipeline, pipeline) ||
+                !ReferenceEquals(_admittedPostProcessState, authored) || _admittedPostProcessVersion != version ||
+                _admittedCommandGeneration != pipeline.CommandGeneration)
+            {
+                WebGpuPipelineAdmission.Validate(pipeline.CreateRequirements(RendererBackendId.WebGPU, authored), pipeline, _rendererShaderArtifacts);
+                _admittedCamera = camera.Camera;
+                _admittedPipeline = pipeline;
+                _admittedPostProcessState = authored;
+                _admittedPostProcessVersion = version;
+                _admittedCommandGeneration = pipeline.CommandGeneration;
+            }
         }
         if (camera is not null && !ReferenceEquals(_renderViewport.CameraComponent, camera))
             _renderViewport.CameraComponent = camera;
@@ -505,6 +519,11 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         _rendererSession = 0;
         _tonemapArtifact = null;
         _pipelineArtifacts = null;
+        _admittedCamera = null;
+        _admittedPipeline = null;
+        _admittedPostProcessState = null;
+        _admittedPostProcessVersion = 0;
+        _admittedCommandGeneration = 0;
         _rendererShaderArtifacts = null;
         _rendererMaterialVariants = null;
         _rendererComputeArtifacts = null;

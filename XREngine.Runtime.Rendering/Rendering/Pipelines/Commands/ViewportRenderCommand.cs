@@ -33,6 +33,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// Can be used to skip commands while executing.
         /// Will be reset to true if execution is skipped.
         /// </summary>
+        [System.ComponentModel.DefaultValue(true)]
         public bool ShouldExecute
         {
             get => _shouldExecute;
@@ -42,6 +43,25 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// If true, this command's CollectVisible and SwapBuffers methods will be called.
         /// </summary>
         public virtual bool NeedsCollecVisible => false;
+
+        /// <summary>
+        /// Declares output operations and cold shader/material dependencies. Commands with
+        /// arbitrary callbacks must supply this contract explicitly; callbacks are never run
+        /// during publication. Custom commands may override without registering their type.
+        /// </summary>
+        public virtual void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            if (DeclaredRequirements?.Backend != requirements.Backend.Value)
+                requirements.RequireOperation($"undeclared-command:{GetType().FullName}");
+        }
+
+        /// <summary>Adds cold dependencies for callbacks and resource names that cannot be inferred.</summary>
+        public RenderPipelineRequirementsDeclaration? DeclaredRequirements
+        {
+            get => _declaredRequirements;
+            set => SetField(ref _declaredRequirements, value);
+        }
+        private RenderPipelineRequirementsDeclaration? _declaredRequirements;
 
         private string? _gpuProfilingName;
         private string BaseGpuProfilingName => _gpuProfilingName ??= GetType().Name;

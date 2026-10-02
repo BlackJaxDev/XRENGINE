@@ -138,11 +138,15 @@ internal static partial class ProjectBuilder
                     descriptorIdentity = variant.DescriptorIdentity
                 });
             }
-            foreach ((string pass, string identity) in shaderSource.PipelineArtifacts)
+            foreach ((string bindingKey, string identity) in shaderSource.PipelineArtifacts)
             {
                 if (!shaderIdentities.Contains(identity))
-                    throw new InvalidDataException($"The declared browser pipeline artifact '{pass}' was not packaged.");
-                pipelineArtifacts.Add(new { pass, descriptorIdentity = identity });
+                    throw new InvalidDataException($"The declared browser pipeline artifact '{bindingKey}' was not packaged.");
+                (string? scope, string pass) = WebPipelineArtifactCatalog.SplitBindingKey(bindingKey);
+                if (scope is null)
+                    pipelineArtifacts.Add(new { pass, descriptorIdentity = identity });
+                else
+                    pipelineArtifacts.Add(new { scope, pass, descriptorIdentity = identity });
             }
             foreach ((string kernel, string identity) in shaderSource.ComputeArtifacts)
             {

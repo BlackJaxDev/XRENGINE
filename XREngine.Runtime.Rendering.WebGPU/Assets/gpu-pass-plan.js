@@ -20,7 +20,7 @@ function clearColor(value) {
 
 /** Lowers immutable attachment plans; only acquired canvas views change between executions. */
 export class GpuPassPlan {
-    constructor(resources, owner, plan, canvas = {}) {
+    constructor(resources, owner, plan, canvas = {}, debugName = 'WebGPU render pass') {
         fields(plan, ['colors', 'depthStencil']);
         if (!plan || !Array.isArray(plan.colors) || plan.colors.length > 8)
             throw new TypeError('A render pass requires at most eight color attachment slots.');
@@ -29,7 +29,7 @@ export class GpuPassPlan {
         this.resourceHandles = [];
         this.bindings = [];
         this.signature = { colorFormats: [], depthStencilFormat: null, sampleCount: 0, width: 0, height: 0, depthReadOnly: false, stencilReadOnly: false };
-        this.descriptor = { colorAttachments: [] };
+        this.descriptor = { label: debugName, colorAttachments: [] };
         this._subresources = new Set();
         for (let slot = 0; slot < plan.colors.length; slot++) {
             const color = plan.colors[slot];

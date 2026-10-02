@@ -7,6 +7,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_IfElse : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            requirements.Include(TrueCommands);
+            requirements.Include(FalseCommands);
+        }
+
         public string? Label { get; set; }
 
         public Func<bool>? ConditionEvaluator { get; set; }

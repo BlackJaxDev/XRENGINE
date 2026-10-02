@@ -164,3 +164,9 @@ browser representations under one verified managed-admission identity.
 [Browser shader cooking and material generation](work/progress/rendering/browser-shader-cooking.md) records the C# cooker, typed WGSL generation, optional pinned Slang route, coordinate/layout contracts and bounded startup. Compiler/layout qualification and runtime acceptance remain deferred.
 
 [Browser GPU resources and ordered submission](work/progress/rendering/browser-gpu-resources-submission.md) records selected-device capabilities, buffers and texture subresources, framebuffer lowering, bounded pipeline caches, reusable commands and cancellable readback. Runtime acceptance remains deferred.
+
+[Browser engine-frame diagnostics](work/progress/rendering/browser-engine-frame-diagnostics-2026-10-02.md) records bounded per-frame validation receipts, retained labels, explicit WebGPU/Promise object counts and opt-in managed allocation/crossing measurements.
+
+[Modular browser pipeline requirements](work/design/platform/modular-browser-render-pipelines-2026-10-02.md) records the shared Default, Advanced and authored-pipeline scope, including GPU-driven zero-readback submission. The [implementation record](work/progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md) distinguishes generic asset/catalog contracts from pending Advanced stage execution.
+
+[Engine color MSAA resolve](work/progress/rendering/browser-color-msaa-resolve-2026-10-02.md) records shared renderbuffer ownership, retained four-to-one color resolves, precise unsupported combinations and remaining GPU acceptance.

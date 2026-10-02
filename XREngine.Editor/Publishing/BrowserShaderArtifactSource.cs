@@ -76,25 +76,30 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
         }
         if (root.TryGetProperty("pipelineArtifacts", out JsonElement pipelines))
         {
-            if (pipelines.ValueKind != JsonValueKind.Array || pipelines.GetArrayLength() > 16)
-                throw new InvalidDataException("Browser pipeline artifact catalog exceeds 16 entries.");
+            if (pipelines.ValueKind != JsonValueKind.Array ||
+                pipelines.GetArrayLength() > WebPipelineArtifactCatalog.MaximumEntries)
+                throw new InvalidDataException("Browser pipeline artifact catalog exceeds its limit.");
             foreach (JsonElement pipeline in pipelines.EnumerateArray())
             {
-                if (pipeline.ValueKind != JsonValueKind.Object || pipeline.EnumerateObject().Count() != 2 ||
+                if (pipeline.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("Browser pipeline artifact must declare a pass and descriptor identity.");
+                bool hasScope = pipeline.TryGetProperty("scope", out JsonElement scopeValue);
+                if (pipeline.EnumerateObject().Count() != (hasScope ? 3 : 2) ||
+                    hasScope && scopeValue.ValueKind != JsonValueKind.String ||
                     !pipeline.TryGetProperty("pass", out JsonElement passValue) || passValue.ValueKind != JsonValueKind.String ||
-                    !WebPipelineArtifactCatalog.IsSupportedPass(passValue.GetString()) ||
                     !pipeline.TryGetProperty("descriptorIdentity", out JsonElement identityValue) || identityValue.ValueKind != JsonValueKind.String)
-                    throw new InvalidDataException("Browser pipeline artifact must declare a known pass and descriptor identity.");
+                    throw new InvalidDataException("Browser pipeline artifact must declare a pass, descriptor identity, and optional scope.");
                 string pass = passValue.GetString()!;
+                string bindingKey = WebPipelineArtifactCatalog.GetBindingKey(hasScope ? scopeValue.GetString() : null, pass);
                 string identity = ShaderProgramArtifactCatalog.ValidateIdentity(
                     identityValue.GetString())
-                    ?? throw new InvalidDataException($"Browser pipeline artifact '{pass}' has no descriptor identity.");
+                    ?? throw new InvalidDataException($"Browser pipeline artifact '{bindingKey}' has no descriptor identity.");
                 if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) ||
                     artifact.Pass != pass || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null ||
                     artifact.ComputeEntryPoint is not null)
-                    throw new InvalidDataException($"Browser pipeline artifact '{pass}' is not a complete matching WebGPU raster program.");
-                if (!_pipelineArtifacts.TryAdd(pass, identity))
-                    throw new InvalidDataException($"Browser pipeline artifact pass '{pass}' is duplicated.");
+                    throw new InvalidDataException($"Browser pipeline artifact '{bindingKey}' is not a complete matching WebGPU raster program.");
+                if (!_pipelineArtifacts.TryAdd(bindingKey, identity))
+                    throw new InvalidDataException($"Browser pipeline artifact binding '{bindingKey}' is duplicated.");
             }
         }
         if (root.TryGetProperty("computeArtifacts", out JsonElement computes))

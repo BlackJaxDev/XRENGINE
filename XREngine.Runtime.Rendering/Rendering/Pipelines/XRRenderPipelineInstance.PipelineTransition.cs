@@ -367,7 +367,12 @@ public sealed partial class XRRenderPipelineInstance
             MeshRenderCommands.ResetForPipelineTransition(
                 pipeline.PassIndicesAndSorters,
                 pipeline.PassMetadata);
-            InvalidMaterial = pipeline.InvalidMaterial;
+            // Shader-free outputs must not import a desktop fallback shader merely to
+            // attach a viewport. Resolve the source's exact fallback only if it is used.
+            if (pipeline.IsWebOutputPrepared)
+                SetLazyInvalidMaterial(pipeline);
+            else
+                InvalidMaterial = pipeline.InvalidMaterial;
             pipeline.AddInstance(this);
         }
         else

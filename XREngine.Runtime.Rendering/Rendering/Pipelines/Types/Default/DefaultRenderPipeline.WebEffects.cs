@@ -9,7 +9,7 @@ using XREngine.Scene;
 
 namespace XREngine.Rendering;
 
-public partial class DefaultRenderPipeline
+public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProvider
 {
     public const string WebNormalTextureName = "WebNormalTexture";
     public const string WebNormalFboName = "WebNormalFBO";
@@ -568,4 +568,7 @@ public partial class DefaultRenderPipeline
         multiBounce = settings.GroundTruth.MultiBounceEnabled;
         return true;
     }
+
+    bool IRenderPipelineAmbientOcclusionProvider.TryGetAmbientOcclusion(out XRTexture2D? visibility, out float power, out bool multiBounce)
+        => TryGetWebAmbientOcclusion(out visibility, out power, out multiBounce);
 }
