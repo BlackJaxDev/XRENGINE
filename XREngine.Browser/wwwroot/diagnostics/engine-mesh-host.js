@@ -16,13 +16,14 @@ export class EngineMeshDiagnosticHost {
         this.failure = null;
         this.partialSubmissions = 0;
         this.readyFrames = 0;
+        this.settleFrames = 0;
         this.lastReadySession = 0;
         this.frame = this.frame.bind(this);
     }
 
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
-            'engine-standard-lit-color-directional-shadow'].includes(artifactName))
+            'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
         // Invalidate the previous visible completion before the first await.
@@ -34,9 +35,12 @@ export class EngineMeshDiagnosticHost {
         this.failure = null;
         this.partialSubmissions = 0;
         this.readyFrames = 0;
+        this.settleFrames = 0;
         this.lastReadySession = 0;
-        this.kind = artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
+        this.kind = artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
+            artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
             artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
+        if (this.kind === 'debug') this.settleFrames = 2;
         this.readyMessage = `Engine mesh ${this.kind} diagnostic rendered; RuntimeWorld play and physics are unverified`;
         this.stage = 'loading-shader-artifact';
         if (!assetManifestUrl) throw new Error('Engine mesh diagnostics require a cooked engine asset manifest.');
@@ -58,12 +62,21 @@ export class EngineMeshDiagnosticHost {
                 if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
                 return { descriptorJson, source: await sourceResponse.text() };
             };
-            const artifact = await loadArtifact(artifactName);
-            const tonemap = ['lit', 'shadow'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
+            const artifact = await loadArtifact(this.kind === 'debug' ? 'engine-standard-lit-color' : artifactName);
+            const tonemap = ['lit', 'shadow', 'debug'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
             const shadowDepth = this.kind === 'shadow' ? await loadArtifact('engine-shadow-depth') : null;
+            const debug = this.kind === 'debug' ? {
+                point: await loadArtifact('engine-debug-point'),
+                line: await loadArtifact('engine-debug-line'),
+                triangle: await loadArtifact('engine-debug-triangle'),
+            } : null;
             if (controller.signal.aborted || epoch !== this.epoch) return;
             this.stage = 'creating-engine-session';
-            const creation = shadowDepth
+            const creation = debug
+                ? this.exports.CreateDebugAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+                    tonemap.descriptorJson, tonemap.source, debug.point.descriptorJson, debug.point.source,
+                    debug.line.descriptorJson, debug.line.source, debug.triangle.descriptorJson, debug.triangle.source)
+                : shadowDepth
                 ? this.exports.CreateShadowAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source, shadowDepth.descriptorJson, shadowDepth.source)
                 : tonemap ? this.exports.CreateLitAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
@@ -109,15 +122,18 @@ export class EngineMeshDiagnosticHost {
         if (!this.session) return;
         try {
             this.stage = 'engine-frame';
-            const submissionsBefore = this.kind === 'shadow' ? this.statistics()?.frameSubmitCalls ?? 0 : 0;
+            const submissionsBefore = ['shadow', 'debug'].includes(this.kind) ? this.statistics()?.frameSubmitCalls ?? 0 : 0;
             const ready = this.exports.Frame(this.session);
-            if (this.kind === 'shadow' && !ready && (this.statistics()?.frameSubmitCalls ?? 0) > submissionsBefore)
+            if (['shadow', 'debug'].includes(this.kind) && !ready && (this.statistics()?.frameSubmitCalls ?? 0) > submissionsBefore)
                 this.partialSubmissions++;
             this.stage = 'waiting-for-next-frame';
             if (ready) {
-                this.readyFrames++;
-                this.lastReadySession = this.session;
-                this.onState(this.readyMessage);
+                if (this.settleFrames > 0) this.settleFrames--;
+                else {
+                    this.readyFrames++;
+                    this.lastReadySession = this.session;
+                    this.onState(this.readyMessage);
+                }
             }
             else if (performance.now() - this.startedAt > 45000)
                 throw new Error(`Engine mesh ${this.kind} diagnostic did not submit its expected engine draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
@@ -153,6 +169,34 @@ export class EngineMeshDiagnosticHost {
         this.exports.SetShadowMapSize(this.session, size);
         this.startedAt = performance.now();
         this.onState('Preparing resized engine shadow map');
+    }
+
+    setDebugCase(sampleCase) {
+        if (!this.session || this.kind !== 'debug') throw new Error('An active engine debug diagnostic is required.');
+        this.exports.SetDebugCase(this.session, sampleCase);
+        this.settleFrames = 2;
+        this.startedAt = performance.now();
+        this.onState('Preparing changed registered debug shapes');
+    }
+
+    debugState() {
+        if (!this.session || this.kind !== 'debug') throw new Error('An active engine debug diagnostic is required.');
+        const shaders = [], pipelines = [], buffers = [], commands = [];
+        this.renderer._resources.slots.forEach((entry, slot) => {
+            if (entry?.owner !== this.session) return;
+            const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
+            if (entry.kind === 'shader') shaders.push(identity);
+            if (entry.kind === 'render-pipeline') pipelines.push({ ...identity,
+                blended: entry.value.descriptor.fragment?.targets?.some(target => !!target?.blend) ?? false });
+            if (entry.kind === 'buffer') buffers.push({ ...identity, size: entry.value.size,
+                usage: entry.value.usage });
+            if (entry.kind === 'commands') {
+                const draw = entry.value.operations?.find(operation => operation.type === 'render' && operation.engineInstanceCountLimit > 0);
+                if (draw) commands.push({ ...identity, label: draw.pipeline?.label ?? '',
+                    instanceLimit: draw.engineInstanceCountLimit });
+            }
+        });
+        return { ...JSON.parse(this.exports.GetDebugState(this.session)), shaders, pipelines, buffers, commands };
     }
 
     shadowState() {
@@ -193,6 +237,7 @@ export class EngineMeshDiagnosticHost {
         this.canvas.style.height = `${height}px`;
         const generation = this.renderer.resize(width, height);
         this.exports.ResizeGraphics(this.session, width, height, generation);
+        if (this.kind === 'debug') this.settleFrames = 2;
         this.startedAt = performance.now();
         this.onState('Preparing resized engine render resources');
     }
@@ -293,6 +338,7 @@ export class EngineMeshDiagnosticHost {
         const session = this.session;
         this.session = 0;
         this.readyFrames = 0;
+        this.settleFrames = 0;
         this.lastReadySession = 0;
         const creation = this.creation;
         this.creation = null;

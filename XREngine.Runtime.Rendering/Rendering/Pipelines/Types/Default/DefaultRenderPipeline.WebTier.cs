@@ -210,9 +210,15 @@ public partial class DefaultRenderPipeline
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(command => command.UseInternalResolution = true))
         using (commands.AddUsing<VPRC_BindFBOByName>(command => command.SetOptions(ForwardPassFBOName, clearStencil: false)))
         {
+            // Opaque materials may leave blend state unchanged. The preceding frame's
+            // display overlays must not turn those surfaces into alpha-blended draws.
+            commands.Add<VPRC_Manual>().ManualAction = static () => RuntimeEngine.Rendering.State.EnableBlend(false);
             commands.Add<VPRC_DepthTest>().Enable = true;
             commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, EMeshSubmissionStrategy.CpuDirect);
             commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, EMeshSubmissionStrategy.CpuDirect);
+            // A depth-tested debug primitive has no display-overlay equivalent. If one is
+            // submitted, its explicit WebGPU material rejection preserves that distinction.
+            commands.Add<VPRC_RenderDebugShapes>().DepthTested = true;
         }
         using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
         using (commands.AddUsing<VPRC_BindOutputFBO>(command => command.SetOptions(clearColor: false, clearDepth: false, clearStencil: false)))
@@ -223,6 +229,8 @@ public partial class DefaultRenderPipeline
             tonemap.RequiredForOutput = true;
             tonemap.SetTargets(WebTonemapFBOName)
                 .ConfigureRenderGraphResources(static resources => resources.SampleTexture(HDRSceneTextureName));
+            commands.Add<VPRC_Manual>().ManualAction = RenderWebDebugDrawCallbacks;
+            commands.Add<VPRC_RenderDebugShapes>().DepthTested = false;
         }
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, EMeshSubmissionStrategy.CpuDirect);
         return commands;
@@ -239,9 +247,14 @@ public partial class DefaultRenderPipeline
         if (metadata.TryGetPassIndex(tonemap, out int index))
         {
             metadata.ForPass(index, tonemap, ERenderGraphPassStage.Graphics).DependsOn((int)EDefaultRenderPass.OpaqueForward);
-            metadata.ForPass((int)EDefaultRenderPass.PostRender, nameof(EDefaultRenderPass.PostRender), ERenderGraphPassStage.Graphics).DependsOn(index);
+            metadata.ForPass((int)EDefaultRenderPass.OnTopForward, nameof(EDefaultRenderPass.OnTopForward), ERenderGraphPassStage.Graphics).DependsOn(index);
+            metadata.ForPass((int)EDefaultRenderPass.PostRender, nameof(EDefaultRenderPass.PostRender), ERenderGraphPassStage.Graphics)
+                .DependsOn((int)EDefaultRenderPass.OnTopForward);
         }
     }
+
+    private static void RenderWebDebugDrawCallbacks()
+        => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.ActiveMeshRenderCommands.RenderPublishedDebugDrawCallbacks();
 
     private void ValidateWebFrameRequirements()
     {
@@ -258,13 +271,14 @@ public partial class DefaultRenderPipeline
             (int)EDefaultRenderPass.Background, (int)EDefaultRenderPass.DeferredDecals,
             (int)EDefaultRenderPass.MaskedForward, (int)EDefaultRenderPass.TransparentForward,
             (int)EDefaultRenderPass.WeightedBlendedOitForward, (int)EDefaultRenderPass.PerPixelLinkedListForward,
-            (int)EDefaultRenderPass.DepthPeelingForward, (int)EDefaultRenderPass.OnTopForward,
+            (int)EDefaultRenderPass.DepthPeelingForward,
             (int)EDefaultRenderPass.PostBloomForward, (int)EDefaultRenderPass.PostMotionBlurForward,
             (int)EDefaultRenderPass.PostDepthOfFieldForward,
         ];
         foreach (int pass in unsupportedPasses)
             if (instance.ActiveMeshRenderCommands.HasRenderingCommands(pass))
                 throw new NotSupportedException($"WebGPU.DefaultPipeline.PassUnsupported: pass '{(EDefaultRenderPass)pass}' has no cooked output route.");
+        instance.ActiveMeshRenderCommands.ValidatePublishedDebugDrawCallbacks();
 
         PipelinePostProcessState? state = (instance.RenderState.SceneCamera ?? instance.LastSceneCamera)?.GetPostProcessState(this);
         if (GetSettings<BloomSettings>(state) is { Enabled: true } ||

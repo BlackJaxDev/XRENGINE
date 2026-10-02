@@ -279,3 +279,60 @@ and requires a new session, matching epoch and completed frame. Repeated
 disable/restore checks additionally verify stable queue-drained resource counts.
 The [first qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36952723468/artifacts/11204788286)
 retains the actual pixels and failure. A subsequent complete run is still required.
+
+The restart repair `3d18468ebdf1115b431743c56ce0f345d8c3235d` then passed
+[run 36954020671](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36954020671).
+All shadow pixel cases, both map extents, three additional disable/restore cycles,
+and a fresh stopped/restarted session passed. The near/far edge measurements
+remain 9 and 21 pixels. Queue-drained live resources returned to 42 while disabled
+and 61 after restoration in every repeated toggle, with zero retiring resources;
+the intentionally retained disabled-depth binding is included. The device-local
+descriptor cache grew from 14 to 17 entries across those toggles within its
+128-entry bound and reset with the session. This is not a managed-heap or hardware
+performance measurement. The complete
+[qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36954020671/artifacts/11205471405)
+contains the pixels, counters and restart result. The authored-player check still
+skips the bare host because it has no project launch descriptor.
+
+## Shared debug primitive overlays
+
+The registered `DebugDrawComponent` path now has exact source-free
+`DebugPointV1`, `DebugLineV1` and `DebugTriangleV1` cooked variants. Their
+`debug-overlay` pass uses `instanced-debug-{point,line,triangle}-v1` input and
+`display-rgba-v1` output profiles. Fixed indexed quad/triangle scaffolds expand
+compressed 16/28/40-byte instance records in the vertex stage; packed RGBA bits
+remain integer data, and no CPU geometry expansion is substituted. Each draw
+admits at most 65,536 instances. Published OnTopForward callbacks owned by the
+real component populate the shared visualizer after tonemapping. Other callback
+types and depth-tested debug primitives are explicitly unsupported by this
+bounded overlay route. Point size, line width and alpha semantics are retained.
+
+Engine frame packet version two carries ordered storage snapshots and explicit
+instance counts through the existing single rendering submission. Uploads are
+validated before GPU mutation and copied before their consuming draw. Dirty
+ranges survive deferred frames; storage growth is committed only with an
+accepted frame and previous buffers retire after completion. Same-capacity
+numeric/count changes reuse the prepared command identity.
+
+Fresh published WASM under Node reached all three real engine draw paths for
+zero/one, 256, 384, 32, 512, 768 and 1,024-instance cohorts, repeated zero-to-visible changes,
+and same-count position/color mutation. All three storage uploads preceded
+their corresponding draws; same-capacity command identities remained stable.
+The recording import initially omitted the device storage-binding limit and
+correctly triggered the named binding rejection; correcting that supplied
+capability resolved the probe. This is managed/import-boundary evidence, not
+GPU pixel evidence. Exact-commit Chromium qualification remains required.
+
+That failure also exposed an independent canvas error-isolation hole: the
+shared command container's offscreen-only rejection receipt did not prevent
+partial canvas submission. WebGPU now explicitly requires atomic frame
+authoring, so the original command exception aborts the complete frame.
+Desktop renderers retain their existing command-failure isolation policy.
+The fresh fault run confirms the original storage-limit exception surfaces
+before any frame reaches the submission import. Opaque HDR passes explicitly
+disable blending so a preceding display overlay cannot change an opaque
+material that leaves blend state unchanged. All emitted opaque pipelines have
+blending disabled in the repeated live-WASM cohort.
+Local no-incremental leaf builds pass without warnings/errors, and the raw
+storage ABI probe accepts six original and scalar-alias cases while rejecting fifteen
+float, vector, fixed-array, writable, or struct-wrapped alternatives.

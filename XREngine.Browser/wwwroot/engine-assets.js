@@ -74,13 +74,17 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'OpaqueShadowDepth'].includes(variant.semantic) || variant.semanticVersion !== 1
+                || !['StandardLitColor', 'OpaqueShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle'].includes(variant.semantic) || variant.semanticVersion !== 1
                 || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
                 || !shaderIdentities.has(variant.descriptorIdentity))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.semantic === 'OpaqueShadowDepth' && (variant.pass !== 'depth'
                 || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'depth-normal-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            const debugProfiles = { DebugPoint: 'instanced-debug-point-v1', DebugLine: 'instanced-debug-line-v1', DebugTriangle: 'instanced-debug-triangle-v1' };
+            if (debugProfiles[variant.semantic] && (variant.pass !== 'debug-overlay'
+                || variant.vertexProfile !== debugProfiles[variant.semantic] || variant.outputProfile !== 'display-rgba-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             const key = [variant.semantic, variant.semanticVersion, variant.target, variant.pass,
                 variant.vertexProfile, variant.outputProfile].join('\u001f');

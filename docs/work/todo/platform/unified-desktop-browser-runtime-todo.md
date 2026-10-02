@@ -20,6 +20,16 @@ The editor stays a desktop application and gains an honest browser publish targe
 
 ## Current State (2026-10-02)
 
+The later exact commit `3d18468ebdf1115b431743c56ce0f345d8c3235d` passed
+[Chromium shadow qualification](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36954020671),
+adding the shared standalone directional PCSS path, map resize, repeated
+disable/restore resource retirement, and stop/restart to the qualified profile.
+The current debug-HUD implementation also passes published-WASM/import-boundary
+execution through the real component and shared pipeline, but its GPU pixel
+qualification is pending. These are partial-row advances; the count remains
+**39 checked and 71 open**. The [shader record](../../progress/rendering/unified-webgpu-shader-cooking.md)
+distinguishes the exact live evidence from newer source work.
+
 The 2026-09-30 build-stabilization and portable-host results remain historical evidence for their source snapshot. The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed [real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) on 2026-10-02, qualifying a bounded shared `DefaultRenderPipeline` lit/HDR profile, its resizes, and the listed lifecycle/resource checks. This remains software-WebGPU evidence; full production/gameplay and device acceptance are open. **39 of 110 checklist items remain checked; 71 remain open.** See the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) and [lit-profile acceptance](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance) for exact scope.
 
 | Area | Finding | Tracked by |

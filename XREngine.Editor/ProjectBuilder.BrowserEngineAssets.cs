@@ -1,7 +1,9 @@
 using System.Text.Json;
 using XREngine.Scene;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Editor.Publishing;
+using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Editor;
@@ -17,8 +19,6 @@ internal static partial class ProjectBuilder
         // browser scene projection is allowed to remove authored gameplay behavior.
         IShaderProgramArtifactResolver? resolver = Engine.CurrentProject is { ProjectDirectory: { } projectDirectory, BrowserShaderArtifactManifestPath: { Length: > 0 } manifest }
             ? new BrowserShaderArtifactSource(projectDirectory, manifest) : null;
-        IReadOnlyList<ShaderProgramArtifact> shaderArtifacts = BrowserWorldCapabilityAudit.Inspect(world, resolver, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
         string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
         string worldPath = "/game/" + relativeWorld;
         if (string.Equals(worldPath, "/game/startup.asset", StringComparison.OrdinalIgnoreCase))
@@ -26,6 +26,22 @@ internal static partial class ProjectBuilder
         BrowserAssetDependencyCooker dependencyCooker = new(
             assetRoot, Engine.Assets?.EngineAssetsPath, sourceDirectory, cancellationToken);
         dependencyCooker.Cook(world, worldPath, "startup-world.bin");
+        IReadOnlyList<ShaderProgramArtifact> shaderArtifacts;
+        // Inspect what the browser will actually hydrate. A registered game serializer may
+        // intentionally project desktop shader data into explicit cooked material semantics.
+        // This CPU-only audit may run in a live desktop editor; temporary materials must not
+        // attach API wrappers to its active renderer.
+        {
+            using IDisposable wrapperSuppression = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+            using IDisposable materialTarget = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(EngineMaterialConstructionTarget.WebGpuCooked);
+            using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+            XRWorld runtimeWorld = CookedAssetReader.LoadAsset(
+                File.ReadAllBytes(Path.Combine(sourceDirectory, "startup-world.bin")), typeof(XRWorld)) as XRWorld
+                ?? throw new InvalidDataException("The browser startup payload did not hydrate an XRWorld.");
+            using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
+            shaderArtifacts = BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver, cancellationToken);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
         GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
         // Keep authored output requirements while the manifest owns the selected world.
         // Copy window objects so removing external world references cannot mutate editor settings.
@@ -61,6 +77,7 @@ internal static partial class ProjectBuilder
             shaderReferences.Add(new { identity = artifact.Identity, descriptor, source });
         }
         List<object> materialVariants = [];
+        List<object> pipelineArtifacts = [];
         if (resolver is BrowserShaderArtifactSource shaderSource)
         {
             foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
@@ -78,11 +95,18 @@ internal static partial class ProjectBuilder
                     descriptorIdentity = variant.DescriptorIdentity
                 });
             }
+            if (shaderSource.TonemapDescriptorIdentity is { } tonemapIdentity)
+            {
+                if (!shaderIdentities.Contains(tonemapIdentity))
+                    throw new InvalidDataException("The declared browser tonemap artifact was not packaged.");
+                pipelineArtifacts.Add(new { pass = "tonemap", descriptorIdentity = tonemapIdentity });
+            }
         }
         byte[] recipe = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schema = 1, format = "xrengine-assets", startupWorld = worldPath,
-            startupSettings = "/game/startup.asset", shaderArtifacts = shaderReferences, materialVariants, assets
+            startupSettings = "/game/startup.asset", shaderArtifacts = shaderReferences,
+            materialVariants, pipelineArtifacts, assets
         });
         string path = Path.Combine(sourceDirectory, "engine-assets.recipe.json");
         File.WriteAllBytes(path, recipe);

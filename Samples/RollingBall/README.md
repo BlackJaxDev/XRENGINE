@@ -71,6 +71,35 @@ dotnet build .\Samples\RollingBall\RollingBall.csproj `
 Use the VS Code task `Build-RollingBall-CookGameExe` to produce a cooked,
 framework-dependent development build under `Samples/RollingBall/Build/Game`.
 
+## Browser WebGPU publish
+
+The project selects the saved `Worlds/RollingBallWorld.asset` through
+`StartupScenePath`. The browser shader catalog is project-relative under
+`Assets/Shaders/WebGPU`. Regenerate its checked-in, hash-addressed artifacts from
+the seven explicit engine recipes with pinned Slang 2026.8 before publishing:
+
+```powershell
+pwsh Tools/Cook-RollingBallBrowserShaders.ps1
+```
+
+From a Windows source checkout with .NET 10.0.401, `wasm-tools`, and the
+reviewed browser Jolt managed/native source prepared as described in
+`docs/work/progress/rendering/browser-project-publishing.md`, use the production
+Editor Build Project command:
+
+```powershell
+dotnet build XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU
+dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Samples/RollingBall/RollingBall.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
+```
+
+The staged publisher writes the static player to
+`Samples/RollingBall/Build/BrowserWebGPU` only after world cooking, game assembly
+audit, WebAssembly publish, content packaging, and launch configuration succeed.
+Serve that directory over localhost HTTP or HTTPS for browser validation. This
+recipe does not claim rendered game acceptance: the production WebGPU pipeline
+still has named unsupported routes for authored effects and the scoreboard's
+debug-shape pass until those are implemented and tested in a browser.
+
 ## Release Package
 
 The canonical clean NativeAOT build, archive smoke test, and ZIP packaging

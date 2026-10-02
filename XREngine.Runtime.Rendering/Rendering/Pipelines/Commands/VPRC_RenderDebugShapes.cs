@@ -47,7 +47,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
             finally
             {
-                ResetStencilState();
+                // The cooked WebGPU display route has no stencil attachment. Desktop
+                // gizmo materials keep their stencil write/reset behavior unchanged.
+                if (AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+                    ResetStencilState();
             }
         }
 

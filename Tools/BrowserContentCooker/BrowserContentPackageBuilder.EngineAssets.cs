@@ -92,7 +92,8 @@ public static partial class BrowserContentPackageBuilder
             foreach (JsonElement variant in variantValues.EnumerateArray())
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
-                string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth");
+                string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth",
+                    "DebugPoint", "DebugLine", "DebugTriangle");
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, 1);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
@@ -101,6 +102,16 @@ public static partial class BrowserContentPackageBuilder
                 if (semantic == "OpaqueShadowDepth")
                     Require(pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1",
                         "Opaque shadow depth requires its exact pass and profiles.");
+                string? debugProfile = semantic switch
+                {
+                    "DebugPoint" => "instanced-debug-point-v1",
+                    "DebugLine" => "instanced-debug-line-v1",
+                    "DebugTriangle" => "instanced-debug-triangle-v1",
+                    _ => null,
+                };
+                if (debugProfile is not null)
+                    Require(pass == "debug-overlay" && vertexProfile == debugProfile && outputProfile == "display-rgba-v1",
+                        "Debug primitives require their exact overlay pass and profiles.");
                 string? descriptorIdentity = variant.GetProperty("descriptorIdentity").GetString();
                 Require(descriptorIdentity is not null && Regex.IsMatch(descriptorIdentity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
                     "Material variant references an absent shader descriptor.");

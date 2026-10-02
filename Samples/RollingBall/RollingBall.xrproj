@@ -4,5 +4,7 @@ ProjectVersion: 1.0.0
 EngineVersion: 1.0.0
 ID: 0d6e4df2-17fb-4ed8-adca-cb5d0b5aa395
 Name: Rolling Ball
+StartupScenePath: Worlds/RollingBallWorld.asset
+BrowserShaderArtifactManifestPath: Assets/Shaders/WebGPU/manifest.json
 DesktopHostProjectPath: ../RollingBall.DesktopVR/RollingBall.DesktopVR.csproj
 DesktopHostRegistrationType: RollingBall.DesktopVR.RollingBallDesktopVrHost

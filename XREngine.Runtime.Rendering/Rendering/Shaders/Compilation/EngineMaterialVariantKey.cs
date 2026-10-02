@@ -27,6 +27,17 @@ public readonly record struct EngineMaterialVariantKey(
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "depth" ||
              VertexProfile != "static-position-v1" || OutputProfile != "depth-normal-v1"))
             throw new ArgumentException("OpaqueShadowDepthV1 requires the WebGPU depth/static-position-v1/depth-normal-v1 variant.");
+        string? debugProfile = Semantic.Semantic switch
+        {
+            EngineMaterialSemantic.DebugPoint => "instanced-debug-point-v1",
+            EngineMaterialSemantic.DebugLine => "instanced-debug-line-v1",
+            EngineMaterialSemantic.DebugTriangle => "instanced-debug-triangle-v1",
+            _ => null,
+        };
+        if (debugProfile is not null &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "debug-overlay" ||
+             VertexProfile != debugProfile || OutputProfile != "display-rgba-v1"))
+            throw new ArgumentException($"{Semantic.Semantic}V1 requires the WebGPU debug-overlay/{debugProfile}/display-rgba-v1 variant.");
     }
 
     private static void ValidateProfile(string value, string parameterName)

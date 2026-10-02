@@ -20,6 +20,21 @@ internal static class BrowserWorldCapabilityAudit
         foreach (XRScene scene in world.Scenes)
             foreach (SceneNode root in scene.RootNodes)
                 Visit(root, 0);
+        if (resolver is BrowserShaderArtifactSource shaderSource)
+        {
+            foreach (EngineMaterialVariantEntry variant in shaderSource.MaterialVariants)
+            {
+                if (!shaderSource.TryResolve(variant.DescriptorIdentity, variant.Key.Target, out ShaderProgramArtifact? artifact))
+                    throw new InvalidDataException($"BrowserCook.VariantMissing: '{variant.Key}'.");
+                artifacts.TryAdd(artifact.Identity, artifact);
+            }
+            if (shaderSource.TonemapDescriptorIdentity is { } tonemapIdentity)
+            {
+                if (!shaderSource.TryResolve(tonemapIdentity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? tonemap))
+                    throw new InvalidDataException("BrowserCook.TonemapArtifactMissing: the declared descriptor is unavailable.");
+                artifacts.TryAdd(tonemap.Identity, tonemap);
+            }
+        }
         return artifacts.Values.OrderBy(artifact => artifact.Identity, StringComparer.Ordinal).ToArray();
 
         void Visit(SceneNode node, int depth)
@@ -56,6 +71,22 @@ internal static class BrowserWorldCapabilityAudit
         {
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1)
+            {
+                if (material.Shaders.Count != 0)
+                    throw new NotSupportedException($"BrowserCook.SurfaceUnsupported: '{path}' material '{material.Name}' retains authored shader stages.");
+                if (!StandardLitColorSurfaceBinding.TryCreate(material, out _, out string? reason))
+                    throw new NotSupportedException($"BrowserCook.SurfaceUnsupported: '{path}' material '{material.Name}': {reason}.");
+                if (resolver is not BrowserShaderArtifactSource source ||
+                    !source.MaterialVariants.Any(variant =>
+                        variant.Key.Semantic == material.EngineSemantic &&
+                        variant.Key.Target == ShaderCompileTarget.WebGPUWgsl &&
+                        variant.Key.Pass == "opaque-forward" &&
+                        variant.Key.VertexProfile == "static-position-normal-v1" &&
+                        variant.Key.OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1"))
+                    throw new NotSupportedException($"BrowserCook.VariantMissing: '{path}' material '{material.Name}' requires an exact StandardLitColorV1 WebGPU forward variant in the project shader manifest.");
+                return;
+            }
             if (material.Shaders.Count == 0)
                 throw new NotSupportedException($"BrowserCook.ShaderMissing: '{path}' material '{material.Name}' has no selected cooked WebGPU stages.");
             foreach (XRShader shader in material.Shaders)

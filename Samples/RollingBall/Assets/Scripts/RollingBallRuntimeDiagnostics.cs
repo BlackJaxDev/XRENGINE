@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Numerics;
-using System.Text;
 using XREngine.Components.Physics;
 using XREngine.Scene.Physics;
 
@@ -320,19 +319,18 @@ internal static class RollingBallRuntimeDiagnostics
         if (string.IsNullOrWhiteSpace(configured))
             return null;
 
+        IRollingBallPlatformHost? host = RollingBallHostRegistration.PlatformHost;
+        if (host is null)
+        {
+            Console.Error.WriteLine("Rolling Ball file diagnostics require the desktop platform host.");
+            return null;
+        }
+
         try
         {
-            string path = Path.GetFullPath(configured);
-            string? directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
-
-            File.WriteAllText(
-                path,
+            return host.OpenDiagnostics(configured,
                 $"timestamp={DateTimeOffset.Now:O} pid={Environment.ProcessId} event=session-start" +
-                Environment.NewLine,
-                Encoding.UTF8);
-            return path;
+                Environment.NewLine);
         }
         catch (Exception exception)
         {
@@ -355,7 +353,7 @@ internal static class RollingBallRuntimeDiagnostics
         {
             try
             {
-                File.AppendAllText(path, line, Encoding.UTF8);
+                RollingBallHostRegistration.PlatformHost?.AppendDiagnostics(path, line);
             }
             catch (Exception exception)
             {

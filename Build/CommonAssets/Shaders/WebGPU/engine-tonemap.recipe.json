@@ -94,5 +94,6 @@
       }
     ]
   },
-  "pipeline": {}
+  "pipeline": {},
+  "pipelineArtifact": { "pass": "tonemap" }
 }

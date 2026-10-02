@@ -587,6 +587,191 @@ async function shadowCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
+async function debugOverlayCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-shared-debug-overlay', config);
+    const counts = [0, 1, 256, 384, 32, 0, 384, 512, 0, 1, 32, 32, 768, 32, 1024, 0];
+    const baselineSites = [
+        { name: 'point', x: 115, y: 159 }, { name: 'line', x: 256, y: 218 },
+        { name: 'triangle', x: 384, y: 366 },
+        { name: 'alternate-point', x: 397, y: 159 }, { name: 'alternate-line', x: 256, y: 269 },
+        { name: 'alternate-triangle', x: 128, y: 366 },
+    ];
+    const pixel = (capture, name) => capture.samples.find(sample => sample.name === name).average;
+    const near = (actual, expected, tolerance) => actual.every((value, channel) => Math.abs(value - expected[channel]) <= tolerance);
+    const debugIdentity = state => JSON.stringify({
+        pipelines: state.pipelines.filter(item => item.label.startsWith('engine-debug-'))
+            .map(({ slot, generation, label }) => ({ slot, generation, label })).sort((a, b) => a.label.localeCompare(b.label)),
+        commands: state.commands.map(({ slot, generation, label }) => ({ slot, generation, label }))
+            .sort((a, b) => a.slot - b.slot),
+        buffers: state.buffers.filter(item => ['PointsBuffer', 'LinesBuffer', 'TrianglesBuffer'].includes(item.label))
+            .map(({ slot, generation, label }) => ({ slot, generation, label })).sort((a, b) => a.label.localeCompare(b.label)),
+    });
+    const waitReady = async (sampleCase, previousReadyFrames, expectedSession) => {
+        await page.waitForFunction(({ sampleCase, previousReadyFrames, expectedSession, expectedCount }) => {
+            const host = window.engineMeshDiagnostic;
+            const status = document.querySelector('#status')?.textContent ?? '';
+            if (status.startsWith('Failed:') || status.startsWith('Error:')) return true;
+            if (!host || host.session !== expectedSession || host.readyFrames <= previousReadyFrames ||
+                host.lastReadySession !== expectedSession) return false;
+            const state = host.debugState();
+            return state.sampleCase === sampleCase && state.visualizerPoints === expectedCount &&
+                state.visualizerLines === expectedCount && state.visualizerTriangles === expectedCount;
+        }, { sampleCase, previousReadyFrames, expectedSession, expectedCount: counts[sampleCase] });
+        const status = await page.locator('#status').textContent();
+        assert(status.startsWith('Engine mesh debug diagnostic rendered'), `BrowserSmoke.EngineDebugFrameFailed: ${status}`);
+    };
+    const captureCase = async (name, sites = baselineSites) => {
+        const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `engine-debug-${name}.png`) });
+        return capturePixels(page, png, sites);
+    };
+    let initialIdentity, expandedIdentity, largeIdentity, initialPipelineIdentity, initialLive, blankPixels;
+    report.debugCases = [];
+    try {
+        await page.goto(`${origin}/diagnostics/engine-mesh.html?probe=debug&manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
+            `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
+        await page.locator('#start').click();
+        await page.waitForFunction(() => window.engineMeshDiagnostic.session > 0 || window.engineMeshDiagnostic.failure);
+        const session = await page.evaluate(() => window.engineMeshDiagnostic.session);
+        await waitReady(0, 0, session);
+        for (const sampleCase of [0, 1, 9, 2, 3, 4, 10, 11, 5, 6, 7, 12, 13, 14, 15]) {
+            if (sampleCase) {
+                const previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+                await page.evaluate(value => window.engineMeshDiagnostic.setDebugCase(value), sampleCase);
+                await waitReady(sampleCase, previousReadyFrames, session);
+            }
+            if ([3, 7, 12, 14].includes(sampleCase))
+                await page.waitForFunction(() => window.engineMeshDiagnostic.statistics()?.resources?.retiring === 0,
+                    null, { timeout: Math.min(config.timeout, 15000) });
+            const state = await page.evaluate(() => window.engineMeshDiagnostic.debugState());
+            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            const pixels = await captureCase(String(sampleCase));
+            report.debugCases.push({ sampleCase, state, statistics, pixels });
+            assert(state.pipeline === 'DefaultRenderPipeline' && state.authoredShaderCount === 0 && state.gizmosVisible &&
+                state.debugInstanceRenderingAvailable && state.componentCallbacks > 0 &&
+                state.expectedPoints === counts[sampleCase] && state.expectedLines === counts[sampleCase] &&
+                state.expectedTriangles === counts[sampleCase] && state.componentShapes === counts[sampleCase] * 3,
+                `BrowserSmoke.EngineDebugProducer: case ${sampleCase} did not use the registered component and shared pipeline.`);
+            assert(statistics.packets === 0 && statistics.focusedPipeline === null && statistics.frameSubmitCalls > 0 &&
+                await page.evaluate(() => window.engineMeshDiagnostic.partialSubmissions) === 0,
+                `BrowserSmoke.EngineDebugPartialFrame: case ${sampleCase} used another renderer or submitted an unready frame.`);
+            const debugPipelines = state.pipelines.filter(item => item.label.startsWith('engine-debug-'));
+            const litPipelines = state.pipelines.filter(item => item.label === 'engine-standard-lit-color');
+            assert(litPipelines.length > 0 && litPipelines.every(item => !item.blended),
+                `BrowserSmoke.EngineDebugOpaqueBlendLeak: case ${sampleCase} enabled blending on the StandardLit background.`);
+            if (counts[sampleCase]) {
+                assert(debugPipelines.length === 3 && state.commands.length === 3 &&
+                    debugPipelines.filter(item => ['engine-debug-point', 'engine-debug-line'].includes(item.label))
+                        .every(item => item.blended) &&
+                    state.resolutionTraces.filter(item => [3, 4, 5].includes(item.SourceSemantic.Semantic) && item.Stage === 'Recorded').length === 3,
+                    `BrowserSmoke.EngineDebugCommands: case ${sampleCase} lacks point/line/triangle cooked GPU draws.`);
+                const identity = debugIdentity(state);
+                const pipelineIdentity = JSON.stringify(debugPipelines.map(({ slot, generation, label }) =>
+                    ({ slot, generation, label })).sort((a, b) => a.label.localeCompare(b.label)));
+                if (sampleCase === 1) {
+                    initialIdentity = identity;
+                    initialPipelineIdentity = pipelineIdentity;
+                    initialLive = statistics.resources.live;
+                }
+                assert(pipelineIdentity === initialPipelineIdentity,
+                    `BrowserSmoke.EngineDebugPipelineIdentity: case ${sampleCase} rebuilt cooked pipelines for a count/capacity change.`);
+                if ([9, 2].includes(sampleCase))
+                    assert(identity === initialIdentity, `BrowserSmoke.EngineDebugCountIdentity: case ${sampleCase} rebuilt warm debug commands.`);
+                if (sampleCase === 3) expandedIdentity = identity;
+                if ([4, 10, 11, 6].includes(sampleCase))
+                    assert(identity === expandedIdentity, `BrowserSmoke.EngineDebugShrinkIdentity: case ${sampleCase} rebuilt bindings within capacity.`);
+                if (sampleCase === 12) largeIdentity = identity;
+                if (sampleCase === 13)
+                    assert(identity === largeIdentity, 'BrowserSmoke.EngineDebugRepeatedShrinkIdentity: the 768-to-32 transition rebuilt bindings.');
+                assert(statistics.resources.live <= initialLive + 18,
+                    `BrowserSmoke.EngineDebugRetention: case ${sampleCase} grew live resources beyond the bounded debug cohort.`);
+            }
+            if (sampleCase === 0) blankPixels = pixels;
+            const alternate = [4, 9, 11].includes(sampleCase);
+            if (counts[sampleCase]) {
+                const point = pixel(pixels, alternate ? 'alternate-point' : 'point');
+                const line = pixel(pixels, alternate ? 'alternate-line' : 'line');
+                const triangle = pixel(pixels, alternate ? 'alternate-triangle' : 'triangle');
+                if (alternate) {
+                    assert(point[0] > 160 && point[1] > 160 && point[2] + 80 < Math.min(point[0], point[1]) &&
+                        triangle[1] > triangle[0] + 90 && triangle[2] > triangle[0] + 90,
+                        `BrowserSmoke.EngineDebugAlternatePixels: case ${sampleCase} did not update point/triangle color and position.`);
+                    const background = pixel(blankPixels, 'alternate-line');
+                    const expected = [background[0] * 0.4 + 153, background[1] * 0.4, background[2] * 0.4 + 153];
+                    assert(near(line.slice(0, 3), expected, 60),
+                        `BrowserSmoke.EngineDebugAlternateAlpha: case ${sampleCase} did not blend the magenta line.`);
+                } else {
+                    assert(point[0] > point[1] + 60 && point[0] > point[2] + 60 &&
+                        triangle[2] > triangle[0] + 90 && triangle[2] > triangle[1] + 90,
+                        `BrowserSmoke.EngineDebugPixels: case ${sampleCase} lacks the red point or blue triangle.`);
+                    const background = pixel(blankPixels, 'line');
+                    const expected = [background[0] * 0.4, background[1] * 0.4 + 153, background[2] * 0.4];
+                    assert(near(line.slice(0, 3), expected, 60),
+                        `BrowserSmoke.EngineDebugLineAlpha: case ${sampleCase} did not blend the green line.`);
+                }
+            } else for (const site of baselineSites)
+                assert(near(pixel(pixels, site.name), pixel(blankPixels, site.name), 8),
+                    `BrowserSmoke.EngineDebugZeroCount: case ${sampleCase} left stale pixels at ${site.name}.`);
+            if (sampleCase === 2) {
+                const warm = await page.evaluate(() => {
+                    const host = window.engineMeshDiagnostic;
+                    const before = host.statistics();
+                    const commands = host.debugState().commands;
+                    const ready = host.exports.Frame(host.session);
+                    return { ready, before, after: host.statistics(), commands, afterCommands: host.debugState().commands };
+                });
+                report.debugWarmFrame = warm;
+                assert(warm.ready && warm.after.frameSubmitCalls - warm.before.frameSubmitCalls === 1 &&
+                    warm.after.controlCalls - warm.before.controlCalls === 1 &&
+                    warm.after.uploadSubmitCalls === warm.before.uploadSubmitCalls &&
+                    warm.after.arenaGrowth === warm.before.arenaGrowth &&
+                    warm.after.resources.pipelineCacheEntries === warm.before.resources.pipelineCacheEntries &&
+                    JSON.stringify(warm.commands) === JSON.stringify(warm.afterCommands),
+                    'BrowserSmoke.EngineDebugWarmFrame: one warmed shared frame imported unexpected control/upload work or rebuilt commands.');
+            }
+        }
+        let previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+        await page.evaluate(() => { window.engineMeshDiagnostic.setDebugCase(1); window.engineMeshDiagnostic.resize(640, 320); });
+        await waitReady(1, previousReadyFrames, session);
+        const resized = await captureCase('resize-640x320', [
+            { name: 'point', x: 144, y: 99 }, { name: 'line', x: 320, y: 136 },
+            { name: 'triangle', x: 480, y: 229 },
+        ]);
+        assert(resized.width === 640 && resized.height === 320 && pixel(resized, 'point')[0] > pixel(resized, 'point')[1] + 60 &&
+            pixel(resized, 'triangle')[2] > pixel(resized, 'triangle')[0] + 90,
+            'BrowserSmoke.EngineDebugResizePixels: non-square output lost point/triangle overlay color.');
+        report.debugResize = { pixels: resized, state: await page.evaluate(() => window.engineMeshDiagnostic.debugState()) };
+        previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+        await page.evaluate(() => window.engineMeshDiagnostic.resize(512, 512));
+        await waitReady(1, previousReadyFrames, session);
+        await page.locator('#stop').click();
+        assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),
+            'BrowserSmoke.EngineDebugStop: the debug renderer survived stop.');
+        await page.locator('#start').click();
+        await page.waitForFunction(() => window.engineMeshDiagnostic.session > 0 || window.engineMeshDiagnostic.failure);
+        const restartedSession = await page.evaluate(() => window.engineMeshDiagnostic.session);
+        await waitReady(0, 0, restartedSession);
+        previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+        await page.evaluate(() => window.engineMeshDiagnostic.setDebugCase(1));
+        await waitReady(1, previousReadyFrames, restartedSession);
+        const restarted = await captureCase('restart');
+        assert(restartedSession !== session && pixel(restarted, 'point')[0] > pixel(restarted, 'point')[1] + 60 &&
+            pixel(restarted, 'triangle')[2] > pixel(restarted, 'triangle')[0] + 90,
+            'BrowserSmoke.EngineDebugRestart: fresh renderer did not restore the shared overlay.');
+        report.debugRestart = { session: restartedSession, pixels: restarted,
+            state: await page.evaluate(() => window.engineMeshDiagnostic.debugState()) };
+        const failure = await page.evaluate(() => window.engineMeshDiagnostic.renderer.getFailureDiagnostics());
+        assert(!failure.firstError && !failure.deviceLoss && !failure.failed,
+            `BrowserSmoke.EngineDebugGpuFailure: ${JSON.stringify(failure)}`);
+        await page.locator('#stop').click();
+        assertNoBrowserErrors(events);
+    } catch (error) {
+        report.debugFailure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
+        await page.screenshot({ path: path.join(config.output, 'engine-debug-failure.png'), fullPage: true }).catch(() => {});
+        throw error;
+    } finally { await context.close(); }
+}
+
 async function gpuCanaryCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'independent-gpu-canary', config);
     try {
@@ -775,9 +960,12 @@ async function main() {
         else report.checks.push({ name: 'engine-depth', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.engineManifest) await check('engine-texture-sampling-lifetime', () => textureCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-texture-sampling-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
-        if (config.engineManifest) await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
-        if (config.engineManifest) await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
-        else report.checks.push({ name: 'engine-lit-hdr-tonemap', status: 'skipped', reason: '--engine-manifest was not supplied' });
+        if (config.engineManifest) {
+            await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
+            await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
+            await check('engine-shared-debug-overlay', () => debugOverlayCheck(browser, hosted.origin, report, config));
+        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-directional-shadow', 'engine-shared-debug-overlay'])
+            report.checks.push({ name, status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {
             await captureGpuProcessState(browser, report, 'after-engine-depth');
             await check('independent-gpu-canary-diagnostic-only', () => gpuCanaryCheck(browser, hosted.origin, report, config));

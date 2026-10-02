@@ -62,7 +62,7 @@ export const depthSamples = Object.freeze([
 
 export const help = `Usage: node Tools/BrowserSmoke/run.mjs
   --browser-publish <published-wwwroot>
-  --shader-artifacts <schema3-depth-artifacts-directory>
+  --shader-artifacts <schema3-engine-shader-artifacts-directory>
   --output <evidence-directory>
   [--jolt-spike <published-spike-wwwroot>]
   [--engine-manifest /relative/engine-assets/manifest.json]

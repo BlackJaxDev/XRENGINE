@@ -64,6 +64,13 @@ the declaration emit no variant reference. Browser publishing carries these
 references only when the selected world includes the exact descriptor hash;
 unknown or custom materials remain unsupported without an explicit companion.
 
+A schema-three whole-program recipe can also declare
+`"pipelineArtifact": { "pass": "tonemap" }`. This explicitly binds the
+verified vertex/fragment program to the output pass in the manifest's
+`pipelineArtifacts` array using the descriptor's SHA-256 identity. The cooker
+does not infer pipeline ownership from a shader name or source path. Duplicate
+pass declarations and a mismatched recipe pass fail before manifest publication.
+
 ```sh
 dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj -- --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --source-root Build/CommonAssets/Shaders/WebGPU --output <artifact-output>
 ```

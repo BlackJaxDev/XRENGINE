@@ -31,6 +31,14 @@ internal sealed class WebGpuBindingSet : IDisposable
         return false;
     }
 
+    public bool UsesHandle(AbstractRenderAPIObject resource, int handle)
+    {
+        for (int index = 0; index < _resources.Length; index++)
+            if (ReferenceEquals(_owners[index], resource) && _resources[index] == handle)
+                return true;
+        return false;
+    }
+
     public void MarkRecorded()
     {
         foreach (AbstractRenderAPIObject? owner in _owners)

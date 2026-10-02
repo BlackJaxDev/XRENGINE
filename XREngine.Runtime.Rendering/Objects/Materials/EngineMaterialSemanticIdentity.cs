@@ -12,6 +12,12 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity OpaqueShadowDepthV1 => new(EngineMaterialSemantic.OpaqueShadowDepth, 1);
 
+    public static EngineMaterialSemanticIdentity DebugPointV1 => new(EngineMaterialSemantic.DebugPoint, 1);
+
+    public static EngineMaterialSemanticIdentity DebugLineV1 => new(EngineMaterialSemantic.DebugLine, 1);
+
+    public static EngineMaterialSemanticIdentity DebugTriangleV1 => new(EngineMaterialSemantic.DebugTriangle, 1);
+
     /// <summary>Rejects unknown semantics and revisions before they can select cooked code.</summary>
     public void Validate()
     {
@@ -20,6 +26,8 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
         if (Semantic == EngineMaterialSemantic.StandardLitColor && Version == 1)
             return;
         if (Semantic == EngineMaterialSemantic.OpaqueShadowDepth && Version == 1)
+            return;
+        if (Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle && Version == 1)
             return;
         throw new ArgumentException($"Unsupported engine material semantic '{Semantic}' version {Version}.");
     }

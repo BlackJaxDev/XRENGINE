@@ -1,4 +1,5 @@
 using RollingBall;
+using System.Text;
 using XREngine;
 using XREngine.Components.VR;
 using XREngine.Data.Components.Scene;
@@ -16,6 +17,19 @@ public sealed class RollingBallDesktopVrHost : IRollingBallPlatformHost
         => RollingBallHostRegistration.Register(new RollingBallDesktopVrHost());
 
     public RuntimeApplicationProfile ApplicationProfile => RuntimeApplicationProfile.VrClient;
+
+    public string OpenDiagnostics(string requestedPath, string initialLine)
+    {
+        string path = Path.GetFullPath(requestedPath);
+        string? directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+        File.WriteAllText(path, initialLine, Encoding.UTF8);
+        return path;
+    }
+
+    public void AppendDiagnostics(string path, string line)
+        => File.AppendAllText(path, line, Encoding.UTF8);
 
     public GameStartupSettings CreateStartupSettings(RollingBallWorldAsset world, bool runtimeSmoke)
     {

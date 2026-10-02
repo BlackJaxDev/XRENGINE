@@ -14,6 +14,7 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
     private long _loadedBytes;
 
     internal IReadOnlyList<EngineMaterialVariantEntry> MaterialVariants => _materialVariants.AsReadOnly();
+    internal string? TonemapDescriptorIdentity { get; private set; }
 
     internal BrowserShaderArtifactSource(string projectDirectory, string manifestPath)
     {
@@ -60,6 +61,24 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
                     || ShaderProgramArtifactReader.ReadMaterialVariantKey(declaration, artifact.Pass, artifact.Target) != key)
                     throw new InvalidDataException($"MaterialVariant.DescriptorMismatch: '{identity}'.");
                 _materialVariants.Add(new EngineMaterialVariantEntry(key, identity));
+            }
+        }
+        if (root.TryGetProperty("pipelineArtifacts", out JsonElement pipelines))
+        {
+            if (pipelines.ValueKind != JsonValueKind.Array || pipelines.GetArrayLength() > 16)
+                throw new InvalidDataException("Browser pipeline artifact catalog exceeds 16 entries.");
+            foreach (JsonElement pipeline in pipelines.EnumerateArray())
+            {
+                if (pipeline.ValueKind != JsonValueKind.Object || pipeline.EnumerateObject().Count() != 2 ||
+                    pipeline.GetProperty("pass").GetString() != "tonemap" || TonemapDescriptorIdentity is not null)
+                    throw new InvalidDataException("Browser pipeline artifact must uniquely declare the tonemap pass.");
+                string identity = ShaderProgramArtifactCatalog.ValidateIdentity(
+                    pipeline.GetProperty("descriptorIdentity").GetString())
+                    ?? throw new InvalidDataException("Browser tonemap artifact has no descriptor identity.");
+                if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) ||
+                    artifact.Pass != "tonemap" || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
+                    throw new InvalidDataException("Browser tonemap artifact is not a complete WebGPU tonemap program.");
+                TonemapDescriptorIdentity = identity;
             }
         }
     }
