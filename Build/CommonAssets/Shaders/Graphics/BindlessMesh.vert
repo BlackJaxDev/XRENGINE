@@ -7,25 +7,7 @@ layout(location=2) in vec2 inUV;
 
 layout(std140, binding=0) uniform CameraBlock { mat4 uViewProj; };
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 layout(std430, binding=9) readonly buffer TransformBuffer { float Transforms[]; };
 layout(std430, binding=10) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };

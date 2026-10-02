@@ -3,52 +3,6 @@
 
 #include "AdvancedDiagnostics.glslinc"
 
-struct XRAdvancedDrawRecord
-{
-    XRAdvancedGpuHandle instance;
-    XRAdvancedGpuHandle geometry;
-    XRAdvancedGpuHandle material;
-    XRAdvancedGpuHandle deformation;
-    XRAdvancedGpuHandle renderState;
-    XRAdvancedGpuHandle editorIdentity;
-    XRAdvancedGpuHandle currentTransform;
-    XRAdvancedGpuHandle previousTransform;
-    uint primitiveSection;
-    uint flags;
-    uint reserved0;
-    uint reserved1;
-};
-
-struct XRAdvancedTransformRecord
-{
-    mat4 world;
-    uint frameSlot;
-    uint flags;
-    uint reserved0;
-    uint reserved1;
-};
-
-struct XRAdvancedRenderStateRecord
-{
-    uint stateClass;
-    uint primitiveTopology;
-    uint coverageMode;
-    uint cullMode;
-    uint depthMode;
-    uint blendMode;
-    uint colorWriteMask;
-    uint flags;
-};
-
-struct XRAdvancedEditorIdentityRecord
-{
-    uvec2 stableInstanceId;
-    uvec2 identityLow;
-    uvec2 identityHigh;
-    uint selectionId;
-    uint flags;
-};
-
 XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_DRAWS) readonly buffer XRAdvancedDrawTable
 {
     XRAdvancedDrawRecord records[];

@@ -267,7 +267,7 @@ public sealed class PublishedCookedAssetTests
             CookedAssetFormat.RuntimeBinaryV1,
             payload);
 
-        return MemoryPackSerializer.Serialize(blob);
+        return CookedAssetEnvelope.Serialize(blob);
     }
 
     private static XRMesh CreateSampleMesh()

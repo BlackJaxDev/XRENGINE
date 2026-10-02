@@ -166,21 +166,60 @@ public sealed partial class XRRenderPipelineInstance
     /// the render thread runs collapse to the most recent asset and viewport.
     /// </summary>
     internal void RequestPipelineChange(RenderPipeline? pipeline, XRViewport? viewport)
+        => RequestPipelineChange(pipeline, viewport, onlyWhenUnassigned: false);
+
+    /// <summary>
+    /// Gets the newest requested pipeline: the pending request while one waits for the render
+    /// thread, otherwise the applied pipeline.
+    /// </summary>
+    private RenderPipeline? EffectiveRequestedPipeline
+    {
+        get
+        {
+            lock (_pipelineTransitionSync)
+                return EffectiveRequestedPipelineNoLock;
+        }
+    }
+
+    private RenderPipeline? EffectiveRequestedPipelineNoLock
+        => _pipelineRequestSerial == _appliedPipelineRequestSerial
+            ? _pipeline
+            : _requestedPipeline;
+
+    /// <summary>
+    /// Requests <paramref name="defaultPipeline"/> only when no pipeline is applied or pending
+    /// and returns the applied or pending pipeline afterwards. Checking and requesting under
+    /// one lock keeps a default from superseding an explicit request made on another thread.
+    /// </summary>
+    private RenderPipeline? RequestDefaultPipelineIfUnassigned(RenderPipeline defaultPipeline)
+    {
+        if (!RequestPipelineChange(defaultPipeline, LastWindowViewport, onlyWhenUnassigned: true))
+        {
+            // Construction subscribes the default asset to runtime settings. A candidate that
+            // lost to an explicit request must release those subscriptions, even though it
+            // never owned this instance. Keep construction and destruction outside the lock.
+            defaultPipeline.Destroy();
+        }
+        return _pipeline ?? EffectiveRequestedPipeline;
+    }
+
+    private bool RequestPipelineChange(RenderPipeline? pipeline, XRViewport? viewport, bool onlyWhenUnassigned)
     {
         if (System.Threading.Volatile.Read(ref _terminalTeardownRequested) != 0)
-            return;
+            return false;
 
         bool processInline;
         lock (_pipelineTransitionSync)
         {
-            RenderPipeline? effectiveRequest = _pipelineRequestSerial == _appliedPipelineRequestSerial
-                ? _pipeline
-                : _requestedPipeline;
+            RenderPipeline? effectiveRequest = EffectiveRequestedPipelineNoLock;
+            if (onlyWhenUnassigned && effectiveRequest is not null)
+                return false;
+
             if (ReferenceEquals(effectiveRequest, pipeline))
             {
                 if (_pipelineRequestSerial != _appliedPipelineRequestSerial && viewport is not null)
                     _requestedPipelineViewport = viewport;
-                return;
+                return true;
             }
 
             _requestedPipeline = pipeline;
@@ -188,7 +227,7 @@ public sealed partial class XRRenderPipelineInstance
             _pipelineRequestSerial++;
 
             if (_pipelineTransitionQueued != 0)
-                return;
+                return true;
 
             _pipelineTransitionQueued = 1;
             processInline = RuntimeEngine.IsRenderThread ||
@@ -198,13 +237,14 @@ public sealed partial class XRRenderPipelineInstance
         if (processInline)
         {
             ProcessRequestedPipelineTransitions();
-            return;
+            return true;
         }
 
         RuntimeEngine.EnqueueRenderThreadTask(
             () => ProcessRequestedPipelineTransitions(),
             $"XRRenderPipelineInstance.ApplyPipelineTransition[{InstanceId}]",
             RenderThreadJobKind.RenderPipelineResource);
+        return true;
     }
 
     /// <summary>

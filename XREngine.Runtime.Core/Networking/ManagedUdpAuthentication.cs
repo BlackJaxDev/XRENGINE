@@ -48,9 +48,14 @@ public static class ManagedUdpAuthentication
     {
         if (tag.Length != 32)
             return false;
-        using var hmac = new HMACSHA256(key.ToArray());
-        byte[] expected = hmac.ComputeHash(signedBytes.ToArray());
-        try { return CryptographicOperations.FixedTimeEquals(expected, tag); }
+        // One-shot span hashing keeps per-datagram verification free of heap allocations.
+        Span<byte> expected = stackalloc byte[32];
+        try
+        {
+            return HMACSHA256.TryHashData(key, signedBytes, expected, out int written)
+                && written == expected.Length
+                && CryptographicOperations.FixedTimeEquals(expected, tag);
+        }
         finally { CryptographicOperations.ZeroMemory(expected); }
     }
 

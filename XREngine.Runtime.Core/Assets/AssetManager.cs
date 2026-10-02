@@ -636,6 +636,22 @@ namespace XREngine
             // CacheAsset is called repeatedly for the same asset instance.
             asset.PropertyChanged -= AssetPropertyChanged;
             asset.PropertyChanged += AssetPropertyChanged;
+            asset.Destroyed -= AssetDestroyed;
+            asset.Destroyed += AssetDestroyed;
+        }
+
+        private void AssetDestroyed(XRObjectBase obj)
+        {
+            if (obj is not XRAsset asset)
+                return;
+            asset.PropertyChanged -= AssetPropertyChanged;
+            asset.Destroyed -= AssetDestroyed;
+            // Compare both key and value so destruction of an old instance cannot evict its replacement.
+            LoadedAssetsByPathInternal.TryRemove(new KeyValuePair<string, XRAsset>(asset.FilePath ?? string.Empty, asset));
+            if (!string.IsNullOrWhiteSpace(asset.OriginalPath))
+                LoadedAssetsByOriginalPathInternal.TryRemove(new KeyValuePair<string, XRAsset>(asset.OriginalPath, asset));
+            LoadedAssetsByIDInternal.TryRemove(new KeyValuePair<Guid, XRAsset>(asset.ID, asset));
+            DirtyAssets.TryRemove(new KeyValuePair<Guid, XRAsset>(asset.ID, asset));
         }
 
         /// <summary>
@@ -813,6 +829,7 @@ namespace XREngine
             LoadedAssetsByIDInternal.Clear();
             LoadedAssetsByPathInternal.Clear();
             LoadedAssetsByOriginalPathInternal.Clear();
+            PublishedArchiveRegistry.CloseAll();
         }
 
         public static string VerifyAssetPath(XRAsset asset, string directory)

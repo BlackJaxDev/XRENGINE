@@ -17,17 +17,17 @@ internal sealed class EngineRuntimeAnimationHostServices : IRuntimeAnimationHost
     public ELoopType ChildRecalculationLoopType => Engine.EffectiveSettings.RecalcChildMatricesLoopType;
     public bool HumanoidPoseTransportAvailable => Engine.Networking is BaseNetworkingManager;
 
-    public event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived
+    public event HumanoidPosePacketHandler? HumanoidPosePacketReceived
     {
         add
         {
             if (Engine.Networking is BaseNetworkingManager networking)
-                networking.HumanoidPoseFrameReceived += value;
+                networking.HumanoidPosePacketReceived += value;
         }
         remove
         {
             if (Engine.Networking is BaseNetworkingManager networking)
-                networking.HumanoidPoseFrameReceived -= value;
+                networking.HumanoidPosePacketReceived -= value;
         }
     }
 
@@ -49,12 +49,7 @@ internal sealed class EngineRuntimeAnimationHostServices : IRuntimeAnimationHost
     public void RenderText(Vector3 position, string text, ColorF4 color, float scale = 0.0012f)
         => RuntimeEngine.Rendering.Debug.RenderText(position, text, color, scale);
 
-    public bool BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false)
-    {
-        if (Engine.Networking is not BaseNetworkingManager networking)
-            return false;
-
-        networking.BroadcastHumanoidPoseFrame(frame, compress);
-        return true;
-    }
+    public bool BroadcastHumanoidPose(HumanoidPosePacketKind kind, ushort baselineSequence, int avatarCount, Span<byte> avatarPayload)
+        => Engine.Networking is BaseNetworkingManager networking
+            && networking.BroadcastHumanoidPose(kind, baselineSequence, avatarCount, avatarPayload);
 }

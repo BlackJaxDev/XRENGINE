@@ -619,6 +619,7 @@ public sealed partial class InMemoryControlPlane
             && current.BindPort == replacement.BindPort
             && string.Equals(current.AdvertisedEndpoint.Host, replacement.AdvertisedEndpoint.Host, StringComparison.Ordinal)
             && current.AdvertisedEndpoint.Port == replacement.AdvertisedEndpoint.Port
+            && current.AdvertisedEndpoint.WireProtocolVersion == replacement.AdvertisedEndpoint.WireProtocolVersion
             && string.Equals(current.AdvertisedEndpoint.ProtocolVersion, replacement.AdvertisedEndpoint.ProtocolVersion, StringComparison.Ordinal)
             && current.MaxPlayers == replacement.MaxPlayers
             && string.Equals(current.WorldPackage.ManifestHash, replacement.WorldPackage.ManifestHash, StringComparison.OrdinalIgnoreCase)

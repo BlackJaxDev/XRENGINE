@@ -170,6 +170,10 @@ public sealed class RenderBenchProductionScene : IDisposable
     public VulkanExplicitTargetRendererHost Host => _host ?? throw new InvalidOperationException("The production scene has no explicit Vulkan target.");
     public IReadOnlyDictionary<int, SceneNode> CandidateRenderIdentity => _candidateNodes;
     public long SubmittedStepCount { get; private set; }
+    /// <summary>Enables synchronous timing of the world swap and canonical-package finalization boundary.</summary>
+    public bool MeasurePublication { get; set; }
+    public double LastPublicationMilliseconds { get; private set; }
+    public long LastPublicationAllocatedBytes { get; private set; }
     public long LastCollectGeneration { get; private set; }
     /// <summary>Creates a real sampled deferred fixture draw before first collection.</summary>
     public XRMaterial AddMaterialScenarioFixture(XRTexture2D albedo)
@@ -469,6 +473,8 @@ public sealed class RenderBenchProductionScene : IDisposable
             with { Request = outputRequest };
         viewport.CollectVisible(frameOutputPacing: pacing);
         frame.CompleteCollect();
+        long publicationBytes = MeasurePublication ? GC.GetAllocatedBytesForCurrentThread() : 0;
+        long publicationStarted = MeasurePublication ? Stopwatch.GetTimestamp() : 0;
         if (_useAdvancedPipeline)
             WorldHost.RenderWorld.GlobalSwapBuffers(output.SchedulingRequest.FrameId);
         else
@@ -481,6 +487,11 @@ public sealed class RenderBenchProductionScene : IDisposable
                 CreateRenderDeclinedDiagnostic(viewport));
         }
         viewport.SwapBuffers();
+        if (MeasurePublication)
+        {
+            LastPublicationMilliseconds = Stopwatch.GetElapsedTime(publicationStarted).TotalMilliseconds;
+            LastPublicationAllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - publicationBytes;
+        }
         frame.PublishCollect();
         frame.ConsumePublishedCollect();
         if (!_useAdvancedPipeline)

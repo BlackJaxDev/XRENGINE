@@ -4,6 +4,10 @@
 
 This is the local orchestration milestone. Full replicated world bootstrap, authoritative input simulation, public-network packet authorization, durable recovery, remote content delivery and the sample website remain separate phases in the [managed instances tracker](../../work/todo/networking/control-plane-managed-server-instances-todo.md). Connected does not mean synchronized or playable.
 
+Packages are data only. Creation, verification, staging, catalog loading, and
+content endpoints reject executable payloads per the
+[downloadable content execution policy](downloadable-content-execution-policy.md).
+
 ## Boundaries
 
 | Component | Owns |

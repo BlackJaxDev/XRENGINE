@@ -1,12 +1,11 @@
 # Dependency Inventory
 
-Generated: 2026-09-30T14:44:02-07:00
-Commit: 00233106ac1abcae4eca70357051182da04ae47b
+Generated: 2026-10-02T15:19:25-07:00
+Commit: 5f92754694473983f97b2c0eabe8fbecb2212411
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
 Notes:
-- The headless-test NUnitLite and Shouldly entries were reconciled against locally restored package metadata on 2026-09-30; the complete inventory was not regenerated for that addition.
 - `Owner` is derived from a GitHub repository URL when available, otherwise from the NuGet nuspec `authors` field (best-effort).
 - This lists direct `PackageReference`s from solution projects, not all transitive dependencies.
 - NVIDIA proprietary SDK binaries (DLSS/NGX, Reflex, Streamline) are **not redistributed** and are expected to be provided by end users via `ThirdParty/NVIDIA/SDK/win-x64/`.
@@ -55,6 +54,8 @@ Notes:
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Microsoft.Build | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |
+| Microsoft.CodeAnalysis.Analyzers | 3.11.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.Analyzers-3.11.0-MIT.txt) | XREngine.SourceGenerators.csproj |
+| Microsoft.CodeAnalysis.CSharp | 4.14.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.CSharp-4.14.0-MIT.txt) | XREngine.SourceGenerators.csproj |
 | Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.UnitTests.csproj |
 | Microsoft.Web.WebView2 | 1.0.4129.50 | Microsoft | [LICENSE.txt](licenses/nuget/Microsoft.Web.WebView2-1.0.4129.50-LICENSE.txt.txt) | LocalAgentBroker.Tray.csproj |
 | NAudio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |

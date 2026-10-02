@@ -37,6 +37,12 @@ public static class RealtimeAdmissionValidator
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!RealtimeProtocol.IsCompatible(request.WireProtocolVersion))
+        {
+            message = RealtimeProtocol.DescribeMismatch(request.WireProtocolVersion);
+            return AdmissionFailureReason.BuildVersionMismatch;
+        }
+
         if (!string.Equals(request.BuildVersion, serverProtocolVersion, StringComparison.OrdinalIgnoreCase))
         {
             message = $"Server version {serverProtocolVersion}, client version {request.BuildVersion}.";

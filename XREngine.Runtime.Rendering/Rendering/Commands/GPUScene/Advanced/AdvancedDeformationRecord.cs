@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// Stable references to immutable source geometry and frame-slot deformation outputs.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedDeformationRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedDeformationRecord
 {

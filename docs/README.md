@@ -59,6 +59,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Job System](developer-guides/runtime/job-system.md)
 - [Profiler](developer-guides/diagnostics/profiler.md)
 - [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
+- [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)
 - [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
@@ -93,6 +94,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
+- [Shadow and Pipeline Validation Failures TODO](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
 - [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)

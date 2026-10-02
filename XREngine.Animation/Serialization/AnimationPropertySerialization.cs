@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -107,6 +108,8 @@ internal static class AnimationPropertySerialization
 
     private static bool TryGetKeyframesProperty(Type animationType, [NotNullWhen(true)] out PropertyInfo? keyframesProperty)
     {
+        AotParityDiagnostics.Report(animationType, EAotParityCategory.ReflectiveMemberBinding,
+            nameof(AnimationPropertySerialization), "Register a typed animation codec and keyframe accessors for this animation type.");
         keyframesProperty = animationType.GetProperty("Keyframes", BindingFlags.Instance | BindingFlags.Public);
         return keyframesProperty is not null && typeof(IList).IsAssignableFrom(keyframesProperty.PropertyType);
     }
@@ -116,7 +119,7 @@ internal static class AnimationPropertySerialization
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        return Type.GetType(typeName, throwOnError: false);
+        return AotRuntimeMetadataStore.ResolveType(typeName);
     }
 }
 

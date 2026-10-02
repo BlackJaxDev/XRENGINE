@@ -783,9 +783,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
 
         string? encoded = RuntimeEngine.EncodeWindowTargetWorldHierarchyJson(xrWindow);
         Engine.Networking?.ReplicateStateChange(
-            new StateChangeInfo(
-                EStateChangeType.WorldChange,
-                encoded is null ? "null" : encoded),
+            EStateChangeType.WorldChange,
+            System.Text.Encoding.UTF8.GetBytes(encoded ?? "null"),
             true,
             true);
     }

@@ -108,41 +108,29 @@ public partial class ServerNetworkingManager
         }
     }
 
-    /// <summary>Routes Phase 6 state messages without requiring a second <c>HandleStateChange</c> override.</summary>
-    public bool TryHandleReplicationStateChange(StateChangeInfo change, IPEndPoint? sender)
+    /// <summary>Routes replication control messages without requiring a second <c>HandleStateChange</c> override.</summary>
+    public bool TryHandleReplicationStateChange(EStateChangeType type, ReadOnlySpan<byte> payload, IPEndPoint? sender)
     {
         if (sender is null)
             return false;
 
-        switch (change.Type)
+        switch (type)
         {
             case EStateChangeType.ReplicationTransferAck:
-                if (StateChangePayloadSerializer.TryDeserialize<ReplicationTransferAck>(change.Data, out ReplicationTransferAck? ack) && ack is not null)
+                if (TryReadStateChangePayload<ReplicationTransferAck>(payload, out ReplicationTransferAck? ack) && ack is not null)
                     HandleReplicationAck(ack, sender);
                 return true;
             case EStateChangeType.ReplicationResyncRequest:
-                if (StateChangePayloadSerializer.TryDeserialize<ReplicationResyncRequest>(change.Data, out ReplicationResyncRequest? request) && request is not null)
+                if (TryReadStateChangePayload<ReplicationResyncRequest>(payload, out ReplicationResyncRequest? request) && request is not null)
                     HandleReplicationResyncRequest(request, sender);
                 return true;
             case EStateChangeType.ReplicationSyncComplete:
-                if (StateChangePayloadSerializer.TryDeserialize<ReplicationSyncComplete>(change.Data, out ReplicationSyncComplete? complete) && complete is not null)
+                if (TryReadStateChangePayload<ReplicationSyncComplete>(payload, out ReplicationSyncComplete? complete) && complete is not null)
                     HandleReplicationSyncComplete(complete, sender);
                 return true;
             default:
                 return false;
         }
-    }
-
-    /// <summary>Caches an authoritative pose so late join baselines include the latest pose frame.</summary>
-    public void RecordReplicationPose(HumanoidPoseFrame frame)
-    {
-        if (string.IsNullOrWhiteSpace(frame.SourceClientId))
-            return;
-
-        lock (_replicationTransferLock)
-            foreach (PeerReplicationTransfer transfer in _replicationTransfers.Values)
-                if (transfer.SessionId == frame.SessionId)
-                    transfer.ForceSideChannelUpdate = true;
     }
 
     private void QueueReplicationCapture_NoLock()
@@ -271,7 +259,7 @@ public partial class ServerNetworkingManager
         };
         // UDP has no fragmentation guarantee. A large change recovers through the already
         // byte-chunked baseline path instead of silently dropping an oversized delta.
-        if (StateChangePayloadSerializer.Serialize(pendingDelta).Length > ReplicationChunkPayloadBytes)
+        if (StateChangeCodec.GetEncodedLength(pendingDelta) > ReplicationChunkPayloadBytes)
         {
             transfer.ResetForBaseline();
             _lastReplicationCaptureTick = -1;
@@ -422,7 +410,7 @@ public partial class ServerNetworkingManager
 
         if (transfer.PendingDelta is { } delta)
         {
-            int deltaByteCost = StateChangePayloadSerializer.Serialize(delta).Length;
+            int deltaByteCost = StateChangeCodec.GetEncodedLength(delta);
             connection.Budget ??= new NetworkBandwidthBudget(MultiplayerRuntimePolicy.DefaultReplicationBytesPerSecond, GetUtcSeconds());
             if (!connection.Budget.TryConsume(deltaByteCost, GetUtcSeconds()))
                 return;
@@ -435,7 +423,7 @@ public partial class ServerNetworkingManager
         if (transfer.Chunks is null || transfer.NextChunkIndex >= transfer.Chunks.Length)
             return;
         ReplicationBaselineChunk chunk = transfer.Chunks[transfer.NextChunkIndex];
-        int byteCost = StateChangePayloadSerializer.Serialize(chunk).Length;
+        int byteCost = StateChangeCodec.GetEncodedLength(chunk);
         connection.Budget ??= new NetworkBandwidthBudget(MultiplayerRuntimePolicy.DefaultReplicationBytesPerSecond, GetUtcSeconds());
         if (!connection.Budget.TryConsume(byteCost, GetUtcSeconds()))
             return;

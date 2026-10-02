@@ -128,9 +128,15 @@ namespace XREngine.Input
         private static Type? ResolveControllerType(string assemblyQualifiedTypeName)
         {
             Type? type = Type.GetType(assemblyQualifiedTypeName, throwOnError: false);
-            return type is not null && typeof(IPawnController).IsAssignableFrom(type)
-                ? type
-                : null;
+            if (type is null || !typeof(IPawnController).IsAssignableFrom(type))
+                return null;
+
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                type,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.TypeResolutionScan,
+                $"{nameof(RuntimePlayerControllerServices)}.{nameof(ResolveControllerType)}",
+                $"Register the controller with {nameof(RegisterLocalControllerFactory)} or {nameof(RegisterRemoteControllerFactory)} so the default controller type is a registered factory, not a name lookup.");
+            return type;
         }
 
         public static void RegisterLocalControllerFactory<TController>(Func<ELocalPlayerIndex, TController> factory, bool makeDefault = false)

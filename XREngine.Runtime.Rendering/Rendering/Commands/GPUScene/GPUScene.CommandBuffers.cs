@@ -599,6 +599,7 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Number of uint components per transparency metadata entry.</summary>
         public const uint TransparencyMetadataUIntCount = 4;
+        [XREngine.Rendering.Shaders.GpuRecord("GPULodTransitionState", "GPUScene")]
         [StructLayout(LayoutKind.Sequential)]
         public struct GPULodTransitionState
         {
@@ -694,6 +695,8 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// Per-mesh metadata entry stored in MeshDataBuffer.
         /// </summary>
+        [XREngine.Rendering.Shaders.GpuRecord("MeshDataEntry", "GPUScene")]
+        [StructLayout(LayoutKind.Sequential)]
         public struct MeshDataEntry
         {
             /// <summary>Number of indices in this submesh.</summary>

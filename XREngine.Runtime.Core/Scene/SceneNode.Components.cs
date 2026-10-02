@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
@@ -13,6 +14,8 @@ namespace XREngine.Scene
         /// </summary>
         public T? AddComponent<T>(string? name = null) where T : XRComponent
         {
+            using var parityScope = World?.IsPlaySessionActive == true
+                ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponent");
 
             var comp = XRComponent.New<T>(this);
@@ -36,6 +39,8 @@ namespace XREngine.Scene
         /// </summary>
         public T? AddComponent<T>(Func<T> factory, string? name = null) where T : XRComponent
         {
+            using var parityScope = World?.IsPlaySessionActive == true
+                ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentFactory");
 
             T comp = XRComponent.New(this, factory);
@@ -57,6 +62,8 @@ namespace XREngine.Scene
         /// </summary>
         public XRComponent? AddComponent(Type type, string? name = null)
         {
+            using var parityScope = World?.IsPlaySessionActive == true
+                ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
             XRComponent? existingComponent = null;
 
             if (XRComponent.New(this, type) is not XRComponent comp || !VerifyComponentAttributesOnAdd(comp, out existingComponent))

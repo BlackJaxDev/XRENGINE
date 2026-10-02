@@ -1,6 +1,6 @@
 # Continuous-camera CPU stall attribution
 
-Status: subscription-refresh, program-invalidation and compact-uniform allocation corrections validated; broader stall attribution remains open, October 1, 2026.
+Status: subscription-refresh, program-invalidation, compact-uniform, prepared-cohort comparison and desktop mesh-operation pooling corrections validated for their measured allocation scope; broader stall attribution remains open, October 2, 2026.
 
 The [cumulative validation](2026-10-01-cumulative-publication-validation.md)
 found long render-dispatch intervals with Vulkan validation disabled. Repeated
@@ -347,3 +347,191 @@ prepared-operation cohort comparison (~71 KB) and submission-contract sealing
 paths and design explicit program-borrow retirement before considering sealed
 snapshot storage reuse. The unaligned outer-dispatch gap and displayed-motion
 acceptance remain open.
+
+
+## October 2: Prepared-Cohort Comparison And Pool Fallback
+
+The resumed checkout is `5f9275469`. The retained October 1 compact-uniform
+editor binaries are unchanged; source comparison against the previous control
+shows only the already recorded compact-uniform and program-invalidation changes.
+The new correction changes only `VulkanFrameLoop.PrimaryRecordingPreparation.cs`.
+
+The previous trace separates two owners. `MaterializeQueuedMeshRenderRequestsCore`
+attributes about 101 KB per present to `MeshDrawOp` creation through its pool
+fallback. Its inclusive stack also contains resource-use array growth, which is
+a different first-engine owner and must not be double-counted. Cohort matching
+attributes about 71 KB per present to value equality: boxed `StencilOpState` and
+`Single` values, including reflection through `FieldAccessor.GetValue`.
+
+The retained comparison correction replaces the three Silk extent/viewport/
+scissor comparisons and generated fixed-function equality with scalar checks.
+It retains all 18 fixed-function fields and all seven fields in each stencil
+state. Float comparisons use `float.Equals`, preserving NaN/signed-zero semantics.
+Indexed viewport/scissor arrays still compare by reference; material revisions,
+context generations, program identity and all other cache gates remain unchanged.
+There is no pool, ownership, cache-admission or retirement change.
+
+The first control (`mesh-compare-control-alloc`) failed premeasurement admission:
+resource preparation was still blocked at the original 45-second cutoff. No
+performance window was accepted. The scratch driver now permits up to twelve
+additional 15-second warmup waits while retaining Completed and at least 100
+completed presents as admission requirements. The replacement control was
+admitted. This does not weaken the timed-window gate.
+
+The targeted Release build passes with zero warnings/errors. Candidate Vulkan
+SHA-256 is `67188FF34A5D3BA95FDC7087E956FE14FF6CA5E98B0F5903F65E8AC07E07FEFE`;
+only Vulkan differs from the control binary manifest. Evidence labels are
+`mesh-compare-control-retry-alloc`, `mesh-compare-candidate-alloc`,
+`mesh-compare-candidate-light`, and the candidate mutation directory.
+
+| Admitted window | Completed presents | Sampled bytes / present | Sealed-copy bytes / present |
+|---|---:|---:|---:|
+| Unchanged compact-uniform control | 1,750 | 2.098 MB | 1.261 MB |
+| Scalar cohort comparison | 1,650 | 2.019 MB | 1.268 MB |
+
+The uncapped targeted report records **1,178 cohort-match allocation samples /
+125,546,840 sampled bytes (71.7 KB per present) in control and zero observed samples
+in the candidate**. Both new comparison helpers also have zero samples. The
+refresh, layout-signature and vertex-input targets remain at zero in both runs.
+This is not merely absence from the original top-15 owner list: the scratch
+analyzer now emits the full owner list and explicit target counters. Offset
+window timestamps were normalized to UTC before parsing, and trace/window overlap
+was checked; the preliminary timezone-misparsed empty output was discarded.
+
+Total sampled allocation falls 3.79%; sealed-copy allocation is effectively flat.
+`MeshDrawOp` allocation persists at about 100 versus 102 KB per present, with
+changed JIT inlining shifting the candidate's first-engine label to `MeshDrawOp.Rent`.
+The original three refresh tracked sites remain at zero samples. These are
+sampled allocation estimates from single motion windows, not exact totals or a
+repeated throughput/frame-tail acceptance benchmark. Control screenshots include
+incidental hover highlighting absent in the candidate; no pixel-equivalence or
+small whole-frame throughput claim is made.
+
+| GC observation | Count | Total suspension | Maximum suspension | Lost events |
+|---|---:|---:|---:|---:|
+| Control, allocation stacks | 270 | 2,433.30 ms | 12.71 ms | 0 |
+| Candidate, allocation stacks | 246 | 2,934.97 ms | 429.86 ms | 0 |
+| Candidate, GC-only | 254 | 2,351.75 ms | 12.82 ms | 0 |
+
+The candidate's large suspension remains recorded; it was not reproduced in the
+lighter observer window. GC suspension includes rendezvous/preparation, and the
+GC-only run intentionally contains no allocation samples. No stall or displayed
+smoothness pass follows from the allocation correction.
+
+Both allocation endpoints are Completed with 393 resident draws and zero pending
+retirements. Candidate mutation checks keep 393 draws through 20 root moves,
+then 0 while inactive and 393 after restoration. Transform writes advance
+0 to 7,467 to 7,860. All mutation endpoints and shader reload complete. Start/end,
+moved/inactive/restored and reload images were viewed; the scene returns after
+reactivation and the existing black regions remain. Inspected session logs have
+no exception/fatal/error matches. The named isolated editor is stopped. No tests
+were added or modified; per-field comparison edge cases have source review but
+were not individually driven through the editor.
+
+### Pool Fallback Hypothesis Before The Runtime Probe
+
+Source review identifies null `OperationWorkspace` as the strongest hypothesis,
+not yet runtime-confirmed. `EnterRenderPipelineFrameResourceScope` calls
+`CreateFrameOpContext`, which leaves that property null; `CaptureFrameOpContext`
+instead attaches `_commandRuntime.GetFrameOpWorkspace()`. Mesh enqueue consumes
+the active planner context, normalization preserves existing pipeline contexts,
+and `EnqueueQueuedMeshDraw` passes the result unchanged to `MeshDrawOp.Rent`.
+
+`FrameOp.TryRentForCurrentFrame` rejects null workspace or zero render-frame ID.
+A valid workspace with insufficient retained entries allocates and retains the
+new operation, so ordinary capacity misses should warm up unless workspaces are
+reset/replaced or demand keeps growing. There is no active-frame mismatch
+rejection: a changed frame ID resets the workspace cursor.
+
+The next bounded diagnostic should count allocation reasons (null workspace,
+zero frame ID, exhausted valid workspace), with workspace identity/cursor/retained
+count and reset/replacement counts for the last case. Before correcting context
+provenance, prove which thread owns materialization and when all deferred and
+retained consumers stop borrowing operations. Do not blindly attach the producer
+thread's workspace or reuse an operation within the same frame. Sealed binding
+snapshots and submission-contract sealing remain separate owners.
+
+## October 2: Desktop Mesh-Operation Pooling
+
+A temporary bounded probe confirmed the context-provenance hypothesis: all
+16,384 observed rentals had a null workspace, with no zero-frame, valid-pool
+exhaustion or hit cases. Four checkpoints span render frames 359 through 480 on
+thread 2. The first probe launch failed before measurement because the world was
+not available; a bounded camera-readiness retry admitted the subsequent run.
+The probe is diagnostic evidence only, not a performance baseline. Its source
+was restored byte-for-byte before building the retained candidate.
+
+The correction explicitly opts desktop primary drain and PresentNow
+materialization into frame-owned authoring operations. At enqueue, a local copy
+of the request context receives the materializing worker's operation workspace
+only when there is no output-completion receipt, capture, ordered-compute capture
+or OpenXR eye/mirror context. Other callers default to disabled. Producer requests
+and cached cohort values retain their original contexts.
+
+The lifetime review supports this restricted boundary: desktop operations drain
+and lower before the render frame advances, numeric plan payloads copy mesh
+data, and cached cohorts retain request values rather than operation references.
+Cold retries capture/reset their authoring operations; terminal failures discard
+pending scene operations. Receipt-owned work can remain queued across frames,
+and captured/explicit producer batches have separate lifetimes, so those paths
+remain excluded. Accepted plans can retain authoring references, but their late
+cleanup does not consume ordinary mesh-operation payloads. No global context,
+pool algorithm, sealed-snapshot lifetime or OpenXR ownership change is made.
+
+The targeted Release build passes with zero warnings/errors. Candidate Vulkan
+SHA-256 is `9258A6A86B7D32D2F5579A6360BA2C85ED87F06013CD95FFE00DDCEEC5AD0B7C`.
+Only Vulkan differs from the clean scalar-comparison candidate manifest. That
+previous `mesh-compare-candidate-alloc` run is the comparator, not the probe.
+New evidence labels are `mesh-pool-candidate-alloc`, `mesh-pool-candidate-light`
+and the candidate mutation directory. Exact windows were parsed in UTC with
+uncapped owner counters and all-stack counters for the two operation types.
+
+| Admitted allocation window | Completed presents | Sampled bytes / present | Sealed-copy bytes / present |
+|---|---:|---:|---:|
+| Clean scalar-comparison candidate | 1,650 | 2.019 MB | 1.268 MB |
+| Desktop operation pooling | 1,902 | 1.646 MB | 1.077 MB |
+
+Total sampled allocation falls 18.49%. Exact `MeshDrawOp` type samples fall from
+1,583 / 168,710,008 sampled bytes to zero across all stacks. `FrameOpResourceUse[]`
+falls from 460 / 48,982,896 sampled bytes to 9 / 955,936 bytes; the array-resize
+subset falls from 405 / 43,131,968 bytes to the same 9 / 955,936 bytes. Reusing
+operations also preserves their grown resource-use arrays. The three refresh
+sites, cohort matcher and scalar helpers, layout-signature builder and
+vertex-input builder remain at zero observed allocation samples.
+
+Sealed-copy bytes per present also fall 15.06%, although this fix does not change
+their storage or ownership. Do not attribute that entire whole-window change to
+operation reuse: these are single sampled windows with different completed
+present counts, not exact allocation totals or repeated throughput acceptance.
+Other sampled owners together fall from 0.751 to 0.568 MB per present.
+
+| GC observation | Count | Total suspension | Maximum suspension | Lost events |
+|---|---:|---:|---:|---:|
+| Clean scalar-comparison candidate, allocation stacks | 246 | 2,934.97 ms | 429.86 ms | 0 |
+| Desktop pooling, allocation stacks | 226 | 2,241.85 ms | 60.50 ms | 0 |
+| Desktop pooling, GC-only | 226 | 2,839.02 ms | 567.52 ms | 0 |
+
+The lighter window intentionally has no allocation ticks. Its long suspension
+remains unresolved; suspension includes rendezvous/preparation. Validation and
+engine CPU observers were disabled. Neither this reduction nor the lower maximum
+in the allocation trace establishes smooth displayed motion or cumulative
+acceptance.
+
+Both candidate endpoint outcomes are Completed with 393 resident draws and zero
+pending retirements. Twenty root moves preserve 393 draws, deactivation produces
+zero, and restoration recovers 393; transform writes advance 0 to 7,467 to 7,860.
+All mutation endpoints and shader reload complete. Start/end, moved, inactive,
+restored and reload images were captured and viewed. Existing black regions and
+incidental hover outlines remain; this is not pixel-equivalence or visual-quality
+acceptance. Inspected session logs have no exception/fatal/error matches. The
+named isolated editor is stopped. No tests were added or modified.
+
+The existing pool retains objects and their last resource/context references up
+to historical per-frame high-water demand. Stable demand does not imply growing
+storage every frame, but scene-unload retention has not been validated. Check
+that boundary before broadening reuse; excluded receipt/capture/OpenXR paths
+have no new runtime coverage. Next allocation work should inspect submission-
+contract sealing and the remaining sealed binding snapshots (about 1.077 MB per
+present here), preserving explicit program-borrow retirement and content
+identity. GC tails, the outer-dispatch gap and displayed-motion acceptance remain
+open.

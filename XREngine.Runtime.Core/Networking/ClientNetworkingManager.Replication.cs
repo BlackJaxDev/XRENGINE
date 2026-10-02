@@ -60,21 +60,21 @@ public partial class ClientNetworkingManager
 
     public event Action<ClientReplicationSynchronizationState>? ReplicationSynchronizationStateChanged;
 
-    /// <summary>Routes Phase 6 messages without requiring a second state-change override.</summary>
-    public bool TryHandleReplicationStateChange(StateChangeInfo change, IPEndPoint? sender)
+    /// <summary>Routes session synchronization messages through their binary contracts.</summary>
+    public bool TryHandleReplicationStateChange(EStateChangeType type, ReadOnlySpan<byte> payload, IPEndPoint? sender)
     {
-        switch (change.Type)
+        switch (type)
         {
             case EStateChangeType.ReplicationBaselineChunk:
-                if (StateChangePayloadSerializer.TryDeserialize<ReplicationBaselineChunk>(change.Data, out ReplicationBaselineChunk? chunk) && chunk is not null)
+                if (TryReadStateChangePayload(payload, out ReplicationBaselineChunk chunk) && chunk is not null)
                     HandleReplicationBaselineChunk(chunk);
                 return true;
             case EStateChangeType.ReplicationDeltaBatch:
-                if (StateChangePayloadSerializer.TryDeserialize<ReplicationDeltaBatch>(change.Data, out ReplicationDeltaBatch? delta) && delta is not null)
+                if (TryReadStateChangePayload(payload, out ReplicationDeltaBatch delta) && delta is not null)
                     HandleReplicationDeltaBatch(delta);
                 return true;
             case EStateChangeType.ReplicationSyncComplete:
-                if (StateChangePayloadSerializer.TryDeserialize<ReplicationSyncComplete>(change.Data, out ReplicationSyncComplete? confirmation) && confirmation is not null)
+                if (TryReadStateChangePayload(payload, out ReplicationSyncComplete confirmation) && confirmation is not null)
                     HandleReplicationSyncConfirmation(confirmation);
                 return true;
             default:
@@ -96,6 +96,7 @@ public partial class ClientNetworkingManager
             _replicationWorldContext = next;
             _replicationWorldLease = next is null ? default : ReplicationWorldOwnershipLeases.Acquire(next.WorldInstance, this);
             ++_replicationAttemptGeneration;
+            _receivedPosePackets.Clear();
             _replicationFailure = null;
             _replicationConnectionGeneration = assignment.ReplicationConnectionGeneration;
             _replicationTransferId = Guid.Empty;
@@ -125,6 +126,7 @@ public partial class ClientNetworkingManager
         lock (_replicationSyncLock)
         {
             ++_replicationAttemptGeneration;
+            _receivedPosePackets.Clear();
             SetReplicationState_NoLock(ClientReplicationSynchronizationState.NotAssigned);
             QueueReplicationWorldPause_NoLock(_replicationAttemptGeneration, ResolvePrimaryWorldInstance());
         }
@@ -137,6 +139,7 @@ public partial class ClientNetworkingManager
         lock (_replicationSyncLock)
         {
             ++_replicationAttemptGeneration;
+            _receivedPosePackets.Clear();
             cleanup = _replicationWorldContext;
             cleanupLease = _replicationWorldLease;
             _replicationWorldContext = null;
@@ -183,6 +186,7 @@ public partial class ClientNetworkingManager
                     return;
                 }
                 ++_replicationAttemptGeneration;
+            _receivedPosePackets.Clear();
                 _replicationTransferId = Guid.Empty;
                 _baselineChunks.Clear();
                 _baselineBufferedBytes = 0;
@@ -369,7 +373,7 @@ public partial class ClientNetworkingManager
                 return;
             }
 
-            int byteCount = StateChangePayloadSerializer.Serialize(delta).Length;
+            int byteCount = StateChangeCodec.GetEncodedLength(delta);
             if (_bufferedReplicationDeltas.Count >= MaximumBufferedReplicationDeltas || _bufferedReplicationBytes + byteCount > MaximumBufferedReplicationBytes)
             {
                 FailReplication_NoLock("Replication delta buffer limit exceeded.");
@@ -378,7 +382,7 @@ public partial class ClientNetworkingManager
 
             if (_bufferedReplicationDeltas.TryGetValue(delta.Sequence, out ReplicationDeltaBatch? duplicate))
             {
-                if (StateChangePayloadSerializer.Serialize(duplicate) != StateChangePayloadSerializer.Serialize(delta))
+                if (!StateChangeCodec.EncodedEquals(duplicate, delta))
                     FailReplication_NoLock("Conflicting duplicate replication delta.");
                 return;
             }
@@ -512,7 +516,7 @@ public partial class ClientNetworkingManager
             }
 
             _bufferedReplicationDeltas.Remove(batch.Sequence);
-            _bufferedReplicationBytes -= StateChangePayloadSerializer.Serialize(batch).Length;
+            _bufferedReplicationBytes -= StateChangeCodec.GetEncodedLength(batch);
             _replicationBaselineTick = batch.World.TickId;
             ++_expectedReplicationDeltaSequence;
             _replicationApplyQueued = false;
@@ -527,7 +531,7 @@ public partial class ClientNetworkingManager
         => HasValidLocalAssignment && sessionId == _activeSessionId && connectionGeneration == _replicationConnectionGeneration && credentialEpoch == CredentialEpoch;
 
     private static bool BaselineChunksEqual(ReplicationBaselineChunk left, ReplicationBaselineChunk right)
-        => StateChangePayloadSerializer.Serialize(left) == StateChangePayloadSerializer.Serialize(right);
+        => StateChangeCodec.EncodedEquals(left, right);
 
     private static bool HasMatchingBaselineHeader(ReplicationBaselineChunk left, ReplicationBaselineChunk right)
         => left.ChunkCount == right.ChunkCount
@@ -597,6 +601,7 @@ public partial class ClientNetworkingManager
     private void FailReplication_NoLock(string reason)
     {
         ++_replicationAttemptGeneration;
+            _receivedPosePackets.Clear();
         IRuntimeNetworkWorldContext? cleanup = _replicationWorldContext;
         ReplicationWorldOwnershipLease cleanupLease = _replicationWorldLease;
         _replicationWorldContext = null;
@@ -649,6 +654,7 @@ public partial class ClientNetworkingManager
         {
             _replicationDisposed = true;
             ++_replicationAttemptGeneration;
+            _receivedPosePackets.Clear();
             cleanup = _replicationWorldContext;
             cleanupLease = _replicationWorldLease;
             _replicationWorldContext = null;
@@ -696,7 +702,7 @@ public partial class ClientNetworkingManager
         foreach (PlayerTransformUpdate transform in header.Transforms)
             HandleRemoteTransform(transform);
         foreach (HumanoidPoseFrame pose in header.Poses)
-            base.HandleStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, StateChangePayloadSerializer.Serialize(pose)), null);
+            RaiseHumanoidPoseFrameReceived(pose);
     }
 
     private void ApplyDeltaPresence_NoLock(ReplicationDeltaBatch batch)
@@ -714,7 +720,7 @@ public partial class ClientNetworkingManager
         foreach (PlayerTransformUpdate transform in batch.Transforms)
             HandleRemoteTransform(transform);
         foreach (HumanoidPoseFrame pose in batch.Poses)
-            base.HandleStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, StateChangePayloadSerializer.Serialize(pose)), null);
+            RaiseHumanoidPoseFrameReceived(pose);
     }
 
     private void BindReplicationPlayer(ReplicationRosterEntry entry)

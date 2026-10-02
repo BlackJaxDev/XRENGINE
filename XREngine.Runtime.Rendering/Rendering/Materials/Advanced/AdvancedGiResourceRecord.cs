@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Backend-neutral global-illumination resource descriptor.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedGiResourceRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedGiResourceRecord
 {

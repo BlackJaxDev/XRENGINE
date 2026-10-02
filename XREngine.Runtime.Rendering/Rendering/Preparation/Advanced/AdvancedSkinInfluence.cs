@@ -7,6 +7,7 @@ namespace XREngine.Rendering;
 /// Canonical aggregate-skinning influence row. Bone indices address the
 /// frame-global precomposed palette and preserve palette row zero as identity.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("SkinInfluence", PreserveMemberCase = true)]
 [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 48)]
 public struct AdvancedSkinInfluence
 {

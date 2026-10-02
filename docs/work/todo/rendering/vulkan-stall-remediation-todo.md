@@ -1,6 +1,6 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-10-01
+Last Updated: 2026-10-02
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
 Status: S00/S00a/S01/S02/S03/S04/S05/S06/S07/S08/S09/S10/S11 Validated; S12 Validated for reachable scope (distinct-world gate dispositioned Not Applicable); S13a/S13b Validated on the September 26 final binary (all September 26 closeout items resolved, including the operator-run elevated capture); S13c Validated for reachable scope (September 26; multi-LOD/streaming cases not exercisable on the fixture); S13d Validated for reachable scope (September 26: four owners validated, zero allocation and zero unchanged-row publication on transform-only motion, per-dependency mutation matrix run; instance count, live material swap, texture replacement and skinning not exercisable on the fixture); S13e Validated for reachable scope (September 26: scene publication prepared once per compatible family, 7.0 to 1.0 calls per family on one and three families per frame, incompatible mutations refresh, restart and stereo pass; resize and MSAA change not drivable on the fixture); S13f Deferred/Not Applicable (October 1: measured structural scans below 0.05 ms/presentation with zero scan allocation); S13g Validated for the measured allocation-only scope (October 1: 880 to zero bytes/poll; warmed body time down 27.9% stationary and 42.1% moving; broader readiness reuse Deferred; five pre-existing source-text test failures recorded); S13h Deferred (October 1: both gates measured across desktop and three-family emulation; no material contention established, parallel lifetime/utilization evidence insufficient; no synchronization change); S13i Executed; NOT PASSED (October 1: follow-up allocation fixes validated in focused windows; CPU tails, observer/fixture gaps and visual failures remain)
 Execution: One fix at a time, with a mandatory validation gate after each fix
@@ -24,7 +24,7 @@ Updating it does not authorize test changes, dependency upgrades, storage
 migrations, or changes to launch flows.
 Keep durable results in the linked investigation and concise gate status here.
 
-## Current Progress And Next Work (October 1)
+## Current Progress And Next Work (October 2)
 
 S13a-S13e have their recorded scoped validation; S13f/S13h are measured deferrals,
 and S13g passed its allocation-only scope. S13i was executed and remains **NOT
@@ -37,12 +37,23 @@ allocation from **4.269 to 2.093 MB per completed present (51%)** against their
 current-source control. This is separate from the earlier subscription-refresh
 comparison; do not add the percentages or imply an identical historical baseline.
 
-Next, inspect temporary construction in queued mesh requests, prepared-operation
-cohort matching and submission-contract sealing, then validate one bounded fix
-at a time. Sealed binding snapshots remain the largest measured allocation owner,
-but reusing their storage requires resolving program-held references and content
-identity first. Detailed completed work, ranked candidates, rejected approaches
-and acceptance requirements are in the [S13i follow-up](#s13i-prove-the-cumulative-fix-on-the-reported-workload).
+October 2: scalar comparisons in prepared-cohort matching remove its observed
+boxing allocations: 1,178 samples / 125.5 MB in control versus zero samples in the
+candidate. The fresh matched windows measure 2.098 to 2.019 MB per completed
+present (3.79% lower). This is a focused allocation result, not a smoothness gate.
+
+The follow-up probe confirms null `OperationWorkspace` in all 16,384 observed
+mesh-operation rentals. Guarded desktop materialization now uses the materializing
+worker's pool. `MeshDrawOp` falls from 1,583 allocation samples to zero, and
+resource-use arrays from 460 to 9. Sampled allocation falls from **2.019 to
+1.646 MB per completed present (18.49%)** against the clean comparison candidate.
+Receipt-owned, captured and OpenXR paths remain excluded; scene-unload retention
+is unvalidated. A 567.52 ms GC suspension remains in the lighter window.
+
+Next, inspect submission-contract sealing and retained pool references across
+scene unload. Sealed binding snapshots remain the largest owner, with their own
+program-borrow and content-identity constraints. Detailed evidence and gates are in the
+[S13i follow-up](#s13i-prove-the-cumulative-fix-on-the-reported-workload).
 
 GC pauses and the unexplained outer-dispatch interval remain open. Neither
 validation-off allocation measurements nor the successful mutation checks prove
@@ -1780,6 +1791,21 @@ They do not change the NOT PASSED disposition above.
 - [x] Compact `ProgramUniformValue` from 200 to 80 bytes and dictionary entries
   from 216 to 96 bytes. Keep the managed reference outside the numeric union and
   preserve constructor-kind getter semantics. No snapshot lifetime change.
+- [x] October 2: replace boxed/reflection equality in prepared-cohort matching
+  with full scalar extent, viewport, scissor and fixed-function comparisons.
+  Preserve all fields, float semantics and indexed-array reference identity.
+  Uncapped trace reports show 1,178 samples / 125.5 MB in control and zero observed
+  samples in the candidate; earlier refresh/layout targets remain at zero.
+  Fresh motion windows measure 2.098 to 2.019 MB per completed present (3.79%
+  lower). Release build, root-mutation and shader-reload checks pass; this is
+  measured allocation scope only, with no displayed-motion acceptance.
+- [x] October 2: confirm null workspaces in 16,384 mesh rentals and attach the
+  materializing worker's workspace only for immediately drained desktop work.
+  Keep receipt-owned, captured, ordered-batch and OpenXR work excluded. Exact
+  `MeshDrawOp` samples fall 1,583 to zero and resource-use arrays 460 to 9;
+  sampled total falls 2.019 to 1.646 MB per completed present (18.49%). Release
+  build, root mutations and reload pass. Temporary probes are removed. Pool
+  high-water resource retention and scene unload remain separate open gates.
 - [x] Run targeted Release builds (zero warnings/errors), continuous camera
   windows, 20 root-transform changes, deactivation/reactivation and shader reload.
   Resident draws restore to 393, mutation/reload endpoints complete, and the
@@ -1803,19 +1829,31 @@ lost zero events. GC suspension maximum was 459.31 ms with allocation stacks and
 cadence. Vulkan validation and engine CPU observers were disabled. The camera
 used one uninterrupted focus command, still eased at its endpoints.
 
+The subsequent October 2 desktop-pooling comparison uses the clean scalar-
+comparison candidate as control: 2.019 to 1.646 MB per completed present, with
+sealed-copy allocation 1.268 to 1.077 MB. These single sampled windows do not
+attribute the entire total reduction to pooling. Candidate GC suspension maxima
+are 60.50 ms with allocation stacks and 567.52 ms with GC-only observation, with
+zero lost events. The long lighter-window suspension remains unresolved. See the
+investigation for exact counts, binary hashes, exclusions and lifetime review.
+
 #### Suspected Next Work And Entry Conditions
 
 Execute one implementation at a time; the estimates below identify measured
 owners, not proven optimization designs or exclusive CPU costs.
 
-- [ ] **First bounded candidate: recurring temporary construction.** Inspect
-  `MaterializeQueuedMeshRenderRequestsCore` (~101 KB sampled per present),
-  `IsPreparedMeshOperationCohortMatch` (~71 KB), and `TrySealSubmissionContract`
-  (~69 KB). Establish exact allocating stacks, ownership, escape and mutation
-  boundaries, then choose one owner. Prefer removing redundant construction or
-  reusing owner-held scratch only when its lifetime is proven; do not infer that
-  each method can safely pool its outputs.
-- [ ] **Largest remaining owner: sealed binding snapshots (~1.271 MB/present).**
+- [ ] **Pool retention and excluded lifetimes.** The ordinary desktop fallback
+  is corrected for the measured scope above. Validate scene-unload retention:
+  pooled objects retain their last resource/context references up to historical
+  per-frame high-water demand. Do not broaden reuse to receipt-owned, captured,
+  ordered-batch or OpenXR work without proving every borrow ends before reuse.
+- [ ] **Separate temporary-construction owners.** Inspect submission-contract
+  sealing (~69 KB per present in the October 1 capture). Operation resource-use
+  arrays now have only 9 samples in the desktop-pooling window, down from 460;
+  classify any remaining growth before further changes. Preserve dependency closure and ownership;
+  do not double-count nested allocation totals or assume pooling is safe.
+  Prepared-cohort comparison is now corrected for the measured scope above.
+- [ ] **Largest remaining owner: sealed binding snapshots (~1.077 MB/present in the latest window).**
   Measure required snapshot contents/copy frequency and establish explicit
   program-borrow retirement plus content generations before storage reuse.
   `ApplyBindingSnapshot` retains snapshots beyond recording, and frame-data

@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// Fixed 64-byte GPU material header. Constants and texture references live in
 /// separate packed arenas so rows sharing a kernel never require unique pipelines.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedMaterialRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedMaterialRecord
 {

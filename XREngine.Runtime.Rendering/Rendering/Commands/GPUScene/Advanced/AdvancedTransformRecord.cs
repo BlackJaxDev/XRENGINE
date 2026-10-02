@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// One explicitly owned temporal transform row.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedTransformRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedTransformRecord
 {

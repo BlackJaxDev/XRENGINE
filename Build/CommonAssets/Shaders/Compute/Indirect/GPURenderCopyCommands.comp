@@ -15,13 +15,8 @@ uniform uint OutputCapacity;
 uniform int BoundsCheckEnabled;
 uniform int ActiveViewCount;
 
-struct DrawMetadata
-{
-    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
-    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
-    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
-    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
+
 layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 1) writeonly buffer VisibleDrawIds { uint OutDrawIds[]; };
 
@@ -43,36 +38,10 @@ layout(std430, binding = 4) buffer OverflowFlag
     uint OverflowData[];
 };
 
-struct GPUViewDescriptor
-{
-    uint ViewId;
-    uint ParentViewId;
-    uint Flags;
-    uint RenderPassMaskLo;
-    uint RenderPassMaskHi;
-    uint OutputLayer;
-    uint ViewRectX;
-    uint ViewRectY;
-    uint ViewRectW;
-    uint ViewRectH;
-    uint VisibleOffset;
-    uint VisibleCapacity;
-    vec4 FoveationA;
-    vec4 FoveationB;
-};
 
-struct GPUViewConstants
-{
-    mat4 View;
-    mat4 Projection;
-    mat4 ViewProjection;
-    mat4 PrevViewProjection;
-    vec4 CameraPositionAndNear;
-    vec4 CameraForwardAndFar;
-};
 
 layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
-layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, row_major, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
 layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
 layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
 layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };

@@ -15,6 +15,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Audio](audio/openal-streaming-audio.md)
 - [Components](components/component-api.md)
 - [Diagnostics And Profiler](diagnostics/profiler.md)
+- [Runtime Data Layout Measurements](diagnostics/runtime-data-layout-measurements.md)
 - [Self-Iterating Rendering Performance Loop](diagnostics/self-iterating-performance-loop.md)
 - [Global Illumination](gi/global-illumination.md)
 - [Networking](networking/networking.md)

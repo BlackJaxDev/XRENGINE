@@ -84,6 +84,7 @@ public ref struct TransformHierarchyMutationBatch
         TransformBase.ExitHierarchyMutationBatch();
         if (hasMutations)
             root.EnqueueHierarchyRecalculation();
+        root.HierarchyStore?.FlushHierarchy();
     }
 
     private readonly void EnsureActive()

@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Reflection and irradiance probe influence record.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedProbeRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedProbeRecord
 {

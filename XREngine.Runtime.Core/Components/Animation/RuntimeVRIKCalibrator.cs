@@ -95,7 +95,19 @@ public static class RuntimeVRIKCalibrator
     }
 
     private static Type? ResolveRuntimeType(string typeName)
-        => Type.GetType($"{typeName}, XREngine.Runtime.AnimationIntegration")
-        ?? Type.GetType($"{typeName}, XREngine.Animation")
-        ?? Type.GetType($"{typeName}, XRENGINE");
+    {
+        Type? resolved = Type.GetType($"{typeName}, XREngine.Runtime.AnimationIntegration")
+            ?? Type.GetType($"{typeName}, XREngine.Animation")
+            ?? Type.GetType($"{typeName}, XRENGINE");
+        if (resolved is not null)
+        {
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                resolved,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.TypeResolutionScan,
+                $"{nameof(RuntimeVRIKCalibrator)}.{nameof(ResolveRuntimeType)}",
+                "Route VR IK calibration through a registered host service instead of resolving the calibrator type by name.");
+        }
+
+        return resolved;
+    }
 }

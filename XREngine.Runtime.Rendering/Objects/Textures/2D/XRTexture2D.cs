@@ -1020,8 +1020,8 @@ namespace XREngine.Rendering
         {
             try
             {
-                byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(filePath);
-                if (TryReadResidentDataFromTextureAssetFileBytes(assetBytes, maxPreviewSize, includeMipChain: false, out TextureStreamingResidentData residentData))
+                using XREngine.Core.Files.CookedPayloadOwner assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(filePath);
+                if (TryReadResidentDataFromTextureAssetFileBytes(assetBytes.Span, maxPreviewSize, includeMipChain: false, out TextureStreamingResidentData residentData))
                 {
                     ApplyResidentData(target, residentData, includeMipChain: false);
                     return true;

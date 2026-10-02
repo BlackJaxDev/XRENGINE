@@ -36,6 +36,8 @@ namespace XREngine.Scene.Transforms
         public override Quaternion InverseRenderRotation
             => Quaternion.Identity;
 
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
             => Parent is null
                 ? Matrix4x4.Identity

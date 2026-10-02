@@ -44,65 +44,35 @@ namespace XREngine.Core.Files
         /// </summary>
         /// <param name="archiveFilePath">Path to the <c>.pak</c> file.</param>
         /// <returns>An <see cref="ArchiveInfo"/> describing the archive.</returns>
-        /// <exception cref="InvalidOperationException">The file is not a valid asset archive.</exception>
+        /// <exception cref="InvalidDataException">The file is not a valid asset archive or uses another format version.</exception>
         public static ArchiveInfo ReadArchiveInfo(string archiveFilePath)
         {
-            unsafe
+            using PublishedArchiveHandle handle = PublishedArchiveHandle.Open(archiveFilePath);
+            ArchiveEntryInfo[] entries = new ArchiveEntryInfo[handle.EntryCount];
+            long totalCompressed = 0;
+            for (int i = 0; i < entries.Length; i++)
             {
-                long fileSize = new FileInfo(archiveFilePath).Length;
-                using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
-                using var reader = new CookedBinaryReader((byte*)map.Address.Pointer, map.Length);
-
-                int magic = reader.ReadInt32();
-                if (magic != Magic)
-                    throw new InvalidOperationException("Invalid asset archive format — magic number mismatch.");
-
-                int version = reader.ReadInt32();
-                if (version != CurrentVersion)
-                    throw new InvalidOperationException($"Unsupported archive version '{version}'. Only V{CurrentVersion} is supported.");
-
-                var flags = (ArchiveFlags)reader.ReadInt32();
-                var lookupMode = (TocLookupMode)reader.ReadInt32();
-                int fileCount = reader.ReadInt32();
-                long buildTimestamp = reader.ReadInt64();
-                long headerDeadBytes = reader.ReadInt64();
-
-                var footer = ReadFooter(reader);
-                reader.Position = ResolveDictionaryOffset(footer);
-                var stringCompressor = new StringCompressor(reader);
-
-                // Read all TOC entries.
-                reader.Position = footer.TocPosition;
-                var entries = new ArchiveEntryInfo[fileCount];
-                long totalCompressed = 0;
-
-                for (int i = 0; i < fileCount; i++)
-                {
-                    var toc = ReadSequentialTocEntry(reader);
-                    string path = stringCompressor.GetString(toc.StringOffset);
-                    entries[i] = new ArchiveEntryInfo(path, toc.Hash, toc.DataOffset, toc.CompressedSize,
-                        toc.UncompressedSize, toc.ContentHash, toc.SourceTimestampUtcTicks, toc.Codec);
-                    totalCompressed += toc.CompressedSize;
-                }
-
-                return new ArchiveInfo
-                {
-                    FilePath = archiveFilePath,
-                    FileSize = fileSize,
-                    MagicNumber = magic,
-                    Version = version,
-                    Flags = flags,
-                    LookupMode = lookupMode,
-                    FileCount = fileCount,
-                    BuildTimestampUtcTicks = buildTimestamp,
-                    DeadBytes = footer.DeadBytes,
-                    TocOffset = footer.TocPosition,
-                    StringTableOffset = footer.StringTableOffset,
-                    IndexTableOffset = footer.IndexTableOffset,
-                    TotalCompressedBytes = totalCompressed,
-                    Entries = entries,
-                };
+                entries[i] = handle.GetEntry(i);
+                totalCompressed += entries[i].CompressedSize;
             }
+
+            return new ArchiveInfo
+            {
+                FilePath = handle.FilePath,
+                FileSize = handle.FileSize,
+                MagicNumber = Magic,
+                Version = CurrentVersion,
+                Flags = handle.Flags,
+                LookupMode = handle.LookupMode,
+                FileCount = handle.EntryCount,
+                BuildTimestampUtcTicks = handle.BuildTimestampUtcTicks,
+                DeadBytes = handle.DeadBytes,
+                TocOffset = handle.TocOffset,
+                StringTableOffset = handle.StringTableOffset,
+                IndexTableOffset = handle.IndexTableOffset,
+                TotalCompressedBytes = totalCompressed,
+                Entries = entries,
+            };
         }
     }
 }

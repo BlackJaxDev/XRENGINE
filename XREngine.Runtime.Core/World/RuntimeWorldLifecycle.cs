@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using System.Buffers;
 using System.Collections.Concurrent;
 using XREngine.Components;
@@ -58,6 +59,8 @@ public sealed partial class RuntimeWorldLifecycle
     /// </summary>
     public void TickGroup(ETickGroup group)
     {
+        using var parityScope = IsPlaySessionActive
+            ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
         if (!_ticks.TryGetValue(group, out SortedList<int, TickQueue>? ordered))
             return;
 

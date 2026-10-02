@@ -635,6 +635,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_loaded_game_types` | List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly. |
 | `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
+| `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
@@ -699,6 +700,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `list_viewport_sequence_captures` | List active and recently completed viewport sequence captures without per-frame payloads. |
 | `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics. |
 | `list_worlds` | List active world instances and their scenes. |
+| `load_game_project` | Load a local .xrproj authoring project in edit mode. Compile its scripts separately before loading worlds that use game types. |
 | `load_world` | Load a world asset and set it as active on the current world instance. |
 | `move_node_sibling` | Reorder a scene node among siblings. |
 | `prefab_apply_overrides` | Apply an instance's recorded prefab overrides back to its source prefab asset. |
@@ -750,6 +752,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_meshlet_debug_display` | Enable or disable per-meshlet colors on a viewport camera. Omit enabled to return control to the camera post-process setting. |
+| `set_network_runtime_measurements` | Enable allocation-free networking measurement scopes. Counters are cumulative; subtract snapshots after warmup. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |
 | `set_node_active_recursive` | Set active state on a node and its children. |
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |

@@ -36,7 +36,7 @@ namespace XREngine
             private int _stalePruneQueued;
             private XREngine.Timers.IRuntimeTimingServices? _simulationTiming;
 
-            public ServerNetworkingManager() : base(peerId: "server") { }
+            public ServerNetworkingManager() : base(peerId: "server") { _drainPoseQueue = DrainPoseQueue; }
 
             /// <summary>Hard local admission ceiling. Managed workers set this from their launch contract.</summary>
             public int MaxPlayers { get; set; } = int.MaxValue;
@@ -103,12 +103,13 @@ namespace XREngine
                 UdpMulticastSender = listener;
             }
 
-            protected override async Task SendUDP()
+            protected override Task SendUDP()
             {
                 QueueStalePlayerPrune();
                 PumpReplicationTransfers();
                 //Send to clients
-                await ConsumeAndSendUDPQueues(UdpMulticastSender);
+                ConsumeAndSendUDPQueues(UdpMulticastSender);
+                return Task.CompletedTask;
             }
 
             protected override void CollectUdpSendTargets(List<IPEndPoint> targets)
@@ -128,52 +129,53 @@ namespace XREngine
                 // subsequently bound to an admitted connection in the state handler below.
                 => sender is not null && type == EBroadcastType.StateChange;
 
-            protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
+            protected override void HandleStateChange(EStateChangeType type, ReadOnlySpan<byte> payload, IPEndPoint? sender)
             {
                 if (sender is null)
                     return;
 
                 // UDP receive runs independently of simulation. Every handler rechecks the
                 // endpoint/association after this queue boundary before it mutates world state.
-                RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => HandleStateChangeOnSimulation(change, sender));
+                if (type == EStateChangeType.HumanoidPoseFrame)
+                {
+                    QueuePosePacket(payload, sender);
+                    return;
+                }
+                byte[] ownedPayload = payload.ToArray();
+                RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => HandleStateChangeOnSimulation(type, ownedPayload, sender));
             }
 
-            private void HandleStateChangeOnSimulation(StateChangeInfo change, IPEndPoint? sender)
+            private void HandleStateChangeOnSimulation(EStateChangeType type, ReadOnlySpan<byte> payload, IPEndPoint? sender)
             {
-                if (TryHandleReplicationStateChange(change, sender))
+                if (TryHandleReplicationStateChange(type, payload, sender))
                     return;
 
-                switch (change.Type)
+                switch (type)
                 {
                     case EStateChangeType.PlayerJoin:
-                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerJoinRequest>(change.Data, out var join) || join is null || sender is null)
+                        if (!TryReadStateChangePayload<PlayerJoinRequest>(payload, out var join) || join is null || sender is null)
                             break;
                         HandlePlayerJoin(join, sender);
                         break;
                     case EStateChangeType.PlayerInputSnapshot:
-                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerInputSnapshot>(change.Data, out var snapshot) || snapshot is null || sender is null)
+                        if (!TryReadStateChangePayload<PlayerInputSnapshot>(payload, out var snapshot) || snapshot is null || sender is null)
                             break;
                         HandlePlayerInputSnapshot(snapshot, sender);
                         break;
                     case EStateChangeType.PlayerTransformUpdate:
-                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate) || transformUpdate is null || sender is null)
+                        if (!TryReadStateChangePayload<PlayerTransformUpdate>(payload, out var transformUpdate) || transformUpdate is null || sender is null)
                             break;
                         HandlePlayerTransformUpdate(transformUpdate, sender);
                         break;
                     case EStateChangeType.PlayerLeave:
-                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out var leave) || leave is null || sender is null)
+                        if (!TryReadStateChangePayload<PlayerLeaveNotice>(payload, out var leave) || leave is null || sender is null)
                             break;
                         HandlePlayerLeave(leave, sender);
                         break;
                     case EStateChangeType.Heartbeat:
-                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerHeartbeat>(change.Data, out var hb) || hb is null || sender is null)
+                        if (!TryReadStateChangePayload<PlayerHeartbeat>(payload, out var hb) || hb is null || sender is null)
                             break;
                         HandleHeartbeat(hb, sender);
-                        break;
-                    case EStateChangeType.HumanoidPoseFrame:
-                        if (!StateChangePayloadSerializer.TryDeserialize<HumanoidPoseFrame>(change.Data, out var pose) || pose is null || sender is null)
-                            break;
-                        HandleHumanoidPoseFrame(pose, sender);
                         break;
                 }
             }
@@ -183,6 +185,13 @@ namespace XREngine
                 if (string.IsNullOrWhiteSpace(request.ClientId))
                 {
                     SendJoinAdmissionFailure(string.Empty, AdmissionFailureReason.InvalidRequest, "A stable client identity is required.", sender);
+                    return;
+                }
+
+                if (!RealtimeProtocol.IsCompatible(request.WireProtocolVersion))
+                {
+                    SendJoinAdmissionFailure(request.ClientId, AdmissionFailureReason.BuildVersionMismatch,
+                        RealtimeProtocol.DescribeMismatch(request.WireProtocolVersion), sender);
                     return;
                 }
 
@@ -510,7 +519,7 @@ namespace XREngine
             private void HandleHeartbeat(PlayerHeartbeat hb, IPEndPoint sender)
             {
                 ServerSessionPlayerEvent? playerEvent = null;
-                ClockSyncMessage? clockSync = null;
+                ClockSyncSample? clockSync = null;
                 double receiveUtc = GetUtcSeconds();
                 lock (_playerLock)
                 {
@@ -529,17 +538,7 @@ namespace XREngine
                 if (playerEvent is not null)
                     RuntimeNetworkingHostServices.Current.NotifyServerPlayerHeartbeatObserved(playerEvent);
                 if (clockSync is not null)
-                    SendClockSyncTo(sender, clockSync);
-            }
-
-            private void HandleHumanoidPoseFrame(HumanoidPoseFrame frame, IPEndPoint sender)
-            {
-                if (!TryAcceptHumanoidPoseFrame(frame, sender, out HumanoidPoseFrame accepted))
-                    return;
-
-                base.HandleStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, StateChangePayloadSerializer.Serialize(accepted)), null);
-                RecordReplicationPose(accepted);
-                BroadcastHumanoidPoseFrame(accepted, compress: false, resendOnFailedAck: false);
+                    SendClockSyncTo(sender, clockSync.Value, hb.ClientId);
             }
 
             private void BroadcastExistingTransforms()
@@ -783,17 +782,10 @@ namespace XREngine
             private static double GetUtcSeconds()
                 => (DateTime.UtcNow - DateTime.UnixEpoch).TotalSeconds;
 
-            private ClockSyncMessage CreateClockSync(NetworkPlayerConnection connection, PlayerHeartbeat heartbeat, double receiveUtc)
-                => new()
-                {
-                    SessionId = connection.SessionId,
-                    ClientId = connection.ClientId,
-                    ServerPlayerIndex = connection.ServerPlayerIndex,
-                    ClientSendTimestampUtc = heartbeat.ClientSendTimestampUtc == 0.0d ? heartbeat.TimestampUtc : heartbeat.ClientSendTimestampUtc,
-                    ServerReceiveTimestampUtc = receiveUtc,
-                    ServerSendTimestampUtc = GetUtcSeconds(),
-                    ServerTickId = _replication.CurrentServerTickId
-                };
+            private ClockSyncSample CreateClockSync(NetworkPlayerConnection connection, PlayerHeartbeat heartbeat, double receiveUtc)
+                => new(connection.SessionId, connection.ServerPlayerIndex,
+                    heartbeat.ClientSendTimestampUtc == 0.0d ? heartbeat.TimestampUtc : heartbeat.ClientSendTimestampUtc,
+                    receiveUtc, GetUtcSeconds(), _replication.CurrentServerTickId);
 
             private void SendAuthoritativeTransformUpdate(PlayerTransformUpdate update, NetworkPlayerConnection owner, double nowUtc)
             {

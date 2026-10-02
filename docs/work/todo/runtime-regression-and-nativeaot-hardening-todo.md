@@ -14,6 +14,10 @@ Predecessors and related work:
 - [Unit Test Project Reorganization TODO](tests/unit-test-project-reorganization-todo.md)
 - [Humanoid Body Root Compensation TODO](avatar/humanoid-body-root-compensation-todo.md)
 - [MonkeyBall VR Final-Build Runtime TODO](games/monkeyball-vr-final-build-runtime-todo.md)
+- [Runtime Data Layout And Generated Contracts TODO](runtime/runtime-data-layout-and-generated-contracts-todo.md)
+  provides the Roslyn generator, span-based cooked codecs, published-reader
+  split, and `XRE_AOT_PARITY` diagnostics used by A0-A2. This tracker remains
+  responsible for strict-publication acceptance.
 
 ## Goal
 

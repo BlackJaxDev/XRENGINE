@@ -33,6 +33,7 @@ public static class RuntimeAssetBootstrap
             leases.Add(RuntimeCoreAssetSerializationRegistration.Install(
                 new AssetManagerAssetSerializationServices(Engine.Assets)));
             leases.Add(AnimationSerializationRegistration.Install());
+            leases.Add(global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Runtime_Host.Install());
             leases.Add(RenderingSerializationRegistration.Install());
             leases.Add(BootstrapAssetSerializationRegistration.Install());
         });

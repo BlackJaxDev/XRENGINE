@@ -2,7 +2,7 @@ namespace XREngine.Core.Files
 {
     public static partial class AssetPacker
     {
-        private readonly struct FooterInfo(
+        internal readonly struct FooterInfo(
             long tocPosition,
             long stringTableOffset,
             long dictionaryOffset,

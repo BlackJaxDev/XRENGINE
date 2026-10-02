@@ -950,7 +950,8 @@ internal sealed partial class VulkanFrameLoop
         return MaterializeQueuedMeshRenderRequests(
             requestCount,
             allowPreparedCohort,
-            out deferredReason);
+            out deferredReason,
+            allowFrameOwnedAuthoringOperations: true);
     }
 
     /// <summary>
@@ -966,7 +967,8 @@ internal sealed partial class VulkanFrameLoop
         bool foregroundRequired = false,
         long readinessDeadlineTimestamp = long.MaxValue,
         ulong sourceFrameId = 0UL,
-        bool requireCompleteCohort = false)
+        bool requireCompleteCohort = false,
+        bool allowFrameOwnedAuthoringOperations = false)
     {
         VulkanPresentNowReadinessWatchdog inactiveWatchdog = default;
         return MaterializeQueuedMeshRenderRequestsCore(
@@ -980,6 +982,7 @@ internal sealed partial class VulkanFrameLoop
             requireCompleteCohort,
             trackPresentNowProgress: false,
             sliceColdPreparation: false,
+            allowFrameOwnedAuthoringOperations,
             ref inactiveWatchdog);
     }
 
@@ -990,7 +993,8 @@ internal sealed partial class VulkanFrameLoop
         out bool coldSliceDeferred,
         ref VulkanPresentNowReadinessWatchdog watchdog,
         ulong sourceFrameId,
-        bool sliceColdPreparation = true)
+        bool sliceColdPreparation = true,
+        bool allowFrameOwnedAuthoringOperations = false)
         => MaterializeQueuedMeshRenderRequestsCore(
             requestCount,
             allowPreparedCohort,
@@ -1002,6 +1006,7 @@ internal sealed partial class VulkanFrameLoop
             requireCompleteCohort: false,
             trackPresentNowProgress: true,
             sliceColdPreparation: sliceColdPreparation,
+            allowFrameOwnedAuthoringOperations,
             ref watchdog);
 
     private bool MaterializeQueuedMeshRenderRequestsCore(
@@ -1015,6 +1020,7 @@ internal sealed partial class VulkanFrameLoop
         bool requireCompleteCohort,
         bool trackPresentNowProgress,
         bool sliceColdPreparation,
+        bool allowFrameOwnedAuthoringOperations,
         ref VulkanPresentNowReadinessWatchdog watchdog)
     {
         deferredReason = string.Empty;
@@ -1283,6 +1289,7 @@ internal sealed partial class VulkanFrameLoop
 
                 if (!EnqueueQueuedMeshDraw(
                         in operationRequest,
+                        allowFrameOwnedAuthoringOperations,
                         out MeshDrawOp? enqueuedOperation))
                 {
                     _meshOperationWarmPreparationSignatures.Remove(
@@ -1958,11 +1965,21 @@ internal sealed partial class VulkanFrameLoop
              program.LinkGeneration == draw.PreparedProgramLinkGeneration);
         return reusableDrawMatches &&
                ReferenceEquals(producer.Target, cached.Target) &&
-               producer.TargetExtent.Equals(cached.TargetExtent) &&
-               producer.Viewport.Equals(cached.Viewport) &&
-               producer.Scissor.Equals(cached.Scissor) &&
+               producer.TargetExtent.Width == cached.TargetExtent.Width &&
+               producer.TargetExtent.Height == cached.TargetExtent.Height &&
+               producer.Viewport.X.Equals(cached.Viewport.X) &&
+               producer.Viewport.Y.Equals(cached.Viewport.Y) &&
+               producer.Viewport.Width.Equals(cached.Viewport.Width) &&
+               producer.Viewport.Height.Equals(cached.Viewport.Height) &&
+               producer.Viewport.MinDepth.Equals(cached.Viewport.MinDepth) &&
+               producer.Viewport.MaxDepth.Equals(cached.Viewport.MaxDepth) &&
+               producer.Scissor.Offset.X == cached.Scissor.Offset.X &&
+               producer.Scissor.Offset.Y == cached.Scissor.Offset.Y &&
+               producer.Scissor.Extent.Width == cached.Scissor.Extent.Width &&
+               producer.Scissor.Extent.Height == cached.Scissor.Extent.Height &&
                producer.IndexedViewportScissors == cached.IndexedViewportScissors &&
-               producer.FixedFunctionState == cached.FixedFunctionState &&
+               PreparedFixedFunctionStateEquals(
+                   producer.FixedFunctionState, cached.FixedFunctionState) &&
                context.PipelineIdentity == cached.PipelineIdentity &&
                context.ViewportIdentity == cached.ViewportIdentity &&
                context.OutputTargetIdentity == cached.OutputTargetIdentity &&
@@ -1985,6 +2002,41 @@ internal sealed partial class VulkanFrameLoop
                material.UberStateRevision ==
                    cached.MaterialUberStateRevision;
     }
+
+    // Silk value types use boxing/reflection equality. Compare their fields
+    // directly while retaining every structural field in the cohort identity.
+    private static bool PreparedFixedFunctionStateEquals(
+        in VulkanFixedFunctionStateSnapshot left,
+        in VulkanFixedFunctionStateSnapshot right)
+        => left.DepthTestEnabled == right.DepthTestEnabled &&
+           left.DepthWriteEnabled == right.DepthWriteEnabled &&
+           left.DepthCompareOp == right.DepthCompareOp &&
+           left.StencilTestEnabled == right.StencilTestEnabled &&
+           PreparedStencilStateEquals(left.FrontStencilState, right.FrontStencilState) &&
+           PreparedStencilStateEquals(left.BackStencilState, right.BackStencilState) &&
+           left.StencilWriteMask == right.StencilWriteMask &&
+           left.ColorWriteMask == right.ColorWriteMask &&
+           left.CullMode == right.CullMode &&
+           left.FrontFace == right.FrontFace &&
+           left.BlendEnabled == right.BlendEnabled &&
+           left.AlphaToCoverageEnabled == right.AlphaToCoverageEnabled &&
+           left.ColorBlendOp == right.ColorBlendOp &&
+           left.AlphaBlendOp == right.AlphaBlendOp &&
+           left.SrcColorBlendFactor == right.SrcColorBlendFactor &&
+           left.DstColorBlendFactor == right.DstColorBlendFactor &&
+           left.SrcAlphaBlendFactor == right.SrcAlphaBlendFactor &&
+           left.DstAlphaBlendFactor == right.DstAlphaBlendFactor;
+
+    private static bool PreparedStencilStateEquals(
+        in StencilOpState left,
+        in StencilOpState right)
+        => left.FailOp == right.FailOp &&
+           left.PassOp == right.PassOp &&
+           left.DepthFailOp == right.DepthFailOp &&
+           left.CompareOp == right.CompareOp &&
+           left.CompareMask == right.CompareMask &&
+           left.WriteMask == right.WriteMask &&
+           left.Reference == right.Reference;
 
     private static VulkanPreparedMeshOperationCohortEntry
         CreatePreparedMeshOperationCohortEntry(
@@ -2096,6 +2148,7 @@ internal sealed partial class VulkanFrameLoop
 
     private bool EnqueueQueuedMeshDraw(
         in VulkanMeshOperationRequest request,
+        bool allowFrameOwnedAuthoringOperations,
         out MeshDrawOp? operation)
     {
         operation = null;
@@ -2106,12 +2159,32 @@ internal sealed partial class VulkanFrameLoop
         if (passIndex == int.MinValue)
             return false;
 
+        FrameOpContext context = request.Context;
+        VulkanFrameOperationQueue.ThreadWorkspace queueThread =
+            _frameOperationQueue.CurrentThread;
+        if (allowFrameOwnedAuthoringOperations &&
+            context.OutputCompletionReceiptId == 0 &&
+            context.ContextKind is not (EVulkanFrameOpContextKind.OpenXrEye or
+                EVulkanFrameOpContextKind.OpenXrMirror) &&
+            queueThread.Capture is null &&
+            queueThread.OrderedComputeBatchCapture is null)
+        {
+            // Desktop materialization drains and lowers these operations before
+            // the render frame advances. Use the materializing worker's pool,
+            // never a producer's workspace carried by the captured request.
+            // Receipt-owned/captured work can escape that lifetime boundary.
+            context = context with
+            {
+                OperationWorkspace = _commandRuntime.GetFrameOpWorkspace(),
+            };
+        }
+
         operation = MeshDrawOp.Rent(
             passIndex,
             request.ExplicitTarget ?? request.ProducerSnapshot.Target,
             request.Draw,
-            request.Context,
-            _frameOperationQueue.CurrentThread.RenderQueryBracketDepth > 0);
+            context,
+            queueThread.RenderQueryBracketDepth > 0);
         return _commandRuntime.TryEnqueueContentFrameOperation(
             _frameOperationQueue,
             operation,

@@ -198,7 +198,7 @@ namespace XREngine.Rendering.Commands
             _visibilityDirtyRange.Mark(drawId);
         }
 
-        private bool UpdateTransform(uint transformId, in Matrix4x4 worldMatrix)
+        private bool UpdateTransform(uint transformId, in Matrix4x4 worldMatrix, RenderCommand? source)
         {
             if (transformId == 0u)
                 return false;
@@ -208,7 +208,9 @@ namespace XREngine.Rendering.Commands
             if (previous.WorldMatrix.Equals(worldMatrix))
                 return false;
 
-            UpdatingTransformBuffer.SetDataRawAtIndex(transformId, new TransformGpu(worldMatrix));
+            UpdatingTransformBuffer.SetDataRawAtIndex(transformId,
+                TransformPublicationRecords.TryGet(source, worldMatrix, out TransformGpu published, out _)
+                    ? published : new TransformGpu(worldMatrix));
             _transformDirtyRange.Mark(transformId);
             return true;
         }

@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Commands;
 /// table; the generation rejects stale references and the dense index locates
 /// the current physical record after compaction.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedGpuHandleLookup")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedGpuHandleLookup(
     uint Generation,

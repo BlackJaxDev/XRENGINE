@@ -1,7 +1,9 @@
-using MemoryPack;
-
 namespace XREngine;
 
+/// <summary>
+/// Identifies the payload carried by a realtime state-change frame. The numeric values are part
+/// of the wire format; append new members and never renumber existing ones.
+/// </summary>
 public enum EStateChangeType : byte
 {
     Invalid = 0,
@@ -35,22 +37,4 @@ public enum EStateChangeType : byte
     ReplicationTransferAck,
     ReplicationResyncRequest,
     ReplicationSyncComplete,
-}
-
-[MemoryPackable]
-public sealed partial class StateChangeInfo
-{
-    public StateChangeInfo()
-    {
-    }
-
-    [MemoryPackConstructor]
-    public StateChangeInfo(EStateChangeType type, string data)
-    {
-        Type = type;
-        Data = data;
-    }
-
-    public EStateChangeType Type { get; set; }
-    public string Data { get; set; } = string.Empty;
 }

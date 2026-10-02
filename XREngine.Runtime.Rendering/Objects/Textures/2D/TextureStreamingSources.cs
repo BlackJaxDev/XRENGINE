@@ -73,12 +73,14 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
         {
             long totalStartTimestamp = XRTexture2D.StartImportedTextureTiming();
             long readStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(assetPath);
+            // The cache file is leased through an owner so the encoded bytes never reach the large
+            // object heap; only the selected resident mips are copied out during parsing.
+            using XREngine.Core.Files.CookedPayloadOwner assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(assetPath);
             double cacheReadMilliseconds = XRTexture2D.CompleteImportedTextureTiming(readStartTimestamp);
             cancellationToken.ThrowIfCancellationRequested();
 
             long parseStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
+            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes.Span, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
             {
                 double cacheParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
                 TextureRuntimeDiagnostics.LogCacheRead(
@@ -102,7 +104,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_fallbackSource is not null &&
-                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes))
+                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes.Span))
             {
                 return LoadFallbackResidentData(
                     maxResidentDimension,

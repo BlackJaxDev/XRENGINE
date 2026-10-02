@@ -5,11 +5,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
-    <XREngineFactoryRegistrationMode>Portable</XREngineFactoryRegistrationMode>
-    <GeneratedAotFactoryRegistrations>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', '$(TargetFramework)', 'Generated', 'AotFactoryRegistrations.g.cs'))</GeneratedAotFactoryRegistrations>
-    <XREngineFactoryRegistrationOutput>$(GeneratedAotFactoryRegistrations)</XREngineFactoryRegistrationOutput>
-    <XREngineFactoryRegistrationStamp>$(GeneratedAotFactoryRegistrations).stamp</XREngineFactoryRegistrationStamp>
-    <XREngineEmitPortableFactoryRegistrations>true</XREngineEmitPortableFactoryRegistrations>
+    <XREngineRuntimeContractMode>Portable</XREngineRuntimeContractMode>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,6 +27,5 @@
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
-  <Import Project="../Build/Portable/PortableFactorySources.props" />
-  <Import Project="../Build/Registration/FactoryRegistrations.targets" />
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>

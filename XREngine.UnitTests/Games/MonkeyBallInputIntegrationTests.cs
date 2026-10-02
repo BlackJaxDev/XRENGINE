@@ -188,8 +188,9 @@ public sealed class MonkeyBallInputIntegrationTests
             "Cooked MonkeyBall Input World",
             new XRScene("Cooked MonkeyBall Input Scene", root));
 
-        byte[] payload = MonkeyBallWorldCookedSerializer.Serialize(authored);
-        MonkeyBallWorldAsset cooked = MonkeyBallWorldCookedSerializer.Deserialize(payload);
+        var payload = new System.Buffers.ArrayBufferWriter<byte>();
+        MonkeyBallWorldCookedSerializer.Serialize(authored, payload);
+        MonkeyBallWorldAsset cooked = MonkeyBallWorldCookedSerializer.Deserialize(payload.WrittenSpan);
         cooked.Scenes.Count.ShouldBe(1);
         cooked.Scenes[0].RootNodes.Count.ShouldBe(1);
         return cooked.Scenes[0].RootNodes[0]

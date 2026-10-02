@@ -13,6 +13,8 @@ namespace XREngine.Networking
     [MemoryPackable]
     public sealed partial class PlayerJoinRequest
     {
+        /// <summary>Realtime binary wire protocol explicitly offered by the joining client.</summary>
+        public int WireProtocolVersion { get; set; }
         public string ClientId { get; set; } = string.Empty;
         public string? DisplayName { get; set; }
         public string BuildVersion { get; set; } = "dev";

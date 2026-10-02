@@ -75,6 +75,8 @@ namespace XREngine.Components.Scene.Transforms
             //We're not using the local matrix for this component
             return Matrix4x4.Identity;
         }
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
             => Matrix4x4.CreateTranslation(_interpPoint);
         protected internal void Tick()
