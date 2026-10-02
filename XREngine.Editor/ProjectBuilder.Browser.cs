@@ -1,5 +1,7 @@
 using System.Text.Json;
 using XREngine.Core.Files;
+using XREngine.Core;
+using XREngine.Components.Scripting;
 using XREngine.Diagnostics;
 using XREngine.Editor.Publishing;
 using XREngine.Publishing;
@@ -15,6 +17,7 @@ internal static partial class ProjectBuilder
             "." + Path.GetFileName(context.BuildRoot) + ".browser-stage-" + Guid.NewGuid().ToString("N"));
         private string? _siteRoot;
         private string? _recipePath;
+        private string? _configuration;
         private bool _includesDefaultUiFont;
         private IReadOnlyList<BrowserUiFontCookRequest> _authoredFonts = [];
         private BrowserSharedWorldPackage? _sharedWorldPackage;
@@ -41,6 +44,20 @@ internal static partial class ProjectBuilder
             try
             {
                 Cancellation.ThrowIfCancellationRequested();
+                var activeGame = GameCSProjLoader.GetLoadedAssembly("GAME")
+                    ?? throw new InvalidOperationException("BrowserCook.GameAssemblyMissing: the browser-target game must be loaded before world export.");
+                string gameName = activeGame.GetName().Name!;
+                using IDisposable preferredGameTypes = AotRuntimeMetadataStore.PreferDevelopmentTypes((name, ignoreCase) =>
+                {
+                    string fullName = SerializedTypeIdentity.GetUnqualifiedTypeName(name);
+                    if (name.Length > fullName.Length)
+                    {
+                        string qualifier = name[(fullName.Length + 1)..].Split(',')[0].Trim();
+                        if (!string.Equals(qualifier, gameName, StringComparison.Ordinal))
+                            return null;
+                    }
+                    return activeGame.GetType(fullName, throwOnError: false, ignoreCase: ignoreCase);
+                });
                 if (string.IsNullOrWhiteSpace(context.Project.BrowserSharedWorldPackageManifestPath))
                 {
                     XRWorld world = LoadStartupWorld(context);
@@ -76,6 +93,7 @@ internal static partial class ProjectBuilder
         {
             try
             {
+                _configuration = configuration;
                 _siteRoot = global::CodeManager.Instance.PublishBrowserApplication(
                     configuration, PublishRoot, context.Settings.IncludePdbFiles, Cancellation);
             }
@@ -92,6 +110,8 @@ internal static partial class ProjectBuilder
             {
                 string recipe = _recipePath ?? throw new InvalidOperationException("Browser world export did not produce a recipe.");
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
+                string configuration = _configuration ?? throw new InvalidOperationException("Browser publish configuration was not recorded.");
+                WriteBrowserRuntimeMetadata(configuration, SourceRoot, site);
                 BrowserContentPackageBuilder.Build(recipe, Path.Combine(site, "content"), Cancellation);
                 PublishBrowserSharedWorldPackage(_sharedWorldPackage, Path.Combine(site, "content"), Cancellation);
             }
@@ -275,8 +295,13 @@ internal static partial class ProjectBuilder
         if (settings.SaveSettingsBeforeBuild)
             steps.Add(new BuildStep("Saving project settings", Engine.SaveProjectSettings));
         steps.Add(new BuildStep("Preparing staged browser output", state.Prepare));
-        steps.Add(new BuildStep("Compiling portable game assemblies",
-            () => BuildManagedAssemblies(ResolveConfiguration(settings.Configuration), global::CodeManager.Platform_AnyCPU)));
+        steps.Add(new BuildStep("Compiling portable game assemblies", () =>
+        {
+            global::CodeManager manager = global::CodeManager.Instance;
+            manager.RemakeSolutionAsDLL(false);
+            manager.BuildBrowserGameAssemblyForPublishing(ResolveConfiguration(settings.Configuration),
+                _activeJob?.CancellationToken ?? CancellationToken.None);
+        }));
         steps.Add(new BuildStep("Cooking authored engine startup world", state.ExportAuthoredWorld));
         steps.Add(new BuildStep("Publishing WebAssembly browser application",
             () => state.PublishApplication(ResolveConfiguration(settings.Configuration))));

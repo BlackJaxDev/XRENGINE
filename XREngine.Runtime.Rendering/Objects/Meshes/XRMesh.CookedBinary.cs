@@ -1204,6 +1204,7 @@ public partial class XRMesh : ICookedBinarySerializable
             HasSpillInfluences = false;
             MaxSpillInfluenceCount = 0;
             _maxWeightCount = 0;
+            ApplySkinningBufferState(CaptureSkinningBufferState());
             return;
         }
 
@@ -1257,6 +1258,9 @@ public partial class XRMesh : ICookedBinarySerializable
             throw new InvalidOperationException("Cooked Core4Spill skinning payload is missing spill influence buffers.");
         }
 
+        // The mesh is still construction-owned. Validate the complete restored
+        // aggregate, not buffer references paired with default palette metadata.
+        ApplySkinningBufferState(CaptureSkinningBufferState());
         EnsureComputeSkinningBuffers();
     }
 
@@ -1292,6 +1296,7 @@ public partial class XRMesh : ICookedBinarySerializable
         if (!hasBlendshapes)
         {
             BlendshapeNames = Array.Empty<string>();
+            RebuildBlendshapeNameLookup();
             BlendshapeCounts = null;
             BlendshapeIndices = null;
             BlendshapeDeltas = null;
@@ -1304,6 +1309,7 @@ public partial class XRMesh : ICookedBinarySerializable
             BlendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
             BlendshapeAffectedVertexCount = 0;
             BlendshapeSparseRecordCount = 0;
+            ApplyBlendshapeBufferState(CaptureBlendshapeBufferState());
             return;
         }
 
@@ -1322,6 +1328,7 @@ public partial class XRMesh : ICookedBinarySerializable
         for (int i = 0; i < nameCount; i++)
             names[i] = reader.ReadString();
         BlendshapeNames = names;
+        RebuildBlendshapeNameLookup();
 
         BlendshapeCounts = ReadBufferData(reader, null, allowMetadata: true);
         BlendshapeIndices = ReadBufferData(reader, null, allowMetadata: true);
@@ -1330,6 +1337,7 @@ public partial class XRMesh : ICookedBinarySerializable
         BlendshapeSparseRecords = ReadBufferData(reader, null, allowMetadata: true);
         BlendshapeQuantizedDeltas = ReadBufferData(reader, null, allowMetadata: true);
         BlendshapeQuantizationMetadata = ReadBufferData(reader, null, allowMetadata: true);
+        ApplyBlendshapeBufferState(CaptureBlendshapeBufferState());
     }
 
     private SkinningPlan BuildSkinningPlan()
@@ -1790,6 +1798,7 @@ public partial class XRMesh : ICookedBinarySerializable
             HasSpillInfluences = false;
             MaxSpillInfluenceCount = 0;
             _maxWeightCount = 0;
+            ApplySkinningBufferState(CaptureSkinningBufferState());
             return;
         }
 
@@ -1816,6 +1825,7 @@ public partial class XRMesh : ICookedBinarySerializable
         RegisterBuffer(BoneInfluenceSpillHeaders);
         RegisterBuffer(BoneInfluenceSpillEntries);
 
+        ApplySkinningBufferState(CaptureSkinningBufferState());
         EnsureComputeSkinningBuffers();
     }
 
@@ -1824,6 +1834,7 @@ public partial class XRMesh : ICookedBinarySerializable
         if (payload is null)
         {
             BlendshapeNames = Array.Empty<string>();
+            RebuildBlendshapeNameLookup();
             BlendshapeCounts = null;
             BlendshapeIndices = null;
             BlendshapeDeltas = null;
@@ -1836,10 +1847,12 @@ public partial class XRMesh : ICookedBinarySerializable
             BlendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
             BlendshapeAffectedVertexCount = 0;
             BlendshapeSparseRecordCount = 0;
+            ApplyBlendshapeBufferState(CaptureBlendshapeBufferState());
             return;
         }
 
         BlendshapeNames = payload.Names ?? Array.Empty<string>();
+        RebuildBlendshapeNameLookup();
         BlendshapeShaderVariant = payload.ShaderVariant;
         BlendshapeDeltaStorageMode = payload.StorageMode;
         BlendshapeDeltaEncoding = payload.Encoding;
@@ -1860,6 +1873,7 @@ public partial class XRMesh : ICookedBinarySerializable
         RegisterBuffer(BlendshapeSparseRecords);
         RegisterBuffer(BlendshapeQuantizedDeltas);
         RegisterBuffer(BlendshapeQuantizationMetadata);
+        ApplyBlendshapeBufferState(CaptureBlendshapeBufferState());
     }
 
     private TransformBase[] BuildBonesFromPayload(BoneInfo[] infos)

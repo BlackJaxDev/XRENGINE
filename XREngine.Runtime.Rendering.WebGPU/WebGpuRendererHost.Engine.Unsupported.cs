@@ -16,18 +16,6 @@ public sealed partial class WebGpuRendererHost
     public override bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow)
         => throw UnsupportedEngineOperation(nameof(CalcDotLuminance));
 
-    public override void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
-        => throw UnsupportedEngineOperation(nameof(CalcDotLuminanceAsync));
-
-    public override void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
-        => throw UnsupportedEngineOperation(nameof(CalcDotLuminanceAsync));
-
-    public override void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
-        => throw UnsupportedEngineOperation(nameof(CalcDotLuminanceFrontAsync));
-
-    public override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
-        => throw UnsupportedEngineOperation(nameof(CalcDotLuminanceFrontAsyncCompute));
-
     public override void SetReadBuffer(EReadBufferMode mode)
         => throw UnsupportedEngineOperation(nameof(SetReadBuffer));
 
@@ -37,11 +25,6 @@ public sealed partial class WebGpuRendererHost
     public override float GetDepth(int x, int y)
         => throw UnsupportedEngineOperation(nameof(GetDepth));
 
-    public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback)
-        => throw UnsupportedEngineOperation(nameof(GetPixelAsync));
-
-    public override void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback)
-        => throw UnsupportedEngineOperation(nameof(GetDepthAsync));
 
     public override byte GetStencilIndex(float x, float y)
         => throw UnsupportedEngineOperation(nameof(GetStencilIndex));
@@ -63,9 +46,6 @@ public sealed partial class WebGpuRendererHost
 
     public override void DisableSampleShading()
         => throw UnsupportedEngineOperation(nameof(DisableSampleShading));
-
-    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback)
-        => throw UnsupportedEngineOperation(nameof(GetScreenshotAsync));
 
     public override bool TryReadTextureMipRgbaFloat(
         XRTexture texture,

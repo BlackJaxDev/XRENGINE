@@ -129,8 +129,15 @@ export class GpuEngineFrame {
             throw error;
         }
 
+        const guardCanvasCapture = presentsCanvas &&
+            (r.readback.hasPendingCanvas(r._generation) || r.luminance.hasPendingCanvas(r._generation));
+        let producerScopesOpen = false;
         r._executing = true;
         try {
+            if (guardCanvasCapture) {
+                r.readback.beginCanvasProducerScopes();
+                producerScopesOpen = true;
+            }
             if (!this.staging) {
                 if (uniformCapacity + storageCapacity > r.device.limits.maxBufferSize)
                     throw new RangeError('WebGPU.EngineFrame.StagingCapacity: device buffer limit is too small.');
@@ -138,7 +145,8 @@ export class GpuEngineFrame {
                     usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, label: 'Engine frame staging' });
             }
             r._setOperation('acquire-canvas');
-            c.canvasColor.view = r.context.getCurrentTexture().createView();
+            const canvasTexture = r.context.getCurrentTexture();
+            c.canvasColor.view = canvasTexture.createView();
             c.canvasColor.width = c.canvasDepth.width = r._width;
             c.canvasColor.height = c.canvasDepth.height = r._height;
             c.canvasColor.format = r.format;
@@ -164,12 +172,22 @@ export class GpuEngineFrame {
             r._setOperation('submit-engine-frame');
             r.device.queue.submit(r._submission);
             this.lastSequence = sequence;
+            const producerGate = producerScopesOpen ? r.readback.endCanvasProducerScopes() : undefined;
+            producerScopesOpen = false;
+            // The accepted frame's commands precede these readback copies in queue order.
+            // The acquired canvas texture is still current until this browser task returns.
+            r.readback.captureCanvas(canvasTexture, r._generation, presentsCanvas, producerGate);
+            r.luminance.captureCanvas(canvasTexture, r._generation, presentsCanvas, producerGate);
             r._stats.draws += drawCount;
             r._stats.frameSubmitCalls++;
             r._stats.copiedBytes += length;
             r._stats.uploadedBytes += uniformLength + storageLength;
             return presentsCanvas;
-        } catch (error) { r._fail(error); throw error; }
+        } catch (error) {
+            if (producerScopesOpen) void r.readback.endCanvasProducerScopes();
+            r._fail(error);
+            throw error;
+        }
         finally {
             for (let record = 0; record < count; record++) {
                 this.operations[record]?.plan?.release();

@@ -1,4 +1,6 @@
+using System.Reflection;
 using XREngine.Core.Files;
+using XREngine.Components.Scripting;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -15,6 +17,9 @@ internal static partial class ProjectBuilder
         private readonly HashSet<string> _visiting = new(StringComparer.Ordinal);
         private int _nextSourceOrdinal;
         private readonly Publishing.BrowserMaterialCookProjection _materialProjection = new(engineRoot);
+        private readonly Assembly _gameAssembly = GameCSProjLoader.GetLoadedAssembly("GAME")
+            ?? throw new InvalidOperationException("BrowserCook.GameAssemblyMissing: the compiled game must be loaded before cooking.");
+        private CookedBinarySerializationCallbacks? _cookCallbacks;
 
         public void Dispose() => _materialProjection.Dispose();
 
@@ -38,6 +43,7 @@ internal static partial class ProjectBuilder
         public string Cook(XRAsset asset, string catalogPath, string sourceName)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ValidateGameObjectOwnership(asset);
             if (_entries.ContainsKey(catalogPath))
                 return catalogPath;
             if (!_visiting.Add(catalogPath))
@@ -95,7 +101,7 @@ internal static partial class ProjectBuilder
 
                 string typeName = asset.GetType().AssemblyQualifiedName
                     ?? throw new InvalidOperationException($"Browser asset '{catalogPath}' has no stable runtime type identity.");
-                WriteCookedAsset(asset, Path.Combine(sourceDirectory, sourceName), callbacks: _materialProjection.Callbacks);
+                WriteCookedAsset(asset, Path.Combine(sourceDirectory, sourceName), callbacks: CookCallbacks);
                 _entries.Add(catalogPath, (typeName, sourceName, [.. references.Keys]));
                 _assetTypes.Add(catalogPath, asset.GetType());
                 return catalogPath;
@@ -104,6 +110,26 @@ internal static partial class ProjectBuilder
             {
                 _visiting.Remove(catalogPath);
             }
+        }
+
+        private CookedBinarySerializationCallbacks CookCallbacks => _cookCallbacks ??= new()
+        {
+            OnSerializingValue = ValidateAndProject,
+        };
+
+        private object? ValidateAndProject(object? value)
+        {
+            ValidateGameObjectOwnership(value);
+            return _materialProjection.Callbacks.OnSerializingValue?.Invoke(value) ?? value;
+        }
+
+        private void ValidateGameObjectOwnership(object? value)
+        {
+            if (value is null)
+                return;
+            Type type = value.GetType();
+            if (type.Assembly.GetName().Name == _gameAssembly.GetName().Name && type.Assembly != _gameAssembly)
+                throw new InvalidDataException($"BrowserCook.StaleGameObject: '{type.FullName}' belongs to an older game assembly context; reload the authored world before publishing.");
         }
 
         private static IReadOnlyList<PublishedCookedAssetDependency> DescribeDependencies(XRAsset asset, string catalogPath)

@@ -26,6 +26,14 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected XRViewport? PrimaryShadowViewportOrNull => _primaryShadowViewport;
 
+        internal override BrowserShadowCasterState GetBrowserShadowCasterState()
+            => GetBrowserShadowViewportCasterState(_primaryShadowViewport);
+
+        internal override ulong GetBrowserShadowProjectionSignature()
+            => ShadowCamera is { } camera
+                ? MixBrowserShadowMatrix(14695981039346656037UL, camera.ViewProjectionMatrix)
+                : 0;
+
         protected OneViewLightComponent()
         {
         }
@@ -39,6 +47,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             uint width = ShadowMapResolutionWidth > 0 ? ShadowMapResolutionWidth : DefaultResolution;
             uint height = ShadowMapResolutionHeight > 0 ? ShadowMapResolutionHeight : DefaultResolution;
+            (width, height) = GetEffectiveShadowMapResolution(width, height);
             return new XRViewport(null, width, height)
             {
                 RenderPipeline = new ShadowRenderPipeline(),
@@ -53,7 +62,8 @@ namespace XREngine.Components.Capture.Lights.Types
         public override void SetShadowMapResolution(uint width, uint height)
         {
             base.SetShadowMapResolution(width, height);
-            _primaryShadowViewport?.Resize(width, height);
+            (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
+            _primaryShadowViewport?.Resize(resourceWidth, resourceHeight);
         }
 
         protected abstract XRCameraParameters GetCameraParameters();

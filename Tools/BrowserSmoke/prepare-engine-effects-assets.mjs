@@ -5,11 +5,12 @@ import { createHash } from 'node:crypto';
 
 // Creates an engine-assets recipe for the static smoke world using the exact
 // just-cooked schema-3 shader catalog; BrowserContentCooker verifies every hash.
-const [baseRecipePath, shaderDirectory, outputDirectory] = process.argv.slice(2);
-assert(baseRecipePath && shaderDirectory && outputDirectory,
-    'Usage: node prepare-engine-effects-assets.mjs <base-recipe> <cooked-shaders> <output-directory>');
+const [baseRecipePath, shaderDirectory, fixtureDirectory, outputDirectory] = process.argv.slice(2);
+assert(baseRecipePath && shaderDirectory && fixtureDirectory && outputDirectory,
+    'Usage: node prepare-engine-effects-assets.mjs <base-recipe> <cooked-shaders> <cooked-world-fixture> <output-directory>');
 const recipeRoot = await fs.realpath(path.dirname(baseRecipePath));
 const shaderRoot = await fs.realpath(shaderDirectory);
+const fixtureRoot = await fs.realpath(fixtureDirectory);
 const contained = async (root, relative) => {
     assert(typeof relative === 'string' && /^[A-Za-z0-9_./-]+$/.test(relative) &&
         !path.isAbsolute(relative) && !relative.split('/').includes('..'),
@@ -30,7 +31,9 @@ assert(Array.isArray(catalog.pipelineArtifacts) && catalog.pipelineArtifacts.len
 await fs.mkdir(outputDirectory,{recursive:true});
 const assets=new Map();
 for(const asset of base.assets) {
-    const source = await contained(recipeRoot,asset.source);
+    const root = ['EngineSmokeWorld.bin', 'AotRuntimeMetadata.bin'].includes(asset.source)
+        ? fixtureRoot : recipeRoot;
+    const source = await contained(root,asset.source);
     await fs.copyFile(source,path.join(outputDirectory,asset.source));
     assert(!assets.has(asset.path), `Duplicate base asset ${asset.path}`);
     assets.set(asset.path,asset);
@@ -68,7 +71,7 @@ for(const entry of catalog.artifacts) {
         assets.set(sourcePath,{path:sourcePath,type:assetType,encoding:'utf8-text',source:sourceAssetName,dependencies:[]});
 }
 const recipe={...base,shaderArtifacts,materialVariants:catalog.materialVariants ?? [],
-    pipelineArtifacts:catalog.pipelineArtifacts,assets:[...assets.values()]};
+    pipelineArtifacts:catalog.pipelineArtifacts,computeArtifacts:catalog.computeArtifacts ?? [],assets:[...assets.values()]};
 await fs.writeFile(path.join(outputDirectory,'engine-effects-assets.recipe.json'),JSON.stringify(recipe,null,2)+'\n');
 console.log(JSON.stringify({shaders:shaderArtifacts.length,passes:recipe.pipelineArtifacts.length,
     assets:recipe.assets.length,recipe:path.join(outputDirectory,'engine-effects-assets.recipe.json')}));

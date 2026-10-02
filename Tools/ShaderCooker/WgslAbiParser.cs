@@ -13,6 +13,7 @@ internal sealed partial class WgslAbiParser
     private int _index;
     private bool _vertex;
     private bool _fragment;
+    private int _luminanceScratchDeclarations;
 
     internal WgslAbiParser(string source, string context, ShaderProgramArtifact? expected = null)
     {
@@ -29,7 +30,15 @@ internal sealed partial class WgslAbiParser
             List<WgslAbiAttribute> attributes = Attributes();
             if (Take("struct")) { StructureDeclaration(attributes); continue; }
             if (Take("alias")) { AliasDeclaration(attributes); continue; }
-            if (Take("var")) { ResourceDeclaration(attributes); continue; }
+            if (Take("var"))
+            {
+                if (_expected?.Pass == WebComputeArtifactCatalog.LuminanceReductionKernel &&
+                    _index + 1 < _tokens.Count && _tokens[_index].Text == "<" &&
+                    _tokens[_index + 1].Text == "workgroup")
+                    LuminanceScratchDeclaration(attributes);
+                else ResourceDeclaration(attributes);
+                continue;
+            }
             if (Take("fn")) { FunctionDeclaration(attributes); continue; }
             if (attributes.Count != 0) Fail(attributes[0].Offset, "unsupported attributed declaration");
             // Other module declarations (enable, diagnostic, const, override) cannot declare a resource.
@@ -120,6 +129,21 @@ internal sealed partial class WgslAbiParser
         if (kind == "unsupported") Fail(offset, "unsupported global resource address space or type");
         _bindingNames[(group, binding)] = resourceName.Text;
         if (!_bindings.TryAdd((group, binding), (kind, type, offset))) Fail(offset, "duplicate resource binding");
+    }
+
+    private void LuminanceScratchDeclaration(List<WgslAbiAttribute> attributes)
+    {
+        if (attributes.Count != 0 || ++_luminanceScratchDeclarations != 1)
+            Fail(Current.Offset, "luminance reduction permits one unbound workgroup scratch array");
+        Expect("<");
+        Expect("workgroup");
+        Expect(">");
+        WgslAbiToken name = Identifier();
+        Expect(":");
+        string type = TypeUntil(";");
+        Expect(";");
+        if (name.Text != "sums" || type != "array<vec2f,256>")
+            Fail(name.Offset, "luminance scratch must be exactly 256 vec2f elements");
     }
 
     private void FunctionDeclaration(List<WgslAbiAttribute> attributes)

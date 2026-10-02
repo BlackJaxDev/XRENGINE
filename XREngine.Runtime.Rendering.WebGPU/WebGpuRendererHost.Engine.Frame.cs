@@ -16,6 +16,7 @@ public sealed partial class WebGpuRendererHost
     private readonly byte[] _engineUploadArena = new byte[EngineMaximumUploads * EngineUploadRecordBytes];
     private readonly byte[] _engineStorageArena = new byte[EngineStorageCapacity];
     private readonly List<WebGpuDataBuffer> _enginePendingStorage = new(8);
+    private readonly List<IWebGpuProducedTexture> _engineProducedTextures = new(16);
     private readonly List<int> _engineDeferredReleases = new(EngineFrameMaximumRecords);
     private byte[]? _engineUniformArena;
     private int _engineUniformBuffer;
@@ -136,6 +137,8 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineUploadCount, 0, publishNotifications: false);
         SetField(ref _engineStorageBytes, 0, publishNotifications: false);
         SetField(ref _engineDrawPending, false, publishNotifications: false);
+        _engineProducedTextures.Clear();
+        ResetAuthorizedShadowReuse();
         SetField(ref _engineMeshDrawCount, 0, publishNotifications: false);
         if (_engineMeshResolutionTraceEnabled)
         {
@@ -223,6 +226,12 @@ public sealed partial class WebGpuRendererHost
             _enginePendingStorage.Add(buffer);
     }
 
+    internal void RegisterProducedTexture(IWebGpuProducedTexture texture)
+    {
+        if (!_engineProducedTextures.Contains(texture))
+            _engineProducedTextures.Add(texture);
+    }
+
     internal void StageEngineStorageUpload(int handle, int destinationOffset, ReadOnlySpan<byte> bytes)
     {
         if (!_engineRecording || !_resources.Contains(handle))
@@ -273,6 +282,8 @@ public sealed partial class WebGpuRendererHost
         CommitDirectionalShadowDefaults();
         if (presented && !_engineDrawPending)
         {
+            for (int i = 0; i < _engineProducedTextures.Count; i++)
+                _engineProducedTextures[i].CommitProducedFrame(_engineFrameSequence);
             SetField(ref _submittedEngineSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
             SetField(ref _submittedEngineOutputProperties, output.Properties, publishNotifications: false);
         }

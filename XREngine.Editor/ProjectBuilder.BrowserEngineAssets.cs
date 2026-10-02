@@ -72,6 +72,10 @@ internal static partial class ProjectBuilder
             .OrderBy(static entry => entry.Key, StringComparer.Ordinal)
             .Select(static entry => (object)new { path = entry.Key, type = entry.Value.TypeName, encoding = "cooked-binary",
                 source = entry.Value.Source, dependencies = entry.Value.Dependencies })];
+        const string runtimeMetadataPath = "/engine/Metadata/AotRuntimeMetadata.bin";
+        assets.Add(new { path = runtimeMetadataPath, type = typeof(AotRuntimeMetadata).AssemblyQualifiedName!,
+            encoding = "cooked-binary", source = AotRuntimeMetadataStore.MetadataFileName,
+            dependencies = Array.Empty<string>() });
         if (includesDefaultUiFont)
         {
             CookBrowserDefaultUiFont(sourceDirectory, cancellationToken);
@@ -130,7 +134,7 @@ internal static partial class ProjectBuilder
         byte[] recipe = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schema = 1, format = "xrengine-assets", startupWorld = worldPath,
-            startupSettings = "/game/startup.asset", shaderArtifacts = shaderReferences,
+            startupSettings = "/game/startup.asset", publishedMetadata = runtimeMetadataPath, shaderArtifacts = shaderReferences,
             defaultUiFont = includesDefaultUiFont ? BrowserDefaultUiFontPath : null,
             materialVariants, pipelineArtifacts, computeArtifacts, assets
         }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });

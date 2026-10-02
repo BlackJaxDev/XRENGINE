@@ -485,3 +485,12 @@ Tools/BrowserSmoke/playwright-report/
 # Browser canvas host is authored source, not a generated asset folder.
 !XREngine.Runtime.Platform.Browser/Assets/
 !XREngine.Runtime.Platform.Browser/Assets/**
+
+# The rendering sample's saved world and game sources are authored inputs.
+!Samples/RenderingParity/Assets/
+Samples/RenderingParity/Assets/*
+!Samples/RenderingParity/Assets/Scripts/
+!Samples/RenderingParity/Assets/Scripts/**
+!Samples/RenderingParity/Assets/Worlds/
+!Samples/RenderingParity/Assets/Worlds/**
+!Samples/RenderingParity/Assets/startup.asset

@@ -277,6 +277,15 @@ namespace XREngine.Scene
         {
             ShadowScratch scratch = CurrentShadowScratch;
 
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            IBrowserShadowReuseCapability? browserReuse = !collectVisibleNow
+                ? renderer as IBrowserShadowReuseCapability : null;
+            ulong outputGeneration = renderer?.CurrentFrameOutput?.TargetGeneration ?? 0;
+            int browserInterval = browserReuse is not null && outputGeneration != 0
+                ? RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.ShadowUpdateInterval : 1;
+            ulong shadowFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong casterMembershipRevision = World.VisualScene.ShadowCasterMembershipRevision;
+
             SynchronizeDirectionalShadowAtlasMode();
 
             if (collectVisibleNow)
@@ -299,20 +308,44 @@ namespace XREngine.Scene
                 {
                     DirectionalLightComponent light = DynamicDirectionalLights[i];
                     if (ShouldRenderLegacyDirectionalShadowMap(light, out bool renderCascades))
+                    {
+                        if (browserInterval > 1 && browserReuse is not null &&
+                            !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
+                                browserInterval, browserReuse))
+                            continue;
                         light.RenderShadowMap(collectVisibleNow, renderCascades);
+                        if (browserInterval > 1 && browserReuse is not null)
+                            light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
+                    }
                 }
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
                     SpotLightComponent light = DynamicSpotLights[i];
                     bool relevant = IsSpotShadowRelevantForRender(light, scratch);
                     if (relevant && (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light)))
+                    {
+                        if (browserInterval > 1 && browserReuse is not null &&
+                            !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
+                                browserInterval, browserReuse))
+                            continue;
                         light.RenderShadowMap(collectVisibleNow);
+                        if (browserInterval > 1 && browserReuse is not null)
+                            light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
+                    }
                 }
                 for (int i = 0; i < DynamicPointLights.Count; i++)
                 {
                     PointLightComponent light = DynamicPointLights[i];
                     if (!light.UsesPointShadowAtlasForCurrentEncoding)
+                    {
+                        if (browserInterval > 1 && browserReuse is not null && light.CastsShadows &&
+                            !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
+                                browserInterval, browserReuse))
+                            continue;
                         light.RenderShadowMap(collectVisibleNow);
+                        if (browserInterval > 1 && browserReuse is not null && light.CastsShadows)
+                            light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
+                    }
                 }
             }
             finally

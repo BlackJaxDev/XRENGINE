@@ -96,6 +96,8 @@ internal sealed partial class WgslAbiParser
     private void ValidateEngineLayout()
     {
         ShaderProgramArtifact expected = _expected!;
+        if (expected.Pass == WebComputeArtifactCatalog.LuminanceReductionKernel && _luminanceScratchDeclarations != 1)
+            Fail(0, "luminance reduction requires its bounded workgroup scratch array");
         CheckEntry(expected.VertexEntryPoint, ShaderStageVisibility.Vertex);
         CheckEntry(expected.FragmentEntryPoint, ShaderStageVisibility.Fragment);
         CheckEntry(expected.ComputeEntryPoint, ShaderStageVisibility.Compute);

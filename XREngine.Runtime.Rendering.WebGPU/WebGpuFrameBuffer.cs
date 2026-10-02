@@ -193,9 +193,9 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         foreach (AbstractRenderAPIObject texture in _textures)
             switch (texture)
             {
-                case WebGpuTexture2D twoDimensional: twoDimensional.MarkRecorded(); break;
-                case WebGpuTexture2DArray array: array.MarkRecorded(); break;
-                case WebGpuTextureCube cube: cube.MarkRecorded(); break;
+                case WebGpuTexture2D twoDimensional: twoDimensional.MarkProduced(); break;
+                case WebGpuTexture2DArray array: array.MarkProduced(); break;
+                case WebGpuTextureCube cube: cube.MarkProduced(); break;
             }
     }
 

@@ -19,6 +19,7 @@ public partial class BrowserWebGpuQualitySettings : XRBase
     private int _maxDirectionalShadowDimension = 2048;
     private int _maxPointShadowDimension = 2048;
     private int _maxSpotShadowDimension = 2048;
+    private int _shadowUpdateInterval = 1;
     private int _maxTextureDimension;
     private bool _enableGtao = true;
     private bool _enableBloom = true;
@@ -48,16 +49,20 @@ public partial class BrowserWebGpuQualitySettings : XRBase
     public int MaxSpotLights { get => _maxSpotLights; set => SetField(ref _maxSpotLights, value); }
 
     [Category("Browser WebGPU")]
-    [Description("Maximum admitted authored directional shadow-map width or height. Maps are not resized implicitly.")]
+    [Description("Maximum browser directional shadow-map width or height; authored resolution is preserved while the output target scales down.")]
     public int MaxDirectionalShadowDimension { get => _maxDirectionalShadowDimension; set => SetField(ref _maxDirectionalShadowDimension, value); }
 
     [Category("Browser WebGPU")]
-    [Description("Maximum admitted authored point shadow-map width or height. Maps are not resized implicitly.")]
+    [Description("Maximum browser point shadow-map width or height; authored resolution is preserved while the output target scales down.")]
     public int MaxPointShadowDimension { get => _maxPointShadowDimension; set => SetField(ref _maxPointShadowDimension, value); }
 
     [Category("Browser WebGPU")]
-    [Description("Maximum admitted authored spot shadow-map width or height. Maps are not resized implicitly.")]
+    [Description("Maximum browser spot shadow-map width or height; authored resolution is preserved while the output target scales down.")]
     public int MaxSpotShadowDimension { get => _maxSpotShadowDimension; set => SetField(ref _maxSpotShadowDimension, value); }
+
+    [Category("Browser WebGPU")]
+    [Description("Maximum rendered frames between unchanged shadow-map updates. Scene or output changes refresh immediately.")]
+    public int ShadowUpdateInterval { get => _shadowUpdateInterval; set => SetField(ref _shadowUpdateInterval, value); }
 
     [Category("Browser WebGPU")]
     [Description("Maximum admitted GPU texture width or height, including render targets. Zero uses the device limit.")]
@@ -85,6 +90,7 @@ public partial class BrowserWebGpuQualitySettings : XRBase
             MaxDirectionalShadowDimension = 1024,
             MaxPointShadowDimension = 1024,
             MaxSpotShadowDimension = 1024,
+            ShadowUpdateInterval = 2,
             MaxTextureDimension = 2048,
         },
         "low" => new()
@@ -98,6 +104,7 @@ public partial class BrowserWebGpuQualitySettings : XRBase
             MaxDirectionalShadowDimension = 512,
             MaxPointShadowDimension = 512,
             MaxSpotShadowDimension = 512,
+            ShadowUpdateInterval = 3,
             MaxTextureDimension = 1024,
             EnableGtao = false,
             EnableBloom = false,
@@ -114,6 +121,7 @@ public partial class BrowserWebGpuQualitySettings : XRBase
             MaxDirectionalLights is < 0 or > 4 || MaxPointLights is < 0 or > 8 || MaxSpotLights is < 0 or > 8 ||
             MaxDirectionalShadowDimension is < 128 or > 2048 ||
             MaxPointShadowDimension is < 128 or > 2048 || MaxSpotShadowDimension is < 128 or > 2048 ||
+            ShadowUpdateInterval is < 1 or > 120 ||
             MaxTextureDimension is < 0 or > 16384 || MaxTextureDimension is > 0 and < 128 ||
             MaxTextureDimension > 0 && (MaxTextureDimension < MaxBackingDimension ||
                 MaxTextureDimension < MaxDirectionalShadowDimension ||

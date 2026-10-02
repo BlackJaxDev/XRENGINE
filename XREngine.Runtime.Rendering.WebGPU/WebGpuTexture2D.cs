@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Owns an exact-format 2D WebGPU texture and its generation-scoped render views.</summary>
-public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
+public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>, IWebGpuProducedTexture
 {
     private readonly Dictionary<int, int> _views = [];
     private int _handle;
@@ -144,6 +144,38 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
 
     internal bool WasRecordedInFrame(uint frameSequence) => _lastRecordedFrame == frameSequence;
 
+    private uint _lastProducedFrame;
+    private uint _lastCommittedProducedFrame;
+    private ulong _productionTicket;
+    private ulong _committedProductionTicket;
+
+    public void MarkProduced()
+    {
+        MarkRecorded();
+        if (_productionTicket == ulong.MaxValue)
+            throw new InvalidOperationException("WebGPU.Texture.ProductionTicketExhausted: replace the renderer.");
+        SetField(ref _productionTicket, _productionTicket + 1, publishNotifications: false);
+        SetField(ref _lastProducedFrame, Renderer.EngineFrameSequence, publishNotifications: false);
+        Renderer.RegisterProducedTexture(this);
+    }
+
+    public void CommitProducedFrame(uint frameSequence)
+    {
+        if (_lastProducedFrame == frameSequence)
+        {
+            SetField(ref _lastCommittedProducedFrame, frameSequence, publishNotifications: false);
+            SetField(ref _committedProductionTicket, _productionTicket, publishNotifications: false);
+        }
+    }
+
+    public bool WasProducedInFrame(uint frameSequence) => _lastProducedFrame == frameSequence;
+
+    public bool HasCommittedProduction
+        => IsGenerated && _lastProducedFrame != 0 && _lastProducedFrame == _lastCommittedProducedFrame &&
+            _productionTicket == _committedProductionTicket;
+
+    public ulong ProductionTicket => _productionTicket;
+
     private void UploadMipmaps(int handle, uint width, uint height, uint samples,
         ESizedInternalFormat format, Mipmap2D[] mips)
     {
@@ -181,6 +213,9 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
         Renderer.RetireEngineResourceAfterFrame(_handle);
         SetField(ref _handle, 0);
         SetField(ref _lastRecordedFrame, 0u);
+        SetField(ref _lastProducedFrame, 0u);
+        SetField(ref _lastCommittedProducedFrame, 0u);
+        SetField(ref _committedProductionTicket, 0u);
         _invalidated = true;
     }
 

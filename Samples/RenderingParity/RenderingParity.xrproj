@@ -1,0 +1,8 @@
+__type: XREngine.XRProject
+ProjectName: RenderingParity
+ProjectVersion: 1.0.0
+EngineVersion: 1.0.0
+ID: 9d51cfae-5e09-476f-b5e8-0f81235574b3
+Name: Rendering Parity
+StartupScenePath: Worlds/RenderingParityWorld.asset
+BrowserShaderArtifactManifestPath: Assets/Shaders/WebGPU/manifest.json

@@ -75,7 +75,10 @@ namespace XREngine.Scene.Transforms
         private static Type[] ResolveTransformTypes()
         {
             if (!XRRuntimeEnvironment.IsPublishedBuild)
+            {
+                AotRuntimeMetadataStore.NoteBrowserDevelopmentTypeDiscovery(nameof(TransformBase));
                 return GetAllTransformTypes();
+            }
 
             AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
             if (metadata.TransformTypes is null || metadata.TransformTypes.Length == 0)
@@ -215,6 +218,17 @@ namespace XREngine.Scene.Transforms
         [MemoryPackIgnore]
         public Guid EffectiveSerializedReferenceId
             => SerializedReferenceId != Guid.Empty ? SerializedReferenceId : ID;
+
+        // YAML owns its reference-only representation. The generic cooked member
+        // stream instead needs this inherited nonpublic bridge so both scene-owned
+        // transforms and detached carriers retain the same authored identity without
+        // changing their independent runtime/object-cache IDs.
+        internal const string CookedReferenceIdentityMemberName = nameof(CookedBinarySerializedReferenceId);
+        protected Guid CookedBinarySerializedReferenceId
+        {
+            get => EffectiveSerializedReferenceId;
+            set => SerializedReferenceId = value;
+        }
 
         public bool MatchesSerializedReferenceId(Guid id)
             => id != Guid.Empty && EffectiveSerializedReferenceId == id;
@@ -819,6 +833,9 @@ namespace XREngine.Scene.Transforms
 
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
         {
+            if (SerializedReferenceId == Guid.Empty)
+                throw new InvalidDataException("CookedTransform.ReferenceIdentityMissing: generic transform cache lacks its serialized reference identity; recook content with the matching engine build.");
+
             // Deserialization may replace the EventList while property notifications are suppressed.
             // Re-attach invariants that are normally installed via property change callbacks.
             _children ??= new EventList<TransformBase>() { ThreadSafe = true };

@@ -294,6 +294,7 @@ public abstract class XRWorldObjectBase : XRObjectBase
             return;
         }
 
+        AotRuntimeMetadataStore.NoteBrowserDevelopmentTypeDiscovery(nameof(XRWorldObjectBase));
         CollectReplicableProperties();
     }
 

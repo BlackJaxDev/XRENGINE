@@ -25,6 +25,8 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
     public string StartupWorldPath { get; private set; } = string.Empty;
     public string? StartupSettingsPath { get; private set; }
     public string? DefaultUiFontPath { get; private set; }
+    public string? PublishedMetadataPath { get; private set; }
+    public string? PublishedMetadataFingerprint { get; private set; }
 
     /// <summary>Validates the complete manifest before exposing asset identities to the engine.</summary>
     public static async Task<BrowserEngineAssetSource> OpenAsync(string manifestUrl, CancellationToken cancellationToken = default)
@@ -98,6 +100,27 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
                 paths[index++] = dependency.GetString()!;
             _assets.Add(path, new RuntimeAssetCatalogEntry(path, type, encoding, Array.AsReadOnly(paths)));
         }
+        if (root.TryGetProperty("publishedMetadata", out JsonElement metadataReference))
+        {
+            string? metadataPath = metadataReference.ValueKind == JsonValueKind.String
+                ? metadataReference.GetString() : null;
+            if (metadataReference.ValueKind != JsonValueKind.String
+                || metadataPath != "/engine/Metadata/AotRuntimeMetadata.bin"
+                || !_assets.TryGetValue(metadataPath, out RuntimeAssetCatalogEntry? metadataEntry)
+                || metadataEntry.Encoding != RuntimeAssetEncoding.CookedBinary
+                || metadataEntry.TypeName != typeof(AotRuntimeMetadata).AssemblyQualifiedName
+                    && metadataEntry.TypeName != "XREngine.AotRuntimeMetadata, XREngine.Data"
+                || metadataEntry.Dependencies.Count != 0)
+                throw new InvalidDataException("AssetSource.PublishedMetadataInvalid: expected a standalone published type payload.");
+            PublishedMetadataPath = metadataPath;
+            foreach (JsonElement item in root.GetProperty("assets").EnumerateArray())
+            {
+                if (item.GetProperty("path").GetString() != metadataPath)
+                    continue;
+                PublishedMetadataFingerprint = item.GetProperty("hash").GetString();
+                break;
+            }
+        }
         if (root.TryGetProperty("defaultUiFont", out JsonElement fontReference))
         {
             if (fontReference.ValueKind != JsonValueKind.String)
@@ -136,7 +159,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
 
     private void ReadComputeArtifacts(JsonElement computes)
     {
-        if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 1)
+        if (computes.ValueKind != JsonValueKind.Array || computes.GetArrayLength() > 2)
             throw new InvalidDataException("AssetSource.ComputeArtifactBudgetExceeded.");
         HashSet<string> identities = _shaderArtifacts.Select(static artifact => artifact.Identity).ToHashSet(StringComparer.Ordinal);
         foreach (JsonElement compute in computes.EnumerateArray())
@@ -291,6 +314,8 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
         _pipelineArtifactIdentities.Clear();
         _computeArtifactIdentities.Clear();
         DefaultUiFontPath = null;
+        PublishedMetadataPath = null;
+        PublishedMetadataFingerprint = null;
         _verifiedWorldIdentity = null;
         _verifiedNativeWorldPath = null;
     }

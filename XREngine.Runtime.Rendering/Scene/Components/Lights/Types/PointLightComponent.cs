@@ -256,6 +256,28 @@ namespace XREngine.Components.Capture.Lights.Types
                 AllowUIRender = false,
             };
 
+        internal override BrowserShadowCasterState GetBrowserShadowCasterState()
+        {
+            ulong hash = 14695981039346656037UL;
+            bool requiresRefresh = false;
+            for (int face = 0; face < _viewports.Length; face++)
+            {
+                BrowserShadowCasterState state = GetBrowserShadowViewportCasterState(_viewports[face]);
+                hash = MixBrowserShadowValue(hash, state.Signature);
+                requiresRefresh |= state.RequiresRefresh;
+            }
+            return new(hash, requiresRefresh);
+        }
+
+        internal override ulong GetBrowserShadowProjectionSignature()
+        {
+            ulong hash = 14695981039346656037UL;
+            for (int face = 0; face < ShadowFaceCount; face++)
+                if (TryGetShadowFaceCamera(face, out XRCamera camera))
+                    hash = MixBrowserShadowMatrix(hash, camera.ViewProjectionMatrix);
+            return hash;
+        }
+
         private void EnsureShadowResources()
         {
             if (_viewports.Length == ShadowFaceCount && _shadowCameras.Length == ShadowFaceCount)
@@ -268,6 +290,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 : ShadowMapResolutionHeight;
             if (resolution == 0)
                 resolution = 1024u;
+            (resolution, _) = GetEffectiveShadowMapResolution(resolution, resolution);
 
             _viewports = new XRViewport[ShadowFaceCount].Fill(_ => CreateShadowViewport(resolution));
 
@@ -752,6 +775,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             base.SetShadowMapResolution(max, max);
 
+            (max, _) = GetEffectiveShadowMapResolution(max, max);
             foreach (XRViewport vp in _viewports)
                 vp.Resize(max, max);
         }

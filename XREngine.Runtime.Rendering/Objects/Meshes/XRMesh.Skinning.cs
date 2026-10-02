@@ -239,12 +239,17 @@ public partial class XRMesh
         {
             if (weightsPerVertex is not null && boneToIndexTable.Count > 0)
             {
-                staging = new XRMesh(deferObjectCachePublication: true)
+                // The temporary owner and its metadata are detached. Replacement
+                // buffers created below still join the caller's atomic publication.
+                using (XRObjectBase.SuppressObjectCacheRegistration())
                 {
-                    VertexCount = VertexCount,
-                    UtilizedBones = [.. utilizedBones],
-                    SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector,
-                };
+                    staging = new XRMesh(deferObjectCachePublication: true)
+                    {
+                        VertexCount = VertexCount,
+                        UtilizedBones = [.. utilizedBones],
+                        SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector,
+                    };
+                }
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
                 staging.PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
                 prepared = staging.CaptureSkinningBufferState();

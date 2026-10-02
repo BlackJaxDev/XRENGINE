@@ -1,6 +1,6 @@
 namespace XREngine.Rendering;
 
-/// <summary>One RGBA8 or BGRA8 color mip rectangle, returned in native channel order with tightly packed rows.</summary>
+/// <summary>One RGBA8 or BGRA8 mip rectangle, or a complete depth32float mip, returned as tightly packed native four-byte pixels.</summary>
 public readonly record struct BrowserTextureReadbackDescription(int TextureHandle, int MipLevel,
     int X, int Y, int Width, int Height)
 {
@@ -11,6 +11,6 @@ public readonly record struct BrowserTextureReadbackDescription(int TextureHandl
         _ = BrowserResourceHandle.FromPacked(TextureHandle);
         if (MipLevel < 0 || MipLevel > 31 || X < 0 || Y < 0 || Width <= 0 || Height <= 0 ||
             (long)Width * Height > BrowserBufferReadbackDescription.MaximumByteLength / 4)
-            throw new ArgumentOutOfRangeException(nameof(Width), "Readback requires a positive bounded color texture rectangle.");
+            throw new ArgumentOutOfRangeException(nameof(Width), "Readback requires a positive bounded four-byte texture rectangle.");
     }
 }

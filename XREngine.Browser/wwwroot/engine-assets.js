@@ -54,6 +54,16 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         assetPath(value.startupSettings);
         if (!assets.has(value.startupSettings)) throw new Error('AssetSource.StartupSettingsMissing.');
     }
+    if (value.publishedMetadata !== undefined) {
+        assetPath(value.publishedMetadata);
+        const metadata = assets.get(value.publishedMetadata);
+        if (value.publishedMetadata !== '/engine/Metadata/AotRuntimeMetadata.bin' || !metadata
+            || metadata.encoding !== 'cooked-binary'
+            || !(metadata.type === 'XREngine.AotRuntimeMetadata, XREngine.Data'
+                || metadata.type.startsWith('XREngine.AotRuntimeMetadata, XREngine.Data,'))
+            || metadata.dependencies.length !== 0)
+            throw new Error('AssetSource.PublishedMetadataInvalid: expected a standalone published type payload.');
+    }
     if (value.defaultUiFont !== undefined) {
         assetPath(value.defaultUiFont);
         const font = assets.get(value.defaultUiFont);
@@ -160,13 +170,16 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         }
     }
     if (value.computeArtifacts !== undefined) {
-        if (!Array.isArray(value.computeArtifacts) || value.computeArtifacts.length > 1)
+        if (!Array.isArray(value.computeArtifacts) || value.computeArtifacts.length > 2)
             throw new Error('AssetSource.ComputeArtifactBudgetExceeded.');
+        const kernels = new Set();
         for (const compute of value.computeArtifacts) {
             if (!compute || typeof compute !== 'object' || Array.isArray(compute)
-                || Object.keys(compute).length !== 2 || compute.kernel !== 'packed-skinning'
-                || !validSha256(compute.descriptorIdentity))
+                || Object.keys(compute).length !== 2
+                || !['packed-skinning', 'luminance-reduction'].includes(compute.kernel)
+                || !validSha256(compute.descriptorIdentity) || kernels.has(compute.kernel))
                 throw new Error('AssetSource.ComputeArtifactInvalid.');
+            kernels.add(compute.kernel);
             const descriptor = shaderDescriptors.get(compute.descriptorIdentity);
             if (!descriptor) throw new Error('AssetSource.ComputeArtifactMissing.');
             if (descriptor.bytes > CONTENT_LIMITS.jsonBytes)
@@ -220,6 +233,39 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
         const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, compute.descriptorIdentity, entry.path);
         try {
             const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+            if (compute.kernel === 'luminance-reduction') {
+                const names = ['Source', 'Partials', 'Result', 'Parameters'];
+                const physical = ['source', 'partials', 'result', 'parameters'];
+                const kinds = ['texture-2d-array-float', 'storage', 'storage', 'uniform'];
+                const sizes = [0, 8, 4, 64];
+                const bindings = descriptor?.layout?.bindings;
+                const members = bindings?.[3]?.members;
+                const memberNames = ['origin', 'extent', 'mip', 'layers', 'tilesX', 'tilesY', 'tileCount', 'mode', 'weights'];
+                const providers = ['Origin', 'Extent', 'Mip', 'Layers', 'TilesX', 'TilesY', 'TileCount', 'Mode', 'Weights'];
+                const types = ['vec2<u32>', 'vec2<u32>', 'u32', 'u32', 'u32', 'u32', 'u32', 'u32', 'vec4<f32>'];
+                const offsets = [0, 8, 16, 20, 24, 28, 32, 36, 48];
+                const bytesPerMember = [8, 8, 4, 4, 4, 4, 4, 4, 16];
+                if (descriptor?.pass !== 'luminance-reduction' || descriptor.target !== 'WebGPUWgsl'
+                    || descriptor.semanticSchemaIdentity !== 'xrengine.engine.compute.v1'
+                    || !descriptor.entryPoints || Object.keys(descriptor.entryPoints).length !== 1
+                    || descriptor.entryPoints.compute !== 'reduce'
+                    || !Array.isArray(descriptor.workgroupSize)
+                    || descriptor.workgroupSize.length !== 3 || descriptor.workgroupSize.some((size, i) => size !== [256, 1, 1][i])
+                    || Object.hasOwn(descriptor, 'materialVariant')
+                    || !descriptor.pipeline || typeof descriptor.pipeline !== 'object'
+                    || Array.isArray(descriptor.pipeline) || Object.keys(descriptor.pipeline).length !== 0
+                    || !Array.isArray(bindings) || bindings.length !== 4
+                    || bindings.some((binding, i) => binding.name !== names[i] || binding.physicalName !== physical[i]
+                        || binding.kind !== kinds[i] || binding.group !== 0 || binding.binding !== i
+                        || binding.bytes !== sizes[i] || binding.owner !== 'Engine' || binding.frequency !== 'Object'
+                        || binding.dynamic !== false || (binding.runtimeArray === true) !== (i === 1 || i === 2)
+                        || !Array.isArray(binding.visibility) || binding.visibility.length !== 1 || binding.visibility[0] !== 'compute'
+                        || !Array.isArray(binding.members) || binding.members.length !== (i === 3 ? 9 : 0))
+                    || members.some((member, i) => member.name !== memberNames[i] || member.provider !== providers[i]
+                        || member.type !== types[i] || member.offset !== offsets[i] || member.bytes !== bytesPerMember[i]))
+                    throw new Error('AssetSource.ComputeArtifactDescriptorMismatch.');
+                continue;
+            }
             const expectedNames = ['PackedSkinningData', 'BonePalette', 'ActiveMorphs', 'DeformedPositions', 'DeformedAttributes', 'Update'];
             const physicalNames = ['data', 'palette', 'activeMorphs', 'vertices', 'attributes', 'update'];
             const expectedKinds = ['read-only-storage', 'read-only-storage', 'read-only-storage', 'storage', 'storage', 'uniform'];

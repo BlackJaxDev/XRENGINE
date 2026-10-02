@@ -28,14 +28,22 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ComponentPropertyChanged(object? s, IXRPropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
+            if (!BeginLifetimeMutation())
+                return;
+            try
             {
-                Component.Transform.WorldMatrixChanged += Component_WorldMatrixPreviewChanged;
-                Component.Transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+                if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
+                {
+                    Component.Transform.WorldMatrixChanged += Component_WorldMatrixPreviewChanged;
+                    Component.Transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+                }
             }
+            finally { EndLifetimeMutation(); }
         }
         private void ComponentPropertyChanging(object? s, IXRPropertyChangingEventArgs e)
         {
+            if (_retiring)
+                return;
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
             {
                 Component.Transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;
@@ -80,20 +88,57 @@ namespace XREngine.Components.Scene.Mesh
             return searchRoot.FindSelfOrDescendantBySerializedReferenceId(referenceId) ?? source;
         }
 
+        /// <summary>Checks completed world ownership for source carriers that can now resolve to scene transforms.</summary>
+        internal bool RequiresSceneTransformRebind()
+        {
+            if (_retiring)
+                return false;
+            TransformBase? searchRoot = GetTransformReferenceSearchRoot();
+            if (searchRoot is null)
+                return false;
+
+            bool hasSkinning = false;
+            lock (_lodsLock)
+            {
+                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
+                {
+                    if (node.Value.Renderer.Mesh is not { HasSkinning: true } mesh)
+                        continue;
+                    hasSkinning = true;
+                    if (mesh.NeedsSerializedTransformRebind(searchRoot))
+                        return true;
+                }
+            }
+
+            return hasSkinning &&
+                (!ReferenceEquals(ResolveTransformReference(RootBone, searchRoot), RootBone) ||
+                 !ReferenceEquals(ResolveTransformReference(_skinnedBoundsRootTransform, searchRoot), _skinnedBoundsRootTransform));
+        }
+
         private XRMesh? CreateRuntimeMesh(XRMesh? sourceMesh, TransformBase? searchRoot)
         {
             if (sourceMesh is null || searchRoot is null || !sourceMesh.NeedsSerializedTransformRebind(searchRoot))
                 return sourceMesh;
 
             XRMesh reboundMesh = sourceMesh.CloneForRuntimeTransformRebind();
-            if (!reboundMesh.RebindSerializedTransformReferences(searchRoot, remapVertexWeights: false))
-            {
-                reboundMesh.Destroy(now: true);
-                return sourceMesh;
-            }
-
+            // Rebinding writes callback-capable live bone bind matrices. Adopt the
+            // clone before those callbacks so constructor failure can retire it.
             _ownedRuntimeMeshes.Add(reboundMesh);
-            return reboundMesh;
+            try
+            {
+                if (!reboundMesh.RebindSerializedTransformReferences(searchRoot, remapVertexWeights: false))
+                {
+                    ReleaseOwnedRuntimeMesh(reboundMesh);
+                    return sourceMesh;
+                }
+                return reboundMesh;
+            }
+            catch (Exception bindingFailure)
+            {
+                try { ReleaseOwnedRuntimeMesh(reboundMesh); }
+                catch (Exception cleanupFailure) { bindingFailure.Data["RuntimeMeshRebindCleanupFailure"] = cleanupFailure; }
+                throw;
+            }
         }
 
         private static bool IsSelfOrDescendantOf(TransformBase root, TransformBase candidate)
@@ -109,10 +154,13 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ReleaseOwnedRuntimeMesh(XRMesh? mesh)
         {
-            if (mesh is null || !_ownedRuntimeMeshes.Remove(mesh))
+            if (mesh is null || !_ownedRuntimeMeshes.Contains(mesh))
                 return;
 
             mesh.Destroy(now: true);
+            if (!mesh.IsDestroyed)
+                throw new InvalidOperationException("RenderableMesh.RuntimeMeshRetirementVetoed: runtime clone ownership is retained for retry.");
+            _ownedRuntimeMeshes.Remove(mesh);
         }
 
         #endregion
@@ -121,27 +169,37 @@ namespace XREngine.Components.Scene.Mesh
 
         private void Rendering_SettingsChanged()
         {
-            bool isSkinned = IsSkinned;
-            if (!RenderDeformationSettingsChanged(isSkinned))
+            if (!BeginLifetimeMutation())
                 return;
-
-            CaptureRenderDeformationSettings(isSkinned);
-            InvalidateGpuDeformationState();
-            MarkSkinnedDataDirty();
-
-            if (isSkinned)
+            try
             {
-                XRMeshRenderer? renderer = CurrentLODRenderer;
-                if (renderer?.EnsureSkinningBuffers(logWarnings: false) == true)
-                    renderer.RefreshBoneMatricesFromRenderState();
+                bool isSkinned = IsSkinned;
+                if (!RenderDeformationSettingsChanged(isSkinned))
+                    return;
 
-                if (RootBone is not null)
-                    MarkPendingRootBoneRenderMatrix(GetCurrentTransformMatrix(RootBone));
-                else
-                    SetSkinnedRootRenderMatrix(GetCurrentTransformMatrix(Component.Transform));
+                CaptureRenderDeformationSettings(isSkinned);
+                InvalidateGpuDeformationState();
+                if (_retiring)
+                    return;
+                MarkSkinnedDataDirty();
+
+                if (isSkinned)
+                {
+                    XRMeshRenderer? renderer = CurrentLODRenderer;
+                    if (renderer?.EnsureSkinningBuffers(logWarnings: false) == true)
+                        renderer.RefreshBoneMatricesFromRenderState();
+                    if (_retiring)
+                        return;
+
+                    if (RootBone is not null)
+                        MarkPendingRootBoneRenderMatrix(GetCurrentTransformMatrix(RootBone));
+                    else
+                        SetSkinnedRootRenderMatrix(GetCurrentTransformMatrix(Component.Transform));
+                }
+
+                MarkPendingComponentRenderMatrix(GetCurrentTransformMatrix(Component.Transform));
             }
-
-            MarkPendingComponentRenderMatrix(GetCurrentTransformMatrix(Component.Transform));
+            finally { EndLifetimeMutation(); }
         }
 
         #endregion
@@ -153,6 +211,8 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
+            if (_retiring)
+                return;
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: null, rootMatrix: renderMatrix);
@@ -164,17 +224,25 @@ namespace XREngine.Components.Scene.Mesh
 
         private void RootBone_WorldMatrixPreviewChanged(TransformBase rootBone, Matrix4x4 worldMatrix)
         {
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
-            if (!hasSkinning)
+            if (!BeginLifetimeMutation())
                 return;
+            try
+            {
+                if (_retiring)
+                    return;
+                bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
+                if (!hasSkinning)
+                    return;
 
-            Matrix4x4 basis = GetSkinnedBasisMatrix();
-            // Keep the basis for the GPU skinned BVH only. Skinned culling bounds use the single
-            // world-space-LocalCullingVolume + identity-offset convention; republish via the aggregate
-            // path instead of stamping the basis as an offset (which would pair the existing world-space
-            // volume with the root matrix and double-transform the box -> culling "tower" flicker).
-            SetSkinnedRootRenderMatrix(basis);
-            TryApplySkinnedBoneCullingBounds();
+                Matrix4x4 basis = GetSkinnedBasisMatrix();
+                // Keep the basis for the GPU skinned BVH only. Skinned culling bounds use the single
+                // world-space-LocalCullingVolume + identity-offset convention; republish via the aggregate
+                // path instead of stamping the basis as an offset (which would pair the existing world-space
+                // volume with the root matrix and double-transform the box -> culling "tower" flicker).
+                SetSkinnedRootRenderMatrix(basis);
+                TryApplySkinnedBoneCullingBounds();
+            }
+            finally { EndLifetimeMutation(); }
         }
 
         /// <summary>
@@ -182,6 +250,8 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
+            if (_retiring)
+                return;
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: renderMatrix, rootMatrix: null);
@@ -193,43 +263,61 @@ namespace XREngine.Components.Scene.Mesh
 
         private void Component_WorldMatrixPreviewChanged(TransformBase component, Matrix4x4 worldMatrix)
         {
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
-            if (hasSkinning)
-            {
-                Matrix4x4 basis = GetSkinnedBasisMatrix();
-                // World-space bounds + identity offset convention; republish via aggregate path
-                // rather than stamping the basis as a culling offset (torn-read tower bug).
-                SetSkinnedRootRenderMatrix(basis);
-                TryApplySkinnedBoneCullingBounds();
+            if (!BeginLifetimeMutation())
                 return;
-            }
+            try
+            {
+                if (_retiring)
+                    return;
+                bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
+                if (hasSkinning)
+                {
+                    Matrix4x4 basis = GetSkinnedBasisMatrix();
+                    // World-space bounds + identity offset convention; republish via aggregate path
+                    // rather than stamping the basis as a culling offset (torn-read tower bug).
+                    SetSkinnedRootRenderMatrix(basis);
+                    TryApplySkinnedBoneCullingBounds();
+                    return;
+                }
 
-            RenderInfo?.CullingOffsetMatrix = worldMatrix;
+                RenderInfo?.CullingOffsetMatrix = worldMatrix;
+            }
+            finally { EndLifetimeMutation(); }
         }
 
         private void ApplyImmediateRenderMatrixUpdate(Matrix4x4? componentMatrix, Matrix4x4? rootMatrix)
         {
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
-            if (hasSkinning)
-            {
-                Matrix4x4 basis = GetSkinnedBasisMatrix();
-                _rc.WorldMatrix = Matrix4x4.Identity;
-                // Basis is for the GPU skinned BVH; TryApplySkinnedBoneCullingBounds publishes the
-                // world-space aggregate with an identity offset (the single skinned convention).
-                SetSkinnedRootRenderMatrix(basis);
-                _ = TryApplySkinnedBoneCullingBounds();
-
+            if (!BeginLifetimeMutation())
                 return;
+            try
+            {
+                if (_retiring)
+                    return;
+                bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
+                if (hasSkinning)
+                {
+                    Matrix4x4 basis = GetSkinnedBasisMatrix();
+                    _rc.WorldMatrix = Matrix4x4.Identity;
+                    // Basis is for the GPU skinned BVH; TryApplySkinnedBoneCullingBounds publishes the
+                    // world-space aggregate with an identity offset (the single skinned convention).
+                    SetSkinnedRootRenderMatrix(basis);
+                    _ = TryApplySkinnedBoneCullingBounds();
+
+                    return;
+                }
+
+                Matrix4x4 matrix = componentMatrix ?? GetCurrentTransformMatrix(Component.Transform);
+                _rc?.WorldMatrix = matrix;
+
+                RenderInfo?.CullingOffsetMatrix = matrix;
             }
-
-            Matrix4x4 matrix = componentMatrix ?? GetCurrentTransformMatrix(Component.Transform);
-            _rc?.WorldMatrix = matrix;
-
-            RenderInfo?.CullingOffsetMatrix = matrix;
+            finally { EndLifetimeMutation(); }
         }
 
         internal void QueueCurrentRenderMatrixUpdate()
         {
+            if (_retiring)
+                return;
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(
@@ -246,12 +334,16 @@ namespace XREngine.Components.Scene.Mesh
 
         private void QueuePendingRenderMatrixUpdate()
         {
+            if (_retiring)
+                return;
             if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
                 _pendingRenderMatrixUpdates.Enqueue(this);
         }
 
         private void MarkPendingComponentRenderMatrix(Matrix4x4 renderMatrix)
         {
+            if (_retiring)
+                return;
             lock (_pendingRenderMatrixLock)
             {
                 _pendingComponentRenderMatrix = renderMatrix;
@@ -263,6 +355,8 @@ namespace XREngine.Components.Scene.Mesh
 
         private void MarkPendingRootBoneRenderMatrix(Matrix4x4 renderMatrix)
         {
+            if (_retiring)
+                return;
             lock (_pendingRenderMatrixLock)
             {
                 _pendingRootBoneRenderMatrix = renderMatrix;
@@ -274,57 +368,68 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyPendingRenderMatrixUpdates()
         {
-            int componentVersion;
-            int rootBoneVersion;
-            Matrix4x4 componentMatrix;
-
-            lock (_pendingRenderMatrixLock)
+            if (!BeginLifetimeMutation())
             {
-                componentVersion = _pendingComponentRenderMatrixVersion;
-                rootBoneVersion = _pendingRootBoneRenderMatrixVersion;
-                componentMatrix = _pendingComponentRenderMatrix;
-            }
-
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
-            if (hasSkinning)
-            {
-                Matrix4x4 basis = GetSkinnedBasisMatrix();
-                _rc?.WorldMatrix = Matrix4x4.Identity;
-                // Keep the basis available for the GPU skinned BVH, but DO NOT publish it as the
-                // culling offset. Skinned culling bounds use a single convention: a world-space
-                // LocalCullingVolume paired with an IDENTITY CullingOffsetMatrix (see
-                // PublishSkinnedWorldCullingBounds). Writing the basis here as an offset-only update
-                // (without updating LocalCullingVolume) pairs the prior world-space aggregate volume
-                // with the root render matrix, double-transforming the box into the culling "tower"
-                // that flickers the mesh out. The bounds publish below owns the offset.
-                SetSkinnedRootRenderMatrix(basis);
-            }
-            else
-            {
-                _rc?.WorldMatrix = componentMatrix;
-
-                RenderInfo?.CullingOffsetMatrix = componentMatrix;
-            }
-
-            Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
-
-            lock (_pendingRenderMatrixLock)
-            {
-                if (_pendingComponentRenderMatrixVersion != componentVersion ||
-                    _pendingRootBoneRenderMatrixVersion != rootBoneVersion)
-                {
-                    QueuePendingRenderMatrixUpdate();
+                    Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
+                    return;
                 }
-            }
+                try
+                {
+                int componentVersion;
+                int rootBoneVersion;
+                Matrix4x4 componentMatrix;
 
-            // Matrix changes are applied in the world's SwapBuffers phase after visible
-            // collection has already run. Publish the command snapshot here too; otherwise
-            // dirty-delta command swapping can leave the rendered matrix one frame behind.
-            _rc?.SwapBuffers();
+                lock (_pendingRenderMatrixLock)
+                {
+                    componentVersion = _pendingComponentRenderMatrixVersion;
+                    rootBoneVersion = _pendingRootBoneRenderMatrixVersion;
+                    componentMatrix = _pendingComponentRenderMatrix;
+                }
 
-            ProcessSkinnedBoundsRefresh();
-            if (hasSkinning && TryApplySkinnedBoneCullingBounds())
+                bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
+                if (hasSkinning)
+                {
+                    Matrix4x4 basis = GetSkinnedBasisMatrix();
+                    _rc?.WorldMatrix = Matrix4x4.Identity;
+                    // Keep the basis available for the GPU skinned BVH, but DO NOT publish it as the
+                    // culling offset. Skinned culling bounds use a single convention: a world-space
+                    // LocalCullingVolume paired with an IDENTITY CullingOffsetMatrix (see
+                    // PublishSkinnedWorldCullingBounds). Writing the basis here as an offset-only update
+                    // (without updating LocalCullingVolume) pairs the prior world-space aggregate volume
+                    // with the root render matrix, double-transforming the box into the culling "tower"
+                    // that flickers the mesh out. The bounds publish below owns the offset.
+                    SetSkinnedRootRenderMatrix(basis);
+                }
+                else
+                {
+                    _rc?.WorldMatrix = componentMatrix;
+
+                    RenderInfo?.CullingOffsetMatrix = componentMatrix;
+                }
+
+                Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
+                if (_retiring)
+                    return;
+
+                lock (_pendingRenderMatrixLock)
+                {
+                    if (_pendingComponentRenderMatrixVersion != componentVersion ||
+                        _pendingRootBoneRenderMatrixVersion != rootBoneVersion)
+                    {
+                        QueuePendingRenderMatrixUpdate();
+                    }
+                }
+
+                // Matrix changes are applied in the world's SwapBuffers phase after visible
+                // collection has already run. Publish the command snapshot here too; otherwise
+                // dirty-delta command swapping can leave the rendered matrix one frame behind.
                 _rc?.SwapBuffers();
+
+                ProcessSkinnedBoundsRefresh();
+                if (!_retiring && hasSkinning && TryApplySkinnedBoneCullingBounds() && !_retiring)
+                    _rc?.SwapBuffers();
+            }
+            finally { EndLifetimeMutation(); }
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

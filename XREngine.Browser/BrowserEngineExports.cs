@@ -75,6 +75,16 @@ public static partial class BrowserEngineExports
             stage = "open asset catalog";
             _source = await BrowserEngineAssetSource.OpenAsync(manifestUrl, token);
             token.ThrowIfCancellationRequested();
+            stage = "install published type metadata";
+            if (_source.PublishedMetadataPath is not { } metadataPath
+                || _source.PublishedMetadataFingerprint is not { } metadataFingerprint)
+                throw new InvalidDataException("PublishedMetadata.Missing: the browser world bundle has no published type metadata.");
+            byte[] metadataBytes = await _source.ReadAllBytesAsync(metadataPath, token);
+            token.ThrowIfCancellationRequested();
+            if (requestedEpoch != Volatile.Read(ref _epoch))
+                throw new OperationCanceledException("Browser world startup was superseded before type metadata installation.");
+            AotRuntimeMetadataStore.InstallVerifiedBrowserMetadata(metadataBytes, metadataFingerprint);
+            XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Published);
             stage = "install runtime asset services";
             _previousStorageSource = DirectStorageIO.Source;
             DirectStorageIO.Source = _source;

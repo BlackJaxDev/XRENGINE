@@ -48,8 +48,8 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
                     directional.ShadowMapStorageFormat is not (EShadowMapStorageFormat.Depth16 or EShadowMapStorageFormat.Depth24 or EShadowMapStorageFormat.Depth32Float) ||
                     directional.SoftShadowMode != ESoftShadowMode.ContactHardeningPcss ||
                     directional.BlockerSamples != 8 || directional.FilterSamples != 8 ||
-                    directional.ShadowMapResolutionWidth is 0 or > 2048 || directional.ShadowMapResolutionHeight is 0 or > 2048)
-                    throw new NotSupportedException($"BrowserCook.ShadowProfileUnsupported: '{path}' requires standalone non-cascaded directional depth, PCSS 8/8, no contact shadows, and dimensions at most 2048.");
+                    directional.ShadowMapResolutionWidth == 0 || directional.ShadowMapResolutionHeight == 0)
+                    throw new NotSupportedException($"BrowserCook.ShadowProfileUnsupported: '{path}' requires standalone non-cascaded directional depth, PCSS 8/8, no contact shadows, and positive authored dimensions.");
                 break;
             case PointLightComponent point:
                 _pointLights++;

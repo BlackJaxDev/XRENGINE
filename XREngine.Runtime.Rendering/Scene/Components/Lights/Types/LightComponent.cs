@@ -4,6 +4,7 @@ using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Components.Lights;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
@@ -203,6 +204,7 @@ namespace XREngine.Components.Capture.Lights.Types
                         UpdateLightMatrix(Transform.RenderMatrix);
                     break;
                 case nameof(ShadowMap):
+                    ResetBrowserShadowReuse();
                     ReleaseCookedLocalShadowResources(prev as XRMaterialFrameBuffer);
                     if (prev is XRMaterialFrameBuffer previousShadowMap && previousShadowMap.Material is not null)
                         previousShadowMap.Material.SettingShadowUniforms -= SetShadowMapUniforms;
@@ -869,21 +871,45 @@ namespace XREngine.Components.Capture.Lights.Types
                 (!IsActiveInHierarchy || !CastsShadows))
                 return;
 
+            (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
+
             if (ShadowMap is null && UsesCookedLocalShadowResources)
             {
-                CreateCookedLocalShadowResources(width, height);
+                CreateCookedLocalShadowResources(resourceWidth, resourceHeight);
                 return;
             }
 
             if (ShadowMap is null)
-                ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(width, height))
+                ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(resourceWidth, resourceHeight))
                 {
                     // Named so GPU frame dumps attribute shadow passes to this light
                     // instead of falling back to the null-target "Swapchain" label.
                     Name = $"{GetType().Name}.{ID:N}.ShadowMapFbo",
                 };
             else
-                ShadowMap.Resize(width, height);
+                ShadowMap.Resize(resourceWidth, resourceHeight);
+        }
+
+        /// <summary>Returns output-local shadow dimensions without changing the authored light resolution.</summary>
+        public (uint Width, uint Height) GetEffectiveShadowMapResolution(uint width, uint height)
+        {
+            if (RuntimeEngineMaterialConstructionServices.Target != EngineMaterialConstructionTarget.WebGpuCooked)
+                return (width, height);
+
+            BrowserWebGpuQualitySettings quality = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality;
+            uint limit = (uint)(this switch
+            {
+                DirectionalLightComponent => quality.MaxDirectionalShadowDimension,
+                PointLightComponent => quality.MaxPointShadowDimension,
+                SpotLightComponent => quality.MaxSpotShadowDimension,
+                _ => Math.Max(quality.MaxDirectionalShadowDimension,
+                    Math.Max(quality.MaxPointShadowDimension, quality.MaxSpotShadowDimension)),
+            });
+            uint largest = Math.Max(width, height);
+            if (largest <= limit || largest == 0)
+                return (width, height);
+            return ((uint)Math.Max(1UL, (ulong)width * limit / largest),
+                (uint)Math.Max(1UL, (ulong)height * limit / largest));
         }
 
         /// <summary>

@@ -10,6 +10,9 @@ internal static partial class WebGpuImports
     [JSImport("beginTextureReadback", "xrengine.webgpu")]
     internal static partial int BeginTextureReadback(int session, int handle, int mipLevel, int x, int y, int width, int height);
 
+    [JSImport("beginCanvasReadback", "xrengine.webgpu")]
+    internal static partial int BeginCanvasReadback(int session, int generation, int x, int y, int width, int height);
+
     [JSImport("beginCompletion", "xrengine.webgpu")]
     internal static partial int BeginCompletion(int session);
 
