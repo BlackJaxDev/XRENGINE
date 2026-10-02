@@ -399,6 +399,24 @@ math defect. The check now waits for two completed ready frames after mutation;
 numeric assertions and tolerances are unchanged. The next end-to-end CI run
 must verify that diagnosis and the remaining effect assertions.
 
+The Linux Chromium job at exact commit
+`9e1962ae99bd281f9f8e982a8e4b03d1bcbb8e33` passed
+[run 36968996486](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36968996486).
+All 21 effect samples and eight output resizes pass, including 1×1 and odd
+extents, face coverage, AO radius/power/multibounce, direct-light and occluded
+emission isolation, bloom threshold/strength, debug-bloom output and restart.
+The formerly stale contact reading now includes direct illumination (HDR red
+`0.3008984375` in case 11). Both effects produce nineteen draws; disabling AO,
+bloom, or both produces thirteen, ten, or four respectively. Every retained
+sample has zero retiring resources and zero retained readback tickets/bytes;
+normal-sized output settles at 235 live resources after warmup and resize.
+The fresh restart has 220 live resources before those extra warmed variants.
+The [artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36968996486/artifacts/11211596268)
+contains captures and target values. All preceding Linux browser checks pass.
+The overall workflow still failed its independent Windows job on pinned-source
+checkout line endings, before Editor publishing. This is software effect
+correctness, not UI pixels, canonical game execution or device performance.
+
 ## Shared bitmap screen UI implementation
 
 The shared canvas command now follows display composition, retaining
