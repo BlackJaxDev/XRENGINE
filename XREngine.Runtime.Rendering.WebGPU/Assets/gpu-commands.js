@@ -263,7 +263,7 @@ export class GpuCommands {
                     for (const target of descriptor.fragment.targets) {
                         if (!target) continue;
                         object(target, ['format', 'blend', 'writeMask']);
-                        oneOf(target.format, ['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb'], 'color target format');
+                        oneOf(target.format, ['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb', 'rgba16float'], 'color target format');
                         integer(target.writeMask ?? 15, 0, 15, 'color write mask');
                         if (target.blend) {
                             object(target.blend, ['color', 'alpha']);

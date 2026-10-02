@@ -250,6 +250,132 @@ async function textureCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
+// Independent analytic reference at the center of the normal-bearing engine
+// quad. It never supplies pixels or shader source to the renderer.
+function litReference(sampleCase) {
+    const baseColor = sampleCase === 5 ? [0.1, 0.45, 0.25] : [0.4, 0.2, 0.1];
+    const roughness = sampleCase === 6 ? 0.9 : 0.6, metallic = sampleCase === 7 ? 1 : 0.3;
+    const specular = sampleCase === 8 ? 0 : 0.5, opacity = sampleCase === 9 ? 0.35 : 0.7;
+    const emission = sampleCase === 10 ? 8 : 0.25, exposure = sampleCase === 11 ? 0.25 : 1;
+    const directional = [0, 2, 3].includes(sampleCase) ? 0 : sampleCase === 12 ? 0.5 : 2;
+    const point = [2, 4].includes(sampleCase) ? 2 : 0, spot = [3, 4].includes(sampleCase) ? 2 : 0;
+    const attenuation = (1 - (2 / 10) ** 4) ** 2 / (2 ** 2 + 1) * 3;
+    const light = [0.7, 0.5, 0.3], distribution = 1 / (Math.PI * roughness ** 4);
+    const hdr = baseColor.map((albedo, channel) => {
+        const f0 = 0.04 * (1 - metallic) + albedo * metallic;
+        const fresnel = f0 + (1 - f0) * 2 ** (-5.55473 - 6.98316);
+        const direct = (1 - fresnel) * (1 - metallic) * albedo / Math.PI + specular * distribution * fresnel / 4.0001;
+        return albedo * (0.08 + emission) + direct * light[channel] * (directional + (point + spot) * attenuation);
+    });
+    const display = hdr.map(value => {
+        const exposed = value * exposure;
+        return Math.round(255 * Math.min(1, exposed * 1.6 / (exposed + 0.6)) ** (1 / 2.2));
+    });
+    return { baseColor, roughness, metallic, specular, opacity, emission, exposure,
+        lightIntensities: { directional, point, spot }, hdr: [...hdr, opacity], display: [...display, 255] };
+}
+
+async function litCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-lit-hdr-tonemap', config);
+    try {
+        await page.goto(`${origin}/diagnostics/engine-mesh.html?probe=lit&manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
+            `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
+        await page.locator('#start').click();
+        const names = ['ambient', 'directional', 'point', 'spot', 'combined', 'base-color', 'roughness',
+            'metallic', 'specular', 'opacity', 'hdr-emission', 'exposure', 'light-intensity', 'restored'];
+        report.litCases = [];
+        let identity, initialLive;
+        for (let sampleCase = 0; sampleCase < names.length; sampleCase++) {
+            if (sampleCase) await page.evaluate(value => window.engineMeshDiagnostic.setLitCase(value), sampleCase);
+            await page.waitForFunction(() => {
+                const status = document.querySelector('#status')?.textContent ?? '';
+                return status.startsWith('Engine mesh lit diagnostic rendered') || status.startsWith('Failed:') || status.startsWith('Error:');
+            });
+            const status = await page.locator('#status').textContent();
+            assert(status.startsWith('Engine mesh lit diagnostic rendered'), `BrowserSmoke.EngineLitFrameFailed: ${status}`);
+            const expected = litReference(sampleCase);
+            const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `engine-lit-${sampleCase}-${names[sampleCase]}.png`) });
+            const pixels = await capturePixels(page, png,
+                [{ name: names[sampleCase], x: 256, y: 256, expected: expected.display, tolerance: 3 }]);
+            const hdr = await page.evaluate(() => window.engineMeshDiagnostic.readHdrCenter());
+            const state = await page.evaluate(() => window.engineMeshDiagnostic.litState());
+            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            report.litCases.push({ sampleCase, name: names[sampleCase], expected, hdr, pixels, state, statistics });
+            assert(hdr.format === 'rgba16float' && hdr.width === 512 && hdr.height === 512,
+                'BrowserSmoke.EngineHdrTargetMissing: the scene must render into the real 512x512 RGBA16F engine target.');
+            for (let channel = 0; channel < 4; channel++) {
+                const tolerance = Math.max(0.004, expected.hdr[channel] * 0.015);
+                assert(hdr.min[channel] >= expected.hdr[channel] - tolerance && hdr.max[channel] <= expected.hdr[channel] + tolerance,
+                    `BrowserSmoke.LitHdrMismatch: ${names[sampleCase]} channel ${channel} expected ${expected.hdr[channel]}±${tolerance}, got ${hdr.min[channel]}..${hdr.max[channel]}.`);
+                const sample = pixels.samples[0];
+                assert(sample.min[channel] >= expected.display[channel] - 3 && sample.max[channel] <= expected.display[channel] + 3,
+                    `BrowserSmoke.LitTonemapMismatch: ${names[sampleCase]} channel ${channel} expected ${expected.display[channel]}±3, got ${sample.min[channel]}..${sample.max[channel]}.`);
+            }
+            assert(state.sampleCase === sampleCase && state.semantic === 'StandardLitColorV1' && state.pipeline === 'DefaultRenderPipeline' &&
+                state.shaderRevision === state.initialShaderRevision && state.authoredShaderCount === 0 &&
+                state.directionalLights === 1 && state.pointLights === 1 && state.spotLights === 1 && state.castsShadows === false,
+                'BrowserSmoke.EngineLitIdentity: the real engine material, pipeline, and unshadowed light contract changed.');
+            assert(state.shaders.length >= 2 && state.pipelines.length >= 2,
+                'BrowserSmoke.EngineLitProgramsMissing: lit HDR and presentation require separate cooked GPU programs.');
+            const currentIdentity = JSON.stringify({ shaders: state.shaders, pipelines: state.pipelines });
+            identity ??= currentIdentity;
+            assert(currentIdentity === identity, 'BrowserSmoke.EngineLitShaderReplacement: numeric updates replaced GPU shader/pipeline identity.');
+            assert(statistics.draws >= 2 && statistics.frameSubmitCalls > 0 && statistics.packets === 0 && statistics.focusedPipeline === null,
+                'BrowserSmoke.EngineLitSubmission: lighting must use real engine mesh and tonemap commands.');
+            initialLive ??= statistics.resources.live;
+            assert(statistics.resources.live <= initialLive,
+                'BrowserSmoke.EngineLitRetention: numeric changes grew live GPU resources.');
+        }
+        assert(report.litCases[10].hdr.min[0] > 1,
+            'BrowserSmoke.EngineHdrClamped: emission above one did not survive the linear HDR target.');
+        report.litResizes = [];
+        for (const extent of [384, 256, 640, 320, 512]) {
+            await page.evaluate(size => window.engineMeshDiagnostic.resize(size, size), extent);
+            await page.waitForFunction(() => {
+                const status = document.querySelector('#status')?.textContent ?? '';
+                return status.startsWith('Engine mesh lit diagnostic rendered') || status.startsWith('Failed:') || status.startsWith('Error:');
+            });
+            const status = await page.locator('#status').textContent();
+            assert(status.startsWith('Engine mesh lit diagnostic rendered'), `BrowserSmoke.EngineLitResizeFailed: ${status}`);
+            await page.waitForFunction(size => {
+                const host = window.engineMeshDiagnostic;
+                if (!host.session || host.statistics()?.resources?.retiring !== 0) return false;
+                const targets = host.litState().hdrTargets;
+                return targets.length === 1 && targets[0].width === size && targets[0].height === size;
+            }, extent,
+                { timeout: Math.min(config.timeout, 15000) });
+            const hdr = await page.evaluate(() => window.engineMeshDiagnostic.readHdrCenter());
+            assert(hdr.width === extent && hdr.height === extent,
+                `BrowserSmoke.EngineLitStaleExtent: expected ${extent}, got ${hdr.width}x${hdr.height}.`);
+            const expected = litReference(13);
+            const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `engine-lit-resize-${extent}.png`) });
+            const pixels = await capturePixels(page, png,
+                [{ name: `resize-${extent}`, x: extent / 2, y: extent / 2, expected: expected.display, tolerance: 3 }]);
+            assert(pixels.width === extent && pixels.height === extent, 'BrowserSmoke.EngineLitResizeScreenshotExtent.');
+            for (let channel = 0; channel < 4; channel++) {
+                assert(Math.abs(hdr.average[channel] - expected.hdr[channel]) <= Math.max(0.004, expected.hdr[channel] * 0.015),
+                    `BrowserSmoke.EngineLitResizeHdrMismatch: extent ${extent}, channel ${channel}.`);
+                assert(Math.abs(pixels.samples[0].average[channel] - expected.display[channel]) <= 3,
+                    `BrowserSmoke.EngineLitResizeTonemapMismatch: extent ${extent}, channel ${channel}.`);
+            }
+            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            report.litResizes.push({ extent, hdr, pixels, statistics });
+            assert(statistics.resources.live <= initialLive,
+                `BrowserSmoke.EngineLitResizeRetention: extent ${extent} retained ${statistics.resources.live}, initially ${initialLive}.`);
+        }
+        await page.screenshot({ path: path.join(config.output, 'engine-lit-page.png'), fullPage: true });
+        await page.locator('#stop').click();
+        assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),
+            'BrowserSmoke.EngineLitTeardown: the lit diagnostic renderer survived stop.');
+        assertNoBrowserErrors(events);
+    } catch (error) {
+        report.litFailure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
+        await page.screenshot({ path: path.join(config.output, 'engine-lit-failure.png'), fullPage: true }).catch(() => {});
+        throw error;
+    } finally { await context.close(); }
+}
+
 async function gpuCanaryCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'independent-gpu-canary', config);
     try {
@@ -438,6 +564,8 @@ async function main() {
         else report.checks.push({ name: 'engine-depth', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.engineManifest) await check('engine-texture-sampling-lifetime', () => textureCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-texture-sampling-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
+        if (config.engineManifest) await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
+        else report.checks.push({ name: 'engine-lit-hdr-tonemap', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {
             await captureGpuProcessState(browser, report, 'after-engine-depth');
             await check('independent-gpu-canary-diagnostic-only', () => gpuCanaryCheck(browser, hosted.origin, report, config));

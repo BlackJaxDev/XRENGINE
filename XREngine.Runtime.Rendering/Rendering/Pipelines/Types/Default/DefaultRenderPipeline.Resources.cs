@@ -41,6 +41,7 @@ public partial class DefaultRenderPipeline
         AoModeFieldBit2 = 1UL << 28,
         AoModeFieldBit3 = 1UL << 29,
         VelocityResourcesEnabled = 1UL << 30,
+        WebForwardLit = 1UL << 31,
     }
 
     private const ulong AoModeFieldMask = 0xFUL << 26;
@@ -83,12 +84,16 @@ public partial class DefaultRenderPipeline
     internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
         RequireSupportedOutputResources();
+        if (UsesWebOutputTier)
+            return default;
         return GlobalIlluminationProviderRegistry.BuildResourceVariant(GlobalIlluminationPlan, viewport);
     }
 
     internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
         RequireSupportedOutputResources();
+        if (UsesWebOutputTier)
+            return (ulong)DefaultPipelineResourceFeature.WebForwardLit;
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
 
         if (viewport?.CapturePolicy.UsesMinimalDirectFboPath == true)
@@ -179,6 +184,11 @@ public partial class DefaultRenderPipeline
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RequireSupportedOutputResources();
+        if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.WebForwardLit) != 0)
+        {
+            DeclareWebResources(builder);
+            return;
+        }
         if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.MinimalDirectCapture) != 0)
             return;
 

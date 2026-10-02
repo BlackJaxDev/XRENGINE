@@ -10,7 +10,8 @@ namespace XREngine.Tools.ShaderCooker;
 internal static class SlangWgslCompiler
 {
     private const int MaxSourceBytes = 1024 * 1024;
-    private const int MaxReflectionBytes = 64 * 1024;
+    // Flat bounded lighting records produce repeated per-stage reflection data.
+    private const int MaxReflectionBytes = 256 * 1024;
     private const int MaxDepfileBytes = 512 * 1024;
     private const int MaxDiagnosticCharacters = 64 * 1024;
     private const int MaxInputFiles = 4096;

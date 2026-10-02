@@ -139,6 +139,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     protected abstract Lazy<XRMaterial> InvalidMaterialFactory { get; }
 
+    private readonly object _invalidMaterialSync = new();
+    private XRMaterial? _invalidMaterial;
+    private ObjectCacheOwnership? _invalidMaterialOwnership;
+
     /// <summary>
     /// Gets the invalid material for this pipeline.
     /// This material is used when a render command references a missing or invalid material.
@@ -146,7 +150,38 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     [Browsable(false)]
     [YamlIgnore]
     public XRMaterial InvalidMaterial
-        => InvalidMaterialFactory.Value;
+    {
+        get
+        {
+            if (System.Threading.Volatile.Read(ref _invalidMaterial) is { } material)
+                return material;
+            lock (_invalidMaterialSync)
+            {
+                ObjectDisposedException.ThrowIf(IsDestroyed, this);
+                if (_invalidMaterial is not null)
+                    return _invalidMaterial;
+
+                // Own only allocations made by the factory. Custom pipelines may
+                // return an authored material that remains borrowed from its asset owner.
+                using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+                material = InvalidMaterialFactory.Value;
+                _invalidMaterialOwnership = publication.CompleteWithOwnership();
+                System.Threading.Volatile.Write(ref _invalidMaterial, material);
+                return material;
+            }
+        }
+    }
+
+    protected override void OnDestroying()
+    {
+        lock (_invalidMaterialSync)
+        {
+            _invalidMaterialOwnership?.Dispose();
+            _invalidMaterialOwnership = null;
+            System.Threading.Volatile.Write(ref _invalidMaterial, null);
+        }
+        base.OnDestroying();
+    }
 
     private RenderPipelinePostProcessSchema _postProcessSchema = RenderPipelinePostProcessSchema.Empty;
 

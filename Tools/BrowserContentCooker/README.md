@@ -34,6 +34,29 @@ That abbreviated recipe requires the referenced assets to be added; the `Example
 
 The fixed profile identifies the matching browser raster shader/material ABI. Content and host must use the same profile; incompatible ABI changes require a profile version bump rather than silently reinterpreting existing payloads.
 
+## Engine asset catalogs
+
+Recipes with `schema: 1` and `format: "xrengine-assets"` package ordinary cooked
+engine assets with `startupWorld`, optional `startupSettings`, and `assets`.
+The optional `shaderArtifacts` array names exact hash-owned shader descriptor
+and source paths. Material variants use explicit semantic keys; pipeline-owned
+shaders use the separate optional `pipelineArtifacts` array:
+
+```json
+"pipelineArtifacts": [
+  { "pass": "tonemap", "descriptorIdentity": "<lowercase SHA-256 descriptor hash>" }
+]
+```
+
+The placeholder must be replaced by the 64-character descriptor hash in
+`shaderArtifacts`. Only the `tonemap` pass is supported. Entries have exactly
+these two fields, no repeated passes, and at most 16 entries. The referenced
+hash-owned descriptor must declare `pass: "tonemap"` and `target: "WebGPUWgsl"`.
+Unknown passes, malformed entries, missing references, and mismatched descriptor
+metadata fail before output files are written. Omitted or empty catalogs do not
+select a shader implicitly by its name or source path. These engine catalogs
+are independent of the frozen forward-renderer recipe format below.
+
 ## Service requirements
 
 Schema 1 recipes remain supported unchanged. Schema 2 adds exactly one required root property:

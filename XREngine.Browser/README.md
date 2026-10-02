@@ -95,6 +95,17 @@ declaration. Browser startup rejects duplicate keys, missing hashes, and
 mismatched descriptors before activating the world. A missing catalog entry
 does not trigger a shader-name or authored-source fallback.
 
+Pipeline-owned shaders use a separate optional `pipelineArtifacts` array. An
+entry has exactly `pass: "tonemap"` and `descriptorIdentity` containing the
+lowercase SHA-256 hash of a descriptor already listed in `shaderArtifacts`.
+Only `tonemap` is supported; unknown passes, duplicate passes, unknown fields,
+missing references, and arrays exceeding 16 entries are rejected. The cooker,
+browser loader, and managed source require the hash-owned descriptor to declare
+the same pass and the `WebGPUWgsl` target. The browser verifies these descriptor
+bytes before exposing the catalog, and managed startup resolves the module from
+the verified shader catalog. Absence leaves tonemapping unsupported; shader
+names and source paths never select a pipeline artifact.
+
 Keep hash-addressed cooked shader payloads under `Assets/shaders/` as LF bytes.
 Line-ending conversion changes their hashes and causes the loader to reject them.
 

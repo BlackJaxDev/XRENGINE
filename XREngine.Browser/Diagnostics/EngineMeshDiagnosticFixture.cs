@@ -15,10 +15,10 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Browser.Diagnostics;
 
 /// <summary>
-/// Static engine-object depth fixture. It does not begin play, install physics,
+/// Static engine-object raster fixture. It does not begin play, install physics,
 /// or represent production RuntimeWorld/browser gameplay acceptance.
 /// </summary>
-internal sealed class EngineMeshDiagnosticFixture : IDisposable
+internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
 {
     private readonly WebGpuRendererHost _renderer;
     private readonly RuntimeSceneHost _scene = new();
@@ -26,49 +26,69 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
     private readonly XRViewport _viewport;
     private readonly XRMesh _mesh;
     private readonly XRMaterial _material;
-    private readonly XRShader _vertex;
-    private readonly XRShader _fragment;
-    private readonly EngineMeshDiagnosticPipeline _pipeline;
+    private readonly XRShader? _vertex;
+    private readonly XRShader? _fragment;
+    private readonly RenderPipeline _pipeline;
+    private readonly bool _lit;
     private XRTexture2D? _texture;
     private bool _disposed;
 
-    public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height)
+    public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height,
+        ShaderProgramArtifact? tonemapArtifact = null)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
         _ = RuntimeRenderingHostServices.Factories;
         bool textured = artifact.Pass == "texture-probe";
-        if (artifact.Pass is not ("depth-probe" or "texture-probe") || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
+        _lit = tonemapArtifact is not null;
+        if ((_lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe")) ||
+            artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
             throw new ArgumentException("The fixture requires an explicitly cooked engine raster diagnostic artifact.", nameof(artifact));
         _renderer = renderer;
         using IDisposable suppressWrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
-        _vertex = new XRShader(EShaderType.Vertex)
+        if (_lit)
         {
-            Name = artifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
-            EntryPoint = artifact.VertexEntryPoint, CookedArtifact = artifact,
-        };
-        _fragment = new XRShader(EShaderType.Fragment)
+            _material = XRMaterial.CreateColorMaterialDeferred(new ColorF4(0.4f, 0.2f, 0.1f, 0.7f));
+            _material.Name = "Mutable standard lit engine surface";
+            _pipeline = new DefaultRenderPipeline { WebTonemapArtifact = tonemapArtifact };
+        }
+        else
         {
-            Name = artifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
-            EntryPoint = artifact.FragmentEntryPoint, CookedArtifact = artifact,
-        };
-        _material = new XRMaterial(_vertex, _fragment)
-        {
-            Name = artifact.Name, RenderPass = (int)EDefaultRenderPass.OpaqueForward,
-            RenderOptions = new RenderingParameters
+            _vertex = new XRShader(EShaderType.Vertex)
             {
-                CullMode = ECullMode.None,
-                ExcludeFromCpuOcclusion = true,
-                DepthTest = new DepthTest { Enabled = ERenderParamUsage.Enabled, UpdateDepth = true, Function = EComparison.Less },
-            },
-        };
+                Name = artifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
+                EntryPoint = artifact.VertexEntryPoint, CookedArtifact = artifact,
+            };
+            _fragment = new XRShader(EShaderType.Fragment)
+            {
+                Name = artifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
+                EntryPoint = artifact.FragmentEntryPoint, CookedArtifact = artifact,
+            };
+            _material = new XRMaterial(_vertex, _fragment)
+            {
+                Name = artifact.Name, RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+                RenderOptions = new RenderingParameters
+                {
+                    CullMode = ECullMode.None,
+                    ExcludeFromCpuOcclusion = true,
+                    DepthTest = new DepthTest { Enabled = ERenderParamUsage.Enabled, UpdateDepth = true, Function = EComparison.Less },
+                },
+            };
+            _pipeline = new EngineMeshDiagnosticPipeline(_material);
+        }
+        _material.RenderOptions.CullMode = ECullMode.None;
+        _material.RenderOptions.ExcludeFromCpuOcclusion = true;
         if (textured)
         {
             _texture = CreateTexture(0);
             _material.Textures.Add(_texture);
         }
-        _pipeline = new EngineMeshDiagnosticPipeline(_material);
-        _mesh = textured ? new XRMesh(
+        _mesh = _lit ? new XRMesh(
+            [new Vertex(new Vector3(-0.75f, -0.75f, 0), Vector3.UnitZ),
+             new Vertex(new Vector3(0.75f, -0.75f, 0), Vector3.UnitZ),
+             new Vertex(new Vector3(0.75f, 0.75f, 0), Vector3.UnitZ),
+             new Vertex(new Vector3(-0.75f, 0.75f, 0), Vector3.UnitZ)],
+            new List<ushort> { 0, 1, 2, 0, 2, 3 }) : textured ? new XRMesh(
             [new Vertex(new Vector3(-0.35f, -0.35f, 0), new Vector2(0, 1)),
              new Vertex(new Vector3(0.35f, -0.35f, 0), new Vector2(1, 1)),
              new Vertex(new Vector3(0.35f, 0.35f, 0), new Vector2(1, 0)),
@@ -80,11 +100,19 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         visual.ApplyRenderDispatchPreference(false);
         visual.SetBounds(new AABB(new Vector3(-2, -2, -5), new Vector3(2, 2, 1)));
         _renderWorld = new RuntimeWorldRenderer(_scene, visual);
-        AddModel("Near left triangle", new Vector3(-0.45f, 0, -1));
-        AddModel("Far right triangle", new Vector3(0.45f, 0, -3));
-        AddModel("Occluded far left triangle", new Vector3(-0.45f, 0, -3));
+        if (_lit)
+        {
+            AddModel("Standard lit normal quad", new Vector3(0, 0, -2));
+            InitializeLights();
+        }
+        else
+        {
+            AddModel("Near left triangle", new Vector3(-0.45f, 0, -1));
+            AddModel("Far right triangle", new Vector3(0.45f, 0, -3));
+            AddModel("Occluded far left triangle", new Vector3(-0.45f, 0, -3));
+        }
 
-        SceneNode cameraNode = new("Engine depth diagnostic camera");
+        SceneNode cameraNode = new("Engine mesh diagnostic camera");
         Transform cameraTransform = cameraNode.SetTransform<Transform>();
         _scene.RootNodes.Add(cameraNode);
         XROrthographicCameraParameters parameters = new(2, 2, 0, 4) { InheritAspectRatio = false };
@@ -93,6 +121,11 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         {
             RenderPipeline = _pipeline,
         };
+        if (_lit)
+        {
+            ConfigureLitCamera(camera);
+            SetLitCase(0);
+        }
         _viewport = new XRViewport(null, width, height)
         {
             Camera = camera,
@@ -172,7 +205,7 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
-            _renderer.IsBackendReplacementFrameReady && _renderer.LastEngineMeshDrawCount == 3;
+            _renderer.IsBackendReplacementFrameReady && _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3);
     }
 
     private void CollectFrame()
@@ -190,6 +223,10 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
     {
         XRRenderPipelineInstance pipeline = _viewport.RenderPipelineInstance;
         return $"Draws={_renderer.LastEngineMeshDrawCount}; " +
+            $"collected meshes={pipeline.ActiveMeshRenderCommands.GetRenderingMeshCommandCount()}; " +
+            $"deferred={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueDeferred)}; " +
+            $"forward={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueForward)}; " +
+            $"HDR FBO={pipeline.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName) is not null}; " +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }
@@ -209,8 +246,8 @@ internal sealed class EngineMeshDiagnosticFixture : IDisposable
         _mesh.Destroy();
         _material.Destroy();
         _texture?.Destroy();
-        _vertex.Destroy();
-        _fragment.Destroy();
+        _vertex?.Destroy();
+        _fragment?.Destroy();
         _pipeline.Destroy();
     }
 }

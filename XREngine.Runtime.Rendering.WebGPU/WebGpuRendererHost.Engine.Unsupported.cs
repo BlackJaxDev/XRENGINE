@@ -49,9 +49,6 @@ public sealed partial class WebGpuRendererHost
     public override void StencilMask(uint mask)
         => throw UnsupportedEngineOperation(nameof(StencilMask));
 
-    public override void ClearStencil(int value)
-        => throw UnsupportedEngineOperation(nameof(ClearStencil));
-
     public override void EnableStencilTest(bool enable)
         => throw UnsupportedEngineOperation(nameof(EnableStencilTest));
 

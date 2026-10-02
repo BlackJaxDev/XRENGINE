@@ -153,6 +153,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
             if (passIndex == int.MinValue && hasRenderGraphMetadata)
             {
+                if (RequiredForOutput)
+                    throw new InvalidOperationException($"RenderPipeline.RequiredOutputPassMissing: '{passName}'.");
                 Debug.RenderingWarningEvery(
                     $"QuadBlit.MissingRenderGraphPass.{passName}",
                     TimeSpan.FromSeconds(2),
@@ -168,6 +170,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRQuadFrameBuffer? sourceFBO = activeInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
             if (sourceFBO is null)
             {
+                if (RequiredForOutput)
+                    throw new InvalidOperationException($"RenderPipeline.RequiredOutputSourceMissing: '{SourceQuadFBOName}'.");
                 if (DiagnosticsEnabled)
                     Debug.RenderingWarning($"[QuadBlitDiag] Source FBO '{SourceQuadFBOName}' not found as XRQuadFrameBuffer.");
                 return;

@@ -27,6 +27,12 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
     {
         data.Resized += Invalidate;
         data.PropertyChanged += OnDataChanged;
+        data.BindRequested += Bind;
+        data.BindForWriteRequested += BindForWriting;
+        data.BindForReadRequested += BindForReading;
+        data.UnbindRequested += Unbind;
+        data.UnbindFromWriteRequested += UnbindFromWriting;
+        data.UnbindFromReadRequested += UnbindFromReading;
     }
 
     public override bool IsGenerated => _plan is not null;
@@ -42,6 +48,21 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
     public override nint GetHandle() => 0;
 
     private void Invalidate() => _invalidated = true;
+
+    private void Bind() => BindCurrent(EFramebufferTarget.Framebuffer, Data);
+    private void BindForWriting() => BindCurrent(EFramebufferTarget.DrawFramebuffer, Data);
+    private void BindForReading() => BindCurrent(EFramebufferTarget.ReadFramebuffer, Data);
+    private void Unbind() => BindCurrent(EFramebufferTarget.Framebuffer, null);
+    private void UnbindFromWriting() => BindCurrent(EFramebufferTarget.DrawFramebuffer, null);
+    private void UnbindFromReading() => BindCurrent(EFramebufferTarget.ReadFramebuffer, null);
+
+    private void BindCurrent(EFramebufferTarget target, XRFrameBuffer? framebuffer)
+    {
+        // One shared resource can have wrappers in multiple output generations.
+        // Only the renderer executing this scope may change its binding state.
+        if (ReferenceEquals(AbstractRenderer.Current, Renderer))
+            Renderer.BindFrameBuffer(target, framebuffer);
+    }
 
     private void OnDataChanged(object? sender, IXRPropertyChangedEventArgs change)
     {
@@ -98,8 +119,8 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
                 int slot = ColorSlot(target.Attachment);
                 if (slot >= 0)
                 {
-                    if (api.Format is not ("rgba8unorm" or "rgba8unorm-srgb") || formats[slot] is not null)
-                        throw Unsupported("Create", "color slots require distinct exact RGBA8 texture views");
+                    if (api.Format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || formats[slot] is not null)
+                        throw Unsupported("Create", "color slots require distinct exact RGBA8 or RGBA16F texture views");
                     formats[slot] = api.Format;
                     colorCount = Math.Max(colorCount, slot + 1);
                 }
@@ -217,6 +238,12 @@ public sealed class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
     {
         Data.Resized -= Invalidate;
         Data.PropertyChanged -= OnDataChanged;
+        Data.BindRequested -= Bind;
+        Data.BindForWriteRequested -= BindForWriting;
+        Data.BindForReadRequested -= BindForReading;
+        Data.UnbindRequested -= Unbind;
+        Data.UnbindFromWriteRequested -= UnbindFromWriting;
+        Data.UnbindFromReadRequested -= UnbindFromReading;
         base.OnRetiring();
     }
 

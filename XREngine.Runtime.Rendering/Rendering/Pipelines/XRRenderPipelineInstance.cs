@@ -1930,6 +1930,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (pending is null)
             return false;
 
+        // Event-loop backends cannot force queue completion. Keep the existing
+        // generation and stop allocating replacements until a receipt drains.
+        if (HasNonBlockingRetirementPressure())
+            return false;
+
         if (!forceDue && !IsPendingGenerationDue())
         {
             Debug.RenderingEvery(
@@ -2117,6 +2122,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         RenderResourceGeneration? pending = PendingGeneration;
         if (pending is null || !pending.IsReady)
+            return false;
+        if (HasNonBlockingRetirementPressure())
             return false;
 
         int importedResourceRevision = PublishStagedImportedResources(pending);
@@ -2633,7 +2640,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// receipt permits disposal; WaitForGpu can return early during device loss.
     /// </summary>
     private static void WaitForRetirementProgress()
-        => AbstractRenderer.Current?.WaitForGpu();
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null) return;
+        if (((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderResourceRetirementBackendCapability>(out var retirement)
+            && retirement is { RequiresBlockingRetirementProgress: false })
+            return;
+        renderer.WaitForGpu();
+    }
+
+    private bool HasNonBlockingRetirementPressure()
+        => _retiredGenerations.Count >= MaxRetiredResourceGenerations &&
+            AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+            renderer.TryGetBackendCapability<IRenderResourceRetirementBackendCapability>(out var retirement) &&
+            retirement is { RequiresBlockingRetirementProgress: false };
 
     /// <summary>
     /// Prepares backend references before physical resources are retired. Vulkan

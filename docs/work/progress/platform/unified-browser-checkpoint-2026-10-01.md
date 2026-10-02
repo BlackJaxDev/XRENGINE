@@ -243,3 +243,36 @@ Audible output, gesture activation, spatialization, codecs, and device budgets
 remain separate acceptance. Whole-stream automatic looping is explicitly
 unsupported; static looping remains supported. See the
 [audio leaf contract](../../../../XREngine.Audio.WebAudio/README.md).
+
+## Reviewed lifetime repair and lit renderer continuation
+
+The canvas-composed ownership leak is now repaired at the actual owners:
+`GPUScene` releases its lazy LOD-transition buffer and pending state, and each
+render-pipeline asset retains one fallback material with ownership limited to its
+factory allocations. Shared shader-cache imports have an independent publication
+boundary so destroying a generated fallback cannot destroy a cached shader.
+Borrowed custom fallback materials remain with their original owners.
+
+Early scene activation exposed a separate rollback hole: a root was world-bound
+before the root collection tracked it. Attachment and visible-scene registration
+are now transactional. An intentional activation failure preserves the original
+exception, clears root/component world links and bookkeeping, and permits a
+successful retry on the same world followed by clean graph destruction. The
+probe also covers a preceding successfully attached root in the same scene.
+
+Freshly published .NET WebAssembly executes the canonical RollingBall game through
+five headless cycles and five canvas-composed cycles. Both routes finish every
+cycle with exactly the same 35 registered objects and identical registered IDs,
+zero authored graph survivors, no remaining native actors, cleared component body
+links and a released physics system. Each cycle executes 120 warm frames and 600
+measured frames, with exactly 600 variable and 1,200 fixed callbacks. The canvas
+probe deliberately leaves graphics uninitialized; it does not establish pixels,
+playable browser input, forced-GC heap budgets or physical-device performance.
+
+The next renderer slice implements exact-hash built-in lit material selection,
+bounded engine directional/point/spot light publication, RGBA16F attachments and
+the shared default pipeline's HDR-to-Mobius output route. Actual Slang cooking and
+narrow managed builds pass. The [shader record](../rendering/unified-webgpu-shader-cooking.md#engine-lit-forward-and-hdr-output)
+lists the supported cohort and explicit rejection boundaries. The corresponding
+live browser pixel qualification is still pending; full shadows, UI and rendered
+RollingBall acceptance remain open.

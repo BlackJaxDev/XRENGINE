@@ -371,8 +371,25 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             return;
 
         scene.PropertyChanged += ScenePropertyChanged;
-        if (scene.IsVisible)
-            LoadVisibleScene(scene);
+        try
+        {
+            if (scene.IsVisible)
+                LoadVisibleScene(scene);
+        }
+        catch (Exception attachmentError)
+        {
+            scene.PropertyChanged -= ScenePropertyChanged;
+            _loadedScenes.Remove(scene);
+            try
+            {
+                UnloadVisibleScene(scene);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException("Scene attachment and rollback both failed.", attachmentError, cleanupError);
+            }
+            throw;
+        }
     }
 
     /// <summary>Stops observing a scene and removes its currently visible roots.</summary>
@@ -425,9 +442,19 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             if (_scenePolicy?.TryAttachSceneRoot(this, scene, node) == true)
                 continue;
 
-            node.SetWorldContext(this);
             if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
-                RootNodes.Add(node);
+            {
+                try
+                {
+                    RootNodes.Add(node);
+                }
+                catch
+                {
+                    if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
+                        roots.Remove(node);
+                    throw;
+                }
+            }
         }
     }
 

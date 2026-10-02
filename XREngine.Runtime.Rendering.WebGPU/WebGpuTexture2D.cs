@@ -57,7 +57,8 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
             return;
         if (_handle != 0) Destroy();
 
-        bool color = format is "rgba8unorm" or "rgba8unorm-srgb";
+        bool byteColor = format is "rgba8unorm" or "rgba8unorm-srgb";
+        bool color = byteColor || format == "rgba16float";
         BrowserTextureUsage usage = BrowserTextureUsage.RenderAttachment | BrowserTextureUsage.TextureBinding;
         if (color && Data.MultiSampleCount == 1)
             usage |= BrowserTextureUsage.CopySource | BrowserTextureUsage.CopyDestination;
@@ -68,7 +69,7 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
             Mipmap2D level = mips[mip];
             if (level.Width != Math.Max(1u, Data.Width >> mip) || level.Height != Math.Max(1u, Data.Height >> mip))
                 throw Unsupported("Create", "the authored mip extents do not form a complete 2D chain");
-            if (level.Data is not null && (!color || Data.MultiSampleCount != 1 ||
+            if (level.Data is not null && (!byteColor || Data.MultiSampleCount != 1 ||
                 level.PixelFormat != EPixelFormat.Rgba || level.PixelType != EPixelType.UnsignedByte))
                 throw Unsupported("Upload", "only single-sample, tightly packed RGBA8 mip bytes can be uploaded");
         }
@@ -153,6 +154,7 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
     {
         ESizedInternalFormat.Rgba8 => "rgba8unorm",
         ESizedInternalFormat.Srgb8Alpha8 => "rgba8unorm-srgb",
+        ESizedInternalFormat.Rgba16f => "rgba16float",
         ESizedInternalFormat.DepthComponent16 => "depth16unorm",
         ESizedInternalFormat.DepthComponent24 => "depth24plus",
         ESizedInternalFormat.DepthComponent32f => "depth32float",

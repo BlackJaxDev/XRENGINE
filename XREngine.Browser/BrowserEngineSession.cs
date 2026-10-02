@@ -53,6 +53,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     private EAudioEffects _previousAudioEffects;
     private bool _running;
     private bool _disposed;
+    private ShaderProgramArtifact? _tonemapArtifact;
     private readonly List<ObjectCacheOwnership> _sessionObjects = [];
     private GameStartupSettings? _previousGameSettings;
     private UserSettings? _previousUserSettings;
@@ -80,7 +81,8 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     /// <summary>Composes a fetched XRWorld through the shared world host and begins gameplay.</summary>
     public async Task StartAsync(XRWorld world, GameStartupSettings authoredSettings, GameState initialState,
         CancellationToken cancellationToken = default, string? canvasId = null,
-        IShaderProgramArtifactResolver? shaderArtifacts = null)
+        IShaderProgramArtifactResolver? shaderArtifacts = null, EngineMaterialVariantCatalog? materialVariants = null,
+        ShaderProgramArtifact? tonemapArtifact = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(authoredSettings);
@@ -99,6 +101,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
 
             GameStartupSettings settings = OwnConstruction(() => ProjectBrowserStartup(authoredSettings, world,
                 out _canvasWidth, out _canvasHeight));
+            _tonemapArtifact = tonemapArtifact;
 
             _capabilities = RuntimeApplicationCapabilityServices.Install(new RuntimeApplicationCapabilities(
                 IsConfigured: true,
@@ -120,13 +123,13 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
             // physical output. Both world hosts resolve physics from this same catalog.
             _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(
                 BrowserRendererComposition.BackendCatalog, _physicsBackends,
-                static () => new DefaultRenderPipeline());
+                CreateDefaultPipeline);
             if (canvasId is not null)
             {
                 _canvas = new BrowserCanvasRenderTarget(canvasId);
                 _renderer = OwnConstruction(() => BrowserRendererComposition.CreateRequired(_canvas)) as WebGpuRendererHost
                     ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
-                _renderer.BindShaderArtifacts(shaderArtifacts);
+                _renderer.BindShaderArtifacts(shaderArtifacts, materialVariants);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
                 if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
                     throw new AdvancedRenderPipelineNotSupportedException(
@@ -228,6 +231,14 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
     private AbstractPhysicsScene CreatePhysicsScene()
         => _physicsBackends.CreateRequired(EPhysicsLibrary.Jolt);
 
+    private RenderPipeline CreateDefaultPipeline()
+    {
+        DefaultRenderPipeline pipeline = new();
+        if (_tonemapArtifact is { } artifact)
+            pipeline.BindWebTonemapArtifact(artifact);
+        return pipeline;
+    }
+
     /// <summary>Runs one production engine frame on the browser event thread.</summary>
     public bool Step(double elapsedSeconds)
     {
@@ -243,6 +254,8 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
             return;
         CameraComponent? camera = (_localPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)
             ?.RuntimeCameraComponent as CameraComponent;
+        if (camera?.Camera.RenderPipeline is DefaultRenderPipeline pipeline && _tonemapArtifact is { } artifact)
+            pipeline.BindWebTonemapArtifact(artifact);
         if (camera is not null && !ReferenceEquals(_renderViewport.CameraComponent, camera))
             _renderViewport.CameraComponent = camera;
     }
@@ -264,15 +277,12 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
 
     public void UpdateSurface(RuntimeSurfaceState surface)
     {
-        if (_canvas is null || _renderViewport is null)
+        if (_canvas is null || _renderViewport is null || _renderer is null)
             throw new InvalidOperationException("WebGPU.EngineCanvas.Required: start a canvas world first.");
         bool replaced = surface.Generation != _canvas.Surface.Generation;
         _canvas.UpdateSurface(surface);
-        if (replaced)
-            _renderViewport.RenderPipelineInstance.InvalidatePhysicalResources();
-        if (surface.CanRender)
-            _renderViewport.Resize(checked((uint)surface.PhysicalWidth), checked((uint)surface.PhysicalHeight));
-        else
+        _renderer.SynchronizeEngineViewport(replaced);
+        if (!surface.CanRender)
             ResetFrameTiming();
     }
 
@@ -377,6 +387,7 @@ internal sealed class BrowserEngineSession(PhysicsBackendCatalog physicsBackends
         _renderer = null;
         _canvas = null;
         _rendererSession = 0;
+        _tonemapArtifact = null;
         if (_gameState?.Worlds is { } worlds)
             Capture(errors, () => worlds.RemoveAll(candidate => ReferenceEquals(candidate, _runtimeWorld)));
         _runtimeWorld = null;

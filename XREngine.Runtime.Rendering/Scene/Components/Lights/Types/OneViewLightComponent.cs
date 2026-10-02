@@ -83,7 +83,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void EnsurePrimaryShadowViewportReady()
         {
-            if (!IsActiveInHierarchy)
+            if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
             XRViewport viewport = _primaryShadowViewport ??= CreateShadowViewport();
