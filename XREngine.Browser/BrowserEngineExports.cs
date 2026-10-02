@@ -185,7 +185,7 @@ public static partial class BrowserEngineExports
     [JSExport]
     public static bool HasPresentedCanvasFrame() => _session?.HasPresentedCanvasFrame ?? false;
 
-    /// <summary>Returns zero while preparing, one after presentation, and minus one after a resource failure.</summary>
+    /// <summary>Returns zero while preparing, one after a complete current-output submission, and minus one after a resource failure.</summary>
     [JSExport]
     public static int GetCanvasPreparationState() => _session?.CanvasPreparationState ?? -1;
 

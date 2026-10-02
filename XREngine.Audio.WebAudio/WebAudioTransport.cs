@@ -1,10 +1,11 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Audio;
 
 namespace XREngine.Audio.WebAudio;
 
 /// <summary>PCM playback adapter for browser Web Audio. Output stays suspended until a page gesture unlocks it.</summary>
-public sealed class WebAudioTransport : IAudioTransport
+public sealed partial class WebAudioTransport : IAudioSpatialTransport
 {
     private int _context;
     private const int MaximumQueuedBuffers = 32;
@@ -16,6 +17,17 @@ public sealed class WebAudioTransport : IAudioTransport
 
     public static Task<bool> UnlockAsync() => WebAudioImports.UnlockAsync();
     public static string State => WebAudioImports.State();
+    public static bool IsReady => WebAudioImports.IsReady();
+    public static bool HasActivationFailure => WebAudioImports.HasActivationFailure();
+    public static string ActivationFailure => WebAudioImports.ActivationFailure();
+
+    /// <summary>Composes page lifetime with the independently owned canvas visibility blocker.</summary>
+    public static void SetPageActive(bool active) => WebAudioImports.SetPageActive(active);
+    public static void SetSurfaceActive(bool active) => WebAudioImports.SetSurfaceActive(active);
+
+    /// <summary>Coalesces authored pose updates until this synchronous frame batch ends.</summary>
+    public static int BeginSpatialUpdates() => WebAudioImports.BeginSpatialUpdates();
+    public static void EndSpatialUpdates(int batch) => WebAudioImports.EndSpatialUpdates(batch);
 
     public string? DeviceName => "Browser default output";
     public int SampleRate => _context == 0 ? 0 : WebAudioImports.SampleRate(_context);
@@ -64,8 +76,8 @@ public sealed class WebAudioTransport : IAudioTransport
     public void UploadBufferData(AudioBufferHandle buffer, ReadOnlySpan<byte> pcm, int frequency, int channels, SampleFormat format)
     {
         // PCM upload is an asset-boundary operation; JavaScript copies this borrowed view synchronously.
-        byte[] copy = pcm.ToArray();
-        WebAudioImports.UploadBuffer(RequireOpen(), checked((int)buffer.Id), copy.AsSpan(), frequency, channels, (int)format);
+        Span<byte> borrowed = MemoryMarshal.CreateSpan(ref MemoryMarshal.GetReference(pcm), pcm.Length);
+        WebAudioImports.UploadBuffer(RequireOpen(), checked((int)buffer.Id), borrowed, frequency, channels, (int)format);
     }
 
     public void Play(AudioSourceHandle source)

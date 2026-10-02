@@ -106,6 +106,32 @@ export class WebAudioStream {
             : entry.offset;
     }
 
+    /** Queue-origin offset; the sub-buffer clock remains available separately. */
+    queueOffset() {
+        this.refresh();
+        if (this.stopped) return 0;
+        let seconds = this.offset();
+        for (let index = 0; index < this.processed; index++) seconds += this.entry(index).audio.duration;
+        return seconds;
+    }
+
+    /** Seeks the retained queue, marking traversed entries processed and preserving pause. */
+    seek(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) throw new Error('WebAudio.InvalidOffset.');
+        let duration = 0;
+        for (let index = 0; index < this.count; index++) duration += this.entry(index).audio.duration;
+        if (seconds >= duration) throw new Error('WebAudio.OffsetOutOfRange: the seek must remain within the retained queue.');
+        let target = 0, offset = seconds;
+        while (offset >= this.entry(target).audio.duration) offset -= this.entry(target++).audio.duration;
+        this.refresh();
+        const wasPlaying = this.playing;
+        this.stop();
+        this.processed = target;
+        this.entry(target).offset = offset;
+        this.stopped = false;
+        if (wasPlaying) this.play(this.rate);
+    }
+
     sampleOffset() {
         const offset = this.offset();
         return this.processed === this.count ? 0 : Math.floor(offset * this.entry(this.processed).audio.sampleRate);

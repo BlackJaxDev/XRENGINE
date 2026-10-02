@@ -537,3 +537,58 @@ effect, raster/pass and shadow cases recorded in the publisher progress report;
 its positive authored texture fixture and explicit unsupported-setting checks
 pass through the real compiled Editor methods. The larger audio ownership work
 remains a separate source group and is not part of this publication.
+
+### Game input acceptance and resize evidence correction (2026-10-02)
+
+Exact commit `45c3a5a00806c8c31253ccb3b16b9a473cc2c81c` passed all three jobs in
+[run 37000846498](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37000846498):
+baseline Linux browser/rendering/physics, genuine Windows Editor publication,
+and the exact-bundle game smoke. The inspected game captures now show the pause
+bar changing green to yellow and back. Tilt/reset image differences and two
+fresh game contexts also pass the existing checks; generic image differences
+are not an independent state trace of each gameplay callback.
+
+Capture inspection exposed a false positive in the first resize check despite
+the green job: its image contained only the CSS outline (828 colorful pixels,
+exactly its width). The second resize capture shows the actual game. Thus resize
+recovery is not fully qualified by that run. The source correction tracks the
+last complete engine submission's output generation and properties, invalidates
+page readiness on a new generation, and keeps preparation time independent of
+simulation-debt resets. The strengthened existing check excludes outline pixels
+and requires the authored green HUD for playing/resized frames. Independent
+review confirms the old blank capture now has zero accepted colorful/green
+pixels, while the actual game captures still pass. A fresh runtime run is
+required; submission readiness does not claim GPU completion or browser paint.
+
+### Reviewed audio and hosting source (2026-10-02)
+
+The audio source group adds authored distance/cone/Doppler/relative controls,
+stereo preservation, queue-relative seek semantics, composed page/surface
+activation blockers, and required-world-only simulation gating while rendering
+continues. Required worlds retain a session-long activation owner. Pose changes
+coalesce once per source per frame, with explicit Play/queue flush boundaries.
+Changed playback rates may still allocate bounded browser one-shot nodes;
+queued-stream automatic looping remains explicitly unsupported.
+
+Shared-buffer retirement now accounts for direct requeue, another source's
+live queue/static use, duplicate retirement, callback throws and listener
+teardown. Eleven production AudioManager/ListenerContext/AudioSource cases pass
+against an accounting transport. Final Browser compilation passes with zero
+warnings/errors. The canonical optional-audio v5 payload remains byte-identical
+(2,669 bytes, SHA-256
+`80b3e1847a6d242fcef63208f699c8b432869270f885cfdd78d45d2fb520d107`);
+required audio alone emits v6, and both versions hydrate/round-trip through the
+registered codec. No authored asset migration is performed. Audible browser,
+gesture/device-matrix and new spatial/streaming pixel/audio acceptance remain
+separate from these source/managed-boundary checks.
+
+The new [static hosting guide](../../../developer-guides/runtime/browser-static-hosting.md)
+records HTTPS, MIME/compression, immutable versus revalidated URLs, a conditional
+CSP example, and why the current single-threaded profile does not require
+cross-origin isolation. No deployment or security header was applied. The
+combined audio/hosting/resize group passes the integrated Editor, Server,
+VRClient, desktop WebGPU, all nineteen portable compile rows and fresh native-Jolt
+Browser publication with zero compiler warnings/errors. Logs are under the
+active run’s `audio-output-gate/` folder. This closes the audio activation and
+static-hosting documentation rows, bringing the checklist to 51/110. The broader
+audio and live resize/device acceptance rows remain open.

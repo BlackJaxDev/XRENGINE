@@ -105,17 +105,23 @@ export class EngineCanvasHost {
         const visible = !document.hidden && !this.frozen && !this.pageHidden;
         const focused = this.input.ownsFocus();
         const drawable = visible && attached && width > 0 && height > 0;
-        const clockDiscontinuity = drawable !== this.drawable || generation !== this.surfaceGeneration;
+        const outputChanged = generation !== this.surfaceGeneration;
+        const clockDiscontinuity = drawable !== this.drawable || outputChanged;
         this.engine.UpdateCanvasSurface(Math.max(0, bounds.width), Math.max(0, bounds.height),
             width, height, boundedRatio, generation, visible, focused, attached);
         this.rawRatio = rawRatio;
         this.attached = attached;
         this.surfaceGeneration = generation;
         this.drawable = drawable;
+        if (outputChanged) {
+            this.presented = false;
+            this.firstFrameSeconds = 0;
+        }
         if (clockDiscontinuity) this.previousFrame = undefined;
         if (this.drawable) {
             if (!this.request) this.request = requestAnimationFrame(this.frame);
             if (this.presented) this.onState('running', `Engine world ready: ${this.detail}`);
+            else if (outputChanged) this.onState('loading', 'Preparing the current canvas output…');
         } else {
             if (this.request) cancelAnimationFrame(this.request);
             this.request = 0;
@@ -148,7 +154,9 @@ export class EngineCanvasHost {
                     this.presented = true;
                     this.onState('running', `Engine world ready: ${this.detail}`);
                 } else {
-                    this.firstFrameSeconds += elapsed;
+                    // Clock resets discard simulation debt, not an active output's
+                    // preparation time. Suspension clears previousFrame separately.
+                    if (Number.isFinite(gap) && gap > 0) this.firstFrameSeconds += gap / 1000;
                     if (this.firstFrameSeconds > 45)
                         throw new Error(`First-frame preparation exceeded 45 seconds. ${this.engine.GetCanvasRenderingStatus()}`);
                 }

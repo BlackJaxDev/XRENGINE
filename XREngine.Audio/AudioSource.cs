@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Data;
@@ -20,6 +21,9 @@ namespace XREngine.Audio
         public ListenerContext ParentListener { get; }
         private AudioSourceHandle _transportHandle;
         private EffectsSourceHandle? _effectsHandle;
+        private int _sourceLifetimeVersion;
+        private int _streamingOwnershipVersion;
+        private int _playbackCommandVersion;
 
         public uint Handle => _transportHandle.Id;
         internal AudioSourceHandle TransportHandle => _transportHandle;
@@ -28,6 +32,7 @@ namespace XREngine.Audio
         private void CreateNativeSource()
         {
             _transportHandle = ParentListener.ActiveTransport.CreateSource();
+            unchecked { _sourceLifetimeVersion++; _streamingOwnershipVersion++; }
             if (IsV2)
                 RegisterEffectsSource();
         }
@@ -39,8 +44,10 @@ namespace XREngine.Audio
 
             if (IsV2)
                 UnregisterEffectsSource();
-            ParentListener.ActiveTransport.DestroySource(_transportHandle);
+            if (ParentListener.ActiveTransport.IsOpen)
+                ParentListener.ActiveTransport.DestroySource(_transportHandle);
             _transportHandle = AudioSourceHandle.Invalid;
+            unchecked { _sourceLifetimeVersion++; _streamingOwnershipVersion++; }
         }
 
         private void RegisterEffectsSource()
@@ -134,6 +141,8 @@ namespace XREngine.Audio
         }
 
         private readonly Queue<AudioBuffer> _currentStreamingBuffers = [];
+        private readonly Queue<(AudioBuffer Buffer, int Lease, bool Notify, uint Source, int Lifetime)> _retiredStreamingBuffers = new(32);
+        private bool _drainingStreamingRetirements;
         public Queue<AudioBuffer> CurrentStreamingBuffers => _currentStreamingBuffers;
 
         public XREvent<AudioBuffer>? BufferQueued;
@@ -379,7 +388,7 @@ namespace XREngine.Audio
             if (buffersProcessed > 0)
                 UnqueueConsumedBuffers(buffersProcessed);
             
-            if (BuffersQueued >= maxbuffers)
+            if (buffers.Length > maxbuffers || BuffersQueued > maxbuffers - buffers.Length)
             {
                 // Return the passed-in buffers to the pool so they aren't leaked.
                 foreach (var leaked in buffers)
@@ -391,15 +400,29 @@ namespace XREngine.Audio
             Span<AudioBufferHandle> queueHandles = stackalloc AudioBufferHandle[buffers.Length];
             for (int i = 0; i < buffers.Length; i++)
             {
-                var buf = buffers[i];
-                _currentStreamingBuffers.Enqueue(buf);
-                BufferQueued?.Invoke(buf);
-                queueHandles[i] = buf.TransportHandle;
+                queueHandles[i] = buffers[i].TransportHandle;
             }
+            // Publish managed ownership only after the complete transport batch is admitted.
+            _currentStreamingBuffers.EnsureCapacity(checked(_currentStreamingBuffers.Count + buffers.Length));
             ParentListener.ActiveTransport.QueueBuffers(_transportHandle, queueHandles);
+            for (int i = 0; i < buffers.Length; i++)
+                _currentStreamingBuffers.Enqueue(buffers[i]);
+            unchecked { _streamingOwnershipVersion++; }
             if (IsV2)
                 _sourceType = ESourceType.Streaming;
             AudioDiagnostics.RecordBuffersQueued(Handle, buffers.Length, BuffersQueued);
+
+            int ownershipVersion = _streamingOwnershipVersion;
+            int commandVersion = _playbackCommandVersion;
+            for (int i = 0; i < buffers.Length; i++)
+            {
+                BufferQueued?.Invoke(buffers[i]);
+                // A callback may unqueue/release the batch, replace the buffer, issue a
+                // playback command, or destroy/reuse this source. Never notify retired
+                // references or override the callback's explicit playback decision.
+                if (ownershipVersion != _streamingOwnershipVersion || commandVersion != _playbackCommandVersion)
+                    return true;
+            }
 
             if (AutoPlayOnQueue && !IsPlaying)
             {
@@ -423,29 +446,27 @@ namespace XREngine.Audio
                 return;
             }
 
+            _retiredStreamingBuffers.EnsureCapacity(checked(_retiredStreamingBuffers.Count + count));
             Span<AudioBufferHandle> unqueued = stackalloc AudioBufferHandle[count];
             count = Math.Min(count, ParentListener.ActiveTransport.UnqueueProcessedBuffers(_transportHandle, unqueued));
+            if (count == 0)
+                return;
 
-            // Keep our managed queue in sync with OpenAL's processed queue.
+            unchecked { _streamingOwnershipVersion++; }
+            uint sourceHandle = Handle;
+            // Retire the complete native batch before any observer can throw or re-enter.
             for (int i = 0; i < count; i++)
             {
-                uint handle = unqueued[i].Id;
-                if (handle == 0)
-                    continue;
-
-                AudioBuffer? buf = RemoveTrackedStreamingBuffer(handle);
-                if (buf is null)
+                AudioBuffer? buffer = RemoveTrackedStreamingBuffer(unqueued[i].Id);
+                if (buffer is not null)
                 {
-                    Debug.WriteLine($"Warning: Streaming buffer handle {handle} was unqueued by OpenAL but not tracked locally.");
-                    continue;
+                    buffer.BeginStreamingRetirement();
+                    _retiredStreamingBuffers.Enqueue((buffer, buffer.PoolLeaseVersion, true, sourceHandle,
+                        _sourceLifetimeVersion));
                 }
-
-                BufferProcessed?.Invoke(buf);
-                StreamingBufferProcessed?.Invoke();
-                ParentListener.ReleaseBuffer(buf);
             }
-            //Trace.WriteLineIf(handles.Length > 0, $"Unqueued {handles.Length} buffers.");
-            AudioDiagnostics.RecordBuffersUnqueued(Handle, count, _currentStreamingBuffers.Count);
+            AudioDiagnostics.RecordBuffersUnqueued(sourceHandle, count, _currentStreamingBuffers.Count);
+            DrainStreamingRetirements();
         }
 
         private AudioBuffer? RemoveTrackedStreamingBuffer(uint handle)
@@ -470,14 +491,102 @@ namespace XREngine.Audio
             return found;
         }
 
-        private void ReleaseAllTrackedStreamingBuffers()
+        private void ReleaseAllTrackedStreamingBuffers(uint retainedBuffer = 0)
         {
+            int count = _currentStreamingBuffers.Count;
+            if (count == 0)
+                return;
+            _retiredStreamingBuffers.EnsureCapacity(checked(_retiredStreamingBuffers.Count + count));
+            unchecked { _streamingOwnershipVersion++; }
             while (_currentStreamingBuffers.Count > 0)
             {
                 AudioBuffer buffer = _currentStreamingBuffers.Dequeue();
-                if (buffer is not null)
-                    ParentListener.ReleaseBuffer(buffer);
+                if (buffer.Handle != retainedBuffer)
+                {
+                    buffer.BeginStreamingRetirement();
+                    _retiredStreamingBuffers.Enqueue((buffer, buffer.PoolLeaseVersion, false, 0, 0));
+                }
             }
+            DrainStreamingRetirements();
+        }
+
+        private bool CanNotifyStreamingRetirement(
+            in (AudioBuffer Buffer, int Lease, bool Notify, uint Source, int Lifetime) retirement,
+            bool hasFailure)
+            => retirement.Notify && !hasFailure && retirement.Source == Handle &&
+                retirement.Lifetime == _sourceLifetimeVersion &&
+                retirement.Buffer.PoolLeaseVersion == retirement.Lease && ParentListener.ActiveTransport.IsOpen &&
+                ReferenceEquals(ParentListener.GetBufferByHandle(retirement.Buffer.Handle), retirement.Buffer);
+
+        private void DrainStreamingRetirements()
+        {
+            // Reentrant detaches/unqueues append their already-retired ownership to this
+            // queue. The outer drain remains responsible for every accepted buffer.
+            if (_drainingStreamingRetirements)
+                return;
+            _drainingStreamingRetirements = true;
+            Exception? failure = null;
+            try
+            {
+                while (_retiredStreamingBuffers.Count > 0)
+                {
+                    var retirement = _retiredStreamingBuffers.Dequeue();
+                    AudioBuffer buffer = retirement.Buffer;
+                    try
+                    {
+                        if (CanNotifyStreamingRetirement(in retirement, failure is not null))
+                        {
+                            BufferProcessed?.Invoke(buffer);
+                            if (CanNotifyStreamingRetirement(in retirement, failure is not null))
+                                StreamingBufferProcessed?.Invoke();
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        failure = failure is null ? error : new AggregateException(
+                            "Streaming buffer notification or retirement failed.", failure, error);
+                    }
+                    finally
+                    {
+                        // A callback may have pooled/reused this object, disposed its
+                        // listener, or deliberately attached it as the static buffer.
+                        bool lastRetirement = buffer.CompleteStreamingRetirement(retirement.Lease);
+                        if (lastRetirement && !HasLiveBufferOwner(buffer) &&
+                            ReferenceEquals(ParentListener.GetBufferByHandle(buffer.Handle), buffer))
+                        {
+                            try { ParentListener.ReleaseBuffer(buffer); }
+                            catch (Exception error)
+                            {
+                                failure = failure is null ? error : new AggregateException(
+                                    "Streaming buffer notification or retirement failed.", failure, error);
+                            }
+                        }
+                    }
+                }
+            }
+            finally { _drainingStreamingRetirements = false; }
+            if (failure is not null)
+                ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        private bool HasLiveBufferOwner(AudioBuffer buffer)
+        {
+            if (!ParentListener.ActiveTransport.IsOpen)
+                return false;
+            // Both dictionary and queue enumerators are value types. A callback can
+            // transfer a retired buffer to any source without returning it to the pool.
+            foreach (KeyValuePair<uint, AudioSource> pair in ParentListener.Sources)
+            {
+                AudioSource source = pair.Value;
+                if (!source._transportHandle.IsValid)
+                    continue;
+                if (source._bufferHandle.Id == buffer.Handle)
+                    return true;
+                foreach (AudioBuffer queued in source._currentStreamingBuffers)
+                    if (ReferenceEquals(queued, buffer))
+                        return true;
+            }
+            return false;
         }
         #endregion
 
@@ -555,6 +664,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             ParentListener.ActiveTransport.Play(_transportHandle);
+            unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Playing;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
         }
@@ -565,6 +675,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             ParentListener.ActiveTransport.Stop(_transportHandle);
+            unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Stopped;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
         }
@@ -575,6 +686,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             ParentListener.ActiveTransport.Pause(_transportHandle);
+            unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Paused;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
         }
@@ -585,6 +697,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             ParentListener.ActiveTransport.Rewind(_transportHandle);
+            unchecked { _playbackCommandVersion++; }
             if (IsV2)
             {
                 _secondsOffset = 0.0f;
@@ -795,6 +908,35 @@ namespace XREngine.Audio
         private float _coneOuterAngle = 360.0f;
         private float _coneOuterGain;
 
+        private void SetSpatialProperty(AudioSourceFloatProperty property, float value)
+        {
+            if (IsV2 && ParentListener.Transport is IAudioSpatialTransport spatial)
+                spatial.SetSourceProperty(_transportHandle, property, value);
+            else if (ParentListener.ActiveTransport is IAudioListenerBackend backend)
+                backend.SetSourceProperty(_transportHandle, property, value);
+        }
+        private void SetSpatialProperty(AudioSourceIntegerProperty property, int value)
+        {
+            if (IsV2 && ParentListener.Transport is IAudioSpatialTransport spatial)
+                spatial.SetSourceProperty(_transportHandle, property, value);
+            else if (ParentListener.ActiveTransport is IAudioListenerBackend backend)
+                backend.SetSourceProperty(_transportHandle, property, value);
+        }
+        private void SetSpatialProperty(AudioSourceBooleanProperty property, bool value)
+        {
+            if (IsV2 && ParentListener.Transport is IAudioSpatialTransport spatial)
+                spatial.SetSourceProperty(_transportHandle, property, value);
+            else if (ParentListener.ActiveTransport is IAudioListenerBackend backend)
+                backend.SetSourceProperty(_transportHandle, property, value);
+        }
+        private void SetSpatialProperty(AudioSourceVectorProperty property, Vector3 value)
+        {
+            if (IsV2 && ParentListener.Transport is IAudioSpatialTransport spatial)
+                spatial.SetSourceProperty(_transportHandle, property, value);
+            else if (ParentListener.ActiveTransport is IAudioListenerBackend backend)
+                backend.SetSourceProperty(_transportHandle, property, value);
+        }
+
         private bool GetSourceRelative()
         {
             if (IsV2)
@@ -809,20 +951,13 @@ namespace XREngine.Audio
         }
         private void SetSourceRelative(bool relative)
         {
+            SetSpatialProperty(AudioSourceBooleanProperty.RelativeToListener, relative);
             _sourceRelative = relative;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceBooleanProperty.RelativeToListener, relative);
         }
         private void SetLooping(bool loop)
         {
+            ParentListener.ActiveTransport.SetSourceLooping(_transportHandle, loop);
             _looping = loop;
-            if (IsV2)
-            {
-                ParentListener.Transport!.SetSourceLooping(_transportHandle, loop);
-                return;
-            }
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceBooleanProperty.Looping, loop);
         }
         private void SetBypassSteamAudioSpatialization(bool bypass)
         {
@@ -859,7 +994,9 @@ namespace XREngine.Audio
 
         private int GetByteOffset()
         {
-            if (IsV2)
+            if (IsV2 && ParentListener.Transport is IAudioSpatialTransport spatial)
+                return spatial.GetSourceProperty(_transportHandle, AudioSourceIntegerProperty.ByteOffset);
+            if (IsV2 && ParentListener.Transport is not IAudioListenerBackend)
                 return _byteOffset;
             return LegacyBackend.GetSourceProperty(_transportHandle, AudioSourceIntegerProperty.ByteOffset);
         }
@@ -905,26 +1042,26 @@ namespace XREngine.Audio
 
         private void SetByteOffset(int offset)
         {
+            SetSpatialProperty(AudioSourceIntegerProperty.ByteOffset, offset);
             _byteOffset = offset;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceIntegerProperty.ByteOffset, offset);
         }
         private void SetSampleOffset(int offset)
         {
+            SetSpatialProperty(AudioSourceIntegerProperty.SampleOffset, offset);
             _sampleOffset = offset;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceIntegerProperty.SampleOffset, offset);
         }
         private void SetBufferHandle(uint buffer)
         {
-            _bufferHandle = new AudioBufferHandle(buffer);
-            ParentListener.ActiveTransport.SetSourceBuffer(_transportHandle, _bufferHandle);
+            AudioBufferHandle handle = new(buffer);
+            _retiredStreamingBuffers.EnsureCapacity(checked(_retiredStreamingBuffers.Count + _currentStreamingBuffers.Count));
+            ParentListener.ActiveTransport.SetSourceBuffer(_transportHandle, handle);
+            _bufferHandle = handle;
             if (IsV2)
             {
                 _sourceType = buffer == 0 ? ESourceType.Undetermined : ESourceType.Static;
             }
+            unchecked { _streamingOwnershipVersion++; }
+            ReleaseAllTrackedStreamingBuffers(buffer);
         }
 
         //SourceType is read-only
@@ -955,34 +1092,22 @@ namespace XREngine.Audio
 
         private void SetPosition(Vector3 position)
         {
+            ParentListener.ActiveTransport.SetSourcePosition(_transportHandle, position);
             _position = position;
             if (IsV2)
-            {
-                ParentListener.Transport!.SetSourcePosition(_transportHandle, position);
                 SyncEffectsSourcePose();
-                return;
-            }
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceVectorProperty.Position, position);
         }
         private void SetVelocity(Vector3 velocity)
         {
+            ParentListener.ActiveTransport.SetSourceVelocity(_transportHandle, velocity);
             _velocity = velocity;
-            if (IsV2)
-            {
-                ParentListener.Transport!.SetSourceVelocity(_transportHandle, velocity);
-                return;
-            }
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceVectorProperty.Velocity, velocity);
         }
         private void SetDirection(Vector3 direction)
         {
+            SetSpatialProperty(AudioSourceVectorProperty.Direction, direction);
             _direction = direction;
             if (IsV2)
-            {
                 SyncEffectsSourcePose();
-                return;
-            }
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceVectorProperty.Direction, direction);
         }
 
         private float GetReferenceDistance()
@@ -1047,93 +1172,67 @@ namespace XREngine.Audio
         }
         private float GetSecOffset()
         {
-            if (IsV2)
+            if (IsV2 && ParentListener.Transport is IAudioSpatialTransport spatial)
+                return spatial.GetSourceProperty(_transportHandle, AudioSourceFloatProperty.SecondsOffset);
+            if (IsV2 && ParentListener.Transport is not IAudioListenerBackend)
                 return _secondsOffset;
             return LegacyBackend.GetSourceProperty(_transportHandle, AudioSourceFloatProperty.SecondsOffset);
         }
 
         private void SetReferenceDistance(float distance)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.ReferenceDistance, distance);
             _referenceDistance = distance;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.ReferenceDistance, distance);
         }
         private void SetMaxDistance(float distance)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.MaxDistance, distance);
             _maxDistance = distance;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.MaxDistance, distance);
         }
         private void SetRolloffFactor(float factor)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.RolloffFactor, factor);
             _rolloffFactor = factor;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.RolloffFactor, factor);
         }
         private void SetPitch(float pitch)
         {
+            ParentListener.ActiveTransport.SetSourcePitch(_transportHandle, pitch);
             _pitch = pitch;
-            if (IsV2)
-            {
-                ParentListener.Transport!.SetSourcePitch(_transportHandle, pitch);
-                return;
-            }
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.Pitch, pitch);
         }
         private void SetMinGain(float gain)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.MinGain, gain);
             _minGain = gain;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.MinGain, gain);
         }
         private void SetMaxGain(float gain)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.MaxGain, gain);
             _maxGain = gain;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.MaxGain, gain);
         }
         private void SetGain(float gain)
         {
+            ParentListener.ActiveTransport.SetSourceGain(_transportHandle, gain);
             _gain = gain;
-            if (IsV2)
-            {
-                ParentListener.Transport!.SetSourceGain(_transportHandle, gain);
-                return;
-            }
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.Gain, gain);
         }
         private void SetConeInnerAngle(float angle)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.ConeInnerAngle, angle);
             _coneInnerAngle = angle;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.ConeInnerAngle, angle);
         }
         private void SetConeOuterAngle(float angle)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.ConeOuterAngle, angle);
             _coneOuterAngle = angle;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.ConeOuterAngle, angle);
         }
         private void SetConeOuterGain(float gain)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.ConeOuterGain, gain);
             _coneOuterGain = gain;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.ConeOuterGain, gain);
         }
         private void SetSecOffset(float offset)
         {
+            SetSpatialProperty(AudioSourceFloatProperty.SecondsOffset, offset);
             _secondsOffset = offset;
-            if (IsV2)
-                return;
-            LegacyBackend.SetSourceProperty(_transportHandle, AudioSourceFloatProperty.SecondsOffset, offset);
         }
 
         #endregion

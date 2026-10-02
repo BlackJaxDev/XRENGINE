@@ -14,6 +14,14 @@ namespace XREngine.Scene
         private List<XRScene> _scenes = [];
         private GameMode? _defaultGameMode = null;
         private WorldSettings _settings = new();
+        private bool _requiresAudio;
+
+        /// <summary>Whether gameplay must wait for an active audio output. Optional audio never gates simulation.</summary>
+        public bool RequiresAudio
+        {
+            get => _requiresAudio;
+            set => SetField(ref _requiresAudio, value);
+        }
 
         public List<XRScene> Scenes
         {

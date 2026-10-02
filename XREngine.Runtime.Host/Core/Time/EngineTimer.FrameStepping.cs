@@ -49,7 +49,14 @@ public partial class EngineTimer
     /// four ticks. Host cadence replaces desktop update/render frequency waits.
     /// </summary>
     /// <returns>True when the frame rendered; false when a callback stopped the lifecycle.</returns>
-    public bool StepFrame(double elapsedSeconds)
+    public bool StepFrame(double elapsedSeconds) => StepFrame(elapsedSeconds, dispatchSimulation: true);
+
+    /// <summary>Executes a caller-thread presentation frame with an independently gated simulation.</summary>
+    /// <param name="dispatchSimulation">False suppresses fixed and variable updates without
+    /// changing application pause state. Jobs, visibility, swapping and rendering continue;
+    /// simulation debt is discarded instead of accumulating during the gate.</param>
+    /// <returns>True when the frame rendered; false when a callback stopped the lifecycle.</returns>
+    public bool StepFrame(double elapsedSeconds, bool dispatchSimulation)
     {
         RequireCallerThreadLoopOwner();
         if (!double.IsFinite(elapsedSeconds) || elapsedSeconds < 0.0)
@@ -70,7 +77,7 @@ public partial class EngineTimer
                 return false;
 
             // Consume a paused single-step request once for both simulation phases.
-            if (ShouldDispatchUpdate())
+            if (dispatchSimulation && ShouldDispatchUpdate())
             {
                 phase = "FixedUpdate";
                 _fixedUpdateAccumulatorTicks = Math.Min(

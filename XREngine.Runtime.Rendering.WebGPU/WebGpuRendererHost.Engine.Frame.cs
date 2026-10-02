@@ -29,6 +29,8 @@ public sealed partial class WebGpuRendererHost
     private XRViewport? _engineViewport;
     private bool _engineDrawPending;
     private int _engineMeshDrawCount;
+    private ulong _submittedEngineSurfaceGeneration;
+    private RenderTargetOutputProperties _submittedEngineOutputProperties;
     private WebGpuMeshResolutionTrace[]? _engineMeshResolutionTraces;
     private bool _engineMeshResolutionTraceEnabled;
     private int _engineMeshResolutionTraceCount;
@@ -40,6 +42,11 @@ public sealed partial class WebGpuRendererHost
     public IShaderProgramArtifactResolver? ShaderArtifacts => _shaderArtifacts;
     internal EngineMaterialVariantCatalog? MaterialVariants => _materialVariants;
     public int LastEngineMeshDrawCount => _engineMeshDrawCount;
+    /// <summary>Reports a complete engine submission for the current drawable surface, not an earlier resize generation.</summary>
+    public bool IsEngineOutputFrameReady => _submittedFrame &&
+        TryDescribeFrameOutput(out RenderFrameOutputDescription output) &&
+        _submittedEngineSurfaceGeneration == output.TargetGeneration &&
+        _submittedEngineOutputProperties == output.Properties;
     public int LastEngineMeshResolutionTraceCount => _engineMeshResolutionTraceCount;
     public bool LastEngineMeshResolutionTraceTruncated => _engineMeshResolutionTraceTruncated;
     public bool EngineMeshResolutionTraceEnabled => _engineMeshResolutionTraceEnabled;
@@ -264,6 +271,11 @@ public sealed partial class WebGpuRendererHost
                 _enginePendingStorage.RemoveAt(index);
         }
         CommitDirectionalShadowDefaults();
+        if (presented && !_engineDrawPending)
+        {
+            SetField(ref _submittedEngineSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
+            SetField(ref _submittedEngineOutputProperties, output.Properties, publishNotifications: false);
+        }
         SetField(ref _submittedFrame, presented && !_engineDrawPending);
     }
 }

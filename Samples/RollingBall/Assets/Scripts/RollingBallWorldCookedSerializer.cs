@@ -25,13 +25,15 @@ namespace RollingBall;
 internal static class RollingBallWorldCookedSerializer
 {
     private const uint Magic = 0x4D425752;
-    private const int Version = 5;
+    private const int CompatibleVersion = 5;
+    private const int RequiredAudioVersion = 6;
     private const int MaximumCollectionCount = 16_384;
 
-    /// <summary>Lists file references emitted by the version-five world serializer.</summary>
+    /// <summary>Lists file references emitted by the compatible world serializer.</summary>
     public static IReadOnlyList<PublishedCookedAssetDependency> GetExternalDependencies(RollingBallWorldAsset world)
     {
         ArgumentNullException.ThrowIfNull(world);
+
         string? skyboxPath = world.Settings.SkyboxTexturePath;
         if (string.IsNullOrWhiteSpace(skyboxPath))
             return Array.Empty<PublishedCookedAssetDependency>();
@@ -91,15 +93,21 @@ internal static class RollingBallWorldCookedSerializer
     {
         ArgumentNullException.ThrowIfNull(world);
 
+        bool requiresAudio = world.RequiresAudio;
+
         using MemoryStream stream = new();
         using BinaryWriter writer = new(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write(Magic);
-        writer.Write(Version);
+        // Ordinary worlds retain their existing byte-identical cache format. The
+        // additional declaration is emitted only when the feature is explicitly authored.
+        writer.Write(requiresAudio ? RequiredAudioVersion : CompatibleVersion);
         WriteString(writer, world.Name);
         WriteWorldSettings(writer, world.Settings);
         writer.Write(world.Scenes.Count);
         for (int i = 0; i < world.Scenes.Count; i++)
             WriteScene(writer, world.Scenes[i]);
+        if (requiresAudio)
+            writer.Write(requiresAudio);
         writer.Flush();
         return stream.ToArray();
     }
@@ -114,7 +122,7 @@ internal static class RollingBallWorldCookedSerializer
             throw new InvalidDataException("The cooked Rolling Ball world has an invalid signature.");
 
         int version = reader.ReadInt32();
-        if (version != Version)
+        if (version != CompatibleVersion && version != RequiredAudioVersion)
             throw new InvalidDataException($"Unsupported cooked Rolling Ball world version {version}.");
 
         RollingBallWorldAsset world = new()
@@ -125,6 +133,9 @@ internal static class RollingBallWorldCookedSerializer
         int sceneCount = ReadCount(reader, "scene");
         for (int i = 0; i < sceneCount; i++)
             world.Scenes.Add(ReadScene(reader));
+
+        if (version == RequiredAudioVersion)
+            world.RequiresAudio = reader.ReadBoolean();
 
         if (stream.Position != stream.Length)
             throw new InvalidDataException("The cooked Rolling Ball world contains trailing data.");
