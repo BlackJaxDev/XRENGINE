@@ -418,15 +418,18 @@ async function shadowCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-directional-shadow', config);
     const url = `${origin}/diagnostics/engine-mesh.html?probe=shadow&manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
         `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`;
-    const ready = async previousPasses => {
-        await page.waitForFunction(previous => {
+    const ready = async (previousPasses, previousReadyFrames = 0, expectedEpoch = null) => {
+        await page.waitForFunction(({ previousPasses, previousReadyFrames, expectedEpoch }) => {
             const host = window.engineMeshDiagnostic;
             const status = document.querySelector('#status')?.textContent ?? '';
             if (status.startsWith('Failed:') || status.startsWith('Error:')) return true;
+            if (!host || host.session <= 0 || host.readyFrames <= previousReadyFrames ||
+                host.lastReadySession !== host.session ||
+                (expectedEpoch !== null && host.epoch !== expectedEpoch)) return false;
             if (!status.startsWith('Engine mesh shadow diagnostic rendered')) return false;
             const state = host.shadowState();
-            return !state.castsShadows || state.shadowPasses > previous;
-        }, previousPasses);
+            return !state.castsShadows || state.shadowPasses > previousPasses;
+        }, { previousPasses, previousReadyFrames, expectedEpoch });
         const status = await page.locator('#status').textContent();
         assert(status.startsWith('Engine mesh shadow diagnostic rendered'), `BrowserSmoke.EngineShadowFrameFailed: ${status}`);
     };
@@ -449,14 +452,16 @@ async function shadowCheck(browser, origin, report, config) {
         await page.goto(url, { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
         await page.locator('#start').click();
-        await ready(0);
+        const initialEpoch = await page.evaluate(() => window.engineMeshDiagnostic.epoch);
+        await ready(0, 0, initialEpoch);
         report.shadowCases = [];
         let baseline, previousPasses = 0;
         for (const [sampleCase, name] of ['baseline', 'caster-moved', 'light-moved',
             'near-contact', 'far-from-caster', 'disabled', 'restored'].entries()) {
             if (sampleCase) {
+                const previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
                 await page.evaluate(value => window.engineMeshDiagnostic.setShadowCase(value), sampleCase);
-                await ready(previousPasses);
+                await ready(previousPasses, previousReadyFrames, initialEpoch);
             }
             const state = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
             const result = await sample(name, state);
@@ -499,8 +504,9 @@ async function shadowCheck(browser, origin, report, config) {
             `BrowserSmoke.EngineShadowPenumbra: contact-hardening filter did not widen the far edge (${near.edge.transitionPixels} to ${far.edge.transitionPixels} pixels).`);
         report.shadowMapResizes = [];
         for (const size of [512, 256]) {
+            const previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
             await page.evaluate(value => window.engineMeshDiagnostic.setShadowMapSize(value), size);
-            await ready(previousPasses);
+            await ready(previousPasses, previousReadyFrames, initialEpoch);
             const state = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
             const result = await sample(`map-${size}`, state);
             assert(state.mapWidth === size && state.mapHeight === size &&
@@ -512,13 +518,64 @@ async function shadowCheck(browser, origin, report, config) {
             report.shadowMapResizes.push({ size, ...result });
             previousPasses = state.shadowPasses;
         }
+        // Disabling creates the retained one-pixel depth-one binding once. Use
+        // the first full toggle as the warmed reference, then require later
+        // toggles to drain and return to a stable live-resource count.
+        report.shadowToggleCycles = [];
+        let settledDisabledLive, settledRestoredLive;
+        const waitForRetirement = async () => {
+            await page.waitForFunction(() => window.engineMeshDiagnostic.statistics()?.resources?.retiring === 0,
+                null, { timeout: Math.min(config.timeout, 15000) });
+            return page.evaluate(() => window.engineMeshDiagnostic.statistics());
+        };
+        for (let cycle = 0; cycle < 3; cycle++) {
+            let previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+            await page.evaluate(() => window.engineMeshDiagnostic.setShadowCase(5));
+            await ready(previousPasses, previousReadyFrames, initialEpoch);
+            const disabledState = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
+            const disabledPixels = await sample(`toggle-${cycle}-disabled`, disabledState);
+            const disabledStatistics = await waitForRetirement();
+            assert(!disabledState.castsShadows && disabledStatistics.resources.retiring === 0 &&
+                disabledPixels.hdrShadow.average[0] > baseline.hdrShadow.average[0] + 0.08 &&
+                disabledPixels.canvas.samples[0].average[0] > baseline.canvas.samples[0].average[0] + 10,
+                `BrowserSmoke.EngineShadowRepeatDisable: cycle ${cycle} did not release the cast shadow and retire resources.`);
+            settledDisabledLive ??= disabledStatistics.resources.live;
+            assert(disabledStatistics.resources.live <= settledDisabledLive,
+                `BrowserSmoke.EngineShadowDisabledRetention: cycle ${cycle} grew live resources from ${settledDisabledLive} to ${disabledStatistics.resources.live}.`);
+
+            previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+            await page.evaluate(() => window.engineMeshDiagnostic.setShadowCase(6));
+            await ready(previousPasses, previousReadyFrames, initialEpoch);
+            const restoredState = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
+            const restoredPixels = await sample(`toggle-${cycle}-restored`, restoredState);
+            const restoredStatistics = await waitForRetirement();
+            assert(restoredState.castsShadows && restoredState.shadowPasses > previousPasses &&
+                restoredStatistics.resources.retiring === 0 &&
+                restoredPixels.hdrShadow.average[0] + 0.08 < restoredPixels.hdrLit.average[0] &&
+                restoredPixels.canvas.samples[0].average[0] + 10 < restoredPixels.canvas.samples[1].average[0],
+                `BrowserSmoke.EngineShadowRepeatRestore: cycle ${cycle} did not restore the producer and shadowed output.`);
+            settledRestoredLive ??= restoredStatistics.resources.live;
+            assert(restoredStatistics.resources.live <= settledRestoredLive,
+                `BrowserSmoke.EngineShadowRestoredRetention: cycle ${cycle} grew live resources from ${settledRestoredLive} to ${restoredStatistics.resources.live}.`);
+            assert(await page.evaluate(() => window.engineMeshDiagnostic.partialSubmissions) === 0,
+                'BrowserSmoke.EngineShadowTogglePartialFrame: a toggle submitted a partial frame.');
+            report.shadowToggleCycles.push({ cycle, disabledState, disabledStatistics, restoredState,
+                restoredStatistics, disabledPixels, restoredPixels,
+                pipelineCacheEntries: { disabled: disabledStatistics.resources.pipelineCacheEntries,
+                    restored: restoredStatistics.resources.pipelineCacheEntries } });
+            previousPasses = restoredState.shadowPasses;
+        }
+        const oldSession = await page.evaluate(() => window.engineMeshDiagnostic.session);
         await page.locator('#stop').click();
         assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),
             'BrowserSmoke.EngineShadowTeardown: the renderer survived stop.');
         await page.locator('#start').click();
-        await ready(0);
+        const restartEpoch = await page.evaluate(() => window.engineMeshDiagnostic.epoch);
+        await ready(0, 0, restartEpoch);
         const restarted = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
-        assert(restarted.shadowPasses > 0 && restarted.mapWidth === 256 && restarted.shadowCasters >= 1,
+        assert(restarted.shadowPasses > 0 && restarted.mapWidth === 256 && restarted.shadowCasters >= 1 &&
+            await page.evaluate(previous => window.engineMeshDiagnostic.session !== previous &&
+                window.engineMeshDiagnostic.lastReadySession === window.engineMeshDiagnostic.session, oldSession),
             'BrowserSmoke.EngineShadowRestart: the real producer did not resume with fresh resources.');
         report.shadowRestart = { state: restarted, statistics: await page.evaluate(() => window.engineMeshDiagnostic.statistics()) };
         await page.locator('#stop').click();

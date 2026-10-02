@@ -15,6 +15,8 @@ export class EngineMeshDiagnosticHost {
         this.stage = 'idle';
         this.failure = null;
         this.partialSubmissions = 0;
+        this.readyFrames = 0;
+        this.lastReadySession = 0;
         this.frame = this.frame.bind(this);
     }
 
@@ -23,10 +25,16 @@ export class EngineMeshDiagnosticHost {
             'engine-standard-lit-color-directional-shadow'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
-        await this.stop(false);
+        // Invalidate the previous visible completion before the first await.
+        // A second Start may spend time canceling or loading while session is 0.
+        this.stage = 'starting';
+        this.onState('Starting engine mesh diagnostic');
+        await this.stop(false, false);
         if (epoch !== this.epoch) return;
         this.failure = null;
         this.partialSubmissions = 0;
+        this.readyFrames = 0;
+        this.lastReadySession = 0;
         this.kind = artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
             artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
         this.readyMessage = `Engine mesh ${this.kind} diagnostic rendered; RuntimeWorld play and physics are unverified`;
@@ -106,7 +114,11 @@ export class EngineMeshDiagnosticHost {
             if (this.kind === 'shadow' && !ready && (this.statistics()?.frameSubmitCalls ?? 0) > submissionsBefore)
                 this.partialSubmissions++;
             this.stage = 'waiting-for-next-frame';
-            if (ready) this.onState(this.readyMessage);
+            if (ready) {
+                this.readyFrames++;
+                this.lastReadySession = this.session;
+                this.onState(this.readyMessage);
+            }
             else if (performance.now() - this.startedAt > 45000)
                 throw new Error(`Engine mesh ${this.kind} diagnostic did not submit its expected engine draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
             this.request = requestAnimationFrame(this.frame);
@@ -261,20 +273,27 @@ export class EngineMeshDiagnosticHost {
         }
         this.onState(`Failed: ${message}`);
         try {
-            void this.stop().catch(cleanup => this.onState(`Failed: ${message}; cleanup failed: ${String(cleanup?.message ?? cleanup).slice(0, 2048)}`));
+            void this.stop(true, false).catch(cleanup => this.onState(`Failed: ${message}; cleanup failed: ${String(cleanup?.message ?? cleanup).slice(0, 2048)}`));
         } catch (cleanup) {
             this.onState(`Failed: ${message}; cleanup failed: ${String(cleanup?.message ?? cleanup).slice(0, 2048)}`);
         }
     }
 
-    stop(supersede = true) {
+    stop(supersede = true, publishState = true) {
         if (supersede) this.epoch++;
+        const stopEpoch = this.epoch;
+        if (publishState) {
+            this.stage = 'stopping';
+            this.onState('Stopping engine mesh diagnostic');
+        }
         this.controller?.abort();
         this.exports.CancelPendingCreate();
         if (this.request) cancelAnimationFrame(this.request);
         this.request = 0;
         const session = this.session;
         this.session = 0;
+        this.readyFrames = 0;
+        this.lastReadySession = 0;
         const creation = this.creation;
         this.creation = null;
         try { if (session) this.exports.Stop(session); }
@@ -290,6 +309,11 @@ export class EngineMeshDiagnosticHost {
                 if (failure) throw failure.reason;
             });
         }
-        return this.pendingStop;
+        return this.pendingStop.then(() => {
+            if (publishState && stopEpoch === this.epoch && this.session === 0) {
+                this.stage = 'idle';
+                this.onState('Engine mesh diagnostic stopped');
+            }
+        });
     }
 }
