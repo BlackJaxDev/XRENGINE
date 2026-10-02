@@ -145,7 +145,7 @@ public static partial class EngineMeshDiagnosticExports
             _registration = _catalog.Register(new WebGpuRendererBackendModule());
             stage = "install rendering services";
             _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(_catalog,
-                new PhysicsBackendCatalog(), static () => throw new NotSupportedException(
+                new PhysicsBackendCatalog(), static _ => throw new NotSupportedException(
                     "EngineMeshDiagnostic.PipelineRequired: every diagnostic camera must use its explicit engine pipeline."));
             stage = "create renderer";
             _target = new BrowserCanvasRenderTarget(canvasId);
