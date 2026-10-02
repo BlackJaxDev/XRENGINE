@@ -541,7 +541,8 @@ namespace XREngine.Rendering
             // V2 auxiliary programs read the live source's parameters/coverage.
             // Numeric and mode edits must not destroy stable replay pipelines.
             // Replacing the parameter layout, shaders, or options still invalidates.
-            bool preserveCoverageVariants = EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 &&
+            bool preserveCoverageVariants = (EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 ||
+                EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1) &&
                 propName is nameof(BindingValueVersion) or nameof(AlphaCutoff) or nameof(TransparencyMode)
                     or nameof(TransparentTechniqueOverride) or nameof(RenderPass) or nameof(TransparentSortPriority)
                     or nameof(Name);
@@ -755,48 +756,54 @@ namespace XREngine.Rendering
             }
         }
 
-        public void InvalidateDepthNormalPrePassVariant()
+        public void InvalidateDepthNormalPrePassVariant() => InvalidateDepthNormalPrePassVariant(now: false);
+
+        private void InvalidateDepthNormalPrePassVariant(bool now)
         {
-            _depthNormalPrePassVariant?.Destroy();
+            _depthNormalPrePassVariant?.Destroy(now);
             _depthNormalPrePassVariant = null;
             _depthNormalPrePassVariantResolved = false;
         }
 
-        public void InvalidateOutlinePassVariant()
+        public void InvalidateOutlinePassVariant() => InvalidateOutlinePassVariant(now: false);
+
+        private void InvalidateOutlinePassVariant(bool now)
         {
-            _outlinePassVariant?.Destroy();
+            _outlinePassVariant?.Destroy(now);
             _outlinePassVariant = null;
             _outlinePassVariantResolved = false;
         }
 
-        public void InvalidateShadowCasterVariant()
+        public void InvalidateShadowCasterVariant() => InvalidateShadowCasterVariant(now: false);
+
+        private void InvalidateShadowCasterVariant(bool now)
         {
-            DestroyStandardLitSpotShadowVariant();
-            _shadowCasterVariant?.Destroy();
+            DestroyStandardLitSpotShadowVariant(now);
+            _shadowCasterVariant?.Destroy(now);
             _shadowCasterVariant = null;
             _shadowCasterVariantResolved = false;
-            _pointShadowCasterVariant?.Destroy();
+            _pointShadowCasterVariant?.Destroy(now);
             _pointShadowCasterVariant = null;
             _pointShadowCasterVariantResolved = false;
-            _pointShadowCasterGeometryVariant?.Destroy();
+            _pointShadowCasterGeometryVariant?.Destroy(now);
             _pointShadowCasterGeometryVariant = null;
             _pointShadowCasterGeometryVariantResolved = false;
-            _pointShadowCasterAtlasVariant?.Destroy();
+            _pointShadowCasterAtlasVariant?.Destroy(now);
             _pointShadowCasterAtlasVariant = null;
             _pointShadowCasterAtlasVariantResolved = false;
-            _pointShadowCasterAtlasGeometryVariant?.Destroy();
+            _pointShadowCasterAtlasGeometryVariant?.Destroy(now);
             _pointShadowCasterAtlasGeometryVariant = null;
             _pointShadowCasterAtlasGeometryVariantResolved = false;
-            _directionalCascadeInstancedShadowCasterVariant?.Destroy();
+            _directionalCascadeInstancedShadowCasterVariant?.Destroy(now);
             _directionalCascadeInstancedShadowCasterVariant = null;
             _directionalCascadeInstancedShadowCasterVariantResolved = false;
-            _directionalCascadeGeometryShadowCasterVariant?.Destroy();
+            _directionalCascadeGeometryShadowCasterVariant?.Destroy(now);
             _directionalCascadeGeometryShadowCasterVariant = null;
             _directionalCascadeGeometryShadowCasterVariantResolved = false;
-            _directionalCascadeAtlasInstancedShadowCasterVariant?.Destroy();
+            _directionalCascadeAtlasInstancedShadowCasterVariant?.Destroy(now);
             _directionalCascadeAtlasInstancedShadowCasterVariant = null;
             _directionalCascadeAtlasInstancedShadowCasterVariantResolved = false;
-            _directionalCascadeAtlasGeometryShadowCasterVariant?.Destroy();
+            _directionalCascadeAtlasGeometryShadowCasterVariant?.Destroy(now);
             _directionalCascadeAtlasGeometryShadowCasterVariant = null;
             _directionalCascadeAtlasGeometryShadowCasterVariantResolved = false;
         }
@@ -815,6 +822,19 @@ namespace XREngine.Rendering
             _shaders.PostAnythingRemoved -= ShaderRemoved;
             foreach (XRShader shader in _shaders)
                 ShaderRemoved(shader);
+        }
+
+        protected override void OnDestroying()
+        {
+            // These caches own their companions; the companions borrow this source's
+            // parameters and textures. Never destroy those borrowed resources here.
+            InvalidateDepthNormalPrePassVariant(now: true);
+            InvalidateShadowCasterVariant(now: true);
+            InvalidateOutlinePassVariant(now: true);
+            ShaderPipelineProgram?.Destroy(now: true);
+            DestroyShaderPipelineProgram();
+            PreShadersSet();
+            base.OnDestroying();
         }
 
         private IReadOnlyList<XRShader> GetShaderList(EShaderType shaderType)
@@ -1577,6 +1597,8 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
         {
+            if (deferred)
+                return CreateStandardLitTextureMaterial(CreateDeferredLitDefaults(ColorF4.White), [], []);
             XRShader fragmentShader = (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!;
             XRMaterial material = deferred
                 ? new(CreateDeferredLitDefaults(ColorF4.White), fragmentShader)
@@ -1591,6 +1613,9 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
         {
+            if (deferred)
+                return CreateStandardLitTextureMaterial(CreateDeferredLitDefaults(ColorF4.White), [texture],
+                    [CreateStandardSurfaceBinding(Materials.EMaterialTextureSemantic.BaseColor, texture)]);
             XRShader fragmentShader = (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!;
             XRMaterial material = deferred
                 ? new(CreateDeferredLitDefaults(ColorF4.White), [texture], fragmentShader)

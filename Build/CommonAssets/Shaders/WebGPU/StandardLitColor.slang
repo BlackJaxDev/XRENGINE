@@ -20,6 +20,9 @@ struct LitMaterialUniforms
 {
     float4 baseColorOpacity;
     float4 roughnessMetallicSpecularEmission;
+#ifdef XRE_STANDARD_LIT_TEXTURE
+    float4 textureControls;
+#endif
 #ifdef XRE_STANDARD_LIT_COVERAGE
     float4 coverage;
 #endif
@@ -65,10 +68,21 @@ struct LitLightingUniforms
 [[vk::binding(1, 2)]] Texture2D<float4> ambientOcclusionTexture;
 [[vk::binding(2, 2)]] SamplerState ambientOcclusionSampler;
 
+
+#ifdef XRE_STANDARD_LIT_TEXTURE
+#include "StandardLitTextureSampling.slang"
+#endif
+
 struct LitVertexInput
 {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
+#ifdef XRE_STANDARD_LIT_TEXTURE
+    [[vk::location(2)]] float2 uv : TEXCOORD0;
+#ifdef XRE_STANDARD_LIT_TEXTURE_NORMAL
+    [[vk::location(3)]] float4 tangent : TANGENT;
+#endif
+#endif
 };
 
 struct LitVertexOutput
@@ -76,6 +90,13 @@ struct LitVertexOutput
     float4 position : SV_Position;
     [[vk::location(0)]] float3 worldPosition : TEXCOORD0;
     [[vk::location(1)]] float3 worldNormal : TEXCOORD1;
+#ifdef XRE_STANDARD_LIT_TEXTURE
+    [[vk::location(2)]] float2 uv : TEXCOORD2;
+#ifdef XRE_STANDARD_LIT_TEXTURE_NORMAL
+    [[vk::location(3)]] float3 worldTangent : TEXCOORD3;
+    [[vk::location(4)]] float3 worldBitangent : TEXCOORD4;
+#endif
+#endif
 };
 
 [shader("vertex")]
@@ -86,6 +107,14 @@ LitVertexOutput standardLitVertex(LitVertexInput input)
     output.position = mul(view.viewProjection, world);
     output.worldPosition = world.xyz;
     output.worldNormal = mul(object.normalMatrix, float4(input.normal, 0.0)).xyz;
+#ifdef XRE_STANDARD_LIT_TEXTURE
+    output.worldNormal = normalize(output.worldNormal);
+    output.uv = input.uv;
+#ifdef XRE_STANDARD_LIT_TEXTURE_NORMAL
+    output.worldTangent = normalize(mul(object.normalMatrix, float4(input.tangent.xyz, 0.0)).xyz);
+    output.worldBitangent = normalize(mul(object.normalMatrix, float4(cross(input.normal, input.tangent.xyz) * input.tangent.w, 0.0)).xyz);
+#endif
+#endif
     return output;
 }
 
@@ -197,6 +226,16 @@ float4 standardLitFragment(LitVertexOutput input) : SV_Target0
     float3 viewDirection = safeNormalize(view.cameraPosition.xyz - input.worldPosition);
     float3 albedo = material.baseColorOpacity.xyz;
     float4 surface = material.roughnessMetallicSpecularEmission;
+#ifdef XRE_STANDARD_LIT_TEXTURE
+    albedo *= baseColorTexture.Sample(baseColorSampler, input.uv).rgb;
+    if (material.textureControls.x > 0.5)
+        surface.x *= roughnessTexture.Sample(roughnessSampler, input.uv).r;
+    if (material.textureControls.y > 0.5)
+        surface.y *= metallicTexture.Sample(metallicSampler, input.uv).r;
+#ifdef XRE_STANDARD_LIT_TEXTURE_NORMAL
+    normal = mappedTextureNormal(input.uv, normal, input.worldTangent, input.worldBitangent);
+#endif
+#endif
     float3 rms = float3(saturate(surface.x), saturate(surface.y), max(surface.z, 0.0));
     float3 color = float3(0.0);
     ADD_DIRECTIONAL(0)
@@ -225,7 +264,12 @@ float4 standardLitFragment(LitVertexOutput input) : SV_Target0
     ambient = ambientMax <= 0.0001 ? float3(0.08) : ambient * max(1.0, 0.08 / ambientMax);
     ambient *= ambientVisibility(input.position.xy, albedo);
     // Linear HDR color. The pipeline owns display tone mapping and encoding.
+#ifdef XRE_STANDARD_LIT_TEXTURE
+    // Deferred texture emission is BaseColor * Emission, independently of albedo texels.
+    float3 shaded = color + ambient * albedo + material.baseColorOpacity.xyz * surface.w;
+#else
     float3 shaded = color + ambient * albedo + albedo * surface.w;
+#endif
 #ifdef XRE_STANDARD_LIT_COVERAGE
     if (material.coverage.z > 0.5)
         shaded *= material.baseColorOpacity.w;

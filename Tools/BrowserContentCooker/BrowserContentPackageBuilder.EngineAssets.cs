@@ -105,7 +105,7 @@ public static partial class BrowserContentPackageBuilder
             foreach (JsonElement variant in variantValues.EnumerateArray())
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
-                string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth",
+                string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "OpaqueShadowDepth",
                     "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UITextBatchedBitmap", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
                     "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1);
@@ -113,6 +113,11 @@ public static partial class BrowserContentPackageBuilder
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
+                if (semantic == "StandardLitTexture")
+                    Require(vertexProfile is "position-normal-uv-v1" or "position-normal-tangent-uv-v1" &&
+                        (pass == "opaque-forward" && outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||
+                         pass == "depth-normal" && vertexProfile == "position-normal-tangent-uv-v1" && outputProfile == "normal-rgba16f-v1"),
+                        "Lit-texture surfaces require their exact opaque color or mapped-normal profile.");
                 if (semantic == "StandardLitColor" && semanticVersion == 2)
                     Require(pass == "forward-coverage" && vertexProfile == "static-position-normal-v1" &&
                             outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||

@@ -33,6 +33,9 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
     {
         RequireReady();
         ArgumentNullException.ThrowIfNull(description);
+        int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxTextureDimension;
+        if (qualityLimit > 0 && (description.Width > qualityLimit || description.Height > qualityLimit))
+            throw new NotSupportedException($"WebGPU.Quality.TextureDimensionExceeded: texture '{description.Label}' size {description.Width}x{description.Height} exceeds the selected browser texture limit {qualityLimit}; authored textures are not resized implicitly.");
         return Track(WebGpuImports.CreateTextureResource(_session, description.Width, description.Height,
             description.MipLevelCount, description.SampleCount, description.Format, (int)description.Usage,
             description.Label, description.ArrayLayerCount));

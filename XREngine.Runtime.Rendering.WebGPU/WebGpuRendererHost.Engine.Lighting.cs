@@ -38,6 +38,10 @@ public sealed partial class WebGpuRendererHost
         int spotCount = lights.DynamicSpotLights.Count;
         if (directionalCount > MaximumForwardDirectionalLights || pointCount > MaximumForwardPointLights || spotCount > MaximumForwardSpotLights)
             throw new NotSupportedException("WebGPU.Lighting.CapacityExceeded: the selected forward profile supports four directional, eight point, and eight spot lights; no light is silently dropped.");
+        BrowserWebGpuQualitySettings quality = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality;
+        if (directionalCount > quality.MaxDirectionalLights || pointCount > quality.MaxPointLights ||
+            spotCount > quality.MaxSpotLights)
+            throw new NotSupportedException($"WebGPU.Quality.LightCountExceeded: authored lights {directionalCount}/{pointCount}/{spotCount} exceed selected browser limits {quality.MaxDirectionalLights}/{quality.MaxPointLights}/{quality.MaxSpotLights} (directional/point/spot).");
         program.SetVector4("ForwardLightCounts", new Vector4(directionalCount, pointCount, spotCount, 0));
         program.SetVector4("GlobalAmbient", new Vector4(world.GetEffectiveAmbientColor(), 0));
         for (int i = 0; i < directionalCount; i++)

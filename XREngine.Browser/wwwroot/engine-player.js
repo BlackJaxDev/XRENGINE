@@ -27,18 +27,19 @@ async function publishedManifestUrl() {
     if (!response.ok) throw new Error(`Published launch descriptor: HTTP ${response.status}`);
     const descriptor = await response.json();
     if (descriptor?.schema !== 2 || descriptor.format !== 'xrengine-engine-launch' ||
-        descriptor.manifest !== './content/manifest.json')
+        descriptor.manifest !== './content/manifest.json' ||
+        (descriptor.quality != null && !['low', 'balanced', 'high'].includes(descriptor.quality)))
         throw new Error('Published launch descriptor is not a supported engine-world launch');
-    return new URL(descriptor.manifest, descriptorUrl).href;
+    return { manifest: new URL(descriptor.manifest, descriptorUrl).href, quality: descriptor.quality ?? '' };
 }
 
 async function start() {
     const mine = ++epoch;
     try {
-        const manifest = await publishedManifestUrl();
+        const launch = await publishedManifestUrl();
         if (mine !== epoch) return;
         host.setPageHidden(pageHidden);
-        await host.start(manifest);
+        await host.start(launch.manifest, launch.quality);
     } catch (error) {
         if (mine !== epoch) return;
         report('failed', `Engine startup failed: ${error.message ?? error}`);

@@ -38,8 +38,13 @@ namespace XREngine.Rendering
 
         public void OnSettingVertexUniforms(XRRenderProgram program)
             => SettingVertexUniforms?.Invoke(program);
+        public bool HasSettingVertexUniformHandlers => SettingVertexUniforms is not null;
         public bool HasSettingUniformsHandlers
             => SettingUniforms is not null;
+
+        /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
+        protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
+            => SettingUniforms == handler;
 
         /// <summary>
         /// Typed, generation-owned numeric binding publishers eligible for
@@ -304,6 +309,13 @@ namespace XREngine.Rendering
                     IncrementBindingResourceVersion();
                     break;
             }
+        }
+
+        protected override void OnDestroying()
+        {
+            DetachParameterHandlers(_parameters);
+            DetachTextureListHandlers(_textures);
+            base.OnDestroying();
         }
 
         public void SetFloat(string name, float value)

@@ -18,4 +18,5 @@ public enum EngineMaterialSemantic
     SkyboxCubemap = 12,
     SkyboxDynamicProcedural = 13,
     OpaqueSpotShadowDepth = 14,
+    StandardLitTexture = 15,
 }

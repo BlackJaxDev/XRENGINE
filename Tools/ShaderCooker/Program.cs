@@ -194,7 +194,7 @@ internal static class Program
                     && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
                 string semantic = String(variant, "semantic");
                 int semanticVersion = Integer(variant, "semanticVersion");
-                Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
+                Require(semantic is "StandardLitColor" or "StandardLitTexture" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
                     "UIQuadBatched" or "UITextBatchedBitmap" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
                     "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
                     "SkyboxCubemap" or "SkyboxDynamicProcedural"

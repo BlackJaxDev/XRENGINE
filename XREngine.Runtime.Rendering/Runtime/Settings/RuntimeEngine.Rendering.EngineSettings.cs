@@ -28,7 +28,7 @@ public static partial class RuntimeEngine
             {
                 public EngineSettings()
                 {
-                    AttachRenderSubSettings(_execution, _openGL, _vulkan);
+                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality);
                     TrackOverrideableSettings();
                 }
 
@@ -67,7 +67,8 @@ public static partial class RuntimeEngine
                 {
                     base.OnPropertyChanged(propName, prev, field);
 
-                    if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan))
+                    if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan) ||
+                        propName == nameof(BrowserWebGpuQuality))
                         RefreshRenderSubSettings(prev, field);
                 }
 

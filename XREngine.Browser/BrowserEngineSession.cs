@@ -63,7 +63,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     public RuntimeWorld? World => _runtimeWorld;
     public bool IsRunning => _running;
-    public bool HasEngineOwnership => _engineInitialized || _sessionObjects.Count != 0;
+    public bool HasEngineOwnership => _engineInitialized || _sessionObjects.Count != 0 || HasPendingBrowserQualityRestoration;
     public int CanvasWidth => _canvasWidth;
     public int CanvasHeight => _canvasHeight;
     public int RendererSession => _rendererSession;
@@ -96,7 +96,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         CancellationToken cancellationToken = default, string? canvasId = null,
         IShaderProgramArtifactResolver? shaderArtifacts = null, EngineMaterialVariantCatalog? materialVariants = null,
         ShaderProgramArtifact? tonemapArtifact = null, WebPipelineArtifactCatalog? pipelineArtifacts = null,
-        WebComputeArtifactCatalog? computeArtifacts = null)
+        WebComputeArtifactCatalog? computeArtifacts = null, string? qualityPreset = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(authoredSettings);
@@ -134,6 +134,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             _previousUserSettings = Engine.UserSettings;
             OwnConstruction(() => Engine.InitializeForCallerThread(settings));
             _engineInitialized = true;
+            ApplySelectedBrowserQuality(canvasId is not null, qualityPreset);
             // Camera and material factories are shared data services even without a
             // physical output. Both world hosts resolve physics from this same catalog.
             _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(
@@ -316,6 +317,9 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         if (_canvas is null || _renderViewport is null || _renderer is null)
             throw new InvalidOperationException("WebGPU.EngineCanvas.Required: start a canvas world first.");
         bool replaced = surface.Generation != _canvas.Surface.Generation;
+        if (replaced || !surface.CanRender || surface.PhysicalWidth != _canvas.Surface.PhysicalWidth ||
+            surface.PhysicalHeight != _canvas.Surface.PhysicalHeight)
+            ResetInput();
         _canvas.UpdateSurface(surface);
         _renderer.SynchronizeEngineViewport(replaced);
         if (!surface.CanRender)
@@ -442,6 +446,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             _engineInitialized = false;
         }
 
+        Capture(errors, RestoreSelectedBrowserQuality);
         if (_renderer is not null)
             Capture(errors, _renderer.Dispose);
         _renderer = null;

@@ -22,9 +22,9 @@ public partial class XRMaterial
         return variant;
     }
 
-    private void DestroyStandardLitSpotShadowVariant()
+    private void DestroyStandardLitSpotShadowVariant(bool now = false)
     {
-        _standardLitSpotShadowVariant?.Destroy();
+        _standardLitSpotShadowVariant?.Destroy(now);
         SetField(ref _standardLitSpotShadowVariant, null, publishNotifications: false);
     }
 

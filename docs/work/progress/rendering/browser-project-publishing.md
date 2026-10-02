@@ -174,9 +174,13 @@ character controllers as well as desktop-only component assemblies. It rejects
 ignored PhysX body flags, dominance/owner metadata, incompatible packed collision
 masks, contact/sleep and custom COM/inertia settings, distinct per-shape dynamic
 friction/restitution/damping, unsupported geometry adapters, and native runtime
-material objects. Character settings requiring controller materials, invisible
-walls, constrained climbing or custom PhysX scaling/cache growth also fail
-before package activation. Diagnostics identify the scene path, component and
+material objects. Both character-controller component families currently fail
+with `BrowserCook.ControllerFilteringUnsupported`: PhysX movement uses unfiltered
+manager-wide sweeps while Jolt applies the controller group/mask. Neither default
+settings nor lower-sixteen-bit representability guarantee equivalent selection
+against all admitted rigid bodies. Desktop behavior is unchanged; a future
+portable controller contract must cover sweep queries and simulation filtering,
+not only encode a different group number. Diagnostics identify the scene path, component and
 feature. Defaults that the Jolt adapter intentionally replaces remain admitted;
 this does not claim numerical equality between physics backends. Collision
 geometry that needs native runtime generation must be baked before publishing.

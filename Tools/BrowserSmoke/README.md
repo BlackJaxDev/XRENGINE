@@ -1,5 +1,12 @@
 # Browser runtime smoke harness
 
+The CI game lane publishes through the genuine Windows Editor CLI, verifies its
+activated canonical content, and uploads the exact static bundle. A dependent
+Linux Chromium job downloads that artifact and runs the existing game checks
+with explicit SwiftShader. This keeps Editor CLI execution and GPU qualification
+on runners that provide their required capabilities; the game is not republished
+or rewritten on Linux. The separate Linux engine-regression job remains intact.
+
 This is production-path qualification tooling. It serves an already published
 browser application and cooked shader artifacts, launches real Chromium, and
 checks the actual engine-rendered pixels. It neither mocks WebGPU nor replaces

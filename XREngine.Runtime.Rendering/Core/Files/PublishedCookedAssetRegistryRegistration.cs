@@ -10,6 +10,8 @@ public static class RenderingPublishedCookedAssetRegistration
     public static IDisposable Install()
         => RegistrationLeaseGroup.Create(static leases =>
         {
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedStandardLitTextureMaterial),
+                static () => new PublishedStandardLitTextureMaterial());
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(
                 typeof(XRMesh),
                 static () => XRMesh.CreateDeferredForDeserialization()));

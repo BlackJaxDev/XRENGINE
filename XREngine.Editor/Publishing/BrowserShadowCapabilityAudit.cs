@@ -14,11 +14,19 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     private int _directionalLights, _pointLights, _spotLights;
     private int _directionalShadows, _pointShadows, _spotShadows;
     private bool _litV1, _litV2;
+    private bool _litTexture, _litNormalTexture;
 
     internal void InspectMaterial(XRMaterial? material)
     {
         _litV1 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1;
         _litV2 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
+        if (material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+        {
+            if (material.GetSurfaceTexture(XREngine.Rendering.Materials.EMaterialTextureSemantic.Normal) is null)
+                _litTexture = true;
+            else
+                _litNormalTexture = true;
+        }
     }
 
     internal void Inspect(XRComponent component, string path)
@@ -63,6 +71,8 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
         string output = local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1";
         if (_litV1) Require(EngineMaterialSemanticIdentity.StandardLitColorV1, "opaque-forward", "static-position-normal-v1", output);
         if (_litV2) Require(EngineMaterialSemanticIdentity.StandardLitColorV2, "forward-coverage", "static-position-normal-v1", output);
+        if (_litTexture) Require(EngineMaterialSemanticIdentity.StandardLitTextureV1, "opaque-forward", "position-normal-uv-v1", output);
+        if (_litNormalTexture) Require(EngineMaterialSemanticIdentity.StandardLitTextureV1, "opaque-forward", "position-normal-tangent-uv-v1", output);
         if (_directionalShadows != 0)
         {
             Require(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1, "depth", "static-position-v1", "depth-normal-v1");

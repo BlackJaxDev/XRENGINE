@@ -23,6 +23,12 @@ public readonly record struct EngineMaterialVariantKey(
         ValidateProfile(Pass, nameof(Pass));
         ValidateProfile(VertexProfile, nameof(VertexProfile));
         ValidateProfile(OutputProfile, nameof(OutputProfile));
+        if (Semantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl ||
+             VertexProfile is not ("position-normal-uv-v1" or "position-normal-tangent-uv-v1") ||
+             !(Pass == "opaque-forward" && OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||
+               Pass == "depth-normal" && VertexProfile == "position-normal-tangent-uv-v1" && OutputProfile == "normal-rgba16f-v1")))
+            throw new ArgumentException("StandardLitTextureV1 requires its exact textured forward or depth-normal profile.");
         if (Semantic.IsSkybox() && (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "background" ||
             VertexProfile != "fullscreen-sky-v1" || OutputProfile != "linear-hdr-v1"))
             throw new ArgumentException("Skybox variants require WebGPU background/fullscreen-sky-v1/linear-hdr-v1.");

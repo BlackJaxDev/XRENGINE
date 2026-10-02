@@ -7,7 +7,7 @@ using YamlDotNet.Serialization;
 namespace XREngine.Runtime.InputIntegration
 {
     //TODO: handle sending controller input packets to the server
-    public class LocalPlayerController : PlayerController<LocalInputInterface>
+    public partial class LocalPlayerController : PlayerController<LocalInputInterface>
     {
         /// <inheritdoc />
         public override bool IsLocal => true;
@@ -76,11 +76,20 @@ namespace XREngine.Runtime.InputIntegration
 
         protected override bool OnPropertyChanging<T2>(string? propName, T2 field, T2 @new)
         {
+            if (propName is nameof(Viewport) or nameof(ControlledPawn) or nameof(Input) or nameof(LocalPlayerIndex))
+            {
+                CancelVirtualInput();
+                MarkContactOwnershipBoundary();
+            }
+            else if (propName == nameof(FocusedUIComponent) && @new is not null)
+                CancelVirtualControls();
             return base.OnPropertyChanging(propName, field, @new);
         }
         protected override void OnPropertyChanged<T2>(string? propName, T2 prev, T2 field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            if (propName is nameof(Viewport) or nameof(ControlledPawn) or nameof(Input) or nameof(LocalPlayerIndex))
+                MarkContactOwnershipBoundary();
             switch (propName)
             {
                 case nameof(Viewport):
@@ -157,6 +166,7 @@ namespace XREngine.Runtime.InputIntegration
                 return;
 
             WindowInputSnapshot snapshot = _viewport.ConsumeInputSnapshot();
+            _latestInputSnapshot = snapshot;
             _snapshotGamepad.ApplySnapshot(snapshot);
             _snapshotKeyboard.ApplySnapshot(snapshot);
             _snapshotMouse.ApplySnapshot(snapshot);
@@ -185,6 +195,8 @@ namespace XREngine.Runtime.InputIntegration
 
             ConsumeLatestInputSnapshot();
 
+            UpdateVirtualInput(isUIInputCaptured);
+
             if (isUIInputCaptured)
             {
                 localInput.ClearMouseScrollBuffer();
@@ -192,6 +204,7 @@ namespace XREngine.Runtime.InputIntegration
             }
 
             localInput.TickStates(delta);
+            TouchMouseCancellationPending = false;
         }
 
         /// <inheritdoc />

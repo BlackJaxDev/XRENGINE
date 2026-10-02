@@ -29,7 +29,7 @@ namespace XREngine.Rendering
     /// Can either be a window or render texture.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport
+    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport, IRuntimePointerContactSource
     {
         #region Fields
 
@@ -64,6 +64,7 @@ namespace XREngine.Rendering
         /// </summary>
         private IPawnController? _associatedPlayer = null;
         private IRuntimeLocalPlayerInputSource? _inputSource;
+        private ulong _pointerContactBindingSequence;
 
         /// <summary>
         /// The screen-space rectangular region where this viewport renders within the parent window.
@@ -384,6 +385,30 @@ namespace XREngine.Rendering
         WindowInputSnapshot IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()
             => _inputSource?.ConsumeInputSnapshot() ?? Window?.ConsumeLatestWindowInputSnapshot() ?? default;
 
+        object? IRuntimePointerContactSource.PointerContactOwner
+            => (_inputSource as IRuntimePointerContactSource)?.PointerContactOwner;
+
+        ulong IRuntimePointerContactSource.PointerContactSequence
+            => (_inputSource as IRuntimePointerContactSource)?.PointerContactSequence ?? 0;
+
+        ulong IRuntimePointerContactSource.PointerContactGeneration
+            => (_inputSource as IRuntimePointerContactSource)?.PointerContactGeneration ?? 0;
+
+        int IRuntimePointerContactSource.ConsumePointerContacts(Span<WindowPointerContact> destination, out ulong generation)
+        {
+            if (_inputSource is IRuntimePointerContactSource contacts)
+            {
+                int count = contacts.ConsumePointerContacts(destination, out generation);
+                int retained = 0;
+                for (int index = 0; index < count; index++)
+                    if (destination[index].Sequence > _pointerContactBindingSequence)
+                        destination[retained++] = destination[index];
+                return retained;
+            }
+            generation = 0;
+            return 0;
+        }
+
         void IRuntimeLocalPlayerViewport.RequestMouseCapture(bool captured)
         {
             if (_inputSource is { } inputSource)
@@ -414,6 +439,7 @@ namespace XREngine.Rendering
             {
                 // A failed capture release must not keep routing through a stale source.
                 SetField(ref _inputSource, inputSource);
+                _pointerContactBindingSequence = (inputSource as IRuntimePointerContactSource)?.PointerContactSequence ?? 0;
             }
         }
 

@@ -6,7 +6,7 @@ namespace XREngine.Editor;
 internal static partial class ProjectBuilder
 {
     /// <summary>Cooks the serializer-declared external asset graph into browser catalog identities.</summary>
-    private sealed class BrowserAssetDependencyCooker(string gameRoot, string? engineRoot, string sourceDirectory, CancellationToken cancellationToken)
+    private sealed class BrowserAssetDependencyCooker(string gameRoot, string? engineRoot, string sourceDirectory, CancellationToken cancellationToken) : IDisposable
     {
         private readonly string _gameRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gameRoot));
         private readonly string? _engineRoot = engineRoot is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(engineRoot));
@@ -14,6 +14,9 @@ internal static partial class ProjectBuilder
         private readonly Dictionary<string, Type> _assetTypes = new(StringComparer.Ordinal);
         private readonly HashSet<string> _visiting = new(StringComparer.Ordinal);
         private int _nextSourceOrdinal;
+        private readonly Publishing.BrowserMaterialCookProjection _materialProjection = new(engineRoot);
+
+        public void Dispose() => _materialProjection.Dispose();
 
         public IReadOnlyDictionary<string, (string TypeName, string Source, string[] Dependencies)> Entries => _entries;
 
@@ -92,7 +95,7 @@ internal static partial class ProjectBuilder
 
                 string typeName = asset.GetType().AssemblyQualifiedName
                     ?? throw new InvalidOperationException($"Browser asset '{catalogPath}' has no stable runtime type identity.");
-                WriteCookedAsset(asset, Path.Combine(sourceDirectory, sourceName));
+                WriteCookedAsset(asset, Path.Combine(sourceDirectory, sourceName), callbacks: _materialProjection.Callbacks);
                 _entries.Add(catalogPath, (typeName, sourceName, [.. references.Keys]));
                 _assetTypes.Add(catalogPath, asset.GetType());
                 return catalogPath;

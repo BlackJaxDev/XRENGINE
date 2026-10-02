@@ -88,7 +88,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
+                || !['StandardLitColor', 'StandardLitTexture', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
                     'UIQuadBatched', 'UITextBatchedBitmap', 'SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral',
                     'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
                 || !(variant.semanticVersion === 1 || variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2)
@@ -107,6 +107,13 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                     && variant.outputProfile === 'radial-r16f-v1'
                     || variant.pass === 'spot-shadow-depth' && variant.vertexProfile === 'static-position-v1'
                     && variant.outputProfile === 'projected-r16f-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'StandardLitTexture'
+                && !(['position-normal-uv-v1', 'position-normal-tangent-uv-v1'].includes(variant.vertexProfile)
+                    && (variant.pass === 'opaque-forward'
+                        && ['linear-hdr-v1', 'linear-hdr-directional-shadow-v1', 'linear-hdr-local-shadows-v1'].includes(variant.outputProfile)
+                        || variant.pass === 'depth-normal' && variant.vertexProfile === 'position-normal-tangent-uv-v1'
+                        && variant.outputProfile === 'normal-rgba16f-v1')))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.semantic === 'OpaqueShadowDepth' && (variant.pass !== 'depth'
                 || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'depth-normal-v1'))

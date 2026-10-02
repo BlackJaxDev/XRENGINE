@@ -62,18 +62,21 @@ internal static partial class ShaderSourceResolver
 
     private sealed class SearchContext
     {
-        public SearchContext(string? sourceDirectory, string[] shaderRoots, string searchRootsKey, Action<string>? warningLogger)
+        public SearchContext(string? sourceDirectory, string[] shaderRoots, string searchRootsKey, Action<string>? warningLogger,
+            IReadOnlyDictionary<string, string>? canonicalSnippets = null)
         {
             SourceDirectory = sourceDirectory;
             ShaderRoots = shaderRoots;
             SearchRootsKey = searchRootsKey;
             WarningLogger = warningLogger;
+            CanonicalSnippets = canonicalSnippets;
         }
 
         public string? SourceDirectory { get; }
         public string[] ShaderRoots { get; }
         public string SearchRootsKey { get; }
         public Action<string>? WarningLogger { get; }
+        public IReadOnlyDictionary<string, string>? CanonicalSnippets { get; }
     }
 
     private sealed class CachedTextFile
@@ -240,6 +243,27 @@ internal static partial class ShaderSourceResolver
     {
         SearchContext context = CreateSearchContext(sourcePath: null, options);
         return TryLoadSnippet(context, snippetName, out snippetSource, out _);
+    }
+
+    internal static string ResolveCanonicalSnippetDirectives(string source, IReadOnlyDictionary<string, string> snippets)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(snippets);
+        if (IncludeRegex().IsMatch(source))
+            throw new InvalidDataException("ShaderSource.CanonicalIncludeUnsupported: canonical snippet expansion does not resolve files.");
+        Dictionary<string, string> snapshot = new(StringComparer.OrdinalIgnoreCase);
+        foreach ((string name, string text) in snippets)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            ArgumentNullException.ThrowIfNull(text);
+            if (IncludeRegex().IsMatch(text))
+                throw new InvalidDataException($"ShaderSource.CanonicalIncludeUnsupported: snippet '{name}' contains a file include.");
+            snapshot.Add(name, text);
+        }
+        // Share the desktop expansion algorithm, including annotations and duplicate
+        // directives, but neither its search providers nor its global resolution cache.
+        SearchContext context = new(null, [], string.Empty, null, snapshot);
+        return ResolveSnippetsRecursive(source, context, new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase));
     }
 
     internal static IEnumerable<string> GetAvailableSnippetNames(ShaderSourceResolverOptions? options)
@@ -549,6 +573,13 @@ internal static partial class ShaderSourceResolver
 
     private static bool TryLoadSnippet(SearchContext context, string snippetName, out string? snippetSource, out ShaderSourceFileDependency fileDependency)
     {
+        if (context.CanonicalSnippets is not null)
+        {
+            fileDependency = default;
+            if (!context.CanonicalSnippets.TryGetValue(snippetName, out snippetSource))
+                throw new InvalidDataException($"ShaderSource.CanonicalSnippetMissing: '{snippetName}' is outside the supplied canonical dependency set.");
+            return true;
+        }
         if (RegisteredSnippets.TryGetValue(snippetName, out string? registeredSnippetSource))
         {
             snippetSource = registeredSnippetSource;

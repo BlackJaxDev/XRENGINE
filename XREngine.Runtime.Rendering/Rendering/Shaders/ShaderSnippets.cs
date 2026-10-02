@@ -62,6 +62,14 @@ public static class ShaderSnippets
     public static string ResolveSnippets(string source, HashSet<string>? resolvedSnippets = null)
         => global::XREngine.Rendering.ShaderSourceResolver.ResolveSnippetDirectives(source, CreateResolverOptions());
 
+    /// <summary>
+    /// Expands a canonical stage using only the supplied snippet texts and the normal
+    /// recursive expansion rules. File includes and undeclared dependencies fail; runtime
+    /// registrations, filesystem providers and shared caches are never consulted.
+    /// </summary>
+    public static string ResolveCanonical(string source, IReadOnlyDictionary<string, string> snippets)
+        => global::XREngine.Rendering.ShaderSourceResolver.ResolveCanonicalSnippetDirectives(source, snippets);
+
     private static RuntimeResolverOptions CreateResolverOptions()
     {
         List<string> additionalRoots = [];

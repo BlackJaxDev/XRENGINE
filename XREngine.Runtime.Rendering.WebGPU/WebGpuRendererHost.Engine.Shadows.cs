@@ -34,13 +34,21 @@ public sealed partial class WebGpuRendererHost
             ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
         EngineMaterialVariantKey coverageReceiver = new(EngineMaterialSemanticIdentity.StandardLitColorV2,
             ShaderCompileTarget.WebGPUWgsl, "forward-coverage", "static-position-normal-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
+        EngineMaterialVariantKey texturedReceiver = new(EngineMaterialSemanticIdentity.StandardLitTextureV1,
+            ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "position-normal-uv-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
+        EngineMaterialVariantKey tangentTexturedReceiver = new(EngineMaterialSemanticIdentity.StandardLitTextureV1,
+            ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "position-normal-tangent-uv-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
         if (_materialVariants is null || count > 0 && !_materialVariants.TryResolve(depth, out _) ||
-            (_materialVariants.TryResolve(receiver, out _) != true && _materialVariants.TryResolve(coverageReceiver, out _) != true))
+            (_materialVariants.TryResolve(receiver, out _) != true && _materialVariants.TryResolve(coverageReceiver, out _) != true &&
+             _materialVariants.TryResolve(texturedReceiver, out _) != true && _materialVariants.TryResolve(tangentTexturedReceiver, out _) != true))
             throw ShadowUnsupported("the package must supply exact caster and selected local/directional receiver variants");
     }
 
     private static void ValidateDirectionalShadowLight(DirectionalLightComponent light)
     {
+        int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxDirectionalShadowDimension;
+        if (light.ShadowMapResolutionWidth > qualityLimit || light.ShadowMapResolutionHeight > qualityLimit)
+            throw ShadowUnsupported($"light '{light.Name}' shadow size {light.ShadowMapResolutionWidth}x{light.ShadowMapResolutionHeight} exceeds the selected browser directional-shadow limit {qualityLimit}; authored maps are not resized implicitly");
         if (light.UseShadowAtlas || light.EnableCascadedShadows || light.ShadowMapEncoding != EShadowMapEncoding.Depth ||
             light.EnableContactShadows || light.SoftShadowMode != ESoftShadowMode.ContactHardeningPcss ||
             light.BlockerSamples != 8 || light.FilterSamples != 8 ||

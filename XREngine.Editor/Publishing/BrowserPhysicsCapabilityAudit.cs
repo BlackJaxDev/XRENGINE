@@ -11,14 +11,11 @@ internal static class BrowserPhysicsCapabilityAudit
 {
     internal static void Inspect(XRComponent component, string path)
     {
-        // Movement also inherits the authored rigid-body settings below.
-        if (component is CharacterMovement3DComponent movement)
-        {
-            Require(movement.InvisibleWallHeight == 0, nameof(movement.InvisibleWallHeight));
-            Require(!movement.ConstrainedClimbing, nameof(movement.ConstrainedClimbing));
-            Require(movement.ScaleCoeff == 0.8f, nameof(movement.ScaleCoeff));
-            Require(movement.VolumeGrowth == 1.5f, nameof(movement.VolumeGrowth));
-        }
+        // PhysX controller sweeps currently use manager-wide unfiltered queries,
+        // whereas Jolt applies a packed controller group/mask to movement. Even
+        // default controller settings differ against admitted filtered bodies.
+        if (component is CharacterControllerComponent or CharacterMovement3DComponent)
+            throw new NotSupportedException($"BrowserCook.ControllerFilteringUnsupported: '{path}' component '{component.GetType().FullName}' requires controller sweep and collision filtering that the browser Jolt adapter does not preserve.");
         switch (component)
         {
             case DynamicRigidBodyComponent body:
@@ -55,10 +52,6 @@ internal static class BrowserPhysicsCapabilityAudit
                     nameof(staticBody.AutoGenerateConvexCollidersFromSiblingModel) + ": bake collision geometry before publishing");
                 InspectShapes(staticBody.Geometry, staticBody.ColliderShapes, staticBody.MaterialDefinition, staticBody.Material, Require, ReportMapping);
                 break;
-            case CharacterControllerComponent controller:
-                Require(controller.MaterialDefinition is null, nameof(controller.MaterialDefinition));
-                Require(HasBrowserCollisionLayer(controller.CollisionLayerMask.Value), nameof(controller.CollisionLayerMask));
-                break;
         }
 
         void Require(bool supported, string feature)
@@ -70,9 +63,6 @@ internal static class BrowserPhysicsCapabilityAudit
         void ReportMapping(string feature)
             => Debug.LogWarning($"BrowserCook.PhysicsMaterialMapping: '{path}' component '{component.GetType().FullName}', '{feature}' uses Jolt's existing single dynamic-friction coefficient. The separate authored static coefficient is retained but has no separate Jolt solver parameter.");
     }
-
-    private static bool HasBrowserCollisionLayer(int mask)
-        => mask == 0 || (mask & ushort.MaxValue) != 0;
 
     private static bool HasEquivalentBrowserGroupMask(PhysicsGroupsMask mask)
     {
