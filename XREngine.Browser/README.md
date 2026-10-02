@@ -4,9 +4,10 @@
 
 The editor's `BrowserWebGPU` target installs `engine-player.html` as the site
 entry point. It loads the canonical cooked `XRWorld` and statically linked game
-assembly through the shared runtime. This path is still under qualification;
-the production `DefaultRenderPipeline` WebGPU output remains explicitly gated
-until its required lit material and pass routes are available. See the
+assembly through the shared runtime. Its bounded `DefaultRenderPipeline` WebGPU
+profile supports lit output; unsupported authored features fail with a named
+capability diagnostic. Full application and device parity remain under
+qualification. See the
 [current checkpoint](../docs/work/progress/platform/unified-browser-checkpoint-2026-10-01.md)
 for exact build/runtime evidence and remaining work.
 
@@ -14,6 +15,42 @@ Browser composition installs its built-in material target before deserializing
 the world. Material semantics and parameters are retained without loading
 desktop GLSL. Hash-owned `materialVariants` metadata is validated before play;
 it does not make an absent renderer variant available.
+
+### Host-service composition
+
+`BrowserEngineSession` composes the real shared `Engine` on the browser event
+thread. The process-wide service replacement is serialized on that thread for
+the session lifetime; it does not support a simultaneously installed desktop
+VR provider. Installation is retained before provider mutation, and shutdown
+restores prior providers only while the browser still owns each direct slot.
+Later direct overrides must be retired before session teardown. Import-service
+scopes support out-of-order retirement without restoring a disposed provider.
+
+| Service slots | Browser provider or availability |
+| --- | --- |
+| `RuntimeApplicationCapabilityServices`, `RuntimeEngineStartupPolicyServices` | Browser capabilities and startup policy |
+| `RuntimeRenderingHostServices`, `RuntimeRenderObjectServices`, `RuntimeShaderServices`, `RuntimeCharacterMovementVisualizationServices` | Shared caller-thread rendering bootstrap with WebGPU backend and browser pipeline recipe |
+| `RuntimeAnimationHostServices`, `RuntimeAudioIntegrationServices`, `RuntimeInputServices`, `RuntimeInputCaptureServices` | Shared adapter bootstrap; input snapshots come from the browser canvas, audio output from Web Audio |
+| `RuntimeGameModeHostServices`, `RuntimePawnHostServices`, `RuntimePlayerControllerServices` | Shared adapter bootstrap |
+| `RuntimeWorldHostServices`, `RuntimeWorldRegistryServices`, `RuntimeNetworkingHostServices` | Shared adapter bootstrap; rendered or headless world selected by canvas presence, WebSocket transport installed by session |
+| `RuntimeWorldObjectServices`, `RuntimeThreadServices`, `RuntimeMaintenanceServices`, `RuntimeSceneNodeServices`, `RuntimeSceneStreamingHostServices`, `RuntimeTransformServices` | Shared `Engine` facade providers |
+| `RuntimeTimingServices`, `RuntimePhysicsServices`, `RuntimeStaticColliderAuthoringServices` | Shared `Engine` timer/physics providers; Jolt scene factory supplied by the browser |
+| `RuntimeDebugHostServices` | Shared default diagnostics provider |
+| `RuntimeVideoStreamingServices` | Named failure for video-frame GPU action creation |
+| `RuntimeWindowApplicationServices` | No native window pump; window creation and task routing fail by name before invoking callbacks |
+| `RuntimeVrInputServices`, `RuntimeVrStateServices` | No active VR runtime; optional action registration and pose/device queries return false or empty |
+| `RuntimeVrRenderingServices`, `RuntimeEngine.VRState.LifecycleServices` | No browser VR output; required eye/render-model/startup operations fail by name |
+| `RuntimeOpenVrStateServices`, `RuntimeOpenVrCompositorServices` | No tracking/projection; compositor submission fails by name |
+| `RuntimeNetworkDiscoveryHostServices` | LAN discovery configuration fails by name before networking starts |
+| `RuntimeClipboardServices` | Native clipboard operations fail by name; DOM text editing uses the page bridge |
+| `RuntimeThirdPartyAssetLoadingServices`, `RuntimeModelSceneLoadingServices`, `RuntimeSceneImportServices` | Development import operations fail by name instead of entering native, reflection, or file paths |
+| `RuntimeWorldHostCompositionServices` | Optional editor-only composition left uninstalled |
+
+`RuntimeModelImportServices` belongs to the desktop `ModelAssetPipeline` project,
+which is outside the browser assembly closure. Only cooked, published assets are
+admitted by the browser asset source; model import is unavailable. Browser
+WebGPU is mono-output only; stereo, XR, and offscreen pipeline requests fail
+without selecting a substitute recipe.
 
 The shared sky background route preserves authored gradient, solid-color,
 equirectangular, octahedral, cubemap and procedural skies in HDR before sorted
@@ -57,7 +94,11 @@ the canvas and its input coordinates stay inside the visible page area. Hidden,
 frozen, zero-sized, or detached canvases suspend rendering; reattachment or
 visibility restoration resumes the same session with a reset frame clock.
 `pagehide` stops discarded pages while a back/forward-cached page resumes on
-`pageshow`. A frame gap over 250 ms also resets timing and temporal histories.
+`pageshow`. A valid active frame gap over 250 ms invalidates temporal history,
+while the engine retains its bounded elapsed-time and fixed-step accumulator.
+Active elapsed is capped at one second with at most four fixed ticks per frame;
+sustained slow presentation therefore does not freeze simulation. The first
+frame after suspension still admits zero elapsed time.
 Focus-only and unchanged-size events preserve frame cadence.
 
 The audio unlock button drives the shared Web Audio leaf directly from a trusted

@@ -43,7 +43,10 @@ function playbackOffset(owner, source) {
     return source.loop ? (source.offset + elapsed) % duration : Math.min(duration, source.offset + elapsed);
 }
 function applyRate(owner, source) {
-    const rate = spatialPlaybackRate(owner, source);
+    // AudioParam playbackRate is float32; clock accounting must use that value.
+    const rate = Math.fround(spatialPlaybackRate(owner, source));
+    if (!Number.isFinite(rate) || rate <= 0)
+        throw new Error('WebAudio.PlaybackRateUnsupported: the effective float32 playback rate must be positive and finite.');
     if (rate === source.rate) return;
     source.offset = playbackOffset(owner, source);
     source.started = owner.context.currentTime;
@@ -142,7 +145,7 @@ function createSource(owner) {
         coneInner: 360, coneOuter: 360, coneOuterGain: 0,
         position: [0, 0, 0], velocity: [0, 0, 0], direction: [0, 0, 0],
         worldPosition: [0, 0, 0], worldDirection: [0, 0, 0],
-        stream: new WebAudioStream(owner.context, panner), transfer: new Int32Array(32) };
+        stream: new WebAudioStream(owner.context, panner, owner), transfer: new Int32Array(32) };
     owner.sources.set(id, source);
     owner.sourceList.push(source);
     flushSourceSpatial(owner, source);
@@ -160,7 +163,7 @@ export const engineAudioImports = {
         master.connect(context.destination);
         const id = ++nextContext;
         const owner = { id, context, master, buffers: new Map(), sources: new Map(), sourceList: [],
-            pcmBytes: 0, listenerGain: 1, dopplerFactor: 1, speedOfSound: 343.3, distanceModel: 0xD002,
+            pcmBytes: 0, loopBytes: 0, listenerGain: 1, dopplerFactor: 1, speedOfSound: 343.3, distanceModel: 0xD002,
             activated: false, activationFailure: '', spatialVersion: 0, appliedSpatialVersion: -1, listenerPosition: [0, 0, 0], listenerVelocity: [0, 0, 0],
             listenerForward: [0, 0, -1], listenerUp: [0, 1, 0], listenerRight: [1, 0, 0] };
         contexts.set(id, owner);
@@ -361,7 +364,6 @@ export const engineAudioImports = {
     queueBuffers(id, sourceId, buffers) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
         if (source.bufferId) throw new Error('WebAudio.StaticSource: detach the static buffer before queuing.');
-        if (source.loop) throw new Error('WebAudio.StreamLoopUnsupported: stream producers must explicitly repeat queued content.');
         // The borrowed managed view cannot survive this call. Copy only at a queue boundary.
         const ids = buffers.slice();
         if (!ids.length) return;
@@ -378,12 +380,25 @@ export const engineAudioImports = {
             if (entry.bytesPerFrame !== bytesPerFrame)
                 throw new Error('WebAudio.StreamFormatMismatch: queued buffers must share their PCM sample width.');
         }
+        const previousChannels = source.channels;
+        const previousBytesPerFrame = source.bytesPerFrame;
+        const previousDestination = source.stream.destination;
         source.channels = first.audio.numberOfChannels;
         source.bytesPerFrame = bytesPerFrame;
         source.stream.destination = source.channels === 1 ? source.panner : source.gain;
         source.spatialDirty = true;
-        flushSourceSpatial(owner, source);
-        source.stream.enqueue(ids, bufferId => requireBuffer(owner, bufferId).audio);
+        try {
+            // Validate the prospective spatial rate before the queue takes ownership.
+            // A singular Doppler rate must not strand admitted buffers in the transport.
+            flushSourceSpatial(owner, source);
+            source.stream.enqueue(ids, bufferId => requireBuffer(owner, bufferId).audio);
+        } catch (error) {
+            source.channels = previousChannels;
+            source.bytesPerFrame = previousBytesPerFrame;
+            source.stream.destination = previousDestination;
+            source.spatialDirty = true;
+            throw error;
+        }
     },
     unqueueProcessedBuffers(id, sourceId, output, maximum) {
         const source = requireSource(requireContext(id), sourceId);
@@ -395,8 +410,7 @@ export const engineAudioImports = {
     },
     buffersProcessed(id, sourceId) {
         const source = requireSource(requireContext(id), sourceId);
-        source.stream.refresh();
-        return source.bufferId ? source.state === 'stopped' ? 1 : 0 : source.stream.processed;
+        return source.bufferId ? source.state === 'stopped' ? 1 : 0 : source.stream.processedCount();
     },
     buffersQueued(id, sourceId) {
         const source = requireSource(requireContext(id), sourceId);
@@ -429,8 +443,7 @@ export const engineAudioImports = {
     },
     sourceLooping(id, sourceId, loop) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);
-        if (loop && source.stream.count)
-            throw new Error('WebAudio.StreamLoopUnsupported: stream producers must explicitly repeat queued content.');
+        source.stream.setLooping(Boolean(loop));
         source.offset = playbackOffset(owner, source);
         source.started = owner.context.currentTime;
         source.loop = Boolean(loop);
@@ -439,7 +452,7 @@ export const engineAudioImports = {
     isSourcePlaying(id, sourceId) {
         const source = requireSource(requireContext(id), sourceId);
         source.stream.refresh();
-        return source.deferredPlayback || (source.stream.count ? source.stream.playing : source.playing);
+        return source.deferredPlayback || (source.stream.count ? source.stream.playing || Boolean(source.stream.pending) : source.playing);
     },
     sampleOffset(id, sourceId) {
         const owner = requireContext(id), source = requireSource(owner, sourceId);

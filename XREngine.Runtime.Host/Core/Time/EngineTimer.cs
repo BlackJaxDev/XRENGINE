@@ -5,6 +5,7 @@ using System;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
+using XREngine.Execution;
 
 namespace XREngine.Timers
 {
@@ -221,6 +222,8 @@ namespace XREngine.Timers
         {
             if (OperatingSystem.IsBrowser())
                 throw new PlatformNotSupportedException("Browser hosts must drive StartCallerThreadLoop and StepFrame without worker threads.");
+            if (RuntimeWorkScheduler.IsCallerThread)
+                throw new InvalidOperationException("RunGameLoop cannot create worker loops while caller-thread jobs are configured; drive StepFrame.");
             if (IsCallerThreadLoop || Volatile.Read(ref _explicitFrameOwnerThreadId) != 0)
                 throw new InvalidOperationException("A caller-thread frame clock cannot be replaced by the threaded game loop while active.");
             if (IsRunning)
@@ -397,7 +400,7 @@ namespace XREngine.Timers
 
         private void RunCollectVisibleIteration()
         {
-            long collectGeneration = _visibilityGenerationGate.RequestNextCollect();
+            long collectGeneration;
 #if !XRE_PUBLISHED
             long allocStart = 0;
             Engine.AllocationScope allocationScope = default;
@@ -417,13 +420,12 @@ namespace XREngine.Timers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         Volatile.Write(ref _collectVisiblePhase, "DispatchCollectVisible");
-                        if (!DispatchCollectVisible())
+                        if (!TryCollectVisibleGeneration(out collectGeneration))
                         {
                             Stop();
                             return;
                         }
                     }
-                    _visibilityGenerationGate.MarkCollectCompleted(collectGeneration);
 
                     //Wait for the render thread to swap update buffers with render buffers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender", ProfilerScopeKind.AlwaysOnHotPathLoop))
@@ -445,22 +447,13 @@ namespace XREngine.Timers
                         : default;
 #endif
 
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    // The shared publication path pumps frame-swap jobs, then swaps world and
+                    // viewport buffers, and publishes only after every callback succeeds.
+                    if (!TryPublishCollectVisibleGeneration(collectGeneration))
                     {
-                        Volatile.Write(ref _collectVisiblePhase, "ProcessCollectVisibleSwapJobs");
-                        ProcessCollectVisibleSwapJobs();
+                        Stop();
+                        return;
                     }
-
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    {
-                        Volatile.Write(ref _collectVisiblePhase, "DispatchSwapBuffers");
-                        DispatchSwapBuffers();
-                    }
-
-                    // Publish only after every swap listener completed. A failed listener leaves
-                    // this generation unavailable and terminates the loop through the outer catch.
-                    Volatile.Write(ref _collectVisiblePhase, "GatePublish");
-                    _visibilityGenerationGate.Publish(collectGeneration);
                 }
             }
             finally
@@ -859,6 +852,7 @@ namespace XREngine.Timers
                     : default;
 #endif
 
+                long callbackStartTicks = Stopwatch.GetTimestamp();
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
                 Collect.DeltaTicks = elapsedTicks;
@@ -867,11 +861,16 @@ namespace XREngine.Timers
                 {
                     CollectFrameId++;
                 }
-                PreCollectVisible?.Invoke();
-                CollectVisible?.Invoke();
-                PostCollectVisible?.Invoke();
-                timestampTicks = TimeTicks();
-                Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
+                try
+                {
+                    PreCollectVisible?.Invoke();
+                    CollectVisible?.Invoke();
+                    PostCollectVisible?.Invoke();
+                }
+                finally
+                {
+                    Collect.ElapsedTicks = Math.Max(0L, Stopwatch.GetTimestamp() - callbackStartTicks);
+                }
                 return true;
             }
             catch (Exception e)

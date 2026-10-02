@@ -86,7 +86,10 @@ failure atomicity; browser smoke remains the pixel qualification.
 
 The audio check imports the published Web Audio streaming scheduler and renders
 two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
-sample at rates 1 and 2, processed-buffer order, and disposal. It requires no
+sample at rates 1 and 2, processed-buffer order, and disposal. It also checks
+whole-queue native looping and disabling near the end of a traversal at both
+rates, including the absence of an extra traversal. Those additional loop cases
+await their first exact-commit browser run. The check requires no
 microphone or output-device permission. This establishes scheduling/sample
 correctness only, not audible playback, gesture unlock, spatialization, or codec
 support across the device matrix.

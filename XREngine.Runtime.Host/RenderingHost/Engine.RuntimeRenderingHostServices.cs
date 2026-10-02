@@ -128,7 +128,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool AllowCpuOversubscription => Engine.EffectiveSettings.AllowCpuOversubscription;
     public ERenderWorkerQos RenderWorkerQos => Engine.EffectiveSettings.RenderWorkerQos;
     public EngineExecutionTopology ExecutionTopology => RequireWorkScheduler().Topology;
-    public JobManager GeneralJobs => RequireWorkScheduler().GeneralJobs;
+    public JobManager GeneralJobs => Engine.Jobs;
     public RenderWorkDomain RenderWork => RequireWorkScheduler().Render;
     public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
     public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
@@ -504,6 +504,10 @@ internal sealed class EngineRuntimeRenderingHostServices :
     {
         if (Engine.IsRenderThread)
             return task();
+
+        if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+            throw new InvalidOperationException(
+                "InvokeRenderThreadTask cannot wait for an off-owner render dispatch in a caller-thread host.");
 
         T? result = default;
         ExceptionDispatchInfo? exception = null;

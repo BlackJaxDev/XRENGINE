@@ -1,6 +1,6 @@
 # Caller-thread frame stepping and scheduling
 
-Updated: 2026-10-01.
+Updated: 2026-10-02.
 
 ## Implemented boundary
 
@@ -18,7 +18,9 @@ The host supplies finite non-negative elapsed seconds. Simulation elapsed time i
 
 ResetFrameTiming clears simulation debt and phase deltas between frames; the host must also reset its elapsed-time source after suspension. The explicit clock remains readable between frames and after stop. BeginExplicitFrame remains available to existing deterministic production harnesses; the ordinary frame step reuses its clock/ownership primitive without allocating a scope per frame.
 
-Desktop retains its dedicated workers, pacing waits, modal resize behavior, and public dispatch APIs. It calls the extracted shared phase bodies; this change does not switch desktop hosts to caller-thread execution or establish desktop pacing equivalence. CPU dispatch duration uses Stopwatch rather than the externally advanced simulation clock.
+Desktop retains its independently scheduled update, fixed-update, collect, and render workers, including quantized update cadence, render frequency limiting, the generation-zero bootstrap, stale-visibility policy, modal resize, and early render-buffer release. Desktop collection and caller stepping now use the same request/complete and swap-job/world-before-viewport/publish operations. A stopped or faulted collect/swap callback cannot publish its generation. This does not switch desktop hosts to caller-thread execution or establish desktop pacing equivalence. Collect callback duration uses Stopwatch rather than the externally advanced simulation clock, which stays fixed during caller callbacks.
+
+Additional caller-thread guards reject threaded timer startup, headless/render blocking loops, render-work-domain construction, and publication waits before their worker or wait side effects. Off-owner synchronous physics/render task invocations reject caller-thread execution while valid owner-thread calls remain inline. Rendering host general jobs resolve through the caller-capable JobManager; topology and render-work access still require an installed worker scheduler. Tick-group execution and its parallel setting, and public base transform hierarchy dispatch and its nonsequential setting, reject unsupported caller-thread modes before changing state or launching workers. In-repository spawn setup still calls the virtual sequential hierarchy method synchronously; the immediate traversal would bypass possible external overrides, so that call boundary needs a compatibility decision before replacement. This is a focused guard pass, not closure of the broader reachable blocking/parallel inventory.
 
 ## Job execution
 
@@ -29,6 +31,8 @@ Caller-thread transform flushes require sequential settings and use the existing
 ## Validation and limits
 
 - Static diff/whitespace checks pass
+- A Release Host dependency-graph build with the shared validation toolchain passed with zero warnings and zero errors after the shared collect/publication and capability-guard changes. The successful command used serialized MSBuild, disabled shared compilation, ignored failed restore sources, and wrote to the existing task artifact root. Evidence: `Build/_AgentValidation/20261001-225000-lit-surface/logs/caller-host-gate-build.log`
+- An ignored executable drove the current production EngineTimer and caller JobManager: 25 ms produced two fixed ticks followed by update, collect, world swap, viewport swap, and render; collect callback duration was positive under the explicit frame clock. After 512 warm-up frames, 2,048 frames allocated zero bytes on the caller thread. An injected swap callback fault kept the prior publication generation, retained terminal evidence, stopped the loop, and a new caller lifecycle rendered. Named blocking/parallel entry-point guards rejected; a native RenderWorkDomain with one worker started and disposed after caller shutdown. Evidence: `Build/_AgentValidation/20261001-225000-lit-surface/logs/caller-frame-probe.log` and ignored `scratch/caller-frame-probe/` under that task run
 - Integrated browser build compiled Core and Host successfully with no warnings in those projects; the intermediate build failed later in the in-progress WebGPU renderer implementation
 - A standalone process loaded the resulting production Core/Host/Rendering assemblies and drove the actual EngineTimer plus JobManager: 25 ms produced two fixed ticks then update/collect/swap/render; a five-second input was capped to four catch-up ticks; pause/single-step and timing reset behaved as specified
 - Ten scheduled jobs drained through a capacity-four caller queue with zero worker count and all slots released. A pending caller-job synchronous wait rejected, and shutdown retained ownership until its async task completed
@@ -64,11 +68,11 @@ Regenerated from tracked source using the same lexical expressions as the active
 | JobManager / JobHandle / RuntimeWorkScheduler | Explicit caller executor uses nonblocking admission and async readiness; pending synchronous job waits reject caller execution |
 | RuntimeWorld.Transforms | Caller executor requires sequential traversal and uses immediate matrix recursion; desktop parallel/asynchronous branches remain |
 | Engine.CodeProfiler stats loop | Disabled by default on browser; explicit enable rejects unsupported worker-backed logging |
-| RuntimeThreadDispatcher.InvokePhysics | Inline on registered caller physics owner; off-owner wait remains for desktop and must not be reached by a browser leaf |
-| CollectVisibleGenerationGate | Caller steps use generation transitions and TryConsumeFresh only; blocking publication wait remains desktop-only |
-| EngineGeneralWorkDomain / EngineJobAuxiliaryWorkDomain / RenderWorkDomain | Threaded domains are not constructed by ConfigureCallerThread; render backends requiring a domain still need capability validation |
+| RuntimeThreadDispatcher.InvokePhysics | Inline on registered caller physics owner; off-owner caller invocation rejects before queueing or waiting; desktop retains the synchronous dispatch |
+| CollectVisibleGenerationGate | Caller steps use generation transitions and TryConsumeFresh only; blocking publication waits reject caller-thread hosts |
+| EngineGeneralWorkDomain / EngineJobAuxiliaryWorkDomain / RenderWorkDomain | Threaded domains are not constructed by ConfigureCallerThread; RenderWorkDomain construction rejects caller-thread hosts before allocating workers or events; render backends requiring a domain still need capability validation |
 | AssetManager serializers, remote loading, metadata | Async asset-source and browser boot work is separate; synchronous entry points need a reachable-call audit for actual cooked-world content |
-| SceneNode / prefab / game-mode transform setup | Several sequential completed-task waits remain; review custom virtual transforms and prefer immediate traversal or true async ownership |
+| SceneNode / prefab / game-mode transform setup | Several sequential completed-task waits remain. Base hierarchy dispatch rejects parallel/asynchronous caller requests, while custom virtual overrides and the sequential spawn wait still require a compatibility review before changing traversal |
 | Physics chains / convex authoring / GPU readback | Capability-specific waits and worker schedulers remain; browser worlds must reject unavailable native/GPU paths until implemented |
 | Network transport / replication identity | Transport startup and schema/asset-ID initialization need browser-specific asynchronous/capability review |
 | Humanoid / VR calibration / audio conversion | Optional subsystem waits/Task.Run remain; enabling those components requires separate leaf validation |

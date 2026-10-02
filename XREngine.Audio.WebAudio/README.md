@@ -47,16 +47,44 @@ admission flushes the affected source earlier, and later pose changes can requir
 another flush. Standalone transport setters retain immediate behavior outside
 that synchronous frame scope.
 
-Buffer submission creates the one-shot nodes required by Web Audio. A changed
-pitch or Doppler rate destroys and reschedules every remaining queued source
+Nonlooped buffer submission creates the one-shot nodes required by Web Audio. A
+changed pitch or Doppler rate destroys and reschedules every remaining queued source
 node because scheduled start times are immutable. Moving or accelerating sources
 can change Doppler every frame, so this is a recurring bounded browser API
 allocation, even after redundant pose rescheduling is coalesced. It is not a
 zero-allocation audio or performance qualification; device profiling remains open.
-Static-source looping is supported. Looping an
-entire live stream is rejected by name; its producer must repeat the content
-explicitly. Capture, output-device selection, and Steam Audio are not supplied
-by this leaf.
+Static and queued-source looping are supported. A queued loop copies the entire
+retained queue into one native looping Web Audio buffer at loop enablement,
+queue mutation or replay/seek after stop or rewind. Wrapping is independent of
+frame callbacks, timers and page throttling. Playing, paused and initial loops
+expose zero processed buffers; stop still marks the queue processed for unqueue,
+and rewind restores its initial state.
+Disabling looping continues the current traversal and then stops. Enqueued PCM
+extends the next traversal while preserving the current queue-relative position.
+Queue mutation and lifecycle restart may allocate and copy float PCM. Copies use
+`copyFromChannel` rather than reading back acquired source buffers. Active,
+replacement and not-yet-retired aggregates share an 8 MiB per-output budget;
+admission rejects an oversized replacement before taking buffer ownership. A
+playing-source change uses one native audio-clock handoff approximately two
+render quanta ahead. Initial queued-loop Play uses the same two-quantum lead,
+with its offset stationary until that native start time. Until a replacement
+handoff, offset queries report the old playback
+segment; the new segment takes over at the shared native start/stop timestamp.
+A second incompatible enqueue, seek or loop toggle during that short handoff is
+rejected by name. Pause cancels the handoff and freezes the current position
+while retaining admitted PCM. Changed rates on a pending loop node are applied
+at its start; a pending nonlooped queue is rebuilt at the new effective float32
+rate. When disabling a loop too near its end for that handoff, the native node
+instead stops at the current traversal end, without an extra traversal. Ended
+callbacks only retire stopped nodes; they never schedule playback. Retired nodes
+are bounded, and an aggregate stays in the output budget until every native
+node holding it retires. Stop, rewind, detach and context close synchronously
+release aggregate reservations and native nodes. The handoff lead does not
+guarantee sample-contiguous switching if JavaScript itself stalls beyond that
+lead. Enabling a loop within one render quantum of nonlooped queue exhaustion
+can leave up to one quantum of silence while using a future switch timestamp;
+a late native control message takes effect as soon as the browser applies it.
+Capture, output-device selection, and Steam Audio are not supplied by this leaf.
 
 The scheduling model follows the
 [Web Audio source-node contract](https://www.w3.org/TR/webaudio/#AudioBufferSourceNode),

@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using XREngine.Execution;
 
 namespace XREngine.Timers;
 
@@ -102,21 +103,16 @@ public partial class EngineTimer
                 return false;
 
             phase = "CollectVisible";
-            long generation = _visibilityGenerationGate.RequestNextCollect();
-            if (!DispatchCollectVisible())
-                throw new InvalidOperationException(FirstTerminalFault?.ExceptionMessage ?? "Visibility collection failed.");
-            if (!IsCallerThreadLoop)
+            if (!TryCollectVisibleGeneration(out long generation))
+            {
+                if (FirstTerminalFault is not null)
+                    throw new InvalidOperationException(FirstTerminalFault.ExceptionMessage);
                 return false;
-            _visibilityGenerationGate.MarkCollectCompleted(generation);
+            }
 
             phase = "SwapBuffers";
-            ProcessCollectVisibleSwapJobs();
-            if (!IsCallerThreadLoop)
+            if (!TryPublishCollectVisibleGeneration(generation))
                 return false;
-            DispatchSwapBuffers();
-            if (!IsCallerThreadLoop)
-                return false;
-            _visibilityGenerationGate.Publish(generation);
             if (!_visibilityGenerationGate.TryConsumeFresh(out long consumed) || consumed != generation)
                 throw new InvalidOperationException("The caller-thread frame could not consume its completed visibility publication.");
 
@@ -170,7 +166,7 @@ public partial class EngineTimer
 
     private void RejectCallerThreadWait()
     {
-        if (IsCallerThreadLoop || OperatingSystem.IsBrowser())
+        if (IsCallerThreadLoop || RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
             throw new InvalidOperationException("A caller-thread host must use StepFrame instead of a blocking timer dispatch.");
     }
 

@@ -245,6 +245,9 @@ public static class RuntimeVrStateServices
         }
     }
 
+    /// <summary>Whether no application VR state provider has been installed.</summary>
+    public static bool IsDefaultProvider => ReferenceEquals(Current, Default);
+
     #endregion
 
     #region Runtime state

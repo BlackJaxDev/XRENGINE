@@ -19,28 +19,47 @@ public interface IRuntimeThirdPartyAssetLoadingServices
 public static class RuntimeThirdPartyAssetLoadingServices
 {
     private static readonly IRuntimeThirdPartyAssetLoadingServices Default = new ReflectionServices();
+    private static readonly object Sync = new();
     private static IRuntimeThirdPartyAssetLoadingServices _current = Default;
+    private static InstallationLease? _head;
 
     public static IRuntimeThirdPartyAssetLoadingServices Current => Volatile.Read(ref _current);
 
     public static IDisposable Install(IRuntimeThirdPartyAssetLoadingServices services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        IRuntimeThirdPartyAssetLoadingServices previous = Interlocked.Exchange(ref _current, services);
-        return new InstallationLease(services, previous);
+        lock (Sync)
+        {
+            InstallationLease lease = new(services, _head);
+            _head = lease;
+            Volatile.Write(ref _current, services);
+            return lease;
+        }
     }
 
     private sealed class InstallationLease(
         IRuntimeThirdPartyAssetLoadingServices installed,
-        IRuntimeThirdPartyAssetLoadingServices previous) : IDisposable
+        InstallationLease? previous) : IDisposable
     {
-        private IRuntimeThirdPartyAssetLoadingServices? _installed = installed;
+        public IRuntimeThirdPartyAssetLoadingServices Installed { get; } = installed;
+        public InstallationLease? Previous { get; } = previous;
+        public bool IsDisposed { get; private set; }
 
         public void Dispose()
         {
-            IRuntimeThirdPartyAssetLoadingServices? current = Interlocked.Exchange(ref _installed, null);
-            if (current is not null)
-                Interlocked.CompareExchange(ref _current, previous, current);
+            lock (Sync)
+            {
+                if (IsDisposed)
+                    return;
+                IsDisposed = true;
+                if (!ReferenceEquals(_head, this))
+                    return;
+                InstallationLease? next = Previous;
+                while (next?.IsDisposed == true)
+                    next = next.Previous;
+                _head = next;
+                Volatile.Write(ref _current, next?.Installed ?? Default);
+            }
         }
     }
 
