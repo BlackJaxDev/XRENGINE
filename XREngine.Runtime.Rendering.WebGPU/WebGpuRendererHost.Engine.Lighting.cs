@@ -28,7 +28,7 @@ public sealed partial class WebGpuRendererHost
     }
 
     /// <summary>Reads the same engine light collections and numeric fields as the desktop forward shader.</summary>
-    internal void PublishForwardLights(WebGpuRenderProgram program)
+    internal void PublishForwardLights(WebGpuRenderProgram program, bool directionalShadowReceiver)
     {
         IRuntimeRenderWorld world = RuntimeEngine.Rendering.State.RenderingWorld
             ?? throw new InvalidOperationException("WebGPU.Lighting.WorldMissing: forward lighting requires the active engine render world.");
@@ -43,7 +43,7 @@ public sealed partial class WebGpuRendererHost
         for (int i = 0; i < directionalCount; i++)
         {
             DirectionalLightComponent light = lights.DynamicDirectionalLights[i];
-            RequireUnshadowedLight(light);
+            if (!directionalShadowReceiver) RequireUnshadowedLight(light);
             program.SetVector4(DirectionNames[i], new Vector4(light.Transform.WorldForward, 0));
             program.SetVector4(DirectionColorNames[i], new Vector4(light.Color, light.DiffuseIntensity));
         }
@@ -64,6 +64,8 @@ public sealed partial class WebGpuRendererHost
             program.SetVector4(SpotDirectionNames[i], new Vector4(light.Transform.RenderForward, light.Exponent));
             program.SetVector4(SpotCutoffNames[i], new Vector4(light.InnerCutoff, light.OuterCutoff, light.Brightness, 0));
         }
+        if (directionalShadowReceiver)
+            PublishDirectionalShadow(program, world);
     }
 
     private static void RequireUnshadowedLight(LightComponent light)

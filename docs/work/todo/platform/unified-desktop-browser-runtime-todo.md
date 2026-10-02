@@ -2,9 +2,9 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current tree compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds; unchecked implementation and verification rows remain open until their own acceptance evidence is recorded. **39 of 110 items are complete; 71 remain open.** The 2026-09-30 portable-host gate and desktop Editor/Server/VRClient evidence remain historical. Resumed source now composes a real `RuntimeWorld` in the browser, but live engine-world/render qualification is still open; see the [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md).
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source compiles all 18 portable-project rows and the fresh browser interpreter/Jolt publish succeeds; the exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` also passed real Chromium/SwiftShader CI on 2026-10-02. **39 of 110 items are checked; 71 remain open.** New runtime/render evidence qualifies bounded profiles but does not close unchecked rows without their own acceptance evidence. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits.
 
-Created: 2026-09-29. Updated: 2026-10-01.
+Created: 2026-09-29. Updated: 2026-10-02.
 
 Owner: Runtime architecture / rendering / platform.
 
@@ -18,22 +18,22 @@ Run the same engine, worlds, and C# game code in the browser (WebGPU, .NET 10 We
 
 The editor stays a desktop application and gains an honest browser publish target on this path. The separate browser runtime on the `codex/webgpu-readiness-audit` branch is stabilized as a reference harness and retired once this path reaches parity.
 
-## Current State (2026-10-01)
+## Current State (2026-10-02)
 
-The 2026-09-30 build-stabilization and portable-host results below remain historical evidence for that source snapshot. Implementation resumed on 2026-10-01; the current source/build-versus-live boundary is summarized in the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md). **39 of 110 checklist items are checked against the qualified snapshot below; 71 remain open.**
+The 2026-09-30 build-stabilization and portable-host results remain historical evidence for their source snapshot. The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed [real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) on 2026-10-02, qualifying a bounded shared `DefaultRenderPipeline` lit/HDR profile, its resizes, and the listed lifecycle/resource checks. This remains software-WebGPU evidence; full production/gameplay and device acceptance are open. **39 of 110 checklist items remain checked; 71 remain open.** See the [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) and [lit-profile acceptance](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance) for exact scope.
 
 | Area | Finding | Tracked by |
 | --- | --- | --- |
-| Build | The 2026-09-30 full gate passed for its source snapshot. On 2026-10-01, the supported in-process task-host override compiled all 18 portable-project rows and a fresh current-tree browser publish exited 0 with no compiler warnings/errors; the compile sweep retained only NU1900 cached-audit warnings. Editor, Server, VRClient, Jolt, transport, content-cooker and shader-cooker checks also have successful logs. The later c1da82c snapshot also passed real Chromium depth, world/asset/Jolt lifecycle and offline-audio qualification. Production rendered-world acceptance remains open. | UR00.09, UR01, UR04, UR15 |
+| Build | The 2026-09-30 full gate passed for its source snapshot. On 2026-10-01, the supported in-process task-host override compiled all 18 portable-project rows and a fresh browser publish exited 0 with no compiler warnings/errors; the compile sweep retained only NU1900 cached-audit warnings. Editor, Server, VRClient, Jolt, transport, content-cooker and shader-cooker checks also have successful logs. The exact published 2026-10-02 commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed real Chromium/SwiftShader CI, including depth, texture/sRGB, lit/HDR, Jolt, engine world lifecycle, asset lifetime and offline-audio checks. Full production/gameplay and physical-device acceptance remain open. | UR00.09, UR01, UR04, UR15 |
 | Toolchain | `global.json` now pins SDK 10.0.401 and workload set 10.0.401.1 following owner approval. The installed browser packs match the recorded toolchain. | UR00.02, decision D5 |
-| Engine host | The facade, timer, settings and shared host services live in portable `XREngine.Runtime.Host`; 121 reviewed sources moved and the baseline public identities are preserved. Browser source now composes `BrowserEngineExports`/`BrowserEngineSession` to load an `XRWorld`, create a `RuntimeWorld`, enter play and step it. Minimal Chromium world lifecycle and canonical RollingBall WASM lifecycle now pass. The production DefaultRenderPipeline still rejects unsupported browser output. | UR17, UR01, UR02, UR04 |
-| Parity target | `Samples/RollingBall` targets portable `net10.0`; gameplay uses backend-neutral physics contracts and desktop VR composition is separated into `Samples/RollingBall.DesktopVR`. The desktop build passes. Canonical serialization/loading and game lifecycle pass in published WASM; rendered playable parity remains unverified; the descriptive rebrand is not legal clearance. | UR10.05–UR10.08, UR11.05, decision D2 |
-| Shaders and pipeline | The hand-written shader inventory and D7 route are recorded. Pinned Slang cooking, ABI validation and real engine depth pixels pass for the admitted depth/depth-probe diagnostic. The engine material path and broader pass groups remain open; `DefaultRenderPipeline.WebTier.RequireSupportedOutputResources()` rejects WebGPU outputs until required forward-lighting, attachment, material and tonemap routes exist. | UR04–UR06, decision D7 |
-| Jolt leaf | Browser-specific managed/native Jolt supply and reviewed portability allowances are present; D14 is approved and the native/managed spike publish passed. Chromium initialization, stepping, callbacks and repeated teardown pass. One desktop-versus-WASM falling-body trace matches; full physics/gameplay parity remains open. Desktop physics defaults remain unchanged pending parity. | UR07, decisions D3, D4, D10, D14 |
+| Engine host | The facade, timer, settings and shared host services live in portable `XREngine.Runtime.Host`; 121 reviewed sources moved and the baseline public identities are preserved. Browser source composes `BrowserEngineExports`/`BrowserEngineSession` to load an `XRWorld`, create a `RuntimeWorld`, enter play and step it. Real Chromium world lifecycle and canonical RollingBall published-WASM lifecycle pass. `DefaultRenderPipeline` now renders the qualified `StandardLitColor` profile to RGBA16F HDR and tonemaps it; unsupported authored features still fail diagnostically, and an editor-published playable world is not yet qualified. | UR17, UR01, UR02, UR04 |
+| Parity target | `Samples/RollingBall` targets portable `net10.0`; gameplay uses backend-neutral physics contracts and desktop VR composition is separated into `Samples/RollingBall.DesktopVR`. The desktop build passes. Canonical serialization/loading and five-cycle headless and canvas-composed game lifecycle pass in published WASM, with stable 35-object registration and rollback/retry evidence. Canvas lifecycle initializes no GPU; rendered playable parity remains unverified. The descriptive rebrand is not legal clearance. | UR10.05–UR10.08, UR11.05, decision D2 |
+| Shaders and pipeline | The hand-written shader inventory and D7 route are recorded. Pinned Slang cooking, ABI validation and real Chromium depth pixels pass. The shared `DefaultRenderPipeline` qualifies actual `StandardLitColor` GGX lighting with up to four directional, eight point and eight spot lights, RGBA16F HDR, and Mobius/gamma tonemapping across 14 numeric cases and five resizes; all 30 live GPU resources stayed stable and retiring resources drained to zero. Shadow-enabled lights, UI, other pass groups and broader production acceptance remain open. | UR04–UR06, decision D7 |
+| Jolt leaf | Browser-specific managed/native Jolt supply and reviewed portability allowances are present; D14 is approved. Chromium initialization, stepping, callbacks and repeated teardown pass. A bounded matched desktop Linux Jolt/native versus published-WASM micro-scene produced identical sampled position, velocity, contact-count/onset and ray results at 18 checkpoints; quaternion discrepancy was at most `4.3e-8` rad. This is not full canonical-game parity or a universal determinism guarantee. Desktop physics defaults remain unchanged. | UR07, decisions D3, D4, D10, D14 |
 | Path casing | All 759 Core paths now use `XREngine.Runtime.Core` in the Git index; 244 case-only renames preserve modes and blobs. The Linux build/publish/browser CI lane now passes. | UR00.08, decision D8 |
 | Unit tests | The repeat full run completes without host abort: 4,804 passed, 669 failed, seven runner skips. No baseline-passing name regressed; additional cases execute after the finalizer repair. Source contracts, fixtures and behavioral failures remain separately classified. | UR00.10, UR00.12, prerequisite checklist |
 
-The caller-thread frame/scheduler smoke, hash-verified asset source, browser publisher, Web Audio adapter, input adapter, WebSocket transport, and focused WebGPU renderer source are also present, with limits recorded in the checkpoint. At checkpoint `fe3a119`, [Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36918408996) passed a minimal real-world lifecycle, asset delivery/lifetime, and native Jolt queries/callbacks/repeated teardown. The depth rendering check failed and remains under repair. This does not establish the complete U1/U2/U3 scene/component, rendered-world, or playable-game acceptance. Local Chromium remains blocked by this host's Unix-socket policy; CI supplies software-WebGPU correctness evidence, not hardware budgets.
+The caller-thread frame/scheduler smoke, hash-verified asset source, browser publisher, Web Audio adapter, input adapter, WebSocket transport, and focused WebGPU renderer source are also present, with limits recorded in the checkpoint. The latest [Chromium CI run](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282) passed depth and texture/sRGB pixels, the bounded lit/HDR route, Jolt, world play/stop, asset lifetime and offline audio. The canonical RollingBall published-WASM lifecycle passed five headless and five canvas-composed cycles; both finish at 35 registered objects and permit rollback/retry, but the canvas probe initializes no GPU. A separate matched Jolt micro-scene comparison showed zero sampled pose/velocity/contact/ray deltas across 18 checkpoints, not full-game parity. These results do not establish an editor-published rendered RollingBall game, complete production feature tier, or physical-device budgets. Local Chromium remains blocked by this host's Unix-socket policy; CI supplies software-WebGPU correctness evidence, not hardware budgets.
 
 ## Rules
 
@@ -55,16 +55,34 @@ The caller-thread frame/scheduler smoke, hash-verified asset source, browser pub
 
 ## Qualified implementation snapshot
 
-The 2026-10-01 checkpoint `c1da82cd7049ad9a973e589cdee9ce552cffa7f1` passed
-the full local build gate (18 portable rows, shared renderer, Editor, Server,
-VRClient, native-Jolt browser publish) and
-[real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36936819487).
-Desktop builds had zero warnings/errors; local portable restore retained known
-NU1900 cache-audit warnings. The CI depth patches matched expected bytes exactly,
-with 39 engine draws and zero reference packets. Native Jolt, world/asset
-lifecycle, and offline PCM sample checks passed.
+The exact published commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed
+[real Chromium CI](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282)
+on 2026-10-02. Actual Chromium on Google SwiftShader passed the fourteen-case
+`StandardLitColor`/HDR/tonemap diagnostic and five resizes without console errors.
+The supported profile is shared `DefaultRenderPipeline`, direct GGX/Fresnel
+lighting with at most four directional, eight point and eight spot lights,
+RGBA16F scene HDR plus depth32, and Mobius/gamma output to a non-sRGB canvas.
+Known HDR captures retained values above one and authored opacity. The 30 live
+GPU resources stayed stable through each case and resize; retiring resources
+drained to zero. Depth and texture/sRGB replacement, engine world play/stop,
+asset lifetime, native Jolt and offline audio also passed. See the [lit-profile
+acceptance record](../../progress/rendering/unified-webgpu-shader-cooking.md#lit-profile-live-acceptance)
+for exact samples and artifacts. This is software-WebGPU correctness evidence,
+not hardware performance or complete production/gameplay acceptance.
 
-This closes the implementation/approved-decision rows `UR01.01`, `UR01.04`, `UR01.06`, `UR02.02`, `UR03.01`, `UR05.01`, `UR06.03`, `UR06.04`, `UR07.01`, `UR07.02`, `UR07.06`, `UR07.07`, `UR08.04`, `UR10.01`, `UR10.04`, `UR10.06`, `UR10.07`, `UR11.03`, `UR15.01`, `UR15.02`.
+The same current checkpoint records five-cycle canonical RollingBall lifecycle
+in both headless and canvas-composed published WASM: 35 registered objects at
+each cycle boundary and 120 warm frames plus 600 measured frames per cycle. A
+separate injected BeginPlay failure rolled back cleanly and an immediate retry
+passed. Canvas composition initializes no GPU. A separate
+published-WASM versus native Linux Jolt probe compared a bounded single-ball,
+tilting-course micro-scene at 18 sampled checkpoints and found zero sampled
+position, velocity, contact/onset, or ray deltas. Quaternion normalization noise
+was at most `4.3e-8` radians. This is not a full canonical-game physics trace,
+rendered browser play, or a universal determinism guarantee; UR07.03 and U3
+acceptance remain open.
+
+The checked implementation/approved-decision rows remain `UR01.01`, `UR01.04`, `UR01.06`, `UR02.02`, `UR03.01`, `UR05.01`, `UR06.03`, `UR06.04`, `UR07.01`, `UR07.02`, `UR07.06`, `UR07.07`, `UR08.04`, `UR10.01`, `UR10.04`, `UR10.06`, `UR10.07`, `UR11.03`, `UR15.01`, `UR15.02`; the newer partial runtime and renderer evidence does not itself check additional rows.
 Static registrations are supplied by the unified C# path; frozen reference
 Python scripts remain for the separately gated retirement work. Canonical
 RollingBall world/gameplay/Jolt proof uses published WASM under Node, not a
@@ -72,11 +90,11 @@ rendered game: five-cycle callbacks, teardown and late BeginPlay failure/retry
 pass, but the diagnostic package does not exercise Editor BrowserWebGPU
 publishing and initializes no GPU.
 
-The remaining 71 rows comprise 9 implemented but awaiting row-level acceptance,
-42 partial, 19 missing, and 1 physical-device qualification blocker. These are
-implementation-status categories, not additional completed items. Production
-DefaultRenderPipeline rendering, the editor-published playable sample, memory
-bounds, and the broader desktop/browser/device verification rows remain open.
+The remaining 71 rows are still open; current source progress and partial live
+qualification do not change the checked-row count. Shadow-enabled rendering,
+engine UI, the full production tier, editor-published playable RollingBall,
+memory/performance bounds, physical-device checks, recovery and broader
+desktop/browser/device verification remain open.
 The detailed [checkpoint record](../../progress/platform/unified-browser-checkpoint-2026-10-01.md)
 preserves evidence and limitations.
 
@@ -95,7 +113,7 @@ Run the gate after every workstream and before checking any `impl` item. Fix fai
 
 The two browser checks need the `wasm-tools` workload. A workstream that touches only desktop leaves may skip them; a workstream that touches any project in [PortableProjects.tsv](../../../../Build/Portable/PortableProjects.tsv) may not. Run repository PowerShell tools with PowerShell 7; Windows builds do not need it.
 
-Historical result: all six checks passed with no warnings on 2026-09-30 for that source snapshot. On 2026-10-01, the current-tree portable compile lane (18 rows) and fresh browser publish also passed using the supported in-process MSBuild task-host override; this does not claim a live browser run. The [build stabilization record](../../progress/platform/unified-runtime-build-stabilization.md) has the historical toolchain versions and payload sizes; the [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records resumed-build evidence.
+Historical result: all six checks passed with no warnings on 2026-09-30 for that source snapshot. On 2026-10-01, the current-tree portable compile lane (18 rows) and fresh browser publish also passed using the supported in-process MSBuild task-host override. The exact published 2026-10-02 commit additionally passed the actual Chromium CI build/publish and smoke path linked above. The [build stabilization record](../../progress/platform/unified-runtime-build-stabilization.md) has historical toolchain versions and payload sizes; the [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records resumed-build and live qualification evidence.
 
 ## Owner Decisions
 
@@ -120,21 +138,21 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-As of the qualified 2026-10-01 snapshot, 39 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, and earlier browser/reference publishes are recorded in their dated reports. New source implementation does not close an item without its required build or live evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes compiled source from the still-missing live browser, renderer, device, performance, recovery, and networking qualification.
+As of this 2026-10-02 update, 39 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
 | Stage | Workstreams | Open items | Size | Blocked by |
 | --- | --- | --- | --- | --- |
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
-| Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Browser Jolt execution proof; parity before any default-promotion consideration |
-| U1: engine boots | UR17, UR01, UR02, UR03 | 13 | L each; UR01 M | Complete a current browser-world boot and frame/lifecycle proof; D1 and D6 are approved |
-| U2: engine renders | UR04, UR05, UR06 | 19 | UR04 XL, UR05 XL, UR06 L | Build and integrate the renderer, materials and supported web tier, then capture known-value output; D7 is approved |
+| Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Remaining native subsystem acceptance; broader physics parity before any default-promotion consideration |
+| U1: engine boots | UR17, UR01, UR02, UR03 | 13 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
+| U2: engine renders | UR04, UR05, UR06 | 19 | UR04 XL, UR05 XL, UR06 L | Extend the qualified depth and lit/HDR profile to remaining production passes, shadows and UI; compare supported worlds and preserve desktop rendering; D7 is approved |
 | U3: project plays | UR07, UR08, UR09, UR10, UR11 | 19 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
 | U4: production | UR13, UR14, UR15, UR16 | 17 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
 | U5: networked client | UR12 | 3 | L | U3 |
 
-The current critical path follows the passing build, world-lifecycle and depth gates: engine texture/resource bindings, faithful semantic materials and the production WebGPU pipeline, then the actual editor-published playable project. D1, D6, D7 and D14 are approved. Jolt, audio, and portable sample implementation can continue in parallel where the prerequisite checklist permits, while their remaining row-level browser acceptance stays explicit.
+The current critical path follows the passing build, world-lifecycle, depth/texture and bounded lit/HDR gates: extend the engine renderer to shadows and UI, qualify the remaining production pipeline, then render and play the editor-published RollingBall project. D1, D6, D7 and D14 are approved. Jolt, audio, and portable sample implementation can continue in parallel where the prerequisite checklist permits, while full-game and other row-level acceptance stays explicit.
 
 ## Historical Pause Record (2026-09-30; implementation resumed 2026-10-01)
 

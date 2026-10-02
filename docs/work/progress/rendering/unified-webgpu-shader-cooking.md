@@ -209,3 +209,58 @@ shadows no longer allocate their unused camera/viewport resources during activat
 Arrays, cubes, depth
 comparison sampling, storage-resource binding and complete production/gameplay
 rendering remain separate work.
+
+## Lit profile live acceptance
+
+Commit `047bb7f1126f9fa6272325ace84446b3c9f7e1b9` passed
+[run 36947665282](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282)
+on 2026-10-02. Actual Chromium on Google SwiftShader executed all fourteen lit
+cases and five resizes with no browser console errors. The combined-light center
+sample was HDR `(0.505371, 0.214697, 0.084167, 0.700195)` and presented bytes
+`(221, 172, 122, 255)`. Emission remained above one in the real HDR texture:
+`(3.402344, 1.683594, 0.831543, 0.700195)`. Opacity changed its HDR alpha to
+`0.350098` without replacing the shader or render pipeline.
+
+Live engine GPU resources stayed at 30 throughout every numeric case and each
+384, 256, 640, 320 and 512-pixel resize; retiring resources drained to zero.
+Combined-light, HDR-emission and resized PNGs were inspected. The
+[qualification artifact](https://github.com/BlackJaxDev/XRENGINE/actions/runs/36947665282/artifacts/11203082261)
+contains screenshots, exact samples, adapter metadata and console records.
+Depth, texture replacement/sRGB, native Jolt, engine world play/stop, asset lifetime
+and offline audio checks also passed. The bare host's authored-player autostart
+remains explicitly skipped. This qualifies the admitted software-WebGPU lit/HDR
+cohort, not hardware performance, shadows, the full production tier or browser
+RollingBall play.
+
+## Standalone directional shadow integration
+
+The additive `StandardLitColorV1/linear-hdr-directional-shadow-v1` receiver and
+`OpaqueShadowDepthV1/static-position-v1/depth-normal-v1` caster retain the existing
+unshadowed material cohort. One registered directional light renders through its
+shared `ShadowRenderPipeline`, followed by the ordinary HDR scene and tonemap.
+The admitted profile is one normal-Z orthographic depth map, dimensions up to
+2048, PCSS eight blocker/eight filter taps, and no atlas, cascades or contact
+shadows. Other requested profiles fail by name. The shader follows the desktop
+projection-derived bias, rotated Vogel sampling and contact-hardening formulas;
+texel footprints use the actual map dimensions. Desktop GLSL remains unchanged.
+
+Depth-only sampled views and exact less-equal comparison samplers are declared
+in the cooked ABI, validated by the managed material binder and carried through
+the real JavaScript resource/command executor. A required map must have recorded
+its producer in the current frame. Unready producer/receiver work defers the
+entire frame. Only a disabled shadow uses the renderer-owned, explicitly cleared
+depth-one binding. Replacing/deactivating a light retires only its own material
+and texture pair, preserving borrowed targets.
+
+Live published-WASM import-boundary execution records two depth-caster draws
+before two HDR receivers and tonemap. Caster/light movement, near/far geometry,
+disable/re-enable and map resize all reach ready without presenting any pending
+partial frame. This exposed and repaired two shared first-use issues: a shadow
+camera queried post-processing before binding its own pipeline, and imported
+framebuffers fired bind events before realizing their current-owner wrapper.
+Framebuffer bind failures now roll back their logical and physical target state.
+The diagnostic selects its explicit CpuDirect policy before creating shadow
+resources. Local builds, exact package/ABI probes, and two canonical RollingBall
+WASM headless plus two canvas-composed lifecycle cycles pass, with the same 35
+post-stop registry objects. GPU pixels, PCSS edge widths, and resource counts still
+require the exact-commit Chromium run; import observations are not GPU evidence.

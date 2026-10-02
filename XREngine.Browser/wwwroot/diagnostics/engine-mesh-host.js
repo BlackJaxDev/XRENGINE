@@ -14,17 +14,21 @@ export class EngineMeshDiagnosticHost {
         this.request = 0;
         this.stage = 'idle';
         this.failure = null;
+        this.partialSubmissions = 0;
         this.frame = this.frame.bind(this);
     }
 
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
-        if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color'].includes(artifactName))
+        if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
+            'engine-standard-lit-color-directional-shadow'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
         await this.stop(false);
         if (epoch !== this.epoch) return;
         this.failure = null;
-        this.kind = artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
+        this.partialSubmissions = 0;
+        this.kind = artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
+            artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
         this.readyMessage = `Engine mesh ${this.kind} diagnostic rendered; RuntimeWorld play and physics are unverified`;
         this.stage = 'loading-shader-artifact';
         if (!assetManifestUrl) throw new Error('Engine mesh diagnostics require a cooked engine asset manifest.');
@@ -47,11 +51,14 @@ export class EngineMeshDiagnosticHost {
                 return { descriptorJson, source: await sourceResponse.text() };
             };
             const artifact = await loadArtifact(artifactName);
-            const tonemap = this.kind === 'lit' ? await loadArtifact('engine-tonemap') : null;
+            const tonemap = ['lit', 'shadow'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
+            const shadowDepth = this.kind === 'shadow' ? await loadArtifact('engine-shadow-depth') : null;
             if (controller.signal.aborted || epoch !== this.epoch) return;
             this.stage = 'creating-engine-session';
-            const creation = tonemap
-                ? this.exports.CreateLitAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+            const creation = shadowDepth
+                ? this.exports.CreateShadowAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+                    tonemap.descriptorJson, tonemap.source, shadowDepth.descriptorJson, shadowDepth.source)
+                : tonemap ? this.exports.CreateLitAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source)
                 : this.exports.CreateAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source);
             this.creation = creation;
@@ -94,7 +101,10 @@ export class EngineMeshDiagnosticHost {
         if (!this.session) return;
         try {
             this.stage = 'engine-frame';
+            const submissionsBefore = this.kind === 'shadow' ? this.statistics()?.frameSubmitCalls ?? 0 : 0;
             const ready = this.exports.Frame(this.session);
+            if (this.kind === 'shadow' && !ready && (this.statistics()?.frameSubmitCalls ?? 0) > submissionsBefore)
+                this.partialSubmissions++;
             this.stage = 'waiting-for-next-frame';
             if (ready) this.onState(this.readyMessage);
             else if (performance.now() - this.startedAt > 45000)
@@ -117,6 +127,36 @@ export class EngineMeshDiagnosticHost {
         this.exports.SetLitCase(this.session, sampleCase);
         this.startedAt = performance.now();
         this.onState('Preparing changed engine surface and light values');
+    }
+
+    setShadowCase(sampleCase) {
+        if (!this.session || this.kind !== 'shadow') throw new Error('An active engine shadow diagnostic is required.');
+        this.exports.SetShadowCase(this.session, sampleCase);
+        this.startedAt = performance.now();
+        this.onState('Preparing changed engine shadow scene');
+    }
+
+    setShadowMapSize(size) {
+        if (!this.session || this.kind !== 'shadow') throw new Error('An active engine shadow diagnostic is required.');
+        this.exports.SetShadowMapSize(this.session, size);
+        this.startedAt = performance.now();
+        this.onState('Preparing resized engine shadow map');
+    }
+
+    shadowState() {
+        if (!this.session || this.kind !== 'shadow') throw new Error('An active engine shadow diagnostic is required.');
+        const shaders = [], pipelines = [], hdrTargets = [], depthTargets = [];
+        this.renderer._resources.slots.forEach((entry, slot) => {
+            if (entry?.owner !== this.session) return;
+            const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
+            if (entry.kind === 'shader') shaders.push(identity);
+            if (entry.kind === 'render-pipeline') pipelines.push(identity);
+            if (entry.kind === 'texture' && entry.value.format === 'rgba16float')
+                hdrTargets.push({ ...identity, width: entry.value.width, height: entry.value.height });
+            if (entry.kind === 'texture' && entry.value.format === 'depth24plus')
+                depthTargets.push({ ...identity, width: entry.value.width, height: entry.value.height });
+        });
+        return { ...JSON.parse(this.exports.GetShadowState(this.session)), shaders, pipelines, hdrTargets, depthTargets };
     }
 
     litState() {
@@ -148,6 +188,15 @@ export class EngineMeshDiagnosticHost {
     /** Explicit diagnostic-only readback of the actual engine-owned HDR target, including opaque material alpha. */
     async readHdrCenter() {
         if (!this.session || this.kind !== 'lit') throw new Error('An active engine lit diagnostic is required.');
+        return this.readHdrAt(0.5, 0.5);
+    }
+
+    /** Reads a five-pixel square at normalized canvas coordinates from the engine-owned HDR texture. */
+    async readHdrAt(u, v) {
+        if (!this.session || !['lit', 'shadow'].includes(this.kind))
+            throw new Error('An active engine HDR diagnostic is required.');
+        if (![u, v].every(value => Number.isFinite(value) && value >= 0.02 && value <= 0.98))
+            throw new Error('HDR sample coordinates must lie inside the render target.');
         const renderer = this.renderer;
         const matches = renderer._resources.slots.filter(entry => entry?.owner === this.session &&
             entry.kind === 'texture' && entry.value.format === 'rgba16float');
@@ -160,7 +209,7 @@ export class EngineMeshDiagnosticHost {
         try {
             const encoder = renderer.device.createCommandEncoder({ label: 'Engine HDR diagnostic copy' });
             encoder.copyTextureToBuffer({ texture: target.texture,
-                origin: [Math.floor(target.width / 2) - 2, Math.floor(target.height / 2) - 2, 0] },
+                origin: [Math.floor(target.width * u) - 2, Math.floor(target.height * v) - 2, 0] },
                 { buffer, bytesPerRow: 256, rowsPerImage: 5 }, [5, 5, 1]);
             renderer.device.queue.submit([encoder.finish()]);
             await Promise.race([buffer.mapAsync(GPUMapMode.READ), new Promise((_, reject) => {

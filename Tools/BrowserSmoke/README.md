@@ -28,6 +28,23 @@ recheck HDR/display pixels, and require retired GPU resources to drain without
 live-count growth before teardown. This establishes the bounded static rendering path, separately
 from RuntimeWorld/gameplay, shadows, probes, transparency and broader effects.
 
+The directional-shadow diagnostic is a separate static fixture. It cooks the
+`StandardLitColorV1` HDR shadow receiver and `OpaqueShadowDepthV1` writer as
+distinct variants, then uses one registered `DirectionalLightComponent` and its
+real `ShadowRenderPipeline` viewport. The light has one normal-Z orthographic
+depth24 map, no atlas/cascades/contact shadows, and the authored 8/8 PCSS,
+bias, filter and source settings. The 256² diagnostic map can be rebuilt at
+512²; the normal engine default remains 2048². An angled narrow caster projects
+outside its camera-visible silhouette onto a wider receiver. Actual HDR
+readbacks and canvas captures verify contrast, caster/light movement, near/far
+penumbra, disabled shadow binding, map resize and stop/restart. The diagnostic
+shadow camera uses a 4×4×100 world-unit volume so the near blocker does not
+already saturate the authored PCSS maximum radius; the far blocker does.
+Producer pass
+and caster counters plus the dedicated depth target must agree with those
+pixels; a mock shadow or reference-scene packet cannot pass. This qualifies the
+bounded shadow profile, not cascades, atlas, contact shadows or gameplay.
+
 The audio check imports the published Web Audio streaming scheduler and renders
 two adjacent PCM buffers with a real `OfflineAudioContext`, checking every output
 sample at rates 1 and 2, processed-buffer order, and disposal. It requires no
@@ -53,7 +70,9 @@ node Tools/BrowserSmoke/run.mjs \
 
 Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
 `engine-depth-probe.recipe.json`, `engine-texture-probe.recipe.json`,
-`engine-standard-lit-color.recipe.json`, and `engine-tonemap.recipe.json` with
+`engine-standard-lit-color.recipe.json`,
+`engine-standard-lit-color-directional-shadow.recipe.json`,
+`engine-shadow-depth.recipe.json`, and `engine-tonemap.recipe.json` with
 `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on
@@ -85,6 +104,9 @@ is exposed on a LAN interface.
 - The depth/texture engine diagnostics must report all three mesh submissions; the
   lit path must report its normal-bearing surface and tonemap submissions. A clear-only
   page cannot satisfy readiness
+- The shadow path must render its real standalone depth writer before the HDR
+  receiver and tonemap frame is presented. Changes wait for a new producer pass;
+  pending preparation cannot count a partial frame as ready
 - A 512x512 screenshot of the composited WebGPU canvas is decoded and sampled in
   5x5 interior patches. Near-left depth 0.25 must produce RGB approximately
   `(64, 0, 191)`; far-right depth 0.75 approximately `(191, 0, 64)`, each within

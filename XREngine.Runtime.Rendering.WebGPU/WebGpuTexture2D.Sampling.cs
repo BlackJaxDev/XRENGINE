@@ -6,16 +6,20 @@ public sealed unsafe partial class WebGpuTexture2D
 {
     private readonly record struct SampledViewKey(int BaseMip, int MipCount);
     private readonly record struct SamplerState(string AddressU, string AddressV,
-        string MinFilter, string MagFilter, string MipmapFilter, float MinLod, float MaxLod, int Anisotropy);
+        string MinFilter, string MagFilter, string MipmapFilter, float MinLod, float MaxLod, int Anisotropy,
+        string? Compare);
     private readonly Dictionary<SampledViewKey, int> _sampledViews = [];
     private SamplerState _samplerState;
     private int _samplerHandle;
 
-    internal int GetSampledView()
+    internal int GetSampledView(bool depth)
     {
         Generate();
-        if (Format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || _samples != 1)
-            throw Unsupported("Sample", "the selected profile admits only single-sample RGBA8 or RGBA16F color textures");
+        bool depthFormat = Format is "depth16unorm" or "depth24plus" or "depth32float" or "depth24plus-stencil8";
+        if (_samples != 1 || depth != depthFormat || !depth && Format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float"))
+            throw Unsupported("Sample", depth
+                ? "depth sampling requires a single-sample depth 2D texture"
+                : "the selected profile admits only single-sample RGBA8 or RGBA16F color textures");
         int baseMip = Data.LargestMipmapLevel;
         int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
         if (baseMip < 0 || baseMip > finalMip)
@@ -25,16 +29,18 @@ public sealed unsafe partial class WebGpuTexture2D
         if (_sampledViews.Count >= 32)
             throw Unsupported("Sample", "the texture exceeds 32 retained sampled mip ranges for its current storage generation");
         view = Renderer.CreateTextureView(new BrowserTextureViewDescription(_handle,
-            key.BaseMip, key.MipCount, "all", Data.Name ?? "Engine sampled view"));
+            key.BaseMip, key.MipCount, depthFormat ? "depth-only" : "all", Data.Name ?? "Engine sampled view"));
         _sampledViews.Add(key, view);
         return view;
     }
 
-    internal int GetSampler()
+    internal int GetSampler(bool comparison)
     {
         Generate();
-        if (Data.EnableComparison || Data.LodBias != 0)
-            throw Unsupported("Sampler", "comparison sampling and nonzero sampler LOD bias require an explicitly admitted shader profile");
+        if (Data.LodBias != 0)
+            throw Unsupported("Sampler", "nonzero sampler LOD bias has no exact WebGPU encoding");
+        if (Data.EnableComparison != comparison || comparison && Data.CompareFunc != ETextureCompareFunc.LessOrEqual)
+            throw Unsupported("Sampler", "the shader binding and authored sampler must agree on ordinary or less-equal comparison sampling");
         (string min, string mip, bool mipmapped) = Data.MinFilter switch
         {
             ETexMinFilter.Nearest => ("nearest", "nearest", false),
@@ -54,11 +60,13 @@ public sealed unsafe partial class WebGpuTexture2D
         if (!float.IsFinite(anisotropy) || anisotropy < 1 || anisotropy > 16 || anisotropy != MathF.Truncate(anisotropy) ||
             anisotropy > 1 && (min != "linear" || mag != "linear" || mip != "linear"))
             throw Unsupported("Sampler", "anisotropy requires an integer from one to sixteen and linear minification, magnification, and mip filters");
-        float minLod = mipmapped ? Math.Clamp(Data.MinLOD, 0, 32) : 0;
-        float maxLod = mipmapped ? Math.Clamp(Data.MaxLOD, 0, 32) : 0;
-        if (minLod > maxLod)
-            throw Unsupported("Sampler", "the authored LOD clamp range is empty");
-        SamplerState state = new(Address(Data.UWrap), Address(Data.VWrap), min, mag, mip, minLod, maxLod, (int)anisotropy);
+        float minLod = mipmapped ? Math.Max(Data.MinLOD, 0) : 0;
+        float maxLod = mipmapped ? Math.Min(Data.MaxLOD, 32) : 0;
+        if (minLod > maxLod || minLod > 32 || maxLod < 0 ||
+            !mipmapped && (Data.MinLOD > 0 || Data.MaxLOD < 0))
+            throw Unsupported("Sampler", "the authored LOD clamp range excludes available sampled levels");
+        SamplerState state = new(Address(Data.UWrap), Address(Data.VWrap), min, mag, mip, minLod, maxLod,
+            (int)anisotropy, comparison ? "less-equal" : null);
         if (_samplerHandle != 0 && state == _samplerState) return _samplerHandle;
         if (_samplerHandle != 0)
         {
@@ -68,7 +76,7 @@ public sealed unsafe partial class WebGpuTexture2D
         }
         int handle = Renderer.CreateSampler(new BrowserSamplerDescription(state.AddressU, state.AddressV,
             state.MinFilter, state.MagFilter, state.MipmapFilter, Data.Name ?? "Engine sampler",
-            state.MaxLod, state.Anisotropy, LodMinClamp: state.MinLod));
+            state.MaxLod, state.Anisotropy, LodMinClamp: state.MinLod, Compare: state.Compare));
         SetField(ref _samplerState, state);
         SetField(ref _samplerHandle, handle);
         return handle;

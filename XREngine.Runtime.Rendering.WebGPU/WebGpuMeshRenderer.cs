@@ -31,6 +31,8 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
         XRMaterial? material = Data.Parent.Material;
         if (material is null)
             return Pending("MaterialMissing");
+        if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true)
+            material = MeshRenderMaterialResolver.Resolve(Data.Parent, null, 1).Material;
         Renderer.ApplyRenderParameters(material.RenderOptions);
         return TryPrepareDraw(material, out _, out _);
     }

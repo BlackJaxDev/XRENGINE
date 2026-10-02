@@ -149,6 +149,7 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteUInt32LittleEndian(header[40..], _engineFrameSequence);
         Span<byte> uniforms = _engineUniformArena is null ? Span<byte>.Empty : _engineUniformArena.AsSpan(0, _engineUniformBytes);
         bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms);
+        CommitDirectionalShadowDefaults();
         SetField(ref _submittedFrame, presented && !_engineDrawPending);
     }
 }

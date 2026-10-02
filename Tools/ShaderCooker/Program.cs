@@ -165,13 +165,19 @@ internal static class Program
                 JsonObject variant = Object(variantNode, "materialVariant");
                 Require(variant.Count == 4 && variant.ContainsKey("semantic") && variant.ContainsKey("semanticVersion")
                     && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
-                Require(String(variant, "semantic") == "StandardLitColor" && Integer(variant, "semanticVersion") == 1,
+                string semantic = String(variant, "semantic");
+                Require(semantic is "StandardLitColor" or "OpaqueShadowDepth" && Integer(variant, "semanticVersion") == 1,
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
+                if (semantic == "OpaqueShadowDepth")
+                    Require(String(recipe, "pass") == "depth" && vertexProfile == "static-position-v1" &&
+                        outputProfile == "depth-normal-v1" &&
+                        CanonicalString(recipe["entryPoints"]) == "{\"vertex\":\"depthVertex\"}\n",
+                        $"{stageContext}: opaque shadow depth requires its vertex-only depth recipe.");
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");
-                materialVariant = new JsonObject { ["semantic"] = "StandardLitColor", ["semanticVersion"] = 1,
+                materialVariant = new JsonObject { ["semantic"] = semantic, ["semanticVersion"] = 1,
                     ["target"] = "WebGPUWgsl", ["pass"] = String(recipe, "pass"),
                     ["vertexProfile"] = vertexProfile, ["outputProfile"] = outputProfile };
             }

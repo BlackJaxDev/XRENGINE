@@ -20,6 +20,7 @@ const status=document.querySelector('#status'), manifest=document.querySelector(
 const params=new URLSearchParams(location.search);
 const texture=params.get('probe')==='texture';
 const lit=params.get('probe')==='lit';
+const shadow=params.get('probe')==='shadow';
 if(texture){
  document.title='Engine texture diagnostic';
  document.querySelector('h1').textContent='Engine texture diagnostic';
@@ -32,11 +33,17 @@ if(lit){
  document.querySelector('#description').textContent='Static engine ModelComponent, normal-bearing mesh, lit material and light components rendered through the shared default pipeline. No production world play or physics is started.';
  document.querySelector('#expected').textContent='StandardLitColorV1 ModelComponent with vertex normals and actual directional, point and spot engine lights. DefaultRenderPipeline writes linear RGBA16F then applies Mobius tonemapping. Numeric surface and light changes retain their material and shader identity. Shadows, RuntimeWorld play and gameplay are outside this diagnostic.';
 }
+if(shadow){
+ document.title='Engine directional shadow diagnostic';
+ document.querySelector('h1').textContent='Engine directional shadow diagnostic';
+ document.querySelector('#description').textContent='A real directional light renders a standalone depth24 shadow map through ShadowRenderPipeline, then a cooked StandardLitColor receiver writes HDR and canvas pixels.';
+ document.querySelector('#expected').textContent='A narrow front caster projects an offset PCSS shadow onto a wider rear receiver. Caster and light movement, near/far penumbra, disabled shadow binding, map resize and restart are qualified from actual GPU output.';
+}
 manifest.value=params.get('manifest') ?? '';
 assets.value=params.get('assets') ?? '';
 const createHost=await createBrowserRuntime();
 const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
-document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null, lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
+document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null, shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
 document.querySelector('#stop').onclick=()=>host.stop().catch(error=>{status.textContent=String(error);});
 window.engineMeshDiagnostic=host;
 window.addEventListener('pagehide',()=>{void host.stop().catch(()=>{});});

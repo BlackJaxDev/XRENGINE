@@ -368,11 +368,17 @@ namespace XREngine.Rendering
         public void BindForReading()
         {
             ReadStack.Push(this);
-            OnBindForRead();
+            try { OnBindForRead(); }
+            catch (Exception failure)
+            {
+                RollbackFailedBind(failure, UnbindFromReadingAction);
+                throw;
+            }
         }
 
         private void OnBindForRead()
         {
+            EnsureCurrentOwnerWrapper();
             BindForReadRequested?.Invoke();
         }
 
@@ -401,8 +407,16 @@ namespace XREngine.Rendering
         public void BindForWriting()
         {
             WriteStack.Push(this);
-            TrackFBOBandwidth();
-            OnBindForWrite();
+            try
+            {
+                TrackFBOBandwidth();
+                OnBindForWrite();
+            }
+            catch (Exception failure)
+            {
+                RollbackFailedBind(failure, UnbindFromWritingAction);
+                throw;
+            }
         }
 
         /// <summary>
@@ -436,6 +450,7 @@ namespace XREngine.Rendering
 
         private void OnBindForWrite()
         {
+            EnsureCurrentOwnerWrapper();
             BindForWriteRequested?.Invoke();
         }
 
@@ -470,12 +485,39 @@ namespace XREngine.Rendering
             // read-only or write-only render pass independently.
             ReadStack.Push(this);
             WriteStack.Push(this);
-            OnBind();
+            try { OnBind(); }
+            catch (Exception failure)
+            {
+                RollbackFailedBind(failure, UnbindAction);
+                throw;
+            }
         }
 
         private void OnBind()
         {
+            EnsureCurrentOwnerWrapper();
             BindRequested?.Invoke();
+        }
+
+        private void EnsureCurrentOwnerWrapper()
+        {
+            // Imported and deferred-publication targets have no eager API wrapper.
+            // First use (including stack restoration) must attach the current
+            // owner's bind callbacks before changing the physical render target.
+            if (AbstractRenderer.Current is not null)
+                _ = EnsureApiWrapperForOwnerFirstUse();
+        }
+
+        private void RollbackFailedBind(Exception failure, Action<object?> rollback)
+        {
+            // A caller cannot install its pop scope until binding returns. Restore
+            // both stacks and the previous physical target before exposing failure.
+            try { rollback(this); }
+            catch (Exception restoreFailure)
+            {
+                throw new AggregateException("Framebuffer binding failed and its previous target could not be restored.",
+                    failure, restoreFailure);
+            }
         }
 
         public StateObject BindState()

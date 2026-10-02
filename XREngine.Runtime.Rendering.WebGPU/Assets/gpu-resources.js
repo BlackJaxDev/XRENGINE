@@ -182,21 +182,24 @@ export class GpuResources {
         return handle;
     }
 
-    createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp = 32, maxAnisotropy = 1, lodMinClamp = 0) {
+    createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp = 32, maxAnisotropy = 1, lodMinClamp = 0, compare = '') {
         const r = this._ready();
         if (![addressU, addressV].every(value => value === 'clamp-to-edge' || value === 'repeat' || value === 'mirror-repeat') ||
             ![minFilter, magFilter, mipmapFilter].every(value => value === 'nearest' || value === 'linear') ||
             !Number.isFinite(lodMinClamp) || !Number.isFinite(lodMaxClamp) ||
             lodMinClamp < 0 || lodMinClamp > lodMaxClamp || lodMaxClamp > 32 ||
             !Number.isInteger(maxAnisotropy) || maxAnisotropy < 1 || maxAnisotropy > 16 ||
+            (compare !== '' && compare !== 'less-equal') ||
             (maxAnisotropy > 1 && [minFilter, magFilter, mipmapFilter].some(value => value !== 'linear')))
             throw new RangeError('Sampler address, filtering, LOD or anisotropy mode is unsupported.');
         debugLabel(label);
         r._setOperation('create-sampler', label);
-        const sampler = r.device.createSampler({ label, addressModeU: addressU, addressModeV: addressV,
-            addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, lodMinClamp, lodMaxClamp, maxAnisotropy });
+        const descriptor = { label, addressModeU: addressU, addressModeV: addressV,
+            addressModeW: 'clamp-to-edge', minFilter, magFilter, mipmapFilter, lodMinClamp, lodMaxClamp, maxAnisotropy };
+        if (compare) descriptor.compare = compare;
+        const sampler = r.device.createSampler(descriptor);
         return r._resources.add('sampler', { sampler, label, state: 'ready', references: 0,
-            filtering: minFilter === 'linear' || magFilter === 'linear' || mipmapFilter === 'linear' }, r._owner);
+            filtering: minFilter === 'linear' || magFilter === 'linear' || mipmapFilter === 'linear', compare }, r._owner);
     }
 
     destroy(entry, immediate) {

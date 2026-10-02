@@ -92,12 +92,15 @@ public static partial class BrowserContentPackageBuilder
             foreach (JsonElement variant in variantValues.EnumerateArray())
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
-                string semantic = Choice(variant, "semantic", "StandardLitColor");
+                string semantic = Choice(variant, "semantic", "StandardLitColor", "OpaqueShadowDepth");
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, 1);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
+                if (semantic == "OpaqueShadowDepth")
+                    Require(pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1",
+                        "Opaque shadow depth requires its exact pass and profiles.");
                 string? descriptorIdentity = variant.GetProperty("descriptorIdentity").GetString();
                 Require(descriptorIdentity is not null && Regex.IsMatch(descriptorIdentity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
                     "Material variant references an absent shader descriptor.");
@@ -107,6 +110,13 @@ public static partial class BrowserContentPackageBuilder
                 Require(keys.Add(key), "Duplicate material variant key.");
                 Require(descriptor.GetProperty("pass").GetString() == pass && descriptor.GetProperty("target").GetString() == target,
                     "Material variant pass or target differs from its shader descriptor.");
+                if (semantic == "OpaqueShadowDepth")
+                {
+                    JsonElement entries = descriptor.GetProperty("entryPoints");
+                    Members(entries, "vertex");
+                    Require(entries.GetProperty("vertex").GetString() == "depthVertex",
+                        "Opaque shadow depth requires a vertex-only depth entry point.");
+                }
                 Require(descriptor.TryGetProperty("materialVariant", out JsonElement declaration),
                     "Material variant is absent from its hash-owned shader descriptor.");
                 Members(declaration, "semantic", "semanticVersion", "vertexProfile", "outputProfile");

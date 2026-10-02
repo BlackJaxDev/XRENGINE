@@ -112,6 +112,8 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>
     internal void MarkRecorded()
         => SetField(ref _lastRecordedFrame, Renderer.EngineFrameSequence, publishNotifications: false);
 
+    internal bool WasRecordedInFrame(uint frameSequence) => _lastRecordedFrame == frameSequence;
+
     private void UploadMipmaps()
     {
         Mipmap2D[] mips = Data.Mipmaps;

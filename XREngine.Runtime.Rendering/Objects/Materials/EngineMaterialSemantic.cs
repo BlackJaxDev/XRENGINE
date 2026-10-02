@@ -5,4 +5,5 @@ public enum EngineMaterialSemantic
 {
     None = 0,
     StandardLitColor = 1,
+    OpaqueShadowDepth = 2,
 }

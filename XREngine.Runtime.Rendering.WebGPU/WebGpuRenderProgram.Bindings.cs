@@ -25,10 +25,10 @@ public sealed partial class WebGpuRenderProgram
                 uniforms++;
                 continue;
             }
-            if (resource.DynamicOffset || resource.BindingType is not ("texture-2d-float" or "filtering-sampler"))
-                throw UnsupportedBinding(resource.Contract.Name, "only dynamic uniforms and exact 2D float texture/filtering sampler pairs are admitted");
+            if (resource.DynamicOffset || resource.BindingType is not ("texture-2d-float" or "filtering-sampler" or "texture-depth-2d" or "comparison-sampler"))
+                throw UnsupportedBinding(resource.Contract.Name, "only dynamic uniforms and exact 2D float/filtering or depth/comparison sampler pairs are admitted");
             bool texture = resource.Contract.Kind == ShaderAbiResourceKind.SampledImage;
-            if (texture != (resource.BindingType == "texture-2d-float") ||
+            if (texture != (resource.BindingType is "texture-2d-float" or "texture-depth-2d") ||
                 !texture && resource.Contract.Kind != ShaderAbiResourceKind.Sampler)
                 throw UnsupportedBinding(resource.Contract.Name, "the resource kind does not match its explicit binding type");
             if (!_samplers.TryGetValue(resource.Contract.Name, out SamplerSlots slots))
@@ -45,6 +45,10 @@ public sealed partial class WebGpuRenderProgram
                 throw UnsupportedBinding(name, "texture and sampler bindings must explicitly share the same logical resource name");
             ShaderAbiResourceContract texture = artifact.Resources[slots.Texture].Contract;
             ShaderAbiResourceContract sampler = artifact.Resources[slots.Sampler].Contract;
+            bool depth = artifact.Resources[slots.Texture].BindingType == "texture-depth-2d";
+            bool comparison = artifact.Resources[slots.Sampler].BindingType == "comparison-sampler";
+            if (depth != comparison)
+                throw UnsupportedBinding(name, "depth textures require comparison samplers and float textures require filtering samplers");
             if (texture.Owner != sampler.Owner || texture.Frequency != sampler.Frequency)
                 throw UnsupportedBinding(name, "paired texture and sampler bindings must have the same owner and update frequency");
         }
@@ -64,14 +68,14 @@ public sealed partial class WebGpuRenderProgram
         else if (resource.Contract.Kind == ShaderAbiResourceKind.SampledImage)
         {
             writer.WriteStartObject("texture");
-            writer.WriteString("sampleType", "float");
+            writer.WriteString("sampleType", resource.BindingType == "texture-depth-2d" ? "depth" : "float");
             writer.WriteString("viewDimension", "2d");
             writer.WriteBoolean("multisampled", false);
         }
         else
         {
             writer.WriteStartObject("sampler");
-            writer.WriteString("type", "filtering");
+            writer.WriteString("type", resource.BindingType == "comparison-sampler" ? "comparison" : "filtering");
         }
         writer.WriteEndObject();
     }
@@ -93,8 +97,9 @@ public sealed partial class WebGpuRenderProgram
         if (resource is not XRTexture2D texture)
             throw UnsupportedBinding(name, "the selected binding requires an authored XRTexture2D");
         WebGpuTexture2D api = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture)!;
-        int view = api.GetSampledView();
-        int sampler = api.GetSampler();
+        bool depth = Artifact.Resources[slots.Texture].BindingType == "texture-depth-2d";
+        int view = api.GetSampledView(depth);
+        int sampler = api.GetSampler(depth);
         _resourceHandles[slots.Texture] = view;
         _resourceHandles[slots.Sampler] = sampler;
         _resourceOwners[slots.Texture] = api;

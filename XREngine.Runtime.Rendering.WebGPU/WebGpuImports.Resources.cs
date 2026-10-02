@@ -28,5 +28,6 @@ internal static partial class WebGpuImports
 
     [JSImport("createSampler", "xrengine.webgpu")]
     internal static partial int CreateSampler(int session, string addressU, string addressV,
-        string minFilter, string magFilter, string mipmapFilter, string label, float lodMaxClamp, int maxAnisotropy, float lodMinClamp);
+        string minFilter, string magFilter, string mipmapFilter, string label, float lodMaxClamp, int maxAnisotropy,
+        float lodMinClamp, string compare);
 }

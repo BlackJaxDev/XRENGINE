@@ -25,6 +25,19 @@ public static class MeshRenderMaterialResolver
         if (renderState?.ShadowPass ?? false)
         {
             XRMaterial? shadowSourceMaterial = localMaterialOverride ?? meshRenderer.Material;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            {
+                if (globalMaterialOverride?.EngineSemantic != EngineMaterialSemanticIdentity.OpaqueShadowDepthV1 ||
+                    globalMaterialOverride.Shaders.Count != 0)
+                    throw new NotSupportedException("WebGPU.ShadowCaster.OverrideUnsupported: expected a source-free OpaqueShadowDepthV1 override.");
+                if (shadowSourceMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 ||
+                    shadowSourceMaterial.Shaders.Count != 0 ||
+                    !shadowSourceMaterial.CanUseSharedOpaqueShadowMaterial())
+                    throw new NotSupportedException("WebGPU.ShadowCaster.MaterialUnsupported: expected a source-free opaque StandardLitColorV1 caster without material-specific shader stages.");
+
+                return new(globalMaterialOverride, null, true, false, "CookedOpaqueShadowDepth");
+            }
+
             bool pointLightShadowOverride = globalMaterialOverride is not null &&
                 UsesPointLightShadowDepthOutput(globalMaterialOverride);
 

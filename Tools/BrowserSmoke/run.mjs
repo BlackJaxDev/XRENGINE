@@ -376,6 +376,160 @@ async function litCheck(browser, origin, report, config) {
     } finally { await context.close(); }
 }
 
+// World x in the centered, two-unit orthographic camera maps to canvas x by
+// (x + 1) / 2. The light points 0.35 radians across the one-unit caster to
+// receiver gap, placing the baseline shadow near x=-tan(0.35), clear of the
+// caster's [-0.12,0.12] footprint.
+function shadowSample(state, extent = 512) {
+    // The near-contact map overlaps the camera-visible caster. Sample its
+    // exposed left half, still >10 screen pixels inside the projected shadow.
+    const visibleX = state.sampleCase === 3 ? state.projectedShadowX - 0.07 : state.projectedShadowX;
+    const x = Math.round((visibleX + 1) * extent / 2);
+    return { x, y: extent / 2, u: x / extent, v: 0.5 };
+}
+
+async function captureShadowEdge(page, png, state, litRed, shadowRed) {
+    return page.evaluate(async ({ encoded, projectedShadowX, litRed, shadowRed }) => {
+        const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        const edge = Math.round((projectedShadowX - 0.12 + 1) * canvas.width / 2);
+        const start = Math.max(3, edge - 28), end = Math.min(canvas.width - 4, edge + 28);
+        const values = [];
+        for (let x = start; x <= end; x++) {
+            let sum = 0;
+            for (let y = canvas.height / 2 - 2; y <= canvas.height / 2 + 2; y++)
+                for (let dx = -2; dx <= 2; dx++)
+                    sum += context.getImageData(x + dx, y, 1, 1).data[0];
+            values.push((litRed - sum / 25) / Math.max(1, litRed - shadowRed));
+        }
+        const crossing = threshold => values.findIndex((value, index) => index + 2 < values.length &&
+            value >= threshold && values[index + 1] >= threshold && values[index + 2] >= threshold);
+        const first = crossing(0.1), last = crossing(0.9);
+        return { edge, start, first, last, transitionPixels: first >= 0 && last >= first ? last - first : null,
+            normalizedDarkness: values };
+    }, { encoded: png.toString('base64'), projectedShadowX: state.projectedShadowX, litRed, shadowRed });
+}
+
+async function shadowCheck(browser, origin, report, config) {
+    const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-directional-shadow', config);
+    const url = `${origin}/diagnostics/engine-mesh.html?probe=shadow&manifest=${encodeURIComponent(`${origin}/__shaders/manifest.json`)}` +
+        `&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`;
+    const ready = async previousPasses => {
+        await page.waitForFunction(previous => {
+            const host = window.engineMeshDiagnostic;
+            const status = document.querySelector('#status')?.textContent ?? '';
+            if (status.startsWith('Failed:') || status.startsWith('Error:')) return true;
+            if (!status.startsWith('Engine mesh shadow diagnostic rendered')) return false;
+            const state = host.shadowState();
+            return !state.castsShadows || state.shadowPasses > previous;
+        }, previousPasses);
+        const status = await page.locator('#status').textContent();
+        assert(status.startsWith('Engine mesh shadow diagnostic rendered'), `BrowserSmoke.EngineShadowFrameFailed: ${status}`);
+    };
+    const sample = async (name, state) => {
+        const shadow = shadowSample(state);
+        const lit = { x: 410, y: 256, u: 410 / 512, v: 0.5 };
+        const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `engine-shadow-${name}.png`) });
+        const canvas = await capturePixels(page, png, [
+            { name: 'projected-shadow', x: shadow.x, y: shadow.y },
+            { name: 'unoccluded-receiver', x: lit.x, y: lit.y },
+        ]);
+        const hdrShadow = await page.evaluate(({ u, v }) => window.engineMeshDiagnostic.readHdrAt(u, v), shadow);
+        const hdrLit = await page.evaluate(({ u, v }) => window.engineMeshDiagnostic.readHdrAt(u, v), lit);
+        const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+        const edge = [3, 4].includes(state.sampleCase)
+            ? await captureShadowEdge(page, png, state, canvas.samples[1].average[0], canvas.samples[0].average[0]) : null;
+        return { state, canvas, hdrShadow, hdrLit, statistics, edge };
+    };
+    try {
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
+        await page.locator('#start').click();
+        await ready(0);
+        report.shadowCases = [];
+        let baseline, previousPasses = 0;
+        for (const [sampleCase, name] of ['baseline', 'caster-moved', 'light-moved',
+            'near-contact', 'far-from-caster', 'disabled', 'restored'].entries()) {
+            if (sampleCase) {
+                await page.evaluate(value => window.engineMeshDiagnostic.setShadowCase(value), sampleCase);
+                await ready(previousPasses);
+            }
+            const state = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
+            const result = await sample(name, state);
+            report.shadowCases.push({ sampleCase, name, ...result });
+            assert(state.sampleCase === sampleCase && state.semantic === 'StandardLitColorV1' &&
+                state.pipeline === 'DefaultRenderPipeline' && state.authoredShaderCount === 0 &&
+                state.directionalLights === 1 && state.pointLights === 0 && state.spotLights === 0,
+                'BrowserSmoke.EngineShadowIdentity: the real engine light, material or pipeline changed.');
+            assert(state.shadowRequests >= state.shadowPasses && state.shadowPasses > 0 && state.shadowCasters >= 1,
+                'BrowserSmoke.EngineShadowProducer: the real standalone shadow viewport did not draw a caster.');
+            assert(state.hdrTargets.length === 1 && state.shaders.length >= 2 && state.pipelines.length >= 2 &&
+                (!state.castsShadows || (state.shaders.length >= 3 && state.pipelines.length >= 3)),
+                'BrowserSmoke.EngineShadowPrograms: enabled depth writer, HDR receiver, and tonemap require separate cooked programs.');
+            assert(result.hdrShadow.format === 'rgba16float' && result.hdrLit.format === 'rgba16float' &&
+                result.canvas.width === 512 && result.canvas.height === 512 && result.statistics.frameSubmitCalls > 0 &&
+                result.statistics.packets === 0 && result.statistics.focusedPipeline === null,
+                'BrowserSmoke.EngineShadowOutput: shadow acceptance must use real HDR/canvas engine frames.');
+            assert(await page.evaluate(() => window.engineMeshDiagnostic.partialSubmissions) === 0,
+                'BrowserSmoke.EngineShadowPartialFrame: an unready producer allowed a partial frame submission.');
+            if (state.castsShadows) {
+                assert(state.depthTargets.some(target => target.width === state.mapWidth && target.height === state.mapHeight),
+                    'BrowserSmoke.EngineShadowDepthTarget: the authored standalone depth24 map is missing.');
+                assert(result.hdrShadow.average[0] + 0.08 < result.hdrLit.average[0] &&
+                    result.canvas.samples[0].average[0] + 10 < result.canvas.samples[1].average[0],
+                    `BrowserSmoke.EngineShadowContrast: ${name} lacks HDR and presented shadow contrast.`);
+            } else {
+                assert(result.hdrShadow.average[0] > baseline.hdrShadow.average[0] + 0.08 &&
+                    result.canvas.samples[0].average[0] > baseline.canvas.samples[0].average[0] + 10,
+                    'BrowserSmoke.EngineShadowDisable: the depth-one disabled binding did not remove the cast shadow.');
+            }
+            if (sampleCase === 0) baseline = result;
+            previousPasses = state.shadowPasses;
+        }
+        assert(report.shadowCases[1].state.projectedShadowX > baseline.state.projectedShadowX + 0.3 &&
+            report.shadowCases[2].state.projectedShadowX > 0.3,
+            'BrowserSmoke.EngineShadowMotion: caster and light movements did not separate the projected shadow.');
+        const near = report.shadowCases[3], far = report.shadowCases[4];
+        assert(near.state.casterZ < far.state.casterZ && near.edge.transitionPixels !== null &&
+            far.edge.transitionPixels !== null && far.edge.transitionPixels >= near.edge.transitionPixels + 2,
+            `BrowserSmoke.EngineShadowPenumbra: contact-hardening filter did not widen the far edge (${near.edge.transitionPixels} to ${far.edge.transitionPixels} pixels).`);
+        report.shadowMapResizes = [];
+        for (const size of [512, 256]) {
+            await page.evaluate(value => window.engineMeshDiagnostic.setShadowMapSize(value), size);
+            await ready(previousPasses);
+            const state = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
+            const result = await sample(`map-${size}`, state);
+            assert(state.mapWidth === size && state.mapHeight === size &&
+                state.depthTargets.some(target => target.width === size && target.height === size) &&
+                result.hdrShadow.average[0] + 0.08 < result.hdrLit.average[0],
+                `BrowserSmoke.EngineShadowMapResize: ${size} did not render an updated depth map and shadowed HDR frame.`);
+            assert(await page.evaluate(() => window.engineMeshDiagnostic.partialSubmissions) === 0,
+                'BrowserSmoke.EngineShadowResizePartialFrame: map preparation submitted a partial frame.');
+            report.shadowMapResizes.push({ size, ...result });
+            previousPasses = state.shadowPasses;
+        }
+        await page.locator('#stop').click();
+        assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),
+            'BrowserSmoke.EngineShadowTeardown: the renderer survived stop.');
+        await page.locator('#start').click();
+        await ready(0);
+        const restarted = await page.evaluate(() => window.engineMeshDiagnostic.shadowState());
+        assert(restarted.shadowPasses > 0 && restarted.mapWidth === 256 && restarted.shadowCasters >= 1,
+            'BrowserSmoke.EngineShadowRestart: the real producer did not resume with fresh resources.');
+        report.shadowRestart = { state: restarted, statistics: await page.evaluate(() => window.engineMeshDiagnostic.statistics()) };
+        await page.locator('#stop').click();
+        assertNoBrowserErrors(events);
+    } catch (error) {
+        report.shadowFailure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
+        await page.screenshot({ path: path.join(config.output, 'engine-shadow-failure.png'), fullPage: true }).catch(() => {});
+        throw error;
+    } finally { await context.close(); }
+}
+
 async function gpuCanaryCheck(browser, origin, report, config) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'independent-gpu-canary', config);
     try {
@@ -565,6 +719,7 @@ async function main() {
         if (config.engineManifest) await check('engine-texture-sampling-lifetime', () => textureCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-texture-sampling-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.engineManifest) await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
+        if (config.engineManifest) await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
         else report.checks.push({ name: 'engine-lit-hdr-tonemap', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {
             await captureGpuProcessState(browser, report, 'after-engine-depth');
