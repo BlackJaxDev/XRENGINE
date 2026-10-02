@@ -312,6 +312,9 @@ public static class AotRuntimeMetadataStore
                     return fromMetadata;
             }
             if (XRRuntimeEnvironment.IsPublishedBuild && !XRRuntimeEnvironment.IsAotRuntimeBuild
+                && ResolvePublishedFrameworkDataType(typeName, fullTypeName, ignoreCase) is { } frameworkType)
+                return frameworkType;
+            if (XRRuntimeEnvironment.IsPublishedBuild && !XRRuntimeEnvironment.IsAotRuntimeBuild
                 && IsBoundedConstructedTypeName(typeName))
             {
                 // Cooked collections name closed CLR types; assembly scans only list their
@@ -350,6 +353,53 @@ public static class AotRuntimeMetadataStore
 
     private static string TypeNameOnly(string assemblyQualifiedName)
         => SerializedTypeIdentity.GetUnqualifiedTypeName(assemblyQualifiedName);
+
+    private static readonly Type[] PublishedFrameworkDataTypes =
+    [
+        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
+        typeof(char), typeof(object), typeof(string), typeof(decimal), typeof(Guid),
+        typeof(TimeSpan), typeof(DateTime), typeof(DateTimeOffset), typeof(DateOnly),
+        typeof(TimeOnly), typeof(Half), typeof(Uri), typeof(System.Numerics.BigInteger),
+        typeof(System.Numerics.Vector2), typeof(System.Numerics.Vector3),
+        typeof(System.Numerics.Vector4), typeof(System.Numerics.Quaternion),
+        typeof(System.Numerics.Matrix4x4), typeof(System.Net.IPAddress), typeof(System.Net.IPEndPoint),
+    ];
+
+    private static Type? ResolvePublishedFrameworkDataType(string typeName, string fullTypeName, bool ignoreCase)
+    {
+        if (typeName.Length > 4096)
+            return null;
+        StringComparison comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (Type candidate in PublishedFrameworkDataTypes)
+        {
+            if (!string.Equals(candidate.FullName, fullTypeName, comparison))
+                continue;
+            int separator = typeName.IndexOf(',');
+            if (separator < 0)
+                return candidate;
+            string qualification = typeName[(separator + 1)..];
+            int nextSeparator = qualification.IndexOf(',');
+            string assemblyName = (nextSeparator < 0 ? qualification : qualification[..nextSeparator]).Trim();
+            // Only runtime framework assemblies/forwarders may name these intrinsic
+            // values. Do not load an application assembly to resolve a scalar hint.
+            if (!string.Equals(assemblyName, candidate.Assembly.GetName().Name, StringComparison.OrdinalIgnoreCase)
+                && assemblyName.ToLowerInvariant() is not ("system.private.corelib" or "system.runtime" or "mscorlib"
+                    or "netstandard" or "system.numerics" or "system.numerics.vectors"
+                    or "system.runtime.numerics" or "system.net.primitives"))
+                return null;
+            // Arrays and nullable values encode their element identity separately;
+            // that scalar has no brackets and cannot use constructed-type resolution.
+            try
+            {
+                return Type.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase) == candidate ? candidate : null;
+            }
+            catch (ArgumentException) { return null; }
+            catch (FileLoadException) { return null; }
+            catch (TypeLoadException) { return null; }
+        }
+        return null;
+    }
 
     private static bool IsBoundedConstructedTypeName(string typeName)
     {
