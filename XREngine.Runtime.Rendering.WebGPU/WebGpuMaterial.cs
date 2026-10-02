@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Rendering.WebGPU;
 
@@ -113,6 +114,8 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                 artifact = ResolveSkyboxArtifact();
             else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
                 artifact = ResolveLitTextureArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+                artifact = ResolveAuthoredLitArtifact();
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
             {
                 XRMaterial source = Data.StandardLitColorSourceMaterial ?? Data;

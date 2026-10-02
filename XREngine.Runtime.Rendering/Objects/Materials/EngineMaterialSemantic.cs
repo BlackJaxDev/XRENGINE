@@ -19,4 +19,6 @@ public enum EngineMaterialSemantic
     SkyboxDynamicProcedural = 13,
     OpaqueSpotShadowDepth = 14,
     StandardLitTexture = 15,
+    /// <summary>Explicit authored opaque PBR inputs with exact target-cooked shader companions.</summary>
+    AuthoredLit = 16,
 }

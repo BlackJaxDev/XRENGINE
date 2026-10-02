@@ -207,7 +207,7 @@ namespace XREngine.Rendering.UI
             {
                 XRMaterial? material = Material;
                 return !DisableBatching &&
-                    !ClipToBounds &&
+                    (!ClipToBounds || UseWebGpuBatchOnly) &&
                     (material?.Textures is null || material.Textures.Count == 0) &&
                     (!UseWebGpuBatchOnly ||
                      material is { HasEngineSemantic: false } && material.Shaders.Count == 0 &&
@@ -229,7 +229,8 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
-            collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds);
+            collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds,
+                UseWebGpuBatchOnly && ClipToBounds ? tfm.AxisAlignedRegion.AsBoundingRectangle() : null);
             return true;
         }
 

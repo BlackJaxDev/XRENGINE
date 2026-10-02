@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **57 of 110 items are checked; 53 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
+Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **60 of 110 items are checked; 50 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
 
 Created: 2026-09-29. Updated: 2026-10-02.
 
@@ -23,7 +23,7 @@ The editor stays a desktop application and gains an honest browser publish targe
 The current coherent source passes Editor, Server, VRClient, desktop WebGPU,
 RenderingParity, all nineteen portable compile rows and fresh interpreter/native-
 Jolt browser publication with zero compiler warnings or errors. The count is
-**57 of 110 named items complete, 53 open**. Published metadata is now installed
+**60 of 110 named items complete, 50 open**. Published metadata is now installed
 before engine/game startup, and the actual metadata-bearing RollingBall bundle
 passes three headless WebAssembly start/step/stop cycles. The authored textured,
 skeletal/morph world passes its real generic hydration and Editor cook/package
@@ -241,6 +241,24 @@ GPU luminance reduction and conservative shadow sizing/reuse. These partial
 renderer changes do not close their broader rows before all contract and live
 acceptance requirements are satisfied.
 
+### Compiled asynchronous GPU services and input (2026-10-02)
+
+The reviewed non-blocking renderer contract, in-place device replacement and
+complete browser input leaf satisfy UR04.04, UR04.06 and UR09.01. The count is
+**60 checked and 50 open**. The coherent source passes Editor, Server, VRClient,
+desktop WebGPU, RenderingParity, all nineteen portable compile rows and fresh
+native-Jolt WASM publication with zero compiler warnings/errors. The current
+checkpoint records the source and boundary evidence. Full device-loss acceptance,
+known-value new luminance/UI pixels, complete UI accessibility and performance
+remain separate open work.
+
+The same source group adds true GPU mip generation and exact sRGB-encoded
+luminance input, authored PBR material recipes from shared engine material
+parameters, UI viewport/clip packets, focused DOM button/text bridges and
+catalog-aware prefab loading. Those features remain partial against their
+broader coverage rows. The source group does not claim a first RenderingParity
+browser frame before the reviewed standalone-mode correction is rerun.
+
 ## Build Gate
 
 Run narrow compile/cook checks during coherent implementation groups, and the full gate at end-to-end milestones and before checking an `impl` item. Fix failures caused by the change; list unrelated failures separately instead of working around them.
@@ -281,7 +299,7 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-As of this 2026-10-02 update, 57 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+As of this 2026-10-02 update, 60 of 110 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -289,9 +307,9 @@ Sizes are rough planning estimates for one engineer: **S** is days, **M** is one
 | --- | --- | --- | --- | --- |
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
 | Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Remaining native subsystem acceptance; broader physics parity before any default-promotion consideration |
-| U1: engine boots | UR17, UR01, UR02, UR03 | 11 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
-| U2: engine renders | UR04, UR05, UR06 | 19 | UR04 XL, UR05 XL, UR06 L | Extend the qualified depth and lit/HDR profile to remaining production passes, shadows and UI; compare supported worlds and preserve desktop rendering; D7 is approved |
-| U3: project plays | UR07, UR08, UR09, UR10, UR11 | 13 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
+| U1: engine boots | UR17, UR01, UR02, UR03 | 9 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
+| U2: engine renders | UR04, UR05, UR06 | 14 | UR04 XL, UR05 XL, UR06 L | Extend the qualified depth and lit/HDR profile to remaining production passes, shadows and UI; compare supported worlds and preserve desktop rendering; D7 is approved |
+| U3: project plays | UR07, UR08, UR09, UR10, UR11 | 11 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
 | U4: production | UR13, UR14, UR15, UR16 | 15 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
 | U5: networked client | UR12 | 1 | L | U3 |
 
@@ -455,13 +473,15 @@ Depends on UR17.
   - [ ] Compute dispatch.
 - [x] **UR04.02** `impl` Track GL-shaped state in C# and resolve it into cached immutable render pipelines, layouts, and bind groups with complete keys and bounded caches, following the Vulkan backend's approach.
 - [ ] **UR04.03** `impl` Record commands into reusable C# arenas and flush one packet per frame to the JavaScript executor. Reuse the branch's resource, command, readback, usage-scope, limits, and pipeline-cache executors. Move the policy logic in `browser-render-pipeline.js` into C#.
-- [ ] **UR04.04** `impl` Clean up the renderer contract for non-blocking backends:
+- [x] **UR04.04** `impl` Clean up the renderer contract for non-blocking backends:
   - neutral `RuntimeImage` readbacks (implemented shared contract; browser renderer support still required);
   - asynchronous-only screenshots, pixel reads, and luminance;
   - `WaitForGpu` rejected with a named error on non-blocking hosts;
   - truthful capability probes: no indirect-count draw, no mesh shaders, no bindless textures, bounded bind groups.
+
+  Done 2026-10-02: neutral async canvas/image, pixel, depth and luminance paths use bounded accepted-production readbacks; synchronous waits/readbacks reject by name and capabilities/physical bindings enforce browser limits. See the [readback](../../progress/platform/browser-webgpu-readback-2026-10-02.md) and [luminance](../../progress/platform/browser-webgpu-luminance-2026-10-02.md) records. New known-value GPU acceptance remains separate.
 - [x] **UR04.05** `impl` Present to the canvas through `RenderFrameOutputDescription` with surface generations, re-acquiring the output each frame and rejecting obsolete plans after resize.
-- [ ] **UR04.06** `impl` Handle pending, ready, failed, and lost states. Recovery reconstructs device resources from CPU-side and cooked sources, carrying over the mobile TODO's MW10.01–MW10.05.
+- [x] **UR04.06** `impl` Handle pending, ready, failed, and lost states. Recovery reconstructs device resources from CPU-side and cooked sources, carrying over the mobile TODO's MW10.01–MW10.05. Done 2026-10-02: reviewed finite replacement retires the old GPU owner, reconstructs from retained engine sources, preserves world/player/physics identity, and requires current validated output before resuming. The [recovery record](../../progress/platform/browser-webgpu-device-recovery-2026-10-02.md) distinguishes implementation/boundary checks from open live loss/reconstruction acceptance.
 - [ ] **UR04.07** `impl` Add error scopes, debug labels, and bridge counters. Recording and submission must not allocate per frame.
 - [ ] **UR04.08** `verify` Validate every shared renderer-contract change on OpenGL and Vulkan with editor captures from multiple positions.
 
@@ -518,7 +538,7 @@ Depends on the [Jolt browser proof and default-promotion gates](native-subsystem
 
 ## UR09 — Input, UI, And Text
 
-- [ ] **UR09.01** `impl` Implement a browser input leaf that feeds `XREngine.Input` devices from pointer, touch, keyboard, IME, wheel, and Gamepad API events, reusing `browser-input.js`. Player controllers and input mappings are unchanged.
+- [x] **UR09.01** `impl` Implement a browser input leaf that feeds `XREngine.Input` devices from pointer, touch, keyboard, IME, wheel, and Gamepad API events, reusing `browser-input.js`. Player controllers and input mappings are unchanged. Done 2026-10-02: `engine-input.js` adapts the reference event approach into shared device/contact snapshots and the existing viewport/player mapping path, rather than importing the frozen page-owned gameplay controller. Focus/content generations protect IME and DOM edits. See the [input record](../../progress/platform/browser-ui-clip-input-2026-10-02.md); device/IME and full accessibility acceptance remain open.
 - [ ] **UR09.02** `impl` Render engine UI through WebGPU with hit testing in the same coordinate convention as rendering.
 - [x] **UR09.03** `impl` Cook glyph atlases with FreeType at cook time and render cooked fonts at runtime. Desktop shipping builds may use the same path.
 - [ ] **UR09.04** `impl` Bridge text entry, IME, and accessibility to DOM elements.

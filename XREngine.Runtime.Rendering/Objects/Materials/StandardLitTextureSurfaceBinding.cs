@@ -10,7 +10,7 @@ namespace XREngine.Rendering;
 /// read detect in-place edits to public parameter and texture arrays without allocating.
 /// Desktop shader selection remains the author's responsibility.
 /// </summary>
-public sealed class StandardLitTextureSurfaceBinding(XRMaterial material)
+public sealed class StandardLitTextureSurfaceBinding(XRMaterial material, bool authoredCooked = false)
 {
     public static bool TryCreate(XRMaterial material, out StandardLitTextureSurfaceBinding? binding, out string? reason)
     {
@@ -21,12 +21,22 @@ public sealed class StandardLitTextureSurfaceBinding(XRMaterial material)
         return true;
     }
 
+    /// <summary>Reads exact authored PBR texture inputs when cooked stages own shader selection.</summary>
+    public static bool TryCreateAuthoredCooked(XRMaterial material, out StandardLitTextureSurfaceBinding? binding, out string? reason)
+    {
+        ArgumentNullException.ThrowIfNull(material);
+        StandardLitTextureSurfaceBinding candidate = new(material, authoredCooked: true);
+        if (!candidate.TryRead(out _, out reason)) { binding = null; return false; }
+        binding = candidate;
+        return true;
+    }
+
     public bool TryRead(out StandardLitTextureSurface surface, out string? reason)
-        => TryRead(material, out surface, out reason);
+        => TryReadCore(material, null, authoredCooked, out surface, out reason);
 
     /// <summary>Checks a live surface without allocating a reader, including per-face shadow admission.</summary>
     public static bool TryRead(XRMaterial material, out StandardLitTextureSurface surface, out string? reason)
-        => TryReadCore(material, null, out surface, out reason);
+        => TryReadCore(material, null, false, out surface, out reason);
 
     /// <summary>
     /// Checks the same schema during offline cooking. The owner must prove complete texture
@@ -37,15 +47,24 @@ public sealed class StandardLitTextureSurfaceBinding(XRMaterial material)
         out StandardLitTextureSurface surface, out string? reason)
     {
         ArgumentNullException.ThrowIfNull(equivalentTexture);
-        return TryReadCore(material, equivalentTexture, out surface, out reason);
+        return TryReadCore(material, equivalentTexture, false, out surface, out reason);
     }
 
-    private static bool TryReadCore(XRMaterial material, Func<XRTexture2D, XRTexture2D, bool>? equivalentTexture,
+    /// <summary>Validates alias-equivalent authored textures before the cook creates a detached carrier.</summary>
+    public static bool TryReadAuthoredForCook(XRMaterial material, Func<XRTexture2D, XRTexture2D, bool> equivalentTexture,
+        out StandardLitTextureSurface surface, out string? reason)
+    {
+        ArgumentNullException.ThrowIfNull(equivalentTexture);
+        return TryReadCore(material, equivalentTexture, true, out surface, out reason);
+    }
+
+    private static bool TryReadCore(XRMaterial material, Func<XRTexture2D, XRTexture2D, bool>? equivalentTexture, bool authoredCooked,
         out StandardLitTextureSurface surface, out string? reason)
     {
         surface = default;
         reason = "StandardLitTextureV1 requires its exact opaque deferred surface without custom bindings or extensions.";
-        if (material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1 ||
+        if ((authoredCooked ? material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitV1 || material.Shaders.Count == 0 :
+            material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1) ||
             material.RenderPass != (int)EDefaultRenderPass.OpaqueDeferred ||
             material.GetEffectiveTransparencyMode() != ETransparencyMode.Opaque ||
             material.BillboardMode != EMeshBillboardMode.None ||

@@ -137,7 +137,7 @@ namespace XREngine.Rendering.UI
 
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
                 AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
-                throw new NotSupportedException($"WebGPU.UI.UnbatchedUnsupported: '{GetType().Name}' requires an admitted screen-space batch profile; clipping, custom shaders, and individual UI draws are unsupported.");
+                throw new NotSupportedException($"WebGPU.UI.UnbatchedUnsupported: '{GetType().Name}' requires an admitted screen-space batch profile; individual UI draws are unsupported.");
 
             if (diagLog)
             {

@@ -67,8 +67,12 @@ namespace XREngine
             if (bypassJobThread || IsOnJobThread)
                 return work();
 
+            JobManager jobs = _jobManagerProvider();
+            if (OperatingSystem.IsBrowser() || jobs.IsCallerThreadExecutor)
+                throw new NotSupportedException("AssetSource.BlockingJobUnavailable: a caller-thread host cannot wait for its own asset job; use the asynchronous operation or explicitly run completed CPU work inline.");
+
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _jobManagerProvider().Schedule(() => JobRoutine(work, tcs), priority: priority);
+            jobs.Schedule(() => JobRoutine(work, tcs), priority: priority);
             return tcs.Task.GetAwaiter().GetResult();
         }
 
@@ -498,7 +502,7 @@ namespace XREngine
                 return true;
             }
 
-            if (_runtimeCatalogOwner)
+            if (UsesRuntimeAssetCatalog)
                 return false;
 
             if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, out assetPath))

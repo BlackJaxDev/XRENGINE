@@ -72,7 +72,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public int RendererSession => _rendererSession;
     public bool HasPresentedCanvasFrame => _renderer?.IsEngineOutputFrameReady ?? false;
     public int CanvasPreparationState => HasPresentedCanvasFrame ? 1
-        : _renderViewport?.RenderPipelineInstance.LastResourceGenerationFailure is not null ? -1 : 0;
+        : _graphicsRecoveryFailure is not null || _renderViewport?.RenderPipelineInstance.LastResourceGenerationFailure is not null ? -1 : 0;
 
     /// <summary>Binds a fetched font only for this session's synchronous UI layout.</summary>
     public void InstallDefaultUiFont(FontGlyphSet font)
@@ -91,7 +91,9 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             $"resource profile={(pipeline?.PendingGeneration ?? pipeline?.ActiveGeneration)?.Key.ToString() ?? "absent"}; " +
             $"draws={_renderer?.LastEngineMeshDrawCount ?? 0}; " +
             $"pipeline decline={pipeline?.LastRenderDeclineReason ?? "none"}; " +
-            $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}.";
+            $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}; " +
+            $"recovery={_graphicsRecoveryPending}; attempts={_graphicsRecoveryAttempts}; " +
+            $"recovery failure={_graphicsRecoveryFailure ?? "none"}.";
     }
 
     /// <summary>Composes a fetched XRWorld through the shared world host and begins gameplay.</summary>
@@ -122,6 +124,9 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
                 ConfigureCanvasResourceProfileDefaults(settings);
             _tonemapArtifact = tonemapArtifact;
             _pipelineArtifacts = pipelineArtifacts;
+            _rendererShaderArtifacts = shaderArtifacts;
+            _rendererMaterialVariants = materialVariants;
+            _rendererComputeArtifacts = computeArtifacts;
 
             _capabilities = RuntimeApplicationCapabilityServices.Install(new RuntimeApplicationCapabilities(
                 IsConfigured: true,
@@ -154,13 +159,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
                 _canvas = new BrowserCanvasRenderTarget(canvasId);
                 _renderer = OwnConstruction(() => BrowserRendererComposition.CreateRequired(_canvas)) as WebGpuRendererHost
                     ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
-                if (computeArtifacts?.TryResolve(WebComputeArtifactCatalog.PackedSkinningKernel,
-                        out ShaderProgramArtifact? deformationArtifact) == true)
-                    _renderer.BindMeshDeformationArtifact(deformationArtifact);
-                if (computeArtifacts?.TryResolve(WebComputeArtifactCatalog.LuminanceReductionKernel,
-                        out ShaderProgramArtifact? luminanceArtifact) == true)
-                    _renderer.BindLuminanceArtifact(luminanceArtifact);
-                _renderer.BindShaderArtifacts(shaderArtifacts, materialVariants);
+                InitializeRendererArtifacts(_renderer);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
                 if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
                     throw new AdvancedRenderPipelineNotSupportedException(
@@ -288,6 +287,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     {
         if (!_running)
             return false;
+        if (_graphicsRecoveryPending && (_renderer?.State != BrowserRendererState.Ready || _graphicsRecoveryFailure is not null))
+            return true;
         RefreshCamera();
         // Slow active frames still advance the bounded engine clock. Temporal
         // history is invalid across the gap, but fixed-step fractions remain.
@@ -299,7 +300,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         // Invalid input still reaches the timer's normal argument validation.
         if (audioWasBlocked && !audioBlocked && double.IsFinite(elapsedSeconds) && elapsedSeconds >= 0.0)
             elapsedSeconds = 0.0;
-        bool stepped = StepWithAudioUpdates(elapsedSeconds, dispatchSimulation: !audioBlocked);
+        bool stepped = StepWithAudioUpdates(_graphicsRecoveryPending ? 0 : elapsedSeconds,
+            dispatchSimulation: !audioBlocked && !_graphicsRecoveryPending);
         ObserveNetworkFailure();
         return stepped;
     }
@@ -323,13 +325,23 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     private void RenderCanvasFrame()
     {
-        if (_canvas?.Surface.CanRender == true)
-            _renderer?.RenderFrame(Engine.Time.Timer.Render.Delta);
+        try
+        {
+            if (_canvas?.Surface.CanRender == true)
+                _renderer?.RenderFrame(Engine.Time.Timer.Render.Delta);
+        }
+        catch (Exception error) when (_graphicsRecoveryPending)
+        {
+            // A rejected replacement must not terminate the caller-thread timer or
+            // lose the live world before the host can retire and retry its device.
+            _graphicsRecoveryFailure = error.Message;
+            _renderer?.MarkFailed(deviceLost: false);
+        }
     }
 
-    public void InitializeGraphics(string colorFormat)
+    public void InitializeGraphics(int session, string colorFormat)
     {
-        if (_renderer is null || _canvas is null || _rendererSession == 0)
+        if (_renderer is null || _canvas is null || session <= 0 || _rendererSession != session)
             throw new InvalidOperationException("WebGPU.EngineCanvas.Required: start a canvas world first.");
         _canvas.SetColorFormat(colorFormat);
         _renderer.MarkReady(_rendererSession);
@@ -348,7 +360,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         if (replaced || extentChanged || (previous.CanRender && !surface.CanRender))
             ResetInput();
         _canvas.UpdateSurface(surface);
-        WebAudioTransport.SetSurfaceActive(surface.CanRender);
+        WebAudioTransport.SetSurfaceActive(surface.CanRender && !_graphicsRecoveryPending);
         if (replaced || extentChanged || (drawableChanged && surface.CanRender))
             _renderer.SynchronizeEngineViewport(replaced || extentChanged);
         if (replaced || drawableChanged || extentChanged)
@@ -357,7 +369,11 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             SuspendNetwork();
     }
 
-    public void RendererFailed(bool deviceLost) => _renderer?.MarkFailed(deviceLost);
+    public void RendererFailed(int session, bool deviceLost)
+    {
+        if (session == _rendererSession)
+            _renderer?.MarkFailed(deviceLost);
+    }
 
     public bool CaptureDesired => _inputViewport?.CaptureDesired ?? false;
     public void InputKey(int key, bool down) => _inputViewport?.Key(key, down);
@@ -379,6 +395,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public string TextInputValue => _textInput.Value;
     public int TextInputContentVersion => _textInput.ContentVersion;
     public string TextInputLabel => _textInput.Label;
+    public int TextInputLabelVersion => _textInput.LabelVersion;
     public int TextInputCursor => _textInput.Cursor;
     public bool TextInputSingleLine => _textInput.SingleLine;
     public bool TextInputReadOnly => _textInput.ReadOnly;
@@ -386,12 +403,13 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public float TextInputY => _textInput.Y;
     public float TextInputWidth => _textInput.Width;
     public float TextInputHeight => _textInput.Height;
-    public bool EditTextInput(int generation, string value, int selectionStart, int selectionEnd)
-        => _textInput.Edit(generation, _localPlayer?.FocusedInteractable, value, selectionStart, selectionEnd);
-    public bool SelectTextInput(int generation, int cursor)
-        => _textInput.Select(generation, _localPlayer?.FocusedInteractable, cursor);
-    public bool ActOnTextInput(int generation, bool submit)
-        => _textInput.Action(generation, _localPlayer?.FocusedInteractable, submit);
+    public bool EditTextInput(int generation, int expectedVersion, string value, int selectionStart, int selectionEnd)
+        => _textInput.Edit(generation, expectedVersion, _localPlayer?.FocusedInteractable,
+            value, selectionStart, selectionEnd);
+    public bool SelectTextInput(int generation, int expectedVersion, int cursor)
+        => _textInput.Select(generation, expectedVersion, _localPlayer?.FocusedInteractable, cursor);
+    public bool ActOnTextInput(int generation, int expectedVersion, bool submit)
+        => _textInput.Action(generation, expectedVersion, _localPlayer?.FocusedInteractable, submit);
 
     /// <summary>Discards elapsed time and temporal history after suspension, output replacement, or an invalid frame clock.</summary>
     public void ResetFrameTiming()
@@ -438,9 +456,10 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         Capture(errors, ReleaseAudioRequirement);
         Capture(errors, SuspendNetwork);
         _textInput.Clear();
+        _accessibleControl.Clear();
         if (_renderer is not null)
             Engine.Time.Timer.RenderFrame -= RenderCanvasFrame;
-        if (_renderer is not null)
+        if (_renderer is { State: not BrowserRendererState.Disposed })
             Capture(errors, () => _renderer.BindEngineViewport(null));
         XRViewport? renderViewport = _renderViewport;
         if (renderViewport is not null)
@@ -486,6 +505,12 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         _rendererSession = 0;
         _tonemapArtifact = null;
         _pipelineArtifacts = null;
+        _rendererShaderArtifacts = null;
+        _rendererMaterialVariants = null;
+        _rendererComputeArtifacts = null;
+        _graphicsRecoveryPending = false;
+        _graphicsRecoveryAttempts = 0;
+        _graphicsRecoveryFailure = null;
         if (_gameState?.Worlds is { } worlds)
             Capture(errors, () => worlds.RemoveAll(candidate => ReferenceEquals(candidate, _runtimeWorld)));
         _runtimeWorld = null;

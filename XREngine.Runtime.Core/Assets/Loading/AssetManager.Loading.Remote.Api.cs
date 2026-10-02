@@ -13,7 +13,10 @@ public partial class AssetManager
         IReadOnlyDictionary<string, string>? metadata = null,
         params string[] relativePathFolders)
         where T : XRAsset, new()
-        => LoadEngineAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
+    {
+        EnsureSynchronousRemoteAssetLoadSupported();
+        return LoadEngineAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
+    }
 
     public T? LoadGameAssetRemote<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
@@ -22,7 +25,10 @@ public partial class AssetManager
         IReadOnlyDictionary<string, string>? metadata = null,
         params string[] relativePathFolders)
         where T : XRAsset, new()
-        => LoadGameAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
+    {
+        EnsureSynchronousRemoteAssetLoadSupported();
+        return LoadGameAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
+    }
 
     public async Task<T> LoadEngineAssetRemoteAsync<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
@@ -58,7 +64,20 @@ public partial class AssetManager
         JobPriority priority = JobPriority.Normal,
         IReadOnlyDictionary<string, string>? metadata = null)
         where T : XRAsset, new()
-        => LoadByIdRemoteAsync<T>(assetId, mode, priority, metadata, CancellationToken.None).GetAwaiter().GetResult();
+    {
+        if (assetId == Guid.Empty)
+            return null;
+        if (TryGetAssetByID(assetId, out XRAsset? existing) && existing is T typed)
+            return typed;
+        EnsureSynchronousRemoteAssetLoadSupported();
+        return LoadByIdRemoteAsync<T>(assetId, mode, priority, metadata, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    private void EnsureSynchronousRemoteAssetLoadSupported()
+    {
+        if (OperatingSystem.IsBrowser() || UsesRuntimeAssetCatalog || _runtimeAssetSource is { SupportsSynchronousReads: false })
+            throw new NotSupportedException("AssetSource.AsyncReadRequired: synchronous remote asset loading is unavailable on this host; load packaged assets asynchronously by catalog path.");
+    }
 
     public async Task<T?> LoadByIdRemoteAsync<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
@@ -74,6 +93,9 @@ public partial class AssetManager
 
         if (TryGetAssetByID(assetId, out XRAsset? existing) && existing is T typed)
             return typed;
+
+        if (UsesRuntimeAssetCatalog)
+            throw new NotSupportedException("AssetSource.CatalogPathRequired: an unloaded packaged asset must be requested by its catalog path; remote jobs and host metadata lookup are unavailable.");
 
         if (TryResolveAssetPathById(assetId, out string? localPath) && File.Exists(localPath))
             return await LoadAsync<T>(localPath, priority).ConfigureAwait(false);

@@ -85,6 +85,7 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class TextBatchData
     {
+        public BoundingRectangle? CropRegion;
         public XRTexture2D? Atlas;
         public int AtlasType;
         public float DistanceRange;
@@ -98,6 +99,7 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Clear()
         {
+            CropRegion = null;
             Atlas = null;
             AtlasType = TextAtlasBitmap;
             DistanceRange = 0.0f;
@@ -116,9 +118,14 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class MaterialQuadBatchData
     {
+        public BoundingRectangle? CropRegion;
         public readonly List<MaterialQuadEntry> Entries = [];
 
-        public void Clear() => Entries.Clear();
+        public void Clear()
+        {
+            CropRegion = null;
+            Entries.Clear();
+        }
     }
 
     private sealed class BatchPool<T> where T : class, new()
@@ -162,6 +169,7 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class CollectPassState
     {
         public EBatchMarkerKind? ActiveKind;
+        public BoundingRectangle? ActiveCropRegion;
         public XRTexture2D? ActiveTextAtlas;
         public int ActiveTextAtlasType;
         public float ActiveTextDistanceRange;
@@ -173,6 +181,7 @@ public sealed class UIBatchCollector : IDisposable
         public void Reset()
         {
             ActiveKind = null;
+            ActiveCropRegion = null;
             ActiveTextAtlas = null;
             ActiveTextAtlasType = TextAtlasBitmap;
             ActiveTextDistanceRange = 0.0f;
@@ -364,13 +373,15 @@ public sealed class UIBatchCollector : IDisposable
         RenderCommandCollection passes,
         in Matrix4x4 worldMatrix,
         in Vector4 color,
-        in Vector4 uixywh)
+        in Vector4 uixywh,
+        BoundingRectangle? cropRegion = null)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
         MaterialQuadBatchData batch;
-        if (state.ActiveKind == EBatchMarkerKind.Material && groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
+        if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveCropRegion == cropRegion &&
+            groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
         }
@@ -378,7 +389,9 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.CropRegion = cropRegion;
             state.ActiveKind = EBatchMarkerKind.Material;
+            state.ActiveCropRegion = cropRegion;
             state.ActiveTextAtlas = null;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
@@ -419,13 +432,14 @@ public sealed class UIBatchCollector : IDisposable
         float distanceRangeMiddle,
         float msdfFillBias,
         int debugMode,
-        List<(Vector4 transform, Vector4 uvs)> glyphs)
+        List<(Vector4 transform, Vector4 uvs)> glyphs,
+        BoundingRectangle? cropRegion = null)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
         TextBatchData batch;
-        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode) &&
+        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -434,6 +448,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.CropRegion = cropRegion;
             batch.Atlas = fontAtlas;
             batch.AtlasType = atlasType;
             batch.DistanceRange = distanceRange;
@@ -441,6 +456,7 @@ public sealed class UIBatchCollector : IDisposable
             batch.MsdfFillBias = msdfFillBias;
             batch.DebugMode = debugMode;
             state.ActiveKind = EBatchMarkerKind.Text;
+            state.ActiveCropRegion = cropRegion;
             state.ActiveTextAtlas = fontAtlas;
             state.ActiveTextAtlasType = atlasType;
             state.ActiveTextDistanceRange = distanceRange;
@@ -1007,7 +1023,7 @@ public sealed class UIBatchCollector : IDisposable
         if (_matQuadMesh!.Material is { } material && material.RenderPass != renderPass)
             material.RenderPass = renderPass;
 
-        DisableBatchCropping();
+        ApplyBatchCropping(batch.CropRegion);
         try
         {
             if (profileGpu)
@@ -1174,7 +1190,7 @@ public sealed class UIBatchCollector : IDisposable
 
         MaybeLogTextPrepareSummary();
 
-        DisableBatchCropping();
+        ApplyBatchCropping(batchData.CropRegion);
         try
         {
             if (profileGpu)
@@ -1343,6 +1359,15 @@ public sealed class UIBatchCollector : IDisposable
     private static void DisableBatchCropping()
         => AbstractRenderer.Current?.SetCroppingEnabled(false);
 
+    private static void ApplyBatchCropping(BoundingRectangle? cropRegion)
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null) return;
+        renderer.SetCroppingEnabled(cropRegion.HasValue);
+        if (cropRegion is { } region)
+            renderer.CropRenderArea(region);
+    }
+
     /// <summary>The shared screen batch has one authored straight-alpha raster profile.</summary>
     internal static bool HasWebGpuRasterProfile(RenderingParameters parameters)
     {
@@ -1402,8 +1427,10 @@ public sealed class UIBatchCollector : IDisposable
         float distanceRange,
         float distanceRangeMiddle,
         float msdfFillBias,
-        int debugMode)
+        int debugMode,
+        BoundingRectangle? cropRegion)
         => state.ActiveKind == EBatchMarkerKind.Text &&
+           state.ActiveCropRegion == cropRegion &&
            ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
            state.ActiveTextAtlasType == atlasType &&
            state.ActiveTextDistanceRange.Equals(distanceRange) &&

@@ -62,27 +62,39 @@ namespace XREngine
 
         private void RejectRuntimeCatalogWrite()
         {
-            if (_runtimeCatalogOwner)
+            if (UsesRuntimeAssetCatalog)
                 throw new NotSupportedException("AssetSource.ReadOnly: runtime content catalogs cannot persist authoring changes.");
         }
 
         public Task SaveAsync(XRAsset asset, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-            => RunOnJobThreadAsync(() => { SaveExistingAssetCore(asset); return true; }, priority, bypassJobThread);
+        {
+            RejectRuntimeCatalogWrite();
+            return RunOnJobThreadAsync(() => { SaveExistingAssetCore(asset); return true; }, priority, bypassJobThread);
+        }
 
         public void Save(XRAsset asset, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-            => RunOnJobThreadBlocking(() => { SaveExistingAssetCore(asset); return true; }, priority, bypassJobThread);
+        {
+            RejectRuntimeCatalogWrite();
+            RunOnJobThreadBlocking(() => { SaveExistingAssetCore(asset); return true; }, priority, bypassJobThread);
+        }
 
         public void SaveTo(XRAsset asset, Environment.SpecialFolder folder, params string[] folderNames)
             => SaveTo(asset, Path.Combine([XREngine.Data.RuntimePlatformPaths.GetFolderPath(folder), ..folderNames]));
 
         public void SaveTo(XRAsset asset, string directory, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-            => RunOnJobThreadBlocking(() => { SaveToDirectoryCore(asset, directory); return true; }, priority, bypassJobThread);
+        {
+            RejectRuntimeCatalogWrite();
+            RunOnJobThreadBlocking(() => { SaveToDirectoryCore(asset, directory); return true; }, priority, bypassJobThread);
+        }
 
         public Task SaveToAsync(XRAsset asset, Environment.SpecialFolder folder, params string[] folderNames)
             => SaveToAsync(asset, Path.Combine([XREngine.Data.RuntimePlatformPaths.GetFolderPath(folder), .. folderNames]));
 
         public Task SaveToAsync(XRAsset asset, string directory, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-            => RunOnJobThreadAsync(() => { SaveToDirectoryCore(asset, directory); return true; }, priority, bypassJobThread);
+        {
+            RejectRuntimeCatalogWrite();
+            return RunOnJobThreadAsync(() => { SaveToDirectoryCore(asset, directory); return true; }, priority, bypassJobThread);
+        }
 
         public Task SaveGameAssetToAsync(XRAsset asset, params string[] folderNames)
             => SaveToAsync(asset, Path.Combine(GameAssetsPath, Path.Combine(folderNames)));

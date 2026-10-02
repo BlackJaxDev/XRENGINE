@@ -1,4 +1,3 @@
-using System.Numerics;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 
@@ -14,13 +13,23 @@ internal sealed class BrowserTextInputBridge
     private static int _nextGeneration;
     private UITextInputComponent? _target;
     private string? _observedValue;
+    private string _observedLabel = "Engine text input";
     private int _generation;
     private int _contentVersion;
+    private int _labelVersion;
 
     public int Generation => _generation;
-    public int ContentVersion => _contentVersion;
+    public int ContentVersion
+    {
+        get
+        {
+            ObserveContent();
+            return _contentVersion;
+        }
+    }
     public string Value => _target?.Text ?? string.Empty;
-    public string Label => _target?.Name ?? _target?.SceneNode?.Name ?? "Engine text input";
+    public string Label => _observedLabel;
+    public int LabelVersion => _labelVersion;
     public int Cursor => _target?.CursorPosition ?? 0;
     public bool SingleLine => _target?.SingleLineMode ?? true;
     public bool ReadOnly => _target?.RegisterInputsOnFocus == false;
@@ -32,7 +41,8 @@ internal sealed class BrowserTextInputBridge
     public int Refresh(object? focusedInteractable, XRViewport? viewport)
     {
         UITextInputComponent? target = focusedInteractable as UITextInputComponent;
-        if (target is not { IsActiveInHierarchy: true, IsFocused: true })
+        if (target is not { IsActiveInHierarchy: true, IsFocused: true } ||
+            !target.UITransform.IsVisibleInHierarchy)
             target = null;
         if (!ReferenceEquals(target, _target))
         {
@@ -41,11 +51,8 @@ internal sealed class BrowserTextInputBridge
             _observedValue = null;
         }
 
-        if (target is not null && !ReferenceEquals(target.Text, _observedValue))
-        {
-            _observedValue = target.Text;
-            _contentVersion++;
-        }
+        ObserveContent();
+        ObserveLabel();
 
         UpdateGeometry(viewport);
         return _generation;
@@ -55,94 +62,90 @@ internal sealed class BrowserTextInputBridge
     {
         _target = null;
         _observedValue = null;
+        _observedLabel = "Engine text input";
         _generation = 0;
         X = Y = -1;
         Width = Height = 0;
     }
 
-    public bool Edit(int generation, object? focusedInteractable, string value, int selectionStart, int selectionEnd)
+    public bool Edit(int generation, int expectedVersion, object? focusedInteractable,
+        string value, int selectionStart, int selectionEnd)
     {
         if (!Owns(generation, focusedInteractable) || ReadOnly || value is null || value.Length > MaximumTextLength)
             return false;
-        return _target!.UserReplaceText(value, selectionStart, selectionEnd);
+        ObserveContent();
+        if (expectedVersion != _contentVersion)
+            return false;
+        bool accepted = _target!.UserReplaceText(value, selectionStart, selectionEnd);
+        ObserveContent();
+        return accepted;
     }
 
-    public bool Select(int generation, object? focusedInteractable, int cursor)
+    public bool Select(int generation, int expectedVersion, object? focusedInteractable, int cursor)
     {
-        if (!Owns(generation, focusedInteractable) || cursor < 0 || cursor > _target!.Text.Length)
+        if (!Owns(generation, focusedInteractable))
+            return false;
+        ObserveContent();
+        if (expectedVersion != _contentVersion || cursor < 0 || cursor > _target!.Text.Length)
             return false;
         _target.CursorPosition = cursor;
         return true;
     }
 
-    public bool Action(int generation, object? focusedInteractable, bool submit)
+    public bool Action(int generation, int expectedVersion, object? focusedInteractable, bool submit)
     {
         if (!Owns(generation, focusedInteractable) || ReadOnly || !_target!.SingleLineMode)
+            return false;
+        ObserveContent();
+        if (expectedVersion != _contentVersion)
             return false;
         if (submit)
             _target.UserSubmit();
         else
             _target.UserCancel();
+        ObserveContent();
         return true;
     }
 
+    private void ObserveContent()
+    {
+        string? value = _target?.Text;
+        if (value is not null && !string.Equals(value, _observedValue, StringComparison.Ordinal))
+        {
+            _observedValue = value;
+            _contentVersion++;
+        }
+    }
+
+    private void ObserveLabel()
+    {
+        string label = _target?.Name ?? _target?.SceneNode?.Name ?? "Engine text input";
+        if (!string.Equals(label, _observedLabel, StringComparison.Ordinal))
+        {
+            _observedLabel = label;
+            _labelVersion++;
+        }
+    }
+
     private bool Owns(int generation, object? focusedInteractable)
-        => generation != 0 && generation == _generation && _target is { IsActiveInHierarchy: true, IsFocused: true } &&
+        => generation != 0 && generation == _generation &&
+           _target is { IsActiveInHierarchy: true, IsFocused: true } &&
+           _target.UITransform.IsVisibleInHierarchy &&
            ReferenceEquals(_target, focusedInteractable);
 
     private void UpdateGeometry(XRViewport? viewport)
     {
-        X = Y = -1;
-        Width = Height = 0;
         UITextInputComponent? target = _target;
-        if (target is null || viewport is null || target.UserInterfaceCanvas is not { } canvas)
-            return;
-
-        UIBoundableTransform transform = target.BoundableTransform;
-        Vector2 size = transform.ActualSize;
-        if (size.X <= 0 || size.Y <= 0)
-            return;
-
-        Vector2 p0, p1, p2, p3;
-        if (canvas.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+        if (target is null || !BrowserUiBoundsProjection.TryProject(target, viewport,
+            out float x, out float y, out float width, out float height))
         {
-            Vector2 canvasSize = canvas.CanvasTransform.ActualSize;
-            if (canvasSize.X <= 0 || canvasSize.Y <= 0)
-                return;
-            p0 = transform.LocalToCanvas(Vector2.Zero) / canvasSize;
-            p1 = transform.LocalToCanvas(new Vector2(size.X, 0)) / canvasSize;
-            p2 = transform.LocalToCanvas(new Vector2(0, size.Y)) / canvasSize;
-            p3 = transform.LocalToCanvas(size) / canvasSize;
-        }
-        else
-        {
-            XRCamera? camera = canvas.CanvasTransform.DrawSpace == ECanvasDrawSpace.Camera
-                ? canvas.CanvasTransform.CameraSpaceCamera ?? viewport.ActiveCamera
-                : viewport.ActiveCamera;
-            if (camera is null)
-                return;
-            Vector3 v0 = camera.WorldToNormalizedViewportCoordinate(transform.LocalToWorld(new Vector3(0, 0, 0)), true);
-            Vector3 v1 = camera.WorldToNormalizedViewportCoordinate(transform.LocalToWorld(new Vector3(size.X, 0, 0)), true);
-            Vector3 v2 = camera.WorldToNormalizedViewportCoordinate(transform.LocalToWorld(new Vector3(0, size.Y, 0)), true);
-            Vector3 v3 = camera.WorldToNormalizedViewportCoordinate(transform.LocalToWorld(new Vector3(size.X, size.Y, 0)), true);
-            if (v0.Z is < 0 or > 1 || v1.Z is < 0 or > 1 || v2.Z is < 0 or > 1 || v3.Z is < 0 or > 1)
-                return;
-            p0 = new Vector2(v0.X, v0.Y);
-            p1 = new Vector2(v1.X, v1.Y);
-            p2 = new Vector2(v2.X, v2.Y);
-            p3 = new Vector2(v3.X, v3.Y);
-        }
-
-        float left = MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p2.X, p3.X));
-        float right = MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p2.X, p3.X));
-        float bottom = MathF.Min(MathF.Min(p0.Y, p1.Y), MathF.Min(p2.Y, p3.Y));
-        float top = MathF.Max(MathF.Max(p0.Y, p1.Y), MathF.Max(p2.Y, p3.Y));
-        if (!float.IsFinite(left) || !float.IsFinite(right) || !float.IsFinite(bottom) || !float.IsFinite(top) ||
-            right <= left || top <= bottom)
+            X = Y = -1;
+            Width = Height = 0;
             return;
-        X = left;
-        Y = 1 - top;
-        Width = right - left;
-        Height = top - bottom;
+        }
+        X = x;
+        Y = y;
+        Width = width;
+        Height = height;
     }
 }

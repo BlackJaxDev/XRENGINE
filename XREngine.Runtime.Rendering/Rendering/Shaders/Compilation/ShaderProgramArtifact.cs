@@ -27,6 +27,9 @@ public sealed record ShaderProgramArtifact(
     /// <summary>Declared local invocation dimensions; absent for raster programs.</summary>
     public ShaderComputeWorkgroupSize? ComputeWorkgroupSize { get; internal init; }
 
+    /// <summary>The declared authored frontend used by the target cook.</summary>
+    public string SourceLanguage { get; internal init; } = string.Empty;
+
     /// <summary>The format of the compiled module; authored shader language remains unchanged.</summary>
     public ShaderCompileTarget Target => Artifact.Target;
 }

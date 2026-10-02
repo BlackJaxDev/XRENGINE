@@ -18,6 +18,8 @@ public readonly record struct EngineMaterialVariantKey(
         Semantic.Validate();
         if (Semantic.Semantic == EngineMaterialSemantic.None)
             throw new ArgumentException("A cooked material variant requires a non-empty engine semantic.");
+        if (Semantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+            throw new ArgumentException("Authored lit materials require exact per-stage cooked companions, not a built-in variant selector.");
         if (!Enum.IsDefined(Target))
             throw new ArgumentOutOfRangeException(nameof(Target), Target, "Unsupported shader target.");
         ValidateProfile(Pass, nameof(Pass));

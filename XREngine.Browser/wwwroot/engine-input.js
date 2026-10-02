@@ -40,6 +40,7 @@ export class BrowserEngineInput {
         this.textEvents = null;
         this.textGeneration = 0;
         this.textVersion = 0;
+        this.textLabelVersion = 0;
         this.textComposing = false;
         this.textCommitPending = false;
         this.textConflict = false;
@@ -47,6 +48,13 @@ export class BrowserEngineInput {
         this.textCommitSequence = 0;
         this.textEpoch = 0;
         this.textPosition = { hidden: false, left: NaN, top: NaN, width: NaN, height: NaN,
+            clipTop: NaN, clipRight: NaN, clipBottom: NaN, clipLeft: NaN };
+        this.textCursor = -1;
+        this.controlElement = null;
+        this.controlEvents = null;
+        this.controlGeneration = 0;
+        this.controlLabelVersion = 0;
+        this.controlPosition = { hidden: false, left: NaN, top: NaN, width: NaN, height: NaN,
             clipTop: NaN, clipRight: NaN, clipBottom: NaN, clipLeft: NaN };
     }
 
@@ -252,6 +260,7 @@ export class BrowserEngineInput {
     reset() {
         this.cancelPointers();
         this.removeTextElement();
+        this.removeAccessibleControl();
         this.engine.ResetInput();
     }
 
@@ -262,11 +271,13 @@ export class BrowserEngineInput {
 
     ownsFocus() {
         return !document.hidden && document.hasFocus() &&
-            (document.activeElement === this.canvas || document.activeElement === this.textElement);
+            (document.activeElement === this.canvas || document.activeElement === this.textElement ||
+                document.activeElement === this.controlElement);
     }
 
-    /** Called after the engine frame so the focused widget and UI layout are current. */
+    /** Called after the engine frame so focused UI and projected bounds are current. */
     syncTextFocus() {
+        this.syncAccessibleControl();
         const generation = this.engine.RefreshTextInput();
         if (!generation) {
             this.removeTextElement();
@@ -281,27 +292,38 @@ export class BrowserEngineInput {
         if ((this.textComposing || this.textCommitPending) && version !== this.textVersion) {
             if (this.engine.GetTextInputValue() !== this.compositionBaseValue)
                 this.textConflict = true;
-            this.textVersion = version;
         } else if (!this.textComposing && !this.textCommitPending && version !== this.textVersion) {
             this.textVersion = version;
             const value = this.engine.GetTextInputValue();
-            if (element.value !== value) element.value = value;
+            if (element.value !== value) {
+                element.value = value;
+                this.textCursor = -1;
+            }
         }
         const cursor = this.engine.GetTextInputCursor();
-        if (!this.textComposing && document.activeElement !== element &&
+        if (!this.textComposing && !this.textCommitPending &&
+            (document.activeElement !== element || cursor !== this.textCursor) &&
             (element.selectionStart !== cursor || element.selectionEnd !== cursor))
             element.setSelectionRange(cursor, cursor);
+        if (!this.textComposing && !this.textCommitPending) this.textCursor = cursor;
         element.readOnly = this.engine.GetTextInputReadOnly();
+        const labelVersion = this.engine.GetTextInputLabelVersion();
+        if (labelVersion !== this.textLabelVersion) {
+            this.textLabelVersion = labelVersion;
+            element.setAttribute('aria-label', this.engine.GetTextInputLabel() || 'Engine text input');
+        }
         this.positionTextElement();
     }
 
     createTextElement(generation) {
-        const focusWasOnCanvas = document.activeElement === this.canvas;
+        const focusWasOnCanvas = document.activeElement === this.canvas ||
+            document.activeElement === this.textElement;
         this.removeTextElement();
         const singleLine = this.engine.GetTextInputSingleLine();
         const element = document.createElement(singleLine ? 'input' : 'textarea');
         if (singleLine) element.type = 'text';
         element.setAttribute('aria-label', this.engine.GetTextInputLabel() || 'Engine text input');
+        this.textLabelVersion = this.engine.GetTextInputLabelVersion();
         element.setAttribute('autocomplete', 'off');
         element.maxLength = 16384;
         element.readOnly = this.engine.GetTextInputReadOnly();
@@ -322,6 +344,7 @@ export class BrowserEngineInput {
         this.textVersion = this.engine.GetTextInputContentVersion();
         const cursor = this.engine.GetTextInputCursor();
         element.setSelectionRange(cursor, cursor);
+        this.textCursor = cursor;
         const controller = new AbortController();
         const signal = controller.signal;
         this.textEvents = controller;
@@ -346,7 +369,8 @@ export class BrowserEngineInput {
             setTimeout(() => {
                 if (epoch !== this.textEpoch || commit !== this.textCommitSequence) return;
                 this.textCommitPending = false;
-                if (this.textConflict || this.engine.GetTextInputValue() !== this.compositionBaseValue)
+                if (this.textConflict || this.engine.GetTextInputValue() !== this.compositionBaseValue ||
+                    this.engine.GetTextInputContentVersion() !== this.textVersion)
                     this.restoreTextElement();
                 else
                     this.applyTextElement();
@@ -361,27 +385,47 @@ export class BrowserEngineInput {
             if (!this.textComposing && !this.textCommitPending && this.textGeneration === generation) {
                 const cursor = element.selectionDirection === 'backward'
                     ? element.selectionStart : element.selectionEnd;
-                this.engine.SelectTextInput(generation, cursor);
+                if (this.engine.SelectTextInput(generation, this.textVersion, cursor))
+                    this.textCursor = cursor;
+                else if (this.engine.GetTextInputContentVersion() !== this.textVersion)
+                    this.restoreTextElement();
             }
         }, { signal });
         element.addEventListener('keydown', event => {
             if (event.isComposing || this.textComposing) return;
+            if (this.textCommitPending) {
+                if (event.key === 'Enter' || event.key === 'Escape') event.preventDefault();
+                return;
+            }
             if (event.key === 'Enter' && singleLine) {
-                this.engine.ActOnTextInput(generation, true);
+                if (!this.engine.ActOnTextInput(generation, this.textVersion, true) &&
+                    this.engine.GetTextInputContentVersion() !== this.textVersion)
+                    this.restoreTextElement();
                 event.preventDefault();
             } else if (event.key === 'Escape') {
-                if (this.engine.ActOnTextInput(generation, false)) event.preventDefault();
+                if (this.engine.ActOnTextInput(generation, this.textVersion, false))
+                    event.preventDefault();
+                else if (this.engine.GetTextInputContentVersion() !== this.textVersion)
+                    this.restoreTextElement();
             }
         }, { signal });
         document.body.appendChild(element);
         this.positionTextElement();
-        if (focusWasOnCanvas) element.focus({ preventScroll: true });
+        if (focusWasOnCanvas && !this.textPosition.hidden) element.focus({ preventScroll: true });
     }
 
     applyTextElement() {
         const element = this.textElement;
         if (!element || !this.textGeneration || this.textComposing) return;
-        const accepted = this.engine.EditTextInput(this.textGeneration, element.value,
+        if (this.textPosition.hidden) {
+            this.restoreTextElement();
+            return;
+        }
+        if (this.engine.GetTextInputContentVersion() !== this.textVersion) {
+            this.restoreTextElement();
+            return;
+        }
+        const accepted = this.engine.EditTextInput(this.textGeneration, this.textVersion, element.value,
             element.selectionStart, element.selectionEnd);
         const value = this.engine.GetTextInputValue();
         if (!accepted || value !== element.value) {
@@ -390,6 +434,7 @@ export class BrowserEngineInput {
             element.setSelectionRange(cursor, cursor);
         }
         this.textVersion = this.engine.GetTextInputContentVersion();
+        this.textCursor = this.engine.GetTextInputCursor();
     }
 
     restoreTextElement() {
@@ -399,16 +444,23 @@ export class BrowserEngineInput {
         const cursor = this.engine.GetTextInputCursor();
         element.setSelectionRange(cursor, cursor);
         this.textVersion = this.engine.GetTextInputContentVersion();
+        this.textCursor = cursor;
     }
 
     positionTextElement() {
         const element = this.textElement;
         if (!element) return;
-        const position = this.textPosition;
-        const x = this.engine.GetTextInputX();
-        const y = this.engine.GetTextInputY();
-        const width = this.engine.GetTextInputWidth();
-        const height = this.engine.GetTextInputHeight();
+        this.positionProjectedElement(element, this.textPosition, this.engine.GetTextInputX(),
+            this.engine.GetTextInputY(), this.engine.GetTextInputWidth(), this.engine.GetTextInputHeight());
+        if (this.textPosition.hidden && document.activeElement === element) {
+            this.textConflict = true;
+            this.canvas.focus({ preventScroll: true });
+        }
+        element.tabIndex = this.textPosition.hidden ? -1 : 0;
+        element.setAttribute('aria-hidden', this.textPosition.hidden ? 'true' : 'false');
+    }
+
+    positionProjectedElement(element, position, x, y, width, height) {
         const rect = this.canvas.getBoundingClientRect();
         const left = rect.left + x * rect.width;
         const top = rect.top + y * rect.height;
@@ -453,7 +505,104 @@ export class BrowserEngineInput {
         position.clipLeft = clipLeft;
     }
 
+    syncAccessibleControl() {
+        const generation = this.engine.RefreshAccessibleControl();
+        if (!generation || !this.canvas.isConnected) {
+            this.removeAccessibleControl();
+            return;
+        }
+        if (generation !== this.controlGeneration)
+            this.createAccessibleControl(generation);
+        const element = this.controlElement;
+        if (!element) return;
+        const labelVersion = this.engine.GetAccessibleControlLabelVersion();
+        if (labelVersion !== this.controlLabelVersion) {
+            this.controlLabelVersion = labelVersion;
+            element.setAttribute('aria-label', this.engine.GetAccessibleControlLabel() || 'Engine button');
+        }
+        this.positionProjectedElement(element, this.controlPosition,
+            this.engine.GetAccessibleControlX(), this.engine.GetAccessibleControlY(),
+            this.engine.GetAccessibleControlWidth(), this.engine.GetAccessibleControlHeight());
+        if (this.controlPosition.hidden && document.activeElement === element)
+            this.canvas.focus({ preventScroll: true });
+        element.tabIndex = this.controlPosition.hidden ? -1 : 0;
+        element.setAttribute('aria-hidden', this.controlPosition.hidden ? 'true' : 'false');
+    }
+
+    createAccessibleControl(generation) {
+        const hadFocus = document.activeElement === this.controlElement;
+        this.removeAccessibleControl();
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.setAttribute('aria-label', this.engine.GetAccessibleControlLabel() || 'Engine button');
+        this.controlLabelVersion = this.engine.GetAccessibleControlLabelVersion();
+        element.style.position = 'fixed';
+        element.style.zIndex = '2147483647';
+        element.style.boxSizing = 'border-box';
+        element.style.background = 'transparent';
+        element.style.color = 'transparent';
+        element.style.border = '0';
+        element.style.outline = '0';
+        element.style.pointerEvents = 'none';
+        const controller = new AbortController();
+        const signal = controller.signal;
+        this.controlEvents = controller;
+        this.controlElement = element;
+        this.controlGeneration = generation;
+        element.addEventListener('focus', () => { element.style.outline = '2px solid #90c9ef'; }, { signal });
+        element.addEventListener('blur', () => {
+            element.style.outline = '0';
+            this.engine.ResetInput();
+        }, { signal });
+        element.addEventListener('keydown', event => {
+            if (!this.ownsFocus() || event.isComposing || event.altKey || event.metaKey ||
+                event.code === 'Enter' || event.code === 'Space' || event.code === 'Tab') return;
+            const key = keys.get(event.code);
+            if (key === undefined) return;
+            this.engine.InputKey(key, true);
+            event.preventDefault();
+        }, { signal });
+        element.addEventListener('keyup', event => {
+            if (event.code === 'Enter' || event.code === 'Space' || event.code === 'Tab') return;
+            const key = keys.get(event.code);
+            if (key === undefined) return;
+            this.engine.InputKey(key, false);
+            if (this.ownsFocus()) event.preventDefault();
+        }, { signal });
+        element.addEventListener('click', () => {
+            this.engine.ActivateAccessibleControl(generation);
+        }, { signal });
+        this.canvas.insertAdjacentElement('afterend', element);
+        this.positionProjectedElement(element, this.controlPosition,
+            this.engine.GetAccessibleControlX(), this.engine.GetAccessibleControlY(),
+            this.engine.GetAccessibleControlWidth(), this.engine.GetAccessibleControlHeight());
+        element.tabIndex = this.controlPosition.hidden ? -1 : 0;
+        element.setAttribute('aria-hidden', this.controlPosition.hidden ? 'true' : 'false');
+        if (hadFocus && !this.controlPosition.hidden) element.focus({ preventScroll: true });
+    }
+
+    removeAccessibleControl() {
+        const hadFocus = this.controlElement && document.activeElement === this.controlElement;
+        this.controlEvents?.abort();
+        this.controlEvents = null;
+        this.controlElement?.remove();
+        this.controlElement = null;
+        this.controlGeneration = 0;
+        this.controlLabelVersion = 0;
+        this.controlPosition.hidden = false;
+        this.controlPosition.left = this.controlPosition.top = NaN;
+        this.controlPosition.width = this.controlPosition.height = NaN;
+        this.controlPosition.clipTop = this.controlPosition.clipRight = NaN;
+        this.controlPosition.clipBottom = this.controlPosition.clipLeft = NaN;
+        if (hadFocus) {
+            this.engine.ResetInput();
+            if (this.canvas.isConnected && !document.hidden && document.hasFocus())
+                this.canvas.focus({ preventScroll: true });
+        }
+    }
+
     removeTextElement() {
+        const hadFocus = this.textElement && document.activeElement === this.textElement;
         ++this.textEpoch;
         this.textEvents?.abort();
         this.textEvents = null;
@@ -461,6 +610,8 @@ export class BrowserEngineInput {
         this.textElement = null;
         this.textGeneration = 0;
         this.textVersion = 0;
+        this.textLabelVersion = 0;
+        this.textCursor = -1;
         this.textComposing = false;
         this.textCommitPending = false;
         this.textConflict = false;
@@ -471,5 +622,7 @@ export class BrowserEngineInput {
         this.textPosition.width = this.textPosition.height = NaN;
         this.textPosition.clipTop = this.textPosition.clipRight = NaN;
         this.textPosition.clipBottom = this.textPosition.clipLeft = NaN;
+        if (hadFocus && this.canvas.isConnected && !document.hidden && document.hasFocus())
+            this.canvas.focus({ preventScroll: true });
     }
 }

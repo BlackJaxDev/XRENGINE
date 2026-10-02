@@ -1021,7 +1021,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override bool SupportsBatchedRendering
             => !DisableBatching &&
-               !ClipToBounds &&
+               (!ClipToBounds || UseWebGpuBatchOnly) &&
                !AnimatableTransforms &&
                (!UseWebGpuBatchOnly ||
                 NonVertexShadersOverride is null &&
@@ -1063,7 +1063,8 @@ namespace XREngine.Rendering.UI
                     font.DistanceRangeMiddle,
                     MsdfFillBias,
                     (int)BatchedDebugMode,
-                    _glyphs);
+                    _glyphs,
+                    UseWebGpuBatchOnly && ClipToBounds ? tfm.AxisAlignedRegion.AsBoundingRectangle() : null);
             }
             return true;
         }

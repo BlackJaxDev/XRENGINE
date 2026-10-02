@@ -13,7 +13,7 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
 {
     private int _directionalLights, _pointLights, _spotLights;
     private int _directionalShadows, _pointShadows, _spotShadows;
-    private bool _litV1, _litV2;
+    private bool _litV1, _litV2, _authoredLit;
     private bool _litTexture, _litNormalTexture;
     private readonly List<string> _lightPaths = [];
     private readonly Dictionary<EngineMaterialSemanticIdentity, (string Path, string? Material, string? Mesh)> _materialPaths = [];
@@ -24,6 +24,7 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
             _materialPaths.TryAdd(material.EngineSemantic, (path, material.Name, mesh));
         _litV1 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1;
         _litV2 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
+        _authoredLit |= material?.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1;
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
         {
             if (material.GetSurfaceTexture(XREngine.Rendering.Materials.EMaterialTextureSemantic.Normal) is null)
@@ -81,6 +82,11 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
             throw new NotSupportedException($"BrowserCook.LightCapacityExceeded: pass 'forward-lighting' supports 4 directional, 8 point, 8 spot lights and at most one standalone shadow map for each type. Authored lights: {string.Join(", ", _lightPaths)}.");
         bool local = _pointShadows != 0 || _spotShadows != 0;
         if (_directionalShadows == 0 && !local) return;
+        if (_authoredLit)
+        {
+            var authored = _materialPaths[EngineMaterialSemanticIdentity.AuthoredLitV1];
+            throw new NotSupportedException($"BrowserCook.AuthoredLitShadowUnsupported: '{authored.Path}' mesh '{authored.Mesh}', material '{authored.Material}' needs an authored cooked shadow-caster companion before using casting lights.");
+        }
         string output = local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1";
         if (_litV1) Require(EngineMaterialSemanticIdentity.StandardLitColorV1, "opaque-forward", "static-position-normal-v1", output);
         if (_litV2) Require(EngineMaterialSemanticIdentity.StandardLitColorV2, "forward-coverage", "static-position-normal-v1", output);

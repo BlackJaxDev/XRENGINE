@@ -32,7 +32,8 @@ internal sealed partial class WgslAbiParser
             if (Take("alias")) { AliasDeclaration(attributes); continue; }
             if (Take("var"))
             {
-                if (_expected?.Pass == WebComputeArtifactCatalog.LuminanceReductionKernel &&
+                if ((_expected?.Pass == WebComputeArtifactCatalog.LuminanceReductionKernel ||
+                     _expected?.Pass == WebComputeArtifactCatalog.LuminanceReduction2DKernel) &&
                     _index + 1 < _tokens.Count && _tokens[_index].Text == "<" &&
                     _tokens[_index + 1].Text == "workgroup")
                     LuminanceScratchDeclaration(attributes);

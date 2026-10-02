@@ -13,6 +13,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Opaque deferred PBR textures with UV0, RGB normals and red-channel scalar maps.</summary>
     public static EngineMaterialSemanticIdentity StandardLitTextureV1 => new(EngineMaterialSemantic.StandardLitTexture, 1);
 
+    /// <summary>Authored opaque PBR surface whose stages retain a whole-program WebGPU companion.</summary>
+    public static EngineMaterialSemanticIdentity AuthoredLitV1 => new(EngineMaterialSemantic.AuthoredLit, 1);
+
     /// <summary>Lit color with explicit uniform-alpha coverage and sorted blending.</summary>
     public static EngineMaterialSemanticIdentity StandardLitColorV2 => new(EngineMaterialSemantic.StandardLitColor, 2);
 
@@ -53,6 +56,8 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
         if (Semantic == EngineMaterialSemantic.StandardLitColor && Version is 1 or 2)
             return;
         if (Semantic == EngineMaterialSemantic.StandardLitTexture && Version == 1)
+            return;
+        if (Semantic == EngineMaterialSemantic.AuthoredLit && Version == 1)
             return;
         if (Semantic == EngineMaterialSemantic.OpaqueShadowDepth && Version == 1)
             return;

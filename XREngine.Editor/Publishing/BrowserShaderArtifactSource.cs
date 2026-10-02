@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Editor.Publishing;
 
@@ -9,6 +11,7 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
 {
     private readonly string _directory;
     private readonly Dictionary<string, string> _descriptors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _names = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ShaderProgramArtifact> _loaded = new(StringComparer.Ordinal);
     private readonly List<EngineMaterialVariantEntry> _materialVariants = [];
     private readonly Dictionary<string, string> _pipelineArtifacts = new(StringComparer.Ordinal);
@@ -39,11 +42,14 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
             throw new InvalidDataException("Browser shader catalog exceeds 256 artifacts.");
         foreach (JsonElement entry in artifacts.EnumerateArray())
         {
+            string name = entry.GetProperty("name").GetString()
+                ?? throw new InvalidDataException("Browser shader artifact has no name.");
             string identity = ShaderProgramArtifactCatalog.ValidateIdentity(entry.GetProperty("sha256").GetString())
                 ?? throw new InvalidDataException("Browser shader artifact has no identity.");
             string descriptor = entry.GetProperty("descriptor").GetString()!;
-            if (descriptor != identity + ".shader.json" || !_descriptors.TryAdd(identity, descriptor))
-                throw new InvalidDataException("Browser shader manifest has an invalid or duplicate descriptor identity.");
+            if (descriptor != identity + ".shader.json" || !_descriptors.TryAdd(identity, descriptor) ||
+                !_names.TryAdd(name, identity))
+                throw new InvalidDataException("Browser shader manifest has an invalid or duplicate descriptor identity or name.");
         }
         if (root.TryGetProperty("materialVariants", out JsonElement variants))
         {
@@ -143,6 +149,19 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
             throw new InvalidDataException($"Browser shader descriptor hash mismatch for '{identity}'.");
         _loaded.Add(identity, artifact);
         return true;
+    }
+
+    /// <summary>Finds the explicit per-material cook, then verifies its modeled surface profile.</summary>
+    internal bool TryResolveAuthoredLit(XRMaterial material, EngineLitMaterialShaderPlan plan,
+        [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+    {
+        artifact = null;
+        string name = EngineLitMaterialShaderGenerator.CookName(material.ID);
+        return _names.TryGetValue(name, out string? identity) &&
+            TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out artifact) &&
+            artifact.Name == name && artifact.SourceLanguage == "MaterialRecipe" &&
+            artifact.SemanticSchemaIdentity == plan.SemanticSchemaIdentity &&
+            artifact.Pass == "opaque-forward";
     }
 
     private static byte[] ReadBounded(string path, int maximum)

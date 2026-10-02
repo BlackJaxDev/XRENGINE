@@ -26,6 +26,7 @@ public sealed class StandardLitColorSurfaceBinding
     private const int ForwardBits = MatColorBit | MatSpecularIntensityBit | MatShininessBit;
 
     private readonly XRMaterial _material;
+    private readonly bool _authoredCooked;
     private ShaderVar[]? _parameters;
     private ShaderVar? _parameter0;
     private ShaderVar? _parameter1;
@@ -60,8 +61,11 @@ public sealed class StandardLitColorSurfaceBinding
 
     private bool HasCoverage => _material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
 
-    private StandardLitColorSurfaceBinding(XRMaterial material)
-        => _material = material;
+    private StandardLitColorSurfaceBinding(XRMaterial material, bool authoredCooked = false)
+    {
+        _material = material;
+        _authoredCooked = authoredCooked;
+    }
 
     /// <summary>
     /// Admits only an explicitly tagged material with one complete, unmixed factory
@@ -78,6 +82,16 @@ public sealed class StandardLitColorSurfaceBinding
             return false;
         }
 
+        binding = candidate;
+        return true;
+    }
+
+    /// <summary>Reads the same PBR inputs from an authored material with an exact cooked shader companion.</summary>
+    public static bool TryCreateAuthoredCooked(XRMaterial material, out StandardLitColorSurfaceBinding? binding, out string? reason)
+    {
+        ArgumentNullException.ThrowIfNull(material);
+        StandardLitColorSurfaceBinding candidate = new(material, authoredCooked: true);
+        if (!candidate.TryRead(out _, out reason)) { binding = null; return false; }
         binding = candidate;
         return true;
     }
@@ -130,7 +144,7 @@ public sealed class StandardLitColorSurfaceBinding
         // In-place edits to the public parameter array do not raise the base
         // material's value event for a replacement ShaderVar. Once observed,
         // read values on every call until the layout is republished normally.
-        if (_unversionedLayout || _valueVersion != _material.BindingValueVersion)
+        if (_authoredCooked || _unversionedLayout || _valueVersion != _material.BindingValueVersion)
         {
             _surface = _schema switch
             {
@@ -147,6 +161,14 @@ public sealed class StandardLitColorSurfaceBinding
             reason = "StandardLitColorV2 requires finite opacity/cutoff in [0,1] and a cutoff parameter matching AlphaCutoff.";
             return false;
         }
+        if (_authoredCooked && (_schema != StandardLitColorSurfaceSchema.DeferredEmission || _surface.Opacity != 1 ||
+            !float.IsFinite(_surface.BaseColor.X) || !float.IsFinite(_surface.BaseColor.Y) || !float.IsFinite(_surface.BaseColor.Z) ||
+            !float.IsFinite(_surface.Specular) || !float.IsFinite(_surface.Roughness) ||
+            !float.IsFinite(_surface.Metallic) || !float.IsFinite(_surface.Emission)))
+        {
+            reason = "AuthoredLitV1 requires exactly six finite deferred PBR factors and opaque opacity one.";
+            return false;
+        }
         surface = HasCoverage
             ? _surface with { TransparencyMode = transparency, AlphaCutoff = _alphaCutoff!.Value }
             : _surface;
@@ -156,7 +178,8 @@ public sealed class StandardLitColorSurfaceBinding
 
     private bool ValidateMaterial(out string? reason)
     {
-        if (_material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 && !HasCoverage)
+        if (_authoredCooked ? _material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitV1 || _material.Shaders.Count == 0 :
+            _material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 && !HasCoverage)
         {
             reason = "Material is not explicitly tagged with a supported StandardLitColor semantic.";
             return false;
@@ -165,7 +188,8 @@ public sealed class StandardLitColorSurfaceBinding
         if (_material.Textures.Count != 0 || _material.SurfaceTextureBindings.Length != 0 ||
             _material.EmissiveColor.HasValue || _material.EmissionStrength.HasValue ||
             _material.Transmission != 0.0f || _material.TransmissionColor != Vector3.One ||
-            _material.NormalScale != 1.0f || _material.HasSettingUniformsHandlers ||
+            _material.NormalScale != 1.0f ||
+            _material.HasSettingUniformsHandlers && !(_authoredCooked && _material.HasOnlyStandardSurfaceUniformHandlers) ||
             _material.HasSettingShadowUniformHandlers || _material.BindingPublishers.Count != 0)
         {
             reason = "StandardLitColorV1 has unsupported surface resources or binding extensions.";

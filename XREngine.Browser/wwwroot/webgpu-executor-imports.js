@@ -44,8 +44,11 @@ export function installWebGpuImports(runtime, renderers) {
         beginTextureReadback: (id, handle, mip, x, y, width, height) => renderer(id).readback.beginTexture(handle, mip, x, y, width, height),
         beginCanvasReadback: (id, generation, x, y, width, height) => renderer(id).readback.beginCanvas(generation, x, y, width, height),
         prepareLuminance: (id, source) => renderer(id).luminance.prepare(source),
-        beginTextureLuminance: (id, handle, mip, width, height, layers, red, green, blue) =>
-            renderer(id).luminance.beginTexture(handle, mip, width, height, layers, red, green, blue),
+        prepareLuminance2D: (id, source) => renderer(id).luminance.prepare2D(source),
+        prepareLuminanceMipmap: (id, source) => renderer(id).luminance.prepareMipmap(source),
+        beginTextureLuminance: (id, handle, mip, width, height, layers, red, green, blue, firstMip, lastMip, detail, strictEncodedSrgb) =>
+            renderer(id).luminance.beginTexture(handle, mip, width, height, layers, red, green, blue,
+                firstMip, lastMip, detail, strictEncodedSrgb),
         beginCanvasLuminance: (id, generation, x, y, width, height, red, green, blue) =>
             renderer(id).luminance.beginCanvas(generation, x, y, width, height, red, green, blue),
         beginCompletion: id => renderer(id).readback.beginCompletion(),

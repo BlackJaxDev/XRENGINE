@@ -1,5 +1,5 @@
 const headerBytes = 48;
-const recordBytes = 80;
+const recordBytes = 112;
 const maximumRecords = 4097;
 const maximumDynamicOffsets = 16;
 const uploadBytes = 24;
@@ -32,7 +32,7 @@ export class GpuEngineFrame {
         const data = this.view;
         const count = data.getUint32(12, true), sequence = data.getUint32(40, true);
         const uploadCount = data.getUint32(44, true);
-        if (data.getUint32(0, true) !== 0x45475258 || data.getUint32(4, true) !== 2 ||
+        if (data.getUint32(0, true) !== 0x45475258 || data.getUint32(4, true) !== 3 ||
             data.getUint32(8, true) !== length || count < 1 || count > maximumRecords || uploadCount > maximumUploads ||
             length !== headerBytes + count * recordBytes + uploadCount * uploadBytes ||
             data.getUint32(16, true) !== r._owner || data.getUint32(20, true) !== r._generation ||
@@ -71,10 +71,27 @@ export class GpuEngineFrame {
                 if (data.getUint32(base + 8 + offset * 4, true) !== 0)
                     throw new RangeError('WebGPU.EngineFrame.ReservedOffset: unused dynamic-offset fields must be zero.');
             const instanceCount = data.getUint32(base + 72, true), flags = data.getUint32(base + 76, true);
-            if (flags & ~1 || (flags === 0 && instanceCount !== 0) ||
-                (flags === 1 && (operation.type !== 'render' || !operation.engineInstanceCountLimit ||
+            if (flags & ~7 || (!(flags & 1) && instanceCount !== 0) ||
+                ((flags & 1) && (operation.type !== 'render' || !operation.engineInstanceCountLimit ||
                     instanceCount > operation.engineInstanceCountLimit)))
                 throw new RangeError('WebGPU.EngineFrame.InstanceOverride: an instance count requires a bounded direct-draw opt-in.');
+            if (operation.type !== 'render' && (flags & 6))
+                throw new RangeError('WebGPU.EngineFrame.DrawArea: only raster draws accept viewport or scissor overrides.');
+            const width = operation.plan?.signature.width ?? 0, height = operation.plan?.signature.height ?? 0;
+            let suppressDraw = operation.scissor !== undefined &&
+                (operation.scissor.width === 0 || operation.scissor.height === 0);
+            for (let kind = 0; kind < 2; kind++) {
+                const enabled = (flags & (kind === 0 ? 2 : 4)) !== 0;
+                const at = base + (kind === 0 ? 80 : 96);
+                const x = data.getUint32(at, true), y = data.getUint32(at + 4, true);
+                const rectWidth = data.getUint32(at + 8, true), rectHeight = data.getUint32(at + 12, true);
+                if ((!enabled && (x || y || rectWidth || rectHeight)) ||
+                    (enabled && (x > width || y > height || rectWidth > width - x || rectHeight > height - y ||
+                        kind === 0 && (!rectWidth || !rectHeight))))
+                    throw new RangeError('WebGPU.EngineFrame.DrawArea: viewport or scissor is outside the bound attachment.');
+                if (kind === 1 && enabled)
+                    suppressDraw = rectWidth === 0 || rectHeight === 0;
+            }
             let dynamicIndex = 0;
             if (operation.bindings) {
                 for (const group of operation.bindings) {
@@ -90,7 +107,7 @@ export class GpuEngineFrame {
             }
             if (dynamicIndex !== offsetCount)
                 throw new Error('WebGPU.EngineFrame.DynamicOffsets: extra dynamic binding offsets.');
-            drawCount += prepared.draws;
+            if (!suppressDraw) drawCount += prepared.draws;
             if (drawCount > 4096)
                 throw new RangeError('WebGPU.EngineFrame.DrawCapacity: too many draws.');
             presentsCanvas ||= prepared.presentsCanvas;

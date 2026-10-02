@@ -247,12 +247,13 @@ public static partial class BrowserContentPackageBuilder
         HashSet<string> computeKernels = new(StringComparer.Ordinal);
         if (recipe.TryGetProperty("computeArtifacts", out JsonElement computeValues))
         {
-            Require(computeValues.ValueKind == JsonValueKind.Array && computeValues.GetArrayLength() <= 2,
-                "Compute artifact catalog exceeds two kernels.");
+            Require(computeValues.ValueKind == JsonValueKind.Array && computeValues.GetArrayLength() <= 4,
+                "Compute artifact catalog exceeds four kernels.");
             foreach (JsonElement compute in computeValues.EnumerateArray())
             {
                 Members(compute, "kernel", "descriptorIdentity");
-                string kernel = Choice(compute, "kernel", "packed-skinning", "luminance-reduction");
+                string kernel = Choice(compute, "kernel", "packed-skinning", "luminance-reduction",
+                    "luminance-reduction-2d", "luminance-mipmap");
                 Require(computeKernels.Add(kernel), "Compute artifact kernels must be unique.");
                 JsonElement identityValue = compute.GetProperty("descriptorIdentity");
                 Require(identityValue.ValueKind == JsonValueKind.String, "Compute artifact identity must be a string.");
@@ -262,15 +263,16 @@ public static partial class BrowserContentPackageBuilder
                 if (!shaderDescriptors.TryGetValue(identity, out JsonElement descriptor))
                     throw new InvalidDataException("Compute artifact references an absent shader descriptor.");
                 bool skinning = kernel == "packed-skinning";
+                bool mipmap = kernel == "luminance-mipmap";
                 Require(descriptor.ValueKind == JsonValueKind.Object
-                    && descriptor.GetProperty("pass").GetString() == (skinning ? "skinning" : "luminance-reduction")
+                    && descriptor.GetProperty("pass").GetString() == (skinning ? "skinning" : kernel)
                     && descriptor.GetProperty("target").GetString() == "WebGPUWgsl"
                     && descriptor.GetProperty("semanticSchemaIdentity").GetString() == "xrengine.engine.compute.v1"
                     && descriptor.TryGetProperty("entryPoints", out JsonElement entries) && entries.ValueKind == JsonValueKind.Object
-                    && entries.EnumerateObject().Count() == 1 && entries.GetProperty("compute").GetString() == (skinning ? "skin" : "reduce")
+                    && entries.EnumerateObject().Count() == 1 && entries.GetProperty("compute").GetString() == (skinning ? "skin" : mipmap ? "generate" : "reduce")
                     && descriptor.TryGetProperty("workgroupSize", out JsonElement workgroup) && workgroup.ValueKind == JsonValueKind.Array
-                    && workgroup.GetArrayLength() == 3 && workgroup[0].GetInt32() == (skinning ? 64 : 256)
-                    && workgroup[1].GetInt32() == 1 && workgroup[2].GetInt32() == 1
+                    && workgroup.GetArrayLength() == 3 && workgroup[0].GetInt32() == (skinning ? 64 : mipmap ? 16 : 256)
+                    && workgroup[1].GetInt32() == (mipmap ? 16 : 1) && workgroup[2].GetInt32() == 1
                     && !descriptor.TryGetProperty("materialVariant", out _),
                     "Compute artifact descriptor must match the selected engine WebGPU kernel.");
                 computeArtifacts.Add(new { kernel, descriptorIdentity = identity });

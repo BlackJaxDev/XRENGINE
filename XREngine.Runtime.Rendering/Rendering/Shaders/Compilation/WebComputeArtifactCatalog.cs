@@ -9,6 +9,8 @@ public sealed class WebComputeArtifactCatalog
 {
     public const string PackedSkinningKernel = "packed-skinning";
     public const string LuminanceReductionKernel = "luminance-reduction";
+    public const string LuminanceReduction2DKernel = "luminance-reduction-2d";
+    public const string LuminanceMipmapKernel = "luminance-mipmap";
 
     private readonly ImmutableDictionary<string, ShaderProgramArtifact> _artifacts;
 
@@ -39,20 +41,29 @@ public sealed class WebComputeArtifactCatalog
         => _artifacts.TryGetValue(kernel, out artifact);
 
     public static bool IsSupportedKernel(string? kernel)
-        => kernel is PackedSkinningKernel or LuminanceReductionKernel;
+        => kernel is PackedSkinningKernel or LuminanceReductionKernel or LuminanceReduction2DKernel or LuminanceMipmapKernel;
 
     /// <summary>Validates the exact physical ABI selected by an engine compute identity.</summary>
     public static void ValidateKernel(string kernel, ShaderProgramArtifact artifact)
     {
         if (kernel == PackedSkinningKernel) ValidatePackedSkinning(artifact);
         else if (kernel == LuminanceReductionKernel) ValidateLuminanceReduction(artifact);
+        else if (kernel == LuminanceReduction2DKernel) ValidateLuminanceReduction2D(artifact);
+        else if (kernel == LuminanceMipmapKernel) ValidateLuminanceMipmap(artifact);
         else throw new InvalidDataException($"ComputeArtifact.KernelUnsupported: '{kernel}'.");
     }
 
     /// <summary>Rejects a reduction module unless it matches the engine's bounded two-dispatch ABI.</summary>
     public static void ValidateLuminanceReduction(ShaderProgramArtifact artifact)
+        => ValidateLuminanceReductionCore(artifact, LuminanceReductionKernel, "texture-2d-array-float");
+
+    /// <summary>Validates the one-layer reduction ABI without accepting a layered texture binding.</summary>
+    public static void ValidateLuminanceReduction2D(ShaderProgramArtifact artifact)
+        => ValidateLuminanceReductionCore(artifact, LuminanceReduction2DKernel, "texture-2d-float");
+
+    private static void ValidateLuminanceReductionCore(ShaderProgramArtifact artifact, string kernel, string sourceKind)
     {
-        if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Pass != LuminanceReductionKernel ||
+        if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Pass != kernel ||
             artifact.ComputeEntryPoint != "reduce" || artifact.VertexEntryPoint is not null ||
             artifact.FragmentEntryPoint is not null ||
             artifact.SemanticSchemaIdentity != "xrengine.engine.compute.v1" ||
@@ -72,7 +83,7 @@ public sealed class WebComputeArtifactCatalog
 
         string[] names = ["Source", "Partials", "Result", "Parameters"];
         string[] physicalNames = ["source", "partials", "result", "parameters"];
-        string[] kinds = ["texture-2d-array-float", "storage", "storage", "uniform"];
+        string[] kinds = [sourceKind, "storage", "storage", "uniform"];
         int[] bytes = [0, 8, 4, 64];
         for (int index = 0; index < names.Length; index++)
         {
@@ -105,6 +116,62 @@ public sealed class WebComputeArtifactCatalog
                 Required(member, "type", JsonValueKind.String).GetString() != types[index] ||
                 RequiredInt(member, "offset") != offsets[index] || RequiredInt(member, "bytes") != sizes[index])
                 throw new InvalidDataException($"ComputeArtifact.BindingMismatch: luminance parameter {index}.");
+        }
+    }
+
+    /// <summary>Validates the bounded, exact-format mip writer ABI.</summary>
+    public static void ValidateLuminanceMipmap(ShaderProgramArtifact artifact)
+    {
+        if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Pass != LuminanceMipmapKernel ||
+            artifact.ComputeEntryPoint != "generate" || artifact.VertexEntryPoint is not null ||
+            artifact.FragmentEntryPoint is not null ||
+            artifact.SemanticSchemaIdentity != "xrengine.engine.compute.v1" ||
+            artifact.ComputeWorkgroupSize != new ShaderComputeWorkgroupSize(16, 16, 1) ||
+            artifact.VertexBuffers.Length != 0 || artifact.Resources.Length != 3)
+            throw new InvalidDataException("ComputeArtifact.DescriptorMismatch: luminance mipmap requires the engine compute ABI.");
+
+        using JsonDocument document = JsonDocument.Parse(artifact.DescriptorBytes.ToArray());
+        JsonElement descriptor = document.RootElement;
+        if (descriptor.TryGetProperty("materialVariant", out _) ||
+            !descriptor.TryGetProperty("pipeline", out JsonElement pipeline) ||
+            pipeline.ValueKind != JsonValueKind.Object || pipeline.EnumerateObject().Any() ||
+            !descriptor.TryGetProperty("layout", out JsonElement layout) ||
+            !layout.TryGetProperty("bindings", out JsonElement bindings) ||
+            bindings.ValueKind != JsonValueKind.Array || bindings.GetArrayLength() != 3)
+            throw new InvalidDataException("ComputeArtifact.DescriptorMismatch: luminance mipmap cannot declare raster bindings.");
+
+        string[] names = ["Source", "Output", "Parameters"];
+        string[] physicalNames = ["source", "output", "parameters"];
+        string[] kinds = ["texture-2d-float", "storage", "uniform"];
+        int[] bytes = [0, 4, 32];
+        for (int index = 0; index < names.Length; index++)
+        {
+            JsonElement binding = bindings[index];
+            JsonElement visibility = Required(binding, "visibility", JsonValueKind.Array);
+            if (Required(binding, "name", JsonValueKind.String).GetString() != names[index] ||
+                Required(binding, "physicalName", JsonValueKind.String).GetString() != physicalNames[index] ||
+                RequiredInt(binding, "group") != 0 || RequiredInt(binding, "binding") != index ||
+                Required(binding, "kind", JsonValueKind.String).GetString() != kinds[index] ||
+                Required(binding, "owner", JsonValueKind.String).GetString() != "Engine" ||
+                Required(binding, "frequency", JsonValueKind.String).GetString() != "Object" ||
+                RequiredInt(binding, "bytes") != bytes[index] || RequiredBoolean(binding, "dynamic") ||
+                (binding.TryGetProperty("runtimeArray", out JsonElement runtimeArray) && runtimeArray.ValueKind == JsonValueKind.True) != (index == 1) ||
+                visibility.GetArrayLength() != 1 || visibility[0].ValueKind != JsonValueKind.String ||
+                visibility[0].GetString() != "compute" ||
+                Required(binding, "members", JsonValueKind.Array).GetArrayLength() != (index == 2 ? 8 : 0))
+                throw new InvalidDataException($"ComputeArtifact.BindingMismatch: luminance mipmap binding {index}.");
+        }
+        JsonElement members = Required(bindings[2], "members", JsonValueKind.Array);
+        string[] memberNames = ["srcMip", "dstWidth", "dstHeight", "srcWidth", "srcHeight", "rowWords", "encoding", "mode"];
+        string[] providers = ["SrcMip", "DstWidth", "DstHeight", "SrcWidth", "SrcHeight", "RowWords", "Encoding", "Mode"];
+        for (int index = 0; index < members.GetArrayLength(); index++)
+        {
+            JsonElement member = members[index];
+            if (Required(member, "name", JsonValueKind.String).GetString() != memberNames[index] ||
+                Required(member, "provider", JsonValueKind.String).GetString() != providers[index] ||
+                Required(member, "type", JsonValueKind.String).GetString() != "u32" ||
+                RequiredInt(member, "offset") != index * 4 || RequiredInt(member, "bytes") != 4)
+                throw new InvalidDataException($"ComputeArtifact.BindingMismatch: luminance mipmap parameter {index}.");
         }
     }
 

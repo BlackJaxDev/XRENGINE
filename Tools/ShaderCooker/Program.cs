@@ -183,7 +183,7 @@ internal static class Program
         JsonObject? computeArtifact = null;
         if (schema == 3)
         {
-            Require(language is "Slang" or "WGSL", $"{stageContext}: engine recipes require authored Slang or explicit WGSL; the frozen browser material generator is not an engine frontend.");
+            Require(language is "Slang" or "WGSL" or "MaterialRecipe", $"{stageContext}: engine recipes require Slang, WGSL, or an authored engine material recipe.");
             using JsonDocument layoutDocument = JsonDocument.Parse(recipeBytes);
             try { engineLayout = ShaderProgramArtifactReader.ReadLayout(layoutDocument.RootElement, ShaderArtifact.FromWgsl(""), "recipe"); }
             catch (InvalidDataException error) { throw new InvalidDataException($"{stageContext}: {error.Message}", error); }
@@ -243,6 +243,7 @@ internal static class Program
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");
+                Require(language != "MaterialRecipe", $"{stageContext}: authored material recipes use exact stage companions, not built-in semantic variants.");
                 materialVariant = new JsonObject { ["semantic"] = semantic, ["semanticVersion"] = semanticVersion,
                     ["target"] = "WebGPUWgsl", ["pass"] = String(recipe, "pass"),
                     ["vertexProfile"] = vertexProfile, ["outputProfile"] = outputProfile };
@@ -264,13 +265,15 @@ internal static class Program
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
                 string kernel = String(compute, "kernel");
                 bool skinning = kernel == WebComputeArtifactCatalog.PackedSkinningKernel;
-                bool luminance = kernel == WebComputeArtifactCatalog.LuminanceReductionKernel;
-                Require(compute.Count == 1 && (skinning || luminance) &&
-                    String(recipe, "pass") == (skinning ? "skinning" : "luminance-reduction") && entries.Count == 1 &&
-                    String(entries, "compute") == (skinning ? "skin" : "reduce") &&
+                bool reduction = kernel is WebComputeArtifactCatalog.LuminanceReductionKernel or
+                    WebComputeArtifactCatalog.LuminanceReduction2DKernel;
+                bool mipmap = kernel == WebComputeArtifactCatalog.LuminanceMipmapKernel;
+                Require(compute.Count == 1 && (skinning || reduction || mipmap) &&
+                    String(recipe, "pass") == (skinning ? "skinning" : kernel) && entries.Count == 1 &&
+                    String(entries, "compute") == (skinning ? "skin" : mipmap ? "generate" : "reduce") &&
                     materialVariant is null && pipelineArtifact is null &&
                     String(recipe, "semanticSchemaIdentity") == "xrengine.engine.compute.v1" &&
-                    CanonicalString(recipe["workgroupSize"]) == (skinning ? "[64,1,1]\n" : "[256,1,1]\n"),
+                    CanonicalString(recipe["workgroupSize"]) == (skinning ? "[64,1,1]\n" : mipmap ? "[16,16,1]\n" : "[256,1,1]\n"),
                     $"{stageContext}: engine compute kernel requires its exact identity, entry, workgroup and semantic schema.");
                 computeArtifact = new JsonObject { ["kernel"] = kernel };
             }
@@ -314,11 +317,36 @@ internal static class Program
         JsonObject sourceMap = new() { ["kind"] = "identity", ["path"] = sourceDependency };
         if (language == "MaterialRecipe")
         {
-            Require(schema == 2, $"{stageContext}: material generation needs schema 2.");
             Require(originalSource.Length <= MaxJsonBytes, $"{stageContext}: material JSON exceeds the JSON byte limit.");
-            source = GenerateMaterial(normalized, name, stageContext);
-            compilerIdentity = "xrengine-material-wgsl/1";
-            sourceMap = new() { ["kind"] = "generated", ["path"] = sourceDependency };
+            if (schema == 2)
+            {
+                source = GenerateMaterial(normalized, name, stageContext);
+                compilerIdentity = "xrengine-material-wgsl/1";
+                sourceMap = new() { ["kind"] = "generated", ["path"] = sourceDependency };
+            }
+            else
+            {
+                EngineLitMaterialShaderPlan plan = PlanEngineLitMaterial(normalized, name, stageContext);
+                Require(String(recipe, "pass") == "opaque-forward" && String(recipe, "semanticSchemaIdentity") == plan.SemanticSchemaIdentity,
+                    $"{stageContext}: pass or semantic schema does not match the generated lit surface.");
+                JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
+                Require(entries.Count == 2 && String(entries, "vertex") == "standardLitVertex" &&
+                    String(entries, "fragment") == "standardLitFragment", $"{stageContext}: generated lit stages require standardLitVertex and standardLitFragment.");
+                VerifyEngineLitSources(sourceRoot, plan, stageContext);
+                SlangWgslOutput generated = await SlangWgslCompiler.CompileAsync(sourceRoot, plan.SlangSource,
+                    [], [], cancellationToken, entries.ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal));
+                VerifyEngineLitSources(sourceRoot, plan, stageContext);
+                source = StrictUtf8.GetBytes(NormalizeLines(generated.Source));
+                compilerIdentity = "xrengine-material-slang/1+" + generated.CompilerIdentity;
+                foreach ((string path, string hash) in generated.Dependencies)
+                {
+                    string checkedPath = RelativePath(path, "engine lit dependency");
+                    string localHash = Hash(ReadBounded(ResolveInput(sourceRoot, checkedPath), MaxSourceBytes));
+                    Require(localHash == hash, $"{stageContext}: generated lit dependency changed: {path}.");
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, checkedPath))] = hash;
+                }
+                sourceMap = new() { ["kind"] = "generated", ["path"] = sourceDependency };
+            }
         }
         else if (language == "Slang")
         {
@@ -396,6 +424,30 @@ internal static class Program
         Require(String(material, "name") == name, $"{context}: material name must equal recipe name.");
         BrowserMaterialShaderDefinition definition = new(name, String(material, "shadingModel"), String(material, "surface"), String(material, "baseColor"));
         return BrowserMaterialShaderGenerator.Generate(definition, ShaderCompileTarget.WebGPUWgsl).Bytes;
+    }
+
+    private static EngineLitMaterialShaderPlan PlanEngineLitMaterial(byte[] source, string name, string context)
+    {
+        JsonObject material = Object(ParseJson(source), "material");
+        bool baseKeys = material.ContainsKey("schemaVersion") && material.ContainsKey("name") &&
+            material.ContainsKey("shadingModel") && material.ContainsKey("surface") && material.ContainsKey("baseColor");
+        Require(baseKeys && (material.Count == 5 || material.Count == 6 && material.ContainsKey("normal")),
+            $"{context}: unsupported authored material properties.");
+        Require(Integer(material, "schemaVersion") == 2 && String(material, "name") == name,
+            $"{context}: material schema or name does not match the recipe.");
+        return EngineLitMaterialShaderGenerator.Plan(name, String(material, "shadingModel"), String(material, "surface"),
+            String(material, "baseColor"), material.ContainsKey("normal") ? String(material, "normal") : "vertex",
+            ShaderCompileTarget.WebGPUWgsl);
+    }
+
+    private static void VerifyEngineLitSources(string root, EngineLitMaterialShaderPlan plan, string context)
+    {
+        foreach (EngineLitMaterialShaderSource canonical in EngineLitMaterialShaderGenerator.RequiredCanonicalSources(plan))
+        {
+            string actual = Hash(ReadBounded(ResolveInput(root, canonical.Path), MaxSourceBytes));
+            Require(actual == canonical.Sha256,
+                $"{context}: engine PBR frontend '{canonical.Path}' differs from its versioned canonical source.");
+        }
     }
 
     private static string FindRepository()

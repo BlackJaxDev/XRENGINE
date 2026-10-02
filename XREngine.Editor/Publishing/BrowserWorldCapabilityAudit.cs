@@ -9,6 +9,7 @@ using XREngine.Data.Components.Scene;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -194,6 +195,7 @@ internal static class BrowserWorldCapabilityAudit
             }
             if (material.Shaders.Count == 0)
                 throw new NotSupportedException($"BrowserCook.ShaderMissing: '{path}' material '{material.Name}' has no selected cooked WebGPU stages.");
+            ShaderProgramArtifact? authored = null;
             foreach (XRShader shader in material.Shaders)
             {
                 if (!shader.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver, out ShaderProgramArtifact? artifact))
@@ -203,8 +205,19 @@ internal static class BrowserWorldCapabilityAudit
                 ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
                 if (verified.Identity != artifact.Identity || shader.CookedArtifactIdentity != artifact.Identity)
                     throw new InvalidDataException($"BrowserCook.ShaderIdentityMismatch: '{path}' material '{material.Name}', source '{artifact.SourcePath}'.");
+                if (authored is not null && authored.Identity != verified.Identity)
+                    throw new NotSupportedException($"BrowserCook.ShaderProgramMismatch: '{path}' material '{material.Name}' retains stages with different whole-program companions.");
+                authored = verified;
                 artifacts.TryAdd(verified.Identity, verified);
             }
+            string? authoredReason = null;
+            if (authored is null || !EngineAuthoredLitMaterialAdmission.TryAdmit(material, authored,
+                out _, out StandardLitTextureSurfaceBinding? texture, out authoredReason))
+                throw new NotSupportedException($"BrowserCook.AuthoredLitUnsupported: '{path}' material '{material.Name}': {authoredReason ?? "no complete cooked opaque PBR program"}.");
+            if (geometry is not null && (!geometry.HasNormals ||
+                texture is not null && (!texture.TryRead(out StandardLitTextureSurface authoredSurface, out _) ||
+                    geometry.TexCoordCount == 0 || authoredSurface.Normal is not null && !geometry.HasTangents)))
+                throw new NotSupportedException($"BrowserCook.AuthoredLitVertexUnsupported: '{path}' mesh '{meshName}' requires normals, plus UV0 and tangents when selected by the authored PBR recipe.");
         }
     }
 

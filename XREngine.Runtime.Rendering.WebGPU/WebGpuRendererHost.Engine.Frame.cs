@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using XREngine.Data.Geometry;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.WebGPU;
@@ -6,7 +7,7 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuRendererHost
 {
     private const int EngineFrameHeaderBytes = 48;
-    private const int EngineFrameRecordBytes = 80;
+    private const int EngineFrameRecordBytes = 112;
     private const int EngineFrameMaximumRecords = 4097;
     private const int EngineUniformCapacity = 4 * 1024 * 1024;
     private const int EngineStorageCapacity = 8 * 1024 * 1024;
@@ -199,7 +200,8 @@ public sealed partial class WebGpuRendererHost
         return (uint)offset;
     }
 
-    internal void RecordEngineCommands(int handle, ReadOnlySpan<uint> dynamicOffsets, uint? instanceCount = null)
+    internal void RecordEngineCommands(int handle, ReadOnlySpan<uint> dynamicOffsets, uint? instanceCount = null,
+        BoundingRectangle? viewport = null, BoundingRectangle? scissor = null)
     {
         if (!_engineRecording || !_resources.Contains(handle))
             throw new InvalidOperationException("WebGPU.Frame.CommandOwner: recording requires a command owned by the active renderer.");
@@ -212,12 +214,35 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteInt32LittleEndian(record[4..], dynamicOffsets.Length);
         for (int i = 0; i < dynamicOffsets.Length; i++)
             BinaryPrimitives.WriteUInt32LittleEndian(record[(8 + i * 4)..], dynamicOffsets[i]);
+        uint flags = 0;
         if (instanceCount.HasValue)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(record[72..], instanceCount.Value);
-            BinaryPrimitives.WriteUInt32LittleEndian(record[76..], 1);
+            flags |= 1;
         }
+        if (viewport is { } viewportRegion)
+        {
+            WriteEngineDrawRectangle(record[80..], viewportRegion, allowEmpty: false);
+            flags |= 2;
+        }
+        if (scissor is { } scissorRegion)
+        {
+            WriteEngineDrawRectangle(record[96..], scissorRegion, allowEmpty: true);
+            flags |= 4;
+        }
+        BinaryPrimitives.WriteUInt32LittleEndian(record[76..], flags);
         SetField(ref _engineCommandCount, _engineCommandCount + 1, publishNotifications: false);
+    }
+
+    private static void WriteEngineDrawRectangle(Span<byte> destination, BoundingRectangle region, bool allowEmpty)
+    {
+        if (region.X < 0 || region.Y < 0 || region.Width < (allowEmpty ? 0 : 1) ||
+            region.Height < (allowEmpty ? 0 : 1))
+            throw new ArgumentOutOfRangeException(nameof(region), "An engine draw rectangle requires nonnegative top-left coordinates and extents.");
+        BinaryPrimitives.WriteUInt32LittleEndian(destination, (uint)region.X);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[4..], (uint)region.Y);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[8..], (uint)region.Width);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[12..], (uint)region.Height);
     }
 
     internal void RegisterPendingStorage(WebGpuDataBuffer buffer)
@@ -260,7 +285,7 @@ public sealed partial class WebGpuRendererHost
         Span<byte> header = _engineCommandArena.AsSpan(0, EngineFrameHeaderBytes);
         header.Clear();
         BinaryPrimitives.WriteUInt32LittleEndian(header, 0x45475258);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 3);
         BinaryPrimitives.WriteInt32LittleEndian(header[8..], length);
         BinaryPrimitives.WriteInt32LittleEndian(header[12..], _engineCommandCount);
         BinaryPrimitives.WriteInt32LittleEndian(header[16..], _session);
