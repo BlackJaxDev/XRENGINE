@@ -8,6 +8,44 @@ namespace XREngine.Timers;
 
 public partial class EngineTimer
 {
+    private bool TryCollectVisibleGeneration(out long generation)
+    {
+        if (!IsRunning || FirstTerminalFault is not null)
+        {
+            generation = 0L;
+            return false;
+        }
+
+        generation = _visibilityGenerationGate.RequestNextCollect();
+        if (!DispatchCollectVisible() || !IsRunning || FirstTerminalFault is not null)
+            return false;
+
+        _visibilityGenerationGate.MarkCollectCompleted(generation);
+        return true;
+    }
+
+    private bool TryPublishCollectVisibleGeneration(long generation)
+    {
+        if (!IsRunning || FirstTerminalFault is not null)
+            return false;
+
+        Volatile.Write(ref _collectVisiblePhase, "ProcessCollectVisibleSwapJobs");
+        using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
+            ProcessCollectVisibleSwapJobs();
+        if (!IsRunning || FirstTerminalFault is not null)
+            return false;
+
+        Volatile.Write(ref _collectVisiblePhase, "DispatchSwapBuffers");
+        using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
+            DispatchSwapBuffers();
+        if (!IsRunning || FirstTerminalFault is not null)
+            return false;
+
+        Volatile.Write(ref _collectVisiblePhase, "GatePublish");
+        _visibilityGenerationGate.Publish(generation);
+        return true;
+    }
+
     private void DispatchVariableUpdate(long timestampTicks, long elapsedTicks)
     {
         long dispatchStartTicks = Stopwatch.GetTimestamp();

@@ -640,8 +640,12 @@ namespace XREngine.Rendering
 
         /// <summary>Discards camera motion and pipeline temporal histories after a host frame-clock discontinuity.</summary>
         public void InvalidateTemporalHistory()
+            => InvalidateTemporalHistory(publishNotifications: true);
+
+        /// <summary>Discards history with optional property notifications for repeatedly discontinuous frame clocks.</summary>
+        public void InvalidateTemporalHistory(bool publishNotifications)
         {
-            ActiveCamera?.InvalidateTemporalHistory();
+            ActiveCamera?.InvalidateTemporalHistory(publishNotifications);
             RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(_renderPipeline, "FrameClockDiscontinuity");
         }
 

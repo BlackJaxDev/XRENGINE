@@ -1,9 +1,41 @@
 # Unified browser implementation checkpoint
 
-Updated: 2026-10-01. This is a partial implementation checkpoint, not a playable
-browser release or completed parity qualification.
+Updated: 2026-10-02. This is a partial implementation checkpoint, not completed
+desktop/browser parity qualification. The sections below preserve the sequence
+of implementation and runtime findings; later exact-commit evidence supersedes
+earlier limitations.
 
-## Implemented and compiled
+## Current checkpoint
+
+The reviewed service/audio/frame-clock implementation passes the integrated
+Editor, Server, VRClient, desktop WebGPU, nineteen portable compile rows and
+fresh interpreter/native-Jolt browser publication with zero compiler warnings
+or errors. **55 of 110 named checklist items are complete.** The preceding
+published implementation at `4a801dba8aa7543b79b6c4fc44506a0115dcb54d` also passed
+those builds, and its genuine Windows Editor CLI published successfully in
+[run 37005875660](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37005875660).
+Its game check stops at the pause capture: the timed canvas capture is still
+green, while the subsequent full-page failure capture shows the yellow paused
+HUD. Input/presentation timing is under investigation; resize is not reached.
+The baseline browser/rendering/physics job passes.
+
+The preceding exact-bundle run already displays the real RollingBall course,
+ball, obstacles and authored HUD, including the mapped pause/resume transition.
+Inspection also exposed a blank resize capture despite a green check. The
+current source corrects output-generation readiness and requires real interior
+game/HUD pixels; that stricter resize result remains unqualified. See
+[the evidence correction](#game-input-acceptance-and-resize-evidence-correction-2026-10-02).
+
+Current source also includes lit textured surfaces, bounded sky/local-shadow/
+post-process profiles, GPU deformation, engine UI and authored font cooking,
+shared touch controls, composed audio activation and the browser platform leaf.
+These implementations have different acceptance boundaries; compiled source
+does not imply that every profile has rendered correctly. Full textured and
+animated authored-world play, queued audio output acceptance, broader recovery/networking,
+allocation/size budgets, desktop capture parity and physical-device acceptance
+remain open. The frozen reference runtime remains until its parity gate is met.
+
+## Initial implemented and compiled snapshot (2026-10-01)
 
 - The browser composes the shared `Engine`, `RuntimeWorld`, registrations,
   caller-thread frame loop, asset catalog, Jolt leaf, Web Audio leaf, input
@@ -39,9 +71,9 @@ supported in-process MSBuild task override because its separate task-host
 Unix sockets are unavailable. CI uses the ordinary toolchain path and must
 independently qualify clean restore, build, and publish.
 
-## Deliberately unavailable
+## Initial depth-only limitations (historical)
 
-The production browser player advances the real world but reports that rendering
+At the initial depth-only checkpoint, the browser player advanced the real world but reported that rendering
 is unavailable. `DefaultRenderPipeline` rejects WebGPU output until the required
 forward lighting, attachment, material, and tonemap routes exist. Engine texture
 and framebuffer wrappers, lit material generation, the remaining raster shader
@@ -53,7 +85,7 @@ is gated on genuine published-project parity. Physical-device budgets, desktop
 render preservation, AOT measurements, tolerance-based cross-platform physics,
 full recovery, and production networking qualification remain open.
 
-## Browser CI scope
+## Browser CI history
 
 The browser workflow builds the pinned managed/native Jolt supply, compiles the
 portable projects, publishes the host and native diagnostic, cooks the engine
@@ -592,3 +624,116 @@ Browser publication with zero compiler warnings/errors. Logs are under the
 active run’s `audio-output-gate/` folder. This closes the audio activation and
 static-hosting documentation rows, bringing the checklist to 51/110. The broader
 audio and live resize/device acceptance rows remain open.
+
+### Shader cooking and output-contract reconciliation (2026-10-02)
+
+A review against exact row wording closes the pinned schema-3 Slang-to-WGSL
+engine cook and current-generation canvas output implementations on the already
+compiled `4a801dba` source. The current checklist count is **53/110**. These two
+implementation closures do not imply that every shader profile or the corrected
+resize path passed live acceptance. Browser service composition remains open
+until every required provider is implemented or explicitly rejects unsupported
+operations; nullable/no-op defaults do not establish that closure.
+
+### Zero-delta gameplay status and shared frame operations (2026-10-02)
+
+The next exact-bundle game run exposes a pause-capture failure before its resize
+checks. The last element capture is green; the later full-page failure capture
+is yellow. Archive times differ by approximately ten seconds, so those captures
+do not isolate GPU/compositor delay from application refresh timing. The run's
+failure remains recorded rather than retried away or accepted by a weaker
+predicate.
+
+Source review identifies a deterministic status-refresh defect: RollingBall's
+HUD refresh countdown uses simulation delta, while the browser previously discarded delta
+for active rAF gaps above 250 ms. Input and rendering still execute, so pause
+can take effect while its old HUD persists. Explicit pause/resume now refreshes
+the real HUD immediately; other round-state changes bypass the cosmetic refresh
+throttle. An actual component/DebugDrawComponent probe at zero delta and positive
+countdown passes pause/resume from Playing and Falling, preserving 36 shapes,
+score/time/lives and queued physics enablement. The actual RollingBall project
+and probe compile with zero warnings/errors. This proves the source defect's
+repair, not the pending browser capture outcome. Logs are
+`logs/hud-state-probe-build.log` and `logs/hud-state-probe.log` in the active run.
+
+Shared timer collection/publication operations now serve both desktop's existing
+collect worker and caller StepFrame, preserving independently scheduled desktop
+simulation. A production timer probe passes generation publication, failure and
+restart, configured-caller capability guards, native worker start/dispose and
+2,048 warmed empty frames with zero caller-thread managed allocation. Callback
+ordering was initially confirmed from shared source; the final probe now records
+and checks `fixed, fixed, update, collect, world swap, viewport swap, render`.
+It also checks pre-start/post-stop caller guards, preservation of a 0.75-second
+fixed interval across two 0.5-second frames, and the one-second/four-fixed-tick
+cap for a ten-second request. The full Host graph compiles cleanly, and the
+final helper/probe rebuilds contain zero warnings/errors. Final probe evidence
+is in `logs/caller-frame-final-probe.log`.
+Broader blocking-site closure, literal all-phases desktop frame-step semantics,
+physical pacing and the documented inherited concurrency cases remain open.
+
+### Active browser time and explicit host-service composition (2026-10-02)
+
+Valid slow active rAF intervals now reach the existing bounded engine clock
+instead of producing `Step(0)` indefinitely. Gaps over 250 ms invalidate camera
+and pipeline history without clearing fixed-step fractions. Suspension, output
+replacement and invalid timestamps still reset timing; the first restored frame
+has zero elapsed time. Required-audio activation similarly consumes a zero-delta
+simulation frame when its gate clears. Existing parameterless desktop history
+invalidation retains property notifications; the repeated browser timing path
+can update the same temporal epoch silently to avoid event allocations.
+Independent source review clears that contract. A probe executes the production
+canvas-host body with controlled timestamps and confirms active progression,
+suspension/output resets, unchanged-size cadence, invalid clocks and raw-time
+preparation deadlines. Its imports are resolved to the built renderer module;
+it does not create a browser or GPU. A production camera/viewport probe also
+passes 2,048 silent history invalidations with zero managed bytes and zero
+property events, advancing the same epoch. The existing parameterless API still
+publishes its ordinary property notification. The probe build has zero warnings
+or errors; the isolated integrated clock-policy build now passes.
+
+Browser host composition now explicitly installs unavailable native services
+instead of inheriting nullable/no-op desktop defaults. Optional VR input
+registration correctly returns unavailable so the ordinary keyboard/gamepad
+pawn still activates; required window/VR/video/import operations fail by name.
+The session owns its lease before mutations, admits only default VR providers,
+rejects foreign direct-provider overlays during teardown without losing retry
+ownership, and uses retired-node import scopes that cannot revive dead providers.
+Composition/replacement is serialized on the browser event thread.
+
+The focused Browser Release build and native production-source composition
+probe have zero warnings/errors; nineteen capability/ownership cases pass.
+That actual built WebAssembly also completes three real XRWorld/Jolt cycles
+with 120 shared frames each under Node. Fetches map to the hash-verified local
+fixture package; no GPU is created. The first attempt selected a RollingBall
+package for the bare host and correctly rejected its unlinked game type; the
+rerun uses the existing EngineSmokeWorld fixture. This evidence is service
+composition and interpreter lifecycle, not rendered game/device acceptance.
+Logs are under `service-composition/` and
+`logs/browser-composition-wasm-probe.log` in the active validation run.
+
+Queued audio looping is now implemented and independently reviewed, including
+native future-clock handoffs, finite traversal-tail stop, retained aggregate
+leases, changed-rate/pause/seek handling and bounded memory. Three production-JS
+boundary probes pass. The existing offline browser audio check now contains
+sample-accurate loop and near-end-disable cases at rates one and two, accounting
+for its explicit initial two-quantum lead. Their first exact-commit browser run,
+audibility, spatial/gesture behavior and codec/device acceptance remain pending.
+
+### Isolated service/audio/frame milestone (2026-10-02)
+
+The reviewed 33-file source group was compiled from its exact staged Git tree,
+with the unrelated animated-world repair excluded. Editor, Server, VRClient,
+desktop WebGPU, all nineteen portable compile rows and fresh interpreter/native-
+Jolt browser publication pass with zero compiler warnings/errors. The actual
+published module repeats the three XRWorld/Jolt cycles and 360 shared frames
+under Node, using file-backed content fetches and no GPU. Evidence is retained
+under the active run's `cleared-runtime-gate/` folder. Provider composition and
+queued audio implementation close two rows, bringing the count to 55/110.
+
+This build includes immediate zero-delta RollingBall HUD updates and active slow-
+frame clock progression; their fresh exact-bundle browser result remains pending.
+The extended existing offline audio cases likewise await this exact-commit run.
+A separate startup audit proves Development-mode assembly scans still execute
+for replication metadata and type redirects. Reusing the existing published
+metadata builder with a verified in-memory browser install is the next bounded
+startup cut; no native constructor side effect was observed by that audit.

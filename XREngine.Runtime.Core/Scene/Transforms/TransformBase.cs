@@ -12,6 +12,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms;
+using XREngine.Execution;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -1126,7 +1127,12 @@ namespace XREngine.Scene.Transforms
         /// If false, they will be marked as dirty and recalculated at the end of the update.
         /// </summary>
         public virtual Task RecalculateMatrixHierarchy(bool forceWorldRecalc, bool setRenderMatrixNow, ELoopType childRecalcType)
-            => RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow)
+        {
+            if (childRecalcType != ELoopType.Sequential &&
+                (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+                throw new InvalidOperationException("Caller-thread transform hierarchies require sequential recalculation.");
+
+            return RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow)
                 ? childRecalcType switch
                 {
                     ELoopType.Asynchronous => ChildrenRecalcAsync(setRenderMatrixNow),
@@ -1134,6 +1140,7 @@ namespace XREngine.Scene.Transforms
                     _ => ChildrenRecalcSequential(setRenderMatrixNow),
                 }
                 : Task.CompletedTask;
+        }
 
         /// <summary>
         /// Updates a hierarchy on its owning thread without task waits or worker

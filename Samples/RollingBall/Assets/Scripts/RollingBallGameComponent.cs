@@ -68,6 +68,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
     private bool _physicsRuntimeReadyRecorded;
     private RollingBallRoundState _state = RollingBallRoundState.Playing;
     private RollingBallRoundState _stateBeforePause = RollingBallRoundState.Playing;
+    private RollingBallRoundState _lastHudState = RollingBallRoundState.Playing;
 
     public string CourseNodeName
     {
@@ -205,14 +206,18 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
     {
         if (_state == RollingBallRoundState.Paused)
         {
-            _state = _stateBeforePause;
+            SetField(ref _state, _stateBeforePause, publishNotifications: false);
             SetBallSimulationEnabled(true);
+            UpdateHud(force: true);
             return;
         }
 
-        _stateBeforePause = _state;
-        _state = RollingBallRoundState.Paused;
+        SetField(ref _stateBeforePause, _state, publishNotifications: false);
+        SetField(ref _state, RollingBallRoundState.Paused, publishNotifications: false);
         SetBallSimulationEnabled(false);
+        // Input-driven status changes must not wait for simulation time, which
+        // a suspended or slow caller-thread host may deliberately discard.
+        UpdateHud(force: true);
     }
 
     protected override void OnBeginPlay()
@@ -1030,10 +1035,10 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
         if (_hud is null)
             return;
 
-        _hudRefreshTimer -= Engine.Delta;
-        if (!force && _hudRefreshTimer > 0.0f)
+        SetField(ref _hudRefreshTimer, _hudRefreshTimer - Engine.Delta, publishNotifications: false);
+        if (!force && _hudRefreshTimer > 0.0f && _lastHudState == _state)
             return;
-        _hudRefreshTimer = 0.1f;
+        SetField(ref _hudRefreshTimer, 0.1f, publishNotifications: false);
 
         _hud.ClearShapes();
 
@@ -1065,6 +1070,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
 
         if (RollingBallRuntimeDiagnostics.Enabled)
             AddDiagnosticHudLine(_hud);
+        SetField(ref _lastHudState, _state, publishNotifications: false);
     }
 
     private static readonly byte[] DigitSegments =

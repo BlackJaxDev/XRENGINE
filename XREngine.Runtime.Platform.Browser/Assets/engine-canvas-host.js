@@ -140,7 +140,7 @@ export class EngineCanvasHost {
             this.input.publish();
             const gap = this.previousFrame === undefined ? 0 : now - this.previousFrame;
             let elapsed = gap / 1000;
-            if (!Number.isFinite(gap) || gap < 0 || gap > 250) {
+            if (!Number.isFinite(gap) || gap < 0) {
                 this.engine.ResetFrameTiming();
                 elapsed = 0;
             }

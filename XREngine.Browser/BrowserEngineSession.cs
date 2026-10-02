@@ -29,6 +29,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     private IDisposable? _assets;
     private IDisposable? _adapters;
     private IDisposable? _renderingServices;
+    private BrowserUnavailableHostServices? _unavailableHostServices;
     private BrowserCanvasRenderTarget? _canvas;
     private WebGpuRendererHost? _renderer;
     private XRViewport? _renderViewport;
@@ -64,7 +65,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     public RuntimeWorld? World => _runtimeWorld;
     public bool IsRunning => _running;
-    public bool HasEngineOwnership => _engineInitialized || _sessionObjects.Count != 0 || HasPendingBrowserQualityRestoration || HasAudioOwnership;
+    public bool HasEngineOwnership => _engineInitialized || _unavailableHostServices is not null ||
+        _sessionObjects.Count != 0 || HasPendingBrowserQualityRestoration || HasAudioOwnership;
     public int CanvasWidth => _canvasWidth;
     public int CanvasHeight => _canvasHeight;
     public int RendererSession => _rendererSession;
@@ -135,6 +137,10 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             _networkTransportInstalled = true;
             _previousGameSettings = Engine.PersistentGameSettings;
             _previousUserSettings = Engine.UserSettings;
+            // Engine's static composition has run by this point. Override only the
+            // browser-unavailable leaves for this session, before world activation.
+            _unavailableHostServices = BrowserUnavailableHostServices.Reserve();
+            _unavailableHostServices.Install();
             OwnConstruction(() => Engine.InitializeForCallerThread(settings));
             _engineInitialized = true;
             ApplySelectedBrowserQuality(canvasId is not null, qualityPreset);
@@ -280,7 +286,17 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         if (!_running)
             return false;
         RefreshCamera();
-        bool stepped = StepWithAudioUpdates(elapsedSeconds, dispatchSimulation: !UpdateAudioSimulationGate());
+        // Slow active frames still advance the bounded engine clock. Temporal
+        // history is invalid across the gap, but fixed-step fractions remain.
+        if (double.IsFinite(elapsedSeconds) && elapsedSeconds > 0.25)
+            _renderViewport?.InvalidateTemporalHistory(publishNotifications: false);
+        bool audioWasBlocked = _audioSimulationBlocked;
+        bool audioBlocked = UpdateAudioSimulationGate();
+        // The interval preceding activation belongs to the gated simulation.
+        // Invalid input still reaches the timer's normal argument validation.
+        if (audioWasBlocked && !audioBlocked && double.IsFinite(elapsedSeconds) && elapsedSeconds >= 0.0)
+            elapsedSeconds = 0.0;
+        bool stepped = StepWithAudioUpdates(elapsedSeconds, dispatchSimulation: !audioBlocked);
         ObserveNetworkFailure();
         return stepped;
     }
@@ -374,7 +390,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public bool ActOnTextInput(int generation, bool submit)
         => _textInput.Action(generation, _localPlayer?.FocusedInteractable, submit);
 
-    /// <summary>Discards elapsed time and temporal history after suspension or a frame-clock gap.</summary>
+    /// <summary>Discards elapsed time and temporal history after suspension, output replacement, or an invalid frame clock.</summary>
     public void ResetFrameTiming()
     {
         if (_running)
@@ -524,6 +540,15 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         if (_renderingServices is not null)
             Capture(errors, _renderingServices.Dispose);
         _renderingServices = null;
+        if (_unavailableHostServices is { } unavailableHostServices)
+        {
+            try
+            {
+                unavailableHostServices.Dispose();
+                _unavailableHostServices = null;
+            }
+            catch (Exception error) { errors.Add(error); }
+        }
         if (_debugOpaquePipelineChanged)
         {
             Capture(errors, () => Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = _previousDebugOpaquePipeline);

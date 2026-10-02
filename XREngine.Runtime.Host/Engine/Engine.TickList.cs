@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using XREngine.Components;
+using XREngine.Execution;
 
 namespace XREngine
 {
@@ -24,6 +25,9 @@ namespace XREngine
                 get => _parallel;
                 set
                 {
+                    if (value && (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+                        throw new InvalidOperationException("Caller-thread tick groups require sequential execution.");
+
                     _parallel = value;
                     Tick = _parallel ? ExecuteParallel : ExecuteSequential;
                 }
@@ -53,6 +57,9 @@ namespace XREngine
                 => _queue.Enqueue((false, tickMethod));
             private void ExecuteParallel()
             {
+                if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+                    throw new InvalidOperationException("Caller-thread tick groups cannot execute parallel ticks.");
+
                 Dequeue();
                 //float time = ElapsedTime;
                 //Use tasks
