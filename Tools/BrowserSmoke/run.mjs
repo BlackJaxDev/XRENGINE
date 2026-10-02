@@ -698,7 +698,7 @@ async function debugOverlayCheck(browser, origin, report, config) {
                         `BrowserSmoke.EngineDebugAlternatePixels: case ${sampleCase} did not update point/triangle color and position.`);
                     const background = pixel(blankPixels, 'alternate-line');
                     const expected = [background[0] * 0.4 + 153, background[1] * 0.4, background[2] * 0.4 + 153];
-                    assert(near(line.slice(0, 3), expected, 60),
+                    assert(near(line.slice(0, 3), expected, 12),
                         `BrowserSmoke.EngineDebugAlternateAlpha: case ${sampleCase} did not blend the magenta line.`);
                 } else {
                     assert(point[0] > point[1] + 60 && point[0] > point[2] + 60 &&
@@ -706,7 +706,7 @@ async function debugOverlayCheck(browser, origin, report, config) {
                         `BrowserSmoke.EngineDebugPixels: case ${sampleCase} lacks the red point or blue triangle.`);
                     const background = pixel(blankPixels, 'line');
                     const expected = [background[0] * 0.4, background[1] * 0.4 + 153, background[2] * 0.4];
-                    assert(near(line.slice(0, 3), expected, 60),
+                    assert(near(line.slice(0, 3), expected, 12),
                         `BrowserSmoke.EngineDebugLineAlpha: case ${sampleCase} did not blend the green line.`);
                 }
             } else for (const site of baselineSites)
@@ -722,7 +722,7 @@ async function debugOverlayCheck(browser, origin, report, config) {
                 });
                 report.debugWarmFrame = warm;
                 assert(warm.ready && warm.after.frameSubmitCalls - warm.before.frameSubmitCalls === 1 &&
-                    warm.after.controlCalls - warm.before.controlCalls === 1 &&
+                    warm.after.controlCalls === warm.before.controlCalls &&
                     warm.after.uploadSubmitCalls === warm.before.uploadSubmitCalls &&
                     warm.after.arenaGrowth === warm.before.arenaGrowth &&
                     warm.after.resources.pipelineCacheEntries === warm.before.resources.pipelineCacheEntries &&
