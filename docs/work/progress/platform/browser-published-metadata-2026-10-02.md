@@ -94,5 +94,39 @@ installs metadata in a fresh process, selects Published, and hydrates the cooked
 - The complete frozen source passes Editor, Server, VRClient, WebGPU,
   RenderingParity, all nineteen portable browser compile rows and fresh native-
   Jolt browser publication with zero compiler warnings/errors
-- Chromium world-play and the Windows Editor authored bundle must still be
-  qualified in their existing CI lanes; no browser rendering outcome is claimed
+- Published commit `d986055d` now passes the genuine Windows Editor RollingBall
+  publisher and exact-bundle Chromium game check in
+  [run 37040914825](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37040914825).
+  Inspected pause/resume and both resized captures retain actual game/HUD pixels.
+  This qualifies metadata-bearing RollingBall startup in the browser, not every
+  generic authored-world or GPU profile. The separate RenderingParity publisher
+  exposed a stale one-kernel admission check, corrected by `266392a2`
+
+## Standalone framework identities in cooked collections
+
+The first real RenderingParity browser startup at `266392a2` exposed a distinct
+metadata lookup gap: its generic array payload names `System.Single` as an
+element type. The existing published interpreter allowed that intrinsic inside
+closed array/generic shapes, but the array reader resolves the scalar element
+identity independently, without brackets. The publisher's metadata table lists
+application definitions rather than every CLR intrinsic, so world hydration
+failed before rendering.
+
+Published interpreter lookup now has a finite, explicit set of framework data
+types (primitives, common scalar/reference data and numerics). Qualified names
+must use a runtime framework assembly or known forwarder, and resolution must
+return the exact corresponding runtime type. Application assembly qualifiers,
+unknown application types and arbitrary framework classes remain excluded.
+Malformed qualifications return no match. NativeAOT lookup is unchanged; this
+does not enable assembly scanning or arbitrary reflection-based type admission.
+
+The exact reported metadata bytes were hash-checked against the PC manifest.
+A disposable production resolver/cooked-reader probe passed standalone numeric,
+string, GUID and math identities, closed arrays/generics, case-insensitive lookup,
+and actual cooked `Single[]`/`UInt32[]` hydration using that metadata. Unknown
+application and `FileInfo` types, pointer/byref/open-generic shapes, excessive
+array rank, foreign assembly qualifiers and malformed qualifiers are rejected.
+The narrow build reports zero warnings/errors. Evidence is under the active
+run's `pc-rendering-hydration/` and `scratch/published-framework-probe/` folders.
+The complete RenderingParity world must still be retried through the browser;
+this targeted repair is not its rendered acceptance.
