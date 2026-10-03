@@ -327,9 +327,13 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             if (!pipeline.IsWebOutputPrepared)
                 pipeline.PrepareForWebOutput(outputProfile, authored, _rendererShaderArtifacts);
             ulong version = authored?.ChangeVersion ?? 0;
-            if (!ReferenceEquals(_admittedCamera, camera.Camera) || !ReferenceEquals(_admittedPipeline, pipeline) ||
+            // The page acquires its device after StartCanvasAsync returns the session.
+            // Keep cold graph validation above, but cache device admission only once
+            // its actual capabilities are installed by InitializeGraphics.
+            if (_renderer is not { State: BrowserRendererState.Pending } &&
+                (!ReferenceEquals(_admittedCamera, camera.Camera) || !ReferenceEquals(_admittedPipeline, pipeline) ||
                 !ReferenceEquals(_admittedPostProcessState, authored) || _admittedPostProcessVersion != version ||
-                _admittedCommandGeneration != pipeline.CommandGeneration || _admittedOutputProfile != outputProfile)
+                _admittedCommandGeneration != pipeline.CommandGeneration || _admittedOutputProfile != outputProfile))
             {
                 WebGpuPipelineAdmission.Validate(pipeline.CreateRequirements(RendererBackendId.WebGPU, outputProfile, authored), pipeline, _rendererShaderArtifacts, _renderer);
                 _admittedCamera = camera.Camera;
@@ -367,6 +371,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         _canvas.SetColorFormat(colorFormat);
         _renderer.MarkReady(_rendererSession);
         _renderer.Initialize();
+        RefreshCamera();
     }
 
     public void UpdateSurface(RuntimeSurfaceState surface)

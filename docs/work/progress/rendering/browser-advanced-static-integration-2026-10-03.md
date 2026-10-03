@@ -121,3 +121,21 @@ The focused managed requirement check passes None, FXAA and SMAA with dormant
 count four and still rejects active four-sample MSAA. The dependency-enabled
 Rendering/WebGPU build has zero warnings and errors. This does not replace the
 pending browser run.
+
+The follow-up `4d95b150` bundle passed the inactive-AA guard in
+[run 37090668361](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37090668361),
+then found a lifecycle ordering error: native device admission ran while the
+renderer was still Pending. The page deliberately acquires its WebGPU device
+after the managed startup returns a renderer session. Cold graph/artifact
+validation remains in that startup, while runtime admission is now deferred
+without caching success and is performed immediately after actual device
+capabilities are installed. Existing rollback and recovery handle a rejection
+before any frame is accepted. Independent source review passed; the changed
+browser source still requires the corrected CI compile/runtime run.
+
+The reviewed browser effect flags also move to disjoint profile bits 58–61.
+Their old positions overlapped native visibility/reconstruction flags, which
+could allocate disabled post effects. This changes only derived resource-profile
+keys, not authored settings or desktop shader behavior. The existing Linux CI
+lane now retains its pinned Jolt archives and license/provenance files so native
+builds can reuse the verified compiler output after an execution workspace reset.
