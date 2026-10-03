@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Animation;
@@ -23,6 +22,8 @@ namespace XREngine.Components.VR
         }
 
         private float _calibrationRadius = 0.25f;
+        private float _configuredTrackingHold = float.NaN;
+        private float _configuredTrackingFade = float.NaN;
         public float CalibrationRadius
         {
             get => _calibrationRadius;
@@ -49,8 +50,11 @@ namespace XREngine.Components.VR
             get => _humanoidComponent;
             set
             {
-                if (SetField(ref _humanoidComponent, value))
-                    Interlocked.Or(ref _pendingActions, 256);
+                if (ReferenceEquals(_humanoidComponent, value))
+                    return;
+                if (_humanoidComponent is not null)
+                    PrepareForAvatarReplacement();
+                SetField(ref _humanoidComponent, value);
             }
         }
 
@@ -171,6 +175,57 @@ namespace XREngine.Components.VR
             set => SetField(ref _trackerCollectionResolveName, value);
         }
 
+
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            ResolveDependencies();
+            _attemptedSessionRestore = false;
+            HasCommittedCalibration = false;
+            CalibrationState = EVrCalibrationState.Uncalibrated;
+            SetInitialState();
+            RegisterCalibrationInput(false);
+            RegisterMovementDiscontinuities(false);
+            RegisterTick(ETickGroup.Normal, (ETickOrder)((int)ETickOrder.Input + 1), UpdateTick);
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            RegisterCalibrationInput(true);
+            RegisterMovementDiscontinuities(true);
+            ReleaseSimulationSnapshot();
+            RestoreSpectatorDesktop();
+            if (IsCalibrating)
+                CancelCalibrationImmediate();
+            GetHumanoid()?.ClearIKTargets();
+            UnregisterTick(ETickGroup.Normal, (ETickOrder)((int)ETickOrder.Input + 1), UpdateTick);
+        }
+
+        public void InitializeRig()
+        {
+            ResolveDependencies();
+            RegisterMovementDiscontinuities(false);
+            if (!HasCommittedCalibration)
+                SetInitialState();
+        }
+
+        private void SetInitialState()
+        {
+            IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
+            IVRIKSolverHandle? solver = GetIKSolver();
+            if (humanoid is null || solver is null)
+                return;
+
+            GetHeightScaleComponent()?.CalculateEyeOffsetFromHead(EyesModel, EyeLBoneName, EyeRBoneName);
+
+            humanoid.SetIKTarget(EHumanoidIKTarget.Head, Headset, Matrix4x4.Identity);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftController, Matrix4x4.Identity);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, RightController, Matrix4x4.Identity);
+            ClearTrackerTargets(humanoid);
+        }
+
         private void ResolveDependencies()
         {
             IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
@@ -196,558 +251,414 @@ namespace XREngine.Components.VR
                 TrackerCollection = SceneNode.FindDescendantByName(TrackerCollectionResolveName)?.GetComponent<VRTrackerCollectionComponent>();
         }
 
-        private XRComponent? _ikSolver;
-        public XRComponent? IKSolver { get => _ikSolver; set => SetField(ref _ikSolver, value); }
-        private Transform? _playspaceRoot;
-        public Transform? PlayspaceRoot { get => _playspaceRoot; set => SetField(ref _playspaceRoot, value); }
-        private Transform? _avatarRoot;
-        public Transform? AvatarRoot { get => _avatarRoot; set => SetField(ref _avatarRoot, value); }
-        private TransformBase? _playerRoot;
-        public TransformBase? PlayerRoot { get => _playerRoot; set => SetField(ref _playerRoot, value); }
-        private UserSettings? _playerSettings;
-        public UserSettings? PlayerSettings { get => _playerSettings; set => SetField(ref _playerSettings, value); }
-        private VrCalibrationState _calibrationState;
-        public VrCalibrationState CalibrationState { get => _calibrationState; private set => SetField(ref _calibrationState, value); }
-        private string _calibrationMessage = "Open calibration to bind body trackers.";
-        public string CalibrationMessage { get => _calibrationMessage; private set => SetField(ref _calibrationMessage, value); }
-        public bool HasCalibration { get; private set; }
-        public long DiscontinuityGeneration { get; private set; }
-        public event Action? TrackingDiscontinuity;
-        public TransformBase? SpectatorHipsTransform => _rig is not null && _rig.TryGetSlot(EHumanoidIKTarget.Hips, out var slot) && slot.Weight > 0.01f ? slot.Target : null;
-        private IHumanoidVrCalibrationRig? _humanoid;
-        private IVRIKCalibrationHandle? _rig;
-        private int _pendingActions;
-        private bool _previousSolverActive;
-        private Matrix4x4 _previousAvatarLocal;
-        private readonly VRDeviceTransformBase?[] _boundDevices = new VRDeviceTransformBase?[11];
-        private readonly string?[] _boundIdentities = new string?[11];
-        private readonly float[] _sourceWeights = new float[11];
-        private readonly double[] _lastUsable = new double[11];
-        private readonly Matrix4x4[] _previousSamples = new Matrix4x4[11];
-        private readonly Matrix4x4[] _currentSamples = new Matrix4x4[11];
-        private readonly VRDeviceTransformBase?[] _stationaryDevices = new VRDeviceTransformBase?[11];
-        private readonly Matrix4x4[] _sourceSamples = new Matrix4x4[11];
-        private readonly bool[] _sourceSampleValid = new bool[11];
-        private readonly bool[] _estimateSampleValid = new bool[11];
-        private readonly float[] _estimatorWeights = new float[11];
-        private readonly Matrix4x4[] _trackedGoals = new Matrix4x4[11];
-        private readonly Matrix4x4[] _estimatedGoals = new Matrix4x4[11];
-        private IVrBodyPoseSource? _bodyPoseSource;
-        public IVrBodyPoseSource? BodyPoseSource { get => _bodyPoseSource; set => SetField(ref _bodyPoseSource, value); }
-        private double _stationarySince;
-        private bool _hasPreviousSample;
-        private bool _headHandsInitialized;
-        private double _nextHeadHandsAttempt;
-        private double _lastTickTime;
-        private Vector3 _lastPlayerPosition;
-        private Quaternion _lastPlayerRotation = Quaternion.Identity;
-        private IRuntimeCharacterMovementComponent? _movement;
-        private float _calibratedMeasurement;
-        private EBodyMeasurementMode _calibratedMeasurementMode;
-
-        protected override void OnComponentActivated()
+        private float _crouchedHeightRatio = 0.5f;
+        public float CrouchedHeightRatio
         {
-            base.OnComponentActivated();
-            InitializeRig();
-            RuntimeVrInputServices.CalibrationActionPressed += OnCalibrationAction;
-            RuntimeVrStateServices.TrackingBasisChanged += OnTrackingBasisChanged;
-            RuntimeVrStateServices.SessionGenerationChanged += OnSessionGenerationChanged;
-            _lastTickTime = Now;
-            RegisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateTick);
+            get => _crouchedHeightRatio;
+            set => SetField(ref _crouchedHeightRatio, value);
         }
 
-        /// <summary>Resolves configured rig references after pawn construction without starting calibration.</summary>
-        public void InitializeRig()
+        private float _proneHeightRatio = 0.2f;
+        public float ProneHeightRatio
         {
-            ResolveDependencies();
-            _humanoid = GetHumanoid();
-            _rig = GetIKSolver() as IVRIKCalibrationHandle;
-            _movement = GetCharacterMovement();
-            AvatarRoot ??= _humanoid?.RootTransform as Transform;
-            PlayspaceRoot ??= Headset?.Parent as Transform;
-            PlayerRoot ??= PlayspaceRoot?.Parent;
-            GetHeightScaleComponent()?.CalculateEyeOffsetFromHead(EyesModel, EyeLBoneName, EyeRBoneName);
-            GetHeightScaleComponent()?.MeasureAvatarHeight();
+            get => _proneHeightRatio;
+            set => SetField(ref _proneHeightRatio, value);
         }
 
-        protected override void OnComponentDeactivated()
+        private float _radiusRatio = 0.2f;
+        public float RadiusRatio
         {
-            ClearMeasurementEntry();
-            RuntimeVrInputServices.CalibrationActionPressed -= OnCalibrationAction;
-            RuntimeVrStateServices.TrackingBasisChanged -= OnTrackingBasisChanged;
-            RuntimeVrStateServices.SessionGenerationChanged -= OnSessionGenerationChanged;
-            UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateTick);
-            if (IsCalibrating) CancelOnSceneThread();
-            SaveSessionCalibration();
-            base.OnComponentDeactivated();
+            get => _radiusRatio;
+            set => SetField(ref _radiusRatio, value);
         }
 
-        private static double Now => (double)System.Diagnostics.Stopwatch.GetTimestamp() / System.Diagnostics.Stopwatch.Frequency;
-        private void OnTrackingBasisChanged() => Interlocked.Or(ref _pendingActions, 8);
-        private void OnSessionGenerationChanged() => Interlocked.Or(ref _pendingActions, 16);
-        private void OnCalibrationAction(RuntimeVrCalibrationAction action)
-            => Interlocked.Or(ref _pendingActions, action switch
-            {
-                RuntimeVrCalibrationAction.Open => 1,
-                RuntimeVrCalibrationAction.Cancel => 2,
-                RuntimeVrCalibrationAction.Capture => 4,
-                RuntimeVrCalibrationAction.MeasurementLeftSelect => 32,
-                RuntimeVrCalibrationAction.MeasurementRightSelect => 64,
-                RuntimeVrCalibrationAction.MeasurementBothSelect => 128,
-                _ => 0,
-            });
-
-        public bool BeginCalibration()
+        private void AddMovementInputFromDevice(Transform playspaceRootTfm, Vector3 movementDelta)
         {
-            Interlocked.Or(ref _pendingActions, 1);
-            return Headset is not null && GetIKSolver() is IVRIKCalibrationHandle;
-        }
-        public void CancelCalibration() => Interlocked.Or(ref _pendingActions, 2);
-        public void EndCalibration() => Interlocked.Or(ref _pendingActions, 4);
+            Vector3 oppositeMovementOffset = -movementDelta;
+            oppositeMovementOffset.Y = 0.0f;
 
-        private void OpenOnSceneThread()
-        {
-            if (IsCalibrating || _rig is null || _humanoid is null || AvatarRoot is null)
+            Vector3 lastPosition = playspaceRootTfm.WorldTranslation;
+            playspaceRootTfm.Translation = oppositeMovementOffset;
+            playspaceRootTfm.RecalculateMatrices(true);
+            Vector3 currentPosition = playspaceRootTfm.WorldTranslation;
+
+            Vector3 moveDelta = lastPosition - currentPosition;
+            float dx = moveDelta.X;
+            float dz = moveDelta.Z;
+
+            if (MathF.Abs(dx) < float.Epsilon && MathF.Abs(dz) < float.Epsilon)
                 return;
-            _previousSolverActive = _rig.IsActive;
-            _previousAvatarLocal = AvatarRoot.LocalMatrix;
-            _rig.IsActive = false;
-            IsCalibrating = true;
-            CalibrationState = VrCalibrationState.Calibrating;
-            _hasPreviousSample = false;
-            _stationarySince = Now;
-            RuntimeVrStateServices.RequestTrackerRefreshForCalibration();
-            VRHeightScaleComponent? scale = HeightScaleComponent as VRHeightScaleComponent;
-            CalibrationMessage = scale?.HasPlayerMeasurement == true
-                ? "Stand straight in the footprints, look ahead, then pull both triggers."
-                : scale?.MeasurementNotice ?? "Hold the calibration menu button to enter height or arm span, then stand in the footprints.";
+
+            GetCharacterMovement()?.AddLiteralInputDelta(new Vector3(dx, 0.0f, dz));
         }
 
-        private void CancelOnSceneThread()
+        private void UpdateCalibrationPose(
+            IHumanoidVrCalibrationRig humanoid,
+            Transform avatarRootTfm,
+            Transform playspaceRootTfm)
         {
-            if (!IsCalibrating) return;
-            IsCalibrating = false;
-            _rig?.EndCalibrationPose();
-            if (AvatarRoot is { } root)
+            Matrix4x4 hmdRelativeToFoot = HMDRelativeToPlayspace(humanoid);
+
+            TransformBase.GetDirectionsXZ(hmdRelativeToFoot, out Vector3 forward, out _);
+
+            Matrix4x4 eyePositionRotation = Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, forward, Globals.Up);
+            Vector3 eyeOffsetFromHead = GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero;
+            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-eyeOffsetFromHead);
+            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetScaledToRealWorldHeadOffsetFromAvatarRoot(humanoid));
+            Matrix4x4 movementOffset = eyeToHead * eyePositionRotation;
+            Matrix4x4 rootMatrix = headToRoot * eyeToHead * eyePositionRotation;
+            Matrix4x4.Decompose(rootMatrix, out _, out Quaternion rootRotation, out Vector3 rootTranslation);
+
+            avatarRootTfm.Translation = new Vector3(0.0f, rootTranslation.Y, 0.0f);
+            avatarRootTfm.Rotation = rootRotation;
+            avatarRootTfm.RecalculateMatrices(true, false);
+            AddMovementInputFromDevice(playspaceRootTfm, movementOffset.Translation);
+        }
+
+        /// <summary>The explicit metric tracking basis. Device parent is only the compatibility default.</summary>
+        public Transform? PlayspaceRoot { get; set; }
+
+        private void MovePlayer(Transform avatarRootTfm, Transform playspaceRootTfm)
+        {
+            IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
+            IVRIKSolverHandle? solver = GetIKSolver();
+            if (humanoid is null || solver is null)
+                return;
+
+            var hipsTarget = humanoid.GetIKTarget(EHumanoidIKTarget.Hips);
+            var headTarget = humanoid.GetIKTarget(EHumanoidIKTarget.Head);
+            TransformBase? resolvedHips = solver.GetCalibratedTarget(EHumanoidIKTarget.Hips);
+            TransformBase? resolvedHead = solver.GetCalibratedTarget(EHumanoidIKTarget.Head) ?? headTarget.tfm;
+            // Retained target transforms support IK loss blending, not room-scale movement.
+            bool useHip = resolvedHips is not null
+                && (hipsTarget.tfm is not IVrTrackingPoseSource hipsPose || hipsPose.PoseCurrentlyUsable);
+            bool useHead = resolvedHead is not null
+                && (headTarget.tfm is not IVrTrackingPoseSource headPose || headPose.PoseCurrentlyUsable);
+            // A missing bound hips source must not turn headset lean into locomotion.
+            if (hipsTarget.tfm is not null && !useHip)
+                return;
+            if (!useHip && !useHead)
+                return;
+
+            IRuntimeCharacterMovementComponent? movement = GetCharacterMovement();
+            TransformBase? rigidBodyTransform = Transform;
+            Transform? avatarTransform = humanoid.SceneNode.GetTransformAs<Transform>(false);
+            if (movement is null || rigidBodyTransform is null || avatarTransform is null)
+                return;
+
+            (useHip ? resolvedHips! : resolvedHead!).RecalculateMatrices(forceWorldRecalc: true);
+            Matrix4x4 deviceToBodyOffsetMatrix;
+            Matrix4x4 deviceMatrix;
+            if (useHip)
             {
-                Vector3 currentScale = root.Scale;
-                root.DeriveLocalMatrix(_previousAvatarLocal);
-                root.Scale = currentScale;
+                deviceToBodyOffsetMatrix = Matrix4x4.Identity;
+                deviceMatrix = resolvedHips!.WorldMatrix;
             }
-            if (_rig is not null) _rig.IsActive = _previousSolverActive;
-            CalibrationState = HasCalibration ? VrCalibrationState.Calibrated : VrCalibrationState.Uncalibrated;
-            CalibrationMessage = "Calibration cancelled; previous tracking restored.";
-        }
+            else
+            {
+                deviceToBodyOffsetMatrix = Matrix4x4.Identity;
+                deviceMatrix = resolvedHead!.WorldMatrix;
+            }
 
-        private void FailCapture(string message)
-        {
-            CancelOnSceneThread();
-            CalibrationState = VrCalibrationState.Failed;
-            CalibrationMessage = message;
+            Matrix4x4 deviceRelativeToFoot = GetTrackedDeviceMatrixRelativeToPlayspace(humanoid, deviceToBodyOffsetMatrix * deviceMatrix);
+
+            avatarRootTfm.Translation = new Vector3(0.0f, 0.0f, 0.0f);
+
+            TransformBase.GetDirectionsXZ(deviceRelativeToFoot, out Vector3 forward, out _);
+
+            Matrix4x4 headMatrix = Matrix4x4.CreateWorld(deviceRelativeToFoot.Translation, forward, Globals.Up);
+
+            AddMovementInputFromDevice(playspaceRootTfm, headMatrix.Translation);
         }
 
         private void UpdateTick()
         {
-            if ((Volatile.Read(ref _pendingActions) & 256) != 0)
-            {
-                Interlocked.And(ref _pendingActions, ~256);
-                if (_humanoid is not null && !ReferenceEquals(_humanoid, HumanoidComponent))
-                {
-                    InvalidateTrackingBasis();
-                    CalibrationMessage = "Avatar changed. Reopen calibration.";
-                }
-                InitializeRig();
-            }
-            if (_humanoid is null || _rig is null) return;
-            (HeightScaleComponent as VRHeightScaleComponent)?.RefreshMeasurement();
-            if (HasCalibration && !IsCalibrating && (_calibratedMeasurement != MeasurementInUse() ||
-                _calibratedMeasurementMode != PlayerSettings?.BodyMeasurementMode))
-            {
-                InvalidateTrackingBasis();
-                CalibrationMessage = "Body measurements changed. Reopen calibration.";
-            }
-            double now = Now;
-            float dt = (float)Math.Clamp(now - _lastTickTime, 0.0, 0.1);
-            _lastTickTime = now;
-            int actions = Interlocked.Exchange(ref _pendingActions, 0);
-            UpdateMeasurementInput(actions, now);
-            if ((actions & 8) != 0) InvalidateTrackingBasis();
-            if ((actions & 16) != 0)
-            {
-                if (IsCalibrating) CancelOnSceneThread();
-                Array.Clear(_sourceWeights);
-                for (int i = 0; i < 11; i++) _rig.SetSlotWeight((EHumanoidIKTarget)i, 0.0f);
-                NotifyTrackingDiscontinuity();
-            }
-            if ((actions & 2) != 0) CancelOnSceneThread();
-            else if ((actions & 1) != 0) OpenOnSceneThread();
+            PublishSimulationSnapshot();
+            ProcessCalibrationRequest();
+            ApplyTrackingSettings();
+            EnsureInitialTrackingRig();
+            Spectator?.UpdateFirstPersonVisibility(IsCalibrating);
+            ApplySpectatorDesktopRouting();
+            IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
+            if (humanoid is null)
+                return;
+
+            if (humanoid.SceneNode.Transform is not Transform avatarRootTfm
+                || (PlayspaceRoot ?? Headset?.Parent) is not Transform playspaceRootTfm)
+                return;
+
             if (IsCalibrating)
             {
-                if (Headset?.TryGetCurrentWorldPose(out Matrix4x4 headWorld, out _, out _) == true)
-                {
-                    VrCalibrationResult poseResult = _rig.ApplyCanonicalCalibrationPose(headWorld,
-                        GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero);
-                    if (!poseResult.Success) { FailCapture(poseResult.Error ?? "Avatar pose is unavailable."); return; }
-                }
-                UpdateBindingPreview();
-                if (RuntimeVrStateServices.IsTrackerRefreshPending)
-                    CalibrationMessage = "New trackers are being acquired. Wait for tracking to resume, then reopen calibration.";
-                UpdateStationaryWindow(now);
-                if ((actions & 4) != 0 && !IsEditingMeasurement) CaptureOnSceneThread();
-                return;
+                UpdateCalibrationPose(humanoid, avatarRootTfm, playspaceRootTfm);
+                if (GetIKSolver() is not null)
+                    FindNearestTrackerTargets(humanoid);
+                SampleCalibrationWindow();
             }
-            if (!_headHandsInitialized) InitializeHeadAndHands();
-            UpdateSources(now, dt);
-            DetectDiscontinuity();
+            else
+                MovePlayer(avatarRootTfm, playspaceRootTfm);
         }
 
-        private void InitializeHeadAndHands()
+        private void ApplyTrackingSettings()
         {
-            double now = Now;
-            if (now < _nextHeadHandsAttempt) return;
-            if (Headset?.TryGetCurrentWorldPose(out _, out _, out _) != true ||
-                LeftController?.TryGetCurrentWorldPose(out _, out _, out _) != true ||
-                RightController?.TryGetCurrentWorldPose(out _, out _, out _) != true)
+            UserSettings? settings = RuntimeVrStateServices.PlayerSettings;
+            if (settings is null || GetIKSolver() is not { } solver)
                 return;
-            _nextHeadHandsAttempt = now + 0.5;
-            if (_rig is null || !TryBuildRequest(false, out VrCalibrationRequest request, out _)) return;
-            VrCalibrationResult result = _rig.Calibrate(request);
-            if (!result.Success) { CalibrationMessage = result.Error ?? "Avatar rig is unavailable."; return; }
-            RememberBindings(request);
-            _headHandsInitialized = true;
-            _rig.IsActive = true;
-            RestoreSessionCalibration();
+            if (_configuredTrackingHold == settings.TrackingLossHoldSeconds &&
+                _configuredTrackingFade == settings.TrackingSourceBlendSeconds)
+                return;
+            solver.ConfigureTrackingTransitions(settings.TrackingLossHoldSeconds, settings.TrackingSourceBlendSeconds);
+            _configuredTrackingHold = settings.TrackingLossHoldSeconds;
+            _configuredTrackingFade = settings.TrackingSourceBlendSeconds;
         }
 
-        private void CaptureOnSceneThread()
+        private static Matrix4x4 GetFixedEyeToHeadOffset(IHumanoidVrCalibrationRig humanoid, Vector3 scaledEyeOffset)
         {
-            if (_rig is null || !IsCalibrating) return;
-            if (RuntimeVrStateServices.IsTrackerRefreshPending)
-            {
-                CalibrationMessage = "Tracker discovery is still pending. Wait for tracking to resume before capturing.";
-                return;
-            }
-            if (HeightScaleComponent is not VRHeightScaleComponent scale || !scale.HasPlayerMeasurement)
-            {
-                FailCapture((HeightScaleComponent as VRHeightScaleComponent)?.MeasurementNotice
-                    ?? "Enter your standing height or arm span in VR Body settings, then reopen calibration.");
-                return;
-            }
-            if (!TryBuildRequest(true, out VrCalibrationRequest request, out string error))
-            {
-                FailCapture(error);
-                return;
-            }
-            Matrix4x4 head = request.Slots[(int)EHumanoidIKTarget.Head]!.Value.DeviceWorld;
-            Vector3 up = Vector3.Normalize(new Vector3(head.M21, head.M22, head.M23));
-            float tilt = MathF.Acos(Math.Clamp(Vector3.Dot(up, Vector3.UnitY), -1.0f, 1.0f)) * 180.0f / MathF.PI;
-            if (tilt > (PlayerSettings?.CalibrationHeadTiltTolerance ?? 10.0f))
-            {
-                FailCapture("Look straight ahead with your head level, then reopen calibration.");
-                return;
-            }
-            if (!_hasPreviousSample || Now - _stationarySince < 0.15)
-            {
-                FailCapture("Hold your headset, controllers and trackers still briefly, then retry calibration.");
-                return;
-            }
-            VrCalibrationResult result;
-            try { result = _rig.Calibrate(request); }
-            catch (Exception ex) { FailCapture("Calibration failed: " + ex.Message); return; }
-            if (!result.Success) { FailCapture(result.Error ?? "Calibration failed."); return; }
-            RememberBindings(request);
-            IsCalibrating = false;
-            _rig.EndCalibrationPose();
-            _rig.IsActive = true;
-            HasCalibration = true;
-            _calibratedMeasurement = MeasurementInUse();
-            _calibratedMeasurementMode = PlayerSettings?.BodyMeasurementMode ?? EBodyMeasurementMode.Height;
-            _headHandsInitialized = true;
-            CalibrationState = VrCalibrationState.Calibrated;
-            CalibrationMessage = "Calibration complete.";
-            if (PlayerSettings?.BodyMeasurementMode == EBodyMeasurementMode.Height && PlayspaceRoot is not null)
-            {
-                float eyeHeight = Vector3.Transform(head.Translation, PlayspaceRoot.InverseWorldMatrix).Y;
-                if (MathF.Abs(eyeHeight - PlayerSettings.PlayerHeight * VRHeightScaleComponent.StandingHeightToEyeHeight) > 0.15f)
-                    CalibrationMessage = "Calibration complete. Measured eye height differs from your standing-height setting; check the setting and floor origin.";
-            }
-            SaveSessionCalibration();
-            NotifyTrackingDiscontinuity();
+            Matrix4x4 relative = (humanoid.HeadNode?.Transform.BindMatrix ?? Matrix4x4.Identity) * humanoid.RootTransform.InverseBindMatrix;
+            if (!VrCalibrationMath.TryGetRigidPose(relative, out Matrix4x4 offset))
+                offset = Matrix4x4.Identity;
+            offset.Translation = -Vector3.TransformNormal(scaledEyeOffset, offset);
+            return offset;
         }
 
-        private bool TryBuildRequest(bool includeTrackers, out VrCalibrationRequest request, out string error)
+        public static Vector3 GetScaledToRealWorldHeadOffsetFromAvatarRoot(IHumanoidVrCalibrationRig humanoid)
+            => (humanoid.HeadNode!.Transform.BindMatrix.Translation - humanoid.RootTransform.BindMatrix.Translation) * humanoid.RootTransform.LossyWorldScale.Y;
+
+        private Matrix4x4 HMDRelativeToPlayspace(IHumanoidVrCalibrationRig humanoid)
+            => GetTrackedDeviceMatrixRelativeToPlayspace(humanoid, Headset?.WorldMatrix ?? Matrix4x4.Identity);
+
+        private Matrix4x4 GetTrackedDeviceMatrixRelativeToPlayspace(IHumanoidVrCalibrationRig humanoid, Matrix4x4 trackedDeviceMatrix)
         {
-            request = new VrCalibrationRequest
+            TransformBase? playspaceTransform = PlayspaceRoot ?? Headset?.Parent;
+            return trackedDeviceMatrix * (playspaceTransform?.InverseWorldMatrix ?? Matrix4x4.Identity);
+        }
+
+        private bool BeginCalibrationImmediate()
+        {
+            if (IsCalibrating || Headset is null)
+                return false;
+
+            IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
+            IVRIKSolverHandle? solver = GetIKSolver();
+            if (humanoid is null || solver is null)
+                return false;
+
+            if (humanoid.HeadNode is null)
+                return false;
+
+            VRTrackerCollectionComponent? trackers = GetTrackerCollection();
+            if (trackers is null)
+                return false;
+            SaveCalibrationState(humanoid, solver);
+            IRuntimeVrHeightScaleComponent? scale = GetHeightScaleComponent();
+            string notice = "Avatar measurement settings are unavailable.";
+            if (scale is null || !scale.TryApplyPlayerMeasurements(out notice))
             {
-                Settings = RuntimeVrStateServices.CalibrationSettings,
-                RequireLevelHead = includeTrackers,
-                HeadTiltTolerance = PlayerSettings?.CalibrationHeadTiltTolerance,
-                HeadsetToEyes = Matrix4x4.CreateTranslation(-(GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero)),
-                LeftGripToWrist = LeftControllerOffset == Matrix4x4.Identity ? VrControllerWristOffsets.ForHand(RuntimeVrStateServices.GetCurrentInteractionProfile(true), true) : LeftControllerOffset,
-                RightGripToWrist = RightControllerOffset == Matrix4x4.Identity ? VrControllerWristOffsets.ForHand(RuntimeVrStateServices.GetCurrentInteractionProfile(false), false) : RightControllerOffset,
-            };
-            error = "";
-            long snapshot = -1;
-            long sampleTime = 0;
-            if (includeTrackers && !_bindingSamplesCoherent)
-            {
-                error = "Tracking samples changed during assignment. Hold still and retry.";
+                RestoreCalibrationState(humanoid, solver);
+                CalibrationMessage = scale is null ? "Avatar measurement settings are unavailable." : notice;
                 return false;
             }
-            for (int i = 0; i < 11; i++)
+
+
+            solver.IsActive = false;
+            solver.SuspendCalibrationAnimationWriters();
+            humanoid.ClearIKTargets();
+            humanoid.PosePreviewMode = EHumanoidPosePreviewMode.TPose;
+            if (!humanoid.SetCanonicalCalibrationPose())
             {
-                VRDeviceTransformBase? device = i switch
-                {
-                    (int)EHumanoidIKTarget.Head => Headset,
-                    (int)EHumanoidIKTarget.LeftHand => LeftController,
-                    (int)EHumanoidIKTarget.RightHand => RightController,
-                    _ => includeTrackers ? _proposedDevices[i] : null,
-                };
-                bool required = i == 0 || i == 2 || i == 3;
-                if (device is null)
-                {
-                    if (required) { error = "Headset and both controllers must be connected."; return false; }
-                    continue;
-                }
-                Matrix4x4 world = default;
-                long currentSnapshot = _bindingSnapshot;
-                long currentSampleTime = _bindingSampleTime;
-                bool usable = false;
-                if (includeTrackers && !required)
-                {
-                    foreach (var sample in _bindingSamples)
-                        if (ReferenceEquals(sample.Device, device)) { world = sample.World; usable = true; break; }
-                }
-                else usable = device.TryGetCurrentWorldPose(out world, out currentSnapshot, out currentSampleTime);
-                if (!usable)
-                {
-                    error = required ? "Headset and both controllers must be tracking." : "A tracker lost tracking during capture. Reopen calibration and retry.";
-                    return false;
-                }
-                if (snapshot >= 0 && (snapshot != currentSnapshot || sampleTime != currentSampleTime))
-                {
-                    error = "Tracking samples changed during capture. Hold still and retry.";
-                    return false;
-                }
-                snapshot = currentSnapshot;
-                sampleTime = currentSampleTime;
-                request.Slots[i] = new VrCalibrationCapture(device, world, (device as VRTrackerTransform)?.SessionIdentity,
-                    currentSnapshot, currentSampleTime);
+                RestoreCalibrationState(humanoid, solver);
+                CalibrationMessage = "The avatar cannot form a canonical T-pose.";
+                return false;
             }
+            IsCalibrating = true;
+            CalibrationState = EVrCalibrationState.Calibrating;
+            CalibrationMessage = "Stand straight in the footprints, look ahead, then pull both triggers. Cancel to keep your previous calibration.";
+            _stationaryWindow.Reset();
+            _previousSnapshot = default;
+
             return true;
         }
 
-        private void RememberBindings(VrCalibrationRequest request)
+        public (TransformBase? tfm, Matrix4x4 offset) LastHeadTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastHipsTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastLeftHandTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastRightHandTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastLeftFootTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastRightFootTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastLeftElbowTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastRightElbowTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastLeftKneeTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastRightKneeTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) LastChestTarget { get; set; } = (null, Matrix4x4.Identity);
+
+        private XRComponent? _ikSolver;
+        public XRComponent? IKSolver
         {
-            for (int i = 0; i < 11; i++)
-            {
-                _boundDevices[i] = request.Slots[i]?.Device as VRDeviceTransformBase;
-                _boundIdentities[i] = request.Slots[i]?.Identity;
-                _sourceWeights[i] = request.Slots[i]?.Device is not null ? 1.0f : 0.0f;
-                _lastUsable[i] = Now;
-                _estimatorWeights[i] = 0.0f;
-                if (_rig?.TryGetSlot((EHumanoidIKTarget)i, out var slot) == true)
-                    _trackedGoals[i] = slot.Target.WorldMatrix;
-            }
+            get => _ikSolver;
+            set => SetField(ref _ikSolver, value);
         }
 
-        private void UpdateSources(double now, float dt)
+        private void CancelCalibrationImmediate()
         {
-            if (_rig is null) return;
-            long snapshot = -1;
-            long sampleTime = 0;
-            bool coherent = true;
-            // Read all sources before publishing any target, so consumers never see a mixed simulation frame.
-            bool missingBoundTracker = false;
-            for (int i = 0; i < 11; i++)
+            if (!IsCalibrating)
+                return;
+            IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
+            IVRIKSolverHandle? solver = GetIKSolver();
+            if (humanoid is null || solver is null)
+                return;
+            RestoreCalibrationState(humanoid, solver);
+            IsCalibrating = false;
+            CalibrationState = _previousCalibrationState;
+            CalibrationMessage = "Calibration canceled; previous rig restored.";
+        }
+
+        private void CaptureCalibrationImmediate()
+        {
+            if (!IsCalibrating || GetHumanoid() is not { } humanoid || GetIKSolver() is not { } solver)
+                return;
+            if (!TryBuildCaptureSnapshot(humanoid, out VrCalibrationPose[] poses))
+                return;
+            Vector3 eyeOffset = GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero;
+            humanoid.SetIKTarget(EHumanoidIKTarget.Head, Headset, GetFixedEyeToHeadOffset(humanoid, eyeOffset));
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftController, LeftControllerOffset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, RightController, RightControllerOffset);
+            float headTiltTolerance = RuntimeVrStateServices.PlayerSettings?.CalibrationHeadTiltTolerance
+                ?? RuntimeVrStateServices.CalibrationHeadTiltToleranceDegrees;
+            VrCalibrationResult result = RuntimeVRIKCalibrator.CalibrateSnapshot(
+                solver, RuntimeVrStateServices.CalibrationSettings, poses, headTiltTolerance);
+            if (!result.Success)
             {
-                VRDeviceTransformBase? device = _boundIdentities[i] is { } identity ? FindTracker(identity) : _boundDevices[i];
-                long currentSnapshot = 0;
-                long currentSampleTime = 0;
-                _sourceSampleValid[i] = device is not null && device.TryGetCurrentWorldPose(out _sourceSamples[i], out currentSnapshot, out currentSampleTime);
-                if (!_sourceSampleValid[i]) continue;
-                if (snapshot >= 0 && (snapshot != currentSnapshot || sampleTime != currentSampleTime)) { coherent = false; break; }
-                snapshot = currentSnapshot;
-                sampleTime = currentSampleTime;
-                _boundDevices[i] = device;
+                RestoreCalibrationState(humanoid, solver);
+                IsCalibrating = false;
+                CalibrationState = EVrCalibrationState.Failed;
+                CalibrationMessage = result.Message + " Your previous rig is unchanged.";
+                return;
             }
-            if (!coherent)
+            humanoid.PosePreviewMode = _previousPreviewMode;
+            solver.EndCalibrationPose();
+            solver.IsActive = true;
+            IsCalibrating = false;
+            HasCommittedCalibration = true;
+            CalibrationState = EVrCalibrationState.Calibrated;
+            CalibrationMessage = GetHeightScaleComponent()?.GetCaptureMeasurementWarning(_previousSnapshot.HeadPose.Translation.Y)
+                ?? "Calibration complete.";
+            SaveCommittedSession();
+            _savedPose.Clear();
+        }
+
+        public enum ETrackableBodyPart
+        {
+            Hips,
+            Chest,
+            LeftFoot,
+            RightFoot,
+            LeftElbow,
+            RightElbow,
+            LeftKnee,
+            RightKnee,
+        }
+
+        private VrTrackerBindingCandidate[] _bindingCandidates = new VrTrackerBindingCandidate[16];
+        private VRTrackerTransform?[] _bindingDevices = new VRTrackerTransform?[16];
+        private readonly VrTrackerBindingSlot[] _bindingSlots = new VrTrackerBindingSlot[8];
+        private readonly VrTrackerBinding[] _previewBindings = new VrTrackerBinding[8];
+
+        private void FindNearestTrackerTargets(IHumanoidVrCalibrationRig humanoid)
+        {
+            VRTrackerCollectionComponent? trackers = GetTrackerCollection();
+            if (trackers is null)
+                return;
+            int trackerCount = trackers.Trackers.Count;
+            // Discovery can grow this calibration-only workspace; gameplay never performs assignment.
+            if (_bindingCandidates.Length < trackerCount)
             {
-                // Repeatedly crossing publications must degrade tracking instead of holding full weight forever.
-                Array.Clear(_sourceSampleValid);
-                snapshot = -1;
+                Array.Resize(ref _bindingCandidates, trackerCount);
+                Array.Resize(ref _bindingDevices, trackerCount);
             }
-            // Estimates share the pre-locomotion world basis of the sampled tracking publication.
-            for (int i = 0; i < 11; i++)
+            int candidateCount = 0;
+            foreach (var pair in trackers.Trackers.Values)
             {
-                _estimateSampleValid[i] = false;
-                if (snapshot >= 0 && i is not (0 or 2 or 3) &&
-                    BodyPoseSource?.TryGetTarget((EHumanoidIKTarget)i, snapshot, out Matrix4x4 estimate) == true)
+                VRTrackerTransform tracker = pair.Item2;
+                _bindingDevices[candidateCount] = tracker;
+                _bindingCandidates[candidateCount++] = new(tracker.TrackingIdentity ?? string.Empty,
+                    tracker.WorldTranslation, tracker.PoseCurrentlyUsable);
+            }
+            int slotCount = 0;
+            AddBindingSlot(EHumanoidIKTarget.Hips, humanoid.HipsNode?.Transform);
+            AddBindingSlot(EHumanoidIKTarget.Chest, humanoid.ChestNode?.Transform);
+            AddBindingSlot(EHumanoidIKTarget.LeftFoot, humanoid.LeftFootNode?.Transform);
+            AddBindingSlot(EHumanoidIKTarget.RightFoot, humanoid.RightFootNode?.Transform);
+            AddBindingSlot(EHumanoidIKTarget.LeftElbow, humanoid.LeftElbowNode?.Transform, true);
+            AddBindingSlot(EHumanoidIKTarget.RightElbow, humanoid.RightElbowNode?.Transform, true);
+            AddBindingSlot(EHumanoidIKTarget.LeftKnee, humanoid.LeftKneeNode?.Transform, true, true);
+            AddBindingSlot(EHumanoidIKTarget.RightKnee, humanoid.RightKneeNode?.Transform, true, true);
+            float scale = MathF.Abs(humanoid.RootTransform.LossyWorldScale.Y);
+            int count = VrTrackerBinder.Bind(_bindingSlots.AsSpan(0, slotCount), _bindingCandidates.AsSpan(0, candidateCount),
+                (RuntimeVrStateServices.PlayerSettings?.TrackerBindingCutoff ?? CalibrationRadius) * scale, _previewBindings);
+            ClearTrackerTargets(humanoid);
+            for (int i = 0; i < count; i++)
+            {
+                VrTrackerBinding binding = _previewBindings[i];
+                humanoid.SetIKTarget(_bindingSlots[binding.SlotIndex].Slot, _bindingDevices[binding.TrackerIndex], Matrix4x4.Identity);
+            }
+
+            void AddBindingSlot(EHumanoidIKTarget slot, TransformBase? bone, bool segment = false, bool knee = false)
+            {
+                if (bone is null)
+                    return;
+                Vector3 start = bone.WorldTranslation, end = start;
+                if (segment && bone.Parent is { } parent)
                 {
-                    _estimateSampleValid[i] = true;
-                    _estimatedGoals[i] = estimate;
+                    start = parent.WorldTranslation;
+                    end = bone.WorldTranslation;
+                    if (knee)
+                    {
+                        start = Vector3.Lerp(start, end, 0.5f);
+                        if (bone.ChildCount > 0 && bone.GetChild(0) is { } child)
+                            end = Vector3.Lerp(end, child.WorldTranslation, 0.5f);
+                    }
                 }
-            }
-            MovePlayer();
-            float blend = dt / (PlayerSettings?.TrackingSourceBlendSeconds ?? 0.25f);
-            for (int i = 0; i < 11; i++)
-            {
-                EHumanoidIKTarget slot = (EHumanoidIKTarget)i;
-                if (_sourceSampleValid[i])
-                {
-                    if (_boundIdentities[i] is { } boundIdentity)
-                        _rig.RebindSlotDevice(slot, _boundDevices[i]!, boundIdentity);
-                    _lastUsable[i] = now;
-                    _sourceWeights[i] = MathF.Min(1.0f, _sourceWeights[i] + blend);
-                    _rig.UpdateSlot(slot, _sourceSamples[i], _sourceWeights[i]);
-                    if (_rig.TryGetSlot(slot, out var tracked)) _trackedGoals[i] = tracked.Target.WorldMatrix;
-                }
-                else if (now - _lastUsable[i] > (PlayerSettings?.TrackingLossHoldSeconds ?? 0.15f))
-                {
-                    missingBoundTracker |= _boundIdentities[i] is not null;
-                    _sourceWeights[i] = MathF.Max(0.0f, _sourceWeights[i] - blend);
-                    _rig.SetSlotWeight(slot, _sourceWeights[i]);
-                }
-                if (_estimateSampleValid[i])
-                {
-                    _estimatorWeights[i] = MathF.Min(1.0f, _estimatorWeights[i] + blend);
-                }
-                else _estimatorWeights[i] = MathF.Max(0.0f, _estimatorWeights[i] - blend);
-                float trackerWeight = _sourceWeights[i];
-                float estimateWeight = (1.0f - trackerWeight) * _estimatorWeights[i];
-                float totalWeight = trackerWeight + estimateWeight;
-                if (estimateWeight > 0.0f)
-                {
-                    Matrix4x4 blended = BlendPose(_estimatedGoals[i], _trackedGoals[i], trackerWeight / totalWeight);
-                    _rig.UpdateEstimatedSlot(slot, blended, totalWeight);
-                }
-            }
-            const string missingMessage = "A bound tracker is unavailable. Reconnect it or recalibrate after swapping trackers.";
-            if (HasCalibration && CalibrationState == VrCalibrationState.Calibrated)
-            {
-                if (missingBoundTracker) CalibrationMessage = missingMessage;
-                else if (CalibrationMessage == missingMessage) CalibrationMessage = "Tracking restored.";
+                _bindingSlots[slotCount++] = new(slot, start, end);
             }
         }
 
-        private static Matrix4x4 BlendPose(Matrix4x4 a, Matrix4x4 b, float weight)
+        private static void ClearTrackerTargets(IHumanoidVrCalibrationRig humanoid)
         {
-            if (!Matrix4x4.Decompose(a, out _, out Quaternion ar, out Vector3 ap) ||
-                !Matrix4x4.Decompose(b, out _, out Quaternion br, out Vector3 bp)) return b;
-            return Matrix4x4.CreateFromQuaternion(Quaternion.Slerp(ar, br, weight)) *
-                Matrix4x4.CreateTranslation(Vector3.Lerp(ap, bp, weight));
+            humanoid.ClearIKTarget(EHumanoidIKTarget.Hips);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.LeftFoot);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.RightFoot);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.Chest);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.LeftElbow);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.RightElbow);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.LeftKnee);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.RightKnee);
         }
 
-        private void UpdateStationaryWindow(double now)
+        private static void RestoreTargets(
+            IHumanoidVrCalibrationRig humanoid,
+            (TransformBase? tfm, Matrix4x4 offset) head,
+            (TransformBase? tfm, Matrix4x4 offset) hips,
+            (TransformBase? tfm, Matrix4x4 offset) leftHand,
+            (TransformBase? tfm, Matrix4x4 offset) rightHand,
+            (TransformBase? tfm, Matrix4x4 offset) leftFoot,
+            (TransformBase? tfm, Matrix4x4 offset) rightFoot,
+            (TransformBase? tfm, Matrix4x4 offset) chest,
+            (TransformBase? tfm, Matrix4x4 offset) leftElbow,
+            (TransformBase? tfm, Matrix4x4 offset) rightElbow,
+            (TransformBase? tfm, Matrix4x4 offset) leftKnee,
+            (TransformBase? tfm, Matrix4x4 offset) rightKnee)
         {
-            bool allValid = true;
-            bool moved = !_hasPreviousSample;
-            long snapshot = -1;
-            long sampleTime = 0;
-            for (int i = 0; i < 11; i++)
-            {
-                VRDeviceTransformBase? device = i switch { 0 => Headset, 2 => LeftController, 3 => RightController, _ => _proposedDevices[i] };
-                if (!ReferenceEquals(device, _stationaryDevices[i])) moved = true;
-                _stationaryDevices[i] = device;
-                if (device is null)
-                {
-                    if (i is 0 or 2 or 3) allValid = false;
-                    continue;
-                }
-                if (!device.TryGetCurrentWorldPose(out Matrix4x4 pose, out long currentSnapshot, out long currentSampleTime)) { allValid = false; continue; }
-                if (snapshot >= 0 && (snapshot != currentSnapshot || sampleTime != currentSampleTime)) allValid = false;
-                snapshot = currentSnapshot;
-                sampleTime = currentSampleTime;
-                if (_hasPreviousSample && (Vector3.DistanceSquared(_previousSamples[i].Translation, pose.Translation) > 0.0001f ||
-                    RotationDistance(_previousSamples[i], pose) > 0.035f)) moved = true;
-                _currentSamples[i] = pose;
-            }
-            if (!allValid || moved)
-            {
-                _stationarySince = now;
-                Array.Copy(_currentSamples, _previousSamples, 11);
-            }
-            _hasPreviousSample = allValid;
+            humanoid.SetIKTarget(EHumanoidIKTarget.Head, head.tfm, head.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.Hips, hips.tfm, hips.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, leftHand.tfm, leftHand.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, rightHand.tfm, rightHand.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftFoot, leftFoot.tfm, leftFoot.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightFoot, rightFoot.tfm, rightFoot.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.Chest, chest.tfm, chest.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftElbow, leftElbow.tfm, leftElbow.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightElbow, rightElbow.tfm, rightElbow.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftKnee, leftKnee.tfm, leftKnee.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightKnee, rightKnee.tfm, rightKnee.offset);
         }
 
-        private static float RotationDistance(Matrix4x4 a, Matrix4x4 b)
-        {
-            if (!Matrix4x4.Decompose(a, out _, out Quaternion ar, out _) || !Matrix4x4.Decompose(b, out _, out Quaternion br, out _)) return float.PositiveInfinity;
-            return 2.0f * MathF.Acos(Math.Clamp(MathF.Abs(Quaternion.Dot(ar, br)), 0.0f, 1.0f));
-        }
-
-        private void MovePlayer()
-        {
-            if (_humanoid is null || PlayspaceRoot is null || AvatarRoot is null || _rig is null) return;
-            // Losing a bound hips source must not turn head leaning into body locomotion.
-            int index = _boundIdentities[(int)EHumanoidIKTarget.Hips] is not null
-                ? (int)EHumanoidIKTarget.Hips : (int)EHumanoidIKTarget.Head;
-            if (!_sourceSampleValid[index] || !_rig.TryGetSlot((EHumanoidIKTarget)index, out var slot)) return;
-            // Consume this simulation sample before publishing targets. The captured offset is applied once.
-            Matrix4x4 relative = slot.DeviceToTargetOffset * _sourceSamples[index] * PlayspaceRoot.InverseWorldMatrix;
-            Vector3 offset = relative.Translation;
-            offset.Y = 0.0f;
-            if (offset.LengthSquared() < 0.000001f) return;
-            IRuntimeCharacterMovementComponent? movement = _movement;
-            if (movement is null) return;
-            Vector3 oldPosition = PlayspaceRoot.WorldTranslation;
-            PlayspaceRoot.Translation = new Vector3(-offset.X, PlayspaceRoot.Translation.Y, -offset.Z);
-            PlayspaceRoot.RecalculateMatrices(true);
-            Vector3 delta = oldPosition - PlayspaceRoot.WorldTranslation;
-            delta.Y = 0.0f;
-            movement.AddLiteralInputDelta(delta);
-            // Every sampled device shares this playspace. Keep the coherent sample in the new world basis.
-            Vector3 worldShift = PlayspaceRoot.WorldTranslation - oldPosition;
-            for (int i = 0; i < _sourceSamples.Length; i++)
-            {
-                if (_sourceSampleValid[i]) _sourceSamples[i].Translation += worldShift;
-                if (_estimateSampleValid[i]) _estimatedGoals[i].Translation += worldShift;
-            }
-        }
-
-        /// <summary>Returns the bind-pose head displacement at the player's explicitly configured scale.</summary>
-        public static Vector3 GetScaledToRealWorldHeadOffsetFromAvatarRoot(IHumanoidVrCalibrationRig humanoid)
-            => ((humanoid.HeadNode?.Transform.BindMatrix.Translation ?? Vector3.Zero) - humanoid.RootTransform.BindMatrix.Translation)
-                * RuntimeVrStateServices.ModelToRealWorldHeightRatio;
-
-        private void DetectDiscontinuity()
-        {
-            if (PlayerRoot is null) return;
-            Vector3 position = PlayerRoot.WorldTranslation;
-            Quaternion rotation = PlayspaceRoot?.WorldRotation ?? PlayerRoot.WorldRotation;
-            if (Vector3.DistanceSquared(position, _lastPlayerPosition) > 1.0f || MathF.Abs(Quaternion.Dot(rotation, _lastPlayerRotation)) < 0.9961947f)
-                NotifyTrackingDiscontinuity();
-            _lastPlayerPosition = position;
-            _lastPlayerRotation = rotation;
-        }
-
-        /// <summary>Resets consumers after teleport, snap turn, avatar replacement, or a known basis change.</summary>
-        public void NotifyTrackingDiscontinuity()
-        {
-            DiscontinuityGeneration++;
-            _hasPreviousSample = false;
-            BodyPoseSource?.ResetHistory();
-            TrackingDiscontinuity?.Invoke();
-        }
-
-        /// <summary>An unknown tracking-space relationship cannot safely preserve captured offsets.</summary>
-        public void InvalidateTrackingBasis()
-        {
-            if (IsCalibrating) CancelOnSceneThread();
-            HasCalibration = false;
-            _headHandsInitialized = false;
-            if (_humanoid is not null)
-                SessionCalibrations.Remove(_humanoid.SceneNode);
-            CalibrationState = VrCalibrationState.Uncalibrated;
-            CalibrationMessage = "The tracking origin changed. Reopen calibration.";
-            for (int i = 0; i < 11; i++) if (i != 0 && i != 2 && i != 3)
-            {
-                _boundDevices[i] = null;
-                _boundIdentities[i] = null;
-                _sourceWeights[i] = 0;
-                _rig?.SetSlotWeight((EHumanoidIKTarget)i, 0);
-            }
-            NotifyTrackingDiscontinuity();
-        }
     }
 }

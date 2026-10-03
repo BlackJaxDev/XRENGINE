@@ -4,7 +4,6 @@ namespace XREngine;
 
 public partial class UserSettings
 {
-    private bool _vrSpectatorEnabled;
     private float _vrSpectatorDistance = 3.0f;
     private float _vrSpectatorHeight = 1.6f;
     private float _vrSpectatorShoulderOffset;
@@ -14,13 +13,6 @@ public partial class UserSettings
     private uint _vrSpectatorWidth = 1920u;
     private uint _vrSpectatorHeightPixels = 1080u;
     private uint _vrSpectatorFramesPerSecond = 30u;
-
-    [Category("VR Spectator")]
-    public bool VrSpectatorEnabled
-    {
-        get => _vrSpectatorEnabled;
-        set { if (SetField(ref _vrSpectatorEnabled, value)) MarkDirty(); }
-    }
 
     [Category("VR Spectator")]
     public float VrSpectatorDistance

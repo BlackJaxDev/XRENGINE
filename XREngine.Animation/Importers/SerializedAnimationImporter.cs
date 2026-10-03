@@ -2396,7 +2396,7 @@ namespace XREngine.Animation.Importers
 
             try
             {
-                foreach (string metaPath in Directory.EnumerateFiles(directory.FullName, "*.meta", SearchOption.AllDirectories))
+                foreach (string metaPath in XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(directory.FullName, "*.meta", SearchOption.AllDirectories))
                 {
                     string? guid = null;
                     foreach (string line in File.ReadLines(metaPath).Take(24))

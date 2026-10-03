@@ -7,6 +7,7 @@ namespace XREngine.Components.Animation
     public interface IHumanoidVrCalibrationRig
     {
         SceneNode SceneNode { get; }
+        EHumanoidPosePreviewMode PosePreviewMode { get; set; }
         TransformBase RootTransform { get; }
         SceneNode? HeadNode { get; }
         SceneNode? HipsNode { get; }
@@ -35,10 +36,17 @@ namespace XREngine.Components.Animation
         void ClearIKTarget(EHumanoidIKTarget target);
         void ClearIKTargets();
         void ResetPose();
+        bool SetCanonicalCalibrationPose() => false;
     }
 
     public interface IVRIKSolverHandle
     {
         bool IsActive { get; set; }
+        void SuspendCalibrationAnimationWriters() { }
+        void EndCalibrationPose() { }
+        void ConfigureTrackingTransitions(float lossHoldSeconds, float crossfadeSeconds) { }
+        void ClearTargets() { }
+        VrCalibrationResult RestoreCalibration(ReadOnlySpan<VrCalibrationTarget> targets, object? settings) => VrCalibrationResult.Failure("This rig does not support calibration restoration.");
+        TransformBase? GetCalibratedTarget(EHumanoidIKTarget slot) => null;
     }
 }

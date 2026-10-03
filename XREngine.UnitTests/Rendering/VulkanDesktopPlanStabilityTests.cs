@@ -234,24 +234,27 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void ConditionalShadowRegistriesRemainStableAndOutputScoped()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourceRegistryPlanning.cs");
         string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/Authority/MergedFrameOpRegistryCacheEntry.cs");
         string merge = SliceBetween(
             planner,
-            "private RenderResourceRegistry? BuildMergedFrameOpRegistry",
+            "internal RenderResourceRegistry? BuildMergedFrameOpRegistry",
             "private List<RenderResourceRegistry> CollectUniqueFrameOpRegistries");
         string lookup = SliceBetween(
             planner,
             "private bool TryGetCachedMergedFrameOpRegistry",
             "private static int IndexOfFrameOpRegistryCacheSource");
 
-        merge.ShouldContain("VulkanFrameOpPlannerStateKey ownerKey = BuildFrameOpPlannerStateKey(primaryContext);");
+        merge.ShouldContain("VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(primaryContext);");
         merge.ShouldContain("retain its descriptors until the compatibility key changes");
         lookup.ShouldContain("!entry.OwnerKey.Equals(ownerKey)");
         lookup.ShouldContain("FrameOpRegistryCacheSource[] accumulatedSources = entry.Sources;");
-        lookup.ShouldContain("AddRegistryDescriptors(entry.MergedRegistry, source, overwrite: true);");
-        lookup.ShouldContain("AddFrameOpFrameBufferDescriptors(entry.MergedRegistry, ops, overwrite: true);");
+        lookup.ShouldContain("entry.MergedRegistry = BuildMergedFrameOpRegistrySnapshot(");
+        lookup.ShouldContain("AddRegistryDescriptors(merged, primaryRegistry, overwrite: true);");
+        lookup.ShouldContain("AddRegistryDescriptors(merged, source, overwrite: false);");
+        lookup.ShouldContain("CollectUniqueFrameOpFrameBuffers(ops),\n            overwrite: false);");
+        lookup.ShouldNotContain("AddRegistryDescriptors(entry.MergedRegistry");
         lookup.ShouldNotContain("entry.MergedRegistry = persistentMerged;");
         state.ShouldContain("public VulkanFrameOpPlannerStateKey OwnerKey { get; } = ownerKey;");
     }

@@ -1,7 +1,6 @@
-using ImageMagick;
+using XREngine.Imaging;
 using MemoryPack;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
@@ -32,60 +31,23 @@ namespace XREngine.Rendering
                 ? _indexedSamplerNames[textureIndex]
                 : $"Texture{textureIndex}";
 
-        /// <summary>
-        /// Allocates a new empty image with the specified dimensions, format and type.
-        /// </summary>
-        /// <param name="width"></param>
-        /// <param name="height"></param>
-        /// <param name="format"></param>
-        /// <param name="type"></param>
-        /// <returns></returns>
-        public static MagickImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type)
+        /// <summary>Allocates an independent raw image without loading an imaging backend.</summary>
+        public static RuntimeImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type)
             => NewImage(width, height, format, type, AllocateBytes(width, height, format, type));
-        /// <summary>
-        /// Creates a new image with the specified dimensions, format, type and data.
-        /// Allocate the data array parameter with AllocateBytes.
-        /// </summary>
-        /// <param name="width"></param>
-        /// <param name="height"></param>
-        /// <param name="format"></param>
-        /// <param name="type"></param>
-        /// <param name="dataFactory"></param>
-        /// <returns></returns>
-        public static MagickImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type, byte[] data)
+
+        /// <summary>Wraps raw image bytes after checking their dimensions and pixel layout.</summary>
+        public static RuntimeImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type, byte[] data)
         {
             ArgumentNullException.ThrowIfNull(data);
             int expectedLength = GetCheckedByteLength(width, height, 1u, format, type);
             if (data.Length != expectedLength)
                 throw new ArgumentException($"Expected {expectedLength} bytes but received {data.Length}.", nameof(data));
-
-            string mapping = GetMagickPixelMapping(format);
-            if (type == EPixelType.HalfFloat)
-            {
-                ReadOnlySpan<Half> source = MemoryMarshal.Cast<byte, Half>(data);
-                float[] values = GC.AllocateUninitializedArray<float>(source.Length);
-                for (int i = 0; i < source.Length; i++)
-                    values[i] = (float)source[i] * Quantum.Max;
-
-                MagickImage halfFloatImage = new();
-                halfFloatImage.ReadPixels(values, new PixelReadSettings(width, height, StorageType.Quantum, mapping));
-                return halfFloatImage;
-            }
-
-            StorageType storageType = GetMagickStorageType(type);
-            return new MagickImage(data, new PixelReadSettings(width, height, storageType, mapping));
+            return new RuntimeImage(width, height, format, type, data);
         }
-        /// <summary>
-        /// Allocates and populates a new image with the specified dimensions, format, type and data.
-        /// </summary>
-        /// <param name="width"></param>
-        /// <param name="height"></param>
-        /// <param name="format"></param>
-        /// <param name="type"></param>
-        /// <param name="dataFactory"></param>
-        /// <returns></returns>
-        public static MagickImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type, Action<byte[]> dataFactory)
+
+        public static RuntimeImage NewImage(uint width, uint height, EPixelFormat format, EPixelType type, Action<byte[]> dataFactory)
         {
+            ArgumentNullException.ThrowIfNull(dataFactory);
             byte[] data = AllocateBytes(width, height, format, type);
             dataFactory(data);
             return NewImage(width, height, format, type, data);
@@ -105,55 +67,29 @@ namespace XREngine.Rendering
             long byteLength = checked((long)width * height * depth * bytesPerPixel);
             if (byteLength > int.MaxValue)
                 throw new NotSupportedException("Image data cannot exceed 2 GB.");
-
             return (int)byteLength;
         }
 
         public static void GetFormat(
-            MagickImage bmp,
+            RuntimeImage image,
             bool internalCompression,
-            //out ESizedInternalFormat sizedFormat,
             out EPixelInternalFormat internalPixelFormat,
             out EPixelFormat pixelFormat,
             out EPixelType pixelType)
         {
-            //Internal format must match pixel format
-            //GL_ALPHA, GL_LUMINANCE, GL_LUMINANCE_ALPHA, GL_RGB, GL_RGBA
-            //bool hasAlpha = bmp.HasAlpha;
-            uint channels = bmp.ChannelCount;
-            uint depth = bmp.Depth;
-            pixelType = bmp.Format switch
+            ArgumentNullException.ThrowIfNull(image);
+            pixelFormat = image.Format;
+            pixelType = image.Type;
+            internalPixelFormat = (pixelFormat, pixelType) switch
             {
-                MagickFormat.Hdr or MagickFormat.Exr or MagickFormat.Pfm => EPixelType.Float,
-                _ => depth switch
-                {
-                    1 => EPixelType.UnsignedByte,
-                    8 => EPixelType.UnsignedByte,
-                    16 => EPixelType.UnsignedShort,
-                    32 => EPixelType.Float,
-                    _ => throw new NotSupportedException($"Unsupported pixel depth: {depth}"),
-                },
+                (EPixelFormat.Red, EPixelType.Float) => EPixelInternalFormat.R32f,
+                (EPixelFormat.Rgba, EPixelType.Float) => EPixelInternalFormat.Rgba32f,
+                (EPixelFormat.Rgb, EPixelType.Float) => EPixelInternalFormat.Rgb32f,
+                (EPixelFormat.Red, _) => internalCompression ? EPixelInternalFormat.CompressedRed : EPixelInternalFormat.Red,
+                (EPixelFormat.Rg, _) => internalCompression ? EPixelInternalFormat.CompressedRG : EPixelInternalFormat.RG,
+                (EPixelFormat.Rgb or EPixelFormat.Bgr, _) => internalCompression ? EPixelInternalFormat.CompressedRgb : EPixelInternalFormat.Rgb,
+                _ => internalCompression ? EPixelInternalFormat.CompressedRgba : EPixelInternalFormat.Rgba,
             };
-            switch (channels)
-            {
-                case 1:
-                    internalPixelFormat = internalCompression ? EPixelInternalFormat.CompressedRed : EPixelInternalFormat.Red;
-                    pixelFormat = EPixelFormat.Red;
-                    break;
-                case 2:
-                    internalPixelFormat = internalCompression ? EPixelInternalFormat.CompressedRG : EPixelInternalFormat.RG;
-                    pixelFormat = EPixelFormat.Rg;
-                    break;
-                case 3:
-                    internalPixelFormat = internalCompression ? EPixelInternalFormat.CompressedRgb : EPixelInternalFormat.Rgb;
-                    pixelFormat = EPixelFormat.Rgb;
-                    break;
-                default:
-                case 4:
-                    internalPixelFormat = internalCompression ? EPixelInternalFormat.CompressedRgba : EPixelInternalFormat.Rgba;
-                    pixelFormat = EPixelFormat.Rgba;
-                    break;
-            }
         }
 
         public static bool IsSigned(EPixelType type)
@@ -206,54 +142,6 @@ namespace XREngine.Rendering
 
         private static bool IsPackedPixelType(EPixelType type)
             => type >= EPixelType.UnsignedByte332;
-
-        private static StorageType GetMagickStorageType(EPixelType type)
-            => type switch
-            {
-                EPixelType.UnsignedByte => StorageType.Char,
-                EPixelType.UnsignedShort => StorageType.Short,
-                EPixelType.UnsignedInt => StorageType.Int32,
-                EPixelType.Float => StorageType.Float,
-                EPixelType.Byte or EPixelType.Short or EPixelType.Int =>
-                    throw new NotSupportedException($"ImageMagick raw-pixel conversion does not support signed {type} data."),
-                _ => throw new NotSupportedException($"ImageMagick raw-pixel conversion does not support {type} data."),
-            };
-
-        private static string GetMagickPixelMapping(EPixelFormat format)
-            => format switch
-            {
-                EPixelFormat.Rgba or EPixelFormat.RgbaInteger => "RGBA",
-                EPixelFormat.Bgra or EPixelFormat.BgraInteger => "BGRA",
-                EPixelFormat.Rgb or EPixelFormat.RgbInteger => "RGB",
-                EPixelFormat.Bgr or EPixelFormat.BgrInteger => "BGR",
-                EPixelFormat.Rg or EPixelFormat.RgInteger => "RG",
-                EPixelFormat.Red or EPixelFormat.RedInteger => "R",
-                EPixelFormat.Green or EPixelFormat.GreenInteger => "G",
-                EPixelFormat.Blue or EPixelFormat.BlueInteger => "B",
-                EPixelFormat.Alpha or EPixelFormat.AlphaInteger => "A",
-                EPixelFormat.Luminance => "I",
-                EPixelFormat.LuminanceAlpha => "IA",
-                EPixelFormat.DepthComponent or
-                    EPixelFormat.StencilIndex or
-                    EPixelFormat.ColorIndex or
-                    EPixelFormat.UnsignedShort or
-                    EPixelFormat.UnsignedInt => "I",
-                _ => throw new NotSupportedException($"ImageMagick raw-pixel conversion does not support {format} data."),
-            };
-
-        public static MagickFormat GetMagickFormat(EPixelFormat fmt)
-            => fmt switch
-            {
-                EPixelFormat.Rgba => MagickFormat.Rgba,
-                EPixelFormat.Bgra => MagickFormat.Bgra,
-                EPixelFormat.Red => MagickFormat.R,
-                EPixelFormat.Green => MagickFormat.G,
-                EPixelFormat.Blue => MagickFormat.B,
-                EPixelFormat.Alpha => MagickFormat.A,
-                EPixelFormat.Rgb => MagickFormat.Rgb,
-                EPixelFormat.Bgr => MagickFormat.Bgr,
-                _ => MagickFormat.Rgba,
-            };
 
         public static int GetComponentCount(EPixelFormat fmt)
             => fmt switch

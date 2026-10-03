@@ -74,6 +74,6 @@ public partial class OpenGLRenderer
             => RendererSwapBuffers((ImGuiViewport*)viewport, (void*)renderArgument);
 
         int IRendererImGuiViewportCallbacks.EnumerateMonitor(nint monitor, nint hdc, nint rectangle)
-            => EnumMonitor(monitor, hdc, ref *(NativeRect*)rectangle, nint.Zero) ? 1 : 0;
+            => 1;
     }
 }

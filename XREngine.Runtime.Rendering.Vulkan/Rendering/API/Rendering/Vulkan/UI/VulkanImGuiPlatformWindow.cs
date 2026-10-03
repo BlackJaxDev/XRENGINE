@@ -1,13 +1,12 @@
 using ImGuiNET;
-using Silk.NET.Core;
-using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
-using Silk.NET.Windowing;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Rendering.UI;
+using XREngine.Data.Vectors;
+using XREngine.Input.Devices;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -22,11 +21,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         private readonly GCHandle _handle;
         private readonly VulkanImGuiDrawDataCache _drawData = new();
         private readonly VulkanImGuiDrawBufferResources _drawBuffers;
-        private IInputContext? _input;
-        private IMouse? _mouse;
-        private readonly List<IKeyboard> _keyboards = [];
-        private Vector2D<int> _lastPosition;
-        private Vector2D<int> _lastSize;
+        private readonly List<WindowInputEvent> _uiEvents = new(64);
+        private IVector2 _lastPosition;
+        private IVector2 _lastSize;
         private bool _disposeStarted;
         private bool _disposed;
 
@@ -42,67 +39,92 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _handle = GCHandle.Alloc(this);
             _drawBuffers = outputHost.CreatePlatformDrawBufferResources();
 
-            WindowOptions options = WindowOptions.Default;
-            options.API = outputHost.MainWindow.API;
-            options.Size = ToWindowSize(viewport.Size);
-            options.Position = ToWindowPosition(viewport.Pos);
-            options.Title = "XREngine";
-            options.WindowBorder = (viewport.Flags & ImGuiViewportFlags.NoDecoration) != 0
-                ? WindowBorder.Hidden
-                : WindowBorder.Resizable;
-            options.TopMost = (viewport.Flags & ImGuiViewportFlags.TopMost) != 0;
-            options.IsVisible = false;
-            options.ShouldSwapAutomatically = false;
-
-            Window = Silk.NET.Windowing.Window.Create(options);
-            Window.Load += OnLoad;
-            Window.FocusChanged += OnFocusChanged;
-            Window.Closing += OnClosing;
-            Window.Initialize();
-            ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, viewport.Flags);
-            VulkanImGuiMultiViewportController.SetClientScreenPosition(Window, ToWindowPosition(viewport.Pos));
-            _lastPosition = VulkanImGuiMultiViewportController.GetClientScreenPosition(Window);
-            _lastSize = Window.Size;
+            IVector2 size = ToWindowSize(viewport.Size);
+            IVector2 position = ToWindowPosition(viewport.Pos);
+            WindowStartupValues startup = WindowStartupValues.Default with
+            {
+                Title = "XREngine",
+                X = position.X,
+                Y = position.Y,
+                Width = size.X,
+                Height = size.Y,
+                UseNativeTitleBar = (viewport.Flags & ImGuiViewportFlags.NoDecoration) == 0,
+            };
+            RuntimeWindowCreateOptions request = new(
+                startup, RuntimeGraphicsApiKind.Vulkan,
+                EInteractiveWindowResizeStrategy.Default, RuntimeWindowPurpose.EditorViewport,
+                position, size, false, false,
+                (viewport.Flags & ImGuiViewportFlags.TopMost) != 0,
+                false, false, 24, 24, 8, 4, 6, false, false, false);
+            IRuntimeWindowBackend? created = null;
+            try
+            {
+                created = RuntimeWindowBackendRegistry.RequireFactory().Create(in request);
+                created.Initialize(new ViewportWindowEventSink());
+                ImGuiPlatformWindowBehavior.ConfigureNativeWindow(created.OperatingSystemWindowHandle, (uint)viewport.Flags);
+                created.RequestClientScreenPosition(position);
+                Window = created;
+                _lastPosition = created.ClientScreenPosition;
+                WindowSurfaceSnapshot surface = created.Surface;
+                _lastSize = new IVector2(surface.ClientWidth, surface.ClientHeight);
+            }
+            catch
+            {
+                try
+                {
+                    if (created is not null)
+                    {
+                        ImGuiPlatformWindowBehavior.ReleaseNativeWindow(created.OperatingSystemWindowHandle);
+                        created.Dispose();
+                    }
+                }
+                finally
+                {
+                    _handle.Free();
+                }
+                throw;
+            }
             outputHost.RegisterPlatformWindow(this);
         }
 
-        public IWindow Window { get; }
+        public IRuntimeWindowBackend Window { get; }
         public uint ViewportId { get; }
         public ImGuiViewportFlags ViewportFlags { get; private set; }
-        public bool AcceptsInputs => !ImGuiPlatformWindowBehavior.IsInputTransparent(ViewportFlags);
-        public bool Focused { get; private set; }
+        public bool AcceptsInputs => !ImGuiPlatformWindowBehavior.IsInputTransparent((uint)ViewportFlags);
+        public bool Focused => Window.Events.IsFocused;
         public bool IsDisposed => _disposeStarted;
         public bool RendererReady => _rendererReady;
         public nint Handle => GCHandle.ToIntPtr(_handle);
 
-        public void SetPosition(Vector2D<int> position)
+        public void SetPosition(IVector2 position)
         {
-            VulkanImGuiMultiViewportController.SetClientScreenPosition(Window, position);
-            _lastPosition = VulkanImGuiMultiViewportController.GetClientScreenPosition(Window);
+            Window.RequestClientScreenPosition(position);
+            _lastPosition = Window.ClientScreenPosition;
         }
 
-        public void SetSize(Vector2D<int> size)
+        public void SetSize(IVector2 size)
         {
-            Window.Size = size;
-            _lastSize = Window.Size;
+            Window.RequestSize(size);
+            WindowSurfaceSnapshot surface = Window.Surface;
+            _lastSize = new IVector2(surface.ClientWidth, surface.ClientHeight);
             RequestRendererResize();
         }
 
         public void ProcessEvents(ImGuiViewportPtr viewport)
         {
             UpdateViewportFlags(viewport.Flags);
-            Window.DoEvents();
             if (Window.IsClosing)
                 viewport.PlatformRequestClose = true;
 
-            Vector2D<int> position = VulkanImGuiMultiViewportController.GetClientScreenPosition(Window);
+            IVector2 position = Window.ClientScreenPosition;
             if (position != _lastPosition)
             {
                 _lastPosition = position;
                 viewport.PlatformRequestMove = true;
             }
 
-            Vector2D<int> size = Window.Size;
+            WindowSurfaceSnapshot surface = Window.Surface;
+            IVector2 size = new(surface.ClientWidth, surface.ClientHeight);
             if (size != _lastSize)
             {
                 _lastSize = size;
@@ -117,7 +139,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 return;
 
             ViewportFlags = flags;
-            ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, flags);
+            ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window.OperatingSystemWindowHandle, (uint)flags);
         }
 
         public void CaptureDrawData(ImDrawDataPtr drawData)
@@ -161,7 +183,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                     !RecreateSwapchainResources())
                     return;
 
-                if (!_rendererReady || Window.WindowState == WindowState.Minimized)
+                if (!_rendererReady || Window.Surface.IsMinimized)
                     return;
 
                 RenderSnapshot(snapshot);
@@ -178,15 +200,11 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 return false;
 
             _disposeStarted = true;
-            Window.Load -= OnLoad;
-            Window.FocusChanged -= OnFocusChanged;
-            Window.Closing -= OnClosing;
-            DetachInputHandlers();
-            ImGuiPlatformWindowBehavior.ReleaseNativeWindow(Window);
+            ImGuiPlatformWindowBehavior.ReleaseNativeWindow(Window.OperatingSystemWindowHandle);
 
             try
             {
-                Window.IsVisible = false;
+                Window.RequestVisibility(false);
             }
             catch
             {
@@ -220,13 +238,11 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _drawBuffers.RetireAll();
             try
             {
-                (Window as IDisposable)?.Dispose();
-                _input = null;
+                Window.Dispose();
             }
             catch
             {
-                VulkanImGuiMultiViewportController.PreserveAbandonedWindow(Window, _input);
-                _input = null;
+                Window.RetainAbandonedResources();
             }
 
             if (_handle.IsAllocated)
@@ -246,8 +262,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _drawBuffers.RetireAll();
             if (_handle.IsAllocated)
                 _handle.Free();
-            VulkanImGuiMultiViewportController.PreserveAbandonedWindow(Window, _input);
-            _input = null;
+            Window.RetainAbandonedResources();
             _outputHost.UnregisterPlatformWindow(this);
         }
 
@@ -321,7 +336,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             if (!_outputHost.TryCreatePlatformSwapchain(
                     _surface,
-                    Window.FramebufferSize,
+                    new Vector2D<int>(Window.Surface.FramebufferWidth, Window.Surface.FramebufferHeight),
                     ViewportId,
                     oldSwapchain,
                     out VulkanImGuiPlatformSwapchainGeneration generation))
@@ -400,7 +415,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         private bool SwapchainExtentChanged()
         {
-            Vector2D<int> framebufferSize = Window.FramebufferSize;
+            WindowSurfaceSnapshot surface = Window.Surface;
+            Vector2D<int> framebufferSize = new(surface.FramebufferWidth, surface.FramebufferHeight);
             return framebufferSize.X > 0 && framebufferSize.Y > 0 &&
                 ((uint)framebufferSize.X != _extent.Width || (uint)framebufferSize.Y != _extent.Height);
         }
@@ -656,102 +672,36 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _rendererReady = false;
         }
 
-        private void OnLoad()
-        {
-            try
-            {
-                _input = Window.CreateInput();
-                AttachInputHandlers();
-            }
-            catch (Exception ex)
-            {
-                Debug.RenderingWarning(
-                    "[Vulkan.ImGuiMultiViewport] Failed to initialize input for viewport 0x{0:X8}: {1}",
-                    ViewportId,
-                    ex.Message);
-            }
-        }
-
-        private void AttachInputHandlers()
-        {
-            if (_input is null)
-                return;
-
-            if (_input.Mice.Count > 0)
-            {
-                _mouse = _input.Mice[0];
-                _mouse.MouseMove += OnMouseMove;
-                _mouse.MouseDown += OnMouseDown;
-                _mouse.MouseUp += OnMouseUp;
-                _mouse.Scroll += OnMouseScroll;
-            }
-
-            foreach (IKeyboard keyboard in _input.Keyboards)
-            {
-                keyboard.KeyDown += OnKeyDown;
-                keyboard.KeyUp += OnKeyUp;
-                keyboard.KeyChar += OnKeyChar;
-                _keyboards.Add(keyboard);
-            }
-        }
-
-        private void DetachInputHandlers()
-        {
-            if (_mouse is not null)
-            {
-                _mouse.MouseMove -= OnMouseMove;
-                _mouse.MouseDown -= OnMouseDown;
-                _mouse.MouseUp -= OnMouseUp;
-                _mouse.Scroll -= OnMouseScroll;
-                _mouse = null;
-            }
-
-            foreach (IKeyboard keyboard in _keyboards)
-            {
-                keyboard.KeyDown -= OnKeyDown;
-                keyboard.KeyUp -= OnKeyUp;
-                keyboard.KeyChar -= OnKeyChar;
-            }
-            _keyboards.Clear();
-        }
-
-        private void OnFocusChanged(bool focused)
-            => Focused = focused;
-
-        private void OnClosing()
+        public void DrainInput()
         {
             if (_disposeStarted)
                 return;
-
-            _owner.RequestClose(ViewportId);
-            try
-            {
-                Window.IsClosing = false;
-            }
-            catch
-            {
-            }
+            WindowInputSnapshot input = Window.ConsumeUiInput(_uiEvents);
+            _owner.ReplayViewportInput(ViewportId, Window.ClientScreenPosition, input,
+                CollectionsMarshal.AsSpan(_uiEvents));
         }
 
-        private void OnMouseMove(IMouse mouse, Vector2 position)
-            => _owner.PushMousePosition(ViewportId, Window, position);
-        private void OnMouseDown(IMouse mouse, MouseButton button)
-            => _owner.PushMouseButton(ViewportId, button, true);
-        private void OnMouseUp(IMouse mouse, MouseButton button)
-            => _owner.PushMouseButton(ViewportId, button, false);
-        private void OnMouseScroll(IMouse mouse, ScrollWheel wheel)
-            => _owner.PushMouseWheel(ViewportId, wheel);
-        private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
-            => _owner.PushKey(keyboard, key, true);
-        private void OnKeyUp(IKeyboard keyboard, Key key, int scancode)
-            => _owner.PushKey(keyboard, key, false);
-        private void OnKeyChar(IKeyboard keyboard, char value)
-            => _owner.PushChar(value);
+        private sealed class ViewportWindowEventSink : IRuntimeWindowEventSink
+        {
+            public void SurfaceChanged(WindowSurfaceSnapshot _) { }
+            public void FocusChanged(bool _) { }
+            public void FileDropped(string[] _) { }
+            public void KeyDown(EKey _) { }
+            public bool CloseRequested()
+            {
+                return true;
+            }
+            public void InteractiveResizeStarted() { }
+            public void InteractiveResizeUpdated(IVector2 _) { }
+            public void InteractiveResizeEnded() { }
+            public void RepaintRequested() { }
+            public void RenderRequested(double _) { }
+        }
 
-        private static Vector2D<int> ToWindowSize(Vector2 size)
+        private static IVector2 ToWindowSize(Vector2 size)
             => new(Math.Max(1, (int)MathF.Round(size.X)), Math.Max(1, (int)MathF.Round(size.Y)));
 
-        private static Vector2D<int> ToWindowPosition(Vector2 position)
+        private static IVector2 ToWindowPosition(Vector2 position)
             => new((int)MathF.Round(position.X), (int)MathF.Round(position.Y));
 
         private void ThrowIfFailed(Result result, string operation)

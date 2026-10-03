@@ -37,6 +37,8 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         _state = new RuntimeWorldRenderState(this, visualScene ?? throw new ArgumentNullException(nameof(visualScene)));
         if (WorldContext is RuntimeWorld runtimeWorld)
         {
+            TransformRecords = new Commands.TransformPublicationRecords(runtimeWorld.TransformHierarchy);
+            runtimeWorld.TransformHierarchy.SetPublicationSink(TransformRecords);
             runtimeWorld.RuntimeWorldMatrixChangeQueued += OnRuntimeWorldMatrixChangeQueued;
             _renderWorldCapabilityLease = runtimeWorld.RegisterCapability<IRuntimeRenderWorld>(this);
             _renderRegistrationCapabilityLease = runtimeWorld.RegisterCapability<IRuntimeRenderInfo3DRegistrationTarget>(this);
@@ -46,6 +48,7 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         RuntimeRenderWorldRegistry.Attach(this);
     }
 
+    public Commands.TransformPublicationRecords? TransformRecords { get; }
     public IRuntimeWorldContext WorldContext { get; }
     public VisualScene3D VisualScene => _state.VisualScene;
     public Lights3DCollection Lights => _state.Lights;
@@ -217,7 +220,7 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
     private void ApplyRenderMatrixChanges()
     {
-        int applied = 0;
+        int applied = WorldContext is RuntimeWorld world ? world.TransformHierarchy.PublishRenderMatrices() : 0;
         while (_pendingMatrices.TryDequeue(out (TransformBase Transform, Matrix4x4 Matrix) item))
         {
             item.Transform.SetRenderMatrix(item.Matrix, false);
@@ -238,7 +241,10 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
             return;
         _disposed = true;
         if (WorldContext is RuntimeWorld runtimeWorld)
+        {
             runtimeWorld.RuntimeWorldMatrixChangeQueued -= OnRuntimeWorldMatrixChangeQueued;
+            runtimeWorld.TransformHierarchy.SetPublicationSink(null);
+        }
         _renderRegistrationCapabilityLease?.Dispose();
         _renderWorldCapabilityLease?.Dispose();
         RuntimeRenderWorldRegistry.Detach(WorldContext, out _);

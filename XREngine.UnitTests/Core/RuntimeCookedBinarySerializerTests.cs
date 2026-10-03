@@ -96,6 +96,21 @@ public sealed class RuntimeCookedBinarySerializerTests
     }
 
     [Test]
+    public void ClosedArrayRegistration_ConstructsJaggedArraysAndReleasesLease()
+    {
+        Type arrayType = typeof(Guid[][]);
+        CookedBinaryFormatterRegistry.TryCreateArray(arrayType, 2, out _).ShouldBeFalse();
+
+        using (CookedBinaryFormatterRegistry.RegisterArray<Guid[]>())
+        {
+            CookedBinaryFormatterRegistry.TryCreateArray(arrayType, 2, out Array? array).ShouldBeTrue();
+            array.ShouldBeOfType<Guid[][]>().Length.ShouldBe(2);
+        }
+
+        CookedBinaryFormatterRegistry.TryCreateArray(arrayType, 2, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void Deserialize_TextPayloadWithoutEnvelope_ThrowsHelpfulException()
     {
         byte[] payload = WithUtf8Bom(Encoding.UTF8.GetBytes("Format: PlainText\nValue: nope\n"));

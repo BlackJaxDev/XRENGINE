@@ -1,6 +1,3 @@
-using OpenVR.NET.Devices;
-using System.Linq;
-using Valve.VR;
 using XREngine.Input;
 using XREngine.Scene.Transforms;
 
@@ -14,8 +11,7 @@ namespace XREngine.Data.Components.Scene
         public VRTrackerTransform() { }
         public VRTrackerTransform(TransformBase parent) : base(parent) { }
 
-        private VrDevice? _tracker = null;
-        private string? _openVrSessionIdentity;
+        private RuntimeVrDeviceInfo? _tracker;
         private string? _syntheticIdentity;
 
         /// <summary>Explicit session identity for a manually supplied tracker pose.</summary>
@@ -24,17 +20,13 @@ namespace XREngine.Data.Components.Scene
             get => _syntheticIdentity;
             set => SetField(ref _syntheticIdentity, value);
         }
-        public VrDevice? Tracker
+        public RuntimeVrDeviceInfo? Tracker
         {
             get => _tracker;
-            set
-            {
-                if (SetField(ref _tracker, value))
-                    _openVrSessionIdentity = null;
-            }
+            set => SetField(ref _tracker, value);
         }
 
-        public override VrDevice? Device => Tracker;
+        public override RuntimeVrDeviceInfo? Device => Tracker;
 
         /// <summary>Session-scoped physical path used to keep a binding with the same tracker after reconnection.</summary>
         public string? SessionIdentity
@@ -45,27 +37,13 @@ namespace XREngine.Data.Components.Scene
                     return SyntheticPoseEnabled ? SyntheticIdentity : OpenXrTrackerPersistentPath;
                 if (SyntheticPoseEnabled)
                     return SyntheticIdentity;
-                if (_openVrSessionIdentity is not null || Tracker is null)
-                    return _openVrSessionIdentity;
-
-                try
-                {
-                    string serial = Tracker.GetString(ETrackedDeviceProperty.Prop_SerialNumber_String);
-                    if (!string.IsNullOrWhiteSpace(serial))
-                        _openVrSessionIdentity = serial;
-                }
-                catch
-                {
-                    // A tracker without a serial cannot safely inherit a calibrated slot.
-                }
-                return _openVrSessionIdentity;
+                return Tracker?.PersistentIdentity;
             }
         }
 
         private string? _openXrTrackerUserPath;
         /// <summary>
-        /// OpenXR persistent tracker user path.
-        /// When OpenXR is the active runtime, this is used to resolve tracker poses.
+        /// Opaque physical tracker path used to resolve OpenXR poses. Never a body role.
         /// </summary>
         public string? OpenXrTrackerUserPath
         {
@@ -107,16 +85,27 @@ namespace XREngine.Data.Components.Scene
             OpenXrTrackerPersistentPath = tracker.PersistentPath;
             OpenXrTrackerRolePath = tracker.RolePath;
             OpenXrTrackerRoleName = tracker.RoleName;
-            OpenXrTrackerPoseAvailable = tracker.PoseAvailable;
+            OpenXrTrackerPoseAvailable = tracker.PoseCurrentlyUsable;
+            OpenXrTrackerInfo = tracker;
+        }
+
+        private RuntimeVrTrackerInfo _openXrTrackerInfo;
+        public RuntimeVrTrackerInfo OpenXrTrackerInfo
+        {
+            get => _openXrTrackerInfo;
+            private set => SetField(ref _openXrTrackerInfo, value);
         }
 
         public void SetTrackerByDeviceIndex(uint deviceIndex)
         {
-            VrDevice? device = RuntimeVrStateServices.TrackedDevices.FirstOrDefault(x => x.DeviceIndex == deviceIndex);
-            if (device is null || !RuntimeVrStateServices.IsGenericTracker(device.DeviceIndex))
-                return;
+            foreach (RuntimeVrDeviceInfo device in RuntimeVrStateServices.TrackedDevices)
+            {
+                if (device.DeviceIndex != deviceIndex || device.DeviceClass != RuntimeVrDeviceClass.GenericTracker)
+                    continue;
 
-            Tracker = device;
+                Tracker = device;
+                return;
+            }
         }
     }
 }

@@ -1,0 +1,38 @@
+using System.Runtime.InteropServices.JavaScript;
+
+namespace XREngine.Rendering.WebGPU;
+
+/// <summary>Generated synchronous imports into the module-owned JavaScript executor.</summary>
+internal static partial class WebGpuImports
+{
+    [JSImport("getCapabilities", "xrengine.webgpu")]
+    internal static partial string GetCapabilities(int session);
+
+    [JSImport("createMesh", "xrengine.webgpu")]
+    internal static partial int CreateMesh(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> vertices,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> indices);
+
+    [JSImport("createTexture", "xrengine.webgpu")]
+    internal static partial int CreateTexture(int session, int width, int height,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> rgba);
+
+    [JSImport("createMaterial", "xrengine.webgpu")]
+    internal static partial int CreateMaterial(int session, int texture, float r, float g, float b, float a);
+
+    [JSImport("destroyResource", "xrengine.webgpu")]
+    internal static partial void DestroyResource(int session, int handle);
+
+    [JSImport("submitPacket", "xrengine.webgpu")]
+    internal static partial void SubmitPacket(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> packet);
+
+    [JSImport("submitUploads", "xrengine.webgpu")]
+    internal static partial void SubmitUploads(int session, [JSMarshalAs<JSType.MemoryView>] Span<byte> commands,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> payload);
+
+    [JSImport("copyTexture", "xrengine.webgpu")]
+    internal static partial void CopyTexture(int session, int source, int destination,
+        int sourceX, int sourceY, int destinationX, int destinationY, int width, int height);
+
+    [JSImport("disposeRenderer", "xrengine.webgpu")]
+    internal static partial void DisposeRenderer(int session);
+}

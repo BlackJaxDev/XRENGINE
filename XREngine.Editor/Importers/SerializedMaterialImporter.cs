@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -1355,17 +1355,12 @@ public static partial class SerializedMaterialImporter
             context.Progress?.Invoke(
                 0.12f,
                 $"Validating required texture {Path.GetFileName(texturePath)}");
-            var imageInfo = new MagickImageInfo(texturePath);
-            if (imageInfo.Width == 0 || imageInfo.Height == 0)
-            {
-                throw new InvalidDataException(
-                    $"Texture decoder returned invalid dimensions {imageInfo.Width}x{imageInfo.Height}.");
-            }
+            using RuntimeImage imageInfo = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(texturePath));
             context.Progress?.Invoke(
                 0.12f,
                 $"Validated required texture {Path.GetFileName(texturePath)} ({imageInfo.Width}x{imageInfo.Height})");
         }
-        catch (Exception ex) when (ex is MagickException or IOException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or NotSupportedException)
         {
             context.AddDiagnostic(
                 "UNITYTEX0001",

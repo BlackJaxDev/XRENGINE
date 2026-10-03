@@ -7,6 +7,8 @@ namespace XREngine;
 public static class XREngineEnvironmentVariables
 {
     public const string VulkanAdvancedValidationForceUnavailable = "XRE_VK_ADVANCED_FORCE_UNAVAILABLE";
+    public const string VulkanRenderBenchGpuCalibration = "XRE_VK_RENDER_BENCH_GPU_CALIBRATION";
+    public const string VulkanRenderBenchPerformanceQuery = "XRE_VK_RENDER_BENCH_PERFORMANCE_QUERY";
     public const string Path = "PATH";
     public const string ContinuousIntegration = "CI";
     public const string MsBuildSdksPath = "MSBuildSDKsPath";
@@ -38,6 +40,7 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrAllowOpenVrRenderModelFallback = "XRE_OPENXR_ALLOW_OPENVR_RENDER_MODEL_FALLBACK";
 
     public const string WorldMode = "XRE_WORLD_MODE";
+    public const string AotParity = "XRE_AOT_PARITY";
     public const string NetMode = "XRE_NET_MODE";
     public const string WindowTitle = "XRE_WINDOW_TITLE";
     public const string WindowPumpHost = "XRE_WINDOW_PUMP_HOST";

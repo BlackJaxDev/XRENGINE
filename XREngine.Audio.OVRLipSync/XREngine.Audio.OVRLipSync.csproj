@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <PropertyGroup>
+    <MetaOvrLipSyncWinX64Dir Condition="'$(MetaOvrLipSyncWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\Meta\OVRLipSync\win-x64\</MetaOvrLipSyncWinX64Dir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll" Condition="Exists('$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll')">
+      <Link>OVRLipSync.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+</Project>

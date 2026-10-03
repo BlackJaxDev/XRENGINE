@@ -30,6 +30,10 @@ public static class ModelSceneImportMetadata
         Reports.Remove(sceneRoot);
         if (report is not null)
             Reports.Add(sceneRoot, new Holder(report));
+
+        // Runtime consumers such as humanoid calibration read only the unit scale, through a
+        // portable holder that does not depend on the authoring pipeline.
+        sceneRoot.SetImportedModelUnitsPerMeter(report?.ModelUnitsPerMeter);
     }
 
     private sealed record Holder(ModelImportProducerReport Report);

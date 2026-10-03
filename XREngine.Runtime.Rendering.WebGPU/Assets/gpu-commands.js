@@ -1,0 +1,521 @@
+import { GpuPassPlan } from './gpu-pass-plan.js';
+import { GpuCommandUsageScope } from './gpu-command-usage-scope.js';
+import { assertPipelineBindingLimits, computeWorkgroupMetadata } from './gpu-command-limits.js';
+
+const maxDescription = 262144;
+const maxCommands = 4096;
+function integer(value, minimum, maximum, name) {
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new RangeError(`Invalid ${name}.`);
+    return value;
+}
+function oneOf(value, choices, name) {
+    if (!choices.includes(value)) throw new TypeError(`Unsupported ${name}: ${value}.`);
+    return value;
+}
+function object(value, keys) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('A GPU description object is required.');
+    for (const key of Object.keys(value)) if (!keys.includes(key)) throw new TypeError(`Unknown GPU description field: ${key}.`);
+    return value;
+}
+function array(value, maximum, name) {
+    if (!Array.isArray(value) || value.length > maximum) throw new RangeError(`Invalid ${name} list.`);
+    return value;
+}
+function parse(json, keys) {
+    if (typeof json !== 'string' || !json.length || json.length > maxDescription) throw new RangeError('GPU description exceeds its bounded size.');
+    return object(JSON.parse(json), keys);
+}
+function label(value = '') {
+    if (typeof value !== 'string' || value.length > 128) throw new RangeError('GPU debug names are limited to 128 characters.');
+    return value;
+}
+function entryPoint(value) {
+    if (typeof value !== 'string' || !/^[A-Za-z_][A-Za-z_0-9]{0,127}$/.test(value)) throw new TypeError('Invalid shader entry point.');
+    return value;
+}
+function hold(dependencies, value) {
+    if (!dependencies.includes(value)) { dependencies.push(value); value.references = (value.references ?? 0) + 1; }
+    return value;
+}
+function release(dependencies) {
+    for (const value of dependencies) value.references--;
+    dependencies.length = 0;
+}
+
+/** Cold, bounded preparation with allocation-free command traversal during replay. */
+export class GpuCommands {
+    constructor(renderer) {
+        this.renderer = renderer;
+        this.pending = new Set();
+        this.canvasColor = { view: undefined, width: 0, height: 0, format: '', sampleCount: 1, usage: 16 };
+        this.canvasDepth = { view: undefined, width: 0, height: 0, format: 'depth24plus', sampleCount: 1, usage: 16 };
+    }
+
+    get(handle, kind) { return this.renderer._resources.getHandle(handle, kind, this.renderer._owner); }
+
+    publish(kind, value, dependencies = []) {
+        value.state = 'ready';
+        value.references = 0;
+        value.release = () => {
+            release(dependencies);
+            value.state = 'released';
+            value.native = undefined;
+            value.operations = undefined;
+        };
+        try { return this.renderer._resources.add(kind, value, this.renderer._owner); }
+        catch (error) { value.release(); throw error; }
+    }
+
+    async operation(action) {
+        const r = this.renderer;
+        r._requireOwner();
+        if (this.pending.size >= 64) throw new Error('Too many GPU resources are being prepared concurrently.');
+        const device = r.device, owner = r._owner;
+        device.pushErrorScope('out-of-memory');
+        device.pushErrorScope('validation');
+        let pending;
+        try { pending = Promise.resolve(action()); }
+        catch (error) { pending = Promise.reject(error); }
+        const validation = device.popErrorScope(), memory = device.popErrorScope();
+        let timer, cancel;
+        const canceled = new Promise((_, reject) => { cancel = () => reject(new Error('GPU resource preparation was canceled by renderer teardown.')); });
+        this.pending.add(cancel);
+        const all = Promise.allSettled([pending, validation, memory]);
+        try {
+            const result = await Promise.race([all, canceled, new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error('GPU resource preparation exceeded 45000 ms.')), 45000);
+            })]);
+            r._requireOwner();
+            if (r.device !== device || r._owner !== owner) throw new Error('GPU resource preparation belongs to an obsolete device.');
+            for (let i = 0; i < result.length; i++) {
+                if (result[i].status === 'rejected') throw result[i].reason;
+                if (i && result[i].value) throw new Error(result[i].value.message);
+            }
+            return result[0].value;
+        } catch (error) {
+            r.pipelineCache?.clear();
+            throw error;
+        } finally { clearTimeout(timer); this.pending.delete(cancel); }
+    }
+
+    async createShaderModule(wgsl, debugName = '') {
+        this.renderer._requireOwner();
+        if (typeof wgsl !== 'string' || !wgsl.length || wgsl.length > 1048576) throw new RangeError('WGSL modules require 1 to 1048576 characters.');
+        const name = label(debugName);
+        const native = await this.operation(async () => {
+            const module = this.renderer.device.createShaderModule({ code: wgsl, label: name });
+            const info = await module.getCompilationInfo();
+            const errors = info.messages.filter(message => message.type === 'error');
+            if (errors.length) throw new Error(errors.map(message => `${name}:${message.lineNum}:${message.linePos}: ${message.message}`).join('\n'));
+            return module;
+        });
+        return this.publish('shader', { native, label: name, size: wgsl.length });
+    }
+
+    createBindingLayout(json) {
+        const r = this.renderer;
+        r._requireOwner();
+        const d = parse(json, ['label', 'entries']);
+        const entries = array(d.entries, Math.min(32, r.device.limits.maxBindingsPerBindGroup), 'binding layout');
+        const seen = new Set();
+        for (const e of entries) {
+            object(e, ['binding', 'visibility', 'buffer', 'sampler', 'texture']);
+            integer(e.binding, 0, r.device.limits.maxBindingsPerBindGroup - 1, 'binding');
+            if (seen.has(e.binding)) throw new Error('Duplicate binding.');
+            seen.add(e.binding);
+            integer(e.visibility, 1, 7, 'shader visibility');
+            if ([e.buffer, e.sampler, e.texture].filter(Boolean).length !== 1) throw new Error('Exactly one resource binding kind is required.');
+            if (e.buffer) {
+                object(e.buffer, ['type', 'hasDynamicOffset', 'minBindingSize']);
+                oneOf(e.buffer.type, ['uniform', 'storage', 'read-only-storage'], 'buffer binding type');
+                if (e.buffer.type === 'storage' && (e.visibility & 1)) throw new Error('Writable storage buffers cannot be visible to the vertex stage.');
+                if (e.buffer.hasDynamicOffset !== undefined && typeof e.buffer.hasDynamicOffset !== 'boolean') throw new TypeError('Dynamic-offset flag must be boolean.');
+                integer(e.buffer.minBindingSize ?? 0, 0, e.buffer.type === 'uniform' ? r.device.limits.maxUniformBufferBindingSize : r.device.limits.maxStorageBufferBindingSize, 'minimum binding size');
+            } else if (e.sampler) {
+                object(e.sampler, ['type']);
+                oneOf(e.sampler.type, ['filtering', 'non-filtering'], 'sampler binding type');
+            } else {
+                object(e.texture, ['sampleType', 'viewDimension', 'multisampled']);
+                oneOf(e.texture.sampleType, ['float', 'unfilterable-float', 'depth'], 'texture sample type');
+                if (e.texture.viewDimension !== '2d' || (e.texture.multisampled !== undefined && typeof e.texture.multisampled !== 'boolean')) throw new TypeError('Only explicit 2D texture bindings are supported.');
+            }
+        }
+        entries.sort((a, b) => a.binding - b.binding);
+        const descriptor = { label: label(d.label), entries };
+        return this.publish('binding-layout', { native: r.pipelineCache.getBindGroupLayout(descriptor), descriptor, label: descriptor.label });
+    }
+
+    createBindingGroup(json) {
+        const r = this.renderer;
+        r._requireOwner();
+        const d = parse(json, ['label', 'layout', 'entries']);
+        const dependencies = [];
+        try {
+            const layout = hold(dependencies, this.get(d.layout, 'binding-layout'));
+            const input = array(d.entries, 32, 'binding group');
+            if (input.length !== layout.descriptor.entries.length) throw new Error('Binding group must fill its layout exactly.');
+            const entries = [], dynamic = [], resources = [];
+            const seen = new Set();
+            for (const e of input) {
+                object(e, ['binding', 'resource', 'offset', 'size']);
+                if (seen.has(e.binding)) throw new Error('Duplicate binding resource.');
+                seen.add(e.binding);
+                const expected = layout.descriptor.entries.find(item => item.binding === e.binding);
+                if (!expected) throw new Error('Binding group contains an unknown binding.');
+                let resource;
+                if (expected.buffer) {
+                    const b = hold(dependencies, this.get(e.resource, 'buffer'));
+                    const offset = e.offset ?? 0, size = e.size ?? b.size - offset;
+                    resource = r.resources.bufferBinding(e.resource, offset, size, expected.buffer.type !== 'uniform');
+                    if (size < (expected.buffer.minBindingSize ?? 0)) throw new Error('Buffer binding is smaller than the layout minimum.');
+                    resources.push({ kind: 'buffer', value: b, writable: expected.buffer.type === 'storage', role: expected.buffer.type });
+                    if (expected.buffer.hasDynamicOffset) dynamic.push({ binding: e.binding, buffer: b, offset, size, alignment: expected.buffer.type === 'uniform' ? r.device.limits.minUniformBufferOffsetAlignment : r.device.limits.minStorageBufferOffsetAlignment });
+                } else {
+                    if (e.offset !== undefined || e.size !== undefined) throw new Error('Only buffers accept binding ranges.');
+                    const value = hold(dependencies, this.get(e.resource, expected.texture ? 'texture-view' : 'sampler'));
+                    if (expected.texture && !(value.texture.usage & 4)) throw new Error('Texture view lacks texture-binding usage.');
+                    if (expected.texture) {
+                        resources.push({ kind: 'texture', value, writable: false });
+                        if ((expected.texture.multisampled ?? false) !== (value.sampleCount > 1)) throw new Error('Texture sample count does not match the binding layout.');
+                        if ((expected.texture.sampleType === 'depth') !== value.format.startsWith('depth')) throw new Error('Texture format does not match the binding sample type.');
+                        if (value.aspect === 'stencil-only' || value.format === 'depth24plus-stencil8' && value.aspect !== 'depth-only')
+                            throw new Error('Depth/stencil texture sampling requires an explicit depth-only view.');
+                    } else if (expected.sampler.type === 'non-filtering' && value.filtering) throw new Error('Filtering sampler cannot fill a non-filtering binding.');
+                    resource = expected.texture ? value.view : value.sampler;
+                }
+                entries.push({ binding: e.binding, resource });
+            }
+            dynamic.sort((a, b) => a.binding - b.binding);
+            const name = label(d.label);
+            const native = r.device.createBindGroup({ label: name, layout: layout.native, entries });
+            return this.publish('binding-group', { native, layout, dynamic, resources, label: name }, dependencies);
+        } catch (error) { release(dependencies); throw error; }
+    }
+
+    async createRenderPipeline(json) { return this.createPipeline(json, false); }
+    async createComputePipeline(json) { return this.createPipeline(json, true); }
+
+    async createPipeline(json, compute) {
+        const r = this.renderer;
+        r._requireOwner();
+        const d = parse(json, compute ? ['label', 'layouts', 'compute'] : ['label', 'layouts', 'vertex', 'fragment', 'primitive', 'depthStencil', 'multisample']);
+        const dependencies = [];
+        try {
+            const layouts = array(d.layouts, r.device.limits.maxBindGroups, 'pipeline layouts').map(handle => hold(dependencies, this.get(handle, 'binding-layout')));
+            assertPipelineBindingLimits(layouts, r.device.limits);
+            const layout = r.pipelineCache.getPipelineLayout({ bindGroupLayouts: layouts.map(value => value.native) });
+            const descriptor = { label: label(d.label), layout };
+            const stage = (input, vertex) => {
+                object(input, vertex ? ['shader', 'entryPoint', 'buffers'] : ['shader', 'entryPoint', 'targets']);
+                const shader = hold(dependencies, this.get(input.shader, 'shader'));
+                return { module: shader.native, entryPoint: entryPoint(input.entryPoint) };
+            };
+            let workgroup;
+            if (compute) {
+                object(d.compute, ['shader', 'entryPoint', 'workgroupSize', 'workgroupStorageSize']);
+                workgroup = computeWorkgroupMetadata(d.compute, r.device.limits);
+                const shader = hold(dependencies, this.get(d.compute.shader, 'shader'));
+                descriptor.compute = { module: shader.native, entryPoint: entryPoint(d.compute.entryPoint) };
+            } else {
+                descriptor.vertex = stage(d.vertex, true);
+                descriptor.vertex.buffers = array(d.vertex.buffers, r.device.limits.maxVertexBuffers, 'vertex buffers');
+                if (r.device.limits.maxBindGroupsPlusVertexBuffers !== undefined
+                    && layouts.length + descriptor.vertex.buffers.length > r.device.limits.maxBindGroupsPlusVertexBuffers)
+                    throw new RangeError('Pipeline exceeds the selected-device combined binding group and vertex buffer limit.');
+                let attributes = 0;
+                for (const buffer of descriptor.vertex.buffers) {
+                    object(buffer, ['arrayStride', 'stepMode', 'attributes']);
+                    integer(buffer.arrayStride, 4, r.device.limits.maxVertexBufferArrayStride, 'vertex stride');
+                    if (buffer.arrayStride % 4) throw new RangeError('Vertex stride must be four-byte aligned.');
+                    oneOf(buffer.stepMode, ['vertex', 'instance'], 'vertex step mode');
+                    for (const attribute of array(buffer.attributes, r.device.limits.maxVertexAttributes, 'vertex attributes')) {
+                        object(attribute, ['format', 'offset', 'shaderLocation']);
+                        oneOf(attribute.format, ['float32', 'float32x2', 'float32x3', 'float32x4', 'uint32', 'uint32x2', 'uint32x3', 'uint32x4', 'sint32', 'sint32x2', 'sint32x3', 'sint32x4'], 'vertex format');
+                        const width = attribute.format.includes('x') ? Number(attribute.format.at(-1)) * 4 : 4;
+                        integer(attribute.offset, 0, buffer.arrayStride - width, 'vertex attribute offset');
+                        if (attribute.offset % 4) throw new RangeError('Vertex attributes require four-byte alignment.');
+                        integer(attribute.shaderLocation, 0, r.device.limits.maxVertexAttributes - 1, 'vertex attribute location');
+                        attributes++;
+                    }
+                }
+                if (attributes > r.device.limits.maxVertexAttributes) throw new RangeError('Too many vertex attributes.');
+                descriptor.fragment = stage(d.fragment, false);
+                descriptor.fragment.targets = array(d.fragment.targets, r.device.limits.maxColorAttachments, 'color targets');
+                for (const target of descriptor.fragment.targets) {
+                    if (!target) continue;
+                    object(target, ['format', 'blend', 'writeMask']);
+                    oneOf(target.format, ['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb'], 'color target format');
+                    integer(target.writeMask ?? 15, 0, 15, 'color write mask');
+                    if (target.blend) {
+                        object(target.blend, ['color', 'alpha']);
+                        for (const component of [target.blend.color, target.blend.alpha]) {
+                            object(component, ['operation', 'srcFactor', 'dstFactor']);
+                            oneOf(component.operation, ['add', 'subtract', 'reverse-subtract', 'min', 'max'], 'blend operation');
+                            for (const factor of [component.srcFactor, component.dstFactor]) oneOf(factor, ['zero', 'one', 'src', 'one-minus-src', 'src-alpha', 'one-minus-src-alpha', 'dst', 'one-minus-dst', 'dst-alpha', 'one-minus-dst-alpha', 'src-alpha-saturated'], 'blend factor');
+                        }
+                    }
+                }
+                descriptor.primitive = object(d.primitive, ['topology', 'stripIndexFormat', 'frontFace', 'cullMode']);
+                oneOf(d.primitive.topology, ['triangle-list', 'line-list', 'point-list'], 'primitive topology');
+                if (d.primitive.stripIndexFormat !== undefined) throw new Error('Strip primitive pipelines are not supported.');
+                oneOf(d.primitive.frontFace, ['ccw', 'cw'], 'front face');
+                oneOf(d.primitive.cullMode, ['none', 'front', 'back'], 'cull mode');
+                if (d.depthStencil) {
+                    descriptor.depthStencil = object(d.depthStencil, ['format', 'depthWriteEnabled', 'depthCompare', 'depthBias', 'depthBiasSlopeScale', 'depthBiasClamp', 'stencilFront', 'stencilBack', 'stencilReadMask', 'stencilWriteMask']);
+                    oneOf(d.depthStencil.format, ['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'], 'depth format');
+                    if (typeof d.depthStencil.depthWriteEnabled !== 'boolean') throw new TypeError('Depth write flag must be boolean.');
+                    oneOf(d.depthStencil.depthCompare, ['never', 'less', 'equal', 'less-equal', 'greater', 'not-equal', 'greater-equal', 'always'], 'depth compare');
+                    for (const key of ['depthBias', 'depthBiasSlopeScale', 'depthBiasClamp']) if (d.depthStencil[key] !== undefined && !Number.isFinite(d.depthStencil[key])) throw new RangeError('Depth bias must be finite.');
+                    if (d.depthStencil.depthBias !== undefined) integer(d.depthStencil.depthBias, -0x80000000, 0x7fffffff, 'depth bias');
+                    for (const key of ['stencilReadMask', 'stencilWriteMask']) if (d.depthStencil[key] !== undefined) integer(d.depthStencil[key], 0, 0xffffffff, 'stencil mask');
+                    for (const face of [d.depthStencil.stencilFront, d.depthStencil.stencilBack]) {
+                        if (!face) continue;
+                        if (d.depthStencil.format !== 'depth24plus-stencil8') throw new Error('Stencil state requires a stencil-capable format.');
+                        object(face, ['compare', 'failOp', 'depthFailOp', 'passOp']);
+                        oneOf(face.compare, ['never', 'less', 'equal', 'less-equal', 'greater', 'not-equal', 'greater-equal', 'always'], 'stencil compare');
+                        for (const key of ['failOp', 'depthFailOp', 'passOp']) oneOf(face[key], ['keep', 'zero', 'replace', 'invert', 'increment-clamp', 'decrement-clamp', 'increment-wrap', 'decrement-wrap'], 'stencil operation');
+                    }
+                }
+                descriptor.multisample = object(d.multisample, ['count', 'mask', 'alphaToCoverageEnabled']);
+                oneOf(d.multisample.count, [1, 4], 'sample count');
+                integer(d.multisample.mask ?? 0xffffffff, 0, 0xffffffff, 'sample mask');
+                if (d.multisample.alphaToCoverageEnabled !== undefined && typeof d.multisample.alphaToCoverageEnabled !== 'boolean') throw new TypeError('Alpha-to-coverage must be boolean.');
+            }
+            const native = await this.operation(() => compute ? r.pipelineCache.getComputePipelineAsync(descriptor) : r.pipelineCache.getRenderPipelineAsync(descriptor));
+            return this.publish(compute ? 'compute-pipeline' : 'render-pipeline', { native, descriptor, layouts, workgroup, label: descriptor.label }, dependencies);
+        } catch (error) { release(dependencies); throw error; }
+    }
+
+    bindings(input, pipeline, dependencies) {
+        const bindings = array(input, pipeline.layouts.length, 'pass bindings');
+        if (bindings.length !== pipeline.layouts.length) throw new Error('Every pipeline binding group must be supplied.');
+        const result = new Array(bindings.length), seen = new Set();
+        for (const item of bindings) {
+            object(item, ['index', 'group', 'dynamicOffsets']);
+            integer(item.index, 0, pipeline.layouts.length - 1, 'binding group index');
+            if (seen.has(item.index)) throw new Error('Duplicate pass binding group.');
+            seen.add(item.index);
+            const group = hold(dependencies, this.get(item.group, 'binding-group'));
+            if (group.layout.native !== pipeline.layouts[item.index].native) throw new Error('Binding group layout is incompatible with pipeline.');
+            const offsets = array(item.dynamicOffsets ?? [], group.dynamic.length, 'dynamic offsets');
+            if (offsets.length !== group.dynamic.length) throw new Error('Dynamic offset count does not match the layout.');
+            for (let i = 0; i < offsets.length; i++) {
+                const binding = group.dynamic[i];
+                integer(offsets[i], 0, 0xffffffff, 'dynamic offset');
+                if (offsets[i] % binding.alignment || offsets[i] + binding.offset + binding.size > binding.buffer.size) throw new RangeError('Dynamic buffer range is unaligned or out of bounds.');
+            }
+            result[item.index] = { native: group.native, offsets, resources: group.resources };
+        }
+        return result;
+    }
+
+    prepareCommands(json) {
+        const r = this.renderer;
+        r._requireOwner();
+        const d = parse(json, ['label', 'commands']);
+        const input = array(d.commands, maxCommands, 'commands');
+        if (!input.length) throw new Error('Command sequences must not be empty.');
+        const dependencies = [], operations = [];
+        let draws = 0, hasCanvas = false, presentsCanvas = false;
+        try {
+            for (const command of input) {
+                if (command.type === 'render') {
+                    object(command, ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference']);
+                    const pipeline = hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
+                    const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
+                    const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata);
+                    plan.assertPipeline(pipeline.descriptor);
+                    for (const attachment of command.pass.colors) {
+                        if (!attachment) continue;
+                        for (const handle of [attachment.viewHandle, attachment.resolveTargetHandle]) {
+                            if (handle === undefined) continue;
+                            if (handle === 0) {
+                                hasCanvas = true;
+                                if (attachment.resolveTargetHandle === 0 || attachment.storeOp === 'store') presentsCanvas = true;
+                            }
+                            else if (handle > 0) hold(dependencies, this.get(handle, 'texture-view'));
+                        }
+                    }
+                    if (command.pass.depthStencil?.viewHandle > 0) hold(dependencies, this.get(command.pass.depthStencil.viewHandle, 'texture-view'));
+                    if (command.pass.depthStencil?.viewHandle === -1) hasCanvas = true;
+                    const bindings = this.bindings(command.bindings, pipeline, dependencies);
+                    const scope = new GpuCommandUsageScope();
+                    scope.bindings(bindings);
+                    // Conservatively reserve every attachment aspect for the pass, even read-only depth.
+                    for (const attachment of plan.bindings) scope.texture(attachment.source, true, 'render attachment');
+                    const vertexBuffers = array(command.vertexBuffers, pipeline.descriptor.vertex.buffers.length, 'vertex buffers').map((item, slot) => {
+                        object(item, ['buffer', 'offset', 'size']);
+                        const buffer = hold(dependencies, this.get(item.buffer, 'buffer'));
+                        const offset = integer(item.offset ?? 0, 0, buffer.size, 'vertex offset');
+                        const size = integer(item.size ?? buffer.size - offset, 1, buffer.size - offset, 'vertex range');
+                        if (!(buffer.usage & 32) || offset % 4 || size % 4) throw new Error('Vertex buffer usage or alignment is invalid.');
+                        scope.buffer(buffer, false, 'vertex');
+                        return { buffer: buffer.buffer, offset, size, slot };
+                    });
+                    if (vertexBuffers.length !== pipeline.descriptor.vertex.buffers.length) throw new Error('All vertex buffer slots must be supplied.');
+                    let indexBuffer, indexFormat, indexBytes = 0, indexOffset = 0, indexSize = 0;
+                    if (command.indexBuffer !== undefined) {
+                        const index = object(command.indexBuffer, ['buffer', 'format', 'offset', 'size']);
+                        indexBuffer = hold(dependencies, this.get(index.buffer, 'buffer'));
+                        indexFormat = oneOf(index.format, ['uint16', 'uint32'], 'index format');
+                        indexBytes = indexFormat === 'uint16' ? 2 : 4;
+                        indexOffset = integer(index.offset ?? 0, 0, indexBuffer.size, 'index offset');
+                        indexSize = integer(index.size ?? indexBuffer.size - indexOffset, indexBytes, indexBuffer.size - indexOffset, 'index range');
+                        if (!(indexBuffer.usage & 16) || indexOffset % indexBytes || indexSize % indexBytes) throw new Error('Index buffer usage or alignment is invalid.');
+                        scope.buffer(indexBuffer, false, 'index');
+                    }
+                    const drawList = array(command.draws, maxCommands - draws, 'draws');
+                    for (const draw of drawList) {
+                        const type = oneOf(draw.type ?? 'drawIndexed', ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect'], 'draw type');
+                        const indexed = type === 'drawIndexed' || type === 'drawIndexedIndirect';
+                        if (indexed && !indexBuffer) throw new Error('Indexed draws require an index buffer.');
+                        if (type === 'drawIndirect' || type === 'drawIndexedIndirect') {
+                            object(draw, ['type', 'buffer', 'offset', 'firstInstancePolicy']);
+                            const buffer = hold(dependencies, this.get(draw.buffer, 'buffer'));
+                            const offset = integer(draw.offset ?? 0, 0, buffer.size - (indexed ? 20 : 16), 'indirect argument offset');
+                            if (!(buffer.usage & 256) || offset % 4) throw new Error('Indirect arguments require INDIRECT usage and four-byte alignment.');
+                            oneOf(draw.firstInstancePolicy, ['zero', 'feature'], 'indirect first-instance policy');
+                            if (draw.firstInstancePolicy === 'feature' && !r.device.features.has('indirect-first-instance'))
+                                throw new Error('Nonzero indirect firstInstance requires the enabled indirect-first-instance feature.');
+                            // GPU producers must initialize all fields, bound counts/index/instance
+                            // addressing, and honor the declared firstInstance policy on every replay.
+                            scope.buffer(buffer, false, 'indirect');
+                            draw.native = buffer.buffer;
+                            draw.offset = offset;
+                            continue;
+                        }
+                        object(draw, indexed ? ['type', 'indexCount', 'instanceCount', 'firstIndex', 'baseVertex', 'firstInstance']
+                            : ['type', 'vertexCount', 'instanceCount', 'firstVertex', 'firstInstance']);
+                        draw.type = type;
+                        draw.instanceCount = integer(draw.instanceCount ?? 1, 0, 0xffffffff, 'instance count');
+                        draw.firstInstance = integer(draw.firstInstance ?? 0, 0, 0xffffffff, 'first instance');
+                        if (indexed) {
+                            integer(draw.indexCount, 0, 0xffffffff, 'index count');
+                            draw.firstIndex = integer(draw.firstIndex ?? 0, 0, 0xffffffff, 'first index');
+                            draw.baseVertex = integer(draw.baseVertex ?? 0, -0x80000000, 0x7fffffff, 'base vertex');
+                            if (draw.firstIndex + draw.indexCount > indexSize / indexBytes) throw new RangeError('Draw exceeds the bound index range.');
+                        } else {
+                            integer(draw.vertexCount, 0, 0xffffffff, 'vertex count');
+                            draw.firstVertex = integer(draw.firstVertex ?? 0, 0, 0xffffffff, 'first vertex');
+                        }
+                        for (let slot = 0; slot < vertexBuffers.length; slot++) {
+                            const layout = pipeline.descriptor.vertex.buffers[slot];
+                            if (layout.stepMode === 'instance' && (draw.firstInstance + draw.instanceCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound instance range.');
+                            if (!indexed && layout.stepMode === 'vertex' && (draw.firstVertex + draw.vertexCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound vertex range.');
+                        }
+                    }
+                    draws += drawList.length;
+                    const stencilReference = integer(command.stencilReference ?? 0, 0, 0xffffffff, 'stencil reference');
+                    operations.push({ type: 'render', pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, stencilReference });
+                } else if (command.type === 'compute') {
+                    object(command, ['type', 'pipeline', 'bindings', 'workgroups']);
+                    const pipeline = hold(dependencies, this.get(command.pipeline, 'compute-pipeline'));
+                    const workgroups = array(command.workgroups, 3, 'workgroup dimensions');
+                    if (workgroups.length !== 3) throw new Error('Compute workgroups require three dimensions.');
+                    for (const count of workgroups) integer(count, 0, r.device.limits.maxComputeWorkgroupsPerDimension, 'workgroup count');
+                    const bindings = this.bindings(command.bindings, pipeline, dependencies);
+                    const scope = new GpuCommandUsageScope();
+                    scope.bindings(bindings);
+                    operations.push({ type: 'compute', pipeline: pipeline.native, bindings, workgroups });
+                } else if (command.type === 'copyBuffer') {
+                    object(command, ['type', 'source', 'destination', 'sourceOffset', 'destinationOffset', 'size']);
+                    const source = hold(dependencies, this.get(command.source, 'buffer'));
+                    const destination = hold(dependencies, this.get(command.destination, 'buffer'));
+                    const sourceOffset = integer(command.sourceOffset ?? 0, 0, source.size, 'source offset');
+                    const destinationOffset = integer(command.destinationOffset ?? 0, 0, destination.size, 'destination offset');
+                    const size = integer(command.size, 4, Math.min(source.size - sourceOffset, destination.size - destinationOffset), 'copy size');
+                    if (source === destination || !(source.usage & 4) || !(destination.usage & 8) || (sourceOffset | destinationOffset | size) % 4) throw new Error('Buffer copy resources, usages or alignment are invalid.');
+                    operations.push({ type: 'copyBuffer', source: source.buffer, destination: destination.buffer, sourceOffset, destinationOffset, size });
+                } else if (command.type === 'copyTexture') {
+                    object(command, ['type', 'source', 'destination', 'sourceMip', 'destinationMip', 'sourceX', 'sourceY', 'destinationX', 'destinationY', 'width', 'height']);
+                    const source = hold(dependencies, this.get(command.source, 'texture'));
+                    const destination = hold(dependencies, this.get(command.destination, 'texture'));
+                    if (source === destination || source.sampleCount !== 1 || destination.sampleCount !== 1 || source.format !== destination.format
+                        || !['rgba8unorm', 'rgba8unorm-srgb'].includes(source.format) || !(source.usage & 1) || !(destination.usage & 2))
+                        throw new Error('Texture copy requires distinct, equal-format single-sampled RGBA8 copy resources.');
+                    const sourceMip = integer(command.sourceMip ?? 0, 0, source.mipLevelCount - 1, 'source mip');
+                    const destinationMip = integer(command.destinationMip ?? 0, 0, destination.mipLevelCount - 1, 'destination mip');
+                    const sourceWidth = Math.max(1, Math.floor(source.width / 2 ** sourceMip)), sourceHeight = Math.max(1, Math.floor(source.height / 2 ** sourceMip));
+                    const destinationWidth = Math.max(1, Math.floor(destination.width / 2 ** destinationMip)), destinationHeight = Math.max(1, Math.floor(destination.height / 2 ** destinationMip));
+                    const sourceX = integer(command.sourceX ?? 0, 0, sourceWidth - 1, 'source x'), sourceY = integer(command.sourceY ?? 0, 0, sourceHeight - 1, 'source y');
+                    const destinationX = integer(command.destinationX ?? 0, 0, destinationWidth - 1, 'destination x'), destinationY = integer(command.destinationY ?? 0, 0, destinationHeight - 1, 'destination y');
+                    const width = integer(command.width, 1, Math.min(sourceWidth - sourceX, destinationWidth - destinationX), 'copy width');
+                    const height = integer(command.height, 1, Math.min(sourceHeight - sourceY, destinationHeight - destinationY), 'copy height');
+                    operations.push({ type: 'copyTexture', source: { texture: source.texture, mipLevel: sourceMip, origin: [sourceX, sourceY, 0] },
+                        destination: { texture: destination.texture, mipLevel: destinationMip, origin: [destinationX, destinationY, 0] }, size: [width, height, 1] });
+                } else throw new Error('Unsupported ordered command type.');
+            }
+            return this.publish('commands', { label: label(d.label), operations, hasCanvas, presentsCanvas, generation: r._generation, width: r._width, height: r._height, draws }, dependencies);
+        } catch (error) { release(dependencies); throw error; }
+    }
+
+    submitPreparedCommands(handle) {
+        const r = this.renderer;
+        r._requireOwner();
+        const commands = this.get(handle, 'commands');
+        const operations = commands.operations;
+        if (commands.hasCanvas && (commands.generation !== r._generation || commands.width !== r._width || commands.height !== r._height || !r._configured)) throw new Error('Canvas command sequence must be prepared again after surface replacement.');
+        r._executing = true;
+        try {
+            if (commands.hasCanvas) {
+                this.canvasColor.view = r.context.getCurrentTexture().createView();
+                this.canvasColor.width = this.canvasDepth.width = r._width;
+                this.canvasColor.height = this.canvasDepth.height = r._height;
+                this.canvasColor.format = r.format;
+                this.canvasDepth.view = r.depthView;
+            }
+            const encoder = r.device.createCommandEncoder();
+            for (let i = 0; i < operations.length; i++) {
+                const operation = operations[i];
+                if (operation.type === 'copyBuffer') {
+                    encoder.copyBufferToBuffer(operation.source, operation.sourceOffset, operation.destination, operation.destinationOffset, operation.size);
+                    continue;
+                }
+                if (operation.type === 'copyTexture') {
+                    encoder.copyTextureToTexture(operation.source, operation.destination, operation.size);
+                    continue;
+                }
+                const pass = operation.type === 'render' ? encoder.beginRenderPass(operation.plan.prepare(this.canvasColor, this.canvasDepth)) : encoder.beginComputePass();
+                pass.setPipeline(operation.pipeline);
+                for (let binding = 0; binding < operation.bindings.length; binding++) {
+                    const group = operation.bindings[binding];
+                    pass.setBindGroup(binding, group.native, group.offsets);
+                }
+                if (operation.type === 'compute') pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
+                else {
+                    pass.setStencilReference(operation.stencilReference);
+                    for (let slot = 0; slot < operation.vertexBuffers.length; slot++) {
+                        const buffer = operation.vertexBuffers[slot];
+                        pass.setVertexBuffer(slot, buffer.buffer, buffer.offset, buffer.size);
+                    }
+                    if (operation.indexBuffer) pass.setIndexBuffer(operation.indexBuffer, operation.indexFormat, operation.indexOffset, operation.indexSize);
+                    for (let draw = 0; draw < operation.draws.length; draw++) {
+                        const value = operation.draws[draw];
+                        if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
+                        else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
+                        else if (value.type === 'draw') pass.draw(value.vertexCount, value.instanceCount, value.firstVertex, value.firstInstance);
+                        else pass.drawIndexed(value.indexCount, value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
+                    }
+                }
+                pass.end();
+            }
+            r._submission[0] = encoder.finish();
+            r.device.queue.submit(r._submission);
+            r._stats.draws += commands.draws;
+            r._stats.frameSubmitCalls++;
+            return commands.presentsCanvas;
+        } catch (error) { r._fail(error); throw error; }
+        finally {
+            for (let i = 0; i < operations.length; i++) operations[i].plan?.release();
+            this.canvasColor.view = this.canvasDepth.view = undefined;
+            r._submission[0] = null;
+            r._executing = false;
+        }
+    }
+
+    dispose() {
+        for (const cancel of this.pending) cancel();
+        this.pending.clear();
+        this.canvasColor.view = this.canvasDepth.view = undefined;
+    }
+}

@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using XREngine.Components;
@@ -7,9 +8,9 @@ namespace XREngine;
 
 /// <summary>
 /// Owns backend-neutral root, play-state, and tick lifecycle state for one
-/// <see cref="RuntimeWorld"/>; rendering state is owned separately.
+/// world context; rendering state is owned separately.
 /// </summary>
-public sealed class RuntimeWorldLifecycle
+public sealed partial class RuntimeWorldLifecycle
 {
     private readonly Dictionary<ETickGroup, TickGroupQueues> _ticks = [];
 
@@ -23,7 +24,6 @@ public sealed class RuntimeWorldLifecycle
             _ticks[group] = new TickGroupQueues(group);
     }
 
-    public XRWorld? TargetWorld { get; set; }
     private int _playState;
     public RuntimeWorldPlayState PlayState
     {
@@ -61,6 +61,8 @@ public sealed class RuntimeWorldLifecycle
     /// </summary>
     public void TickGroup(ETickGroup group)
     {
+        using var parityScope = IsPlaySessionActive
+            ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
         if (!_ticks.TryGetValue(group, out TickGroupQueues? queues))
             return;
 

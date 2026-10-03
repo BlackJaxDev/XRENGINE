@@ -1,16 +1,13 @@
 using XREngine.Extensions;
 using Newtonsoft.Json;
-using Silk.NET.Core.Contexts;
-using Silk.NET.Input;
 using Silk.NET.Maths;
-using Silk.NET.Windowing;
-using System.ComponentModel;
+using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks;
 using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering.Vulkan;
@@ -20,7 +17,7 @@ using XREngine.Scene;
 namespace XREngine.Rendering
 {
     /// <summary>
-    /// Links a Silk.NET generated window to an API-specific engine renderer.
+    /// Connects an owned desktop window backend to an API-specific engine renderer.
     /// </summary>
     [RuntimeOnly]
     public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
@@ -51,22 +48,33 @@ namespace XREngine.Rendering
             public NodeRepresentation?[]? RootNodes { get; set; } = [];
         }
 
-        private sealed class WindowInitializationProbe(string title, ContextAPI api, bool useNativeTitleBar) : IDisposable
+        private sealed class DesktopWindowEventSink(XRWindow owner) : IRuntimeWindowEventSink
         {
-            public string Title { get; } = title;
-            public ContextAPI API { get; } = api;
-            public bool UseNativeTitleBar { get; } = useNativeTitleBar;
-            public long StartTimestamp { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
-            public CancellationTokenSource CancellationSource { get; } = new();
-            public int Stage;
+            public void SurfaceChanged(WindowSurfaceSnapshot snapshot)
+                => owner.FramebufferResizeCallback(snapshot.FramebufferExtent);
 
-            public TimeSpan Elapsed
-                => System.Diagnostics.Stopwatch.GetElapsedTime(StartTimestamp);
-
-            public void Dispose()
+            public void FocusChanged(bool focused) => owner.OnFocusChanged(focused);
+            public void FileDropped(string[] paths) => owner.OnFileDropped(paths);
+            public void KeyDown(EKey key) => AnyWindowKeyDown?.Invoke(owner, key);
+            public bool CloseRequested() => owner.HandleDesktopCloseRequested();
+            public void InteractiveResizeStarted() => owner.BeginInteractiveResize("native-window");
+            public void InteractiveResizeUpdated(IVector2 extent)
+                => owner.QueueInteractivePresentationResize(new Vector2D<int>(extent.X, extent.Y), "native-window");
+            public void InteractiveResizeEnded()
+                => owner.EndInteractiveResize(owner.GetCurrentFramebufferSize(), "native-window");
+            public void RepaintRequested()
             {
-                CancellationSource.Cancel();
-                CancellationSource.Dispose();
+                if (owner._renderer is null)
+                    return;
+                if (owner.NativeWindowThreadId == owner.RenderOwnerThreadId)
+                    owner.RenderInteractiveResizeFrame("desktop-native-resize", allowCurrentThread: true);
+                else
+                    owner.RequestRenderStateRecheck();
+            }
+            public void RenderRequested(double deltaSeconds)
+            {
+                if (owner._renderer is not null)
+                    owner.RenderCallback(deltaSeconds);
             }
         }
 
@@ -99,7 +107,6 @@ namespace XREngine.Rendering
 
         // Editor scene-panel presentation (dockable viewport panel) adapter.
         private readonly IRuntimeWindowScenePanelAdapter _scenePanelAdapter;
-        private WindowInitializationProbe? _windowInitializationProbe;
 
         #endregion
 
@@ -129,17 +136,14 @@ namespace XREngine.Rendering
         private int _normalRenderActive;
         private int _externalNativeEventPumpActive;
         private int _externalPumpDisposeStarted;
-        private IInteractiveResizeStrategy _interactiveResizeStrategy;
         private readonly int _nativeWindowThreadId;
         private int _renderOwnerThreadId;
         private long _windowSurfaceSnapshotSequence;
         private long _windowEventSnapshotSequence;
         private readonly object _windowEventSnapshotSync = new();
         private WindowEventSnapshot _latestWindowEventSnapshot;
-        private readonly WindowInputSnapshotAccumulator _inputSnapshotAccumulator = new();
+        private IRuntimeWindowBackend? _desktopBackend;
         private readonly WindowResizeController _resizeController = new();
-        private readonly HashSet<IKeyboard> _inputSnapshotKeyboards = [];
-        private readonly HashSet<IMouse> _inputSnapshotMice = [];
         private long _pendingFullInternalResizeGeneration;
         private RuntimeWindowBackendKind _windowBackendKind = RuntimeWindowBackendKind.Unknown;
         private RuntimeWindowBackendOwnershipInfo _windowBackendOwnership =
@@ -160,30 +164,9 @@ namespace XREngine.Rendering
         #region Properties
 
         /// <summary>
-        /// Thread-affined Silk.NET window instance. Prefer snapshots, mailbox
-        /// helpers, or explicit XRWindow wrapper APIs outside backend-owned code.
-        /// </summary>
-        public IWindow ThreadAffinedNativeWindow { get; }
-
-        /// <summary>
-        /// Compatibility escape hatch for backend-owned code while ownership
-        /// migration continues. Prefer <see cref="ThreadAffinedNativeWindow"/>
-        /// when raw access is unavoidable and named at the call site.
-        /// </summary>
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        public IWindow Window => ThreadAffinedNativeWindow;
-
-        /// <summary>
         /// Interface to render a scene for this window using the requested graphics API.
         /// </summary>
         public AbstractRenderer Renderer => _renderer;
-
-        /// <summary>
-        /// Thread-affined Silk.NET input context. Gameplay and editor code should
-        /// use the update-side snapshot consumer instead of accessing this context.
-        /// </summary>
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        public IInputContext? Input { get; private set; }
 
         public IRuntimeRenderWorld? TargetWorldInstance
         {
@@ -210,9 +193,9 @@ namespace XREngine.Rendering
 
         public InteractiveResizeDiagnostics InteractiveResizeDiagnostics { get; } = new();
 
-        public string ActualWindowingBackendName => ResolveActualWindowingBackendName();
+        public string ActualWindowingBackendName => _desktopBackend?.Kind.ToString() ?? "Unknown";
 
-        public string WindowTitle => Window?.Title ?? string.Empty;
+        public string WindowTitle => _desktopBackend?.Title ?? string.Empty;
 
         public int NativeWindowThreadId => _nativeWindowThreadId;
 
@@ -237,22 +220,42 @@ namespace XREngine.Rendering
         {
             get
             {
-                return _inputSnapshotAccumulator.Latest;
+                return _desktopBackend?.Input ?? default;
             }
         }
+
+        public IRuntimeWindowGlContext? DesktopGlContext => _desktopBackend?.GlContext;
+        public IRuntimeWindowVulkanSurface? DesktopVulkanSurface => _desktopBackend?.VulkanSurface;
+        public IRuntimeWindowBackend? DesktopWindowBackend => _desktopBackend;
+        public bool UsesDesktopWindowBackend => _desktopBackend is not null;
+        public WindowInputSnapshot ConsumeUiInputSnapshot()
+            => _desktopBackend?.ConsumeUiInput() ?? default;
+
+        public WindowInputSnapshot ConsumeUiInputSnapshot(List<WindowInputEvent> orderedDestination)
+            => _desktopBackend?.ConsumeUiInput(orderedDestination) ?? default;
+        public nint PlatformWindowHandle => _desktopBackend?.PlatformWindowHandle ?? 0;
+        public nint OperatingSystemWindowHandle => _desktopBackend?.OperatingSystemWindowHandle ?? 0;
 
         /// <summary>
         /// Returns and acknowledges all transient input published for the update-side consumer.
         /// </summary>
         internal WindowInputSnapshot ConsumeLatestWindowInputSnapshot()
-            => _inputSnapshotAccumulator.ConsumeLatest();
+            => _desktopBackend?.ConsumeInput() ?? default;
 
         /// <summary>
         /// Returns the current native-window state for an engine keyboard key.
         /// Unlike pawn input, this state remains available when no gameplay pawn is possessed.
         /// </summary>
         public bool IsKeyPressed(EKey key)
-            => _inputSnapshotAccumulator.IsKeyPressed(key);
+        {
+            ReadOnlySpan<EKey> pressed = LatestWindowInputSnapshot.PressedKeySpan;
+            for (int i = 0; i < pressed.Length; i++)
+            {
+                if (pressed[i] == key)
+                    return true;
+            }
+            return false;
+        }
 
         public WindowResizeExtents ResizeExtents => _resizeController.Extents;
 
@@ -357,7 +360,7 @@ namespace XREngine.Rendering
         internal bool IsStartupAttachmentComplete
             => !_isDisposed &&
                !_isDisposing &&
-               Window is not null &&
+               _desktopBackend is not null &&
                _renderer is not null &&
                EffectiveFramebufferSize.X > 0 &&
                EffectiveFramebufferSize.Y > 0 &&
@@ -472,7 +475,7 @@ namespace XREngine.Rendering
             if (_isDisposed || _isDisposing)
                 return;
             WarnIfNotNativeWindowThread("Window.Size");
-            Window.Size = new Vector2D<int>(width, height);
+            _desktopBackend?.RequestSize(new IVector2(width, height));
         }
 
         public void RequestClose()
@@ -535,13 +538,7 @@ namespace XREngine.Rendering
 
         private void SetMouseCaptureOnWindowThread(bool captured)
         {
-            IInputContext? input = Input;
-            if (input is null || input.Mice.Count == 0)
-                return;
-
-            input.Mice[0].Cursor.CursorMode = captured
-                ? CursorMode.Disabled
-                : CursorMode.Normal;
+            _desktopBackend?.RequestCursorCapture(captured);
         }
 
         public void AttachExternalNativeEventPump(int pumpThreadId, string reason)
@@ -575,7 +572,9 @@ namespace XREngine.Rendering
             WarnIfNotNativeWindowThread("Window.DoEvents.WindowPumpHost");
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.WindowPumpHost.DoEvents"))
-                Window.DoEvents();
+            {
+                _desktopBackend?.PumpEvents();
+            }
 
             if (_isDisposed || _isDisposing)
                 return;
@@ -586,7 +585,6 @@ namespace XREngine.Rendering
             UpdateEffectiveWindowSize(windowSize);
             PublishWindowSurfaceSnapshot(framebufferSize, windowSize, IsInteractiveResizeInProgress);
             PublishWindowEventSnapshot(closeRequested: false, closeApproved: false);
-            PublishWindowInputSnapshot();
         }
 
         private void ApplyVSyncModeOnRenderThread(EVSyncMode globalVSyncMode)
@@ -597,32 +595,19 @@ namespace XREngine.Rendering
             WarnIfNotRenderOwnerThread("ApplyVSyncMode");
 
             bool enableVSync = WindowVSyncRequested || globalVSyncMode != EVSyncMode.Off;
-            bool isOpenGlWindow = Window.API.API == ContextAPI.OpenGL;
+            bool isOpenGlWindow = _desktopBackend?.GraphicsApi == RuntimeGraphicsApiKind.OpenGL;
 
             try
             {
+                IRuntimeWindowBackend backend = _desktopBackend
+                    ?? throw new InvalidOperationException("No desktop window backend is attached.");
                 if (isOpenGlWindow)
-                    Window.MakeCurrent();
-
-                Window.VSync = enableVSync;
-
-                if (!isOpenGlWindow || !enableVSync || globalVSyncMode != EVSyncMode.Adaptive)
-                    return;
-
-                try
+                    backend.GlContext?.MakeCurrent();
+                backend.SetVSync(enableVSync);
+                if (isOpenGlWindow && enableVSync && globalVSyncMode == EVSyncMode.Adaptive)
                 {
-                    Window.GLContext?.SwapInterval(-1);
-                }
-                catch (Exception adaptiveEx)
-                {
-                    Debug.RenderingWarningEvery(
-                        $"XRWindow.AdaptiveVSync[{GetHashCode()}]",
-                        TimeSpan.FromSeconds(5),
-                        "[XRWindow] Adaptive VSync is unavailable for window {0}; falling back to standard VSync. {1}",
-                        GetHashCode(),
-                        adaptiveEx.Message);
-
-                    Window.GLContext?.SwapInterval(1);
+                    try { backend.GlContext?.SetSwapInterval(-1); }
+                    catch { backend.GlContext?.SetSwapInterval(1); }
                 }
             }
             catch (Exception ex)
@@ -684,7 +669,7 @@ namespace XREngine.Rendering
             MarkCloseRequestedOrApproved();
             try
             {
-                Window.Close();
+                _desktopBackend?.RequestClose();
             }
             catch (Exception ex)
             {
@@ -752,91 +737,41 @@ namespace XREngine.Rendering
 
         #region Constructor
 
-        public XRWindow(
-            WindowOptions options,
-            bool useNativeTitleBar,
-            bool windowVSyncRequested = false,
-            EInteractiveWindowResizeStrategy interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Default,
-            bool isSecondaryGpuContext = false)
+        public XRWindow(RuntimeWindowCreateOptions options)
         {
-            IsSecondaryGpuContext = isSecondaryGpuContext;
+            IsSecondaryGpuContext = options.Purpose == RuntimeWindowPurpose.SecondaryGpuContext;
             _viewports.CollectionChanged += ViewportsChanged;
             _scenePanelAdapter = RuntimeRenderingHostServices.Factories.CreateWindowScenePanelAdapter();
-            InteractiveResizeStrategy = interactiveResizeStrategy;
-            _interactiveResizeStrategy = InteractiveResizeStrategyFactory.Create(interactiveResizeStrategy);
-            _nativeWindowThreadId = Environment.CurrentManagedThreadId;
+            InteractiveResizeStrategy = options.ResizeStrategy;
+            UseNativeTitleBar = options.Startup.UseNativeTitleBar;
+            WindowVSyncRequested = options.Startup.VSync;
+            PreferHDROutput = options.PreferHdrOutput;
+
+            _desktopBackend = RuntimeWindowBackendRegistry.RequireFactory().Create(in options);
+            _nativeWindowThreadId = _desktopBackend.OwnerThreadId;
             Volatile.Write(ref _renderOwnerThreadId, _nativeWindowThreadId);
-
-            Debug.Rendering(
-                "[XRWindow] Constructing window title='{0}' size={1}x{2} pos=({3},{4}) api={5} interactiveResize={6} windowThread={7}",
-                options.Title,
-                options.Size.X,
-                options.Size.Y,
-                options.Position.X,
-                options.Position.Y,
-                options.API.API,
-                interactiveResizeStrategy,
-                _nativeWindowThreadId);
-
-            ApplyWindowingBackendPreference(interactiveResizeStrategy);
-            ThreadAffinedNativeWindow = Silk.NET.Windowing.Window.Create(options);
-            UseNativeTitleBar = useNativeTitleBar;
-            WindowVSyncRequested = windowVSyncRequested;
-            _windowInitializationProbe = new WindowInitializationProbe(options.Title ?? string.Empty, options.API.API, useNativeTitleBar);
-            StartWindowInitializationWatchdog(_windowInitializationProbe);
-
-            LinkWindow();
-            Debug.Rendering("[XRWindow] Calling Window.Initialize for hash={0}.", GetHashCode());
             try
             {
-                Window.Initialize();
+                LinkWindow();
+                _desktopBackend.Initialize(new DesktopWindowEventSink(this));
+                UpdateEffectiveFramebufferSize(GetCurrentFramebufferSize());
+                UpdateEffectiveWindowSize(GetCurrentWindowSize());
+                RefreshWindowBackendOwnership("post-initialize");
+                PublishWindowSurfaceSnapshot(
+                    EffectiveFramebufferSize,
+                    EffectiveWindowSize,
+                    IsInteractiveResizeInProgress);
+                PublishWindowEventSnapshot(closeRequested: false, closeApproved: false);
+                RecordAllRenderExtents(EffectiveFramebufferSize);
+                _renderer = CreateRendererForCurrentWindow("initial desktop window construction");
             }
-            finally
+            catch
             {
-                _windowInitializationProbe?.Dispose();
-                _windowInitializationProbe = null;
+                UnlinkWindow();
+                _desktopBackend.Dispose();
+                _scenePanelAdapter.Dispose();
+                throw;
             }
-
-            UpdateEffectiveFramebufferSize(GetCurrentFramebufferSize());
-            UpdateEffectiveWindowSize(GetCurrentWindowSize());
-            RefreshWindowBackendOwnership("post-initialize");
-            PublishWindowSurfaceSnapshot(
-                EffectiveFramebufferSize,
-                EffectiveWindowSize,
-                IsInteractiveResizeInProgress);
-            PublishWindowEventSnapshot(closeRequested: false, closeApproved: false);
-            PublishWindowInputSnapshot();
-            RecordAllRenderExtents(EffectiveFramebufferSize);
-            _interactiveResizeStrategy.Install(this);
-            if (Input is not null)
-                _interactiveResizeStrategy.OnInputCreated(Input);
-
-            // GLFW does not reliably honor the position hint supplied via WindowOptions
-            // on Windows, so we force the requested position after initialization.
-            if (Window.Position != options.Position)
-            {
-                Debug.Rendering(
-                    "[XRWindow] Forcing position from ({0},{1}) to requested ({2},{3}) for hash={4}.",
-                    Window.Position.X,
-                    Window.Position.Y,
-                    options.Position.X,
-                    options.Position.Y,
-                    GetHashCode());
-                Window.Position = options.Position;
-            }
-
-            Debug.Rendering(
-                "[XRWindow] Window.Initialize completed for hash={0}. Framebuffer={1}x{2} Backend={3} InteractiveResize={4} WindowThread={5} RenderOwnerThread={6} Ownership={7}",
-                GetHashCode(),
-                EffectiveFramebufferSize.X,
-                EffectiveFramebufferSize.Y,
-                ActualWindowingBackendName,
-                InteractiveResizeStrategy,
-                NativeWindowThreadId,
-                RenderOwnerThreadId,
-                WindowBackendOwnership.Capabilities);
-
-            _renderer = CreateRendererForCurrentWindow("initial window construction");
         }
 
         /// <summary>
@@ -849,60 +784,31 @@ namespace XREngine.Rendering
 
         #region Interactive Resize
 
-        private static void ApplyWindowingBackendPreference(EInteractiveWindowResizeStrategy strategy)
-        {
-            if (strategy == EInteractiveWindowResizeStrategy.SdlBackend)
-            {
-                Debug.Rendering("[InteractiveResize] Prioritizing Silk.NET SDL windowing backend.");
-                Silk.NET.Windowing.Sdl.SdlWindowing.Use();
-                Silk.NET.Input.Sdl.SdlInput.Use();
-                return;
-            }
-
-            Debug.Rendering("[InteractiveResize] Prioritizing Silk.NET GLFW windowing backend.");
-            Silk.NET.Windowing.Glfw.GlfwWindowing.Use();
-            Silk.NET.Input.Glfw.GlfwInput.RegisterPlatform();
-        }
-
         public void SetInteractiveResizeStrategy(EInteractiveWindowResizeStrategy strategy)
         {
             if (_isDisposed || _isDisposing || strategy == InteractiveResizeStrategy)
                 return;
 
-            if (strategy == EInteractiveWindowResizeStrategy.SdlBackend ||
-                InteractiveResizeStrategy == EInteractiveWindowResizeStrategy.SdlBackend)
+            if (_desktopBackend is { } backend)
             {
-                Debug.RenderingWarning(
-                    "[InteractiveResize] Runtime strategy change window={0} from={1} to={2}; actual backend remains {3} until the window is recreated.",
-                    GetHashCode(),
-                    InteractiveResizeStrategy,
-                    strategy,
-                    ActualWindowingBackendName);
-            }
+                if (Environment.CurrentManagedThreadId != backend.OwnerThreadId)
+                {
+                    RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
+                        this,
+                        () => SetInteractiveResizeStrategy(strategy),
+                        $"XRWindow.SetInteractiveResizeStrategy[{GetHashCode()}]");
+                    return;
+                }
 
-            try
-            {
-                _interactiveResizeStrategy.Uninstall();
-            }
-            catch (Exception ex)
-            {
-                Debug.RenderingWarning(
-                    "[InteractiveResize] Strategy uninstall failed during runtime change window={0}. {1}",
-                    GetHashCode(),
-                    ex);
-            }
+                if (strategy == EInteractiveWindowResizeStrategy.SdlBackend ||
+                    InteractiveResizeStrategy == EInteractiveWindowResizeStrategy.SdlBackend)
+                    Debug.RenderingWarning(
+                        "[InteractiveResize] Runtime strategy changed from={0} to={1}; native window backend remains {2} until recreation.",
+                        InteractiveResizeStrategy, strategy, ActualWindowingBackendName);
 
-            InteractiveResizeStrategy = strategy;
-            _interactiveResizeStrategy = InteractiveResizeStrategyFactory.Create(strategy);
-            _interactiveResizeStrategy.Install(this);
-            if (Input is not null)
-                _interactiveResizeStrategy.OnInputCreated(Input);
-
-            Debug.Rendering(
-                "[InteractiveResize] Runtime strategy changed window={0} strategy={1} backend={2}.",
-                GetHashCode(),
-                InteractiveResizeStrategy,
-                ActualWindowingBackendName);
+                backend.SetInteractiveResizeStrategy(strategy);
+                InteractiveResizeStrategy = strategy;
+            }
         }
 
         internal void QueueCurrentFramebufferResize(string reason)
@@ -1043,17 +949,14 @@ namespace XREngine.Rendering
 
         internal Vector2D<int> ConvertWindowSizeToFramebufferSize(Vector2D<int> windowSize)
         {
-            try
+            if (_desktopBackend is { } backend)
             {
-                Vector2D<int> origin = Window.PointToFramebuffer(Vector2D<int>.Zero);
-                Vector2D<int> bottomRight = Window.PointToFramebuffer(windowSize);
-                int width = Math.Abs(bottomRight.X - origin.X);
-                int height = Math.Abs(bottomRight.Y - origin.Y);
-                if (width > 0 && height > 0)
-                    return new Vector2D<int>(width, height);
-            }
-            catch
-            {
+                WindowSurfaceSnapshot surface = backend.Surface;
+                float dpiX = surface.DpiScaleX > 0.0f ? surface.DpiScaleX : 1.0f;
+                float dpiY = surface.DpiScaleY > 0.0f ? surface.DpiScaleY : 1.0f;
+                return new Vector2D<int>(
+                    Math.Max(1, (int)MathF.Round(windowSize.X * dpiX)),
+                    Math.Max(1, (int)MathF.Round(windowSize.Y * dpiY)));
             }
 
             return new Vector2D<int>(Math.Max(1, windowSize.X), Math.Max(1, windowSize.Y));
@@ -1133,109 +1036,12 @@ namespace XREngine.Rendering
                 _latestWindowEventSnapshot = snapshot;
         }
 
-        private void PublishWindowInputSnapshot()
-        {
-            IInputContext? input = Input;
-            int keyboardCount = input?.Keyboards.Count ?? 0;
-            int mouseCount = input?.Mice.Count ?? 0;
-            int gamepadCount = input?.Gamepads.Count ?? 0;
-            bool isFocused = IsFocused;
-            bool isMouseCaptured = ResolveMouseCaptured(input);
-            WindowGamepadSnapshot primaryGamepad = CapturePrimaryGamepad(input);
-
-            _ = _inputSnapshotAccumulator.Publish(
-                keyboardCount,
-                mouseCount,
-                gamepadCount,
-                isFocused,
-                isMouseCaptured,
-                primaryGamepad);
-        }
-
-        private static WindowGamepadSnapshot CapturePrimaryGamepad(IInputContext? input)
-        {
-            if (input is null || input.Gamepads.Count == 0)
-                return default;
-
-            IGamepad gamepad = input.Gamepads[0];
-            if (!gamepad.IsConnected)
-                return default;
-
-            ushort pressedButtonMask = 0;
-            for (int i = 0; i < gamepad.Buttons.Count; i++)
-            {
-                Button button = gamepad.Buttons[i];
-                if (!button.Pressed ||
-                    !TryMapGamepadButton(button.Name, out EGamePadButton mapped))
-                {
-                    continue;
-                }
-
-                pressedButtonMask |= (ushort)(1u << (int)mapped);
-            }
-
-            float leftTrigger = gamepad.Triggers.Count > 0 ? gamepad.Triggers[0].Position : 0.0f;
-            float rightTrigger = gamepad.Triggers.Count > 1 ? gamepad.Triggers[1].Position : 0.0f;
-            float leftX = gamepad.Thumbsticks.Count > 0 ? gamepad.Thumbsticks[0].X : 0.0f;
-            float leftY = gamepad.Thumbsticks.Count > 0 ? -gamepad.Thumbsticks[0].Y : 0.0f;
-            float rightX = gamepad.Thumbsticks.Count > 1 ? gamepad.Thumbsticks[1].X : 0.0f;
-            float rightY = gamepad.Thumbsticks.Count > 1 ? -gamepad.Thumbsticks[1].Y : 0.0f;
-            return new WindowGamepadSnapshot(
-                true,
-                pressedButtonMask,
-                leftTrigger,
-                rightTrigger,
-                leftX,
-                leftY,
-                rightX,
-                rightY);
-        }
-
-        private static bool TryMapGamepadButton(ButtonName name, out EGamePadButton button)
-        {
-            button = name switch
-            {
-                ButtonName.DPadUp => EGamePadButton.DPadUp,
-                ButtonName.DPadDown => EGamePadButton.DPadDown,
-                ButtonName.DPadLeft => EGamePadButton.DPadLeft,
-                ButtonName.DPadRight => EGamePadButton.DPadRight,
-                ButtonName.Y => EGamePadButton.FaceUp,
-                ButtonName.A => EGamePadButton.FaceDown,
-                ButtonName.X => EGamePadButton.FaceLeft,
-                ButtonName.B => EGamePadButton.FaceRight,
-                ButtonName.LeftStick => EGamePadButton.LeftStick,
-                ButtonName.RightStick => EGamePadButton.RightStick,
-                ButtonName.Home => EGamePadButton.SpecialLeft,
-                ButtonName.Start => EGamePadButton.SpecialRight,
-                ButtonName.LeftBumper => EGamePadButton.LeftBumper,
-                ButtonName.RightBumper => EGamePadButton.RightBumper,
-                _ => (EGamePadButton)(-1),
-            };
-            return (int)button >= 0;
-        }
-
-        private static bool ResolveMouseCaptured(IInputContext? input)
-        {
-            if (input is null || input.Mice.Count <= 0)
-                return false;
-
-            try
-            {
-                IMouse mouse = input.Mice[0];
-                return mouse.Cursor.CursorMode is CursorMode.Disabled or CursorMode.Raw ||
-                    mouse.Cursor.IsConfined;
-            }
-            catch
-            {
-                return false;
-            }
-        }
 
         private bool IsWindowMinimized()
         {
             try
             {
-                return Window.WindowState == WindowState.Minimized ||
+                return (_desktopBackend?.Surface.IsMinimized ?? false) ||
                     EffectiveFramebufferSize.X <= 0 ||
                     EffectiveFramebufferSize.Y <= 0 ||
                     EffectiveWindowSize.X <= 0 ||
@@ -1368,24 +1174,6 @@ namespace XREngine.Rendering
         private static bool ExtentMatches(Vector2D<int> current, Vector2D<int> expected)
             => current.X == expected.X && current.Y == expected.Y;
 
-        internal IntPtr TryGetWin32WindowHandle()
-        {
-            INativeWindow? native = TryGetNativeWindow();
-            if (native is null)
-                return IntPtr.Zero;
-
-            object? win32 = GetNativeHandleProperty(native, nameof(INativeWindow.Win32));
-            if (win32 is null)
-                return IntPtr.Zero;
-
-            object? value = GetNullableValue(win32);
-            if (value is null)
-                return IntPtr.Zero;
-
-            object? hwnd = value.GetType().GetField("Item1")?.GetValue(value);
-            return hwnd is IntPtr ptr ? ptr : IntPtr.Zero;
-        }
-
         internal void RenderInteractiveResizeFrame(string reason)
             => RenderInteractiveResizeFrame(reason, allowCurrentThread: false);
 
@@ -1408,9 +1196,8 @@ namespace XREngine.Rendering
 
             int currentThreadId = Environment.CurrentManagedThreadId;
             bool isRenderOwnerThread = currentThreadId == RenderOwnerThreadId;
-            bool canRenderOnCurrentThread =
-                (RuntimeEngine.IsRenderThread && !deferWhenOnRenderThread) ||
-                (allowCurrentThread && (Window.API.API == ContextAPI.OpenGL || isRenderOwnerThread));
+            bool canRenderOnCurrentThread = isRenderOwnerThread &&
+                ((RuntimeEngine.IsRenderThread && !deferWhenOnRenderThread) || allowCurrentThread);
 
             if (!canRenderOnCurrentThread)
             {
@@ -1587,43 +1374,22 @@ namespace XREngine.Rendering
 
         private Vector2D<int> GetCurrentFramebufferSize()
         {
-            Vector2D<int> framebufferSize = Window.FramebufferSize;
-            if (framebufferSize.X > 0 && framebufferSize.Y > 0)
-                return framebufferSize;
-
-            Vector2D<int> windowSize = Window.Size;
-            return new Vector2D<int>(Math.Max(1, windowSize.X), Math.Max(1, windowSize.Y));
+            WindowSurfaceSnapshot snapshot = _desktopBackend?.Surface ?? default;
+            int width = snapshot.FramebufferWidth > 0 ? snapshot.FramebufferWidth : Math.Max(1, snapshot.ClientWidth);
+            int height = snapshot.FramebufferHeight > 0 ? snapshot.FramebufferHeight : Math.Max(1, snapshot.ClientHeight);
+            return new Vector2D<int>(width, height);
         }
 
         private Vector2D<int> GetCurrentWindowSize()
         {
-            Vector2D<int> windowSize = Window.Size;
-            if (windowSize.X > 0 && windowSize.Y > 0)
-                return windowSize;
-
-            Vector2D<int> framebufferSize = EffectiveFramebufferSize;
-            return new Vector2D<int>(Math.Max(1, framebufferSize.X), Math.Max(1, framebufferSize.Y));
+            WindowSurfaceSnapshot snapshot = _desktopBackend?.Surface ?? default;
+            return new Vector2D<int>(Math.Max(1, snapshot.ClientWidth), Math.Max(1, snapshot.ClientHeight));
         }
 
-        private string ResolveActualWindowingBackendName()
-        {
-            INativeWindow? native = TryGetNativeWindow();
-            if (native is null)
-                return "unknown";
-
-            if (HasNativeHandle(native, nameof(INativeWindow.Sdl)))
-                return "SDL";
-            if (HasNativeHandle(native, nameof(INativeWindow.Glfw)))
-                return "GLFW";
-            if (HasNativeHandle(native, nameof(INativeWindow.Win32)))
-                return "Win32";
-
-            return native.Kind.ToString();
-        }
 
         private void RefreshWindowBackendOwnership(string reason)
         {
-            RuntimeWindowBackendKind backendKind = ResolveWindowBackendKind();
+            RuntimeWindowBackendKind backendKind = _desktopBackend?.Kind ?? RuntimeWindowBackendKind.Unknown;
             RuntimeWindowBackendOwnershipInfo ownership = RuntimeWindowBackendOwnershipInfo.ForBackend(backendKind);
             _windowBackendKind = backendKind;
             _windowBackendOwnership = ownership;
@@ -1639,23 +1405,6 @@ namespace XREngine.Rendering
                 ownership.Notes);
         }
 
-        private RuntimeWindowBackendKind ResolveWindowBackendKind()
-        {
-            INativeWindow? native = TryGetNativeWindow();
-            if (native is null)
-                return RuntimeWindowBackendKind.Unknown;
-
-            if (HasNativeHandle(native, nameof(INativeWindow.Sdl)))
-                return RuntimeWindowBackendKind.Sdl;
-            if (HasNativeHandle(native, nameof(INativeWindow.Glfw)))
-                return RuntimeWindowBackendKind.Glfw;
-            if (HasNativeHandle(native, nameof(INativeWindow.Win32)))
-                return RuntimeWindowBackendKind.Win32;
-
-            return native.Kind.ToString().Equals("Win32", StringComparison.OrdinalIgnoreCase)
-                ? RuntimeWindowBackendKind.Win32
-                : RuntimeWindowBackendKind.Unknown;
-        }
 
         private void ObserveRenderOwnerThread(string operation)
         {
@@ -1714,31 +1463,6 @@ namespace XREngine.Rendering
                 WindowBackendKind);
         }
 
-        private INativeWindow? TryGetNativeWindow()
-            => Window is INativeWindowSource nativeSource ? nativeSource.Native : null;
-
-        private static bool HasNativeHandle(INativeWindow native, string propertyName)
-        {
-            object? value = GetNativeHandleProperty(native, propertyName);
-            if (value is null)
-                return false;
-
-            object? nullableValue = GetNullableValue(value);
-            return nullableValue is not null;
-        }
-
-        private static object? GetNativeHandleProperty(INativeWindow native, string propertyName)
-            => typeof(INativeWindow).GetProperty(propertyName)?.GetValue(native);
-
-        private static object? GetNullableValue(object value)
-        {
-            Type valueType = value.GetType();
-            if (Nullable.GetUnderlyingType(valueType) is null)
-                return value;
-
-            bool hasValue = (bool)(valueType.GetProperty("HasValue")?.GetValue(value) ?? false);
-            return hasValue ? valueType.GetProperty("Value")?.GetValue(value) : null;
-        }
 
         #endregion
 
@@ -1746,7 +1470,8 @@ namespace XREngine.Rendering
 
         private AbstractRenderer CreateRendererForCurrentWindow(string reason)
         {
-            RuntimeGraphicsApiKind apiKind = ToRuntimeGraphicsApiKind(Window.API.API);
+            RuntimeGraphicsApiKind apiKind = _desktopBackend?.GraphicsApi
+                ?? throw new InvalidOperationException("A renderer requires an installed desktop window backend.");
             AbstractRenderer renderer = (AbstractRenderer)RuntimeRenderingHostServices.Factories.RendererBackends.CreateRequired(
                 apiKind,
                 new RendererBackendCreateContext(this),
@@ -2056,7 +1781,7 @@ namespace XREngine.Rendering
                 _rendererRecreationAttempts,
                 MaxRendererRecreationAttempts,
                 lostRenderer.GetType().Name,
-                Window.API.API,
+                _desktopBackend?.GraphicsApi.ToString() ?? "unavailable",
                 reason);
 
             try
@@ -2391,93 +2116,18 @@ namespace XREngine.Rendering
 
         #region Window Event Handlers
 
-        private void Window_Load()
-        {
-            if (_windowInitializationProbe is not null)
-                Volatile.Write(ref _windowInitializationProbe.Stage, 1);
 
-            Debug.Rendering("[XRWindow] Load event for hash={0}.", GetHashCode());
-
-            //Task.Run(() =>
-            //{
-                Input = Window.CreateInput();
-                Input.ConnectionChanged += Input_ConnectionChanged;
-                SubscribeInputSnapshotEvents(Input);
-                if (_interactiveResizeStrategy.IsInstalled)
-                    _interactiveResizeStrategy.OnInputCreated(Input);
-                PublishWindowInputSnapshot();
-            //});
-
-            if (_windowInitializationProbe is not null)
-                Volatile.Write(ref _windowInitializationProbe.Stage, 2);
-
-            Debug.Rendering("[XRWindow] Input created for hash={0}.", GetHashCode());
-        }
-
-        private void StartWindowInitializationWatchdog(WindowInitializationProbe probe)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    while (!probe.CancellationSource.IsCancellationRequested)
-                    {
-                        // Cancellation is the normal successful exit for this watchdog. Suppress the
-                        // canceled delay's await exception so debugger first-chance tracing does not
-                        // report an expected window-initialization handoff as a runtime fault.
-                        await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token)
-                            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-                        if (probe.CancellationSource.IsCancellationRequested)
-                            return;
-
-                        Debug.RenderingWarning($"[XRWindow] Window.Initialize still running after {probe.Elapsed.TotalMilliseconds:F0} ms. stage={DescribeWindowInitializationStage(Volatile.Read(ref probe.Stage))} title='{probe.Title}' api={probe.API} nativeTitleBar={probe.UseNativeTitleBar}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.RenderingWarning($"[XRWindow] Window init watchdog failed: {ex.Message}");
-                }
-            });
-        }
-
-        private static string DescribeWindowInitializationStage(int stage)
-            => stage switch
-            {
-                0 => "before-load-event",
-                1 => "load-event-before-input",
-                2 => "load-event-after-input",
-                _ => $"unknown-{stage}",
-            };
-
-        private void Window_Closing()
+        private bool HandleDesktopCloseRequested()
         {
             MarkCloseRequestedOrApproved();
             ClosingRequested?.Invoke(this);
-
-            Debug.Out(
-                "[XRWindow] Closing requested hash={0} disposing={1} disposed={2} viewports={3}",
-                GetHashCode(),
-                _isDisposing,
-                _isDisposed,
-                Viewports.Count);
             PublishWindowEventSnapshot(closeRequested: true, closeApproved: false);
 
-            if (!_isDisposing && !_isDisposed)
+            if (!_isDisposing && !_isDisposed && !RuntimeRenderingHostServices.Factories.AllowWindowClose(this))
             {
-                bool allowClose = RuntimeRenderingHostServices.Factories.AllowWindowClose(this);
-                Debug.Out("[XRWindow] Closing policy hash={0} allow={1}", GetHashCode(), allowClose);
-                if (!allowClose)
-                {
-                    if (TryCancelCloseRequest())
-                    {
-                        ClearCloseRequestedOrApproved();
-                        Debug.Out("[XRWindow] Closing canceled hash={0}.", GetHashCode());
-                        PublishWindowEventSnapshot(closeRequested: false, closeApproved: false);
-                        return;
-                    }
-
-                    Debug.Out("[XRWindow] Closing could not be canceled hash={0}.", GetHashCode());
-                }
+                ClearCloseRequestedOrApproved();
+                PublishWindowEventSnapshot(closeRequested: false, closeApproved: false);
+                return false;
             }
 
             PublishWindowEventSnapshot(closeRequested: true, closeApproved: true);
@@ -2485,155 +2135,35 @@ namespace XREngine.Rendering
             {
                 _renderer.AbandonShutdownTeardown();
                 Debug.RenderingWarning(
-                    "[XRWindow] Host work did not quiesce; abandoning renderer-adjacent teardown. hash={0}",
+                    "[XRWindow] Host work did not quiesce; retaining native window resources after renderer teardown abandonment. hash={0}",
                     GetHashCode());
             }
 
-            if (IsNativeEventPumpExternallyOwned)
-            {
-                _approvedNativeCloseInProgress = true;
-                if (!TryCancelCloseRequest())
+            // The native close callback must unwind before either renderer or window disposal.
+            _approvedNativeCloseInProgress = true;
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () =>
                 {
-                    Debug.RenderingWarning(
-                        "[XRWindow] External pump close could not be canceled before split disposal. hash={0}",
-                        GetHashCode());
-                }
+                    if (IsNativeEventPumpExternallyOwned)
+                    {
+                        TryBeginExternalPumpDispose("DesktopClose");
+                        return;
+                    }
 
-                TryBeginExternalPumpDispose("WindowClosing");
-                return;
-            }
-
-            try
-            {
-                _approvedNativeCloseInProgress = true;
-                Dispose();
-            }
-            finally
-            {
-                RuntimeRenderingHostServices.Factories.RemoveWindow(this);
-            }
+                    try
+                    {
+                        Dispose();
+                    }
+                    finally
+                    {
+                        RuntimeRenderingHostServices.Factories.RemoveWindow(this);
+                    }
+                },
+                $"XRWindow.DesktopClose[{GetHashCode()}]",
+                RenderThreadJobKind.RequiresGraphicsContext);
+            return true;
         }
 
-        private bool TryCancelCloseRequest()
-        {
-            if (Window is null)
-                return false;
-
-            // IWindow.IsClosing has a setter via explicit interface implementation.
-            // The concrete GlfwWindow type inherits a read-only IsClosing from
-            // ViewImplementationBase, so reflection on the runtime type fails.
-            // Use the interface property directly — Window is already IWindow.
-            try
-            {
-                Window.IsClosing = false;
-                return true;
-            }
-            catch
-            {
-                // ignored — fall through to reflection fallbacks
-            }
-
-            var windowType = Window.GetType();
-
-            if (TrySetBoolProperty(windowType, Window, "IsClosing", false))
-                return true;
-            if (TrySetBoolProperty(windowType, Window, "ShouldClose", false))
-                return true;
-            if (TrySetBoolProperty(windowType, Window, "CloseRequested", false))
-                return true;
-
-            if (TrySetBoolField(windowType, Window, "_isClosing", false))
-                return true;
-            if (TrySetBoolField(windowType, Window, "_shouldClose", false))
-                return true;
-            if (TrySetBoolField(windowType, Window, "_closeRequested", false))
-                return true;
-
-            if (TryInvokeBoolSetter(windowType, Window, "SetShouldClose", false))
-                return true;
-            if (TryInvokeBoolSetter(windowType, Window, "SetCloseRequested", false))
-                return true;
-            if (TryInvokeParameterless(windowType, Window, "CancelClose"))
-                return true;
-
-            return false;
-        }
-
-        private static bool TrySetBoolProperty(Type type, object instance, string name, bool value)
-        {
-            try
-            {
-                var prop = type.GetProperty(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-                if (prop is { CanWrite: true } && prop.PropertyType == typeof(bool))
-                {
-                    prop.SetValue(instance, value);
-                    return true;
-                }
-            }
-            catch
-            {
-                // ignored
-            }
-
-            return false;
-        }
-
-        private static bool TrySetBoolField(Type type, object instance, string name, bool value)
-        {
-            try
-            {
-                var field = type.GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-                if (field is not null && field.FieldType == typeof(bool))
-                {
-                    field.SetValue(instance, value);
-                    return true;
-                }
-            }
-            catch
-            {
-                // ignored
-            }
-
-            return false;
-        }
-
-        private static bool TryInvokeBoolSetter(Type type, object instance, string name, bool value)
-        {
-            try
-            {
-                var method = type.GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);
-                if (method is not null)
-                {
-                    method.Invoke(instance, new object[] { value });
-                    return true;
-                }
-            }
-            catch
-            {
-                // ignored
-            }
-
-            return false;
-        }
-
-        private static bool TryInvokeParameterless(Type type, object instance, string name)
-        {
-            try
-            {
-                var method = type.GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, Type.EmptyTypes, null);
-                if (method is not null)
-                {
-                    method.Invoke(instance, null);
-                    return true;
-                }
-            }
-            catch
-            {
-                // ignored
-            }
-
-            return false;
-        }
 
         private void OnFocusChanged(bool focused)
         {
@@ -2648,14 +2178,9 @@ namespace XREngine.Rendering
             FramebufferResized?.Invoke(this, obj);
 
             if (Volatile.Read(ref _interactiveResizeInProgress) != 0)
-            {
-                QueueInteractivePresentationResize(obj, "framebuffer-callback-live");
-                _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
-                return;
-            }
-
-            QueueFramebufferResize(obj, "framebuffer-callback");
-            _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
+                QueueInteractivePresentationResize(obj, "desktop-framebuffer-callback-live");
+            else
+                QueueFramebufferResize(obj, "desktop-framebuffer-callback");
         }
 
         private void ProcessPendingFramebufferResize()
@@ -2704,8 +2229,8 @@ namespace XREngine.Rendering
             {
                 WarnIfNotRenderOwnerThread("ApplyFramebufferResize");
 
-                if (Window.API.API == ContextAPI.OpenGL)
-                    Window.MakeCurrent();
+                if (_desktopBackend?.GraphicsApi == RuntimeGraphicsApiKind.OpenGL)
+                    _desktopBackend.GlContext?.MakeCurrent();
 
                 UpdateEffectiveFramebufferSize(obj);
                 PublishWindowSurfaceSnapshot(obj, EffectiveWindowSize, IsInteractiveResizeInProgress);
@@ -2736,147 +2261,6 @@ namespace XREngine.Rendering
             }
         }
 
-        private void Input_ConnectionChanged(IInputDevice device, bool connected)
-        {
-            switch (device)
-            {
-                case IKeyboard keyboard:
-                    if (connected)
-                        SubscribeInputSnapshotKeyboard(keyboard);
-                    else
-                        UnsubscribeInputSnapshotKeyboard(keyboard);
-                    break;
-                case IMouse mouse:
-                    if (connected)
-                        SubscribeInputSnapshotMouse(mouse);
-                    else
-                        UnsubscribeInputSnapshotMouse(mouse);
-
-                    if (connected && Input is not null)
-                        _interactiveResizeStrategy.OnInputCreated(Input);
-                    break;
-                case IGamepad gamepad:
-                    break;
-            }
-
-            PublishWindowInputSnapshot();
-        }
-
-        private void SubscribeInputSnapshotEvents(IInputContext input)
-        {
-            for (int i = 0; i < input.Keyboards.Count; i++)
-                SubscribeInputSnapshotKeyboard(input.Keyboards[i]);
-
-            for (int i = 0; i < input.Mice.Count; i++)
-                SubscribeInputSnapshotMouse(input.Mice[i]);
-        }
-
-        private void UnsubscribeInputSnapshotEvents(IInputContext input)
-        {
-            for (int i = 0; i < input.Keyboards.Count; i++)
-                UnsubscribeInputSnapshotKeyboard(input.Keyboards[i]);
-
-            for (int i = 0; i < input.Mice.Count; i++)
-                UnsubscribeInputSnapshotMouse(input.Mice[i]);
-
-            _inputSnapshotKeyboards.Clear();
-            _inputSnapshotMice.Clear();
-        }
-
-        private void SubscribeInputSnapshotKeyboard(IKeyboard keyboard)
-        {
-            if (!_inputSnapshotKeyboards.Add(keyboard))
-                return;
-
-            keyboard.KeyDown += InputSnapshot_KeyDown;
-            keyboard.KeyUp += InputSnapshot_KeyUp;
-            keyboard.KeyChar += InputSnapshot_KeyChar;
-        }
-
-        private void UnsubscribeInputSnapshotKeyboard(IKeyboard keyboard)
-        {
-            if (!_inputSnapshotKeyboards.Remove(keyboard))
-                return;
-
-            keyboard.KeyDown -= InputSnapshot_KeyDown;
-            keyboard.KeyUp -= InputSnapshot_KeyUp;
-            keyboard.KeyChar -= InputSnapshot_KeyChar;
-        }
-
-        private void SubscribeInputSnapshotMouse(IMouse mouse)
-        {
-            if (!_inputSnapshotMice.Add(mouse))
-                return;
-
-            mouse.MouseDown += InputSnapshot_MouseDown;
-            mouse.MouseUp += InputSnapshot_MouseUp;
-            mouse.MouseMove += InputSnapshot_MouseMove;
-            mouse.Scroll += InputSnapshot_Scroll;
-
-            _inputSnapshotAccumulator.PrimePointerPosition(mouse.Position.X, mouse.Position.Y);
-        }
-
-        private void UnsubscribeInputSnapshotMouse(IMouse mouse)
-        {
-            if (!_inputSnapshotMice.Remove(mouse))
-                return;
-
-            mouse.MouseDown -= InputSnapshot_MouseDown;
-            mouse.MouseUp -= InputSnapshot_MouseUp;
-            mouse.MouseMove -= InputSnapshot_MouseMove;
-            mouse.Scroll -= InputSnapshot_Scroll;
-        }
-
-        private void InputSnapshot_KeyDown(IKeyboard keyboard, Key key, int scanCode)
-        {
-            EKey engineKey = WindowInputKeyMap.ToEngineKey(key);
-            bool isNewPress = _inputSnapshotAccumulator.RecordKeyDown(engineKey);
-            if (isNewPress)
-                AnyWindowKeyDown?.Invoke(this, engineKey);
-        }
-
-        private void InputSnapshot_KeyUp(IKeyboard keyboard, Key key, int scanCode)
-            => _inputSnapshotAccumulator.RecordKeyUp(WindowInputKeyMap.ToEngineKey(key));
-
-        private void InputSnapshot_KeyChar(IKeyboard keyboard, char character)
-            => _inputSnapshotAccumulator.RecordTextInput(character);
-
-        private void InputSnapshot_MouseDown(IMouse mouse, MouseButton button)
-        {
-            if (TryMapMouseButton(button, out EMouseButton engineButton))
-                _inputSnapshotAccumulator.RecordMouseDown(engineButton);
-        }
-
-        private void InputSnapshot_MouseUp(IMouse mouse, MouseButton button)
-        {
-            if (TryMapMouseButton(button, out EMouseButton engineButton))
-                _inputSnapshotAccumulator.RecordMouseUp(engineButton);
-        }
-
-        private void InputSnapshot_MouseMove(IMouse mouse, Vector2 position)
-            => _inputSnapshotAccumulator.RecordPointerPosition(position.X, position.Y);
-
-        private void InputSnapshot_Scroll(IMouse mouse, ScrollWheel wheel)
-            => _inputSnapshotAccumulator.RecordScroll(wheel.X, wheel.Y);
-
-        private static bool TryMapMouseButton(MouseButton button, out EMouseButton engineButton)
-        {
-            switch (button)
-            {
-                case MouseButton.Left:
-                    engineButton = EMouseButton.LeftClick;
-                    return true;
-                case MouseButton.Right:
-                    engineButton = EMouseButton.RightClick;
-                    return true;
-                case MouseButton.Middle:
-                    engineButton = EMouseButton.MiddleClick;
-                    return true;
-                default:
-                    engineButton = default;
-                    return false;
-            }
-        }
 
         #endregion
 
@@ -2884,17 +2268,6 @@ namespace XREngine.Rendering
 
         private void LinkWindow()
         {
-            IWindow? w = Window;
-            if (w is null)
-                return;
-
-            w.FramebufferResize += FramebufferResizeCallback;
-            w.FileDrop += OnFileDropped;
-            w.Render += RenderCallback;
-            w.FocusChanged += OnFocusChanged;
-            w.Closing += Window_Closing;
-            w.Load += Window_Load;
-
             // Subscribe to play mode transitions to invalidate scene panel resources
             RuntimeRenderingHostServices.Scheduling.SubscribePlayModeTransitions(OnPlayModeTransition);
             RuntimeEngine.PlayMode.PostEnterPlay += OnPlayModeTransition;
@@ -2903,20 +2276,6 @@ namespace XREngine.Rendering
 
         private void UnlinkWindow()
         {
-            var w = Window;
-            if (w is null)
-                return;
-
-            if (_interactiveResizeStrategy.IsInstalled)
-                _interactiveResizeStrategy.Uninstall();
-
-            w.FramebufferResize -= FramebufferResizeCallback;
-            w.FileDrop -= OnFileDropped;
-            w.Render -= RenderCallback;
-            w.FocusChanged -= OnFocusChanged;
-            w.Closing -= Window_Closing;
-            w.Load -= Window_Load;
-
             // Unsubscribe from play mode events
             RuntimeRenderingHostServices.Scheduling.UnsubscribePlayModeTransitions(OnPlayModeTransition);
             RuntimeEngine.PlayMode.PostEnterPlay -= OnPlayModeTransition;
@@ -3082,7 +2441,7 @@ namespace XREngine.Rendering
                 WarnIfNotNativeWindowThread("Window.DoRender.RenderFrame");
                 try
                 {
-                    Window.DoRender();
+                _desktopBackend?.DispatchRender();
                 }
                 catch (InvalidOperationException ex) when (IsOpenGlContextUnavailableForRender(ex))
                 {
@@ -3247,7 +2606,7 @@ namespace XREngine.Rendering
         }
 
         private bool IsOpenGlContextUnavailableForRender(InvalidOperationException exception)
-            => Window.API.API == ContextAPI.OpenGL &&
+            => _desktopBackend?.GraphicsApi == RuntimeGraphicsApiKind.OpenGL &&
                exception.Message.Contains("OpenGL functions can only be used after initialization", StringComparison.Ordinal);
 
         private bool HasRenderableHostSurface()
@@ -3392,8 +2751,8 @@ namespace XREngine.Rendering
                         TimeSpan.FromMilliseconds(500),
                         "[RenderDiag] Skipping viewport rendering because the host surface is zero-sized. Window={0} WindowSize={1}x{2} FramebufferSize={3}x{4}",
                         GetHashCode(),
-                        Window.Size.X,
-                        Window.Size.Y,
+                        EffectiveWindowSize.X,
+                        EffectiveWindowSize.Y,
                         EffectiveFramebufferSize.X,
                         EffectiveFramebufferSize.Y);
                 }
@@ -4050,20 +3409,26 @@ namespace XREngine.Rendering
                     }
                 }
 
-                if (_interactiveResizeStrategy.IsInstalled)
-                {
-                    try
-                    {
-                        _interactiveResizeStrategy.Uninstall();
-                    }
-                    catch
-                    {
-                    }
-                }
-
             }
             finally
             {
+                if (_desktopBackend?.GlContext is { } glContext &&
+                    NativeWindowThreadId != Environment.CurrentManagedThreadId)
+                {
+                    try
+                    {
+                        glContext.ClearCurrent();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.RenderingWarning(
+                            "[XRWindow] Could not detach the retiring GL context before native window disposal. hash={0} error={1}",
+                            GetHashCode(),
+                            ex);
+                        _renderer.AbandonShutdownTeardown();
+                    }
+                }
+
                 RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
                     this,
                     () => DisposeExternalPumpNativeResources(reason),
@@ -4080,34 +3445,13 @@ namespace XREngine.Rendering
             {
                 WarnIfNotNativeWindowThread("DisposeExternalPump.NativeResources");
 
-                if (Input is not null)
-                {
-                    try
-                    {
-                        UnsubscribeInputSnapshotEvents(Input);
-                        Input.ConnectionChanged -= Input_ConnectionChanged;
-                    }
-                    catch
-                    {
-                    }
-
-                    try
-                    {
-                        (Input as IDisposable)?.Dispose();
-                    }
-                    catch
-                    {
-                    }
-
-                    Input = null;
-                }
-
                 UnlinkWindow();
 
-                bool skipNativeWindowDispose = _approvedNativeCloseInProgress;
+                bool skipNativeWindowDispose = _renderer.ShouldSkipNativeWindowDisposeForShutdown;
 
                 if (skipNativeWindowDispose)
                 {
+                    _desktopBackend?.RetainAbandonedResources();
                     Debug.Rendering(
                         "[XRWindow] Native close already approved; skipping direct native window dispose. hash={0}",
                         GetHashCode());
@@ -4116,7 +3460,7 @@ namespace XREngine.Rendering
                 {
                     try
                     {
-                        (Window as IDisposable)?.Dispose();
+                        _desktopBackend?.Dispose();
                     }
                     catch
                     {
@@ -4196,46 +3540,13 @@ namespace XREngine.Rendering
                     }
                 }
 
-                if (_interactiveResizeStrategy.IsInstalled)
-                {
-                    try
-                    {
-                        _interactiveResizeStrategy.Uninstall();
-                    }
-                    catch
-                    {
-                    }
-                }
-
-                // Unhook input.
-                if (Input is not null)
-                {
-                    try
-                    {
-                        UnsubscribeInputSnapshotEvents(Input);
-                        Input.ConnectionChanged -= Input_ConnectionChanged;
-                    }
-                    catch
-                    {
-                    }
-
-                    try
-                    {
-                        (Input as IDisposable)?.Dispose();
-                    }
-                    catch
-                    {
-                    }
-
-                    Input = null;
-                }
-
                 // Unhook window events. Viewports were released only when renderer teardown was safe.
                 UnlinkWindow();
 
-                bool skipNativeWindowDispose = _approvedNativeCloseInProgress;
+                bool skipNativeWindowDispose = _renderer.ShouldSkipNativeWindowDisposeForShutdown;
                 if (skipNativeWindowDispose)
                 {
+                    _desktopBackend?.RetainAbandonedResources();
                     Debug.Rendering(
                         "[XRWindow] Native close already approved; skipping direct native window dispose. hash={0}",
                         GetHashCode());
@@ -4245,7 +3556,7 @@ namespace XREngine.Rendering
                     // Finally, release the window itself if possible.
                     try
                     {
-                        (Window as IDisposable)?.Dispose();
+                        _desktopBackend?.Dispose();
                     }
                     catch
                     {
@@ -4263,12 +3574,5 @@ namespace XREngine.Rendering
         internal string? EncodeTargetWorldHierarchyJson()
             => JsonConvert.SerializeObject(EncodeWorldHierarchy());
 
-        private static RuntimeGraphicsApiKind ToRuntimeGraphicsApiKind(ContextAPI api)
-            => api switch
-            {
-                ContextAPI.OpenGL => RuntimeGraphicsApiKind.OpenGL,
-                ContextAPI.Vulkan => RuntimeGraphicsApiKind.Vulkan,
-                _ => RuntimeGraphicsApiKind.Unknown,
-            };
     }
 }

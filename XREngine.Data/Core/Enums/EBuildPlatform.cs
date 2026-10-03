@@ -3,6 +3,7 @@ namespace XREngine
     public enum EBuildPlatform
     {
         AnyCPU,
-        Windows64
+        Windows64,
+        BrowserWebGPU
     }
 }

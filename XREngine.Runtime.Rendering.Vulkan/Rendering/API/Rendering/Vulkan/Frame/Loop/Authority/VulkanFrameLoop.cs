@@ -104,8 +104,7 @@ internal sealed partial class VulkanFrameLoop
         VulkanFrameTelemetry telemetry,
         IVulkanRendererTargetDriver targetDriver,
         VulkanRenderer ownerRenderer,
-        long backendGeneration,
-        Silk.NET.Windowing.IWindow? window)
+        long backendGeneration)
     {
         _api = api ?? throw new ArgumentNullException(nameof(api));
         _deviceContext = deviceContext;
@@ -144,7 +143,6 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.Descriptors.EnsureFrameSlotCountFloor(_frameSlotCount);
         _acceptedFramePlans = new VulkanAcceptedFramePlanArena(_frameSlotCount);
         _preWaitedFrameSlotTimelineValues = new ulong[_frameSlotCount];
-        _window = window;
         _resourcePlannerSessions = new VulkanResourcePlannerSessionService(
             framePlanner,
             commandRuntime);
@@ -160,7 +158,6 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.PublishFramebufferRetirementFrameSlot(CurrentFrameSlot);
     }
 
-    private readonly Silk.NET.Windowing.IWindow? _window;
 
     internal ulong AcceptedAttemptCount => Volatile.Read(ref _acceptedAttemptCount);
     internal IVulkanRendererTargetDriver TargetDriver => _targetDriver;

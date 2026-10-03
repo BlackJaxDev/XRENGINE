@@ -75,6 +75,9 @@ public sealed class OpenXrSmokeSummary
     public bool RightControllerAimPoseAvailable { get; set; }
     public bool TrackerPoseAvailable { get; set; }
     public string[] KnownTrackerUserPaths { get; set; } = [];
+    public uint TrackerExtensionRevision { get; set; }
+    public XREngine.Input.RuntimeVrTrackerInfo[] Trackers { get; set; } = [];
+    public string TrackerTransportPolicy { get; set; } = "Persistent subactions; profile-role bindings only; no alternate provider; role-independent streaming requires hardware validation";
     public bool LeftHandJointsActive { get; set; }
     public bool RightHandJointsActive { get; set; }
     public bool DesktopMirrorComposed { get; set; }

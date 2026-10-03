@@ -27,6 +27,12 @@ The missing layer is a durable script binding model that exists independently of
 
 ## C# Execution Boundary
 
+Compiled script assemblies are an authoring-project feature. Downloaded worlds
+and avatars never carry them; the
+[downloadable content execution policy](../../../architecture/runtime/downloadable-content-execution-policy.md)
+records the data-only rule, the package-pipeline enforcement, and the intended
+verified-bytecode direction for creator behavior.
+
 Normal C# component code cannot truly execute without being compiled to IL. Roslyn scripting also compiles under the hood. Source-only script components are therefore authoring-time placeholders, not interpreted runtime behavior.
 
 Supported modes should be explicit:

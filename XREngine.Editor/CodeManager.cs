@@ -10,6 +10,7 @@ using System.Xml.Linq;
 using XREngine;
 using XREngine.Components.Scripting;
 using XREngine.Core;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 
 internal partial class CodeManager : XRSingleton<CodeManager>
@@ -103,7 +104,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// ONLY compiles the game client, does not regenerate project files.
     /// </summary>
     /// <param name="e"></param>
-    private void VerifyCodeFileModified(FileSystemEventArgs e)
+    private void VerifyCodeFileModified(AssetFileChangeEventArgs e)
     {
         if (e.FullPath.EndsWith(".cs"))
             _isGameClientInvalid = true;
@@ -113,7 +114,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// Will regenerate project files and compile the game client.
     /// </summary>
     /// <param name="e"></param>
-    private void VerifyCodeAssetsChanged(FileSystemEventArgs e)
+    private void VerifyCodeAssetsChanged(AssetFileChangeEventArgs e)
     {
         if (!e.FullPath.EndsWith(".cs"))
             return;
@@ -243,7 +244,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string? languageVersion = "14.0",
         (string name, string version)[]? packageReferences = null,
         string[]? includedProjectPaths = null,
-        string[]? assemblyReferencePaths = null)
+        string[]? assemblyReferencePaths = null,
+        string? assemblyName = null,
+        string? rendererBackendSelection = null)
     {
         List<object> content =
         [
@@ -252,7 +255,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("OutputType", executable ? "Exe" : "Library"),
                 new XElement("TargetFramework", TargetFramework),
                 new XElement("RootNamespace", rootNamespace),
-                new XElement("AssemblyName", Path.GetFileNameWithoutExtension(projectFilePath)),
+                new XElement("AssemblyName", assemblyName ?? Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
                 new XElement("EnableDefaultCompileItems", "false"),
                 new XElement("CopyLocalLockFileAssemblies", "true"),
@@ -267,7 +270,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("BaseOutputPath", "Build"),
                 new XElement("ServerGarbageCollection", "false"),
                 new XElement("ConcurrentGarbageCollection", "true"),
-                new XElement("GarbageCollectionAdaptationMode", "1")
+                new XElement("GarbageCollectionAdaptationMode", "1"),
+                rendererBackendSelection is null ? null : new XElement("XREngineRendererBackends", rendererBackendSelection)
             ),
         ];
 
@@ -299,7 +303,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         if (includedProjectPaths is not null)
             content.Add(new XElement("ItemGroup",
                 includedProjectPaths.Select(x => new XElement("ProjectReference",
-                    new XAttribute("Include", x)
+                    new XAttribute("Include", x),
+                    rendererBackendSelection is null ? null : new XAttribute(
+                        "AdditionalProperties", "XREngineRendererBackends=$(XREngineRendererBackends)")
                 ))
             ));
 
@@ -528,12 +534,34 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string launcherProjectPath = Path.Combine(launcherRoot, $"{projectName}.Launcher.csproj");
         string rendererBackendSelection = settings.RendererBackendPackage.ToString();
         string? bootstrapProjectPath = TryResolveBootstrapProjectPath();
-        if (settings.RendererBackendPackage != ERendererBackendPackageMode.All &&
+        if ((settings.PublishLauncherAsNativeAot || settings.RendererBackendPackage != ERendererBackendPackageMode.All) &&
             bootstrapProjectPath is null)
         {
             throw new InvalidOperationException(
-                $"Packaging only the {rendererBackendSelection} renderer requires the " +
+                $"Publishing the {rendererBackendSelection} renderer requires the " +
                 "XREngine.Runtime.Bootstrap source project so its NativeAOT registration can be compiled for that backend.");
+        }
+
+        if (settings.PublishLauncherAsNativeAot)
+        {
+            string publishGameRoot = Path.Combine(launcherRoot, "Game");
+            gameProjectPath = Path.Combine(publishGameRoot, $"{projectName}.Published.csproj");
+            CreateCSProj(
+                Engine.Assets.GameAssetsPath,
+                gameProjectPath,
+                projectName,
+                executable: false,
+                allowUnsafeBlocks: true,
+                nullableEnable: true,
+                implicitUsings: true,
+                aot: false,
+                publishSingleFile: false,
+                selfContained: false,
+                builds: [configuration],
+                platforms: [platform],
+                includedProjectPaths: [bootstrapProjectPath!],
+                assemblyName: projectName,
+                rendererBackendSelection: rendererBackendSelection);
         }
         string defineConstants = ComposeLauncherDefineConstants(settings);
 
@@ -550,8 +578,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             programPath,
             generatedLauncherAssemblyName,
             platform,
-            GetEngineAssemblyPaths(),
-            GetEngineRuntimePackageReferences(),
+            settings.PublishLauncherAsNativeAot ? [] : GetEngineAssemblyPaths(),
+            settings.PublishLauncherAsNativeAot ? [] : GetEngineRuntimePackageReferences(),
             rendererBackendSelection,
             bootstrapProjectPath,
             includeGameProject: gameProjectPath);
@@ -752,6 +780,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             "XREngine.Input.dll",
             "XREngine.Modeling.dll",
             "XREngine.Runtime.Core.dll",
+            "XREngine.Runtime.Host.dll",
             "XREngine.Runtime.Bootstrap.dll",
             "XREngine.Runtime.AudioIntegration.dll",
             "XREngine.Runtime.Rendering.dll",
@@ -1037,8 +1066,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string platform,
         string[] targets,
         IReadOnlyDictionary<string, string?>? extraProperties,
-        out string? log)
+        out string? log,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var startInfo = new DiagnosticsProcessStartInfo("dotnet")
         {
             UseShellExecute = false,
@@ -1079,10 +1110,23 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
         using DiagnosticsProcess process = DiagnosticsProcess.Start(startInfo)
             ?? throw new InvalidOperationException($"Failed to start dotnet msbuild for '{projectFilePath}'.");
+        using CancellationTokenRegistration cancellation = cancellationToken.Register(static state =>
+        {
+            DiagnosticsProcess running = (DiagnosticsProcess)state!;
+            try
+            {
+                if (!running.HasExited) running.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }, process);
 
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
+        Task<string> stdoutRead = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderrRead = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
+        cancellationToken.ThrowIfCancellationRequested();
+        string stdout = stdoutRead.GetAwaiter().GetResult();
+        string stderr = stderrRead.GetAwaiter().GetResult();
 
         log = string.Concat(stdout, string.IsNullOrWhiteSpace(stderr) ? string.Empty : Environment.NewLine + stderr);
         return process.ExitCode == 0;
@@ -1221,6 +1265,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         }
         else
         {
+            sb.AppendLine("        RuntimeApplicationBootstrap.PrepareDesktopServices();");
             sb.AppendLine("        using IDisposable startupAssetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();");
         }
         sb.AppendLine();
@@ -1356,61 +1401,70 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine("    private static T LoadRequiredPublishedAsset<T>(string archivePath, string assetPath) where T : XRAsset");
         sb.AppendLine("    {");
-        sb.AppendLine("        byte[] bytes = VerifyArchiveAsset(archivePath, assetPath);");
-        sb.AppendLine("        return CookedAssetReader.LoadAsset(bytes, typeof(T)) as T");
-        sb.AppendLine("            ?? throw new InvalidOperationException(");
-        sb.AppendLine("                $\"Published asset '{assetPath}' did not deserialize as required type '{typeof(T)}'.\");");
+        sb.AppendLine("        PublishedArchiveHandle handle = OpenRequiredArchive(archivePath, assetPath);");
+        sb.AppendLine("        CookedPayloadLease lease = handle.ReadAsset(assetPath);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            return PublishedCookedAssetReader.LoadAsset(lease.Span, typeof(T)) as T");
+        sb.AppendLine("                ?? throw new InvalidOperationException(");
+        sb.AppendLine("                    $\"Published asset '{assetPath}' did not deserialize as required type '{typeof(T)}'.\");");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            lease.Dispose();");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    private static void RunAotSmoke(string configArchivePath, string contentArchivePath, string commonAssetsArchivePath)");
         sb.AppendLine("    {");
         sb.AppendLine("        AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();");
-        sb.AppendLine("        VerifyArchiveAsset(configArchivePath, AotRuntimeMetadataStore.MetadataFileName);");
+        sb.AppendLine("        OpenRequiredArchive(configArchivePath, AotRuntimeMetadataStore.MetadataFileName);");
         sb.AppendLine("        VerifyRuntimeBinaryAsset(configArchivePath, \"startup.asset\", typeof(GameStartupSettings));");
         sb.AppendLine("        VerifyRuntimeBinaryAsset(configArchivePath, \"user_settings.asset\", typeof(UserSettings));");
         sb.AppendLine();
         sb.AppendLine("        if (!File.Exists(contentArchivePath))");
         sb.AppendLine("            throw new FileNotFoundException(\"Content archive was not produced for the published launcher.\", contentArchivePath);");
         sb.AppendLine();
-        sb.AppendLine("        int contentAssetCount = AssetPacker.GetAssetPaths(contentArchivePath).Count;");
+        sb.AppendLine("        int contentAssetCount = PublishedArchiveRegistry.GetOrOpen(contentArchivePath).EntryCount;");
         sb.AppendLine("        if (!File.Exists(commonAssetsArchivePath))");
         sb.AppendLine("            throw new FileNotFoundException(\"Common-assets archive was not produced for the published launcher.\", commonAssetsArchivePath);");
         sb.AppendLine();
-        sb.AppendLine("        int commonAssetCount = AssetPacker.GetAssetPaths(commonAssetsArchivePath).Count;");
+        sb.AppendLine("        int commonAssetCount = PublishedArchiveRegistry.GetOrOpen(commonAssetsArchivePath).EntryCount;");
         sb.AppendLine("        Console.WriteLine($\"AOT smoke passed: {metadata.KnownTypeAssemblyQualifiedNames.Length} metadata types, {metadata.PublishedRuntimeAssetTypeNames.Length} registered runtime asset types, {contentAssetCount} content assets, {commonAssetCount} common assets.\");");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    private static void VerifyRuntimeBinaryAsset(string archivePath, string assetPath, Type expectedType)");
         sb.AppendLine("    {");
-        sb.AppendLine("        byte[] bytes = VerifyArchiveAsset(archivePath, assetPath);");
-        sb.AppendLine("        CookedAssetBlob blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(bytes);");
-        sb.AppendLine("        if (blob.Format != CookedAssetFormat.RuntimeBinaryV1)");
-        sb.AppendLine("            throw new InvalidOperationException($\"Published AOT asset '{assetPath}' must use {CookedAssetFormat.RuntimeBinaryV1}, but was {blob.Format}.\");");
+        sb.AppendLine("        PublishedArchiveHandle handle = OpenRequiredArchive(archivePath, assetPath);");
+        sb.AppendLine("        CookedPayloadLease lease = handle.ReadAsset(assetPath);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ReadOnlySpan<byte> envelope = lease.Span;");
+        sb.AppendLine("            CookedAssetEnvelopeHeader header = CookedAssetEnvelope.ParseHeader(envelope);");
+        sb.AppendLine("            if (header.Format != CookedAssetFormat.RuntimeBinaryV1)");
+        sb.AppendLine("                throw new InvalidOperationException($\"Published AOT asset '{assetPath}' must use {CookedAssetFormat.RuntimeBinaryV1}, but was {header.Format}.\");");
         sb.AppendLine();
-        sb.AppendLine("        if (!CookedAssetTypeReference.MatchesExpectedType(blob.TypeName, expectedType))");
-        sb.AppendLine("            throw new InvalidOperationException($\"Published AOT asset '{assetPath}' type reference '{blob.TypeName}' does not match expected type '{expectedType}'.\");");
+        sb.AppendLine("            string typeReference = header.DecodeTypeReference(envelope);");
+        sb.AppendLine("            if (!CookedAssetTypeReference.MatchesExpectedType(typeReference, expectedType))");
+        sb.AppendLine("                throw new InvalidOperationException($\"Published AOT asset '{assetPath}' type reference '{typeReference}' does not match expected type '{expectedType}'.\");");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            lease.Dispose();");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
-        sb.AppendLine("    private static byte[] VerifyArchiveAsset(string archivePath, string assetPath)");
+        sb.AppendLine("    // Archives open once through the registry and stay open for the life of their content root.");
+        sb.AppendLine("    private static PublishedArchiveHandle OpenRequiredArchive(string archivePath, string assetPath)");
         sb.AppendLine("    {");
         sb.AppendLine("        if (!File.Exists(archivePath))");
         sb.AppendLine("            throw new FileNotFoundException(\"Published archive was not found.\", archivePath);");
         sb.AppendLine();
-        sb.AppendLine("        if (!AssetArchiveContains(archivePath, assetPath))");
+        sb.AppendLine("        PublishedArchiveHandle handle = PublishedArchiveRegistry.GetOrOpen(archivePath);");
+        sb.AppendLine("        if (!handle.Contains(assetPath))");
         sb.AppendLine("            throw new FileNotFoundException($\"Published archive '{archivePath}' is missing required asset '{assetPath}'.\", assetPath);");
         sb.AppendLine();
-        sb.AppendLine("        return AssetPacker.GetAsset(archivePath, assetPath);");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static bool AssetArchiveContains(string archivePath, string assetPath)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        foreach (string candidate in AssetPacker.GetAssetPaths(archivePath))");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (string.Equals(candidate, assetPath, StringComparison.Ordinal))");
-        sb.AppendLine("                return true;");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        return false;");
+        sb.AppendLine("        return handle;");
         sb.AppendLine("    }");
         sb.AppendLine("#endif");
         sb.AppendLine("}");

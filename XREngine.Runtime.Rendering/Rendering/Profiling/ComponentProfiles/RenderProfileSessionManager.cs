@@ -113,7 +113,9 @@ public sealed class RenderProfileSessionManager
         private readonly IRenderProfileExecutor executor;
         private readonly object _sync = new();
         private readonly CancellationTokenSource _cancellation = new();
+        private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _terminal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _armSignal = new(false);
         private readonly ManualResetEventSlim _captureStartSignal = new(false);
         private readonly ManualResetEventSlim _captureWorkerReady = new(false);
         private RenderProfileState _state = RenderProfileState.Created;
@@ -121,12 +123,12 @@ public sealed class RenderProfileSessionManager
         private RenderProfileResult? _result;
         private string? _error;
         private int _capturedFrames;
-        private Task? _preparationTask;
-        private Task? _captureTask;
+        private Task? _lifecycleTask;
         private long? _armedFrameId;
         private long? _captureStartFrameId;
         private bool _stopRequested;
         private bool _cancelRequested;
+        private bool _arming;
         private long? _requestedFrameId;
 
         public Session(string id, RenderProfileRecipe recipe, IRenderProfileExecutor executor)
@@ -142,15 +144,20 @@ public sealed class RenderProfileSessionManager
             lock (_sync)
             {
                 Transition(RenderProfileState.Created, RenderProfileState.Preparing);
-                _preparationTask = Task.Run(PrepareAsync);
+                _lifecycleTask = Task.Factory.StartNew(
+                    RunLifecycle,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
             }
         }
 
-        private async Task PrepareAsync()
+        private void RunLifecycle()
         {
             try
             {
-                RenderProfilePreparation preparation = await executor.PrepareAsync(recipe, _cancellation.Token).ConfigureAwait(false);
+                RenderProfilePreparation preparation = executor.PrepareAsync(recipe, _cancellation.Token)
+                    .GetAwaiter().GetResult();
                 if (preparation.UnsupportedRequirements is { Count: > 0 })
                     throw new NotSupportedException(string.Join("; ", preparation.UnsupportedRequirements));
                 lock (_sync)
@@ -158,29 +165,77 @@ public sealed class RenderProfileSessionManager
                     _preparation = preparation;
                     Transition(RenderProfileState.Preparing, RenderProfileState.Stabilizing);
                 }
-                await executor.StabilizeAsync(recipe, _cancellation.Token).ConfigureAwait(false);
+                executor.StabilizeAsync(recipe, _cancellation.Token).GetAwaiter().GetResult();
                 lock (_sync)
                     Transition(RenderProfileState.Stabilizing, RenderProfileState.Created);
+                _ready.TrySetResult();
+
+                // This dedicated thread owns the executor from preparation through cleanup.
+                _armSignal.Wait(_cancellation.Token);
+                _cancellation.Token.ThrowIfCancellationRequested();
+                executor.WarmCaptureThread(recipe);
+                long armedFrameId = executor.NextFrameId;
+                if (_requestedFrameId.HasValue && _requestedFrameId.Value != armedFrameId)
+                    throw new InvalidOperationException(
+                        $"Requested frame boundary {_requestedFrameId.Value} is unavailable after capture-thread warmup; next frame is {armedFrameId}.");
+                lock (_sync)
+                    _armedFrameId = armedFrameId;
+                _captureWorkerReady.Set();
+                _captureStartSignal.Wait(_cancellation.Token);
+                _cancellation.Token.ThrowIfCancellationRequested();
+
+                for (int frame = 0; frame < recipe.TotalCaptureFrames && !Volatile.Read(ref _stopRequested); frame++)
+                {
+                    _cancellation.Token.ThrowIfCancellationRequested();
+                    long engineFrameId = checked(_captureStartFrameId!.Value + frame);
+                    executor.ExecuteMeasuredFrame(recipe, checked((int)engineFrameId));
+                    Volatile.Write(ref _capturedFrames, frame + 1);
+                }
+
+                lock (_sync)
+                    Transition(RenderProfileState.Capturing, RenderProfileState.Draining);
+                RenderProfileResult result = executor.DrainAsync(recipe, _preparation!, _cancellation.Token)
+                    .GetAwaiter().GetResult();
+                lock (_sync)
+                {
+                    _result = result with
+                    {
+                        SessionId = id,
+                        RecipeName = recipe.Name,
+                        ExecutionMode = recipe.ExecutionMode,
+                        WorkloadIdentity = _preparation!.WorkloadIdentity,
+                        CapturedFrames = Volatile.Read(ref _capturedFrames),
+                        IsIntrusive = recipe.IsIntrusive || result.IsIntrusive,
+                    };
+                    Transition(RenderProfileState.Draining, RenderProfileState.Completed);
+                    _terminal.TrySetResult();
+                }
             }
             catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
             {
-                await TryCancelExecutorAsync().ConfigureAwait(false);
+                string? cleanupError = TryCancelExecutor();
                 lock (_sync)
-                    SetTerminal(_cancelRequested ? RenderProfileState.Cancelled : RenderProfileState.Failed,
+                    SetTerminal(cleanupError is null && _cancelRequested ? RenderProfileState.Cancelled : RenderProfileState.Failed,
+                        cleanupError is not null ? $"Render-profile cleanup failed: {cleanupError}" :
                         _cancelRequested ? null : $"Render-profile session '{id}' timed out after {recipe.TimeoutSeconds} seconds.");
             }
             catch (Exception ex)
             {
-                await TryCancelExecutorAsync().ConfigureAwait(false);
+                string? cleanupError = TryCancelExecutor();
                 lock (_sync)
-                    SetTerminal(RenderProfileState.Failed, ex.Message);
+                    SetTerminal(RenderProfileState.Failed,
+                        cleanupError is null ? ex.Message : $"{ex.Message}; cleanup failed: {cleanupError}");
+            }
+            finally
+            {
+                _ready.TrySetResult();
+                _captureWorkerReady.Set();
             }
         }
 
         public async Task WaitReadyAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
-            Task preparation = _preparationTask ?? throw new InvalidOperationException("Profile preparation did not start.");
-            await preparation.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+            await _ready.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
             RenderProfileState state = Snapshot().State;
             if (state == RenderProfileState.Failed)
                 throw new InvalidOperationException(_error ?? "Render-profile preparation failed.");
@@ -198,21 +253,18 @@ public sealed class RenderProfileSessionManager
         {
             lock (_sync)
             {
-                if (_state != RenderProfileState.Created)
+                if (_state != RenderProfileState.Created || _arming)
                     throw new InvalidOperationException($"Cannot arm render-profile session '{id}' from {_state}.");
+                _arming = true;
                 _requestedFrameId = requestedFrameId;
-                _captureTask = Task.Factory.StartNew(
-                    CaptureAsync,
-                    CancellationToken.None,
-                    TaskCreationOptions.LongRunning,
-                    TaskScheduler.Default).Unwrap();
+                _armSignal.Set();
             }
 
             _captureWorkerReady.Wait(_cancellation.Token);
             lock (_sync)
             {
-                if (_state == RenderProfileState.Failed)
-                    throw new InvalidOperationException(_error ?? "The capture worker failed while arming.");
+                if (_state != RenderProfileState.Created)
+                    throw new InvalidOperationException(_error ?? $"The capture worker stopped while arming: {_state}.");
                 Transition(RenderProfileState.Created, RenderProfileState.Armed);
             }
         }
@@ -229,64 +281,6 @@ public sealed class RenderProfileSessionManager
             }
         }
 
-        private async Task CaptureAsync()
-        {
-            try
-            {
-                executor.WarmCaptureThread(recipe);
-                long armedFrameId = executor.NextFrameId;
-                if (_requestedFrameId.HasValue && _requestedFrameId.Value != armedFrameId)
-                    throw new InvalidOperationException(
-                        $"Requested frame boundary {_requestedFrameId.Value} is unavailable after capture-thread warmup; next frame is {armedFrameId}.");
-                _armedFrameId = armedFrameId;
-                _captureWorkerReady.Set();
-                _captureStartSignal.Wait(_cancellation.Token);
-
-                for (int frame = 0; frame < recipe.TotalCaptureFrames && !Volatile.Read(ref _stopRequested); frame++)
-                {
-                    _cancellation.Token.ThrowIfCancellationRequested();
-                    long engineFrameId = checked(_captureStartFrameId!.Value + frame);
-                    executor.ExecuteMeasuredFrame(recipe, checked((int)engineFrameId));
-                    Volatile.Write(ref _capturedFrames, frame + 1);
-                }
-
-                lock (_sync)
-                    Transition(RenderProfileState.Capturing, RenderProfileState.Draining);
-                RenderProfileResult result = await executor.DrainAsync(recipe, _preparation!, _cancellation.Token).ConfigureAwait(false);
-                lock (_sync)
-                {
-                    _result = result with
-                    {
-                        SessionId = id,
-                        RecipeName = recipe.Name,
-                        ExecutionMode = recipe.ExecutionMode,
-                        WorkloadIdentity = _preparation!.WorkloadIdentity,
-                        CapturedFrames = Volatile.Read(ref _capturedFrames),
-                        IsIntrusive = recipe.Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedCpuSpans) ||
-                            recipe.Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedGpuTimestamps) ||
-                            recipe.Instrumentation.HasFlag(RenderProfileInstrumentation.HardwareCounters),
-                    };
-                    Transition(RenderProfileState.Draining, RenderProfileState.Completed);
-                    _terminal.TrySetResult();
-                }
-            }
-            catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
-            {
-                _captureWorkerReady.Set();
-                await TryCancelExecutorAsync().ConfigureAwait(false);
-                lock (_sync)
-                    SetTerminal(_cancelRequested ? RenderProfileState.Cancelled : RenderProfileState.Failed,
-                        _cancelRequested ? null : $"Render-profile session '{id}' timed out after {recipe.TimeoutSeconds} seconds.");
-            }
-            catch (Exception ex)
-            {
-                _captureWorkerReady.Set();
-                await TryCancelExecutorAsync().ConfigureAwait(false);
-                lock (_sync)
-                    SetTerminal(RenderProfileState.Failed, ex.Message);
-            }
-        }
-
         public void Stop()
         {
             Volatile.Write(ref _stopRequested, true);
@@ -294,21 +288,17 @@ public sealed class RenderProfileSessionManager
 
         public async Task CancelAsync(CancellationToken cancellationToken)
         {
-            _cancelRequested = true;
-            _cancellation.Cancel();
-            _captureStartSignal.Set();
-            Task? activeTask = _captureTask ?? _preparationTask;
-            if (activeTask is not null)
-            {
-                try { await activeTask.WaitAsync(cancellationToken).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (_cancellation.IsCancellationRequested) { }
-            }
-            await TryCancelExecutorAsync(cancellationToken).ConfigureAwait(false);
             lock (_sync)
             {
-                if (_state is not (RenderProfileState.Completed or RenderProfileState.Failed or RenderProfileState.Cancelled))
-                    SetTerminal(RenderProfileState.Cancelled, null);
+                if (_state is RenderProfileState.Completed or RenderProfileState.Failed or RenderProfileState.Cancelled)
+                    return;
+                _cancelRequested = true;
             }
+            _cancellation.Cancel();
+            _armSignal.Set();
+            _captureStartSignal.Set();
+            Task lifecycle = _lifecycleTask ?? throw new InvalidOperationException("Profile lifecycle did not start.");
+            await lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public Task WaitForTerminalStateAsync(CancellationToken cancellationToken)
@@ -344,10 +334,17 @@ public sealed class RenderProfileSessionManager
             _terminal.TrySetResult();
         }
 
-        private async Task TryCancelExecutorAsync(CancellationToken cancellationToken = default)
+        private string? TryCancelExecutor()
         {
-            try { await executor.CancelAsync(cancellationToken).ConfigureAwait(false); }
-            catch when (_cancellation.IsCancellationRequested) { }
+            try
+            {
+                executor.CancelAsync(CancellationToken.None).GetAwaiter().GetResult();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
         }
     }
 }

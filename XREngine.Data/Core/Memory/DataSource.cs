@@ -138,6 +138,10 @@ namespace XREngine.Data
             GC.SuppressFinalize(this);
         }
 
+        /// <summary>Read-only view over the payload without copying. Valid while this data source is alive.</summary>
+        public unsafe ReadOnlySpan<byte> AsReadOnlySpan()
+            => new(Address.Pointer, checked((int)Length));
+
         public byte[] GetBytes()
         {
             byte[] bytes = new byte[Length];

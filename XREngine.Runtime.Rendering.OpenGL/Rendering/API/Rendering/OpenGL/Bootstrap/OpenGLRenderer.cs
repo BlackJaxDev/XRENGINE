@@ -1,9 +1,7 @@
 using XREngine.Extensions;
-using ImageMagick;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
-using Silk.NET.OpenGL.Extensions.ImGui;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
@@ -90,7 +88,9 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         : base(hostContext)
     {
         _ = hostContext.RequireDesktopWindow<XRWindow>();
-        ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
+        IRuntimeWindowGlContext desktopGl = XRWindow.DesktopGlContext
+            ?? throw new InvalidOperationException("OpenGL rendering requires an installed desktop GL context service.");
+        ESApi = Silk.NET.OpenGLES.GL.GetApi(desktopGl.GetProcAddress);
 
         EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;
         EXTSemaphore = ESApi.TryGetExtension<ExtSemaphore>(out var ext2) ? ext2 : null;
@@ -193,9 +193,16 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
 
     protected override GL GetAPI()
     {
-        var api = GL.GetApi(Window.GLContext);
+        IRuntimeWindowGlContext desktopGl = XRWindow.DesktopGlContext
+            ?? throw new InvalidOperationException("OpenGL rendering requires an installed desktop GL context service.");
+        var api = GL.GetApi(desktopGl.GetProcAddress);
         InitGL(api);
         return api;
+    }
+
+    private nint ResolveWindowProcAddress(string name)
+    {
+        return XRWindow.DesktopGlContext?.GetProcAddress(name) ?? 0;
     }
 
     public override void Initialize()
@@ -215,7 +222,6 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
 
         if (_imguiController is { } controller)
         {
-            ImGuiControllerUtilities.DetachInputHandlers(controller);
             ImGuiControllerUtilities.MarkContextDestroyed(controller.Context);
             ImGuiContextTracker.Unregister(controller.Context);
             if (!orphanGLHandles)

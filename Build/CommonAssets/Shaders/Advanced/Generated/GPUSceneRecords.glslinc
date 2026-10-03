@@ -1,0 +1,190 @@
+#ifndef XR_GPU_SCENE_GENERATED_RECORDS_GLSLINC
+#define XR_GPU_SCENE_GENERATED_RECORDS_GLSLINC
+
+// Generated from the C# GPU records. Regenerate with GpuRecordIncludeGenerator.
+
+struct BoundsGpu
+{
+    vec4 BoundingSphere;
+    vec4 AabbMin;
+    vec4 AabbMax;
+    uint BoundsVersion;
+    uint Padding0;
+    uint Padding1;
+    uint Padding2;
+};
+
+struct DrawMetadata
+{
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint RenderIdentityID;
+    uint LogicalMeshID;
+    uint BoundsID;
+};
+
+struct GPUBatchRangeEntry
+{
+    uint DrawOffset;
+    uint DrawCount;
+    uint MaterialID;
+    uint PackedPassPipelineState;
+};
+
+struct GPULodTransitionState
+{
+    uint PreviousMeshID;
+    uint PreviousLODLevel;
+    uint Flags;
+    uint ProgressBits;
+};
+
+struct GpuMeshletDescriptor
+{
+    vec4 BoundsSphere;
+    uint VertexOffset;
+    uint TriangleByteOffset;
+    uint VertexCount;
+    uint TriangleCount;
+    vec4 Cone;
+    vec4 ConeApex;
+    uint PackedCone;
+    uint Reserved0;
+    uint Reserved1;
+    uint Reserved2;
+};
+
+struct GpuMeshletRange
+{
+    uint MeshletOffset;
+    uint MeshletCount;
+    uint VertexIndexOffset;
+    uint TriangleIndexOffset;
+};
+
+struct LODTableEntry
+{
+    uint LODCount;
+    uint LOD0_MeshDataID;
+    uint LOD1_MeshDataID;
+    uint LOD2_MeshDataID;
+    uint LOD3_MeshDataID;
+    float LOD0_MinProjectedRadiusPixels;
+    float LOD1_MinProjectedRadiusPixels;
+    float LOD2_MinProjectedRadiusPixels;
+    float LOD3_MinProjectedRadiusPixels;
+    float Padding0;
+    float Padding1;
+    float Padding2;
+};
+
+struct MeshDataEntry
+{
+    uint IndexCount;
+    uint FirstIndex;
+    uint FirstVertex;
+    uint Flags;
+};
+
+struct GPUSortKeyEntry
+{
+    uint PackedPassPipelineState;
+    uint MaterialID;
+    uint MeshID;
+    uint SourceIndex;
+};
+
+struct GPUViewBatchClassification
+{
+    uint ExactViewMaskLo;
+    uint ExactViewMaskHi;
+    uint PackedPassPipelineState;
+    uint MaterialID;
+    uint MeshID;
+    uint LodLevel;
+    uint DrawID;
+    uint Flags;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GpuMeshletTaskRecord
+{
+    uint MeshletIndex;
+    uint DrawID;
+    uint TransformID;
+    uint MaterialID;
+};
+
+struct MaterialStateGpu
+{
+    uint StateClassID;
+    uint MaterialID;
+    uint PipelineKey;
+    uint OptionsBits;
+    uint TransparencyMode;
+    uint DescriptorStart;
+    uint DescriptorCount;
+    uint Flags;
+};
+
+struct TransformGpu
+{
+    mat4 WorldMatrix;
+};
+
+struct BoneMappingData
+{
+    int ParticleIndex;
+    int ChildParticleIndex;
+    int BoneMatrixIndex;
+    int Flags;
+    vec3 RestLocalDirection;
+    float _pad0;
+};
+
+struct TextureHandleEntry
+{
+    uvec2 Handle;
+    uint Flags;
+    uint Padding0;
+};
+
+#endif

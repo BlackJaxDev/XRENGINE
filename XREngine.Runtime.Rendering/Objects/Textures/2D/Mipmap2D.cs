@@ -1,6 +1,6 @@
 using System;
 using System.ComponentModel;
-using ImageMagick;
+using XREngine.Imaging;
 using MemoryPack;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -11,7 +11,6 @@ namespace XREngine.Rendering
 {
     /// <summary>
     /// Defines raw image data for a 2D texture mipmap.
-    /// Has support for resizing with and converting to/from MagickImage.
     /// </summary>
     [MemoryPackable]
     public partial class Mipmap2D : XRBase
@@ -24,7 +23,7 @@ namespace XREngine.Rendering
 
         [MemoryPackConstructor]
         public Mipmap2D() { }
-        public Mipmap2D(MagickImage? image)
+        public Mipmap2D(RuntimeImage? image)
         {
             if (image != null)
                 SetFromImage(image);
@@ -94,14 +93,14 @@ namespace XREngine.Rendering
 
         }
 
-        public static explicit operator Mipmap2D(MagickImage image)
+        public static explicit operator Mipmap2D(RuntimeImage image)
         {
             Mipmap2D mip = new();
             mip.SetFromImage(image);
             return mip;
         }
 
-        public static explicit operator MagickImage(Mipmap2D mipmap)
+        public static explicit operator RuntimeImage(Mipmap2D mipmap)
             => mipmap.GetImage();
 
         /// <summary>
@@ -122,166 +121,55 @@ namespace XREngine.Rendering
             Width = width;
             Height = height;
         }
-        public void SetFromImage(MagickImage image)
+        /// <summary>Copies image rows synchronously into this mipmap's data source.</summary>
+        public unsafe void SetFromImage(RuntimeImage image)
         {
             ArgumentNullException.ThrowIfNull(image);
-
-            if (IsHighDynamicRange(image.Format))
-                SetFromHighDynamicRangeImage(image);
-            else
-                SetFromLowDynamicRangeImage(image);
-
-            Width = image.Width;
-            Height = image.Height;
-        }
-
-        private static bool IsHighDynamicRange(MagickFormat format)
-            => format is MagickFormat.Exr or MagickFormat.Hdr or MagickFormat.Pfm;
-
-        private unsafe void SetFromLowDynamicRangeImage(MagickImage image)
-        {
-            const int targetChunkBytes = 1024 * 1024;
-            int totalBytes = GetCheckedRgbaByteLength(image.Width, image.Height, sizeof(byte));
-            int rowBytes = checked((int)image.Width * 4);
-            uint rowsPerChunk = (uint)Math.Max(1, targetChunkBytes / Math.Max(1, rowBytes));
-            DataSource decodedData = DataSource.Allocate((uint)totalBytes);
-            MagickImage? convertedImage = null;
-            bool dataAssigned = false;
-
+            int rowBytes = checked((int)((long)image.Width * RuntimeImage.GetBytesPerPixel(image.Format, image.Type)));
+            int byteCount = checked(rowBytes * (int)image.Height);
+            DataSource copied = DataSource.Allocate((uint)byteCount);
+            bool assigned = false;
             try
             {
-                MagickImage pixelSource = image;
-                if (RequiresSrgbConversion(image.ColorSpace))
+                ReadOnlySpan<byte> source = image.Pixels.Span;
+                for (int row = 0; row < image.Height; row++)
                 {
-                    convertedImage = (MagickImage)image.Clone();
-                    convertedImage.ColorSpace = ColorSpace.sRGB;
-                    pixelSource = convertedImage;
+                    int sourceRow = image.Origin == RuntimeImageOrigin.BottomLeft
+                        ? checked((int)image.Height - row - 1)
+                        : row;
+                    source.Slice(sourceRow * image.RowStrideBytes, rowBytes)
+                        .CopyTo(new Span<byte>((byte*)copied.Address + row * rowBytes, rowBytes));
                 }
 
-                using IPixelCollection<float> pixels = pixelSource.GetPixels()
-                    ?? throw new InvalidOperationException("ImageMagick could not expose the decoded pixels.");
-                for (uint y = 0; y < image.Height; y += rowsPerChunk)
+                InternalFormat = (image.Format, image.Type) switch
                 {
-                    uint chunkHeight = Math.Min(rowsPerChunk, image.Height - y);
-                    byte[] chunk = pixels.ToByteArray(0, checked((int)y), image.Width, chunkHeight, PixelMapping.RGBA)
-                        ?? throw new InvalidDataException("ImageMagick returned no RGBA pixel data.");
-                    int expectedChunkBytes = checked((int)(image.Width * chunkHeight * 4u));
-                    if (chunk.Length != expectedChunkBytes)
-                        throw new InvalidDataException($"ImageMagick returned {chunk.Length} RGBA bytes; expected {expectedChunkBytes}.");
-
-                    int destinationOffset = checked((int)(y * image.Width * 4u));
-                    chunk.CopyTo(new Span<byte>((byte*)decodedData.Address + destinationOffset, chunk.Length));
-                }
-
-                InternalFormat = EPixelInternalFormat.Rgba8;
-                PixelFormat = EPixelFormat.Rgba;
-                PixelType = EPixelType.UnsignedByte;
-                Data = decodedData;
-                dataAssigned = true;
+                    (EPixelFormat.Rgba or EPixelFormat.Bgra, EPixelType.UnsignedByte) => EPixelInternalFormat.Rgba8,
+                    (EPixelFormat.Rgb or EPixelFormat.Bgr, EPixelType.UnsignedByte) => EPixelInternalFormat.Rgb8,
+                    (EPixelFormat.Rgba, EPixelType.Float) => EPixelInternalFormat.Rgba32f,
+                    (EPixelFormat.Red, EPixelType.Float) => EPixelInternalFormat.R32f,
+                    _ => InternalFormat,
+                };
+                PixelFormat = image.Format;
+                PixelType = image.Type;
+                Width = image.Width;
+                Height = image.Height;
+                Data = copied;
+                assigned = true;
             }
             finally
             {
-                if (!dataAssigned)
-                    decodedData.Dispose();
-                convertedImage?.Dispose();
+                if (!assigned)
+                    copied.Dispose();
             }
         }
 
-        private unsafe void SetFromHighDynamicRangeImage(MagickImage image)
+        /// <summary>Returns an independent snapshot of this mipmap's pixels.</summary>
+        public RuntimeImage GetImage()
         {
-            const int targetChunkBytes = 1024 * 1024;
-            int totalBytes = GetCheckedRgbaByteLength(image.Width, image.Height, sizeof(float));
-            int rowBytes = checked((int)image.Width * 4 * sizeof(float));
-            uint rowsPerChunk = (uint)Math.Max(1, targetChunkBytes / Math.Max(1, rowBytes));
-            DataSource decodedData = DataSource.Allocate((uint)totalBytes);
-            bool dataAssigned = false;
-
-            try
-            {
-                using IPixelCollection<float> pixels = image.GetPixels()
-                    ?? throw new InvalidOperationException("ImageMagick could not expose the decoded pixels.");
-                int channelCount = checked((int)pixels.Channels);
-                int redIndex = checked((int)(pixels.GetChannelIndex(PixelChannel.Red)
-                    ?? pixels.GetChannelIndex(PixelChannel.Gray)
-                    ?? 0u));
-                int greenIndex = checked((int)(pixels.GetChannelIndex(PixelChannel.Green) ?? (uint)redIndex));
-                int blueIndex = checked((int)(pixels.GetChannelIndex(PixelChannel.Blue) ?? (uint)redIndex));
-                uint? magickAlphaIndex = pixels.GetChannelIndex(PixelChannel.Alpha);
-                int alphaIndex = magickAlphaIndex.HasValue ? checked((int)magickAlphaIndex.Value) : -1;
-                float inverseQuantumRange = 1.0f / Quantum.Max;
-                float* destination = (float*)decodedData.Address;
-
-                for (uint y = 0; y < image.Height; y += rowsPerChunk)
-                {
-                    uint chunkHeight = Math.Min(rowsPerChunk, image.Height - y);
-                    float[] chunk = pixels.GetArea(0, checked((int)y), image.Width, chunkHeight)
-                        ?? throw new InvalidDataException("ImageMagick returned no HDR pixel data.");
-                    int pixelCount = checked((int)(image.Width * chunkHeight));
-                    int expectedValues = checked(pixelCount * channelCount);
-                    if (chunk.Length != expectedValues)
-                        throw new InvalidDataException($"ImageMagick returned {chunk.Length} channel values; expected {expectedValues}.");
-
-                    int destinationPixel = checked((int)(y * image.Width));
-                    for (int pixelIndex = 0; pixelIndex < pixelCount; pixelIndex++)
-                    {
-                        int sourceOffset = pixelIndex * channelCount;
-                        int destinationOffset = (destinationPixel + pixelIndex) * 4;
-                        destination[destinationOffset] = chunk[sourceOffset + redIndex] * inverseQuantumRange;
-                        destination[destinationOffset + 1] = chunk[sourceOffset + greenIndex] * inverseQuantumRange;
-                        destination[destinationOffset + 2] = chunk[sourceOffset + blueIndex] * inverseQuantumRange;
-                        destination[destinationOffset + 3] = alphaIndex >= 0
-                            ? chunk[sourceOffset + alphaIndex] * inverseQuantumRange
-                            : 1.0f;
-                    }
-                }
-
-                InternalFormat = EPixelInternalFormat.Rgba32f;
-                PixelFormat = EPixelFormat.Rgba;
-                PixelType = EPixelType.Float;
-                Data = decodedData;
-                dataAssigned = true;
-            }
-            finally
-            {
-                if (!dataAssigned)
-                    decodedData.Dispose();
-            }
+            byte[] bytes = Data?.GetBytes()
+                ?? XRTexture.AllocateBytes(Width, Height, PixelFormat, PixelType);
+            return new RuntimeImage(Width, Height, PixelFormat, PixelType, bytes);
         }
-
-        private static int GetCheckedRgbaByteLength(uint width, uint height, int componentSize)
-        {
-            long byteLength = checked((long)width * height * 4L * componentSize);
-            if (byteLength > int.MaxValue)
-                throw new NotSupportedException("Decoded texture data cannot exceed 2 GB.");
-
-            return (int)byteLength;
-        }
-
-        private static bool RequiresSrgbConversion(ColorSpace colorSpace)
-            => colorSpace is not ColorSpace.RGB
-                and not ColorSpace.sRGB
-                and not ColorSpace.scRGB
-                and not ColorSpace.Gray
-                and not ColorSpace.LinearGray;
-
-        public MagickImage GetImage()
-        {
-            byte[]? bytes = Data?.GetBytes();
-            MagickImage image = bytes != null
-                ? XRTexture.NewImage(Width, Height, PixelFormat, PixelType, bytes)
-                : XRTexture.NewImage(Width, Height, PixelFormat, PixelType);
-
-            // PixelReadSettings describes raw storage but has no source-file format. Tag floating
-            // color images as EXR so a resize or explicit MagickImage round-trip retains HDR range.
-            if (PixelType is EPixelType.Float or EPixelType.HalfFloat &&
-                PixelFormat is EPixelFormat.Rgb or EPixelFormat.Rgba or EPixelFormat.Bgr or EPixelFormat.Bgra)
-            {
-                image.Format = MagickFormat.Exr;
-            }
-
-            return image;
-        }
-
         private EPixelType _pixelType = EPixelType.UnsignedByte;
         public EPixelType PixelType
         {
@@ -319,77 +207,50 @@ namespace XREngine.Rendering
 
         public void Resize(uint width, uint height, bool ignoreImage = false)
         {
-            if (Data is not null && Data.Length != 0 && Width != 0u && Height != 0u)
-            {
-                if (ignoreImage)
-                {
-                    Width = width;
-                    Height = height;
-                    Data = new DataSource(XRTexture.AllocateBytes(width, height, PixelFormat, PixelType));
-                }
-                else
-                {
-                    try
-                    {
-                        using var img = GetImage();
-                        img.Resize(width, height);
-                        SetFromImage(img);
-                    }
-                    catch (MagickException)
-                    {
-                        Width = width;
-                        Height = height;
-                        Data = new DataSource(XRTexture.AllocateBytes(width, height, PixelFormat, PixelType));
-                    }
-                }
-            }
-            else
+            if (Data is null || Data.Length == 0 || Width == 0 || Height == 0)
             {
                 Width = width;
                 Height = height;
+                return;
             }
-        }
-        public void InterpolativeResize(uint width, uint height, PixelInterpolateMethod method)
-        {
-            if (Data is not null && Data.Length != 0 && Width != 0u && Height != 0u)
-            {
-                using var img = GetImage();
-                img.InterpolativeResize(width, height, method);
-                SetFromImage(img);
-            }
-            else
+            if (ignoreImage)
             {
                 Width = width;
                 Height = height;
+                Data = new DataSource(XRTexture.AllocateBytes(width, height, PixelFormat, PixelType));
+                return;
             }
-        }
-        public void AdaptiveResize(uint width, uint height)
-        {
-            if (Data is not null && Data.Length != 0 && Width != 0u && Height != 0u)
-            {
-                using var img = GetImage();
-                img.AdaptiveResize(width, height);
-                SetFromImage(img);
-            }
-            else
-            {
-                Width = width;
-                Height = height;
-            }
-        }
-        public async Task ResizeAsync(uint width, uint height)
-        {
-            await Task.Run(() => Resize(width, height));
-        }
-        public async Task InterpolativeResizeAsync(uint width, uint height, PixelInterpolateMethod method)
-        {
-            await Task.Run(() => InterpolativeResize(width, height, method));
-        }
-        public async Task AdaptiveResizeAsync(uint width, uint height)
-        {
-            await Task.Run(() => AdaptiveResize(width, height));
+            ResizeWithBackend(width, height, RuntimeImageResizeMode.Standard);
         }
 
+        public void InterpolativeResize(uint width, uint height, RuntimeImageResizeMode mode)
+            => ResizeWithBackend(width, height, mode);
+
+        public void AdaptiveResize(uint width, uint height)
+            => ResizeWithBackend(width, height, RuntimeImageResizeMode.Adaptive);
+
+        private void ResizeWithBackend(uint width, uint height, RuntimeImageResizeMode mode)
+        {
+            if (Data is null || Data.Length == 0 || Width == 0 || Height == 0)
+            {
+                Width = width;
+                Height = height;
+                return;
+            }
+
+            using RuntimeImage source = GetImage();
+            using RuntimeImage resized = RuntimeImageCodecs.Require().Resize(source, width, height, mode);
+            SetFromImage(resized);
+        }
+
+        public Task ResizeAsync(uint width, uint height)
+            => Task.Run(() => Resize(width, height));
+
+        public Task InterpolativeResizeAsync(uint width, uint height, RuntimeImageResizeMode mode)
+            => Task.Run(() => InterpolativeResize(width, height, mode));
+
+        public Task AdaptiveResizeAsync(uint width, uint height)
+            => Task.Run(() => AdaptiveResize(width, height));
         public Mipmap2D Clone(bool cloneImage)
             => new()
             {

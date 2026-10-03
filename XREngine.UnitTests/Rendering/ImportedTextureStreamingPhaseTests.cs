@@ -9,8 +9,11 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Imaging;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Imaging.Magick;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -19,17 +22,23 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class ImportedTextureStreamingPhaseTests
 {
     private IRuntimeRenderingHostServices? _previousRenderingServices;
+    private IRuntimeImageCodec? _previousImageCodec;
 
     [SetUp]
     public void SetUp()
     {
         _previousRenderingServices = RuntimeRenderingHostServices.Current;
+        _previousImageCodec = RuntimeImageCodecs.Current;
+        RuntimeImageCodecs.Current = new MagickRuntimeImageCodec();
         RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
     }
 
     [TearDown]
     public void TearDown()
-        => RuntimeRenderingHostServices.Current = _previousRenderingServices!;
+    {
+        RuntimeRenderingHostServices.Current = _previousRenderingServices!;
+        RuntimeImageCodecs.Current = _previousImageCodec;
+    }
 
     [Test]
     public void DetermineDesiredResidentSize_WhenPromotionsBlocked_ReturnsPreviewResidentSize()
@@ -277,7 +286,8 @@ public sealed class ImportedTextureStreamingPhaseTests
                 PreviewMaxDimension: 64u,
                 PageSelection: SparseTextureStreamingPageSelection.Full),
             desiredResidentSize: 1024u,
-            availableManagedBytes: justUnder512Budget);
+            availableManagedBytes: justUnder512Budget,
+            backend: OpenGlTextureStreamingBackendProvider.Instance.DefaultBackend);
 
         fitted.ShouldBe(256u);
     }
@@ -293,7 +303,8 @@ public sealed class ImportedTextureStreamingPhaseTests
                 PreviewMaxDimension: 64u,
                 PageSelection: SparseTextureStreamingPageSelection.Full),
             desiredResidentSize: 1024u,
-            availableManagedBytes: 0L);
+            availableManagedBytes: 0L,
+            backend: OpenGlTextureStreamingBackendProvider.Instance.DefaultBackend);
 
         fitted.ShouldBe(1u);
     }
@@ -453,7 +464,7 @@ public sealed class ImportedTextureStreamingPhaseTests
     [Test]
     public void StreamableTexturePayload_ReadsOnlyRequestedResidentSlice()
     {
-        using MagickImage source = new(MagickColors.Red, 8, 4);
+        using RuntimeImage source = CreateSolidImage(8, 4, 255, 0, 0);
         byte[] payload = XRTexture2D.CreateTextureStreamingPayload("payload-test.png", source);
 
         XRTexture2D.TryReadResidentDataFromTextureStreamingPayload(
@@ -475,7 +486,7 @@ public sealed class ImportedTextureStreamingPhaseTests
     [Test]
     public void TextureYamlAsset_ReadsResidentSliceFromCookedEnvelope()
     {
-        using MagickImage source = new(MagickColors.Blue, 8, 4);
+        using RuntimeImage source = CreateSolidImage(8, 4, 0, 0, 255);
         XRTexture2D texture = new()
         {
             Name = "EnvelopeTexture",
@@ -516,7 +527,7 @@ public sealed class ImportedTextureStreamingPhaseTests
         {
             string sourcePath = Path.Combine(tempDirectory, "single-full-mip.png");
             string assetPath = Path.Combine(tempDirectory, "single-full-mip.png.XREngine.Rendering.XRTexture2D.asset");
-            using MagickImage source = new(MagickColors.Gold, 128, 64);
+            using RuntimeImage source = CreateSolidImage(128, 64, 255, 215, 0);
             XRTexture2D texture = new()
             {
                 Name = "SingleFullMip",
@@ -550,7 +561,7 @@ public sealed class ImportedTextureStreamingPhaseTests
     [Test]
     public void TextureStreamingManifest_ReadsStreamableHeaderWithoutResidentMipHydration()
     {
-        using MagickImage source = new(MagickColors.CadetBlue, 16, 8);
+        using RuntimeImage source = CreateSolidImage(16, 8, 95, 158, 160);
         byte[] payload = XRTexture2D.CreateTextureStreamingPayload("manifest-test.png", source);
 
         XRTexture2D.TryReadTextureStreamingManifestFromTextureStreamingPayload(
@@ -1047,5 +1058,18 @@ Payload:
             format: XREngine.Data.Rendering.ESizedInternalFormat.Rgba8);
 
         committedBytes.ShouldBeLessThan(fullCommittedBytes);
+    }
+
+    private static RuntimeImage CreateSolidImage(uint width, uint height, byte red, byte green, byte blue)
+    {
+        byte[] rgba = new byte[checked((int)((long)width * height * 4))];
+        for (int pixel = 0; pixel < rgba.Length; pixel += 4)
+        {
+            rgba[pixel] = red;
+            rgba[pixel + 1] = green;
+            rgba[pixel + 2] = blue;
+            rgba[pixel + 3] = 255;
+        }
+        return new RuntimeImage(width, height, RuntimePixelFormat.Rgba8, rgba);
     }
 }

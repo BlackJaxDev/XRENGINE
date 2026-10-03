@@ -379,6 +379,8 @@ namespace XREngine.Scene.Transforms
 
         protected override Matrix4x4 CreateLocalMatrix()
             => Matrix4x4.Identity;
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
             => Matrix4x4.CreateFromQuaternion(PostRotationOffset * Rotation * PreRotationOffset) * Matrix4x4.CreateTranslation(PositionOffset + Position);
 

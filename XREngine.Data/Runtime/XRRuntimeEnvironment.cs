@@ -12,7 +12,7 @@ public enum EXRRuntimeBuildKind
     PublishedAot,
 }
 
-public static class XRRuntimeEnvironment
+public static partial class XRRuntimeEnvironment
 {
     public const string PublishedDefineConstant = "XRE_PUBLISHED";
     public const string AotRuntimeDefineConstant = "XRE_AOT_RUNTIME";
@@ -41,6 +41,7 @@ public static class XRRuntimeEnvironment
             ? null
             : Path.GetFullPath(configArchivePath);
         AotRuntimeMetadataStore.ResetForTestsOrReconfiguration();
+        Core.Files.PublishedArchiveRegistry.CloseAll();
     }
 
     public static string ComposeDefineConstants(string? existing, bool includePublishedBuild, bool includeAotRuntime)

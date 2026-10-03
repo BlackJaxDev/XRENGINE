@@ -1,5 +1,5 @@
-using OpenVR.NET.Manifest;
 using XREngine.Rendering;
+using XREngine.Input;
 
 namespace XREngine;
 
@@ -14,18 +14,14 @@ internal sealed class EngineRuntimeVrLifecycleServices : IRuntimeVrLifecycleServ
     public bool StopOpenXR()
         => EngineVrLifecycle.StopOpenXR();
 
-    public Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window)
-        => actionManifest is IActionManifest typedActionManifest && vrManifest is VrManifest typedVrManifest
-            ? EngineVrLifecycle.InitializeLocal(typedActionManifest, typedVrManifest, window)
-            : Task.FromResult(false);
+    public Task<bool> InitializeLocal(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest, XRWindow window)
+        => EngineVrLifecycle.InitializeLocal(actionManifest, vrManifest, window);
 
     public void InitRenderEmulated(XRWindow window)
         => EngineVrLifecycle.InitRenderEmulated(window);
 
-    public Task<bool> InitializeClient(object actionManifest, object vrManifest)
-        => actionManifest is IActionManifest typedActionManifest && vrManifest is VrManifest typedVrManifest
-            ? EngineVrLifecycle.IninitializeClient(typedActionManifest, typedVrManifest)
-            : Task.FromResult(false);
+    public Task<bool> InitializeClient(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest)
+        => EngineVrLifecycle.IninitializeClient(actionManifest, vrManifest);
 
     public bool InitializeServer()
         => EngineVrLifecycle.InitializeServer();

@@ -1,6 +1,8 @@
 # Text-to-Speech (TTS) System
 
 The XREngine TTS system provides text-to-speech capabilities through multiple cloud providers.
+`TextToSpeechComponent` lives in `XREngine.Runtime.AudioIntegration`; playback
+uses the lower audio contracts and the registered desktop transport.
 
 ## Components
 

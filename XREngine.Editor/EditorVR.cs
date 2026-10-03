@@ -1,7 +1,9 @@
-﻿using OpenVR.NET.Manifest;
+﻿using XREngine.Input;
 using XREngine;
 using XREngine.Editor;
-using ActionType = OpenVR.NET.Manifest.ActionType;
+using ActionType = XREngine.Input.RuntimeOpenVrActionType;
+using Requirement = XREngine.Input.RuntimeOpenVrActionRequirement;
+using ActionSetType = XREngine.Input.RuntimeOpenVrActionSetType;
 
 namespace XREngine.Editor;
 
@@ -15,20 +17,20 @@ internal static class EditorVR
       if (!File.Exists(path))
          File.WriteAllText(path, KnucklesBindingsJsonContent);
 
-      settings.ActionManifest = new ActionManifest<EVRActionCategory, EVRGameAction>()
+      settings.ActionManifest = new RuntimeOpenVrActionManifest<EVRActionCategory, EVRGameAction>()
       {
          Actions = GetActions(),
          ActionSets = GetActionSets(),
          DefaultBindings =
          [
-            new DefaultBinding()
+            new RuntimeOpenVrDefaultBinding()
             {
                ControllerType = "knuckles",
                Path = "bindings_knuckles.json"
             }
          ],
       };
-      settings.VRManifest = new VrManifest()
+      settings.VRManifest = new RuntimeOpenVrApplicationManifest()
       {
          AppKey = "XRE.VR.Test",
          IsDashboardOverlay = false,
@@ -38,7 +40,7 @@ internal static class EditorVR
    }
 
    #region VR Actions
-   private static List<ActionSet<EVRActionCategory, EVRGameAction>> GetActionSets()
+   private static List<RuntimeOpenVrActionSet<EVRActionCategory>> GetActionSets()
    {
       return
       [
@@ -144,9 +146,9 @@ internal static class EditorVR
          },
       ];
    }
-   private static List<OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>> GetActions() =>
+   private static List<RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>> GetActions() =>
    [
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.Interact,
          Category = EVRActionCategory.Global,
@@ -168,7 +170,7 @@ internal static class EditorVR
             { "zh", "äº¤äº’" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.Jump,
          Category = EVRActionCategory.Global,
@@ -190,7 +192,7 @@ internal static class EditorVR
             { "zh", "è·³è·ƒ" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.ToggleMute,
          Category = EVRActionCategory.Global,
@@ -212,7 +214,7 @@ internal static class EditorVR
             { "zh", "åˆ‡æ¢é™éŸ³" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.Grab,
          Category = EVRActionCategory.Global,
@@ -234,7 +236,7 @@ internal static class EditorVR
             { "zh", "æŠ“å–" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.PlayspaceDragLeft,
          Category = EVRActionCategory.Global,
@@ -256,7 +258,7 @@ internal static class EditorVR
             { "zh", "å‘å·¦æ‹–åŠ¨æ¸¸æˆç©ºé—´" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.PlayspaceDragRight,
          Category = EVRActionCategory.Global,
@@ -278,7 +280,7 @@ internal static class EditorVR
             { "zh", "å‘å³æ‹–åŠ¨æ¸¸æˆç©ºé—´" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.ToggleMenu,
          Category = EVRActionCategory.Global,
@@ -300,7 +302,7 @@ internal static class EditorVR
             { "zh", "åˆ‡æ¢èœå•" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.ToggleQuickMenu,
          Category = EVRActionCategory.Global,
@@ -322,7 +324,7 @@ internal static class EditorVR
             { "zh", "åˆ‡æ¢å¿«æ·èœå•" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.ToggleAvatarMenu,
          Category = EVRActionCategory.Global,
@@ -344,7 +346,7 @@ internal static class EditorVR
             { "zh", "åˆ‡æ¢å¤´åƒèœå•" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.LeftHandPose,
          Category = EVRActionCategory.Global,
@@ -366,7 +368,7 @@ internal static class EditorVR
             { "zh", "å·¦æ‰‹å§¿åŠ¿" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.RightHandPose,
          Category = EVRActionCategory.Global,
@@ -388,7 +390,7 @@ internal static class EditorVR
             { "zh", "å³æ‰‹å§¿åŠ¿" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.Locomote,
          Category = EVRActionCategory.Global,
@@ -410,7 +412,7 @@ internal static class EditorVR
             { "zh", "ç§»åŠ¨" },
          },
       },
-      new OpenVR.NET.Manifest.Action<EVRActionCategory, EVRGameAction>()
+      new RuntimeOpenVrAction<EVRActionCategory, EVRGameAction>()
       {
          Name = EVRGameAction.Turn,
          Category = EVRActionCategory.Global,

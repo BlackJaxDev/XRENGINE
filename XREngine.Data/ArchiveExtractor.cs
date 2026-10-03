@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using ICSharpCode.SharpZipLib.GZip;
 using ICSharpCode.SharpZipLib.Tar;
 
@@ -108,7 +108,7 @@ namespace XREngine
             if (!Directory.Exists(tempFolder))
                 yield break;
 
-            var directories = Directory.GetDirectories(tempFolder);
+            var directories = XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateDirectories(tempFolder, "*", SearchOption.TopDirectoryOnly).ToArray();
             int total = directories.Length;
             if (total == 0)
                 yield break;

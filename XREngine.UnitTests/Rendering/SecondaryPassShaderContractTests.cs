@@ -320,29 +320,31 @@ public sealed class SecondaryPassShaderContractTests
             "Ultralight",
             "OpenGLGPUDriver.cs"));
         string vulkanState = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
+            "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
             "API",
             "Rendering",
             "Vulkan",
             "Commands",
-            "VulkanRenderer.StateTracking.cs"));
+            "Authority",
+            "VulkanCommandRuntime.NativeRecordingServices.cs"));
         string vulkanImGui = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
+            "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
             "API",
             "Rendering",
             "Vulkan",
             "UI",
-            "VulkanRenderer.ImGui.cs"));
+            "VulkanImGuiOverlayCommandRecorder.cs"));
         string vulkanExtensions = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
+            "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
             "API",
             "Rendering",
             "Vulkan",
             "Bootstrap",
-            "VulkanExtensions.cs"));
+            "Device",
+            "VulkanDeviceContext.LogicalDeviceBootstrap.cs"));
         string vulkanDepthClipControl = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
@@ -663,14 +665,14 @@ public sealed class SecondaryPassShaderContractTests
             "MeshRenderer",
             "VkMeshRenderer.Uniforms.cs"));
         string renderProgram = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
+            "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
             "API",
             "Rendering",
             "Vulkan",
-            "Objects",
-            "Types",
-            "VkRenderProgram.cs"));
+            "BackendObjects",
+            "Programs",
+            "VkRenderProgram.ComputeUniforms.cs"));
         string material = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",

@@ -59,6 +59,6 @@ These diagnostics are intentionally compact enough to be useful during live-stre
 - `XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIVideoComponent.Audio.cs`
 - `XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIVideoComponent.FrameDrain.cs`
 - `XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIVideoComponent.Pipeline.cs`
-- `XREngine.Audio/OpenAL/OpenALTransport.cs`
+- `XREngine.Audio.OpenAL/OpenAL/OpenALTransport.cs`
 - `XREngine.UnitTests/Audio/OpenALTransportTests.cs`
 - `XREngine.UnitTests/Audio/OpenALRegressionTests.cs`

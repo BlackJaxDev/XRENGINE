@@ -1,5 +1,6 @@
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using System.Numerics;
 
 namespace XREngine.Components.Animation
 {
@@ -11,5 +12,10 @@ namespace XREngine.Components.Animation
     {
         SceneNode? HeadNode { get; }
         TransformBase RootTransform { get; }
+        bool TryGetCanonicalBodyMeasurements(Vector3 eyeOffsetFromHead, out AvatarBodyMeasurements measurements)
+        {
+            measurements = default;
+            return false;
+        }
     }
 }

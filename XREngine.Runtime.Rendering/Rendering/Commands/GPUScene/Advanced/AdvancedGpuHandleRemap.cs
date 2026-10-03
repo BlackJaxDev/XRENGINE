@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// GPU-uploadable dense-index relocation for one stable logical handle.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedGpuHandleRemap")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedGpuHandleRemap(
     AdvancedGpuHandle Handle,

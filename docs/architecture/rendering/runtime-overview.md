@@ -4,6 +4,8 @@
 
 XRENGINE renders each world through a staged pipeline that separates scene updates, visibility gathering, GPU command construction, and pass execution. The system is built around GPU-driven multi-draw indirect rendering but retains CPU fallbacks for debugging and platforms that do not support the compute path.
 
+The reusable rendering project owns worlds, viewports, pipelines, GPU resource contracts, the `XRWindow` facade, and native-free XR service interfaces. `XREngine.Runtime.Rendering.OpenGL` and `XREngine.Runtime.Rendering.Vulkan` own their GPU implementations, including their OpenXR graphics bindings. `XREngine.Runtime.Platform.Desktop` installs the window backend that lends the renderers thread-owned GL context or Vulkan surface services. Bootstrap registers desktop, XR, imaging, media, and font providers explicitly before creating windows or renderer devices. See [project organization](../runtime/project-organization.md) for the dependency layout and [image, media, and font boundaries](image-media-font-boundaries.md) for resource import ownership. Source separation does not imply runtime qualification.
+
 ## Frame Ownership
 - `XRWorldInstance` owns the live scene for a window. It wires engine timers (`Time.Timer`) so update ticks, visibility collection, buffer swaps, and render submission happen on deterministic hooks.
 - Transform changes are queued from gameplay threads via `AddDirtyTransform`. During `PostUpdate` each depth bucket is recalculated and the resulting render matrices are transferred to the render thread during `GlobalSwapBuffers`.

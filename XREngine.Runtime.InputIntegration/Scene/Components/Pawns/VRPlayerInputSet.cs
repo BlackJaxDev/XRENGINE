@@ -1,4 +1,3 @@
-using MagicPhysX;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Core.Attributes;
@@ -6,12 +5,11 @@ using XREngine.Components.Physics;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Imaging;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Scene.Physics.Physx;
-using XREngine.Scene.Physics.Physx.Joints;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Joints;
@@ -164,15 +162,18 @@ namespace XREngine.Components
             if (pipeline is null)
                 return;
 
-            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string desktop = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
 
             BoundingRectangle vp = new BoundingRectangle();
             AbstractRenderer.Current?.GetScreenshotAsync(vp, false, (img, index) =>
             {
+                if (img is null)
+                    return;
                 Utility.EnsureDirPathExists(capturePath);
-                img?.Flip();
-                img?.Write(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"));
+                using (img)
+                    File.WriteAllBytes(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"),
+                        RuntimeImageCodecs.Require().EncodePng(img));
             });
         }
 
@@ -563,8 +564,6 @@ namespace XREngine.Components
 
             SetHandKinematicTarget(RightHandRigidBody, tfm);
 
-            //if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is PhysxScene px)
-            //    RightHandOverlap = OverlapTest(tfm, px);
         }
 
         private unsafe void LeftHandTransform_WorldMatrixChanged(TransformBase tfm, Matrix4x4 worldMatrix)
@@ -575,8 +574,6 @@ namespace XREngine.Components
 
             SetHandKinematicTarget(LeftHandRigidBody, tfm);
 
-            //if (WorldAs<IRuntimePhysicsWorldContext>()?.PhysicsScene is PhysxScene px)
-            //    LeftHandOverlap = OverlapTest(tfm, px);
         }
 
         private static void SetHandKinematicTarget(
@@ -586,19 +583,34 @@ namespace XREngine.Components
                 transform?.WorldTranslation ?? Vector3.Zero,
                 transform?.WorldRotation ?? Quaternion.Identity);
 
-        private unsafe PhysxDynamicRigidBody? OverlapTestPhysxExtension(TransformBase tfm, PhysxScene px)
+        private bool _snapTurningEnabled;
+        public bool SnapTurningEnabled { get => _snapTurningEnabled; set => SetField(ref _snapTurningEnabled, value); }
+        private float _snapTurnDegrees = 45;
+        public float SnapTurnDegrees
         {
-            var handPos = tfm.WorldTranslation;
-            var sphere = new IPhysicsGeometry.Sphere(GrabRadius);
-            return px.OverlapAny(sphere, (handPos, Quaternion.Identity), out var hit, PxQueryFlags.Dynamic, null, null) &&
-                PhysxDynamicRigidBody.AllDynamic.TryGetValue((nint)hit.actor, out var a) &&
-                a is PhysxDynamicRigidBody rb
-                ? rb
-                : null;
+            get => _snapTurnDegrees;
+            set => SetField(ref _snapTurnDegrees, float.IsFinite(value) ? Math.Clamp(value, 1, 180) : 45);
         }
+        private bool _snapTurnLatched;
 
         private void Turn(Vector2 oldValue, Vector2 newValue)
-            => CharacterPawn.LookRight(newValue.X);
+        {
+            if (GetSiblingComponent<XREngine.Components.VR.VRPlayerCharacterComponent>(false)?.IsCalibrating == true)
+                return;
+            if (!SnapTurningEnabled)
+            {
+                CharacterPawn.LookRight(newValue.X);
+                return;
+            }
+            float magnitude = MathF.Abs(newValue.X);
+            if (magnitude < 0.2f)
+                _snapTurnLatched = false;
+            else if (magnitude >= 0.7f && !_snapTurnLatched)
+            {
+                _snapTurnLatched = true;
+                CharacterPawn.SnapTurn(-MathF.Sign(newValue.X) * SnapTurnDegrees);
+            }
+        }
 
         private void Locomote(Vector2 oldValue, Vector2 newValue)
         {

@@ -5,6 +5,8 @@
 // number of compatible renderers.
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
+#include "Advanced/Generated/AdvancedRecords.glslinc"
+
 const uint FEATURE_SKINNING = 1u << 0u;
 const uint FEATURE_BLENDSHAPES = 1u << 1u;
 const uint FEATURE_NORMALS = 1u << 2u;
@@ -60,42 +62,10 @@ struct PackedVertex
     uint Reserved3;
 };
 
-struct SkinInfluence
-{
-    uvec4 Bones;
-    vec4 Weights;
-    uint SpillOffset;
-    uint SpillCount;
-    uvec2 Reserved;
-};
 
-struct SpillInfluence
-{
-    uint Bone;
-    float Weight;
-};
 
-struct ActiveBlendshape
-{
-    uint ShapeIndex;
-    float Weight;
-};
 
-struct BlendshapeRange
-{
-    uint RecordOffset;
-    uint RecordCount;
-    uint AttributeFlags;
-    uint Reserved;
-};
 
-struct BlendshapeRecord
-{
-    uint VertexIndex;
-    uint PositionDelta;
-    uint NormalDelta;
-    uint TangentDelta;
-};
 
 layout(std430, binding = 0) readonly buffer DeformationJobs
 {
@@ -390,6 +360,14 @@ void applySparseBlendshapes(
     tangent += accumulatedTangent;
 }
 
+uint GetSkinBone(SkinInfluence influence, uint index)
+{
+    if (index == 0u) return influence.Bone0;
+    if (index == 1u) return influence.Bone1;
+    if (index == 2u) return influence.Bone2;
+    return influence.Bone3;
+}
+
 void main()
 {
     uint flattenedVertex = gl_GlobalInvocationID.x;
@@ -427,7 +405,7 @@ void main()
         {
             accumulateBone(
                 job,
-                influence.Bones[core],
+                GetSkinBone(influence, core),
                 influence.Weights[core],
                 position,
                 normal,

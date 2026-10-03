@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Core.Reflection.Attributes;
 
 namespace XREngine.Components.Animation
@@ -169,7 +169,7 @@ namespace XREngine.Components.Animation
             if (!string.IsNullOrWhiteSpace(OutputPath))
                 return OutputPath;
 
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string desktopPath = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             string fileName = BuildDefaultAuditFileName(export.ClipName, ".json");
             return Path.Combine(desktopPath, fileName);
         }

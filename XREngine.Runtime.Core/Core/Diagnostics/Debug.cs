@@ -1530,17 +1530,14 @@ namespace XREngine
             }
             catch
             {
-                // Ignore and fall back to the process name.
+                // Ignore and fall back to the process path.
             }
 
-            try
-            {
-                return Process.GetCurrentProcess().ProcessName;
-            }
-            catch
-            {
-                return "XREngine";
-            }
+            // The process path is null on hosts without a process image, such as the browser.
+            string? processPath = Environment.ProcessPath;
+            return string.IsNullOrWhiteSpace(processPath)
+                ? "XREngine"
+                : Path.GetFileNameWithoutExtension(processPath);
         }
 
         internal static string BuildLogSessionId(string applicationIdentifier, DateTime timestamp, int processId)

@@ -1,8 +1,6 @@
-using Silk.NET.OpenXR;
-
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
-internal sealed class OpenXrGraphicsSessionException(Result result, string message) : Exception(message)
+internal sealed class OpenXrGraphicsSessionException(int result, string message) : Exception(message)
 {
-    public Result Result { get; } = result;
+    public int Result { get; } = result;
 }

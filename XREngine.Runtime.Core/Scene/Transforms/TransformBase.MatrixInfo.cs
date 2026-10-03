@@ -44,7 +44,7 @@ namespace XREngine.Scene.Transforms
 
         [Browsable(false)]
         [YamlIgnore]
-        public float TimeSinceLastKeyframeReplicated => _timeSinceLastKeyframe;
+        public float TimeSinceLastKeyframeReplicated => TransformReplicationState.Elapsed(this);
 
         private bool _forceManualRecalc = false;
         [Browsable(false)]
@@ -68,16 +68,16 @@ namespace XREngine.Scene.Transforms
         [Browsable(false)]
         public Plane LocalUpPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalUp);
 
-        private float _timeSinceLastKeyframe = 0;
 
-        private Matrix4x4 _lastReplicatedMatrix = Matrix4x4.Identity;
+
+
         public byte[] EncodeToBytes()
         {
             IRuntimeTransformServices? transformServices = RuntimeTransformServices.Current;
-            _timeSinceLastKeyframe += transformServices?.UpdateDeltaSeconds ?? 0.0f;
-            if (_timeSinceLastKeyframe > (transformServices?.TransformReplicationKeyframeIntervalSeconds ?? float.MaxValue))
+            TransformReplicationState.For(this).TimeSinceKeyframe += transformServices?.UpdateDeltaSeconds ?? 0.0f;
+            if (TransformReplicationState.For(this).TimeSinceKeyframe > (transformServices?.TransformReplicationKeyframeIntervalSeconds ?? float.MaxValue))
             {
-                _timeSinceLastKeyframe = 0;
+                TransformReplicationState.For(this).TimeSinceKeyframe = 0;
                 return EncodeToBytes(false);
             }
             else
@@ -103,15 +103,15 @@ namespace XREngine.Scene.Transforms
                 if (delta)
                 {
                     // Encode only the difference between the current and last replicated transform
-                    var deltaMatrix = _localMatrix - _lastReplicatedMatrix;
+                    var deltaMatrix = LocalMatrix - TransformReplicationState.For(this).Matrix;
                     var matrixBytes = MatrixToBytes(deltaMatrix);
                     gzipStream.Write(matrixBytes, 0, matrixBytes.Length);
                 }
                 else
                 {
-                    var matrixBytes = MatrixToBytes(_localMatrix);
+                    var matrixBytes = MatrixToBytes(LocalMatrix);
                     gzipStream.Write(matrixBytes, 0, matrixBytes.Length);
-                    _lastReplicatedMatrix = _localMatrix;
+                    TransformReplicationState.For(this).Matrix = LocalMatrix;
                 }
             }
             return memoryStream.ToArray();
@@ -138,7 +138,7 @@ namespace XREngine.Scene.Transforms
             var matrix = BytesToMatrix(matrixBytes);
 
             if (delta)
-                DeriveLocalMatrix(_localMatrix + matrix);
+                DeriveLocalMatrix(LocalMatrix + matrix);
             else
                 DeriveLocalMatrix(matrix);
         }

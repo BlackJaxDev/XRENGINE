@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Commands;
 /// Stable logical table identity. Slot zero and generation zero are reserved so
 /// a zero-initialized record always contains invalid references.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedGpuHandle")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedGpuHandle(uint Index, uint Generation)
 {

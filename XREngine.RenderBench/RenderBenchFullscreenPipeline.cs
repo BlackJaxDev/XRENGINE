@@ -16,6 +16,8 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
     private readonly SampleCountFlags _samples;
     private readonly ExtDebugUtils? _debugUtils;
     private readonly bool _useUnifiedImageLayouts;
+    private readonly RenderBenchGpuDiagnostic? _gpuDiagnostic;
+    private readonly string[] _passNames;
     private readonly nint[] _labelNames;
     private ShaderModule _vertexShader;
     private ShaderModule _fragmentShader;
@@ -27,7 +29,8 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
         RenderProfileRecipe recipe,
         string fixtureName,
         int passIterations,
-        bool useUnifiedImageLayouts)
+        bool useUnifiedImageLayouts,
+        RenderBenchGpuDiagnostic? gpuDiagnostic = null)
     {
         _host = host;
         if (!host.SupportsDynamicRendering)
@@ -37,11 +40,15 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
         _colorFormat = ResolveColorFormat(recipe.ColorFormat);
         _samples = ResolveSamples(recipe.SampleCount);
         _useUnifiedImageLayouts = useUnifiedImageLayouts;
+        _gpuDiagnostic = gpuDiagnostic;
+        _passNames = new string[passIterations];
+        for (int pass = 0; pass < passIterations; pass++)
+            _passNames[pass] = $"{fixtureName}.Pass{pass}";
         _debugUtils = recipe.LabelPolicy == RenderProfileLabelPolicy.Disabled ? null : host.DebugUtils;
         _labelNames = _debugUtils is null
             ? []
-            : Enumerable.Range(0, passIterations)
-                .Select(pass => SilkMarshal.StringToPtr($"{fixtureName}.Pass{pass}"))
+            : _passNames
+                .Select(static name => SilkMarshal.StringToPtr(name))
                 .ToArray();
         try
         {
@@ -82,6 +89,7 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
         int barriers = 0;
         for (int pass = 0; pass < passIterations; pass++)
         {
+            int gpuStartQuery = _gpuDiagnostic?.BeginPass(commandBuffer, target.FrameSlotIndex, _passNames[pass], pass) ?? -1;
             if (_debugUtils is not null)
             {
                 DebugUtilsLabelEXT label = new()
@@ -138,6 +146,7 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
                 pass + 1 == passIterations ? AccessFlags.TransferReadBit : AccessFlags.ColorAttachmentWriteBit);
             barriers++;
             currentLayout = next;
+            _gpuDiagnostic?.EndPass(commandBuffer, target.FrameSlotIndex, gpuStartQuery);
             _debugUtils?.CmdEndDebugUtilsLabel(commandBuffer);
         }
         return barriers;

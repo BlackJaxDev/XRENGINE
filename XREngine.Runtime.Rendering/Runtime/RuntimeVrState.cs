@@ -1,8 +1,4 @@
 using System.Numerics;
-using OpenVR.NET;
-using OpenVR.NET.Manifest;
-using Valve.VR;
-using XREngine.Extensions;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Models.Materials;
@@ -22,12 +18,10 @@ public sealed class RuntimeVrState
         OpenXR,
     }
 
-    private readonly Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> _actions = [];
     private float _ipdScalar = 1.0f;
     private float _realWorldHeight = 1.8f;
     private float _desiredAvatarHeight = 1.8f;
     private float _modelHeight = 1.0f;
-    private VR? _openVrApi;
     private XRViewport? _leftEyeViewport;
     private XRViewport? _rightEyeViewport;
     private XRViewport? _stereoViewport;
@@ -40,18 +34,8 @@ public sealed class RuntimeVrState
     public bool IsOpenXRActive => ActiveRuntime == VRRuntime.OpenXR;
     public bool IsInVR { get; set; }
 
-    public OpenXRAPI? OpenXRApi { get; set; }
-    public VR OpenVRApi
-    {
-        get => _openVrApi ??= new VR();
-        set => _openVrApi = value ?? throw new ArgumentNullException(nameof(value));
-    }
-    public VR? OpenVRApiIfCreated => _openVrApi;
-
+    public IOpenXrRuntime? OpenXRApi { get; set; }
     public object? CalibrationSettings { get; set; }
-    public Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> Actions => _actions;
-
-    public event Action<Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>>? ActionsChanged;
     public event Action<bool>? OpenXRSessionRunningChanged;
     public event Action? TrackingBasisChanged;
     public event Action? SessionGenerationChanged;
@@ -117,18 +101,6 @@ public sealed class RuntimeVrState
         }
     }
     public XRWindow? RenderWindow { get; set; }
-    public VRTextureBounds_t SingleTextureBounds { get; set; } = new()
-    {
-        uMin = 0.0f,
-        vMin = 0.0f,
-        uMax = 1.0f,
-        vMax = 1.0f,
-    };
-    public Texture_t EyeTexture { get; set; } = new()
-    {
-        eColorSpace = EColorSpace.Auto,
-        eType = Valve.VR.ETextureType.OpenGL,
-    };
 
     public (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, IRuntimeRenderWorld? World, SceneNode? HMDNode) ViewInformation
     {
@@ -151,15 +123,9 @@ public sealed class RuntimeVrState
             switch (ActiveRuntime)
             {
                 case VRRuntime.OpenVR:
-                    VR? vr = OpenVRApiIfCreated;
-                    if (vr?.Headset is null)
-                        return 0f;
-
-                    ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                    return vr.CVR.GetFloatTrackedDeviceProperty(
-                        vr.Headset.DeviceIndex,
-                        ETrackedDeviceProperty.Prop_UserIpdMeters_Float,
-                        ref error);
+                    return (RuntimeOpenVrStateServices.Current
+                        ?? throw new InvalidOperationException("The OpenVR tracking backend is not registered."))
+                        .RealWorldIpd;
                 case VRRuntime.OpenXR:
                     return OpenXRApi?.TryGetLatestIPD(out float ipd) == true ? ipd : 0f;
                 default:
@@ -181,7 +147,8 @@ public sealed class RuntimeVrState
         }
     }
 
-    public float ScaledIPD => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;
+    /// <summary>Metric eye separation with only the explicitly configured stereo scalar; avatar measurements never rescale tracking.</summary>
+    public float ScaledIPD => RealWorldIPD * IPDScalar;
     public float RealToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
     public float ModelToRealWorldHeightRatio => RealWorldHeight / ModelHeight;
     public float RealWorldToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
@@ -242,13 +209,13 @@ public sealed class RuntimeVrState
     public bool StopOpenXR()
         => LifecycleServices.StopOpenXR();
 
-    public Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window)
+    public Task<bool> InitializeLocal(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest, XRWindow window)
         => LifecycleServices.InitializeLocal(actionManifest, vrManifest, window);
 
     public void InitRenderEmulated(XRWindow window)
         => LifecycleServices.InitRenderEmulated(window);
 
-    public Task<bool> IninitializeClient(object actionManifest, object vrManifest)
+    public Task<bool> IninitializeClient(IRuntimeOpenVrActionManifest actionManifest, RuntimeOpenVrApplicationManifest vrManifest)
         => LifecycleServices.InitializeClient(actionManifest, vrManifest);
 
     public bool InitializeServer()
@@ -272,9 +239,6 @@ public sealed class RuntimeVrState
     public void InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
         => RecalcMatrixOnDraw?.Invoke(timing);
 
-    public void NotifyActionsChanged()
-        => ActionsChanged?.Invoke(_actions);
-
     public void NotifyOpenXRSessionRunningChanged(bool running)
         => OpenXRSessionRunningChanged?.Invoke(running);
 
@@ -295,8 +259,8 @@ public sealed class RuntimeVrState
 
     public readonly struct VRInputData
     {
-        public ETrackedDeviceClass DeviceClass { get; init; }
-        public ETrackingResult TrackingResult { get; init; }
+        public RuntimeVrDeviceClass DeviceClass { get; init; }
+        public RuntimeVrTrackingResult TrackingResult { get; init; }
         public bool Connected { get; init; }
         public bool PoseValid { get; init; }
         public Quaternion Rotation { get; init; }
@@ -308,10 +272,10 @@ public sealed class RuntimeVrState
         public uint unPacketNum { get; init; }
         public ulong ulButtonPressed { get; init; }
         public ulong ulButtonTouched { get; init; }
-        public VRControllerAxis_t rAxis0 { get; init; }
-        public VRControllerAxis_t rAxis1 { get; init; }
-        public VRControllerAxis_t rAxis2 { get; init; }
-        public VRControllerAxis_t rAxis3 { get; init; }
-        public VRControllerAxis_t rAxis4 { get; init; }
+        public RuntimeVrControllerAxis rAxis0 { get; init; }
+        public RuntimeVrControllerAxis rAxis1 { get; init; }
+        public RuntimeVrControllerAxis rAxis2 { get; init; }
+        public RuntimeVrControllerAxis rAxis3 { get; init; }
+        public RuntimeVrControllerAxis rAxis4 { get; init; }
     }
 }

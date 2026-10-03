@@ -1,90 +1,154 @@
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using XREngine.Components.Animation;
+using XREngine.Core;
 using XREngine.Data.Components.Scene;
-using XREngine.Scene;
+using XREngine.Input;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.VR;
 
 public partial class VRPlayerCharacterComponent
 {
-    // The same avatar node survives an editor VR lease, while replacing the avatar
-    // creates a different node even if its prefab and bind pose are identical.
-    private static readonly ConditionalWeakTable<SceneNode, Dictionary<VrAvatarCalibrationKey, VrSessionCalibration>> SessionCalibrations = new();
-
-    private VrAvatarCalibrationKey AvatarSignature()
-        => new(_humanoid?.SceneNode.Prefab?.PrefabAssetId ?? Guid.Empty, _humanoid?.SceneNode.Name,
-            _humanoid?.HeadNode?.Transform.BindMatrix ?? default,
-            _humanoid?.HipsNode?.Transform.BindMatrix ?? default,
-            _humanoid?.LeftHandNode?.Transform.BindMatrix ?? default,
-            _humanoid?.RightHandNode?.Transform.BindMatrix ?? default,
-            _humanoid?.LeftFootNode?.Transform.BindMatrix ?? default,
-            _humanoid?.RightFootNode?.Transform.BindMatrix ?? default);
-
-    private void SaveSessionCalibration()
+    public string PlayerIdentity { get; set; } = "local-player-one";
+    private string? _avatarIdentity;
+    public string? AvatarIdentity
     {
-        if (!HasCalibration || _rig is null || _humanoid is null) return;
-        var saved = new VrSessionCalibration
+        get => _avatarIdentity;
+        set
         {
-            Mode = _calibratedMeasurementMode,
-            Measurement = _calibratedMeasurement,
-        };
-        for (int i = 0; i < 11; i++)
-        {
-            if (!_rig.TryGetSlot((EHumanoidIKTarget)i, out var state)) continue;
-            saved.Identities[i] = _boundIdentities[i];
-            saved.Offsets[i] = state.DeviceToTargetOffset;
+            if (SetField(ref _avatarIdentity, value) && HasCommittedCalibration)
+                RuntimeVrDiscontinuityServices.Publish(EVrPoseDiscontinuity.AvatarReplacement);
         }
-        Dictionary<VrAvatarCalibrationKey, VrSessionCalibration> calibrations =
-            SessionCalibrations.GetValue(_humanoid.SceneNode, static _ => new());
-        calibrations.Clear();
-        calibrations[AvatarSignature()] = saved;
+    }
+    private void PrepareForAvatarReplacement()
+    {
+        if (IsCalibrating)
+            CancelCalibrationImmediate();
+        if (GetIKSolver() is { } previousSolver)
+        {
+            previousSolver.ClearTargets();
+            previousSolver.IsActive = false;
+        }
+        HasCommittedCalibration = false;
+        _attemptedSessionRestore = false;
+        _missingStoredTrackers = 0;
+        CalibrationState = EVrCalibrationState.Uncalibrated;
+        RuntimeVrDiscontinuityServices.Publish(EVrPoseDiscontinuity.AvatarReplacement);
     }
 
-    private float MeasurementInUse() => PlayerSettings is not { } settings ? 0.0f :
-        settings.BodyMeasurementMode == EBodyMeasurementMode.Height ? settings.PlayerHeight : settings.PlayerArmSpan;
+    private bool _attemptedSessionRestore;
+    private int _missingStoredTrackers;
+    private int _restoreSourceSignature;
 
-    private void RestoreSessionCalibration()
+    private bool TryGetSessionScope(out VrCalibrationSessionScope scope, out VrBodyMeasurementKey measurement)
     {
-        if (_rig is null || _humanoid is null ||
-            !SessionCalibrations.TryGetValue(_humanoid.SceneNode, out var calibrations) ||
-            !calibrations.TryGetValue(AvatarSignature(), out var saved)) return;
-        if (saved.Mode != PlayerSettings?.BodyMeasurementMode || saved.Measurement != MeasurementInUse())
+        scope = default;
+        if (!VrBodyMeasurementKey.TryFromSettings(RuntimeVrStateServices.PlayerSettings, out measurement)
+            || string.IsNullOrWhiteSpace(AvatarIdentity)
+            || !CopyCaptureSnapshot(out RuntimeVrTrackingSnapshot snapshot, out _))
+            return false;
+        scope = new(PlayerIdentity, AvatarIdentity, RuntimeVrInputServices.Current.ActiveRuntime,
+            snapshot.SessionGeneration, snapshot.ReferenceSpaceVersion);
+        return true;
+    }
+
+    private static string SourceIdentity(EHumanoidIKTarget slot, TransformBase source)
+        => source is IVrTrackingPoseSource { TrackingIdentity: { Length: > 0 } identity } ? identity : slot switch
         {
-            CalibrationMessage = "Body measurements changed. Reopen calibration.";
+            EHumanoidIKTarget.Head => "fixed-headset",
+            EHumanoidIKTarget.LeftHand => "fixed-left-controller",
+            EHumanoidIKTarget.RightHand => "fixed-right-controller",
+            _ => string.Empty,
+        };
+
+    private void SaveCommittedSession()
+    {
+        if (!TryGetSessionScope(out var scope, out var measurement) || GetHumanoid() is not { } humanoid || GetIKSolver() is not { } solver)
+            return;
+        var slots = new List<VrStoredCalibrationSlot>(11);
+        for (int i = 0; i < 11; i++)
+        {
+            EHumanoidIKTarget slot = (EHumanoidIKTarget)i;
+            if (slot is EHumanoidIKTarget.Head or EHumanoidIKTarget.LeftHand or EHumanoidIKTarget.RightHand)
+                continue;
+            if (humanoid.GetIKTarget(slot).tfm is { } source && solver.GetCalibratedTarget(slot) is { } target)
+                slots.Add(new(slot, SourceIdentity(slot, source), target.LocalMatrix));
+        }
+        _missingStoredTrackers = 0;
+        if (!VrCalibrationSessionStore.Shared.TrySave(scope, measurement, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(slots), out string notice))
+            CalibrationMessage = notice;
+    }
+
+    private void EnsureInitialTrackingRig()
+    {
+        if (IsCalibrating || GetIKSolver() is not { } solver || GetHumanoid() is not { } humanoid
+            || Headset is null || !Headset.PoseCurrentlyUsable)
+            return;
+        bool needsFixedTargets = solver.GetCalibratedTarget(EHumanoidIKTarget.Head) is null
+            || LeftController?.PoseCurrentlyUsable == true && solver.GetCalibratedTarget(EHumanoidIKTarget.LeftHand) is null
+            || RightController?.PoseCurrentlyUsable == true && solver.GetCalibratedTarget(EHumanoidIKTarget.RightHand) is null;
+        if (!HasCommittedCalibration && needsFixedTargets)
+        {
+            Vector3 eyeOffset = GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero;
+            humanoid.SetIKTarget(EHumanoidIKTarget.Head, Headset, GetFixedEyeToHeadOffset(humanoid, eyeOffset));
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftController, LeftControllerOffset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, RightController, RightControllerOffset);
+            VrCalibrationResult initial = RuntimeVRIKCalibrator.Calibrate(solver, RuntimeVrStateServices.CalibrationSettings,
+                Headset, null, LeftController?.PoseCurrentlyUsable == true ? LeftController : null,
+                RightController?.PoseCurrentlyUsable == true ? RightController : null);
+            if (!initial.Success)
+                return;
+            solver.IsActive = true;
+        }
+        // Fixed controller targets must be established before body-session restoration, so a controller
+        // appearing after the headset never gets stranded behind the committed-body guard.
+        if (LeftController?.PoseCurrentlyUsable != true || RightController?.PoseCurrentlyUsable != true)
+            return;
+        if ((_missingStoredTrackers == 0 && (_attemptedSessionRestore || HasCommittedCalibration))
+            || !TryGetSessionScope(out var scope, out var measurement))
+            return;
+        int signature = 17;
+        if (GetTrackerCollection() is { } currentTrackers)
+            foreach (var pair in currentTrackers.Trackers.Values)
+                signature = HashCode.Combine(signature, pair.Item2.TrackingIdentity, pair.Item2.PoseCurrentlyUsable);
+        if (_attemptedSessionRestore && signature == _restoreSourceSignature)
+            return;
+        _restoreSourceSignature = signature;
+        var sources = new List<VrCalibrationSessionSource>(11);
+        if (Headset is { } head)
+            sources.Add(new(SourceIdentity(EHumanoidIKTarget.Head, head), head, head.PoseCurrentlyUsable));
+        if (LeftController is { } left)
+            sources.Add(new(SourceIdentity(EHumanoidIKTarget.LeftHand, left), left, left.PoseCurrentlyUsable));
+        if (RightController is { } right)
+            sources.Add(new(SourceIdentity(EHumanoidIKTarget.RightHand, right), right, right.PoseCurrentlyUsable));
+        if (GetTrackerCollection() is { } collection)
+            foreach (var pair in collection.Trackers.Values)
+                sources.Add(new(pair.Item2.TrackingIdentity ?? string.Empty, pair.Item2, pair.Item2.PoseCurrentlyUsable));
+        var restored = new VrCalibrationTarget[11];
+        int fixedCount = 0;
+        AddFixed(EHumanoidIKTarget.Head);
+        AddFixed(EHumanoidIKTarget.LeftHand);
+        AddFixed(EHumanoidIKTarget.RightHand);
+        void AddFixed(EHumanoidIKTarget slot)
+        {
+            if (humanoid.GetIKTarget(slot).tfm is { } source && solver.GetCalibratedTarget(slot) is { } target)
+                restored[fixedCount++] = new(slot, source, target.LocalMatrix);
+        }
+        if (!VrCalibrationSessionStore.Shared.TryRestore(scope, measurement,
+            System.Runtime.InteropServices.CollectionsMarshal.AsSpan(sources), restored.AsSpan(fixedCount), out int written, out int missing, out string notice))
+        {
+            _attemptedSessionRestore = true;
+            if (!string.IsNullOrWhiteSpace(notice))
+                CalibrationMessage = notice;
             return;
         }
-        if (!TryBuildRequest(false, out var request, out _)) return;
-        VrCalibrationCapture head = request.Slots[(int)EHumanoidIKTarget.Head]!.Value;
-        bool missing = false;
-        for (int i = 0; i < 11; i++)
-        {
-            request.Offsets[i] = saved.Offsets[i];
-            if (saved.Identities[i] is not { } identity) continue;
-            VRTrackerTransform? device = FindTracker(identity);
-            Matrix4x4 world = Matrix4x4.Identity;
-            long snapshot = 0, sampleTime = 0;
-            bool valid = device?.TryGetCurrentWorldPose(out world, out snapshot, out sampleTime) == true;
-            if (valid && (snapshot != head.SnapshotId || sampleTime != head.SampleTime))
-            {
-                _headHandsInitialized = false;
-                CalibrationMessage = "Waiting for coherent tracking before restoring calibration.";
-                return;
-            }
-            missing |= !valid;
-            request.Slots[i] = new VrCalibrationCapture(valid ? device : null, world, identity,
-                head.SnapshotId, head.SampleTime);
-        }
-        var result = _rig.Calibrate(request);
-        if (!result.Success) { CalibrationMessage = result.Error ?? "Saved calibration could not be restored."; return; }
-        RememberBindings(request);
-        for (int i = 0; i < 11; i++)
-            if (_boundDevices[i] is null) { _sourceWeights[i] = 0.0f; _rig.SetSlotWeight((EHumanoidIKTarget)i, 0.0f); }
-        HasCalibration = true;
-        _calibratedMeasurement = saved.Measurement;
-        _calibratedMeasurementMode = saved.Mode;
-        CalibrationState = VrCalibrationState.Calibrated;
-        CalibrationMessage = missing ? "Calibration restored. A bound tracker is missing; reconnect it or recalibrate." : "Calibration restored.";
-        NotifyTrackingDiscontinuity();
+        VrCalibrationResult result = solver.RestoreCalibration(restored.AsSpan(0, fixedCount + written), RuntimeVrStateServices.CalibrationSettings);
+        if (!result.Success)
+            return;
+        _attemptedSessionRestore = true;
+        _missingStoredTrackers = missing;
+        HasCommittedCalibration = true;
+        CalibrationState = EVrCalibrationState.Calibrated;
+        CalibrationMessage = missing > 0 ? notice : "Calibration restored for the same avatar and trackers.";
     }
 }

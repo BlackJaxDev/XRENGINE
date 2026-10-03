@@ -1,10 +1,14 @@
 # Browser WebGL2 And WebGPU Renderer Modules
 
+Mobile delivery: [implementation TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) · [readiness audit and acceptance contract](../../progress/rendering/mobile-browser-readiness.md). Source audit complete; browser runtime and device validation remain pending.
+
 [<- Work docs index](../../README.md)
 
 [Rendering architecture](../../../architecture/rendering/README.md)
 
 Status: proposed implementation design.
+
+Direction update (2026-09-29): backend-level content here (bridge, resource model, WebGPU and WebGL2 modules, security, diagnostics) remains valid. The portable-runtime extraction approach is superseded by the [unified desktop and browser runtime design](../platform/unified-desktop-browser-runtime-design.md): the shared projects now target `net10.0` with their full source set, while integration into the engine renderer contract remains browser work. [Runtime Project Organization](../../../architecture/runtime/project-organization.md) records current module ownership; the [integration checklist](../../todo/platform/native-subsystem-project-split-todo.md) records deferred native/portable acceptance.
 
 Date: 2026-08-13.
 
@@ -220,8 +224,7 @@ Render-pipeline resource keys now include the output target class and
 color/depth formats as well as dimensions, views, and samples. Canvas resize,
 device/context recovery, swapchain reconfiguration, and format changes can
 therefore publish a new target generation without adding browser conditions to
-the generic render graph. Browser implementation, portable project extraction,
-canvas hosting, JavaScript interop, and command packets remain future work.
+the generic render graph. This dated contract snapshot predates the implemented browser host/bridge and whole-project native extraction. See the current project map and mobile/unified runtime trackers for the remaining renderer and gameplay integration; this snapshot is not their validation evidence.
 
 Browser static composition should register only the browser modules included in
 the published app. It should not use collectible assembly loading or reflection

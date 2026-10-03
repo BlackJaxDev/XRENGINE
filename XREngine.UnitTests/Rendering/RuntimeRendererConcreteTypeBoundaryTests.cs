@@ -23,12 +23,11 @@ public sealed class RuntimeRendererConcreteTypeBoundaryTests
     }
 
     [Test]
-    public void FacadeAndApplicationProjects_DoNotReferenceConcreteRendererTypes()
+    public void ApplicationProjects_DoNotReferenceConcreteRendererTypes()
     {
         string root = FindWorkspaceRoot();
         string[] projects =
         [
-            "XRENGINE",
             "XREngine.Editor",
             "XREngine.Runtime.Bootstrap",
             "XREngine.Server",

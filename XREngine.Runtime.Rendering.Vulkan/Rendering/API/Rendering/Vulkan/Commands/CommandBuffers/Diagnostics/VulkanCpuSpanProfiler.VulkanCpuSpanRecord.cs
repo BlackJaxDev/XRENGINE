@@ -1,17 +1,18 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
-
 namespace XREngine.Rendering.Vulkan;
 
-internal static partial class VulkanCpuSpanProfiler
+public static partial class VulkanCpuSpanProfiler
 {
-    internal readonly record struct VulkanCpuSpanRecord(
+    public readonly record struct VulkanCpuSpanRecord(
         EVulkanCpuStage Stage,
         long SpanId,
         long ParentSpanId,
         long StartTimestamp,
         long EndTimestamp,
         long AllocatedBytes,
-        int ThreadId);
+        int ThreadId,
+        long FrameId,
+        int WorkerId,
+        long InvocationOrdinal,
+        string? WaitReason);
 }
 

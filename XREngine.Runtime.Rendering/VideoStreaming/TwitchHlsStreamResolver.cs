@@ -38,7 +38,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
 
         if (IsYouTubeSource(trimmed))
         {
-            string directUrl = await ResolveYouTubeDirectUrlWithYtDlpAsync(trimmed, cancellationToken).ConfigureAwait(false);
+            string directUrl = await YouTubeStreamUrlResolverRegistry.Require().ResolveAsync(trimmed, cancellationToken).ConfigureAwait(false);
             var (resolvedUrl, variants) = await SelectGenericPlaylistIfNeededAsync(directUrl, cancellationToken).ConfigureAwait(false);
             Trace.WriteLine($"Stream resolver: YouTube URL resolved via yt-dlp to: '{resolvedUrl}'");
             return new ResolvedStream
@@ -312,111 +312,11 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
             || host.EndsWith(".youtube.com", StringComparison.Ordinal);
     }
 
-    private static async Task<string> ResolveYouTubeDirectUrlWithYtDlpAsync(string source, CancellationToken cancellationToken)
-    {
-        string executable = FindYtDlpExecutable()
-            ?? throw new InvalidOperationException("YouTube URL detected, but yt-dlp was not found. Install yt-dlp and ensure it is on PATH or copied beside the app executable as 'yt-dlp.exe'.");
-
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = executable,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        startInfo.ArgumentList.Add("--no-warnings");
-        startInfo.ArgumentList.Add("--no-playlist");
-        startInfo.ArgumentList.Add("--skip-download");
-        startInfo.ArgumentList.Add("-f");
-        startInfo.ArgumentList.Add("best[acodec!=none][vcodec!=none]");
-        startInfo.ArgumentList.Add("-g");
-        startInfo.ArgumentList.Add(source);
-
-        using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-            throw new InvalidOperationException("Failed to start yt-dlp process.");
-
-        string stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        string stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-        {
-            string error = string.IsNullOrWhiteSpace(stderr)
-                ? $"yt-dlp exited with code {process.ExitCode}."
-                : stderr.Trim();
-            throw new InvalidOperationException($"yt-dlp failed to resolve YouTube URL: {error}");
-        }
-
-        string? directUrl = stdout
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(static line => line.Trim())
-            .FirstOrDefault(static line => line.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || line.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
-
-        if (string.IsNullOrWhiteSpace(directUrl))
-            throw new InvalidOperationException("yt-dlp did not return a playable URL for this YouTube source.");
-
-        return directUrl;
-    }
-
     private static StreamOpenOptions BuildOpenOptionsForYouTube(string source)
     {
         var options = BuildOpenOptionsForGenericUrl(source);
         options.EnableAdaptiveCatchUpPitch = false;
         return options;
-    }
-
-    private static string? FindYtDlpExecutable()
-    {
-        string[] pathCandidates = OperatingSystem.IsWindows()
-            ? ["yt-dlp.exe", "yt-dlp"]
-            : ["yt-dlp"];
-
-        foreach (string candidate in pathCandidates)
-        {
-            if (IsExecutableOnPath(candidate))
-                return candidate;
-        }
-
-        string baseDir = AppContext.BaseDirectory;
-        string[] localCandidates = OperatingSystem.IsWindows()
-            ?
-            [
-                Path.Combine(baseDir, "yt-dlp.exe"),
-                Path.Combine(baseDir, "Plugins", "YoutubeDL", "yt-dlp.exe"),
-                Path.Combine(baseDir, "YoutubeDL", "yt-dlp.exe")
-            ]
-            :
-            [
-                Path.Combine(baseDir, "yt-dlp"),
-                Path.Combine(baseDir, "Plugins", "YoutubeDL", "yt-dlp")
-            ];
-
-        return localCandidates.FirstOrDefault(File.Exists);
-    }
-
-    private static bool IsExecutableOnPath(string executable)
-    {
-        string? path = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
-        if (string.IsNullOrWhiteSpace(path))
-            return false;
-
-        foreach (string dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            try
-            {
-                if (File.Exists(Path.Combine(dir, executable)))
-                    return true;
-            }
-            catch
-            {
-                // Ignore malformed PATH entries.
-            }
-        }
-
-        return false;
     }
 
     private static async Task<(string selectedUrl, IReadOnlyList<StreamVariantInfo> variants)> SelectGenericPlaylistIfNeededAsync(string source, CancellationToken cancellationToken)

@@ -20,6 +20,7 @@
   <Project Path="XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />
   <Project Path="XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+  <Project Path="XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   <Project Path="XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
   <Project Path="XREngine.Runtime.ModelAssetPipeline/XREngine.Runtime.ModelAssetPipeline.csproj" />
   <Project Path="XREngine.Runtime.ModelingIntegration/XREngine.Runtime.ModelingIntegration.csproj" />
@@ -27,7 +28,10 @@
   <Project Path="XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
   <Project Path="XREngine.Runtime.Rendering.Vulkan/XREngine.Runtime.Rendering.Vulkan.csproj" />
   <Project Path="XREngine.Server/XREngine.Server.csproj" />
+  <Project Path="XREngine.SourceGenerators/XREngine.SourceGenerators.csproj" />
   <Project Path="XREngine.UnitTests/XREngine.UnitTests.csproj" />
+  <Project Path="XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj" />
+  <Project Path="XREngine.UnitTests/SoftwareVulkan/XREngine.SoftwareVulkanValidation.csproj" />
   <Project Path="XREngine.VRClient/XREngine.VRClient.csproj" />
   <Project Path="Tools/LocalAgentBroker/LocalAgentBroker.csproj" />
   <Folder Name="/Build/" />
@@ -37,4 +41,30 @@
   </Folder>
   <Project Path="Tools/LocalAgentBroker.Shared/LocalAgentBroker.Shared.csproj" />
   <Project Path="Tools/LocalAgentBroker.Tray/LocalAgentBroker.Tray.csproj" />
+  <Project Path="XREngine.Runtime.Physics.Jolt/XREngine.Runtime.Physics.Jolt.csproj" />
+  <Project Path="XREngine.Runtime.Physics.PhysX/XREngine.Runtime.Physics.PhysX.csproj" />
+  <Project Path="XREngine.Runtime.Physics.Jitter/XREngine.Runtime.Physics.Jitter.csproj" />
+  <Project Path="XREngine.Runtime.Physics.Authoring/XREngine.Runtime.Physics.Authoring.csproj" />
+  <Project Path="XREngine.Audio.OpenAL/XREngine.Audio.OpenAL.csproj" />
+  <Project Path="XREngine.Audio.OVRLipSync/XREngine.Audio.OVRLipSync.csproj" />
+  <Project Path="XREngine.Audio.Audio2Face/XREngine.Audio.Audio2Face.csproj" />
+  <Project Path="XREngine.Audio.SteamAudio/XREngine.Audio.SteamAudio.csproj" />
+  <Project Path="XREngine.Audio.NAudio/XREngine.Audio.NAudio.csproj" />
+  <Project Path="XREngine.Runtime.Media.FFmpeg/XREngine.Runtime.Media.FFmpeg.csproj" />
+  <Project Path="XREngine.Runtime.Imaging.Magick/XREngine.Runtime.Imaging.Magick.csproj" />
+  <Project Path="XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj" />
+  <Project Path="XREngine.Input.Silk/XREngine.Input.Silk.csproj" />
+  <Project Path="XREngine.Input.XInput/XREngine.Input.XInput.csproj" />
+  <Project Path="XREngine.Runtime.XR.OpenVR/XREngine.Runtime.XR.OpenVR.csproj" />
+  <Project Path="XREngine.Runtime.XR.OpenXR/XREngine.Runtime.XR.OpenXR.csproj" />
+  <Project Path="XREngine.Runtime.Rendering.ImGui/XREngine.Runtime.Rendering.ImGui.csproj" />
+  <Project Path="XREngine.Runtime.UI.Ultralight/XREngine.Runtime.UI.Ultralight.csproj" />
+  <Project Path="XREngine.Runtime.UI.Rive/XREngine.Runtime.UI.Rive.csproj" />
+  <Project Path="XREngine.Runtime.UI.Skia/XREngine.Runtime.UI.Skia.csproj" />
+  <Project Path="XREngine.Runtime.Text.FreeType/XREngine.Runtime.Text.FreeType.csproj" />
+  <Project Path="XREngine.Runtime.IO.DirectStorage/XREngine.Runtime.IO.DirectStorage.csproj" />
+  <Project Path="XREngine.Runtime.Net.Sockets/XREngine.Runtime.Net.Sockets.csproj" />
+  <Project Path="XREngine.Runtime.Net.Osc/XREngine.Runtime.Net.Osc.csproj" />
+  <Project Path="XREngine.Runtime.Diagnostics.Desktop/XREngine.Runtime.Diagnostics.Desktop.csproj" />
+  <Project Path="XREngine.Runtime.MeshProcessing.Meshoptimizer/XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
 </Solution>

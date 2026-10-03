@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -223,7 +223,7 @@ internal sealed partial class ViewportSequenceCaptureSession
 
             // Diagnostic captures may allocate and encode, but neither operation is permitted
             // to run in the per-frame render callback. The in-flight queue bounds this work.
-            _ = Task.Run(() => ProcessCapturedImage(renderer, result.Image, frame, readbackBytes));
+            _ = Task.Run(() => ProcessCapturedImage(result.Image, frame, readbackBytes));
         }, out queueFailure);
     }
 
@@ -263,8 +263,7 @@ internal sealed partial class ViewportSequenceCaptureSession
     }
 
     private void ProcessCapturedImage(
-        AbstractRenderer renderer,
-        MagickImage image,
+        RuntimeImage image,
         ViewportSequenceCaptureFrame frame,
         long readbackBytes)
     {
@@ -272,14 +271,16 @@ internal sealed partial class ViewportSequenceCaptureSession
         {
             using (image)
             {
-                if (renderer.ScreenshotRequiresVerticalFlip)
-                    image.Flip();
-
                 if (image.Width != (uint)frame.OutputWidth || image.Height != (uint)frame.OutputHeight)
-                    image.Resize((uint)frame.OutputWidth, (uint)frame.OutputHeight);
-
-                image.Strip();
-                image.Write(frame.Path, MagickFormat.Png);
+                {
+                    using RuntimeImage resized = RuntimeImageCodecs.Require().Resize(image,
+                        (uint)frame.OutputWidth, (uint)frame.OutputHeight, RuntimeImageResizeMode.Standard);
+                    File.WriteAllBytes(frame.Path, RuntimeImageCodecs.Require().EncodePng(resized));
+                }
+                else
+                {
+                    File.WriteAllBytes(frame.Path, RuntimeImageCodecs.Require().EncodePng(image));
+                }
                 CompleteFrame(frame, readbackBytes, error: null);
             }
         }

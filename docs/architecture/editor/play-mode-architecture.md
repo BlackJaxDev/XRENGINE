@@ -2,6 +2,8 @@
 
 This document outlines the architecture for switching between editor mode and play mode in XRENGINE. The design addresses state management, world lifecycle, physics simulation control, assembly isolation for gameplay code, and proper state reset when transitioning between modes.
 
+Current source ownership: desktop orchestration lives in `XREngine.Runtime.Bootstrap`, neutral play-mode configuration and game modes live in `XREngine.Runtime.Core`, editor requests live in `XREngine.Editor`, and collectible development assembly loading lives in `XREngine.Runtime.Platform.Desktop/Scripting/GameCSProjLoader.cs`. See [Runtime Project Organization](../runtime/project-organization.md). Code sketches below describe the design and are not a complete current API reference.
+
 ## Overview
 
 The editor/play mode system provides:
@@ -77,7 +79,7 @@ so their rendering and input registrations are restored for Edit mode.
 The central coordinator for play mode transitions. Lives in the engine core so both editor and standalone games can use it.
 
 ```csharp
-// Engine.PlayMode partial class in XRENGINE/Engine/Engine.PlayMode.cs
+// Engine.PlayMode partial class in XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.PlayMode.cs
 public static partial class Engine
 {
     public static class PlayMode
@@ -120,7 +122,7 @@ public enum EPlayModeState
 Configuration for how play mode behaves:
 
 ```csharp
-// XRENGINE/Engine/PlayModeConfiguration.cs
+// XREngine.Runtime.Core/Core/PlayModeConfiguration.cs
 public class PlayModeConfiguration : XRAsset
 {
     /// <summary>
@@ -196,7 +198,7 @@ public enum EStateRestorationMode
 Captures the state of a world for later restoration:
 
 ```csharp
-// XRENGINE/Engine/WorldStateSnapshot.cs
+// XREngine.Runtime.Bootstrap/Core/WorldStateSnapshot.cs
 public class WorldStateSnapshot
 {
     /// <summary>
@@ -322,7 +324,8 @@ world settings go through the cooked binary format with snapshot callbacks
 - **File-backed assets are written as references** and resolve to the loaded
   instance, by identity and then by path, accepting only an asset of the
   referenced type. A path loaded as another type (a shader and its source
-  file) is not loaded again, since that would evict the loaded asset.
+  file) is materialized directly as the requested type without replacing the
+  asset manager's existing path-cache entry.
 - **Text files the asset manager does not hold are written by value with
   their path.** Generated shader sources keep their canonical file's path for
   include resolution and program identity while holding generated text, which
@@ -354,7 +357,7 @@ was given.
 Manages loading gameplay code in an isolated `AssemblyLoadContext`:
 
 ```csharp
-// XRENGINE/Engine/GameplayAssemblyManager.cs
+// Proposed manager API; not a current source file. See GameCSProjLoader in the Desktop project.
 public static class GameplayAssemblyManager
 {
     private static GameplayAssemblyLoadContext? _currentContext;
@@ -494,7 +497,7 @@ GameMode should have lifecycle hooks for play mode:
 * **DefaultPlayerPawnClass** – pawn component type that gets auto-spawned for the default player (defaults to `FlyingCameraPawnComponent`).
 
 ```csharp
-// Enhanced XRENGINE/GameMode.cs
+// Enhanced XREngine.Runtime.Core/GameModes/GameMode.cs
 public class GameMode
 {
     public XRWorldInstance? WorldInstance { get; internal set; }

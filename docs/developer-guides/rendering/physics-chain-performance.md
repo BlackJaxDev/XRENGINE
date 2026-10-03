@@ -160,9 +160,9 @@ as CPU transform mirroring, GPU bone readback, and per-chain debug rendering.
 A failed GPU status never indicates that a CPU fallback was used.
 ## Key Files
 
-- `XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs`
+- `XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs`
 - `XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs`
-- `XREngine.Runtime.Rendering/Objects/XRDataBuffer.cs`
+- `XREngine.Runtime.Rendering/Buffers/XRDataBuffer.cs`
 - `XREngine.UnitTests/Physics/PhysicsChainComponentTests.cs`
 - `XREngine.UnitTests/Physics/GPUPhysicsChainDispatcherTests.cs`
 

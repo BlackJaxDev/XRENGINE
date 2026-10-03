@@ -1,0 +1,26 @@
+# Project<TAB>Package<TAB>Version<TAB>reviewed use; native/runtime assets are rejected separately.
+# SDK-provided framework and browser runtime packs are resolved assets, not direct package references.
+XREngine.Data	K4os.Compression.LZ4	1.3.8	Managed LZ4 data compression.
+XREngine.Data	LZMA-SDK	22.1.1	Managed legacy LZMA archive decode and encode.
+XREngine.Data	MemoryPack	1.21.4	Generated managed serialization.
+XREngine.Data	NVorbis	0.10.5	Managed Vorbis decode for audio data.
+XREngine.Data	SharpZipLib	1.4.2	Managed archive extraction.
+XREngine.Data	System.IO.Hashing	10.0.10	Managed asset hash calculation.
+XREngine.Data	YamlDotNet	18.1.0	Managed asset YAML serialization.
+XREngine.Data	ZstdSharp.Port	0.8.8	Managed Zstandard compression.
+XREngine.Audio	MathNet.Numerics	5.0.0	Managed FFT in audio buffers.
+XREngine.Animation	ImmediateReflection	2.0.0	Managed animation member access; reflection metadata requires separate trim review.
+XREngine.Runtime.Core	BitsKit	1.2.0	Managed humanoid pose bitstream IO.
+XREngine.Runtime.Core	DotnetNoise	1.0.0	Managed procedural noise transform.
+XREngine.Runtime.Core	MemoryPack	1.21.4	Generated managed runtime serialization.
+XREngine.Runtime.Core	Newtonsoft.Json	13.0.4	Managed JSON assets and state payloads; trim metadata requires separate review.
+XREngine.Runtime.Core	System.IO.Hashing	10.0.10	Managed runtime hash calculation.
+XREngine.Runtime.Core	YamlDotNet	18.1.0	Managed asset YAML serialization.
+XREngine.Runtime.Rendering	System.IO.Hashing	10.0.10	Managed shader and resource hash calculation.
+XREngine.Runtime.Rendering	MemoryPack	1.21.4	Generated managed rendering asset serialization.
+XREngine.Runtime.Rendering	MIConvexHull	1.1.19.1019	Managed light-probe topology.
+XREngine.Runtime.Rendering	YamlDotNet	18.1.0	Managed rendering asset YAML serialization.
+XREngine.Runtime.Rendering	Silk.NET.Maths	2.23.0	Managed window extent and resize value types; net5.0 asset has no native files or dependencies.
+XREngine.Runtime.Host	Newtonsoft.Json	13.0.4	Managed startup settings and snapshot JSON; interpreter metadata review only.
+XREngine.Runtime.Host	MemoryPack	1.21.4	Generated managed snapshot serialization.
+XREngine.Runtime.Host	YamlDotNet	18.1.0	Managed settings and snapshot YAML serialization; interpreter metadata review only.

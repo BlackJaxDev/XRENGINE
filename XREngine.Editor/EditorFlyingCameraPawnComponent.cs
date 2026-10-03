@@ -1,5 +1,5 @@
 using XREngine.Extensions;
-using ImageMagick;
+using XREngine.Imaging;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Numerics;
@@ -1129,12 +1129,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     #endregion
 
-    static void ScreenshotCallback(MagickImage img, int index)
+    static void ScreenshotCallback(RuntimeImage img, int index)
     {
         var path = GetScreenshotPath();
         Utility.EnsureDirPathExists(path);
-        img?.Flip();
-        img?.Write(path);
+        if (img is null)
+            throw new InvalidOperationException("Screenshot readback returned no image.");
+        using (img)
+            File.WriteAllBytes(path, RuntimeImageCodecs.Require().EncodePng(img));
     }
 
     private static string GetScreenshotPath()
@@ -1246,8 +1248,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 AbstractRenderer.Current?.GetScreenshotAsync(vp.Region, false, (img, index) =>
                 {
                     Utility.EnsureDirPathExists(capturePath);
-                    img?.Flip();
-                    img?.Write(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"));
+                    if (img is null)
+                        throw new InvalidOperationException("Screenshot readback returned no image.");
+                    using (img)
+                        File.WriteAllBytes(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"),
+                            RuntimeImageCodecs.Require().EncodePng(img));
                 });
             }
         }

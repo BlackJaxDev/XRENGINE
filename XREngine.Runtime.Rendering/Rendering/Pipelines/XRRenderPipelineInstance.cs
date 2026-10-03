@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -135,6 +135,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public RenderCommandCollection ActiveMeshRenderCommands => RenderState.MeshRenderCommands ?? MeshRenderCommands;
 
+    private bool _propagateCommandExceptions;
+    /// <summary>
+    /// Controls whether a command failure aborts the render invocation. Explicit
+    /// frame producers require this when partially authored output is invalid.
+    /// </summary>
+    public bool PropagateCommandExceptions
+    {
+        get => _propagateCommandExceptions;
+        set => SetField(ref _propagateCommandExceptions, value);
+    }
+
     public RenderResourceRegistry Resources => _resourceBuildContext?.Generation.Registry
         ?? ActiveGeneration?.Registry
         ?? _legacyResources;
@@ -230,9 +241,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             if (_pipeline is { } pipeline)
                 return pipeline;
 
-            RenderPipeline created = CreateDefaultRenderPipeline();
-            RequestPipelineChange(created, LastWindowViewport);
-            return _pipeline ?? created;
+            // A request made off the render thread stays queued until the render thread applies
+            // it. Report that request instead of superseding it with the default pipeline;
+            // offscreen shadow viewports otherwise lose their ShadowRenderPipeline to any early read.
+            if (EffectiveRequestedPipeline is { } requested)
+                return requested;
+
+            return RequestDefaultPipelineIfUnassigned(CreateDefaultRenderPipeline());
         }
         set => RequestPipelineChange(value, LastWindowViewport);
     }
@@ -333,7 +348,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     private static string DescribeViewport(XRViewport viewport)
     {
-        string? baseName = viewport.Window?.Window?.Title;
+        string? baseName = viewport.Window?.WindowTitle;
         if (string.IsNullOrWhiteSpace(baseName))
             baseName = "Viewport";
         return $"Viewport={baseName}#{viewport.Index} ({viewport.Width}x{viewport.Height})";
@@ -372,9 +387,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             BoundingRectangle region = new(0, 0, (int)whd.X, (int)whd.Y);
             for (int i = 0; i < whd.Z; i++)
             {
-                void ProcessImage(MagickImage image, int layer, int channelIndex)
+                void ProcessImage(RuntimeImage image, int layer, int channelIndex)
                 {
-                    using MagickImage ownedImage = image;
+                    if (image is null)
+                        throw new InvalidOperationException("Texture capture returned no image.");
+                    using RuntimeImage ownedImage = image;
                     string name = tex.Name ?? tex.GetDescribingName();
                     if (whd.Z > 1)
                         name += $" [Layer {layer + 1}]";
@@ -383,8 +400,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     string fileName = $"{name}.png";
                     string filePath = Path.Combine(exportDirPath, fileName);
                     Utility.EnsureDirPathExists(exportDirPath);
-                    ownedImage.Flip();
-                    ownedImage.Write(filePath);
+                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 _ = capture.TryCaptureTexture(tex, region, ProcessImage, 0, i);
@@ -411,9 +427,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
             foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Targets)
             {
-                void ProcessImage(MagickImage image, int index)
+                void ProcessImage(RuntimeImage image, int index)
                 {
-                    using MagickImage ownedImage = image;
+                    if (image is null)
+                        throw new InvalidOperationException("Framebuffer capture returned no image.");
+                    using RuntimeImage ownedImage = image;
                     string name = $"{fbo.GetDescribingName()}_{Attachment}";
                     if (index > 0)
                         name += $"_img{index + 1}";
@@ -424,8 +442,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     string fileName = $"{name}.png";
                     string filePath = Path.Combine(exportDirPath, fileName);
                     Utility.EnsureDirPathExists(exportDirPath);
-                    ownedImage.Flip();
-                    ownedImage.Write(filePath);
+                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 switch (Target)
@@ -2309,7 +2326,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     /// <summary>
-    /// Retires a previously active resource generation, marking it as retired and enqueueing it for disposal. This method is called when a new resource generation is committed, and the old generation is no longer needed. It logs detailed information about the retired generation, including its key, resource counts, and the current size of the retired generations queue. If the queue exceeds the maximum allowed size, it will dispose of the oldest retired generation to free up resources.
+    /// Retires a previously active resource generation after a replacement commits.
+    /// Resources remain queued until their completion fence signals, even when the
+    /// queue exceeds its target size.
     /// </summary>
     /// <param name="generation">The resource generation to retire.</param>
     /// <param name="reason">The reason for retiring the generation.</param>

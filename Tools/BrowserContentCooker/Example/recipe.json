@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "entrypoints": ["world"],
+  "streamed": ["annex"],
+  "assets": [
+    { "id": "triangle", "kind": "mesh", "dependencies": [], "variants": [{ "source": "triangle.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "paint", "kind": "material", "dependencies": [], "variants": [{ "source": "paint.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "world", "kind": "scene", "dependencies": ["triangle", "paint"], "variants": [{ "source": "world.json", "encoding": "json", "requiredFeatures": [] }] },
+    { "id": "annex", "kind": "scene", "dependencies": ["triangle", "paint"], "variants": [{ "source": "annex.json", "encoding": "json", "requiredFeatures": [] }] }
+  ]
+}

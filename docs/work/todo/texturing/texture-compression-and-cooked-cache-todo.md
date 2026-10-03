@@ -20,6 +20,12 @@ The first production target is Windows desktop with OpenGL 4.6:
 
 ## Current Baseline
 
+Browser delivery source update: [Browser cooked content delivery](../../progress/rendering/browser-cooked-content.md)
+adds a bounded manifest and upload path for preconverted ASTC 4×4, ETC2 RGBA8 and
+matching RGBA8 mip variants. It does not replace XRTS, supply a compression encoder,
+or close the native/mobile qualification tasks below. KTX2/Basis conversion remains
+offline and unimplemented by this browser packager. Runtime validation is deferred.
+
 Implemented today:
 
 - [x] Third-party `XRTexture2D` cache writes can use a pure binary `XRTS` payload instead of a YAML envelope.

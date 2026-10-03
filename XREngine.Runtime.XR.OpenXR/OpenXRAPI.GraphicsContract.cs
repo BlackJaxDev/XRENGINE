@@ -1,0 +1,103 @@
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
+public unsafe partial class OpenXRAPI
+{
+    /// <summary>Legacy callback identity for rendering a view into an OpenXR image.</summary>
+    public delegate void DelRenderToFBO(uint textureHandle, uint viewIndex);
+
+    private DelRenderToFBO? _legacyRenderCallback;
+    private OpenXrRenderToEyeCallback? _legacyRenderAdapter;
+
+    /// <summary>Renders a frame through the original OpenXR eye callback contract.</summary>
+    public void RenderFrame(DelRenderToFBO? renderCallback)
+    {
+        _legacyRenderCallback = renderCallback;
+        RenderFrameCore(renderCallback is null ? null : _legacyRenderAdapter ??= RenderLegacyEye);
+    }
+
+    private void RenderLegacyEye(uint textureHandle, uint viewIndex)
+        => _legacyRenderCallback?.Invoke(textureHandle, viewIndex);
+
+    /// <summary>
+    /// The OpenXR-owned layered viewport used for single-pass stereo rendering.
+    /// Diagnostic consumers must not inspect the inactive per-eye viewports for
+    /// resources produced by this pipeline.
+    /// </summary>
+    public XRViewport? StereoViewport => _openXrStereoViewport;
+
+    public bool CanUseTrueSinglePassStereo
+        => Window?.Renderer is AbstractRenderer renderer &&
+           TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
+           binding.CanUseTrueSinglePassStereo;
+
+    internal bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+        => Window?.Renderer is AbstractRenderer renderer &&
+           TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
+           binding.TryRenderDesktopMirrorComposition(GraphicsBindingHost, targetWidth, targetHeight);
+
+    public OpenXrSmokeCaptureLedgerEntry[] GetStrictSpsBoundaryCaptureLedger()
+        => _graphicsBinding?.GetStrictSpsBoundaryCaptureLedger() ?? [];
+
+    private bool TryResolveOpenXrViewRenderModeForCurrentBackend(
+        out VrViewRenderModeResolution resolution)
+    {
+        ERenderLibrary backend = Window?.Renderer.BackendId == RendererBackendId.Vulkan
+            ? ERenderLibrary.Vulkan
+            : ERenderLibrary.OpenGL;
+
+        string? trueSinglePassStereoUnavailableReason = null;
+        bool trueSinglePassStereoAvailable =
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
+            backend == ERenderLibrary.Vulkan &&
+            CanUseTrueSinglePassStereo;
+
+        if (RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
+            backend != ERenderLibrary.Vulkan)
+        {
+            trueSinglePassStereoUnavailableReason =
+                $"OpenXR backend {backend} does not implement an engine-owned layered multiview target";
+        }
+
+        resolution = VrViewRenderModeResolver.Resolve(
+            backend,
+            RuntimeRenderingHostServices.Presentation.VrViewRenderMode,
+            RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
+            trueSinglePassStereoAvailable,
+            rendersExternalSwapchainTargets: !trueSinglePassStereoAvailable,
+            trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason);
+        RecordSmokeViewRenderModeResolution(resolution);
+
+        if (resolution.IsSupported)
+            return true;
+
+        Debug.RenderingWarningEvery(
+            $"OpenXR.ViewRenderMode.Unsupported.{backend}.{resolution.RequestedMode}",
+            TimeSpan.FromSeconds(5),
+            "[OpenXR] Unsupported VR.ViewRenderMode={0} for backend {1}. {2}",
+            resolution.RequestedMode,
+            backend,
+            resolution.Diagnostic ?? "No fallback was applied.");
+        RecordSmokeFailureOnce(
+            $"Unsupported VR.ViewRenderMode={resolution.RequestedMode} for backend {backend}. " +
+            $"{resolution.Diagnostic ?? "No fallback was applied."}");
+        return false;
+    }
+
+    private void ResetGraphicsBackendDiagnostics()
+    {
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+        {
+            binding.ResetBackendDiagnostics(GraphicsBindingHost);
+        }
+    }
+
+    private void DestroyGraphicsBackendResources()
+    {
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+        {
+            binding.DestroyBackendResources(GraphicsBindingHost);
+        }
+    }
+}

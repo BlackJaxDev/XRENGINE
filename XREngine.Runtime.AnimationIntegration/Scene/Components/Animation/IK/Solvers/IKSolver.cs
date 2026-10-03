@@ -1,4 +1,4 @@
-﻿using MathNet.Numerics;
+﻿using XREngine.Extensions;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Data.Core;
@@ -83,12 +83,12 @@ namespace XREngine.Components.Animation
         {
             float weight = IKPositionWeight;
 
-            if (weight.AlmostEqual(0f))
+            if (weight.EqualTo(0f))
                 return Vector3.Zero;
 
             var worldPosition = GetWorldIKPositionUnweighted();
 
-            if (weight.AlmostEqual(1f))
+            if (weight.EqualTo(1f))
                 return worldPosition;
 
             return Vector3.Lerp(Vector3.Zero, worldPosition, weight);

@@ -4,6 +4,33 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Explicit Output Failure Policy
+
+`XRRenderPipelineInstance.PropagateCommandExceptions` lets an explicit frame
+producer require complete command authoring. When enabled, a command-container
+exception is retained while the authored pop/unbind sequence finishes, then
+aborts the invocation with its original stack. The
+presentationless production benchmark enables this policy before its first
+frame; a partial scene cannot produce an accepted submission receipt.
+Ordinary viewport recovery continues to isolate command failures by default.
+
+An exact offscreen completion reservation separately rejects required authoring
+failures. A window-free invocation with no output FBO or completion reservation
+must select the explicit failure policy rather than assume that reservation
+validation covers it.
+
+The GPU material table's CPU upload row must match the generated std430 layout.
+Four texture indices plus flags require three header-padding words before the
+first vec4, yielding 36 words/144 bytes for the opaque layout. Keep the size and
+stride guard enabled; a stale row definition otherwise prevents scene raster
+submission while ordinary command recovery can hide the original exception.
+
+Vulkan atlas index synchronization resolves cold mesh-version and index-buffer
+wrappers at the renderer facade before passing typed wrappers to command
+execution. The command runtime's retained wrapper lookup cannot create them.
+Deferred mesh publication and committed atlas bytes deliberately do not create
+backend wrappers; generating existing wrappers alone cannot satisfy first use.
+
 ## Resource Generation Lifecycle
 
 `DefaultRenderPipeline` declares stable pipeline-owned resources through
@@ -21,6 +48,18 @@ leaves the active generation rendering. Both OpenGL and Vulkan consume the same
 generation-owned descriptors; OpenGL creates concrete objects through the
 existing factories, while Vulkan stages a pending physical resource plan before
 swapping it into active renderer state.
+
+If a resize callback temporarily has no current or retained camera, preserve the
+last output's AO enablement and mode in its resource feature mask, including the
+required forward prepass. Recompute those fields when a camera becomes available;
+an explicitly disabled camera AO setting must not inherit the previous mode.
+
+Vulkan publication commits allocator ownership before retiring old physical
+resources. A retirement failure must not roll back the newly published allocator.
+Retire each eligible group independently and quarantine failed groups with their
+owners retained. Shared groups remain excluded from retirement. The retired
+generation count is a soft bound: absent, pending, or failed completion receipts
+must never be treated as permission to dispose resources still in use.
 
 Initial generations use the same bounded owner-thread materializer as
 replacements; they must not bypass slice limits merely because no active
@@ -425,6 +464,10 @@ The component uses SI-like Earth defaults (`GroundRadius = 6,371,000`, `Atmosphe
 Forward shading reserves two directional shadow slots. `DirectionalShadowMaps[0..1]`, `DirectionalShadowMapArrays[0..1]`, and the flattened directional atlas metadata cover only `DynamicDirectionalLights[0]` and `[1]`; additional directional lights still shade but do not sample forward shadow maps. The global shadow-filter controls remain sourced from light 0, while `DirectionalShadowBiasProjectionParams[0..1]` carries the per-light primary projection bias needed by non-cascaded maps.
 
 Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's texel bias controls plus cascade texel size, light-space depth span, and shadow-map resolution. `CascadeBiasMin` is the constant depth floor, `CascadeBiasMax` is the slope scale in texels, and `CascadeReceiverOffsets` is the world-space normal offset.
+
+**Rule:** Never copy `CascadeBiasMax` (or `RenderedSplitBlendBias.w`) into a consumer that expects normalized depth. Raster receivers resolve the texel slope scale with screen-space derivatives. `AdvancedGlobalResourceCapture` converts it for native shading into normalized depth per authored texel, using the rendered orthographic light matrix and the atlas resolution scale. `StandardShadow.glslinc` multiplies that by the receiver's `tan(theta)`, clamped near 84 degrees. Copying the raw texel count (default `2.0`) as a depth bias pushes every receiver in front of every occluder, which removes all Advanced directional shadows.
+
+The native slope term follows the stored depth, not the shading. It uses the reconstructed triangle plane (`XRAdvancedSurface.geometricNormal`) with `|cos(theta)|`, so a plane facing away from the light keeps its true slope. Clamping `N.L` to zero would treat back-facing receivers as grazing and lift them through thin occluders such as arch soffits. The footprint is `sqrt(2) * (radius + 0.5)` texels, covering the diagonal 3x3 PCF taps and half-texel receiver quantization.
 
 Forward cascade receivers must not sample the last cascade after the view-space depth has passed that cascade's far split. The last cascade fades to the contact/lit fallback over its configured blend width, and fragments beyond the final split use the same fallback instead of reading undefined/stale far-cascade depth.
 

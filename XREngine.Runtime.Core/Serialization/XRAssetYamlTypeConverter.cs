@@ -355,6 +355,9 @@ namespace XREngine
             if (!typeof(TextFile).IsAssignableFrom(expectedType))
                 return false;
 
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(expectedType,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                nameof(XRAssetDeserializer), "Register a cooked asset factory instead of constructing YAML runtime references reflectively.");
             try
             {
                 if (Activator.CreateInstance(expectedType) is not TextFile textFile)
@@ -668,6 +671,9 @@ namespace XREngine
                 return null;
             if (!typeof(XRAsset).IsAssignableFrom(expectedType))
                 return null;
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(expectedType,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                nameof(XRAssetDeserializer), "Register a cooked asset factory instead of constructing YAML runtime references reflectively.");
             try
             {
                 if (Activator.CreateInstance(expectedType) is not XRAsset asset)
@@ -695,7 +701,7 @@ namespace XREngine
 
             string rewrittenTypeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
             concreteType = AotRuntimeMetadataStore.ResolveType(rewrittenTypeName);
-            if (concreteType is null && !XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (concreteType is null && !XRRuntimeEnvironment.IsPublishedBuild)
             {
                 foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
@@ -791,7 +797,7 @@ namespace XREngine
                 return true;
             }
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (XRRuntimeEnvironment.IsPublishedBuild)
                 return false;
 
             // XRAsset.SerializedAssetType writes FullName (no assembly qualifier). Resolve via loaded assemblies.

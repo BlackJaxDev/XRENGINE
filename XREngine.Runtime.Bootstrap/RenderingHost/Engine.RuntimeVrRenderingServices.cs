@@ -1,12 +1,7 @@
-using OpenVR.NET;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Numerics;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
-using OpenVR.NET.Devices;
-using Valve.VR;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
@@ -76,6 +71,7 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
         }
 
         internal XRCamera Camera { get; }
+        public int CullingMask { get => Camera.CullingMask.Value; set => Camera.CullingMask = value; }
 
         public float Near
         {
@@ -92,27 +88,13 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
 
     private sealed class EngineRuntimeVrRenderModelProvider : IRuntimeVrRenderModelProvider
     {
-        private static readonly string[] OpenXrTrackerRoleOrder =
-        [
-            "/user/vive_tracker_htcx/role/waist",
-            "/user/vive_tracker_htcx/role/chest",
-            "/user/vive_tracker_htcx/role/left_foot",
-            "/user/vive_tracker_htcx/role/right_foot",
-            "/user/vive_tracker_htcx/role/left_shoulder",
-            "/user/vive_tracker_htcx/role/right_shoulder",
-            "/user/vive_tracker_htcx/role/left_elbow",
-            "/user/vive_tracker_htcx/role/right_elbow",
-            "/user/vive_tracker_htcx/role/left_knee",
-            "/user/vive_tracker_htcx/role/right_knee",
-            "/user/vive_tracker_htcx/role/camera",
-            "/user/vive_tracker_htcx/role/keyboard",
-        ];
-
-        private VR? _modelOnlyOpenVr;
-        private bool _triedModelOnlyOpenVr;
+        private readonly OpenVrModelCatalog _openVrModels = new();
         private bool _openVrUnavailableLogged;
         private bool _openVrFallbackDisabledLogged;
         private Action? _modelsChanged;
+
+        public EngineRuntimeVrRenderModelProvider()
+            => _openVrModels.ModelsChanged += () => _modelsChanged?.Invoke();
 
         public event Action? ModelsChanged
         {
@@ -137,42 +119,34 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 return false;
             }
 
-            if (TryGetOpenVrControllerDevice(leftHand) is DeviceModel deviceModel)
+            if (!_openVrModels.TryGetControllerModelName(
+                leftHand, RuntimeEngine.VRState.IsOpenVRActive, allowUtilityRuntime: true, out string? modelName))
             {
-                renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrDeviceModel(
-                    deviceModel,
-                    $"openvr-controller:{(leftHand ? "left" : "right")}:{deviceModel.Name}",
-                    $"{(leftHand ? "Left" : "Right")} SteamVR controller model");
-                return true;
+                LogOpenVrUnavailable(_openVrModels.LastFailure ?? "render-model service unavailable");
+                return false;
             }
 
-            if (!TryGetOpenVrSystem(out CVRSystem? cvr))
-                return false;
-
-            ETrackedControllerRole role = leftHand ? ETrackedControllerRole.LeftHand : ETrackedControllerRole.RightHand;
-            uint deviceIndex = cvr.GetTrackedDeviceIndexForControllerRole(role);
-            if (deviceIndex == Valve.VR.OpenVR.k_unTrackedDeviceIndexInvalid)
-                return false;
-
-            return TryCreateOpenVrDescriptorForDevice(
-                cvr,
-                deviceIndex,
-                ETrackedDeviceClass.Controller,
-                $"openvr-controller:{(leftHand ? "left" : "right")}",
-                $"{(leftHand ? "Left" : "Right")} SteamVR controller model",
-                out renderModel);
+            renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrModelName(
+                modelName!,
+                $"openvr-controller:{(leftHand ? "left" : "right")}:{modelName}",
+                $"{(leftHand ? "Left" : "Right")} SteamVR controller model");
+            return true;
         }
 
         public bool TryGetTrackerRenderModel(string? openXrTrackerUserPath, uint? openVrDeviceIndex, [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel)
         {
             renderModel = null;
 
-            if (openVrDeviceIndex is uint deviceIndex && TryGetOpenVrTrackedDeviceModel(deviceIndex) is DeviceModel trackedDeviceModel)
+            bool openVrActive = RuntimeEngine.VRState.IsOpenVRActive;
+            if (openVrDeviceIndex is uint directIndex &&
+                _openVrModels.TryGetTrackerModelName(
+                    directIndex, null, openVrActive, allowUtilityRuntime: false,
+                    out _, out string? directModelName))
             {
-                renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrDeviceModel(
-                    trackedDeviceModel,
-                    $"openvr-tracker:{deviceIndex}:{trackedDeviceModel.Name}",
-                    $"SteamVR tracker {deviceIndex} model");
+                renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrModelName(
+                    directModelName!,
+                    $"openvr-tracker:{directIndex}:{directModelName}",
+                    $"SteamVR tracker {directIndex} model");
                 return true;
             }
 
@@ -182,36 +156,23 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 return false;
             }
 
-            if (!TryGetOpenVrSystem(out CVRSystem? cvr))
-                return false;
-
-            if (openVrDeviceIndex is uint explicitDeviceIndex &&
-                TryCreateOpenVrDescriptorForDevice(
-                    cvr,
-                    explicitDeviceIndex,
-                    ETrackedDeviceClass.GenericTracker,
-                    $"openvr-tracker:{explicitDeviceIndex}",
-                    $"SteamVR tracker {explicitDeviceIndex} model",
-                    out renderModel))
+            if (!_openVrModels.TryGetTrackerModelName(
+                openVrDeviceIndex, openXrTrackerUserPath, openVrActive, allowUtilityRuntime: true,
+                out uint selectedIndex, out string? modelName))
             {
-                return true;
+                LogOpenVrUnavailable(_openVrModels.LastFailure ?? "render-model service unavailable");
+                return false;
             }
 
-            if (string.IsNullOrWhiteSpace(openXrTrackerUserPath))
-                return false;
-
-            uint[] trackerIndices = EnumerateTrackedDevices(cvr, ETrackedDeviceClass.GenericTracker);
-            if (trackerIndices.Length == 0)
-                return false;
-
-            uint selectedIndex = SelectTrackerIndexForOpenXrPath(openXrTrackerUserPath, trackerIndices);
-            return TryCreateOpenVrDescriptorForDevice(
-                cvr,
-                selectedIndex,
-                ETrackedDeviceClass.GenericTracker,
-                $"openvr-tracker:{openXrTrackerUserPath}",
-                $"SteamVR tracker model for {openXrTrackerUserPath}",
-                out renderModel);
+            string keyPrefix = openVrDeviceIndex.HasValue
+                ? $"openvr-tracker:{selectedIndex}"
+                : $"openvr-tracker:{openXrTrackerUserPath}";
+            string displayName = openVrDeviceIndex.HasValue
+                ? $"SteamVR tracker {selectedIndex} model"
+                : $"SteamVR tracker model for {openXrTrackerUserPath}";
+            renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrModelName(
+                modelName!, $"{keyPrefix}:{modelName}", displayName);
+            return true;
         }
 
         public string DescribeAvailability()
@@ -221,80 +182,6 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             return $"{openXr}; {openVr}";
         }
 
-        private static DeviceModel? TryGetOpenVrControllerDevice(bool leftHand)
-        {
-            if (!RuntimeEngine.VRState.IsOpenVRActive)
-                return null;
-
-            VrDevice? device = leftHand ? RuntimeEngine.VRState.OpenVRApi.LeftController : RuntimeEngine.VRState.OpenVRApi.RightController;
-            return device?.Model;
-        }
-
-        private static DeviceModel? TryGetOpenVrTrackedDeviceModel(uint deviceIndex)
-        {
-            if (!RuntimeEngine.VRState.IsOpenVRActive)
-                return null;
-
-            foreach (VrDevice device in RuntimeEngine.VRState.OpenVRApi.TrackedDevices)
-            {
-                if (device.DeviceIndex == deviceIndex &&
-                    RuntimeEngine.VRState.OpenVRApi.CVR.GetTrackedDeviceClass(deviceIndex) == ETrackedDeviceClass.GenericTracker)
-                {
-                    return device.Model;
-                }
-            }
-
-            return null;
-        }
-
-        private bool TryGetOpenVrSystem([NotNullWhen(true)] out CVRSystem? cvr)
-        {
-            cvr = null;
-
-            if (RuntimeEngine.VRState.IsOpenVRActive &&
-                RuntimeEngine.VRState.OpenVRApi.State.HasFlag(VrState.OK) &&
-                RuntimeEngine.VRState.OpenVRApi.CVR is { } activeCvr)
-            {
-                cvr = activeCvr;
-                return true;
-            }
-
-            if (ShouldBlockOpenVrRenderModelFallbackDuringOpenXr())
-            {
-                LogOpenVrFallbackDisabledDuringOpenXr();
-                return false;
-            }
-
-            if (_modelOnlyOpenVr is { State: var state } && state.HasFlag(VrState.OK) && _modelOnlyOpenVr.CVR is { } modelOnlyCvr)
-            {
-                cvr = modelOnlyCvr;
-                return true;
-            }
-
-            if (_triedModelOnlyOpenVr)
-                return false;
-
-            _triedModelOnlyOpenVr = true;
-
-            try
-            {
-                _modelOnlyOpenVr = new VR();
-                if (!_modelOnlyOpenVr.TryStart(EVRApplicationType.VRApplication_Utility))
-                {
-                    LogOpenVrUnavailable("OpenVR utility initialization failed");
-                    return false;
-                }
-            }
-            catch (Exception ex)
-            {
-                LogOpenVrUnavailable($"OpenVR utility initialization failed: {ex.Message}");
-                return false;
-            }
-
-            cvr = _modelOnlyOpenVr.CVR;
-            _modelsChanged?.Invoke();
-            return cvr is not null;
-        }
 
         private string DescribeOpenVrRenderModelAvailability()
         {
@@ -304,7 +191,7 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                     $"SteamVR/OpenVR render-model fallback disabled while OpenXR is requested or active; set {XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback}=1 to opt in";
             }
 
-            return TryGetOpenVrSystem(out _)
+            return _openVrModels.HasSystem(RuntimeEngine.VRState.IsOpenVRActive, allowUtilityRuntime: true)
                 ? "SteamVR/OpenVR render-model service available"
                 : "SteamVR/OpenVR render-model service unavailable";
         }
@@ -360,98 +247,8 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
                 value.Equals("on", StringComparison.OrdinalIgnoreCase));
 
-        private static bool TryCreateOpenVrDescriptorForDevice(
-            CVRSystem cvr,
-            uint deviceIndex,
-            ETrackedDeviceClass expectedClass,
-            string keyPrefix,
-            string displayName,
-            [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel)
-        {
-            renderModel = null;
-
-            if (cvr.GetTrackedDeviceClass(deviceIndex) != expectedClass)
-                return false;
-
-            if (!TryGetOpenVrRenderModelName(cvr, deviceIndex, out string? modelName))
-                return false;
-
-            DeviceModel deviceModel = new(modelName);
-            renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrDeviceModel(
-                deviceModel,
-                $"{keyPrefix}:{modelName}",
-                displayName);
-            return true;
-        }
-
-        private static bool TryGetOpenVrRenderModelName(CVRSystem cvr, uint deviceIndex, [NotNullWhen(true)] out string? modelName)
-        {
-            modelName = null;
-
-            ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-            StringBuilder builder = new(256);
-            uint length = cvr.GetStringTrackedDeviceProperty(
-                deviceIndex,
-                ETrackedDeviceProperty.Prop_RenderModelName_String,
-                builder,
-                (uint)builder.Capacity,
-                ref error);
-
-            if (error == ETrackedPropertyError.TrackedProp_BufferTooSmall)
-            {
-                builder.EnsureCapacity((int)length);
-                error = ETrackedPropertyError.TrackedProp_Success;
-                cvr.GetStringTrackedDeviceProperty(
-                    deviceIndex,
-                    ETrackedDeviceProperty.Prop_RenderModelName_String,
-                    builder,
-                    length,
-                    ref error);
-            }
-
-            if (error != ETrackedPropertyError.TrackedProp_Success)
-                return false;
-
-            modelName = builder.ToString();
-            return !string.IsNullOrWhiteSpace(modelName);
-        }
-
-        private static uint[] EnumerateTrackedDevices(CVRSystem cvr, ETrackedDeviceClass trackedDeviceClass)
-        {
-            uint[] scratch = new uint[Valve.VR.OpenVR.k_unMaxTrackedDeviceCount];
-            int count = 0;
-
-            for (uint i = 0; i < Valve.VR.OpenVR.k_unMaxTrackedDeviceCount; i++)
-            {
-                if (cvr.GetTrackedDeviceClass(i) != trackedDeviceClass)
-                    continue;
-
-                scratch[count++] = i;
-            }
-
-            if (count == 0)
-                return [];
-
-            uint[] result = new uint[count];
-            Array.Copy(scratch, result, count);
-            return result;
-        }
-
-        private static uint SelectTrackerIndexForOpenXrPath(string openXrTrackerUserPath, uint[] trackerIndices)
-        {
-            if (trackerIndices.Length == 1)
-                return trackerIndices[0];
-
-            for (int i = 0; i < OpenXrTrackerRoleOrder.Length; i++)
-            {
-                if (string.Equals(OpenXrTrackerRoleOrder[i], openXrTrackerUserPath, StringComparison.Ordinal))
-                    return trackerIndices[Math.Min(i, trackerIndices.Length - 1)];
-            }
-
-            int hash = StringComparer.Ordinal.GetHashCode(openXrTrackerUserPath) & int.MaxValue;
-            return trackerIndices[hash % trackerIndices.Length];
-        }
     }
+
 
     private sealed class EngineRuntimeVrRenderModelHandle : IRuntimeVrRenderModelHandle
     {
@@ -509,11 +306,11 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             Clear();
             int generation = _loadGeneration;
 
-            if (renderModel.NativeModel is DeviceModel deviceModel)
+            if (renderModel.OpenVrModelName is { Length: > 0 } modelName)
             {
                 Model model = new();
                 _modelComponent.Model = model;
-                Task.Run(() => LoadDeviceAsync(deviceModel, model, generation));
+                _ = Task.Run(() => LoadOpenVrModelAsync(modelName, model, generation));
                 return;
             }
 
@@ -612,97 +409,28 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             }
         }
 
-        private async Task LoadDeviceAsync(DeviceModel deviceModel, Model model, int generation)
-        {
-            foreach (ComponentModel comp in deviceModel.Components)
-            {
-                if (_disposed || generation != _loadGeneration)
-                    return;
-
-                SubMesh? subMesh = await LoadComponentAsync(comp);
-                if (subMesh is not null && !_disposed && generation == _loadGeneration)
-                    model.Meshes.Add(subMesh);
-            }
-        }
-
-        private static async Task<SubMesh?> LoadComponentAsync(ComponentModel comp)
-        {
-            if (!comp.ModelName.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
-                return null;
-
-            List<Vertex> vertices = [];
-            List<ushort> triangleIndices = [];
-            List<Task<XRTexture2D?>> textureLoads = [];
-
-            void OnError(EVRRenderModelError error, ComponentModel.Context context)
-            {
-            }
-
-            void AddTexture(ComponentModel.Texture texture)
-                => textureLoads.Add(LoadTextureAsync(texture));
-
-            void AddTriangle(short index0, short index1, short index2)
-            {
-                triangleIndices.Add((ushort)index0);
-                triangleIndices.Add((ushort)index2);
-                triangleIndices.Add((ushort)index1);
-            }
-
-            void AddVertex(Vector3 position, Vector3 normal, Vector2 uv)
-                => vertices.Add(new Vertex(position, normal, uv));
-
-            bool Begin(ComponentModel.ComponentType type)
-                => true;
-
-            await comp.LoadAsync(Begin, null, AddVertex, AddTriangle, AddTexture, OnError);
-
-            List<XRTexture2D> textures = [];
-            foreach (Task<XRTexture2D?> textureLoad in textureLoads)
-            {
-                XRTexture2D? texture = await textureLoad;
-                if (texture is not null)
-                    textures.Add(texture);
-            }
-
-            if (vertices.Count == 0 || triangleIndices.Count == 0)
-                return null;
-
-            if (triangleIndices.Max() >= vertices.Count)
-            {
-                Debug.VRWarning("Invalid triangle index detected in model component.");
-                return null;
-            }
-
-            XRMesh mesh = new(vertices, triangleIndices);
-            XRMaterial material = textures.Count > 0
-                ? XRMaterial.CreateLitTextureMaterial(textures[0])
-                : XRMaterial.CreateLitColorMaterial(ColorF4.Magenta);
-            return new SubMesh(new SubMeshLOD(material, mesh, 0.0f));
-        }
-
-        private static async Task<XRTexture2D?> LoadTextureAsync(ComponentModel.Texture texture)
+        private async Task LoadOpenVrModelAsync(string modelName, Model model, int generation)
         {
             try
             {
-                (int width, int height, IntPtr data) = await texture.LoadParams();
-                if (width <= 0 || height <= 0 || data == IntPtr.Zero)
-                    return null;
-
-                int rowByteCount = checked(width * 4);
-                byte[] rgbaPixels = new byte[checked(rowByteCount * height)];
-                for (int sourceY = 0; sourceY < height; sourceY++)
+                RuntimeVrModelComponentData[] components = await OpenVrModelLoader.LoadAsync(modelName);
+                foreach (RuntimeVrModelComponentData component in components)
                 {
-                    IntPtr sourceRow = IntPtr.Add(data, sourceY * rowByteCount);
-                    int destinationOffset = (height - sourceY - 1) * rowByteCount;
-                    Marshal.Copy(sourceRow, rgbaPixels, destinationOffset, rowByteCount);
-                }
+                    if (_disposed || generation != _loadGeneration)
+                        return;
 
-                return new XRTexture2D((uint)width, (uint)height, rgbaPixels);
+                    XRMesh mesh = new(component.Vertices, component.TriangleIndices);
+                    XRMaterial material = component.Texture is { } texture
+                        ? XRMaterial.CreateLitTextureMaterial(
+                            new XRTexture2D(texture.Width, texture.Height, texture.RgbaPixels))
+                        : XRMaterial.CreateLitColorMaterial(ColorF4.Magenta);
+                    model.Meshes.Add(new SubMesh(new SubMeshLOD(material, mesh, 0.0f)));
+                }
             }
             catch (Exception ex)
             {
-                Debug.VRWarning($"Failed to load OpenVR render-model texture {texture.ID}: {ex.Message}");
-                return null;
+                if (!_disposed && generation == _loadGeneration)
+                    Debug.VRWarning($"Failed to load OpenVR render model '{modelName}': {ex.Message}");
             }
         }
     }

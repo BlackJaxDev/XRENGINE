@@ -69,7 +69,7 @@ public sealed class MonkeyBallPawnComponent : PawnComponent
                 $"gamepadBound={localInput.Gamepad is not null} " +
                 $"gamepadConnected={localInput.Gamepad?.IsConnected ?? false} " +
                 $"vrRuntime={RuntimeVrInputServices.ActiveRuntime} " +
-                $"vrService={RuntimeVrInputServices.ActiveServiceName} legacyVrActionSets={localInput.OpenVRActions?.Count ?? 0}");
+                $"vrService={RuntimeVrInputServices.ActiveServiceName} vrActions={localInput.HasVrActions}");
         }
     }
 

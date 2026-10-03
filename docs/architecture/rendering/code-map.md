@@ -9,7 +9,7 @@ Define a clear, stable organization for rendering code so contributors can quick
 - GPU compute shader stages by function
 - Shared rendering infrastructure and policy layers
 
-This document is the execution companion to Phase 11 in the Vulkan GPU-driven unified TODO.
+This document maps rendering source ownership and the historical moves that established the current backend folders.
 
 ---
 
@@ -58,7 +58,7 @@ Common backend folders:
   reflection, rewrite/fixup passes, and shader artifact caches.
 - `Features/` - optional backend features such as bindless, meshlets,
   raytracing, sparse textures, streaming, RTX IO, luminance, and upscaling.
-- `UI/` - backend ImGui and editor UI renderer integration.
+- `UI/` - backend ImGui drawing and platform viewport support. Shared ImGui context and font ownership lives in `XREngine.Runtime.Rendering.ImGui`.
 - `BackendObjects/` - API wrappers around engine resources.
 - `Types/` - small backend-specific value types, enums, conversion helpers, and
   interop structs.
@@ -149,9 +149,9 @@ All paths below are under
 
 Target path split:
 
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Traditional/`
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Meshlet/`
-- `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Shared/`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Shared/`
 
 Rules:
 
@@ -172,11 +172,11 @@ Target domains:
 
 Recommended shape (can be implemented incrementally under existing paths):
 
-- `XRENGINE/Rendering/Commands/Policy/`
-- `XRENGINE/Rendering/Commands/Dispatch/`
-- `XRENGINE/Rendering/Commands/Resources/`
-- `XRENGINE/Rendering/Commands/Validation/`
-- `XRENGINE/Rendering/Commands/Telemetry/`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Policy/`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Dispatch/`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Resources/`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Validation/`
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Telemetry/`
 
 ## 3) Compute shader grouping by function
 
@@ -279,10 +279,10 @@ The current high-level execution flow is:
 3. Indirect command/count buffers are consumed by mesh rendering path dispatchers.
 4. Traditional or meshlet draw submission executes from the prepared indirect buffers.
 
-Primary ownership in this phase:
+Primary ownership:
 
-- Host orchestration: `XRENGINE/Rendering/Commands/GPURendering/`
-- Path execution: `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/{Traditional,Meshlet,Shared}/`
+- Host orchestration: `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/`
+- Path execution: `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/{Traditional,Meshlet,Shared}/`
 - Compute stages: `Build/CommonAssets/Shaders/Compute/`
 
 ---
@@ -361,9 +361,9 @@ Primary ownership in this phase:
 | `Build/CommonAssets/Shaders/Compute/HiZGen.comp` | `Build/CommonAssets/Shaders/Compute/Occlusion/HiZGen.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/GPURenderRadixIndexSort.comp` | `Build/CommonAssets/Shaders/Compute/Sorting/GPURenderRadixIndexSort.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/GPURenderGather.comp` | `Build/CommonAssets/Shaders/Compute/Debug/GPURenderGather.comp` | 2 | Moved |
-| `XRENGINE/Rendering/Commands/GpuSortPolicy.cs` | `XRENGINE/Rendering/Commands/GPURendering/Policy/GpuSortPolicy.cs` | 4 | Moved |
-| `XRENGINE/Rendering/Commands/GPUBatchingLayout.cs` | `XRENGINE/Rendering/Commands/GPURendering/Resources/GPUBatchingResources.cs` | 4 | Moved/Renamed |
-| `XRENGINE/Rendering/Commands/GpuBackendParitySnapshot.cs` | `XRENGINE/Rendering/Commands/GPURendering/Validation/GpuBackendParityValidator.cs` | 4 | Moved/Renamed |
+| `XRENGINE/Rendering/Commands/GpuSortPolicy.cs` | `XREngine.Runtime.Rendering/Commands/GpuSortPolicy.cs` | 4 | Moved to shared Rendering project |
+| `XRENGINE/Rendering/Commands/GPUBatchingLayout.cs` | `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Resources/GPUBatchingResources.cs` | 4 | Moved/Renamed |
+| `XRENGINE/Rendering/Commands/GpuBackendParitySnapshot.cs` | `XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Validation/GpuBackendParityValidator.cs` | 4 | Moved/Renamed |
 | `Build/CommonAssets/Shaders/Compute/Skinning.comp` | `Build/CommonAssets/Shaders/Compute/Unused/Skinning.comp` | 5 | Quarantined |
 | `Build/CommonAssets/Shaders/Compute/HiZCull.comp` | `Build/CommonAssets/Shaders/Compute/Unused/HiZCull.comp` | 5 | Quarantined |
 | `Build/CommonAssets/Shaders/Compute/GPURenderSorting.comp` | `Build/CommonAssets/Shaders/Compute/Unused/GPURenderSorting.comp` | 5 | Quarantined |

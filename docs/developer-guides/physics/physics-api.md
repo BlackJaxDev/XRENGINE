@@ -17,7 +17,7 @@ var body = node.GetOrAddComponent<DynamicRigidBodyComponent>();
 body.RigidBody = CreateDynamicBody();
 ```
 
-When a component activates, it registers its actor with the active `AbstractPhysicsScene`. When it deactivates or is removed, it unregisters the actor.
+When a component activates, it registers its actor with the active `AbstractPhysicsScene`. When it deactivates or is removed, it unregisters the actor. Component and scene contracts live in `XREngine.Runtime.Core`; gameplay code should use `IAbstractPhysicsActor`, `IAbstractDynamicRigidBody`, `IAbstractCharacterController`, and the typed neutral joint interfaces rather than concrete solver wrappers.
 
 ## Queries
 
@@ -32,14 +32,18 @@ Results resolve to owning `XRComponent` instances where possible, which keeps ga
 
 ## Backend Notes
 
-PhysX is the production backend. Jolt and Jitter2 are experimental and should be treated as parity targets until their actor, query, and transform-propagation coverage matches PhysX.
+PhysX remains the selected production default. Desktop composition registers the PhysX and Jolt modules in `PhysicsBackendCatalog`; Jolt is available for parity work but is not promoted until its full desktop and browser gates pass. Jitter2 is a separate experimental module that is absent from default composition. A known saved backend selection without an installed module fails with a named diagnostic.
+
+The implementation projects are `XREngine.Runtime.Physics.PhysX`, `XREngine.Runtime.Physics.Jolt`, and `XREngine.Runtime.Physics.Jitter`. General live body settings use `IPhysicsRuntimeBodyProperties` and `IPhysicsDynamicBodySettings`; PhysX-specific component properties are labeled as extensions in editor metadata. `PhysicsQueryFilter` is the shared actor-type/layer query contract; native PhysX callback filters remain solver-specific.
+
+Generated convex colliders use the optional `IPhysicsColliderAuthoringService`. The editor/cook host installs `XREngine.Runtime.Physics.Authoring`, which owns CoACD execution and its disk cache; the PhysX backend implements `IPhysicsConvexHullInstaller` for the resulting hulls. A server or client without authoring must load cooked collider data. Image-backed PhysX height fields require an installed `IPhysicsHeightFieldImageSource` rather than direct imaging-package access.
 
 If you add a backend:
 
-1. Implement `AbstractPhysicsScene`.
-2. Provide actor, shape, material, and joint wrappers.
-3. Preserve layer-mask and query semantics.
-4. Resolve backend results back to engine components.
+1. Implement `AbstractPhysicsScene` and the neutral actor, controller, joint, and query contracts in the new leaf.
+2. Provide a module with a stable `EPhysicsLibrary` ID, capability report, and scene factory; register it explicitly in the application catalog.
+3. Preserve layer-mask, actor-type filtering, ownership, and query-result semantics across backends.
+4. Keep native wrappers and packages in the leaf, and resolve backend results back to engine components.
 
 ## Physics Chains
 

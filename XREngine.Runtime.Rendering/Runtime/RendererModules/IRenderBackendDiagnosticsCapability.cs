@@ -23,6 +23,43 @@ public interface IRenderBackendDiagnosticsCapability
     object GetLiveImageAllocationDiagnostics(int limit)
         => Array.Empty<object>();
 
+    object GetLiveResourceOwnerDiagnostics(int top, bool collapseOwnerSuffix, out int groupCount)
+    {
+        groupCount = 0;
+        return new { returned_live = 0, groups = Array.Empty<object>() };
+    }
+
+    object? GetPresentNowTerminalDiagnostics()
+        => null;
+
+    object? GetPresentNowFailureDiagnostics()
+        => null;
+
+    object? GetDesktopFrameTerminalDiagnostics()
+        => null;
+
+    object? GetRetirementDiagnostics()
+        => null;
+
+    object? GetValidationDiagnostics()
+        => null;
+
+    bool TryCapturePresentNowFailureForFrame(
+        long frameAuthorityId,
+        out RenderBackendPresentNowFailureSnapshot diagnostic)
+    {
+        diagnostic = default;
+        return false;
+    }
+
+    bool TryCaptureMaterialTableDiagnosticsForFrame(
+        long frameAuthorityId,
+        out RenderBackendMaterialTableDiagnosticsSnapshot diagnostic)
+    {
+        diagnostic = default;
+        return false;
+    }
+
     object GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains, int? pipelineIdentity = null)
         => Array.Empty<object>();
 

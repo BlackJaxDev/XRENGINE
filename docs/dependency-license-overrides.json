@@ -1,49 +1,49 @@
 {
   "schemaVersion": 1,
   "entries": {
-    "binary-item|XREngine.Audio.csproj|runtimes\\win-x64\\native\\phonon.dll": {
+    "binary-item|XREngine.Audio.SteamAudio.csproj|..\\XREngine.Audio\\runtimes\\win-x64\\native\\phonon.dll": {
       "license": "Apache-2.0",
       "owner": "Valve (Steam Audio)",
       "licenseLink": "https://raw.githubusercontent.com/ValveSoftware/steam-audio/master/LICENSE.md",
       "notes": "Verified from Steam Audio upstream LICENSE.md (Apache-2.0) and local file metadata (ProductName=Steam Audio, CompanyName=Valve Corporation, FileVersion=4.6.0)."
     },
 
-    "binary-item|XREngine.Runtime.Rendering.csproj|..\\Build\\Dependencies\\FFmpeg\\HlsReference\\win-x64\\*.dll": {
+    "binary-item|XREngine.Runtime.Media.FFmpeg.csproj|..\\Build\\Dependencies\\FFmpeg\\HlsReference\\win-x64\\*.dll": {
       "license": "LGPL-2.1-or-later",
       "owner": "FFmpeg Project",
       "licenseLink": "https://www.ffmpeg.org/legal.html",
       "notes": "Assumes these DLLs are standard FFmpeg LGPL binaries staged for HLS playback support."
     },
 
-    "binary-item|XREngine.Input.csproj|..\\Build\\Submodules\\OpenVR.NET\\OpenVR.NET\\openvr_api.dll": {
+    "binary-item|XREngine.Runtime.XR.OpenVR.csproj|..\\Build\\Submodules\\OpenVR.NET\\OpenVR.NET\\openvr_api.dll": {
       "license": "BSD-3-Clause",
       "owner": "Valve (OpenVR/SteamVR)",
       "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
       "notes": "Assumes this is the standard OpenVR SDK binary from Valve."
     },
 
-    "binary-item|XREngine.Runtime.AudioIntegration.csproj|$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll": {
+    "binary-item|XREngine.Audio.OVRLipSync.csproj|$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll": {
       "license": "Proprietary (Oculus SDK License Agreement)",
       "owner": "Meta Platforms, Inc.",
       "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
       "notes": "Property-based include path for the optional ThirdParty OVR LipSync drop-folder binary."
     },
 
-    "binary-item|XREngine.Runtime.Rendering.csproj|$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll": {
+    "binary-item|XREngine.Runtime.Rendering.OpenGL.csproj|$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll": {
       "license": "Proprietary (NVIDIA RTXGI SDK License)",
       "owner": "NVIDIA Corporation",
       "licenseLink": "https://developer.nvidia.com/rtxgi",
       "notes": "Property-based include path for the optional ThirdParty RTXGI drop-folder binary."
     },
 
-    "binary-item|XREngine.Runtime.Core.csproj|runtimes\\win-x64\\native\\libmagicphysx.dll": {
+    "binary-item|XREngine.Runtime.Physics.PhysX.csproj|runtimes/win-x64/native/libmagicphysx.dll": {
       "license": "MIT (MagicPhysX) + NVIDIA PhysX 5 license",
       "owner": "Cysharp (MagicPhysX) / NVIDIA (PhysX 5)",
       "licenseLink": "https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE",
       "notes": "MagicPhysX itself is MIT-licensed. It is a .NET binding over NVIDIA PhysX 5, which is distributed under NVIDIA's PhysX license (BSD-style, but proprietary to NVIDIA). You should ship both the MagicPhysX MIT license and the NVIDIA PhysX license text in your notices."
     },
 
-    "binary-item|XREngine.Runtime.Rendering.csproj|runtimes\\win-x64\\native\\rive.dll": {
+    "binary-item|XREngine.Runtime.UI.Rive.csproj|..\\XREngine.Runtime.Rendering\\runtimes\\win-x64\\native\\rive.dll": {
       "license": "MIT",
       "owner": "Rive",
       "licenseLink": "https://github.com/rive-app/rive-cpp/blob/master/LICENSE",
@@ -64,7 +64,7 @@
       "notes": "Same OpenVR SDK binary family as other openvr_api.dll entries."
     },
 
-    "checked-binary|XREngine.Runtime.Core/runtimes/win-x64/native/libmagicphysx.dll": {
+    "checked-binary|XREngine.Runtime.Physics.PhysX/runtimes/win-x64/native/libmagicphysx.dll": {
       "license": "MIT (MagicPhysX) + NVIDIA PhysX 5 license",
       "owner": "Cysharp (MagicPhysX) / NVIDIA (PhysX 5)",
       "licenseLink": "https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE",
@@ -92,7 +92,7 @@
       "notes": "Verified from NuGet catalog metadata for this exact package version (licenseExpression=BSD-3-Clause)."
     },
 
-    "reference|XREngine.Runtime.Rendering.csproj|RiveSharp|$(RiveSharpManagedDll)": {
+    "reference|XREngine.Runtime.UI.Rive.csproj|RiveSharp|$(RiveSharpManagedDll)": {
       "license": "MIT",
       "owner": "Rive (rive-app)",
       "licenseLink": "https://github.com/rive-app/rive-cpp/blob/master/LICENSE",

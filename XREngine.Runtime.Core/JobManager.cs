@@ -773,10 +773,10 @@ namespace XREngine
                 try
                 {
                     long managedMB = GC.GetTotalMemory(forceFullCollection: false) >> 20;
-                    long workingSetMB;
-                    using (System.Diagnostics.Process proc = System.Diagnostics.Process.GetCurrentProcess())
-                        workingSetMB = proc.WorkingSet64 >> 20;
-                    memoryText = $", managedHeapMB={managedMB}, workingSetMB={workingSetMB}";
+                    long? workingSetBytes = XREngine.Data.RuntimeProcessMemoryServices.ReadWorkingSetBytes();
+                    memoryText = workingSetBytes is long bytes
+                        ? $", managedHeapMB={managedMB}, workingSetMB={bytes >> 20}"
+                        : $", managedHeapMB={managedMB}, workingSet=unavailable";
                 }
                 catch
                 {

@@ -164,6 +164,13 @@ namespace XREngine.Rendering
         internal void EnsureOwnerFirstConstructionCompleted()
             => CompleteOwnerFirstConstruction();
 
+        /// <summary>Completes owner-first publication before requesting native storage generation.</summary>
+        public override void Generate()
+        {
+            EnsureOwnerFirstConstructionCompleted();
+            base.Generate();
+        }
+
         /// <summary>
         /// The current mapping state of this buffer.
         /// If the buffer is mapped, this means any updates to the buffer will be shown by the GPU immediately.

@@ -77,7 +77,7 @@ internal partial class Program
         private readonly object _ledgerLock = new();
         private readonly List<string> _failures = [];
         private readonly List<string> _warnings = [];
-        private OpenXRAPI? _subscribedApi;
+        private IOpenXrRuntime? _subscribedApi;
         private OpenXrSmokeSummary? _preTeardownSmokeSummary;
         private int _frameLedgerCount;
         private int _occlusionViewLedgerCount;
@@ -250,7 +250,7 @@ internal partial class Program
 
             _finished = true;
             string? logDirectory = TryGetLogDirectory();
-            OpenXRAPI? summaryApi = RuntimeEngine.VRState.OpenXRApi ?? _subscribedApi;
+            IOpenXrRuntime? summaryApi = RuntimeEngine.VRState.OpenXRApi ?? _subscribedApi;
             OpenXrSmokeSummary summary = summaryApi?.CreateSmokeSummary(logDirectory)
                 ?? _preTeardownSmokeSummary
                 ?? new OpenXrSmokeSummary
@@ -437,14 +437,14 @@ internal partial class Program
             if (Math.Abs(RuntimeEngine.Rendering.Settings.TsrRenderScale - requestedTsrScale) > float.Epsilon)
                 RuntimeEngine.Rendering.Settings.TsrRenderScale = requestedTsrScale;
 
-            OpenXRAPI? currentApi = RuntimeEngine.VRState.OpenXRApi;
+            IOpenXrRuntime? currentApi = RuntimeEngine.VRState.OpenXRApi;
             if (currentApi is not null)
                 EnsureSmokeFrameSubscription(currentApi);
 
             // OpenXR teardown can clear the globally published API before the
             // update loop observes its terminal diagnostics. Keep the subscribed
             // instance alive until FinishAfterRun captures the completed summary.
-            OpenXRAPI? api = currentApi ?? _subscribedApi;
+            IOpenXrRuntime? api = currentApi ?? _subscribedApi;
             long totalTargetFrames = (long)_warmupFrames + _targetFrames;
             if (api is not null && (_sessionExitRequested || api.SmokeCompletedFrameCount >= totalTargetFrames))
             {
@@ -489,7 +489,7 @@ internal partial class Program
             RequestShutdown(ExitFrameTimeout, "Timed out waiting for OpenXR smoke frames.");
         }
 
-        private void EnsureSmokeFrameSubscription(OpenXRAPI? api)
+        private void EnsureSmokeFrameSubscription(IOpenXrRuntime? api)
         {
             if (ReferenceEquals(api, _subscribedApi))
                 return;
@@ -517,7 +517,7 @@ internal partial class Program
 
         private void RecordSmokeFrame(long completedFrames, long submittedFrames, long noLayerFrames)
         {
-            OpenXRAPI? api = _subscribedApi;
+            IOpenXrRuntime? api = _subscribedApi;
             if (api is null)
                 return;
 

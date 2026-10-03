@@ -32,8 +32,9 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
+| Shadow and pipeline validation failures | Open | [todo/rendering/shadow-and-pipeline-validation-failures-todo.md](todo/rendering/shadow-and-pipeline-validation-failures-todo.md) | All 50 failed cases from the October 2 shadow and pipeline validation runs, observed diagnostics, rerun commands, and the strict shader-loading parity prerequisite. |
 | Control plane managed server instances | Planned | [todo/networking/control-plane-managed-server-instances-todo.md](todo/networking/control-plane-managed-server-instances-todo.md) | Service/host supervision, verified world startup, player admission/accounting, authoritative synchronization, client workflow, restart recovery, and public hosting. |
-| Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
+| Default render pipeline V2 | Active | [todo/COMPLETED/default-render-pipeline-v2-todo.md](todo/COMPLETED/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
 | Default pipeline depth of field | Active | [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md) | Optimization and feature roadmap for CoC, half-res near/far blur, stereo policy, debug views, and cinematic controls. |
 | Atmospheric scattering | Implemented + validation | [../developer-guides/components/atmospheric-scattering.md](../developer-guides/components/atmospheric-scattering.md), [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md), [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md) | OpenGL mono implementation is in place; visual screenshot/profiler validation and stereo/platform parity remain follow-up validation work. |
 | Local volumetric fog | Implemented + validation | [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md) | Half-resolution scatter, temporal reprojection, bilateral upscale, and composite are in place. Production polish, XR parity, dual-lobe HG, optional powder brightening, and future froxel work are consolidated in the design. |
@@ -42,67 +43,72 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 | Vulkan modern backend completion | Active | [todo/rendering/vulkan-dynamic-rendering-migration-todo.md](todo/rendering/vulkan-dynamic-rendering-migration-todo.md), [design/rendering/vulkan-descriptor-heap-optimization-design.md](design/rendering/vulkan-descriptor-heap-optimization-design.md), [design/rendering/vulkan-shader-object-pipeline-replacement-design.md](design/rendering/vulkan-shader-object-pipeline-replacement-design.md) | Production implementation tracker for local read, native descriptor heap, shader objects, XR foveation, transient memory, GPU-driven/DGC, and ray-tracing paths. Capability gating does not remove implementation work. |
 | Vulkan core hardening and frame-wide render loop | Active | [code changes](todo/rendering/vulkan-core-hardening-and-device-loss-todo.md), [testing](testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md), [target design](design/rendering/vulkan-render-loop-target-architecture.md), [multi-view design](design/rendering/vulkan-render-loop-design.md) | Consolidated program for production-grade lifecycle hardening, a smaller Vulkan ownership surface, zero-allocation CPU hot paths, complete slow-frame attribution, frame-plan recording, graph simplification, and render-tail work. |
 | Advanced visibility renderer | Active; replaces Deferred+ proposal | [XR/Advanced TODO](todo/rendering/vulkan-xr-and-advanced-rendering-todo.md), [historical design](design/rendering/deferred-plus-render-path-design.md) | Current visibility, native shading, temporal and stereo acceptance; superseded proposal TODOs removed. |
-| Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
+| Runtime modularization | Active | [todo/COMPLETED/runtime-modularization-phase3-todo.md](todo/COMPLETED/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
+| Runtime regression and NativeAOT hardening | Active | [Checklist](todo/runtime-regression-and-nativeaot-hardening-todo.md), [progress](progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md) | Current non-Vulkan software regressions, deterministic validation, generated runtime construction, and strict packaged-player acceptance. |
+| Runtime data layout and generated contracts | Planned | [todo/runtime/runtime-data-layout-and-generated-contracts-todo.md](todo/runtime/runtime-data-layout-and-generated-contracts-todo.md), [design/runtime/runtime-data-layout-and-generated-contracts-design.md](design/runtime/runtime-data-layout-and-generated-contracts-design.md) | Copy-free cooked asset loads, binary realtime payloads, AOT parity diagnostics, a Roslyn contract generator, reflected GPU layout validation, dense transform storage, and a data-only downloaded-content policy. Gated changes approved 2026-10-02. |
 | GC and hot-path memory control | Stable doc + testing | [../developer-guides/runtime/hot-path-memory.md](../developer-guides/runtime/hot-path-memory.md), [runtime/gc-hot-path-memory-control-2026-07-02.md](runtime/gc-hot-path-memory-control-2026-07-02.md), [testing/memory-control-investigation-template.md](testing/memory-control-investigation-template.md) | Runtime memory profiles, scratch/pool helpers, allocation scopes, ECS/network allocation tests, and validation template are in place. Hardware VR/editor profiler captures remain follow-up validation. |
 | Finalized game builds and asset cooking | Stable doc | [../user-guide/finalized-game-builds.md](../user-guide/finalized-game-builds.md) | User-facing guide for cooked AOT and explicitly non-AOT finalized game builds. |
 | Physics-chain performance | Stable doc + testing | [../developer-guides/rendering/physics-chain-performance.md](../developer-guides/rendering/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
-| Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
+| Native FBX import/export | Active | [todo/assets/fbx-import-export-todo.md](todo/assets/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
 | fastgltf glTF import | Stable doc + testing | [../developer-guides/assets/model-import.md](../developer-guides/assets/model-import.md) | Native glTF import shipped; validation record lives in [testing/gltf-import.md](testing/gltf-import.md). |
-| USD import/export | Active | [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md) | Managed-fast-path plus OpenUSD-fallback roadmap for USD scene/model support. |
+| USD import/export | Active | [todo/assets/usd-import-export-todo.md](todo/assets/usd-import-export-todo.md) | Managed-fast-path plus OpenUSD-fallback roadmap for USD scene/model support. |
 | Ambient occlusion | Stable doc + testing | [../developer-guides/gi/ambient-occlusion.md](../developer-guides/gi/ambient-occlusion.md) | HBAO+ and non-HBAO implementation trackers are complete; remaining validation lives in [testing/ambient-occlusion.md](testing/ambient-occlusion.md). |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/rendering/gpu/production-rendering-pipeline-roadmap.md](todo/rendering/gpu/production-rendering-pipeline-roadmap.md) | Canonical GPU-driven rendering roadmap. The old broad `gpu-rendering.md` checklist is now a redirect. |
 | Engine rendering optimization | Active | [todo/rendering/optimization/engine-rendering-optimization-roadmap.md](todo/rendering/optimization/engine-rendering-optimization-roadmap.md), [design/rendering/engine-optimization-and-avatar-optimizer-design.md](design/rendering/engine-optimization-and-avatar-optimizer-design.md) | Renderer performance strategy covering CPU direct, zero-readback GPU-driven rendering, meshlets, visibility-buffer rendering, stereo paths, and profiling. |
+| Vulkan component profiling | Implementation; acceptance open | [profiler guide](../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench), [implementation tracker](todo/rendering/optimization/vulkan-headless-mcp-component-profiling-todo.md) | Editor-independent RenderBench fixtures, bounded selected CPU/GPU diagnostics, and command-line comparison are implemented; clean promotion and broader production-frame validation remain open. |
 | Vulkan resident draw stream and render task pool | Implementation recorded; acceptance open | [Vulkan master](todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md), [completed foundation](progress/rendering/vulkan-phases-0-5-completed.md) | Current F3 and RC gates own parity, allocation and lifetime evidence; obsolete Phase 1B-only status retired. |
-| Browser WebGL2 and WebGPU renderers | Active | [design/rendering/browser-wasm-renderer-design.md](design/rendering/browser-wasm-renderer-design.md) | Two browser renderer leaf modules with shared canvas/WASM interop, WebGPU-first automatic selection, WebGL2 compatibility, shader cooking, and portable-runtime extraction. |
+| Browser WebGL2 and WebGPU renderers | Active | [design/rendering/browser-wasm-renderer-design.md](design/rendering/browser-wasm-renderer-design.md), [mobile TODO](todo/rendering/mobile-webgpu-runtime-todo.md), [readiness audit](progress/rendering/mobile-browser-readiness.md) | Source dependency audit and acceptance contract recorded; browser implementation pending. Two browser renderer leaf modules with shared canvas/WASM interop, WebGPU-first automatic selection, WebGL2 compatibility, shader cooking, and portable-runtime extraction. The runtime architecture (separate browser runtime and portable source profiles) is superseded by the unified desktop and browser runtime design below. |
+| Unified desktop and browser runtime | Paused | [design/platform/unified-desktop-browser-runtime-design.md](design/platform/unified-desktop-browser-runtime-design.md), [native subsystem debugging and validation](todo/platform/native-subsystem-project-split-todo.md), [source progress](progress/platform/native-subsystem-project-split.md), [build stabilization](progress/platform/unified-runtime-build-stabilization.md), [host ownership](progress/platform/portable-engine-host-ownership.md), [host validation](investigations/platform/portable-engine-host-validation.md), [browser boot qualification](progress/platform/portable-browser-engine-boot.md), [harness investigation](investigations/rendering/desktop-browser-reference-harness.md), [unified runtime TODO](todo/platform/unified-desktop-browser-runtime-todo.md) | Paused at owner request: 19/110 complete. Reference and portable-host gates pass locally with limits. Real browser-world startup remains open; external asset resolution and a managed Jolt signature conflict are the next boundaries. |
 | Vulkan over MoltenVK renderer integration | Active | [design/rendering/moltenvk-vulkan-renderer-integration-design.md](design/rendering/moltenvk-vulkan-renderer-integration-design.md) | Renderer-focused companion to the Apple platform design: reuse the Vulkan backend through a MoltenVK platform adapter, portability profile, Metal WSI, and explicit capability negotiation. |
-| CPU async query occlusion | Active | [todo/rendering/optimization/cpu-async-hardware-query-occlusion-todo.md](todo/rendering/optimization/cpu-async-hardware-query-occlusion-todo.md) | Focused TODO for fixing CPU async hardware-query occlusion so camera motion does not collapse into rendering every mesh. |
+| CPU async query occlusion | Active | [todo/COMPLETED/cpu-async-hardware-query-occlusion-todo.md](todo/COMPLETED/cpu-async-hardware-query-occlusion-todo.md) | Focused TODO for fixing CPU async hardware-query occlusion so camera motion does not collapse into rendering every mesh. |
 | Avatar optimization and virtualized rendering | Active | [todo/avatar/avatar-optimization-roadmap.md](todo/avatar/avatar-optimization-roadmap.md), [design/rendering/avatar-optimization-and-virtualized-rendering-design.md](design/rendering/avatar-optimization-and-virtualized-rendering-design.md) | In-editor automatic avatar optimization, material consolidation, atlasing, simplification, skin/blendshape reduction, LODs, cluster-virtualized avatars, and Gaussian-splat distant crowds. |
 | Humanoid body/root compensation | Active | [todo/avatar/humanoid-body-root-compensation-todo.md](todo/avatar/humanoid-body-root-compensation-todo.md) | Unity-style humanoid body-frame, root-motion, muscle, and IK ordering work so hips/body motion compensates correctly during humanoid animation playback. |
-| VR full-body calibration and spectator | Active | [todo/avatar/openxr-full-body-calibration-spectator-todo.md](todo/avatar/openxr-full-body-calibration-spectator-todo.md), [investigations/avatar/vr-calibration-baseline-2026-09-24.md](investigations/avatar/vr-calibration-baseline-2026-09-24.md) | Proximity binding for 6- to 11-point tracking without SteamVR roles. The deterministic harness reproduces target loss and duplicate nodes; target ownership, capture math, tracker transport, the player flow, and the spectator remain pending. |
+| VR full-body calibration and spectator | Implemented; acceptance open | [Integration guide](../developer-guides/vr/openxr-body-tracking.md), [acceptance procedure](testing/avatar/openxr-calibration-spectator-validation.md), [Windows validation](investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md) | Stable body targets, proximity binding, transactional calibration, measurement-owned scale, and independent spectator output are implemented. Named-hardware transport, controller presets, visual/performance acceptance, and cross-session continuity remain unqualified. |
 | VR full-body estimation | Active | [todo/avatar/vr-full-body-estimation-todo.md](todo/avatar/vr-full-body-estimation-todo.md) | Analytic estimation of untracked body slots for 3- to 5-point and partial tracker setups, including tracker-loss handoff. Not started. |
 | GPU meshlet zero-readback rendering | Completed | [todo/COMPLETED/meshlet-import-cooking-and-production-readiness-todo.md](todo/COMPLETED/meshlet-import-cooking-and-production-readiness-todo.md), [investigations/rendering/meshlet-import-production-closeout-2026-08-20.md](investigations/rendering/meshlet-import-production-closeout-2026-08-20.md), [design/rendering/gpu-meshlet-zero-readback-rendering-design.md](design/rendering/gpu-meshlet-zero-readback-rendering-design.md) | All unconditional production closeout gates completed 2026-08-22; broad model/prefab cache hydration remains a separate conditional dependency and broader renderer promotion stays in the GPU roadmap. |
-| OpenXR no-HMD testing | Implemented + validation | [design/VR/openxr-monado-testing-pipeline.md](design/VR/openxr-monado-testing-pipeline.md), [investigations/rendering/archive/openxr-monado-vulkan-rendering-2026-06-24.md](investigations/rendering/archive/openxr-monado-vulkan-rendering-2026-06-24.md), [todo/rendering/vr/openxr-monado-testing-pipeline-todo.md](todo/rendering/vr/openxr-monado-testing-pipeline-todo.md), [todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md](todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md), [todo/tests/openxr-timing-tests-todo.md](todo/tests/openxr-timing-tests-todo.md), [todo/rendering/vr/openxr-future-work-todo.md](todo/rendering/vr/openxr-future-work-todo.md) | Local scene-only and Monado-backed no-HMD lanes are implemented; Vulkan/Monado rendering investigation records the latest black-frame and mirror fixes. CI promotion, Monado baseline selection, and hardware rows remain follow-up validation. |
+| OpenXR no-HMD testing | Implemented + validation | [design/VR/openxr-monado-testing-pipeline.md](design/VR/openxr-monado-testing-pipeline.md), [investigations/rendering/archive/openxr-monado-vulkan-rendering-2026-06-24.md](investigations/rendering/archive/openxr-monado-vulkan-rendering-2026-06-24.md), [todo/COMPLETED/openxr-monado-testing-pipeline-todo.md](todo/COMPLETED/openxr-monado-testing-pipeline-todo.md), [todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md](todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md), [todo/tests/openxr-timing-tests-todo.md](todo/tests/openxr-timing-tests-todo.md), [todo/rendering/vr/openxr-future-work-todo.md](todo/rendering/vr/openxr-future-work-todo.md) | Local scene-only and Monado-backed no-HMD lanes are implemented; Vulkan/Monado rendering investigation records the latest black-frame and mirror fixes. CI promotion, Monado baseline selection, and hardware rows remain follow-up validation. |
 | Editor OpenXR runtime toggle and rendering | Active | [todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md](todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md), [investigations/editor/openxr-runtime-toggle-2026-09-24.md](investigations/editor/openxr-runtime-toggle-2026-09-24.md) | Runtime chooser and temporary rigs implemented. Desktop upload starvation, headset shading, import responsiveness, and final transition acceptance remain open; latest staging/BRDF changes require rebuild and runtime validation. |
 | OpenXR SteamVR/OpenVR parity | Active | [todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md](todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md) | Hardware and input parity roadmap for running SteamVR hardware through OpenXR instead of OpenVR, including controller actions, haptics, VIVE trackers, and hand/finger data. |
-| OpenXR stereo and temporal isolation | Active | [todo/rendering/vr/openxr-stereo-temporal-isolation-todo.md](todo/rendering/vr/openxr-stereo-temporal-isolation-todo.md) | Roadmap for honest OpenXR stereo mode semantics, true single-pass stereo, per-eye temporal history, TSR, exposure, fog/atmosphere, vendor upscale, and CPU/GPU profiling validation. |
+| OpenXR stereo and temporal isolation | Active | [todo/COMPLETED/openxr-stereo-temporal-isolation-todo.md](todo/COMPLETED/openxr-stereo-temporal-isolation-todo.md) | Roadmap for honest OpenXR stereo mode semantics, true single-pass stereo, per-eye temporal history, TSR, exposure, fog/atmosphere, vendor upscale, and CPU/GPU profiling validation. |
 | RVC VR debug views | Active | [todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md](todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md) | Debug-view and validation surface for Retinal Visibility Cache across serial, single-pass stereo, Vulkan parallel recording, and quad-view paths. |
 | Model import cooked asset cache | Active | [todo/assets/model-import-binary-cache-todo.md](todo/assets/model-import-binary-cache-todo.md), [design/assets/model-import-binary-cache-design.md](design/assets/model-import-binary-cache-design.md), [../developer-guides/assets/model-import.md](../developer-guides/assets/model-import.md) | Design reconciled; model-specific binary codec is not implemented. Existing cooked-mesh, meshlet, generic cache, and reimport foundations are reusable. |
 | Native FBX avatar transforms | Closed | [investigations/asset-import/native-fbx-avatar-transforms-2026-09-24.md](investigations/asset-import/native-fbx-avatar-transforms-2026-09-24.md) | Parent-first construction, serialized skin bind semantics, and unweighted-vertex placement repaired; real avatar validated in the Vulkan editor. |
 | Avatar scene publication stalls | Active | [investigations/asset-import/avatar-scene-publication-stalls-2026-09-24.md](investigations/asset-import/avatar-scene-publication-stalls-2026-09-24.md) | Investigating repeated transform traversal, import-completion rendering work, and indefinite freezes during overlapping renderer replacement. |
 | Avatar mapping and import diagnostics | Closed | [investigations/asset-import/avatar-mapping-and-import-diagnostics-2026-09-24.md](investigations/asset-import/avatar-mapping-and-import-diagnostics-2026-09-24.md) | Primary skeleton detection and startup playback verified; import warnings remain visible with tracing off and missing textures publish together after import. |
 | Console Vulkan routing and focus | Closed | [investigations/editor/console-vulkan-focus-2026-09-24.md](investigations/editor/console-vulkan-focus-2026-09-24.md) | Vulkan tab added, routine frame tracing gated, and repeated detached-window show requests removed; external textbox focus verified. |
-| Advanced flat mirrors | Active | [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md) | Planar reflection design covering CPU/GPU dispatch, forward/deferred integration, stencil masking, reflection targets, recursion, and VR. |
-| Shadow system overhaul | Active | [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md), [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | Single master TODO covering atlas allocator and relevance, dynamic atlas/LOD allocation, VSM/EVSM filtering, and contact-shadow optimizations for directional, spot, and point lights. |
+| Advanced flat mirrors | Active | [design/rendering/advanced-flat-mirror-rendering-design.md](design/rendering/advanced-flat-mirror-rendering-design.md) | Planar reflection design covering CPU/GPU dispatch, forward/deferred integration, stencil masking, reflection targets, recursion, and VR. |
+| Shadow system overhaul | Active | [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md), [design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md](design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md), [design/rendering/shadows/dynamic-shadow-atlas-lod-plan.md](design/rendering/shadows/dynamic-shadow-atlas-lod-plan.md), [design/rendering/shadows/shadow-resource-migration-audit.md](design/rendering/shadows/shadow-resource-migration-audit.md), [design/rendering/shadows/post-v1-advanced-shadow-features-plan.md](design/rendering/shadows/post-v1-advanced-shadow-features-plan.md) | Single master TODO covering atlas allocator and relevance, dynamic atlas/LOD allocation, VSM/EVSM filtering, and contact-shadow optimizations for directional, spot, and point lights. |
 | Texture runtime, streaming, and virtual texturing | Active | [design/texturing/texture-runtime-streaming-virtual-texturing-design.md](design/texturing/texture-runtime-streaming-virtual-texturing-design.md), [design/texturing/texture-compression-and-cooked-cache-design.md](design/texturing/texture-compression-and-cooked-cache-design.md), [todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md](todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md), [todo/texturing/texture-compression-and-cooked-cache-todo.md](todo/texturing/texture-compression-and-cooked-cache-todo.md), [testing/texture-runtime-streaming-validation.md](testing/texture-runtime-streaming-validation.md) | Canonical texturing roadmap. v1 runtime streaming is implemented and needs scene validation; next phases cover safe sparse pages, compressed cooked payloads, full SVT, Vulkan parity, bindless deferred texturing, RVT, and neural compression. |
-| OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
-| GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
+| OpenVR VRClient GPU handoff | Active | [todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md](todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
+| GPU-driven animation | Active | [todo/rendering/gpu/gpu-driven-animation-todo.md](todo/rendering/gpu/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/rendering/gpu/gpu-driven-animation.md). |
 | Skinning GPU efficiency follow-ups | Active | [todo/rendering/gpu/skinning-gpu-efficiency-followups-todo.md](todo/rendering/gpu/skinning-gpu-efficiency-followups-todo.md), [design/rendering/gpu/gpu-skinning-buffer-compression-plan.md](design/rendering/gpu/gpu-skinning-buffer-compression-plan.md) | Post-`Core4 + Spill` work for no-spill variants, mixed-precision palettes, dispatch reuse, and skinning LOD. |
 | Blendshape compression and GPU efficiency | Active | [todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md](todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md), [todo/avatar/avatar-skin-skeleton-blendshape-optimization-todo.md](todo/avatar/avatar-skin-skeleton-blendshape-optimization-todo.md) | Runtime blendshape delta/weight compression, active-shape compaction, dispatch skipping, and blendshape LOD. |
-| Dedicated render-thread window ownership | Active | [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md) | Refactor plan to move engine window ownership, graphics contexts, and present off the startup/editor thread. |
-| Animated Gaussian capture and streaming | Active | [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md) | Offline bake plus one-draw animated Gaussian clip playback roadmap. |
-| Octahedral billboard capture | Active | [todo/octahedral-billboard-capture-todo.md](todo/octahedral-billboard-capture-todo.md) | Phased repair plan for model/submesh impostor capture, runtime billboards, HLOD integration, and asset persistence. |
-| Shader and snippet optimization | Active | [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md) | Active shader performance and preprocessing tracker. |
+| Dedicated render-thread window ownership | Active | [design/rendering/dedicated-render-thread-window-ownership-plan.md](design/rendering/dedicated-render-thread-window-ownership-plan.md) | Refactor plan to move engine window ownership, graphics contexts, and present off the startup/editor thread. |
+| Animated Gaussian capture and streaming | Active | `todo/animated-gaussian-cloud-capture-and-streaming-todo.md` (document unavailable) | Offline bake plus one-draw animated Gaussian clip playback roadmap. |
+| Octahedral billboard capture | Active | `todo/octahedral-billboard-capture-todo.md` (document unavailable) | Phased repair plan for model/submesh impostor capture, runtime billboards, HLOD integration, and asset persistence. |
+| Shader and snippet optimization | Active | `todo/shader-and-snippet-optimization-todo.md` (document unavailable) | Active shader performance and preprocessing tracker. |
 | Resolved shader source optimization | Active | [todo/rendering/resolved-shader-source-optimization-todo.md](todo/rendering/resolved-shader-source-optimization-todo.md) | Architectural restructuring to resolve all shader includes/snippets first, then prune compiler-facing source generically for every shader family. |
 | XRDataBuffer RHI write model | Stable doc + testing | [../architecture/rendering/xrdatabuffer-rhi-write-model.md](../architecture/rendering/xrdatabuffer-rhi-write-model.md), [testing/xrdatabuffer-rhi-write-model-validation.md](testing/xrdatabuffer-rhi-write-model-validation.md) | Core write model and representative migrations have landed; remaining work is hardware, barrier, and GPU submission strategy validation. |
-| OpenGL shader program deduplication | Active | [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md) | Tracker for reducing duplicate logical shader-program wrappers and adding grouped Shader Program Links diagnostics. |
+| OpenGL shader program deduplication | Active | `todo/rendering/opengl-shader-program-deduplication-todo.md` (document unavailable) | Tracker for reducing duplicate logical shader-program wrappers and adding grouped Shader Program Links diagnostics. |
 | Vulkan ReSTIR radiance cache GI | Active | [todo/rendering/vulkan-restir-radiance-cache-gi-todo.md](todo/rendering/vulkan-restir-radiance-cache-gi-todo.md) | Vulkan-native KHR acceleration-structure, ray-query, and RT-pipeline roadmap for ReSTIR radiance-cached GI while preserving the current OpenGL native bridge. |
 | Vulkan Fossilize integration | Active | [todo/rendering/vulkan-fossilize-integration-todo.md](todo/rendering/vulkan-fossilize-integration-todo.md) | Optional Valve Fossilize tooling, layer capture, replay, and native-recording roadmap for persistent Vulkan object repros and pipeline cache warmup. |
-| Vulkan wrapper parity | Active | [todo/rendering/vulkan-wrapper-parity/README.md](todo/rendering/vulkan-wrapper-parity/README.md) | Consolidated open parity tracker for Vulkan mesh renderer, mesh ownership, material, shader, texture, and data buffer behavior against OpenGL. |
-| GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
-| Voxel cone tracing / VXAO | Active | [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
-| DDGI integration | Active | [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md) | Execution tracker derived from the [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md) roadmap. |
-| Multiplayer networking / dedicated server orchestration | Stable doc | [../developer-guides/networking/networking.md](../developer-guides/networking/networking.md) | The completed realtime cleanup tracker was folded into the stable feature guide. Peer-to-peer host switching is tracked in [design/peer-to-peer-host-switching.md](design/peer-to-peer-host-switching.md). |
+| Vulkan wrapper parity | Active | `todo/rendering/vulkan-wrapper-parity/README.md` (document unavailable) | Consolidated open parity tracker for Vulkan mesh renderer, mesh ownership, material, shader, texture, and data buffer behavior against OpenGL. |
+| GPU softbody rigging | Active | [todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md](todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
+| Voxel cone tracing / VXAO | Active | [todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
+| DDGI integration | Active | [todo/rendering/global-illumination/ddgi-implementation-todo.md](todo/rendering/global-illumination/ddgi-implementation-todo.md) | Execution tracker derived from the [design/global-illumination/ddgi-integration-plan.md](design/global-illumination/ddgi-integration-plan.md) roadmap. |
+| Multiplayer networking / dedicated server orchestration | Stable doc | [../developer-guides/networking/networking.md](../developer-guides/networking/networking.md) | The completed realtime cleanup tracker was folded into the stable feature guide. Peer-to-peer host switching is tracked in [design/networking/peer-to-peer-host-switching.md](design/networking/peer-to-peer-host-switching.md). |
 | Vulkan backlog | Active | [todo/vulkan.md](todo/vulkan.md) | Canonical Vulkan backlog, status, audit, and preserved diagnostics. |
-| Startup FPS drops (2026-03-28) | Active | [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md) | Remaining startup stalls after the earlier GL warmup fixes; includes engine and editor attack order. |
-| Source-backed C# script components | Active | [design/source-backed-csharp-script-components.md](design/source-backed-csharp-script-components.md) | Stable proxy/materialization design for `.cs` assets that can be attached before they compile. |
-| Default pipeline regressions (2026-03-28) | Active | [audit/default-render-pipeline-regression-diagnosis-2026-03-28.md](audit/default-render-pipeline-regression-diagnosis-2026-03-28.md) | AO, AA, deferred grayscale, and sampler-binding diagnosis. |
-| Affine matrix rollout | Closed | [audit/affine-matrix-phase4-closeout-2026-03-19.md](audit/affine-matrix-phase4-closeout-2026-03-19.md) | Final consolidated closeout record. |
+| Startup FPS drops (2026-03-28) | Active | `design/startup-fps-drop-remediation-plan.md` (document unavailable) | Remaining startup stalls after the earlier GL warmup fixes; includes engine and editor attack order. |
+| Source-backed C# script components | Active | [design/scripting/source-backed-csharp-script-components.md](design/scripting/source-backed-csharp-script-components.md) | Stable proxy/materialization design for `.cs` assets that can be attached before they compile. |
+| Default pipeline regressions (2026-03-28) | Active | [audit/COMPLETED/default-render-pipeline-regression-diagnosis-2026-03-28.md](audit/COMPLETED/default-render-pipeline-regression-diagnosis-2026-03-28.md) | AO, AA, deferred grayscale, and sampler-binding diagnosis. |
+| Affine matrix rollout | Closed | [audit/COMPLETED/affine-matrix-phase4-closeout-2026-03-19.md](audit/COMPLETED/affine-matrix-phase4-closeout-2026-03-19.md) | Final consolidated closeout record. |
 | Steam Audio | Stable doc | [../developer-guides/audio/steam-audio.md](../developer-guides/audio/steam-audio.md) | Remaining validation now lives in the stable feature doc. |
 | Remote profiler | Stable doc | [../developer-guides/diagnostics/profiler.md](../developer-guides/diagnostics/profiler.md) | Design notes were merged into the stable feature doc. |
 
 ## Active TODOs
 
+- [todo/runtime/runtime-data-layout-and-generated-contracts-todo.md](todo/runtime/runtime-data-layout-and-generated-contracts-todo.md)
 - [todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md](todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [todo/avatar/avatar-analyzer-reporting-and-ux-todo.md](todo/avatar/avatar-analyzer-reporting-and-ux-todo.md)
 - [todo/avatar/avatar-lod-meshlet-cooked-variant-todo.md](todo/avatar/avatar-lod-meshlet-cooked-variant-todo.md)
@@ -113,64 +119,67 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 - [todo/avatar/cluster-virtualized-avatar-rendering-todo.md](todo/avatar/cluster-virtualized-avatar-rendering-todo.md)
 - [todo/avatar/gaussian-splat-distant-crowd-lod-todo.md](todo/avatar/gaussian-splat-distant-crowd-lod-todo.md)
 - [todo/avatar/humanoid-body-root-compensation-todo.md](todo/avatar/humanoid-body-root-compensation-todo.md)
-- [todo/avatar/openxr-full-body-calibration-spectator-todo.md](todo/avatar/openxr-full-body-calibration-spectator-todo.md)
+- [testing/avatar/openxr-calibration-spectator-validation.md](testing/avatar/openxr-calibration-spectator-validation.md)
 - [todo/avatar/vr-full-body-estimation-todo.md](todo/avatar/vr-full-body-estimation-todo.md)
 - [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md)
-- [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
+- `todo/animated-gaussian-cloud-capture-and-streaming-todo.md` (document unavailable)
 - [todo/rendering/optimization/compact-zero-readback-rendering-todo.md](todo/rendering/optimization/compact-zero-readback-rendering-todo.md)
-- [todo/rendering/optimization/cpu-async-hardware-query-occlusion-todo.md](todo/rendering/optimization/cpu-async-hardware-query-occlusion-todo.md)
+- [todo/COMPLETED/cpu-async-hardware-query-occlusion-todo.md](todo/COMPLETED/cpu-async-hardware-query-occlusion-todo.md)
 - [todo/rendering/optimization/cpu-direct-fast-path-todo.md](todo/rendering/optimization/cpu-direct-fast-path-todo.md)
 - [todo/rendering/vulkan-xr-and-advanced-rendering-todo.md](todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#phase-7)
-- [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
+- [todo/COMPLETED/default-render-pipeline-v2-todo.md](todo/COMPLETED/default-render-pipeline-v2-todo.md)
 - [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md)
-- [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
+- [todo/rendering/global-illumination/ddgi-implementation-todo.md](todo/rendering/global-illumination/ddgi-implementation-todo.md)
 - [todo/rendering/optimization/engine-rendering-optimization-roadmap.md](todo/rendering/optimization/engine-rendering-optimization-roadmap.md)
-- [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md)
+- [todo/assets/fbx-import-export-todo.md](todo/assets/fbx-import-export-todo.md)
 - [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md)
 - [todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md](todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md)
-- [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md)
+- [todo/rendering/gpu/gpu-driven-animation-todo.md](todo/rendering/gpu/gpu-driven-animation-todo.md)
 - [todo/rendering/gpu/production-rendering-pipeline-roadmap.md](todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 - [todo/rendering/gpu/skinning-gpu-efficiency-followups-todo.md](todo/rendering/gpu/skinning-gpu-efficiency-followups-todo.md)
-- [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
+- [todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md](todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md)
 - [todo/assets/model-import-binary-cache-todo.md](todo/assets/model-import-binary-cache-todo.md)
-- [todo/octahedral-billboard-capture-todo.md](todo/octahedral-billboard-capture-todo.md)
-- [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md)
-- [todo/rendering/vr/openxr-monado-testing-pipeline-todo.md](todo/rendering/vr/openxr-monado-testing-pipeline-todo.md)
+- `todo/octahedral-billboard-capture-todo.md` (document unavailable)
+- [todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md](todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md)
+- [todo/COMPLETED/openxr-monado-testing-pipeline-todo.md](todo/COMPLETED/openxr-monado-testing-pipeline-todo.md)
 - [todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md](todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md)
-- [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md)
+- `todo/rendering/opengl-shader-program-deduplication-todo.md` (document unavailable)
 - [todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md](todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md)
 - [todo/rendering/vulkan-core-hardening-and-device-loss-todo.md](todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 - [testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md](testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md)
 - [todo/rendering/vulkan-restir-radiance-cache-gi-todo.md](todo/rendering/vulkan-restir-radiance-cache-gi-todo.md)
 - [todo/rendering/vulkan-fossilize-integration-todo.md](todo/rendering/vulkan-fossilize-integration-todo.md)
-- [todo/physics-finalization.md](todo/physics-finalization.md)
+- [todo/COMPLETED/physics-finalization.md](todo/COMPLETED/physics-finalization.md)
 - [todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md](todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md)
 - [todo/rendering/resolved-shader-source-optimization-todo.md](todo/rendering/resolved-shader-source-optimization-todo.md)
-- [todo/rendering/optimization/rendering-profiler-and-benchmarking-todo.md](todo/rendering/optimization/rendering-profiler-and-benchmarking-todo.md)
-- [todo/rendering/vulkan-wrapper-parity/README.md](todo/rendering/vulkan-wrapper-parity/README.md)
-- [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
-- [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
+- [todo/COMPLETED/rendering-profiler-and-benchmarking-todo.md](todo/COMPLETED/rendering-profiler-and-benchmarking-todo.md)
+- `todo/rendering/vulkan-wrapper-parity/README.md` (document unavailable)
+- [todo/COMPLETED/runtime-modularization-phase3-todo.md](todo/COMPLETED/runtime-modularization-phase3-todo.md)
+- `todo/shader-and-snippet-optimization-todo.md` (document unavailable)
 - [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
 - [todo/tests/unit-test-project-reorganization-todo.md](todo/tests/unit-test-project-reorganization-todo.md)
+- [Native subsystem integration debugging and validation](todo/platform/native-subsystem-project-split-todo.md)
+- [todo/platform/unified-desktop-browser-runtime-todo.md](todo/platform/unified-desktop-browser-runtime-todo.md)
 - [todo/texturing/texture-compression-and-cooked-cache-todo.md](todo/texturing/texture-compression-and-cooked-cache-todo.md)
 - [todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md](todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
-- [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)
-- [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
+- [todo/assets/usd-import-export-todo.md](todo/assets/usd-import-export-todo.md)
+- [todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md)
 - [todo/rendering/optimization/vr-rendering-performance-contract-todo.md](todo/rendering/optimization/vr-rendering-performance-contract-todo.md)
 - [todo/vulkan.md](todo/vulkan.md)
-- [todo/xrmesh-vertex-remapper-optimizations.md](todo/xrmesh-vertex-remapper-optimizations.md)
+- `todo/xrmesh-vertex-remapper-optimizations.md` (document unavailable)
 
 ## Active Design Docs
 
-- [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
-- [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md)
+- [design/transforms/affine-matrix-integration-plan.md](design/transforms/affine-matrix-integration-plan.md)
+- [design/rendering/advanced-flat-mirror-rendering-design.md](design/rendering/advanced-flat-mirror-rendering-design.md)
 - [design/platform/apple-platform-moltenvk-support-design.md](design/platform/apple-platform-moltenvk-support-design.md)
+- [design/platform/unified-desktop-browser-runtime-design.md](design/platform/unified-desktop-browser-runtime-design.md)
 - [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md)
 - [design/cuda-usage-opportunities-design.md](design/cuda-usage-opportunities-design.md)
-- [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
-- [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
-- [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
+- [design/rendering/default-render-pipeline-improvement-plan.md](design/rendering/default-render-pipeline-improvement-plan.md)
+- [design/global-illumination/ddgi-integration-plan.md](design/global-illumination/ddgi-integration-plan.md)
+- [design/rendering/dedicated-render-thread-window-ownership-plan.md](design/rendering/dedicated-render-thread-window-ownership-plan.md)
 - [design/rendering/engine-optimization-and-avatar-optimizer-design.md](design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [design/rendering/browser-wasm-renderer-design.md](design/rendering/browser-wasm-renderer-design.md)
 - [design/rendering/moltenvk-vulkan-renderer-integration-design.md](design/rendering/moltenvk-vulkan-renderer-integration-design.md)
@@ -181,30 +190,31 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 - [design/rendering/vulkan-render-loop-target-architecture.md](design/rendering/vulkan-render-loop-target-architecture.md)
 - [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md)
 - [design/assets/model-import-binary-cache-design.md](design/assets/model-import-binary-cache-design.md)
-- [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md)
-- [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md)
-- [design/gpu-driven-animation.md](design/gpu-driven-animation.md)
-- [design/gpu-render-pass-pipeline.md](design/gpu-render-pass-pipeline.md)
-- [design/gpu-softbody-mesh-rigging-plan.md](design/gpu-softbody-mesh-rigging-plan.md)
-- [design/hbao-hbao-plus-implementation-plan.md](design/hbao-hbao-plus-implementation-plan.md)
-- [design/networking.md](design/networking.md)
+- [design/rendering/shadows/dynamic-shadow-atlas-lod-plan.md](design/rendering/shadows/dynamic-shadow-atlas-lod-plan.md)
+- [design/rendering/gpu/gpu-skinning-buffer-compression-plan.md](design/rendering/gpu/gpu-skinning-buffer-compression-plan.md)
+- [design/rendering/gpu/gpu-driven-animation.md](design/rendering/gpu/gpu-driven-animation.md)
+- [design/rendering/gpu/gpu-render-pass-pipeline.md](design/rendering/gpu/gpu-render-pass-pipeline.md)
+- [design/rendering/gpu/gpu-softbody-mesh-rigging-plan.md](design/rendering/gpu/gpu-softbody-mesh-rigging-plan.md)
+- [design/rendering/hbao-hbao-plus-implementation-plan.md](design/rendering/hbao-hbao-plus-implementation-plan.md)
+- [design/networking/networking.md](design/networking/networking.md)
 - [design/VR/openxr-monado-testing-pipeline.md](design/VR/openxr-monado-testing-pipeline.md)
-- [design/peer-to-peer-host-switching.md](design/peer-to-peer-host-switching.md)
-- [design/native-hierarchy-porting-plan.md](design/native-hierarchy-porting-plan.md)
-- [design/openxr-implementation-comparison.md](design/openxr-implementation-comparison.md)
-- [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md)
+- [design/networking/peer-to-peer-host-switching.md](design/networking/peer-to-peer-host-switching.md)
+- [design/UI/native-hierarchy-porting-plan.md](design/UI/native-hierarchy-porting-plan.md)
+- [design/VR/openxr-implementation-comparison.md](design/VR/openxr-implementation-comparison.md)
+- [design/rendering/shadows/post-v1-advanced-shadow-features-plan.md](design/rendering/shadows/post-v1-advanced-shadow-features-plan.md)
 - [design/runtime/editor-crash-telemetry-design.md](design/runtime/editor-crash-telemetry-design.md)
+- [design/runtime/runtime-data-layout-and-generated-contracts-design.md](design/runtime/runtime-data-layout-and-generated-contracts-design.md)
 - [design/runtime-modularization-plan.md](design/runtime-modularization-plan.md)
-- [design/shadow-pass-material-binding-optimization-plan.md](design/shadow-pass-material-binding-optimization-plan.md)
-- [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md)
-- [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md)
-- [design/slang-shader-cross-compile-plan.md](design/slang-shader-cross-compile-plan.md)
-- [design/source-backed-csharp-script-components.md](design/source-backed-csharp-script-components.md)
-- [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md)
-- [design/transparency-and-oit-implementation-plan.md](design/transparency-and-oit-implementation-plan.md)
+- [design/rendering/shadows/shadow-pass-material-binding-optimization-plan.md](design/rendering/shadows/shadow-pass-material-binding-optimization-plan.md)
+- [design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md](design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md)
+- [design/rendering/shadows/shadow-resource-migration-audit.md](design/rendering/shadows/shadow-resource-migration-audit.md)
+- [design/scripting/slang-shader-cross-compile-plan.md](design/scripting/slang-shader-cross-compile-plan.md)
+- [design/scripting/source-backed-csharp-script-components.md](design/scripting/source-backed-csharp-script-components.md)
+- `design/startup-fps-drop-remediation-plan.md` (document unavailable)
+- [design/rendering/transparency-and-oit-implementation-plan.md](design/rendering/transparency-and-oit-implementation-plan.md)
 - [design/texturing/texture-runtime-streaming-virtual-texturing-design.md](design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
-- [design/vxao-implementation-plan.md](design/vxao-implementation-plan.md)
-- [design/zero-readback-gpu-driven-rendering-plan.md](design/zero-readback-gpu-driven-rendering-plan.md)
+- [design/global-illumination/vxao-implementation-plan.md](design/global-illumination/vxao-implementation-plan.md)
+- [design/rendering/zero-readback-gpu-driven-rendering-plan.md](design/rendering/zero-readback-gpu-driven-rendering-plan.md)
 
 ## Generated Reports
 

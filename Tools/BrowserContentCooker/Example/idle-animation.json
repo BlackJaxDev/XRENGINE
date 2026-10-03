@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "mesh": "triangle",
+  "parents": [-1],
+  "bindPose": [0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
+  "inverseBindMatrices": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  "coreIndexFormat": 1,
+  "coreIndices": [0, 0, 0],
+  "coreWeights": [255, 255, 255],
+  "spillHeaders": [],
+  "spillEntries": [],
+  "normals": [],
+  "tangents": [],
+  "shapeRanges": [],
+  "sparseRecords": [],
+  "quantizedDeltas": [],
+  "quantizationMetadata": [],
+  "defaultClip": "idle",
+  "clips": [{
+    "name": "idle", "framesPerSecond": 2, "frameCount": 2, "loop": true,
+    "frames": [
+      0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+      0.2, 0, 0, 0, 0, 0, 1, 1, 1, 1
+    ],
+    "morphWeights": []
+  }]
+}

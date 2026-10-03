@@ -4,6 +4,7 @@ namespace XREngine.Components.Movement;
 
 public interface IRuntimeCharacterMovementComponent
 {
+    event Action? Teleported { add { } remove { } }
     float StandingHeight { get; set; }
     float CrouchedHeight { get; set; }
     float ProneHeight { get; set; }

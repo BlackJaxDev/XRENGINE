@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// GPU-visible stable identity used by picking and editor diagnostics.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedEditorIdentityRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedEditorIdentityRecord
 {

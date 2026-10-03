@@ -14,4 +14,5 @@ public enum RenderBenchFixtureKind
     Upload,
     GpuPass,
     FullPresentationless,
+    ProductionFullFrame,
 }

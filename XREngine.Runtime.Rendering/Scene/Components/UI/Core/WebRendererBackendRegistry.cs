@@ -9,6 +9,24 @@ public static class WebRendererBackendRegistry
 {
     private static readonly object Sync = new();
     private static readonly Dictionary<RendererBackendId, RegistrationEntry> Registrations = [];
+    private static Func<IWebRendererBackend>? _softwareFactory;
+
+    /// <summary>Installs the software web backend independently of accelerated renderer modules.</summary>
+    public static void RegisterSoftware(Func<IWebRendererBackend> factory)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        lock (Sync)
+            _softwareFactory = factory;
+    }
+
+    /// <summary>Creates the installed software web backend or reports that the capability is absent.</summary>
+    public static IWebRendererBackend CreateSoftware()
+    {
+        Func<IWebRendererBackend>? factory;
+        lock (Sync)
+            factory = _softwareFactory;
+        return factory?.Invoke() ?? throw new NotSupportedException("No software web-renderer backend is installed.");
+    }
 
     /// <summary>
     /// Registers an accelerated web-renderer factory owned by a renderer module.

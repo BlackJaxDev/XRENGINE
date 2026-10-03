@@ -111,7 +111,7 @@ GPU frame-cost baselines are intentionally captured outside the unit-test harnes
 - `XREngine.Editor/AssetEditors/XRMaterialInspector.cs`
 - `XREngine.Editor/AssetEditors/XRMaterialInspector.Uber.cs`
 - `XREngine.Editor/AssetEditors/XRShaderInspector.cs`
-- `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs`
+- `XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs`
 - `XREngine.UnitTests/Rendering/ShaderUiManifestParserTests.cs`
 - `XREngine.UnitTests/Rendering/UberMaterialVariantTests.cs`
 

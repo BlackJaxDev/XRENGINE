@@ -14,7 +14,7 @@ ReSTIR GI uses the `GL_NV_ray_tracing` extension to trace rays and resample ligh
 ## Requirements
 
 - **GPU**: NVIDIA RTX series (RTX 20xx or newer)
-- **API**: Vulkan rendering mode
+- **API**: OpenGL rendering mode with `GL_NV_ray_tracing`; the bridge does not implement Vulkan ray tracing
 - **Driver**: Recent NVIDIA driver with ray tracing support
 - **Native DLL**: `ThirdParty/NVIDIA/RTXGI/win-x64/RestirGI.Native.dll` must be present
 
@@ -35,7 +35,7 @@ if (RestirGI.VerifyRayTracingSupport(logSuccess: true))
 }
 else
 {
-    Debug.Out("Ray tracing not supported, falling back to compute GI");
+    Debug.Out(RestirGI.LastFailure ?? "Ray tracing is unavailable");
 }
 ```
 
@@ -105,13 +105,12 @@ Use the resampled light paths to compute final indirect lighting with minimal no
 
 ## Fallback Behavior
 
-When ray tracing is unavailable, the system automatically falls back to compute-based GI:
+An authored native ray tracing pipeline reports a failure when its backend, driver extension, or native bridge is unavailable. `VPRC_ReSTIRPass.AllowComputeFallback` defaults to `false`. Set it explicitly when the application accepts compute rendering after a requested native pipeline fails. A pass with no native pipeline configured continues to use its normal compute path.
 
 ```csharp
 if (!RestirGI.TryInit())
 {
-    // Automatic fallback to SurfelGI or other compute-based method
-    Debug.LogWarning("ReSTIR unavailable, using compute fallback");
+    Debug.LogWarning(RestirGI.LastFailure ?? "ReSTIR is unavailable");
 }
 ```
 
@@ -131,7 +130,7 @@ Performance scales with:
 
 ## Native Bridge
 
-The `RestirGI.Native.dll` (staged under `ThirdParty/NVIDIA/RTXGI/win-x64/`) provides the OpenGL/Vulkan interop:
+The OpenGL renderer module installs the ray tracing backend through `RestirRayTracingBackendServices`. Its `RestirGI.Native.dll` (staged under `ThirdParty/NVIDIA/RTXGI/win-x64/`) owns the OpenGL native calls:
 
 ```cpp
 // Native functions exposed:
@@ -146,7 +145,7 @@ extern "C" {
 ### Building the Native DLL
 
 ```bash
-cd XRENGINE/Rendering/GI
+cd XREngine.Runtime.Rendering.OpenGL/Rendering/GI
 mkdir build && cd build
 cmake ..
 cmake --build . --config Release
@@ -197,16 +196,17 @@ if (!RestirGI.TryDispatch(in parameters))
 
 ## Current Limitations
 
-- Requires Vulkan rendering mode
+- Requires the OpenGL backend and its registered native ray-tracing service
 - NVIDIA GPUs only (GL_NV_ray_tracing)
 - Native DLL must be compiled and present
 - Currently mono rendering only (no VR stereo path)
 
 ## Files of Interest
 
-- **Managed API**: `XRENGINE/Rendering/GI/RestirGI.cs`
-- **Native Source**: `XRENGINE/Rendering/GI/RestirGI.Native.cpp`
-- **CMake Build**: `XRENGINE/Rendering/GI/CMakeLists.txt`
+- **Managed API**: `XREngine.Runtime.Rendering/Rendering/GI/RestirGI.cs` (neutral facade)
+- **Backend Implementation**: `XREngine.Runtime.Rendering.OpenGL/Rendering/GI/OpenGlRestirRayTracingBackend.cs`
+- **Native Source**: `XREngine.Runtime.Rendering.OpenGL/Rendering/GI/RestirGI.Native.cpp`
+- **CMake Build**: `XREngine.Runtime.Rendering.OpenGL/Rendering/GI/CMakeLists.txt`
 
 ## API Reference
 

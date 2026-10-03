@@ -7,6 +7,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.GI.RadianceCascades;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
@@ -578,7 +579,11 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         pendingAllocator.CommitReusedPhysicalImageMetadata();
 
-        activeGroup.LogicalResources.Single().Descriptor.PixelFormat.ShouldBe(EPixelFormat.Bgra);
+        activeGroup.LogicalResources.Single().Descriptor.PixelFormat.ShouldBe(EPixelFormat.Rgba);
+        activeAllocator.TryGetAllocation("SharedColor", out VulkanImageAllocation activeAllocation).ShouldBeTrue();
+        pendingAllocator.TryGetAllocation("SharedColor", out VulkanImageAllocation pendingAllocation).ShouldBeTrue();
+        activeAllocation.Descriptor.PixelFormat.ShouldBe(EPixelFormat.Rgba);
+        pendingAllocation.Descriptor.PixelFormat.ShouldBe(EPixelFormat.Bgra);
     }
 
     [Test]
@@ -766,6 +771,7 @@ public sealed class RenderPipelineResourceLifecycleTests
             DefaultRenderPipeline.NormalTextureName,
             DefaultRenderPipeline.RMSETextureName,
             DefaultRenderPipeline.TransformIdTextureName,
+            DefaultRenderPipeline.EmissionColorTextureName,
             DefaultRenderPipeline.DepthStencilTextureName
         ]);
     }
@@ -777,11 +783,12 @@ public sealed class RenderPipelineResourceLifecycleTests
         const ulong depthOfField = 1UL << 11;
         const ulong bloom = 1UL << 14;
         const ulong temporal = 1UL << 15;
+        const ulong velocity = 1UL << 30;
         DefaultRenderPipeline pipeline = new(stereo: true);
         RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(
             EAntiAliasingMode.Tsr,
             msaaSamples: 1u,
-            featureMask: motionBlur | depthOfField | bloom | temporal,
+            featureMask: motionBlur | depthOfField | bloom | temporal | velocity,
             stereo: true));
 
         string[] stereoPostProcessTextures =
@@ -943,54 +950,39 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
-    public void DefaultPipelines_GiProfilesDeclareOnlySelectedWorkingResources(Type pipelineType)
+    public void DefaultPipelines_GiProfilesDeclareOnlySupportedProviderResources(Type pipelineType)
     {
-        const ulong restir = 1UL << 20;
-        const ulong radianceCascades = 1UL << 22;
-        const ulong surfelGi = 1UL << 23;
-        RenderPipeline pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
+        DefaultRenderPipeline pipeline = (DefaultRenderPipeline)Activator.CreateInstance(pipelineType)!;
         RenderPipelineResourceLayout baseline = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u));
-        RenderPipelineResourceLayout restirLayout = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u, restir));
-        RenderPipelineResourceLayout radianceLayout = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u, radianceCascades, stereo: true));
-        RenderPipelineResourceLayout surfelLayout = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u, surfelGi));
-
         baseline.ResourcesByName.Keys.ShouldNotContain(VPRC_ReSTIRPass.InitialReservoirBufferName);
         baseline.ResourcesByName.Keys.ShouldNotContain(RadianceCascadeResourceNames.HistoryA);
         baseline.ResourcesByName.Keys.ShouldNotContain(VPRC_SurfelGIPass.SurfelBufferName);
 
-        foreach (string name in new[]
+        pipeline.GlobalIlluminationMode = EGlobalIlluminationMode.DDGI;
+        pipeline.GlobalIlluminationPlan.IsSupported.ShouldBeTrue();
+        RenderPipelineResourceVariant ddgiVariant = pipeline.BuildResourceVariantForGenerationKey(
+            new XRRenderPipelineInstance(pipeline), null);
+        RenderPipelineResourceLayout ddgiLayout = pipeline.BuildResourceLayout(
+            CreateProfile(EAntiAliasingMode.Fxaa, 1u) with { ResourceVariant = ddgiVariant });
+        ddgiLayout.ResourcesByName[DDGIResourceNames.ScreenDiffuse].ShouldBeOfType<TextureSpec>();
+        ddgiLayout.ResourcesByName[DDGIResourceNames.ProbeStateBuffer].ShouldBeOfType<BufferSpec>();
+        baseline.ResourcesByName.Keys.ShouldNotContain(DDGIResourceNames.ScreenDiffuse);
+
+        foreach (EGlobalIlluminationMode unavailable in new[]
         {
-            VPRC_ReSTIRPass.InitialReservoirBufferName,
-            VPRC_ReSTIRPass.TemporalReservoirBufferName,
-            VPRC_ReSTIRPass.SpatialReservoirBufferName,
+            EGlobalIlluminationMode.PathTracing,
+            EGlobalIlluminationMode.RadianceCascades,
+            EGlobalIlluminationMode.SurfelGI,
         })
         {
-            BufferSpec buffer = restirLayout.ResourcesByName[name].ShouldBeOfType<BufferSpec>();
-            buffer.ElementCount.ShouldBe(1280u * 720u, name);
-            buffer.ElementStride.ShouldBe(VPRC_ReSTIRPass.ReservoirStride, name);
+            pipeline.GlobalIlluminationMode = unavailable;
+            pipeline.GlobalIlluminationPlan.IsSupported.ShouldBeFalse();
+            RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, 1u));
+            layout.ResourcesByName.Keys.ShouldNotContain(VPRC_ReSTIRPass.InitialReservoirBufferName);
+            layout.ResourcesByName.Keys.ShouldNotContain(RadianceCascadeResourceNames.HistoryA);
+            layout.ResourcesByName.Keys.ShouldNotContain(VPRC_SurfelGIPass.SurfelBufferName);
+            layout.ResourcesByName.Keys.ShouldNotContain(DDGIResourceNames.ScreenDiffuse);
         }
-
-        foreach (string name in new[]
-        {
-            RadianceCascadeResourceNames.HistoryA,
-            RadianceCascadeResourceNames.HistoryB,
-        })
-        {
-            TextureSpec history = radianceLayout.ResourcesByName[name].ShouldBeOfType<TextureSpec>();
-            history.Layers.ShouldBe(2u, name);
-            history.HistoryPolicy.ShouldBe(RenderResourceHistoryPolicy.ClearOnCommit, name);
-        }
-
-        (string Name, uint Count)[] surfelBuffers =
-        [
-            (VPRC_SurfelGIPass.SurfelBufferName, VPRC_SurfelGIPass.MaxSurfelsConst),
-            (VPRC_SurfelGIPass.CounterBufferName, VPRC_SurfelGIPass.CounterCount),
-            (VPRC_SurfelGIPass.FreeStackBufferName, VPRC_SurfelGIPass.MaxSurfelsConst),
-            (VPRC_SurfelGIPass.GridCountsBufferName, VPRC_SurfelGIPass.GridCellCount),
-            (VPRC_SurfelGIPass.GridIndicesBufferName, VPRC_SurfelGIPass.GridIndexCount),
-        ];
-        foreach ((string name, uint count) in surfelBuffers)
-            surfelLayout.ResourcesByName[name].ShouldBeOfType<BufferSpec>().ElementCount.ShouldBe(count, name);
     }
 
     [Test]
@@ -1142,18 +1134,30 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         int depthViewIndex = layout.OrderedSpecs
             .Select((spec, index) => (spec, index))
-            .Single(entry => entry.spec.Name == DefaultRenderPipeline.DepthViewTextureName)
+            .Single(entry => entry.spec.Name == DefaultRenderPipeline.ForwardContactDepthViewTextureName)
             .index;
         int normalIndex = layout.OrderedSpecs
             .Select((spec, index) => (spec, index))
-            .Single(entry => entry.spec.Name == DefaultRenderPipeline.NormalTextureName)
+            .Single(entry => entry.spec.Name == DefaultRenderPipeline.ForwardPrePassNormalTextureName)
+            .index;
+        int forwardDepthIndex = layout.OrderedSpecs
+            .Select((spec, index) => (spec, index))
+            .Single(entry => entry.spec.Name == DefaultRenderPipeline.ForwardPrePassDepthStencilTextureName)
             .index;
 
         foreach (string frameBufferName in frameBufferNames)
         {
             FrameBufferSpec frameBuffer = layout.ResourcesByName[frameBufferName].ShouldBeOfType<FrameBufferSpec>();
-            frameBuffer.Dependencies.ShouldContain(DefaultRenderPipeline.DepthViewTextureName, frameBufferName);
-            frameBuffer.Dependencies.ShouldContain(DefaultRenderPipeline.NormalTextureName, frameBufferName);
+            frameBuffer.Dependencies.ShouldContain(DefaultRenderPipeline.ForwardContactDepthViewTextureName, frameBufferName);
+            if (frameBufferName == DefaultRenderPipeline.AmbientOcclusionFBOName)
+            {
+                frameBuffer.Attachments.ShouldContain(attachment =>
+                    attachment.ResourceName == DefaultRenderPipeline.ForwardPrePassNormalTextureName);
+                frameBuffer.Attachments.ShouldContain(attachment =>
+                    attachment.ResourceName == DefaultRenderPipeline.ForwardPrePassDepthStencilTextureName);
+            }
+            else
+                frameBuffer.Dependencies.ShouldContain(DefaultRenderPipeline.ForwardPrePassNormalTextureName, frameBufferName);
 
             int frameBufferIndex = layout.OrderedSpecs
                 .Select((spec, index) => (spec, index))
@@ -1161,6 +1165,7 @@ public sealed class RenderPipelineResourceLifecycleTests
                 .index;
             frameBufferIndex.ShouldBeGreaterThan(depthViewIndex, frameBufferName);
             frameBufferIndex.ShouldBeGreaterThan(normalIndex, frameBufferName);
+            frameBufferIndex.ShouldBeGreaterThan(forwardDepthIndex, frameBufferName);
         }
     }
 
@@ -1286,6 +1291,10 @@ public sealed class RenderPipelineResourceLifecycleTests
             nameof(ResourceGenerationKey.ReservedViewCount),
             nameof(ResourceGenerationKey.ReservedEyeIndex),
             nameof(ResourceGenerationKey.SettingsRevision),
+            nameof(ResourceGenerationKey.OutputColorFormat),
+            nameof(ResourceGenerationKey.OutputDepthFormat),
+            nameof(ResourceGenerationKey.PipelineRevision),
+            nameof(ResourceGenerationKey.ResourceVariant),
         ];
 
         propertyNames.ShouldBe(expectedProperties.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
@@ -1311,7 +1320,8 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         SetEffectiveFrameProfile(instance, outputHdr: true, EAntiAliasingMode.None, msaaSamples: 1u);
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
-            nameof(ResourceGenerationKey.OutputHDR), nameof(ResourceGenerationKey.SettingsRevision));
+            nameof(ResourceGenerationKey.OutputHDR), nameof(ResourceGenerationKey.OutputColorFormat),
+            nameof(ResourceGenerationKey.SettingsRevision));
 
         SetEffectiveFrameProfile(instance, outputHdr: false, EAntiAliasingMode.Taa, msaaSamples: 1u);
         AssertOnlyKeyFieldsChanged(baseline, BuildGenerationKey(instance, 640, 360, 320, 180),
@@ -1626,20 +1636,22 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         instance.RequestResourceGeneration(96, 48, 96, 48, "AtomicReplacement", force: true).ShouldBeTrue();
         RenderResourceGeneration pending = instance.PendingGeneration.ShouldNotBeNull();
+        bool commitSawPreviousPublication = false;
         backend.OnCommit = () =>
         {
-            instance.ActiveGeneration.ShouldBeSameAs(pending);
-            instance.ResourceGeneration.ShouldBe(2);
-            pending.Status.ShouldBe(RenderResourceGenerationStatus.Active);
+            commitSawPreviousPublication = ReferenceEquals(instance.ActiveGeneration, previous) &&
+                backend.ActiveSnapshot != pendingSnapshot;
         };
 
         PreparePendingGeneration(instance).ShouldBeTrue();
 
         instance.ActiveGeneration.ShouldBeSameAs(pending);
+        commitSawPreviousPublication.ShouldBeTrue();
         backend.ActiveSnapshot.ShouldBe(pendingSnapshot);
         backend.CommitCount.ShouldBe(1);
         backend.RollbackCount.ShouldBe(0);
-        previous.Status.ShouldBe(RenderResourceGenerationStatus.Disposed);
+        previous.Status.ShouldBe(RenderResourceGenerationStatus.Retired);
+        instance.RetiredGenerations.ShouldContain(previous);
 
         instance.DestroyCache();
     }
@@ -1694,7 +1706,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
-    public void RapidResizeAndFeatureToggleBurst_CoalescesPendingAndBoundsRetiredGenerations()
+    public void RapidResizeAndFeatureToggleBurst_CoalescesPendingAndRetainsUnsignaledGenerations()
     {
         GenerationFailureTestPipeline pipeline = new();
         XRRenderPipelineInstance instance = new(pipeline);
@@ -1736,8 +1748,28 @@ public sealed class RenderPipelineResourceLifecycleTests
             PreparePendingGeneration(instance).ShouldBeTrue();
             instance.PendingGeneration.ShouldBeNull();
             instance.ActiveGeneration.ShouldNotBeNull().Key.InternalWidth.ShouldBe((uint)finalWidth);
-            instance.RetiredGenerations.Count.ShouldBeLessThanOrEqualTo(3);
+            instance.RetiredGenerations.Count.ShouldBe(iteration + 1);
         }
+
+        TestGpuFence[] receipts = instance.RetiredGenerations
+            .Select(_ => new TestGpuFence())
+            .ToArray();
+        int receiptIndex = 0;
+        foreach (RenderResourceGeneration generation in instance.RetiredGenerations)
+        {
+            generation.Status.ShouldBe(RenderResourceGenerationStatus.Retired);
+            generation.TryArmMissingRetirementFence(receipts[receiptIndex++]).ShouldBeTrue();
+        }
+
+        MethodInfo drain = typeof(XRRenderPipelineInstance).GetMethod(
+            "DrainRetiredGenerations", BindingFlags.Instance | BindingFlags.NonPublic).ShouldNotBeNull();
+        drain.Invoke(instance, null);
+        instance.RetiredGenerations.Count.ShouldBe(16);
+
+        foreach (TestGpuFence receipt in receipts)
+            receipt.Status = EGpuFenceStatus.Signaled;
+        drain.Invoke(instance, null);
+        instance.RetiredGenerations.ShouldBeEmpty();
 
         instance.DestroyCache();
     }
@@ -1786,9 +1818,11 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         second.ShouldBe(first);
 
+        SetEffectiveFrameProfile(instance, outputHdr: false, EAntiAliasingMode.Msaa, msaaSamples: 4u);
+        ulong msaaBefore = pipeline.BuildResourceFeatureMaskForGenerationKey(instance, null);
         pipeline.EnableDeferredMsaa = !pipeline.EnableDeferredMsaa;
 
-        pipeline.BuildResourceFeatureMaskForGenerationKey(instance, null).ShouldNotBe(first);
+        pipeline.BuildResourceFeatureMaskForGenerationKey(instance, null).ShouldNotBe(msaaBefore);
     }
 
     [TestCase(typeof(DefaultRenderPipeline))]
@@ -2303,14 +2337,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         RenderPipelineResourceProfile profile = CreateProfile(EAntiAliasingMode.None, 1u);
 
         RenderPipelineResourceLayout ui = new UserInterfaceRenderPipeline().BuildResourceLayout(profile);
-        ui.ResourcesByName.Keys.OrderBy(static x => x).ShouldBe(new[]
-        {
-            UserInterfaceRenderPipeline.DepthStencilTextureName,
-            UserInterfaceRenderPipeline.DepthViewTextureName,
-            UserInterfaceRenderPipeline.StencilViewTextureName,
-        }.OrderBy(static x => x));
-        ui.ResourcesByName[UserInterfaceRenderPipeline.DepthViewTextureName].ShouldBeOfType<TextureViewSpec>();
-        ui.ResourcesByName[UserInterfaceRenderPipeline.StencilViewTextureName].ShouldBeOfType<TextureViewSpec>();
+        ui.ResourcesByName.ShouldBeEmpty();
 
         RenderPipelineResourceLayout test = new XREngine.Rendering.TestRenderPipeline().BuildResourceLayout(profile);
         test.ResourcesByName.Count.ShouldBe(3);
@@ -2385,15 +2412,17 @@ public sealed class RenderPipelineResourceLifecycleTests
         string[] sources =
         [
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs",
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs",
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.ProbeResources.cs",
         ];
 
         foreach (string sourcePath in sources)
         {
             string source = ReadWorkspaceFile(sourcePath);
+            if (sourcePath.EndsWith("AdvancedRenderPipeline.ProbeResources.cs", StringComparison.Ordinal))
+                source += ReadWorkspaceFile(
+                    "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
             source.ShouldContain("BindImportedTexture(");
             source.ShouldContain("BindImportedBuffer(");
-            source.ShouldContain("UnbindImportedTexture(");
             source.ShouldContain("UnbindImportedBuffer(");
             source.ShouldNotContain("Resources.RemoveTexture(");
             source.ShouldNotContain("Resources.RemoveBuffer(");
@@ -2420,9 +2449,9 @@ public sealed class RenderPipelineResourceLifecycleTests
     public void VulkanReadbackScope_UsesCapturedRenderedFrameGenerationAndTarget()
     {
         string plannerSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/Authority/VulkanFramePlanner.ContextSignatures.cs");
         int matchStart = plannerSource.IndexOf(
-            "private static bool FrameOpContextMatchesPlannerStateKey",
+            "internal static bool FrameOpContextMatchesPlannerStateKey",
             StringComparison.Ordinal);
         int matchEnd = plannerSource.IndexOf(";", matchStart, StringComparison.Ordinal);
         string matchBody = plannerSource[matchStart..matchEnd];
@@ -2430,7 +2459,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         matchBody.ShouldContain("ResolveResourcePlanOutputTargetIdentity(context) == key.OutputTargetIdentity");
 
         string readbackSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Readback.cs");
         Regex.Matches(
             readbackSource,
             "_lastWindowPresentFrameOpContext is \\{ \\} context\\s+\\? EnterFrameOpResourcePlannerReadbackScope\\(in context\\)")
@@ -2451,7 +2480,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         methodEnd.ShouldBeGreaterThan(methodStart);
         string method = source[methodStart..methodEnd];
 
-        method.ShouldContain("TryPrepareRetirementMarkers(out Fence graphicsMarker)");
+        method.ShouldContain("TryPrepareRetirementMarkers(out graphicsMarker)");
         method.ShouldContain("QueueRetiredGeneration(retired);");
         method.ShouldNotContain("DeviceWaitIdle(");
     }
@@ -2756,6 +2785,15 @@ public sealed class RenderPipelineResourceLifecycleTests
         ulong BufferHandle,
         ulong FrameBufferHandle,
         long MetadataRevision);
+
+    private sealed class TestGpuFence : XRGpuFence
+    {
+        public EGpuFenceStatus Status { get; set; } = EGpuFenceStatus.Pending;
+
+        protected override EGpuFenceStatus PollCore() => Status;
+
+        protected override void DisposeCore() { }
+    }
 
     private sealed class TestResourceGenerationBackend(BackendGenerationSnapshot activeSnapshot)
         : IRenderResourceGenerationBackend

@@ -497,6 +497,10 @@ before any successful response.
 
 ### Viewport Sequence Capture Sessions
 
+Image analysis resamples each captured frame to exact analysis dimensions. The
+image codec does not preserve aspect ratio implicitly; contact-sheet layout
+calculates its contained thumbnail dimensions before requesting the resize.
+
 Temporal captures use an asynchronous session so an MCP request does not remain open for the duration of capture and exceed the server's request timeout. Start a session, poll it by `capture_id`, and optionally cancel it. Only one sequence capture may be active for a given viewport at a time.
 
 `start_viewport_sequence_capture` requires exactly one stop condition:
@@ -555,6 +559,22 @@ Generated from `McpToolRegistry.Tools` via:
 ```powershell
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
+
+### Targeting Live Owned Objects
+
+Generic inspection resolves scene nodes, transforms and components in the active
+world before consulting global caches. Assets can share persistent IDs with
+dormant edit/play snapshots. To select an exact owned instance, pass `object_id`
+for its live component and `object_path` to `get_object_properties`,
+`set_object_property` or `invoke_method`, for example `Material` or
+`Material.Shaders[0].Source`.
+
+A supplied path requires an active-world root and never falls back to a cached
+root. Paths support instance properties, fields and nonnegative array/list
+indices, with at most 16 member steps and 1,024 characters. Null, destroyed,
+out-of-range and non-engine terminal values fail explicitly. Static method calls
+cannot use `object_path`. Responses retain the root ID and path separately from
+the target's type and optional persistent ID.
 
 <!-- MCP_TOOL_TABLE:START -->
 
@@ -635,8 +655,9 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_loaded_game_types` | List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly. |
 | `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
+| `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
-| `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
+| `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. Scene node, transform, and component IDs resolve against the active world before global object and asset caches, so duplicate snapshot IDs select the live object. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
 | `get_parent_types` | Walk the inheritance chain upward from a type, including interfaces. |
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
@@ -700,6 +721,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `list_viewport_sequence_captures` | List active and recently completed viewport sequence captures without per-frame payloads. |
 | `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics. |
 | `list_worlds` | List active world instances and their scenes. |
+| `load_game_project` | Load a local .xrproj authoring project in edit mode. Compile its scripts separately before loading worlds that use game types. |
 | `load_world` | Load a world asset and set it as active on the current world instance. |
 | `move_node_sibling` | Reorder a scene node among siblings. |
 | `prefab_apply_overrides` | Apply an instance's recorded prefab overrides back to its source prefab asset. |
@@ -751,6 +773,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_meshlet_debug_display` | Enable or disable per-meshlet colors on a viewport camera. Omit enabled to return control to the camera post-process setting. |
+| `set_network_runtime_measurements` | Enable allocation-free networking measurement scopes. Counters are cumulative; subtract snapshots after warmup. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |
 | `set_node_active_recursive` | Set active state on a node and its children. |
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |
@@ -868,13 +891,22 @@ otherwise be lost:
 ## Architecture
 
 Runtime profiling recipes and fixture execution are editor-independent. The
-strict Phase 4 schema is `.vscode/schemas/render-profile-recipe.schema.json`;
+strict schema is `.vscode/schemas/render-profile-recipe.schema.json`;
 `list_render_profile_targets` reports each catalog target's component, mode,
 inclusions, exclusions, and output-hash support. Recipes loaded through MCP and
 recipes passed to RenderBench with `--recipe-file` use the same executor,
 workload identity, correctness gates, and artifact format. Worker-count matrix
 variants retain a common underlying workload hash and suspend MCP only during
 each child capture/drain interval.
+
+The named RenderBench session manager is
+`Tools/Manage-McpRenderBenchSession.ps1 Start|Run|Status|Stop -Name <name>`.
+Preparation and stabilization may run while MCP is available. The accepted
+`start_render_profile` response is serialized before the listener is suspended
+and the parked capture worker is released. Result retrieval occurs after the
+listener resumes. Selected CPU spans and GPU pass queries remain diagnostic
+observers; their bounded records, completeness gates, and trace artifacts are
+described in the [profiler guide](../diagnostics/profiler.md#selected-cpu-and-gpu-diagnostics).
 
 The MCP implementation consists of the following classes:
 

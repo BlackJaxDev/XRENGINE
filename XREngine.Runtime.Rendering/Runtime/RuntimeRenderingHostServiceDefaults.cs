@@ -200,7 +200,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool OpenXrDebugLifecycle = false;
     public const bool OpenXrDebugRenderRightThenLeft = false;
     public const bool OpenXrPrepareFrameAfterDesktopRender = true;
-    public const OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode = OpenXRAPI.OpenXrRenderPacingMode.DedicatedThread;
+    public const OpenXrRenderPacingMode OpenXrRenderPacingMode = OpenXrRenderPacingMode.DedicatedThread;
     public const float OpenXrDeadlineSafetyMarginMs = 1.0f;
     public const float OpenXrPoseTimeOffsetMs = 0.0f;
     public const float OpenXrCollectVisibleFrustumPaddingDegrees = 2.0f;

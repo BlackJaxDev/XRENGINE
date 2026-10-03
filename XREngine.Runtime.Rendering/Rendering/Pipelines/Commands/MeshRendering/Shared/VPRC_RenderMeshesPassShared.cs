@@ -191,7 +191,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             return false;
         }
         if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy() &&
-            activeInstance.Pipeline is ShadowRenderPipeline)
+            MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
         {
             // Strict zero-readback visibility is owned by the GPU scene. A CPU
             // visibility collection can legitimately publish an empty pass, so

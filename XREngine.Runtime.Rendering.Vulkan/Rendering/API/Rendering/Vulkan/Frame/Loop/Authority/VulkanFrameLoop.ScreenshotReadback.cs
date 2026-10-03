@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using ImageMagick;
+using XREngine.Imaging;
 using Silk.NET.Vulkan;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -968,7 +968,7 @@ internal sealed partial class VulkanFrameLoop
         int rawLength,
         double gpuCompletionSeconds)
     {
-        MagickImage? image = null;
+        RuntimeImage? image = null;
         try
         {
             int pixelCount = checked(slot.Width * slot.Height);
@@ -989,13 +989,8 @@ internal sealed partial class VulkanFrameLoop
             if (!slot.WithTransparency)
                 ForceOpaqueAlpha(rgbaPixels);
 
-            image = new MagickImage(rgbaPixels, new MagickReadSettings
-            {
-                Width = checked((uint)slot.Width),
-                Height = checked((uint)slot.Height),
-                Format = MagickFormat.Rgba,
-                Depth = 8,
-            });
+            image = new RuntimeImage(checked((uint)slot.Width), checked((uint)slot.Height),
+                RuntimePixelFormat.Rgba8, rgbaPixels);
 
             if (Interlocked.Exchange(ref slot.CallbackDelivered, 1) != 0)
                 return;
@@ -1021,8 +1016,8 @@ internal sealed partial class VulkanFrameLoop
             if (callback is null)
                 return;
 
-            callback(result);
             image = null;
+            callback(result);
         }
         catch (Exception ex)
         {

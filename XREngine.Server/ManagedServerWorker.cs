@@ -462,7 +462,7 @@ internal sealed partial class ManagedServerWorker : IDisposable
     {
         // world-v1 is the declared built-in bootstrap for package-authored worlds. It intentionally
         // avoids local devices; remote pawns are created only by ServerNetworkingManager admission.
-        if (!string.Equals(_launch.GameBootstrapId, "world-v1", StringComparison.Ordinal))
+        if (!WorldPackageBootstrapIds.IsCompiledIn(_launch.GameBootstrapId))
             throw new NotSupportedException($"Managed game bootstrap '{_launch.GameBootstrapId}' is not registered by this server build.");
 
         world.DefaultGameMode ??= new CustomGameMode { DefaultPlayerPawnClass = null };
@@ -482,7 +482,7 @@ internal sealed partial class ManagedServerWorker : IDisposable
         if (launch.ContractVersion != 1 || string.IsNullOrWhiteSpace(launch.InstanceId) || launch.Generation == Guid.Empty || launch.SessionId == Guid.Empty
             || string.IsNullOrWhiteSpace(launch.ManagementUrl) || string.IsNullOrWhiteSpace(launch.ManagementToken) || !IPAddress.TryParse(launch.BindAddress, out _) || launch.BindPort is < 1 or > 65535
             || launch.MaxPlayers <= 0 || string.IsNullOrWhiteSpace(launch.PackageRootPath) || string.IsNullOrWhiteSpace(launch.WorldEntryPoint)
-            || !string.Equals(launch.GameBootstrapId, "world-v1", StringComparison.Ordinal)
+            || !WorldPackageBootstrapIds.IsCompiledIn(launch.GameBootstrapId)
             || !string.IsNullOrWhiteSpace(launch.WorldPackage.WorldEntryPoint) && !string.Equals(launch.WorldEntryPoint, launch.WorldPackage.WorldEntryPoint, StringComparison.Ordinal)
             || !string.Equals(launch.BuildVersion, launch.WorldPackage.Asset.RequiredBuildVersion, StringComparison.Ordinal)
             || !string.IsNullOrWhiteSpace(launch.WorldPackage.BuildVersion) && !string.Equals(launch.BuildVersion, launch.WorldPackage.BuildVersion, StringComparison.Ordinal)

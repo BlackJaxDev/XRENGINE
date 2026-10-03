@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Commands
         Custom = 6
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("DrawMetadata", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct DrawMetadata : IEquatable<DrawMetadata>
     {
@@ -85,6 +86,7 @@ namespace XREngine.Rendering.Commands
         public static bool operator !=(DrawMetadata left, DrawMetadata right) => !left.Equals(right);
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("TransformGpu", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct TransformGpu
     {
@@ -94,6 +96,7 @@ namespace XREngine.Rendering.Commands
             => WorldMatrix = worldMatrix;
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("BoundsGpu", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct BoundsGpu : IEquatable<BoundsGpu>
     {
@@ -127,6 +130,7 @@ namespace XREngine.Rendering.Commands
         public static bool operator !=(BoundsGpu left, BoundsGpu right) => !left.Equals(right);
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("MaterialStateGpu", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct MaterialStateGpu : IEquatable<MaterialStateGpu>
     {

@@ -74,7 +74,7 @@ public sealed class RenderFrameTimingContractTests
     [Test]
     public void OpenXrCollectVisible_PublishesWorldTransformsBeforeSpsCollection()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.FrameLifecycle.cs").Replace("\r\n", "\n");
 
         int collectStart = source.IndexOf("private void OpenXrCollectVisible()", StringComparison.Ordinal);
         collectStart.ShouldBeGreaterThanOrEqualTo(0);

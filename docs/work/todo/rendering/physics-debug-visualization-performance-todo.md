@@ -242,8 +242,8 @@ Coverage below is authored but deliberately not executed yet.
 
 ## Useful implementation touchpoints
 
-- `XREngine.Runtime.Core/Scene/Physics/Physx/PhysxScene.cs`
-- `XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs`
+- `XREngine.Runtime.Physics.PhysX/Scene/Physics/Physx/PhysxScene.cs`
+- `XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltScene.cs`
 - `XRENGINE/Scene/Physics/Physx/InstancedDebugVisualizer.cs`
 - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Debug.cs`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugPhysics.cs`

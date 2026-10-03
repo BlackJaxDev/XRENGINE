@@ -1,4 +1,19 @@
 <Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser'">
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Extensions' or '$(MSBuildProjectName)' == 'XREngine.Data' or '$(MSBuildProjectName)' == 'XREngine.Audio' or '$(MSBuildProjectName)' == 'XREngine.Animation' or '$(MSBuildProjectName)' == 'XREngine.Input' or '$(MSBuildProjectName)' == 'XREngine.Modeling' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Core' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AudioIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AnimationIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.InputIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.ModelingIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering.WebGPU' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Host' or '$(MSBuildProjectName)' == 'XREngine.Browser'">
+    <XREnginePortableProject>true</XREnginePortableProject>
+  </PropertyGroup>
+
+  <!-- The browser lane qualifies the untrimmed interpreter. Without this, the SDK defaults
+       browser-wasm builds to trimmed publishing, which the portability guard rejects until
+       trimming has its own metadata and serializer review. -->
+  <PropertyGroup Condition="'$(XREnginePortableProject)' == 'true' and '$(RuntimeIdentifier)' == 'browser-wasm'">
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">false</PublishTrimmed>
+  </PropertyGroup>
+
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -7,7 +22,7 @@
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <Nullable>disable</Nullable>
-    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/Build/Temp/**;**/Build/TempValidation/**;**/Build/_AgentValidation/**;**/obj/**;**/bin/**</DefaultItemExcludes>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0-dev</PackageVersion>
     <Authors Condition="'$(Authors)' == ''">BlackJax</Authors>
     <Company Condition="'$(Company)' == ''">BlackJax LLC</Company>

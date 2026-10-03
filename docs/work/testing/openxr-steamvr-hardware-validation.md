@@ -1,6 +1,6 @@
 # OpenXR SteamVR Hardware Validation
 
-Last Updated: 2026-09-27
+Last Updated: 2026-10-01
 
 This report tracks the SteamVR OpenXR hardware matrix for the OpenVR parity work. It records the runnable validation lane added in this pass and the evidence that must be captured on a machine with SteamVR hardware attached.
 
@@ -21,6 +21,14 @@ Evidence is in `Build/_AgentValidation/20260926-190000-vr-fullbody/reports/`: `h
 Short, single-validation-editor performance samples used the same OpenGL runtime and avatar scene. The first-person sample submitted 25 frames and missed all 25 deadlines; median render time was 40.0012 ms and p95 was 317.3575 ms. The spectator sample submitted 75 frames and missed all 75 deadlines; median render time was 56.0683 ms and p95 was 76.3531 ms. These windows include the multi-rig imported asset, editor diagnostics, and concurrent GPU activity. Whole-process managed allocation rates were 30.0 MB/s and 90.6 MB/s respectively across editor threads and MCP sampling; the OpenXR summary's constant-zero allocation field is not a measurement. The samples fail timing acceptance and do not isolate spectator-only cost. Raw data is in `performance-first-person-single-validation-session.json` and `performance-spectator-single-validation-session.json`.
 
 An explicitly selected alternative tracker transport is a possible future compatibility option, not an implemented fallback. It would need a visible per-session provider choice, stable physical identity matching, fresh pose validity and timestamps, and a defined way to combine its tracker samples with the OpenXR headset/controller calibration snapshot before capture could be enabled. The current OpenVR.NET pose facade does not expose a publication timestamp or frame identifier, so merely reading its matrices would not satisfy the capture-coherence requirement. The current mode remains OpenXR-only and reports undiscovered trackers honestly.
+
+## Later software validation
+
+Body calibration and spectator acceptance use the additional
+[integrated behavior procedure](avatar/openxr-calibration-spectator-validation.md).
+The [October 1 Windows validation](../investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
+records software/runtime checks and rendering blockers without connected XR
+devices; it does not change the pending hardware rows below.
 
 ## Current Validation Status
 

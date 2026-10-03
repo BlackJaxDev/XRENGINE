@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
+using XREngine.Rendering.PostProcessing;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -71,34 +73,49 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
                 "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs")
             .Replace("\r\n", "\n");
 
-        source.ShouldContain(
-            "public ERenderBindingFrequency Frequency\n                => ERenderBindingFrequency.View;");
+        source.ShouldContain("public ERenderBindingFrequency Frequency");
+        source.ShouldContain("publication == EGtaoBindingPublication.Generate");
+        source.ShouldContain("? ERenderBindingFrequency.View");
+        source.ShouldContain(": ERenderBindingFrequency.Pass;");
         source.ShouldContain(
             "genFbo.FullScreenMesh.BindingPublishers.Add(");
+        source.ShouldContain("EGtaoBindingPublication.Generate));");
         source.ShouldNotContain(
             "genFbo.SettingUniforms += GTAOGen_SetUniforms;");
     }
 
-    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs")]
-    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs")]
-    public void GtaoSchemaDefaults_UseCentralizedRuntimeConstants(string relativePath)
+    [TestCase(typeof(DefaultRenderPipeline))]
+    [TestCase(typeof(AdvancedRenderPipeline))]
+    public void GtaoSchemaDefaults_UseCentralizedRuntimeConstants(Type pipelineType)
     {
-        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+        var pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
+        pipeline.PostProcessSchema.TryGetStage(CommonPostProcessStages.AmbientOcclusionStageKey, out var stage).ShouldBeTrue();
+        stage.ShouldNotBeNull();
 
-        source.ShouldContain("nameof(AmbientOcclusionSettings.Radius),\n            PostProcessParameterKind.Float,\n            AmbientOcclusionSettings.DefaultRadius,");
-        source.ShouldContain("nameof(AmbientOcclusionSettings.Power),\n            PostProcessParameterKind.Float,\n            AmbientOcclusionSettings.DefaultPower,");
-        source.ShouldContain("nameof(AmbientOcclusionSettings.Bias),\n            PostProcessParameterKind.Float,\n            AmbientOcclusionSettings.DefaultBias,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.SliceCount)),\n            PostProcessParameterKind.Int,\n            GroundTruthAmbientOcclusionSettings.DefaultSliceCount,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.StepsPerSlice)),\n            PostProcessParameterKind.Int,\n            GroundTruthAmbientOcclusionSettings.DefaultStepsPerSlice,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.DenoiseRadius)),\n            PostProcessParameterKind.Int,\n            GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.DenoiseSharpness)),\n            PostProcessParameterKind.Float,\n            GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.UseInputNormals)),\n            PostProcessParameterKind.Bool,\n            GroundTruthAmbientOcclusionSettings.DefaultUseInputNormals,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.UseVisibilityBitmask)),\n            PostProcessParameterKind.Bool,\n            GroundTruthAmbientOcclusionSettings.DefaultUseVisibilityBitmask,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.VisibilityBitmaskThickness)),\n            PostProcessParameterKind.Float,\n            GroundTruthAmbientOcclusionSettings.DefaultVisibilityBitmaskThickness,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.MultiBounceEnabled)),\n            PostProcessParameterKind.Bool,\n            GroundTruthAmbientOcclusionSettings.DefaultMultiBounceEnabled,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.SpecularOcclusionEnabled)),\n            PostProcessParameterKind.Bool,\n            GroundTruthAmbientOcclusionSettings.DefaultSpecularOcclusionEnabled,");
-        source.ShouldContain("(int)GroundTruthAmbientOcclusionSettings.DefaultResolution,");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.UseNormalWeightedBlur)),\n            PostProcessParameterKind.Bool,\n            GroundTruthAmbientOcclusionSettings.DefaultUseNormalWeightedBlur,");
+        AssertDefault(nameof(AmbientOcclusionSettings.Radius), PostProcessParameterKind.Float, AmbientOcclusionSettings.DefaultRadius);
+        AssertDefault(nameof(AmbientOcclusionSettings.Power), PostProcessParameterKind.Float, AmbientOcclusionSettings.DefaultPower);
+        AssertDefault(nameof(AmbientOcclusionSettings.Bias), PostProcessParameterKind.Float, AmbientOcclusionSettings.DefaultBias);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.SliceCount), PostProcessParameterKind.Int, GroundTruthAmbientOcclusionSettings.DefaultSliceCount);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.StepsPerSlice), PostProcessParameterKind.Int, GroundTruthAmbientOcclusionSettings.DefaultStepsPerSlice);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.DenoiseRadius), PostProcessParameterKind.Int, GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.DenoiseSharpness), PostProcessParameterKind.Float, GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.UseInputNormals), PostProcessParameterKind.Bool, GroundTruthAmbientOcclusionSettings.DefaultUseInputNormals);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.UseVisibilityBitmask), PostProcessParameterKind.Bool, GroundTruthAmbientOcclusionSettings.DefaultUseVisibilityBitmask);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.VisibilityBitmaskThickness), PostProcessParameterKind.Float, GroundTruthAmbientOcclusionSettings.DefaultVisibilityBitmaskThickness);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.MultiBounceEnabled), PostProcessParameterKind.Bool, GroundTruthAmbientOcclusionSettings.DefaultMultiBounceEnabled);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.SpecularOcclusionEnabled), PostProcessParameterKind.Bool, GroundTruthAmbientOcclusionSettings.DefaultSpecularOcclusionEnabled);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.Resolution), PostProcessParameterKind.Int, (int)GroundTruthAmbientOcclusionSettings.DefaultResolution);
+        AssertGroundTruthDefault(nameof(GroundTruthAmbientOcclusionSettings.UseNormalWeightedBlur), PostProcessParameterKind.Bool, GroundTruthAmbientOcclusionSettings.DefaultUseNormalWeightedBlur);
+
+        void AssertGroundTruthDefault(string name, PostProcessParameterKind kind, object expected)
+            => AssertDefault($"{nameof(AmbientOcclusionSettings.GroundTruth)}.{name}", kind, expected);
+
+        void AssertDefault(string name, PostProcessParameterKind kind, object expected)
+        {
+            var parameter = stage!.Parameters.Single(parameter => parameter.Name == name);
+            parameter.Kind.ShouldBe(kind);
+            parameter.DefaultValue.ShouldBe(expected);
+        }
     }
 
     [Test]

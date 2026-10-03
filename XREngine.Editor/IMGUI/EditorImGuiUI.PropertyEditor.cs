@@ -1655,7 +1655,7 @@ public static partial class EditorImGuiUI
             }
             else if (effectiveType.IsEnum)
             {
-                string[] enumNames = GetInspectorEnum(effectiveType).Names;
+                var (enumNames, enumLabels, _) = GetInspectorEnum(effectiveType);
                 int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                 if (currentIndex < 0)
                     currentIndex = 0;
@@ -1664,7 +1664,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canModifyElements || enumNames.Length == 0))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumLabels, enumLabels.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
                     {
                         object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
                         using var _u = Undo.TrackChange("Edit Dictionary Value", undoTarget);
@@ -3270,7 +3270,7 @@ public static partial class EditorImGuiUI
             }
             else if (effectiveType.IsEnum)
             {
-                string[] enumNames = GetInspectorEnum(effectiveType).Names;
+                var (enumNames, enumLabels, _) = GetInspectorEnum(effectiveType);
                 int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                 if (currentIndex < 0)
                     currentIndex = 0;
@@ -3279,7 +3279,7 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canModifyElements || enumNames.Length == 0))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumLabels, enumLabels.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
                     {
                         object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
                         using var _u = Undo.TrackChange("Edit Collection Element", undoTarget);
@@ -3987,7 +3987,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    string[] enumNames = GetInspectorEnum(effectiveType).Names;
+                    var (enumNames, enumLabels, _) = GetInspectorEnum(effectiveType);
                     int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                     if (currentIndex < 0)
                         currentIndex = 0;
@@ -3995,13 +3995,13 @@ public static partial class EditorImGuiUI
                     int selectedIndex = currentIndex;
                     using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
                     {
-                        string preview = hasMixedValues ? "<multiple>" : (enumNames.Length > 0 ? enumNames[Math.Clamp(selectedIndex, 0, enumNames.Length - 1)] : string.Empty);
+                        string preview = hasMixedValues ? "<multiple>" : (enumLabels.Length > 0 ? enumLabels[Math.Clamp(selectedIndex, 0, enumLabels.Length - 1)] : string.Empty);
                         if (enumNames.Length > 0 && ImGui.BeginCombo("##Value", preview))
                         {
                             for (int i = 0; i < enumNames.Length; i++)
                             {
                                 bool selected = i == selectedIndex && !hasMixedValues;
-                                if (ImGui.Selectable(enumNames[i], selected))
+                                if (ImGui.Selectable(enumLabels[i], selected))
                                 {
                                     object newValue = Enum.Parse(effectiveType, enumNames[i]);
                                     if (TryApplyInspectorValue(targets, property, values, newValue))
@@ -5614,7 +5614,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    string[] enumNames = GetInspectorEnum(effectiveType).Names;
+                    var (enumNames, enumLabels, _) = GetInspectorEnum(effectiveType);
                     int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                     if (currentIndex < 0)
                         currentIndex = 0;
@@ -5622,7 +5622,7 @@ public static partial class EditorImGuiUI
                     int selectedIndex = currentIndex;
                     using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
                     {
-                        if (enumNames.Length > 0 && ImGui.Combo(label, ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                        if (enumNames.Length > 0 && ImGui.Combo(label, ref selectedIndex, enumLabels, enumLabels.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
                         {
                             object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
                             if (applyValue(newValue))

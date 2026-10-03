@@ -29,7 +29,7 @@ pwsh Tools/Invoke-Mcp.ps1 -Session <unique-agent-session> -Method ping
 pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name <unique-agent-session>
 ```
 
-The session build and running editor live under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/`, so they do not lock `Build/Editor` or normal solution-build outputs. Commands continue to address the logical `<name>`. Never stop editor processes by name or shut down an editor you did not start. Use the session manager, which validates PID ownership and only stops the named session.
+The session build and running editor live under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/`, so they do not lock `Build/Editor` or normal solution-build outputs. Commands continue to address the logical `<name>`. Never stop editor processes by name or shut down an editor you did not start. Use the session manager, which validates PID ownership and only stops the named session. Editor listing and retention skip manifests without an `editorPath`; other tools sharing the registry, such as RenderBench, retain ownership of their sessions.
 
 Preferred VS Code tasks:
 
@@ -135,6 +135,39 @@ For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and lo
 
 4. Always export suspicious render targets/textures to PNG and visually inspect them. For this engine, useful first checks are directional shadow atlas/cascade depth, Velocity, AmbientOcclusionTexture, LightingAccumTexture, BloomBlurTexture mips, TsrOutputTexture, and the final post-process output.
 5. Keep capture output under the current run root's `renderdoc/` folder, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
+
+## Windowless RenderBench Profiling
+
+Use the dedicated RenderBench process for Vulkan component and presentationless
+fixtures. It does not require an editor window. Build with the
+`Build-RenderBench` task or `dotnet build XREngine.RenderBench/XREngine.RenderBench.csproj`;
+capture scripts consume an already built executable and do not build
+implicitly. The `RenderBench (Component Diagnostics)` debug profile builds and
+launches the targeted secondary recipe for debugger investigation. Its selected
+spans are diagnostic evidence. For a direct clean run or a two-variant comparison, use the
+VS Code tasks `Benchmark-RenderProfile-Quick`,
+`Benchmark-RenderProfile-Compare`, and `Benchmark-RenderProfile-Gate`, or call
+`Tools/Benchmarks/Invoke-RenderProfile.ps1` with `-Preset Quick|Compare|Gate`.
+Pass an existing `Build/_AgentValidation/<run>` with `-RunRoot` to keep related
+invocations under one task root. Compare and Gate require explicit baseline and
+candidate executable paths and run four independent processes per variant in
+repeated A/B/B/A order. Diagnostic runs use `-DiagnosticComparison`; observer
+overhead comparisons also use `-ObserverOverhead`. The commands never accept a
+baseline. See the [profiler guide](../diagnostics/profiler.md#repeated-command-line-profiles)
+for complete examples and evidence rules.
+
+For MCP-driven RenderBench work, start and stop only a named session:
+
+```powershell
+pwsh Tools/Manage-McpRenderBenchSession.ps1 Start -Name <name>
+pwsh Tools/Manage-McpRenderBenchSession.ps1 Run -Name <name>
+pwsh Tools/Manage-McpRenderBenchSession.ps1 Status -Name <name>
+pwsh Tools/Manage-McpRenderBenchSession.ps1 Stop -Name <name>
+```
+
+The profile controller suspends MCP for measured capture and query drain;
+inspect buffered status or results after it resumes. Store screenshots,
+traces, logs, and comparison reports beneath the bounded task run root.
 
 ## MCP Server
 

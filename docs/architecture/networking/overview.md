@@ -1,6 +1,16 @@
 # XRENGINE Networking Overview
 
-This document describes the engine networking code that lives in XRENGINE today. The engine owns realtime connections only. Directory, matchmaking, room creation/join orchestration, host capacity, admission token issuance, and world artifact delivery live in the adjacent control-plane app.
+This document describes the engine realtime networking boundary. Runtime.Core
+owns protocol messages, replication, admission, and reliability. The
+`XREngine.Runtime.Net.Sockets` module owns UDP/TCP/TLS socket operations and
+installs `NetworkTransportServices` during Bootstrap startup;
+`XREngine.Runtime.Net.Osc` owns OSC/VMC transport and scene components.
+Public namespaces may remain unchanged after project moves. Directory,
+matchmaking, room creation/join orchestration, host capacity, admission token
+issuance, and world artifact delivery live in the adjacent control-plane app.
+
+See [Runtime Project Organization](../runtime/project-organization.md) for the
+project dependency boundary.
 
 For local development and tests, `XREngine.ControlPlane` now provides an in-process control-plane DLL with basic host registration, instance creation/listing, join handoff generation, opaque session tokens, and local world package manifest verification. It is a reusable control-plane substrate, not an engine realtime transport.
 
@@ -77,7 +87,7 @@ XRENGINE then performs the realtime handshake and rejects clients whose local wo
 
 ## Transport
 
-- Native realtime traffic uses the existing UDP data plane (`RealtimeTransportKind.NativeUdp`).
+- Native realtime traffic uses the UDP data plane (`RealtimeTransportKind.NativeUdp`); Runtime.Core requests datagram transport through `INetworkTransportBackend`, and the socket module supplies its implementation.
 - The server binds one UDP socket for inbound client packets and outbound server replies.
 - Clients bind `UdpClientRecievePort` and use that socket for both outbound client-to-server packets and inbound server-to-client replies.
 - `BaseNetworkingManager` handles per-peer outbound queues, sequence counters, ACK/resend for reliable packets, token-bucket send limiting, RTT, bytes/sec, and packets/sec metrics.

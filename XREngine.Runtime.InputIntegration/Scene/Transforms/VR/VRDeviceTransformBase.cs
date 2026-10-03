@@ -1,6 +1,4 @@
-using OpenVR.NET.Devices;
 using System.Numerics;
-using Valve.VR;
 using XREngine.Input;
 using XREngine.Scene.Transforms;
 
@@ -11,7 +9,7 @@ namespace XREngine.Data.Components.Scene
     /// Retrieves the transform matrix from the VR api automatically.
     /// Supports an optional local matrix offset.
     /// </summary>
-    public abstract class VRDeviceTransformBase : TransformBase
+    public abstract class VRDeviceTransformBase : TransformBase, IVrTrackingPoseSource
     {
         protected VRDeviceTransformBase()
         {
@@ -36,14 +34,12 @@ namespace XREngine.Data.Components.Scene
         /// <summary>
         /// The VR device associated with this transform.
         /// </summary>
-        public abstract VrDevice? Device { get; }
+        public abstract RuntimeVrDeviceInfo? Device { get; }
 
         private bool _syntheticPoseEnabled;
         private bool _syntheticPoseValid = true;
         private long _syntheticSnapshotId;
         private long _syntheticSampleTime;
-        private Matrix4x4 _lastUsableLocalPose = Matrix4x4.Identity;
-        private bool _hasLastUsableLocalPose;
 
         /// <summary>Explicit debug pose mode; never enabled by a failed real-device lookup.</summary>
         public bool SyntheticPoseEnabled
@@ -92,24 +88,29 @@ namespace XREngine.Data.Components.Scene
                 return IsFinite(pose);
             }
 
+            if (_simulationPoseOwner is not null)
+            {
+                if (!_simulationPoseValid)
+                    return false;
+                pose = _simulationPose * (LocalMatrixOffset ?? Matrix4x4.Identity) * ParentWorldMatrix;
+                snapshotId = _simulationSnapshotId;
+                sampleTime = _simulationSampleTime;
+                return IsFinite(pose);
+            }
+
             Matrix4x4 localPose;
             if (RuntimeVrStateServices.IsOpenXRActive)
             {
                 if (!RuntimeVrStateServices.TryGetCurrentPoseSnapshot(out long beforeSnapshot, out long beforeTime) ||
-                    !TryGetTrackedLocalPose(RuntimeVrPoseTiming.Predicted, out localPose) ||
+                    !TryGetCurrentLocalPose(RuntimeVrPoseTiming.Predicted, out localPose) ||
                     !RuntimeVrStateServices.TryGetCurrentPoseSnapshot(out snapshotId, out sampleTime) ||
                     beforeSnapshot != snapshotId || beforeTime != sampleTime)
                     return false;
             }
             else
             {
-                VrDevice? device = Device;
-                if (device is null || !device.IsEnabled ||
-                    device.TrackingState != ETrackingResult.Running_OK)
+                if (!TryGetCurrentLocalPose(RuntimeVrPoseTiming.Predicted, out localPose))
                     return false;
-                localPose = device.DeviceToAbsoluteTrackingMatrix;
-                if (LocalMatrixOffset.HasValue)
-                    localPose *= LocalMatrixOffset.Value;
             }
 
             pose = localPose * ParentWorldMatrix;
@@ -149,9 +150,53 @@ namespace XREngine.Data.Components.Scene
             }
         }
 
-        /// <summary>
-        /// Occurs directly before rendering to recalculate the render matrix based on the VR state.
-        /// </summary>
+        private Matrix4x4 _lastValidLocalPose = Matrix4x4.Identity;
+        private Matrix4x4 _lastValidRenderLocalPose = Matrix4x4.Identity;
+        private bool _hasValidLocalPose;
+        private bool _hasValidRenderPose;
+
+        private object? _simulationPoseOwner;
+        private Matrix4x4 _simulationPose;
+        private bool _simulationPoseValid;
+        private long _simulationGeneration, _simulationSnapshotId, _simulationSampleTime;
+
+        /// <summary>Freezes the predicted source for a complete simulation tick; late rendering remains runtime-owned.</summary>
+        public bool PublishSimulationPose(object owner, in RuntimeVrTrackingSnapshot snapshot, Matrix4x4 pose, bool valid)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            if (_simulationPoseOwner is not null && !ReferenceEquals(_simulationPoseOwner, owner))
+                return false;
+            _simulationPoseOwner = owner;
+            _simulationPose = pose;
+            _simulationPoseValid = valid;
+            _simulationGeneration = snapshot.SessionGeneration;
+            _simulationSnapshotId = snapshot.SnapshotId;
+            _simulationSampleTime = snapshot.SampleTime;
+            MarkLocalModified();
+            return true;
+        }
+
+        public void ReleaseSimulationPose(object owner)
+        {
+            if (!ReferenceEquals(_simulationPoseOwner, owner))
+                return;
+            _simulationPoseOwner = null;
+            MarkLocalModified();
+        }
+
+        public virtual bool PoseCurrentlyUsable => TryGetCurrentLocalPose(RuntimeVrPoseTiming.Predicted, out _);
+        public virtual string? TrackingIdentity => this is VRTrackerTransform tracker
+            ? tracker.OpenXrTrackerPersistentPath ?? tracker.Device?.PersistentIdentity
+            : Device?.PersistentIdentity;
+        public virtual long TrackingSessionGeneration => _simulationPoseOwner is null ? GetPublishedSnapshot().SessionGeneration : _simulationGeneration;
+        public virtual long TrackingSnapshotId => _simulationPoseOwner is null ? GetPublishedSnapshot().SnapshotId : _simulationSnapshotId;
+
+        private static RuntimeVrTrackingSnapshot GetPublishedSnapshot()
+        {
+            RuntimeVrStateServices.TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose>.Empty, out RuntimeVrTrackingSnapshot snapshot, out _);
+            return snapshot;
+        }
+
         private void VRState_RecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
         {
             if (SyntheticPoseEnabled)
@@ -160,79 +205,71 @@ namespace XREngine.Data.Components.Scene
                     SetRenderMatrix((LocalMatrixOffset ?? Matrix4x4.Identity) * ParentRenderMatrix);
                 return;
             }
-
-            if (!TryGetTrackedLocalPose(timing, out Matrix4x4 mtx))
+            if (TryGetCurrentLocalPose(timing, out Matrix4x4 pose))
             {
-                if (RuntimeVrStateServices.IsOpenXRActive)
-                    return;
-
-                VrDevice? device = Device;
-                if (device is null || !device.IsEnabled || device.TrackingState != ETrackingResult.Running_OK)
-                    return;
-                mtx = device.RenderDeviceToAbsoluteTrackingMatrix;
-                if (LocalMatrixOffset.HasValue)
-                    mtx *= LocalMatrixOffset.Value;
-                _lastUsableLocalPose = mtx;
-                _hasLastUsableLocalPose = true;
+                _lastValidRenderLocalPose = pose;
+                _hasValidRenderPose = true;
             }
+            else if (IsManualPoseSource)
+                pose = LocalMatrixOffset ?? Matrix4x4.Identity;
+            else if (_hasValidRenderPose)
+                pose = _lastValidRenderLocalPose;
+            else if (_hasValidLocalPose)
+                pose = _lastValidLocalPose;
+            else
+                return;
 
-            Matrix4x4 renderMatrix = mtx * ParentRenderMatrix;
             bool isOpenXrHeadset = RuntimeVrStateServices.IsOpenXRActive && this is XREngine.Scene.Transforms.VRHeadsetTransform;
-            SetRenderMatrix(renderMatrix, recalcAllChildRenderMatrices: !isOpenXrHeadset);
+            SetRenderMatrix(pose * ParentRenderMatrix, recalcAllChildRenderMatrices: !isOpenXrHeadset);
         }
 
-        /// <summary>
-        /// Updates the local matrix based on the VR device's tracking matrix and the optional local matrix offset.
-        /// Uses the VR state's prediction time to guess what the matrix will be at render time.
-        /// </summary>
-        /// <returns></returns>
+        /// <summary>Retains the last valid runtime pose on loss. Retention never makes a sample usable for calibration.</summary>
         protected override Matrix4x4 CreateLocalMatrix()
         {
             if (SyntheticPoseEnabled)
                 return LocalMatrixOffset ?? Matrix4x4.Identity;
-
-            if (TryGetTrackedLocalPose(RuntimeVrPoseTiming.Predicted, out Matrix4x4 localPose))
-                return localPose;
-
-            if (RuntimeVrStateServices.IsOpenXRActive)
-                return _hasLastUsableLocalPose ? _lastUsableLocalPose : LocalMatrix;
-
-            VrDevice? device = Device;
-            if (device is null || !device.IsEnabled || device.TrackingState != ETrackingResult.Running_OK)
-                return _hasLastUsableLocalPose ? _lastUsableLocalPose : LocalMatrix;
-
-            Matrix4x4 mtx = device.DeviceToAbsoluteTrackingMatrix;
-            if (LocalMatrixOffset.HasValue)
-                mtx *= LocalMatrixOffset.Value;
-            _lastUsableLocalPose = mtx;
-            _hasLastUsableLocalPose = true;
-            return mtx;
+            if (TryGetCurrentLocalPose(RuntimeVrPoseTiming.Predicted, out Matrix4x4 pose))
+            {
+                _lastValidLocalPose = pose;
+                _hasValidLocalPose = true;
+                return pose;
+            }
+            return IsManualPoseSource ? LocalMatrixOffset ?? Matrix4x4.Identity : _lastValidLocalPose;
         }
 
-        private bool TryGetTrackedLocalPose(RuntimeVrPoseTiming timing, out Matrix4x4 pose)
+        private bool IsManualPoseSource => this is VRTrackerTransform tracker && tracker.Device is null && string.IsNullOrWhiteSpace(tracker.OpenXrTrackerUserPath);
+
+        /// <summary>Reads current runtime validity, without falling back to a retained matrix or another runtime.</summary>
+        public virtual bool TryGetCurrentLocalPose(RuntimeVrPoseTiming timing, out Matrix4x4 pose)
         {
-            pose = Matrix4x4.Identity;
-
-            bool ok;
-            if (this is XREngine.Scene.Transforms.VRHeadsetTransform)
-                ok = RuntimeVrStateServices.TryGetHeadLocalPose(timing, out pose);
-            else if (this is XREngine.Data.Components.Scene.VRControllerTransform ctrl)
-                ok = RuntimeVrStateServices.TryGetControllerLocalPose(ctrl.LeftHand, timing, out pose);
-            else if (this is XREngine.Data.Components.Scene.VRTrackerTransform tracker && RuntimeVrStateServices.IsOpenXRActive && !string.IsNullOrWhiteSpace(tracker.OpenXrTrackerUserPath))
-                ok = RuntimeVrStateServices.TryGetTrackerLocalPose(tracker.OpenXrTrackerUserPath, timing, out pose);
-            else
-                ok = false;
-
-            if (ok && LocalMatrixOffset.HasValue)
-                pose *= LocalMatrixOffset.Value;
-
-            if (ok)
+            if (SyntheticPoseEnabled)
             {
-                _lastUsableLocalPose = pose;
-                _hasLastUsableLocalPose = true;
+                pose = LocalMatrixOffset ?? Matrix4x4.Identity;
+                return SyntheticPoseValid && IsFinite(pose);
             }
+            if (timing == RuntimeVrPoseTiming.Predicted && _simulationPoseOwner is not null)
+            {
+                pose = _simulationPose * (LocalMatrixOffset ?? Matrix4x4.Identity);
+                return _simulationPoseValid;
+            }
+            pose = Matrix4x4.Identity;
+            if (!RuntimeVrStateServices.IsInVR)
+                return false;
+            bool valid;
+            if (this is XREngine.Scene.Transforms.VRHeadsetTransform)
+                valid = RuntimeVrStateServices.TryGetHeadLocalPose(timing, out pose);
+            else if (this is VRControllerTransform controller)
+                valid = RuntimeVrStateServices.TryGetControllerLocalPose(controller.LeftHand, timing, out pose);
+            else if (this is VRTrackerTransform tracker && RuntimeVrStateServices.IsOpenXRActive)
+                valid = !string.IsNullOrWhiteSpace(tracker.OpenXrTrackerUserPath) && RuntimeVrStateServices.TryGetTrackerLocalPose(tracker.OpenXrTrackerUserPath, timing, out pose);
+            else if (Device is { IsConnected: true } device && RuntimeVrStateServices.ActiveRuntime == RuntimeVrRuntimeKind.OpenVR)
+                valid = RuntimeVrStateServices.TryGetDeviceLocalPose(device.DeviceIndex, timing, out pose);
+            else
+                valid = false;
 
-            return ok;
+            if (valid && LocalMatrixOffset.HasValue)
+                pose *= LocalMatrixOffset.Value;
+            return valid;
         }
 
         /// <summary>

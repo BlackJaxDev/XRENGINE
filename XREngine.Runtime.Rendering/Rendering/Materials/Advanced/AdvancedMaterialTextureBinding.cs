@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// One backend-neutral material texture slot. Texture and sampler identity remain
 /// independently generation checked until the selected backend encoding is built.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedMaterialTextureBinding")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedMaterialTextureBinding(
     AdvancedTextureReference Texture,

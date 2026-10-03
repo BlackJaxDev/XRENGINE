@@ -380,7 +380,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
             "XREngine.Runtime.Bootstrap",
             "RenderingHost",
             "Engine.Windows.cs"));
-        string jsonSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "VrManifestJsonSerialization.cs"));
+        string jsonSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "XREngineVrRuntimeJsonContext.cs"));
 
         File.Exists(Path.Combine(engineRoot, "Engine.VRState.cs")).ShouldBeFalse();
         lifecycleSource.ShouldContain("internal static class EngineVrLifecycle");

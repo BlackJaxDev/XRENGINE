@@ -46,6 +46,7 @@ namespace XREngine
         }
 
         [Category("Build Target")]
+        [Description("Windows64 and AnyCPU use the desktop launcher pipeline. BrowserWebGPU publishes a WebAssembly static bundle from the saved startup world and packages portable content beside it.")]
         public EBuildPlatform Platform
         {
             get => _platform;

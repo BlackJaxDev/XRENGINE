@@ -1,5 +1,5 @@
 using Newtonsoft.Json;
-using OpenVR.NET.Manifest;
+using XREngine.Input;
 using System.Diagnostics;
 using System.Management;
 using System.Reflection;
@@ -8,6 +8,7 @@ using XREngine.Rendering.Models.Caching;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Bootstrap.Builders;
 
 namespace XREngine.VRClient
 {
@@ -41,6 +42,7 @@ namespace XREngine.VRClient
 
         static void Main(string[] args)
         {
+            RuntimeApplicationBootstrap.PrepareDesktopServices();
             using IDisposable modelAssetPipelineRegistration =
                 ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
             using IDisposable applicationServices =
@@ -48,6 +50,15 @@ namespace XREngine.VRClient
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
             if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ManagedClientConfigFile)))
                 throw new NotSupportedException("Managed realtime launch must be handled by the paired main game process; the VR input/render proxy cannot load or join a managed world.");
+            if (args.Length != 0)
+            {
+                if (args.Length != 1 || !string.Equals(args[0], "--unit-testing", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Usage: XREngine.VRClient [--unit-testing]");
+
+                RunUnitTestingWorld();
+                return;
+            }
+
             IVRGameStartupSettings settings = GenerateSettings();
 
             // Check if this is already running
@@ -68,12 +79,12 @@ namespace XREngine.VRClient
             }
 
             // Initialize VR
-            if (settings.ActionManifest is not IActionManifest actionManifest)
+            if (settings.ActionManifest is not { } actionManifest)
             {
                 Debug.LogWarning("VR settings not initialized correctly; missing or invalid ActionManifest.");
                 Console.In.ReadLine();
             }
-            else if (settings.VRManifest is not VrManifest vrManifest)
+            else if (settings.VRManifest is not { } vrManifest)
             {
                 Debug.LogWarning("VR settings not initialized correctly; missing or invalid VRManifest.");
                 Console.In.ReadLine();
@@ -84,6 +95,46 @@ namespace XREngine.VRClient
             // Run the game
             // We don't need to load a game state because this app only sends inputs to the game and receives renders
             Engine.Run((GameStartupSettings)settings, new GameState());
+        }
+
+        private static void RunUnitTestingWorld()
+        {
+            string settingsPath = UnitTestingWorldSettingsStore.ResolveSettingsFilePath();
+            if (!File.Exists(settingsPath))
+                throw new FileNotFoundException(
+                    "VRClient unit-testing mode requires an existing unit-testing world settings file. Set XRE_UNIT_TEST_WORLD_SETTINGS_PATH to select one.",
+                    settingsPath);
+
+            UnitTestingWorldSettings unitSettings = UnitTestingWorldSettingsStore.Load(false);
+            UnitTestingWorldSettingsStore.ApplyWorldKindOverride(unitSettings);
+
+            GameStartupSettings settings = new()
+            {
+                StartupWindows =
+                [
+                    new GameWindowStartupSettings
+                    {
+                        WindowTitle = "XREngine VRClient Unit Testing (Desktop)",
+                        WindowState = EWindowState.Windowed,
+                        Width = 1280,
+                        Height = 720,
+                        TargetWorld = BootstrapWorldFactory.CreateSelectedWorld(setUI: false, isServer: false),
+                    }
+                ],
+                DefaultUserSettings = new UserSettings { VSync = EVSyncMode.Off },
+                RunVRInPlace = false,
+            };
+            UnitTestingWorldSettingsStore.ApplyUserSettingsSessionValues(unitSettings);
+            UnitTestingWorldSettingsStore.ApplyGameSettingsSessionValues(unitSettings);
+            UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitSettings);
+            settings.DefaultUserSettings.PreferredRenderBackend = unitSettings.Rendering.RenderBackend;
+            settings.DefaultUserSettings.RenderBackendFallbackPolicyOverride = new(unitSettings.Rendering.BackendFallbackPolicy, true);
+            settings.RenderBackendFallbackPolicyOverride = new(unitSettings.Rendering.BackendFallbackPolicy, true);
+            settings.TargetUpdatesPerSecond = 90.0f;
+            settings.TargetFramesPerSecond = 90.0f;
+            settings.FixedFramesPerSecond = 45.0f;
+
+            Engine.Run(settings, new GameState());
         }
 
         private static IVRGameStartupSettings GenerateSettings()
@@ -146,7 +197,7 @@ namespace XREngine.VRClient
                 [
                     (Environment.SpecialFolder.ProgramFiles, "MyGameFolder")
                 ],
-                VRManifest = new VrManifest()
+                VRManifest = new RuntimeOpenVrApplicationManifest()
                 {
                     AppKey = "XRE.VRClient.Test",
                     IsDashboardOverlay = false,
@@ -174,7 +225,7 @@ namespace XREngine.VRClient
                 },
                 TargetUpdatesPerSecond = update,
                 TargetFramesPerSecond = render,
-                ActionManifest = new ActionManifest<TActionCategory, TGameAction>()
+                ActionManifest = new RuntimeOpenVrActionManifest<TActionCategory, TGameAction>()
                 {
                     Actions = GetActions<TActionCategory, TGameAction>(),
                 },
@@ -188,7 +239,7 @@ namespace XREngine.VRClient
             return settings;
         }
 
-        private static List<OpenVR.NET.Manifest.Action<TActionCategory, TGameAction>> GetActions<TActionCategory, TGameAction>()
+        private static List<RuntimeOpenVrAction<TActionCategory, TGameAction>> GetActions<TActionCategory, TGameAction>()
             where TActionCategory : struct, Enum
             where TGameAction : struct, Enum
         {

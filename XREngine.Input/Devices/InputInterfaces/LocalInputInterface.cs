@@ -1,8 +1,5 @@
-﻿using OpenVR.NET.Input;
-using Silk.NET.Input;
 using XREngine.Data.Core;
 using XREngine.Input;
-using XREngine.Input.Devices.Glfw;
 using XREngine.Input.Devices.Types.OpenVR;
 using YamlDotNet.Serialization;
 
@@ -23,11 +20,8 @@ namespace XREngine.Input.Devices
         [YamlIgnore]
         public BaseMouse? Mouse { get; private set; }
         [YamlIgnore]
-        public Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? OpenVRActions { get; private set; }
-        public OpenVR.NET.Input.Action? TryGetOpenVRAction(string category, string name)
-            => OpenVRActions is not null &&
-            OpenVRActions.TryGetValue(category, out var actions) &&
-            actions.TryGetValue(name, out var action) ? action : null;
+        /// <summary>Whether the selected VR runtime has an active action set.</summary>
+        public bool HasVrActions => RuntimeVrInputServices.HasActions;
 
         private int _localPlayerIndex;
         public int LocalPlayerIndex
@@ -60,7 +54,7 @@ namespace XREngine.Input.Devices
             if (Gamepad is null &&
                 Keyboard is null &&
                 Mouse is null &&
-                OpenVRActions is null &&
+                !HasVrActions &&
                 RuntimeVrInputServices.ActiveRuntime == RuntimeVrRuntimeKind.None)
             {
                 return;
@@ -82,7 +76,7 @@ namespace XREngine.Input.Devices
             if (Gamepad is null &&
                 Keyboard is null &&
                 Mouse is null &&
-                OpenVRActions is null &&
+                !HasVrActions &&
                 RuntimeVrInputServices.ActiveRuntime == RuntimeVrRuntimeKind.None)
             {
                 return;
@@ -202,69 +196,18 @@ namespace XREngine.Input.Devices
         public override float GetAxisValue(EGamePadAxis axis)
             => Gamepad?.GetAxisValue(axis) ?? 0.0f;
 
-        public void UpdateDevices(IInputContext? input, Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? vrActions)
-        {
-            TryUnregisterInput();
-            GetDevices(input, vrActions);
-            TryRegisterInput();
-        }
-
         public void UpdateDevices(
             BaseKeyboard? keyboard,
             BaseMouse? mouse,
-            BaseGamePad? gamepad,
-            Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? vrActions)
+            BaseGamePad? gamepad)
         {
             TryUnregisterInput();
             AttachInterfaceToDevices(false);
             Keyboard = keyboard;
             Mouse = mouse;
             Gamepad = gamepad;
-            OpenVRActions = vrActions;
             AttachInterfaceToDevices(true);
             TryRegisterInput();
-        }
-
-        private void GetDevices(IInputContext? context, Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? vrActions)
-        {
-            AttachInterfaceToDevices(false);
-            Gamepad = null;
-            Keyboard = null;
-            Mouse = null;
-            OpenVRActions = vrActions;
-
-            if (context is null)
-                return;
-
-            context.ConnectionChanged += ConnectionChanged;
-
-            //var gamepads = InputDevice.CurrentDevices[EInputDeviceType.Gamepad];
-            //var keyboards = InputDevice.CurrentDevices[EInputDeviceType.Keyboard];
-            //var mice = InputDevice.CurrentDevices[EInputDeviceType.Mouse];
-
-            var gamepads = context.Gamepads;
-            var keyboards = context.Keyboards;
-            var mice = context.Mice;
-
-            if (_localPlayerIndex >= 0 && _localPlayerIndex < gamepads.Count)
-                Gamepad = new GlfwGamepad(gamepads[_localPlayerIndex]);
-
-            //Keyboard and mouse are reserved for the first player only
-            //TODO: support multiple mice and keyboard? Could get difficult with laptops and trackpads and whatnot. Probably no-go.
-            //TODO: support input from ALL keyboards and mice for first player. Not just the first found keyboard and mouse.
-
-            if (keyboards.Count > 0 && _localPlayerIndex == 0)
-                Keyboard = new GlfwKeyboard(keyboards[0]);
-
-            if (mice.Count > 0 && _localPlayerIndex == 0)
-                Mouse = new GlfwMouse(mice[0]);
-
-            AttachInterfaceToDevices(true);
-        }
-
-        private void ConnectionChanged(IInputDevice device, bool connected)
-        {
-
         }
 
         private void AttachInterfaceToDevices(bool attach)

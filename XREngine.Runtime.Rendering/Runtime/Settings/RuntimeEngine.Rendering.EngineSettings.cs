@@ -1,4 +1,3 @@
-using MagicPhysX;
 using MemoryPack;
 using System;
 using System.ComponentModel;
@@ -669,11 +668,11 @@ public static partial class RuntimeEngine
                 private bool _openXrPrepareFrameAfterDesktopRender = true;
                 private float _openXrDeadlineSafetyMarginMs = 1.0f;
                 private float _openXrPoseTimeOffsetMs = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
-                private OpenXRAPI.OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+                private OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXrCollectVisiblePosePolicy.Predicted;
                 private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
-                private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
-                private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-                private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+                private OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXrTrackingLossPolicy.FreezeLastValid;
+                private OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXrActionSyncPolicy.PredictedOnly;
+                private OpenXrRenderPacingMode _openXrRenderPacingMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -2366,7 +2365,7 @@ public static partial class RuntimeEngine
                     get => _openXrPoseTimeOffsetMs;
                     set => SetField(
                         ref _openXrPoseTimeOffsetMs,
-                        Math.Clamp(value, OpenXRAPI.OpenXrMinPoseTimeOffsetMs, OpenXRAPI.OpenXrMaxPoseTimeOffsetMs));
+                        Math.Clamp(value, OpenXrRuntimeSettings.MinPoseTimeOffsetMs, OpenXrRuntimeSettings.MaxPoseTimeOffsetMs));
                 }
 
                 /// <summary>
@@ -2374,7 +2373,7 @@ public static partial class RuntimeEngine
                 /// </summary>
                 [Category("VR")]
                 [Description("Controls which OpenXR pose/frustum policy CollectVisible uses.")]
-                public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy
+                public OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy
                 {
                     get => _openXrCollectVisiblePosePolicy;
                     set => SetField(ref _openXrCollectVisiblePosePolicy, value);
@@ -2396,7 +2395,7 @@ public static partial class RuntimeEngine
                 /// </summary>
                 [Category("VR")]
                 [Description("Controls how OpenXR handles frames whose xrLocateViews result lacks valid position/orientation flags.")]
-                public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy
+                public OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy
                 {
                     get => _openXrTrackingLossPolicy;
                     set => SetField(ref _openXrTrackingLossPolicy, value);
@@ -2407,7 +2406,7 @@ public static partial class RuntimeEngine
                 /// </summary>
                 [Category("VR")]
                 [Description("Controls whether xrSyncActions runs only once for predicted poses or again during late update.")]
-                public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy
+                public OpenXrActionSyncPolicy OpenXrActionSyncPolicy
                 {
                     get => _openXrActionSyncPolicy;
                     set => SetField(ref _openXrActionSyncPolicy, value);
@@ -2418,7 +2417,7 @@ public static partial class RuntimeEngine
                 /// </summary>
                 [Category("VR")]
                 [Description("Controls where OpenXR's next-frame prep runs: inline at start of render callback, post-render, on the default dedicated pacing thread, or on the CollectVisible thread.")]
-                public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode
+                public OpenXrRenderPacingMode OpenXrRenderPacingMode
                 {
                     get => _openXrRenderPacingMode;
                     set => SetField(ref _openXrRenderPacingMode, value);

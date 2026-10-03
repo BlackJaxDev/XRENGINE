@@ -169,7 +169,13 @@ public sealed class DirectionalShadowAtlasFallbackTests
         string lightsSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs")
             .Replace("\r\n", "\n");
 
-        commandCollectionSource.ShouldContain("_renderingShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();");
+        commandCollectionSource.ShouldContain("_renderingShadowCasterCommandSetSignature = package.ShadowCasterCommandSetSignature;");
+        string packageSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/BackendReadyFramePackage.cs")
+            .Replace("\r\n", "\n");
+        packageSource.ShouldContain("ShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();");
+        packageSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueDeferred);");
+        packageSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueForward);");
+        packageSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.MaskedForward);");
         commandCollectionSource.ShouldContain("internal ulong ShadowCasterCommandSetSignature");
         commandCollectionSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueDeferred);");
         commandCollectionSource.ShouldContain("AddShadowCasterPassSignature(ref hash, EDefaultRenderPass.OpaqueForward);");
@@ -298,7 +304,9 @@ public sealed class DirectionalShadowAtlasFallbackTests
         source.ShouldContain("CopyPublishedRenderedCascadeUniformData");
         source.ShouldContain("splits[i] = atlasSlot.SplitFarDistance;");
         source.ShouldContain("matrices[i] = atlasSlot.WorldToLightSpaceMatrix;");
-        source.ShouldContain("staleAges[i] = ResolveRenderedCascadeStaleAge(frameId, atlasSlot.LastRenderedFrame);");
+        source.ShouldContain("state.AtlasCascadeStaleFrameCounts[i],");
+        source.ShouldContain("atlasSlot.Fallback);");
+        source.ShouldContain("if (fallback != ShadowFallbackMode.StaleTile)");
     }
 
     [Test]
@@ -324,17 +332,15 @@ public sealed class DirectionalShadowAtlasFallbackTests
         string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs")
             .Replace("\r\n", "\n");
 
-        source.ShouldContain("int lastGroupRequestIndex = FindLastDirectionalCascadeGroupRequestIndex(directionalGroup, i);");
-        source.ShouldContain("lastGroupRequestIndex,");
-        source.ShouldContain("i = Math.Max(i, lastGroupRequestIndex);");
-        source.ShouldContain("private int FindLastDirectionalCascadeGroupRequestIndex(");
+        source.ShouldContain("EnqueueDirectionalCascadePlanMemberCompletions(plan, entry, light);");
+        source.ShouldContain("TryValidatePlanMemberRange(plan, entry, \"directional-cascade-group\")");
     }
 
     [Test]
     public void VulkanDynamicFramebufferTransitions_UseOrderedAttachmentTargets()
     {
         string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs");
 
         framebufferSource.ShouldContain("private AttachmentTargetInfo[]? _attachmentTargets;");
         framebufferSource.ShouldContain("internal bool TryGetAttachmentTarget(");
@@ -348,7 +354,8 @@ public sealed class DirectionalShadowAtlasFallbackTests
     public void VulkanLayeredFramebuffer_UsesAttachmentLayerCountForTextureArrays()
     {
         string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.RenderScopes.cs")
+            + ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Recording/VulkanRenderer.ClearAndPublishRecording.cs");
 
         framebufferSource.ShouldContain("public uint FramebufferLayers { get; private set; } = 1u;");
         framebufferSource.ShouldContain("uint framebufferLayers = ResolveFramebufferLayers(attachments);");
@@ -356,9 +363,9 @@ public sealed class DirectionalShadowAtlasFallbackTests
         framebufferSource.ShouldContain("Layers = framebufferLayers");
         framebufferSource.ShouldContain("layerIndex < 0");
         framebufferSource.ShouldContain("Math.Max(source.DescriptorArrayLayers, 1u)");
-        commandBufferSource.ShouldContain("ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask)");
+        commandBufferSource.ShouldContain("VulkanDynamicRenderingUtilities.ResolveLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask)");
         commandBufferSource.ShouldContain("LayerCount = plan.LayerCount");
-        commandBufferSource.ShouldContain("ResolveClearRectLayerCount(op.Target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask)");
+        commandBufferSource.ShouldContain("ResolveClearRectLayerCount(target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask)");
     }
 
     [Test]
@@ -366,17 +373,19 @@ public sealed class DirectionalShadowAtlasFallbackTests
     {
         string meshRendererSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string drawingSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
-        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
+        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.RenderStateApi.cs")
+            + ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.MeshMaterialOperations.cs");
         string resolverSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
         string shadowStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/LayeredShadowUniformState.cs");
 
         meshRendererSource.ShouldContain("LayeredShadowUniformState ShadowUniformState");
         meshRendererSource.ShouldContain("LayeredShadowUniformState.CaptureFromCurrentRenderingState()");
-        meshRendererSource.ShouldContain("CaptureProgramBindingSnapshot(effectiveMaterial, shadowUniformState)");
-        drawingSource.ShouldContain("Renderer.SetMaterialUniforms(material, programData, draw.ShadowUniformState);");
-        drawingSource.ShouldContain("MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);");
-        renderStateSource.ShouldContain("SetMaterialUniforms(material, program, LayeredShadowUniformState.CaptureFromCurrentRenderingState())");
-        renderStateSource.ShouldContain("if (shadowState.IsShadowPass)");
+        meshRendererSource.ShouldContain("CaptureProgramBindingSnapshot(");
+        meshRendererSource.ShouldContain("effectiveMaterial,\n                            shadowUniformState,\n                            shadowCasterRelevance)");
+        drawingSource.ShouldContain("CommandOperations.SetMaterialUniforms(material, programData, _program, draw.ShadowUniformState);");
+        drawingSource.ShouldContain("draw.ShadowCasterRelevance);");
+        renderStateSource.ShouldContain("LayeredShadowUniformState.CaptureFromCurrentRenderingState()");
+        renderStateSource.ShouldContain("if (!shadowState.IsShadowPass)");
         shadowStateSource.ShouldContain("public struct LayeredShadowUniformState");
         resolverSource.ShouldContain("ApplyShadowUniforms(XRRenderProgram program, XRMaterial material, in LayeredShadowUniformState shadowState)");
     }
@@ -388,11 +397,13 @@ public sealed class DirectionalShadowAtlasFallbackTests
             .Replace("\r\n", "\n");
 
         atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroupSequentially");
-        atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow)");
+        atlasManagerSource.ShouldContain("usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(");
+        atlasManagerSource.ShouldContain("prepareSequentialCommands: canRenderGrouped,");
         atlasManagerSource.ShouldNotContain("CanRenderDirectionalCascadeGroup(request, group)");
         atlasManagerSource.ShouldContain("light.CanRenderGroupedCascadeShadowAtlasTiles(group)");
-        atlasManagerSource.ShouldContain("usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow);");
-        atlasManagerSource.ShouldContain("light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow)");
+        atlasManagerSource.ShouldContain("light.RenderCascadeShadowAtlasTile(");
+        atlasManagerSource.ShouldContain("request.FaceOrCascadeIndex,");
+        atlasManagerSource.ShouldContain("allocation.InnerPixelRect,");
         atlasManagerSource.ShouldContain("_directionalSequentialFallbackFrame = true;");
         atlasManagerSource.ShouldContain("FallbackReason: usedSequentialFallback ? \"GroupedAtlasRenderFailed\" : light.CascadeShadowRenderFallbackReason");
         atlasManagerSource.ShouldContain("sequential fallback also failed, leaving atlas tiles stale.");

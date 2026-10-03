@@ -12,7 +12,7 @@ public sealed class RendererBackendModuleSourceContractTests
         string windowSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
         string hostSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+            "XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
 
         windowSource.ShouldContain("RendererBackends.CreateRequired(");
         windowSource.ShouldContain("RendererBackendCapabilities.DesktopPresentation");
@@ -27,7 +27,7 @@ public sealed class RendererBackendModuleSourceContractTests
         string renderingPolicy = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.SecondaryContext.cs");
         string hostServices = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+            "XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
 
         renderingPolicy.ShouldNotContain("is VulkanRenderer");
         renderingPolicy.ShouldContain("BackendId == RendererBackendId.Vulkan");
@@ -270,12 +270,18 @@ public sealed class RendererBackendModuleSourceContractTests
         offenders.ShouldBeEmpty(
             "unmanaged entry points must live in a stable bridge; a thunk targeting collectible code roots its load context");
 
+        // The portable bridge keeps the registrations; the non-collectible desktop platform
+        // assembly supplies the native entry points that dispatch into it.
         string bridge = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Interop/RendererImGuiViewportCallbackBridge.cs");
+        string entryPoints = ReadWorkspaceFile(
+            "XREngine.Runtime.Platform.Desktop/Rendering/DesktopImGuiViewportEntryPoints.cs");
         string adapter = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/UI/OpenGLRenderer.ImGuiViewportCallbackAdapter.cs");
-        bridge.ShouldContain("[UnmanagedCallersOnly(");
         bridge.ShouldContain("Register(");
+        bridge.ShouldNotContain("[UnmanagedCallersOnly(");
+        entryPoints.ShouldContain("[UnmanagedCallersOnly(");
+        entryPoints.ShouldContain("RendererImGuiViewportCallbackBridge.TryGetCallbacks(");
         adapter.ShouldContain("IRendererImGuiViewportCallbacks");
     }
 

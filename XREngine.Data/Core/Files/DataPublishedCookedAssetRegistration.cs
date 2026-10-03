@@ -1,6 +1,4 @@
-using MemoryPack;
 using XREngine.Data;
-using XREngine.Data.Core;
 
 namespace XREngine.Core.Files;
 
@@ -8,17 +6,5 @@ namespace XREngine.Core.Files;
 public static class DataPublishedCookedAssetRegistration
 {
     public static IDisposable Install()
-        => RegistrationLeaseGroup.Create(static leases =>
-        {
-            leases.Add(RegisterMemoryPackAsset<UserSettings>());
-            leases.Add(RegisterMemoryPackAsset<BuildSettings>());
-        });
-
-    private static IDisposable RegisterMemoryPackAsset<T>() where T : XRAsset
-        => PublishedCookedAssetRegistry.Register(
-            typeof(T),
-            static asset => MemoryPackSerializer.Serialize((T)asset),
-            static (payload, _) => MemoryPackSerializer.Deserialize<T>(payload),
-            "XREngine.Data");
-
+        => global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Data.Install();
 }

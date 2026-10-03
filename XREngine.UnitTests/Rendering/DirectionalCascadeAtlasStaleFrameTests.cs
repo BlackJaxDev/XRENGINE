@@ -144,7 +144,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             .Replace("\r\n", "\n");
         string forwardSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")
             .Replace("\r\n", "\n");
-        string dirtyReasonSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs")
+        string dirtyReasonSource = ReadRepoFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Reuse/Invalidation/VulkanRenderer.CommandBufferDirtyReasons.cs")
             .Replace("\r\n", "\n");
         string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("private void InvalidateCommandChainScheduleForResourceChange(string reason)")
             .Replace("\r\n", "\n");
@@ -253,7 +253,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         directionalLight.ShouldContain("ERendererProfilerCounter.DirectionalCascadeMixedGenerationPrevented");
         ReadRepoFile("XREngine.Data/Rendering/Enums/ERendererProfilerCounter.cs")
             .ShouldContain("DirectionalCascadePhysicalReprojected");
-        ReadRepoFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs")
+        ReadRepoFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs")
             .ShouldContain("directional_cascade_forced_fresh_render");
     }
 

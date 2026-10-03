@@ -404,6 +404,9 @@ XRENGINE/Build/Engine/
 XRENGINE/Rendering/GI/build/
 XREngine.Editor/imgui.ini
 generated/
+!Build/CommonAssets/Shaders/Advanced/Generated/
+!Build/CommonAssets/Shaders/Advanced/Generated/AdvancedRecords.glslinc
+!Build/CommonAssets/Shaders/Advanced/Generated/GPUSceneRecords.glslinc
 
 docs/docfx/_site/
 docs/docfx/api/**

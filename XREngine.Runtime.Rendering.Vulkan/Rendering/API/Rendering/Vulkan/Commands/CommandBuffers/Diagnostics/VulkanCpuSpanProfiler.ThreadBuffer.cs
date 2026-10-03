@@ -1,18 +1,18 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
-
 namespace XREngine.Rendering.Vulkan;
 
-internal static partial class VulkanCpuSpanProfiler
+public static partial class VulkanCpuSpanProfiler
 {
-    internal sealed class ThreadBuffer(int capacity, int threadId)
+    internal sealed class ThreadBuffer(int capacity, int threadId, int workerId)
     {
         private readonly VulkanCpuSpanRecord[] _records = new VulkanCpuSpanRecord[capacity];
         private int _nextIndex;
         private int _count;
         public int ThreadId { get; } = threadId;
-        public long NextSpanId;
+        public int WorkerId { get; } = workerId;
+        public long FrameId = -1;
+        public long InvocationOrdinal;
         public long ActiveSpanId;
+        public long OverwrittenCount => Math.Max(0, _nextIndex - _records.Length);
 
         public void Write(in VulkanCpuSpanRecord record)
         {

@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
+using XREngine.Data.Runtime.AotParity;
 
 namespace XREngine.Animation
 {
@@ -774,6 +775,15 @@ namespace XREngine.Animation
                 return;
 
             Type targetType = parentObj.GetType();
+            if (TryAssignRegisteredValueAppliers(targetType))
+                return;
+
+            AotParityDiagnostics.Report(
+                targetType,
+                EAotParityCategory.ReflectiveMemberBinding,
+                $"{nameof(AnimationMember)}.{nameof(ConfigureTypedValueAppliers)}",
+                $"Register a typed setter for '{targetType.FullName}.{_memberName}' with {nameof(AnimationMemberBindingRegistry)}, or generate one, so the animated member binds without reflection.");
+
             switch (MemberType)
             {
                 case EAnimationMemberType.Field:
@@ -788,6 +798,50 @@ namespace XREngine.Animation
                     AssignMethodValueAppliers(targetType);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Uses a generated or hand-registered typed setter when one exists for the member. Registered
+        /// bindings are the published runtime's only binding path, so a hit here means no reflection.
+        /// </summary>
+        private bool TryAssignRegisteredValueAppliers(Type targetType)
+        {
+            if (string.IsNullOrEmpty(_memberName))
+                return false;
+
+            bool any = false;
+            if (AnimationMemberBindingRegistry.TryGetSetter<bool>(targetType, _memberName, out Action<object?, bool>? boolSetter))
+            {
+                _boolValueApplier = boolSetter;
+                any = true;
+            }
+            if (AnimationMemberBindingRegistry.TryGetSetter<float>(targetType, _memberName, out Action<object?, float>? floatSetter))
+            {
+                _floatValueApplier = floatSetter;
+                any = true;
+            }
+            if (AnimationMemberBindingRegistry.TryGetSetter<Vector2>(targetType, _memberName, out Action<object?, Vector2>? vector2Setter))
+            {
+                _vector2ValueApplier = vector2Setter;
+                any = true;
+            }
+            if (AnimationMemberBindingRegistry.TryGetSetter<Vector3>(targetType, _memberName, out Action<object?, Vector3>? vector3Setter))
+            {
+                _vector3ValueApplier = vector3Setter;
+                any = true;
+            }
+            if (AnimationMemberBindingRegistry.TryGetSetter<Vector4>(targetType, _memberName, out Action<object?, Vector4>? vector4Setter))
+            {
+                _vector4ValueApplier = vector4Setter;
+                any = true;
+            }
+            if (AnimationMemberBindingRegistry.TryGetSetter<Quaternion>(targetType, _memberName, out Action<object?, Quaternion>? quaternionSetter))
+            {
+                _quaternionValueApplier = quaternionSetter;
+                any = true;
+            }
+
+            return any;
         }
 
         private FieldInfo? ResolveFieldInfo(Type targetType)

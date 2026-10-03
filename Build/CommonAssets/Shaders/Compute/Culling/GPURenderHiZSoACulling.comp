@@ -2,36 +2,7 @@
 // HiZ + Phase C SoA culling: metadata + bounds are the only scene inputs.
 layout(local_size_x = 256) in;
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
-
-struct BoundsGpu
-{
-    vec4 BoundingSphere;
-    vec4 AabbMin;
-    vec4 AabbMax;
-    uint BoundsVersion;
-    uint Padding0;
-    uint Padding1;
-    uint Padding2;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 1) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };

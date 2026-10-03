@@ -1,0 +1,273 @@
+using System.Runtime.InteropServices;
+
+namespace XREngine.Data;
+
+/// <summary>Native CUDA/nvCOMP implementation of the portable hardware codec contract.</summary>
+public sealed class NvCompHardwareCodec : IHardwareLz4Codec
+{
+        // ────────────────────── Native library detection ──────────────────────
+
+        private const string NvCompLib = "nvcomp";
+
+        private static readonly Lazy<bool> _isAvailable = new(ProbeNativeLibrary, LazyThreadSafetyMode.ExecutionAndPublication);
+
+        /// <summary>
+        /// Returns <c>true</c> if both <c>nvcomp</c> and the CUDA runtime are loadable.
+        /// </summary>
+        public bool IsAvailable => _isAvailable.Value;
+
+        private static bool ProbeNativeLibrary()
+        {
+            if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+                return false;
+
+            try
+            {
+                if (!NativeLibrary.TryLoad(NvCompLib, out nint nvcompHandle))
+                    return false;
+
+                if (!CudaInterop.TryLoad(out nint cudartHandle))
+                {
+                    NativeLibrary.Free(nvcompHandle);
+                    return false;
+                }
+
+                // Verify CUDA is functional by attempting to query device count.
+                if (!CudaInterop.TryGetDeviceCount(out _))
+                {
+                    NativeLibrary.Free(nvcompHandle);
+                    NativeLibrary.Free(cudartHandle);
+                    return false;
+                }
+
+                // Keep both libraries loaded for the process lifetime.
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // ──────────────────── nvCOMP Batched LZ4 P/Invoke ────────────────────
+
+        // nvcompBatchedLZ4Opts_t is a struct { nvcompType_t data_type; }
+        // where data_type = NVCOMP_TYPE_CHAR (0) for raw byte data.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct nvcompBatchedLZ4Opts_t
+        {
+            public int data_type; // NVCOMP_TYPE_CHAR = 0
+        }
+
+        // nvcompStatus_t = int enum, 0 = nvcompSuccess.
+        private const int nvcompSuccess = 0;
+
+        [DllImport(NvCompLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern unsafe int nvcompBatchedLZ4CompressGetTempSize(
+            nuint batchSize,
+            nuint maxUncompressedChunkBytes,
+            nvcompBatchedLZ4Opts_t formatOpts,
+            nuint* tempBytes);
+
+        [DllImport(NvCompLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern unsafe int nvcompBatchedLZ4CompressGetMaxOutputChunkSize(
+            nuint maxUncompressedChunkBytes,
+            nvcompBatchedLZ4Opts_t formatOpts,
+            nuint* maxCompressedChunkBytes);
+
+        [DllImport(NvCompLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern unsafe int nvcompBatchedLZ4CompressAsync(
+            nint* deviceUncompressedPtrs,
+            nuint* deviceUncompressedBytes,
+            nuint maxUncompressedChunkBytes,
+            nuint batchSize,
+            nint deviceTempPtr,
+            nuint tempBytes,
+            nint* deviceCompressedPtrs,
+            nuint* deviceCompressedBytes,
+            nvcompBatchedLZ4Opts_t formatOpts,
+            nint stream);
+
+        [DllImport(NvCompLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern unsafe int nvcompBatchedLZ4DecompressGetTempSize(
+            nuint batchSize,
+            nuint maxUncompressedChunkBytes,
+            nuint* tempBytes);
+
+        [DllImport(NvCompLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern unsafe int nvcompBatchedLZ4DecompressAsync(
+            nint* deviceCompressedPtrs,
+            nuint* deviceCompressedBytes,
+            nuint* deviceUncompressedBytes,
+            nuint* deviceActualUncompressedBytes,
+            nuint batchSize,
+            nint deviceTempPtr,
+            nuint tempBytes,
+            nint* deviceUncompressedPtrs,
+            int* deviceStatuses,
+            nint stream);
+
+        // ──────────────────── Helpers ────────────────────────────────────────
+
+        /// <summary>Throws <see cref="InvalidOperationException"/> on non-zero nvCOMP status.</summary>
+        private static void NvcompCheck(int status, string context)
+        {
+            if (status != nvcompSuccess)
+                throw new InvalidOperationException($"nvCOMP error {status} during {context}.");
+        }
+
+        // ──────────────────── Public API ─────────────────────────────────────
+
+        /// <summary>
+        /// GPU-compresses <paramref name="source"/> using nvCOMP batched LZ4.
+        /// The output format is a 4-byte LE uncompressed-size prefix followed by raw LZ4
+        /// block data — identical to <see cref="Compression.CompressLz4"/> — so the
+        /// result is always decompressible on the CPU path.
+        /// </summary>
+        /// <exception cref="NotSupportedException">
+        /// Thrown if nvCOMP is not available.  Callers should check
+        /// <see cref="IsAvailable"/> or use <see cref="Compression.CompressNvComp"/>
+        /// which handles fallback automatically.
+        /// </exception>
+        public unsafe byte[] Compress(ReadOnlySpan<byte> source)
+        {
+            if (!IsAvailable)
+                throw new NotSupportedException("nvCOMP native library is not available.");
+
+            nuint srcLen = (nuint)source.Length;
+            if (srcLen == 0)
+                return [0, 0, 0, 0]; // 4-byte header with size=0
+
+            // ── 1. Query required sizes ──────────────────────────────────
+            var opts = new nvcompBatchedLZ4Opts_t { data_type = 0 };
+
+            nuint tempBytes;
+            NvcompCheck(
+                nvcompBatchedLZ4CompressGetTempSize(1, srcLen, opts, &tempBytes),
+                "CompressGetTempSize");
+
+            nuint maxOutputChunkBytes;
+            NvcompCheck(
+                nvcompBatchedLZ4CompressGetMaxOutputChunkSize(srcLen, opts, &maxOutputChunkBytes),
+                "CompressGetMaxOutputChunkSize");
+
+            // ── 2. Allocate device buffers ───────────────────────────────
+            using var dSrc  = CudaInterop.DeviceBuffer.Allocate(srcLen, "cudaMalloc(src)");
+            using var dDst  = CudaInterop.DeviceBuffer.Allocate(maxOutputChunkBytes, "cudaMalloc(dst)");
+            using var dTemp = CudaInterop.DeviceBuffer.Allocate(tempBytes, "cudaMalloc(temp)");
+
+            // ── 3. Create stream + copy host→device ──────────────────
+            using var stream = CudaInterop.CudaStream.Create();
+            CudaInterop.Upload(source, dSrc.Ptr);
+
+            // ── 4. Launch batched compress ───────────────────────────
+            // Batched API uses arrays of pointers/sizes (batch_size=1 here).
+            nint srcPtr = dSrc.Ptr;
+            nint dstPtr = dDst.Ptr;
+            nuint srcSize = srcLen;
+            nuint compressedSize = 0;
+
+            NvcompCheck(
+                nvcompBatchedLZ4CompressAsync(
+                    &srcPtr,
+                    &srcSize,
+                    srcLen,
+                    1, // batch_size
+                    dTemp.Ptr,
+                    tempBytes,
+                    &dstPtr,
+                    &compressedSize,
+                    opts,
+                    stream.Handle),
+                "BatchedLZ4CompressAsync");
+
+            stream.Synchronize();
+
+            // ── 5. Copy compressed data device→host ──────────────────
+            byte[] result = new byte[4 + (int)compressedSize];
+
+            // Write 4-byte LE uncompressed size prefix.
+            int uncompLen = source.Length;
+            result[0] = (byte)(uncompLen);
+            result[1] = (byte)(uncompLen >> 8);
+            result[2] = (byte)(uncompLen >> 16);
+            result[3] = (byte)(uncompLen >> 24);
+
+            CudaInterop.Download(dDst.Ptr, result.AsSpan(4, (int)compressedSize));
+
+            return result;
+        }
+
+        /// <summary>
+        /// GPU-decompresses <paramref name="compressed"/> using nvCOMP batched LZ4.
+        /// Expects the same wire format as <see cref="Compression.CompressLz4"/>:
+        /// 4-byte LE uncompressed size prefix followed by raw LZ4 block data.
+        /// On Blackwell+, the hardware Decompression Engine handles this with zero
+        /// SM usage if device memory was allocated via the HW-decompress memory pool.
+        /// </summary>
+        /// <exception cref="NotSupportedException">
+        /// Thrown if nvCOMP is not available.
+        /// </exception>
+        public unsafe byte[] Decompress(ReadOnlySpan<byte> compressed)
+        {
+            if (!IsAvailable)
+                throw new NotSupportedException("nvCOMP native library is not available.");
+
+            if (compressed.Length < 4)
+                throw new ArgumentException("Compressed data too short — missing size header.", nameof(compressed));
+
+            // ── 1. Read uncompressed size from 4-byte LE prefix ──────────
+            int uncompressedSize = BitConverter.ToInt32(compressed[..4]);
+            if (uncompressedSize <= 0)
+                return [];
+
+            ReadOnlySpan<byte> payload = compressed[4..];
+            nuint compLen = (nuint)payload.Length;
+            nuint uncompLen = (nuint)uncompressedSize;
+
+            // ── 2. Query temp buffer size ────────────────────────────────
+            nuint tempBytes;
+            NvcompCheck(
+                nvcompBatchedLZ4DecompressGetTempSize(1, uncompLen, &tempBytes),
+                "DecompressGetTempSize");
+
+            // ── 3. Allocate device buffers ───────────────────────────────
+            using var dComp   = CudaInterop.DeviceBuffer.Allocate(compLen, "cudaMalloc(comp)");
+            using var dDecomp = CudaInterop.DeviceBuffer.Allocate(uncompLen, "cudaMalloc(decomp)");
+            using var dTemp   = CudaInterop.DeviceBuffer.Allocate(tempBytes, "cudaMalloc(temp)");
+
+            // ── 4. Create stream + copy compressed host→device ───────
+            using var stream = CudaInterop.CudaStream.Create();
+            CudaInterop.Upload(payload, dComp.Ptr);
+
+            // ── 5. Launch batched decompress ─────────────────────────
+            nint compPtr = dComp.Ptr;
+            nint decompPtr = dDecomp.Ptr;
+            nuint compSize = compLen;
+            nuint uncompSize = uncompLen;
+            nuint actualUncompSize = 0;
+            int status = 0;
+
+            NvcompCheck(
+                nvcompBatchedLZ4DecompressAsync(
+                    &compPtr,
+                    &compSize,
+                    &uncompSize,
+                    &actualUncompSize,
+                    1, // batch_size
+                    dTemp.Ptr,
+                    tempBytes,
+                    &decompPtr,
+                    &status,
+                    stream.Handle),
+                "BatchedLZ4DecompressAsync");
+
+            stream.Synchronize();
+
+            // ── 6. Copy decompressed data device→host ────────────────
+            byte[] result = new byte[uncompressedSize];
+            CudaInterop.Download(dDecomp.Ptr, result);
+
+            return result;
+        }
+    }

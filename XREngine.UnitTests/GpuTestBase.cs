@@ -5,6 +5,7 @@ using NUnit.Framework;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
+using XREngine.Rendering;
 
 namespace XREngine.UnitTests;
 
@@ -233,8 +234,8 @@ public abstract class GpuTestBase
     /// <summary>Marks the test Inconclusive if the driver doesn't support GL_ARB_compute_shader.</summary>
     protected static void AssertHardwareComputeOrInconclusive(GL gl)
     {
-        // glGetInteger(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0) returns 0 when unsupported.
-        gl.GetInteger(GetPName.MaxComputeWorkGroupCount, out int maxWgX);
+        // Workgroup counts are indexed by axis; the scalar query is invalid even on capable GPUs.
+        gl.GetInteger(GetPName.MaxComputeWorkGroupCount, 0, out int maxWgX);
         if (maxWgX <= 0)
             Assert.Inconclusive("GPU does not support compute shaders (maxComputeWorkGroupCount.x = 0).");
     }
@@ -265,6 +266,12 @@ public abstract class GpuTestBase
     /// <summary>Compiles a GLSL shader of any type and returns its GL handle.</summary>
     protected static uint CompileShader(GL gl, ShaderType type, string source)
     {
+        // The driver does not expand GLSL includes. Match the runtime shader
+        // resolver so generated compute sources use the same shared declarations.
+        source = ShaderSourceResolver.ResolveSource(
+            source,
+            sourcePath: null,
+            options: new ShaderSourceResolverOptions { AdditionalShaderRoots = [ShaderBasePath] });
         uint shader = gl.CreateShader(type);
         gl.ShaderSource(shader, source);
         gl.CompileShader(shader);

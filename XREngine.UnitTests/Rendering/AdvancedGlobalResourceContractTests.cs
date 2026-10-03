@@ -14,9 +14,9 @@ public sealed class AdvancedGlobalResourceContractTests
     public void GlobalRecords_HaveStableStd430CompatiblePacking()
     {
         Should.NotThrow(AdvancedShaderRecordLayout.ValidateCpuLayouts);
-        Marshal.SizeOf<AdvancedViewRecord>().ShouldBe(896);
+        Marshal.SizeOf<AdvancedViewRecord>().ShouldBe(944);
         Marshal.SizeOf<AdvancedLightRecord>().ShouldBe(128);
-        Marshal.SizeOf<AdvancedShadowRecord>().ShouldBe(224);
+        Marshal.SizeOf<AdvancedShadowRecord>().ShouldBe(272);
         Marshal.SizeOf<AdvancedProbeRecord>().ShouldBe(176);
         Marshal.SizeOf<AdvancedEnvironmentRecord>().ShouldBe(128);
         Marshal.SizeOf<AdvancedDecalRecord>().ShouldBe(192);

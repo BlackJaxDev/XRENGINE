@@ -1,5 +1,3 @@
-using Silk.NET.OpenXR;
-
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public sealed class OpenXrDeviceLossAbandonmentSnapshot
@@ -15,12 +13,12 @@ public sealed class OpenXrDeviceLossAbandonmentSnapshot
     public int ChildDestroySucceeded { get; set; }
     public int ChildDestroyFailed { get; set; }
     public bool SessionDestroyAttempted { get; set; }
-    public Result? SessionDestroyResult { get; set; }
+    public int? SessionDestroyResult { get; set; }
     public string? SessionDestroyExceptionCategory { get; set; }
     public ulong QuarantinedSessionHandle { get; set; }
     public ulong QuarantinedAppSpaceHandle { get; set; }
     public bool InstanceDestroyAttempted { get; set; }
-    public Result? InstanceDestroyResult { get; set; }
+    public int? InstanceDestroyResult { get; set; }
     public string? InstanceDestroyExceptionCategory { get; set; }
     public ulong QuarantinedInstanceHandle { get; set; }
     public string[] QuarantinedChildHandles { get; set; } = [];

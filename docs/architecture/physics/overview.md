@@ -2,7 +2,9 @@
 
 XREngine wraps multiple physics backends behind a single scene interface so gameplay, tools, and runtime code do not need to care which solver is active. The integration is centered around `AbstractPhysicsScene`, a host-side class that the world owns and ticks every fixed update. Concrete scenes translate high-level requests (actor management, queries, character control) into calls to the selected middleware while keeping compatible data structures such as `Segment`, `LayerMask`, `RaycastHit`, `SweepHit`, and `OverlapHit`.
 
-Most gameplay features ship against the PhysX backend (`XREngine.Scene.Physics.Physx` namespace in `XREngine.Runtime.Core`). Jolt and Jitter2 scenes exist as experimental alternatives; they share the same surface API but are still catching up on feature coverage.
+Most gameplay features currently use the PhysX backend. Backend-neutral contracts and authored components live in `XREngine.Runtime.Core`. `XREngine.Runtime.Physics.PhysX`, `XREngine.Runtime.Physics.Jolt`, and `XREngine.Runtime.Physics.Jitter` own the implementations while keeping their existing type namespaces. Jolt remains a parity candidate; Jitter is an opt-in experimental reference implementation.
+
+Applications register installed backends in `PhysicsBackendCatalog` during composition. Each module supplies a stable `EPhysicsLibrary` ID, display name, supported platforms, capabilities, and scene factory. Selecting a known backend whose module was not installed throws a named diagnostic. The serialized enum values remain unchanged. Desktop bootstrap installs PhysX and Jolt; Jitter is not in the default composition.
 
 ---
 
@@ -30,6 +32,8 @@ Shared gameplay and XRComponent code should depend on the contracts in `XREngine
 
 Backend-specific properties are allowed only as explicit extension surfaces. PhysX extension members must be grouped as `Physics / PhysX Extensions` in component metadata and documented as non-portable. They should not be required by ordinary gameplay systems, Jolt scenes, or shared editor workflows.
 
+Live body properties used by shared components pass through `IPhysicsRuntimeBodyProperties` and `IPhysicsDynamicBodySettings`. Native shape cooking for generated static colliders passes through the optional `IPhysicsConvexHullInstaller` supplied by PhysX. The desktop editor installs `IPhysicsColliderAuthoringService` from `XREngine.Runtime.Physics.Authoring`; CoACD execution and its disk-cache I/O live there. Applications without that service must load cooked collider data instead of generating it at runtime, and authoring requests receive a named missing-service diagnostic. Image-backed height-field creation uses `IPhysicsHeightFieldImageSource` so PhysX does not depend directly on the imaging implementation.
+
 `PhysicsQueryFilter` is the portable query representation. PhysX maps it to `PxQueryFlags`/`PxHitFlags`; Jolt maps the same actor-type selection to static/dynamic motion filtering. Use `PhysxScene.PhysxQueryFilter` only when a caller needs native PhysX pre/post query callbacks.
 
 ## Jolt parity and unsupported-field policy
@@ -39,19 +43,19 @@ The current Jolt rigid-body mapping supports gravity toggles, simulation/debug/s
 Collision filtering parity is defined around shared `LayerMask` behavior plus `PhysicsQueryFilter.ActorTypes`: static-only, dynamic-only, and all-body queries must include the same categories in PhysX and Jolt. Backend-specific callback semantics remain PhysX extensions until an abstract callback contract is introduced.
 
 
-### P1 controller and collider authoring
+### Controller and collider authoring
 
 `CharacterControllerComponent` is the reusable controller owner for gameplay code that wants controller lifecycle separated from movement behavior. `CharacterMovement3DComponent` can bind to a sibling controller component, or continue to create its legacy private controller when no reusable controller owner is present. Controller lifecycle and contact-state changes are exposed through backend-neutral events.
 
-Collider/material authoring should prefer `PhysicsMaterialDefinition` and `PhysicsColliderShape`. Rigid-body components still accept the legacy single `Geometry`/`Material` fields, but `ColliderShapes` is the first-class compound-authoring surface. PhysX attaches additional enabled collider shapes to one actor; Jolt currently consumes the first enabled shape and keeps the authored list intact so native compound transfer can be added without changing component data. Runtime edits should call `RebuildCollisionShapes()` so ownership, registration, and cached velocities are handled coherently.
+Collider/material authoring should prefer `PhysicsMaterialDefinition` and `PhysicsColliderShape`. Rigid-body components still accept the legacy single `Geometry`/`Material` fields, but `ColliderShapes` is the compound-authoring surface. PhysX and Jolt iterate all enabled collider shapes, retaining each shape's local pose and material settings. Runtime edits should call `RebuildCollisionShapes()` so ownership, registration, and cached velocities are handled coherently.
 
 
-### P2 production hardening contract
+### Runtime ownership and diagnostics
 
-Rigid-body components expose `ReplicationAuthority` and `OwnerClient` metadata so networking code can make explicit ownership decisions for rigid bodies, controllers, and joints. Scene reload, activation-order rebind, controller behavior, and Jolt diagnostics are covered by source-contract tests until full Windows/runtime integration tests can run in the engine validation environment. Jolt exposes `GetDiagnostics()` plus debug-render collection hooks so reload/leak tests can assert actor/controller/joint counts without reaching into backend dictionaries.
+Rigid-body components expose `ReplicationAuthority` and `OwnerClient` metadata so networking code can make explicit ownership decisions for rigid bodies, controllers, and joints. Isolated Windows editor runs have exercised both PhysX and Jolt, and targeted tests cover selected lifecycle and query behavior. Full backend parity, reload/leak behavior, and browser qualification remain validation gates before changing the default. Jolt exposes `GetDiagnostics()` plus debug-render collection hooks so tests can assert actor/controller/joint counts without reaching into backend dictionaries.
 
 ## PhysX Backend
-PhysX 5 is the primary, fully-featured integration. Its scene, actors, controllers, joints, geometry adapter, and backend service live in `XREngine.Scene.Physics.Physx` under `XREngine.Runtime.Core`. The rendering-only instanced diagnostic visualizer remains in the transitional facade for the Phase 4 rendering move.
+PhysX 5 is the current primary, fully-featured integration. Its scene, actors, controllers, joints, geometry adapter, and backend service live in `XREngine.Runtime.Physics.PhysX` under the stable `XREngine.Scene.Physics.Physx` namespace.
 
 ### Initialization & Lifetime
 - `PhysxScene.Init()` is invoked once (via the static ctor) to construct a global `PxFoundation` and `PxPhysics` instance. `Release()` tears them down when the runtime exits.
@@ -97,25 +101,25 @@ PhysX character controllers are fully supported:
 
 ---
 
-## Jolt Backend (Experimental)
-The Jolt integration lives in `XREngine.Scene.Physics.Jolt`. It already shares the same public surface area but remains feature-incomplete compared to PhysX.
+## Jolt Backend
+The Jolt integration lives in `XREngine.Runtime.Physics.Jolt` under the stable `XREngine.Scene.Physics.Jolt` namespace. Its module reports supported capabilities explicitly. Desktop parity and browser qualification determine whether it can become the default backend; it does not silently implement PhysX-only settings.
 
 - `JoltScene` spins up a `PhysicsSystem` and `JobSystemThreadPool` during `Initialize()`. The default settings mirror PhysX defaults (gravity, solver iterations, cache sizes) to keep gameplay tuning similar.
 - Actors (`JoltActor`, `JoltRigidActor`, `JoltDynamicRigidBody`, `JoltStaticRigidBody`) wrap Jolt `BodyID`s and read poses/velocities through the `PhysicsSystem.BodyInterface`. Components opt-in by storing a reference to their owning body wrapper.
-- Queries (ray, sweep, overlap) currently create temporary bodies and run through `NarrowPhaseQuery`. The implementation covers happy paths but lacks per-layer filtering and proper hit metadata; expect to extend this before shipping anything that relies on high query fidelity.
-- `StepSimulation()` updates the world with deterministic settings but leaves transform propagation commented out for now. Consumers should treat Jolt as a sandbox backend while parity work continues.
+- Ray, sweep, and overlap queries use `NarrowPhaseQuery` with shared layer masks and static/dynamic actor filters. Results include the owning component, hit position, normal, distance, and backend payload where applicable.
+- `StepSimulation()` consumes buffered controller movement, updates `PhysicsSystem`, publishes its debug frame, propagates dynamic body poses through `IPhysicsStepListener.OnPhysicsStepped()`, and raises `NotifySimulationStepped()`. Cross-platform deterministic replay is not claimed with the current desktop native supply.
 
 ---
 
 ## Jitter2 Backend (Prototype)
-`JitterScene` (under `Scene/Physics/Jitter2`) demonstrates how another solver can plug into `AbstractPhysicsScene`. At the moment only gravity, stepping (`World.Step`), and scene teardown are wired. All query and actor-management methods throw `NotImplementedException`. Use this scene as a template when adding future engines rather than a production-ready backend.
+`JitterScene` in `XREngine.Runtime.Physics.Jitter` demonstrates how another solver can plug into `AbstractPhysicsScene`. The module is experimental and must be installed explicitly. Its unimplemented operations are not a production-ready backend.
 
 ---
 
 ## Engine Components & Transforms
 Physics components live in `Scene/Components/Physics` and abstract simulation specifics away from gameplay code.
 
-- `DynamicRigidBodyComponent` and `StaticRigidBodyComponent` both require a `RigidBodyTransform`. When the `RigidBody` property changes, the component automatically removes the old actor from the world, rebinds ownership (`OwningComponent` on the PhysX wrapper), and re-adds the new actor if the component is active. The world then pulls updated poses inside `RigidBodyTransform.OnPhysicsStepped()`.
+- `DynamicRigidBodyComponent` and `StaticRigidBodyComponent` both require a `RigidBodyTransform`. When the `RigidBody` property changes, the component automatically removes the old actor from the world, rebinds its neutral actor ownership, and re-adds the new actor if the component is active. The world then pulls updated poses inside `RigidBodyTransform.OnPhysicsStepped()`.
 - `PhysicsActorComponent` defines the shared activation/deactivation behavior for components that manage any physics actor. It uses the world reference exposed by `XRComponent` to locate the current `AbstractPhysicsScene` and registers actors appropriately.
 - `LayerMask` (in `Scene/LayerMask.cs`) is a lightweight bitmask structure with helpers to map between engine layer names and backend-specific filters. PhysX converts it to `PxFilterData.word0`; Jolt turns it into an `ObjectLayer`.
 
@@ -159,8 +163,8 @@ To add features or integrate a new solver:
 4. Mirror the query and filtering behavior so tooling (selection rays, physics picking) continues to work regardless of the active backend.
 
 Known gaps to keep in mind:
-- Jolt queries need proper layer filtering, hit normals, and distance calculations.
-- Jitter2 lacks actor support entirely and currently cannot be selected as a runtime backend.
+- Jolt's default promotion still requires the full contract parity and browser runtime gates, including compound mutation, joints, reload, authority, and callbacks.
+- Jitter2 remains experimental with unimplemented operations; selecting it requires explicit module installation.
 - PhysX GPU workflows rely on `PhysXDevice`/CUDA availability. When running without a compatible GPU, ensure the project toggles `EnableGpuDynamics` off during scene creation.
 
 ---

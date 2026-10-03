@@ -25,8 +25,8 @@ public sealed class PhysicsP0ApiContractTests
 
         source.ShouldContain("public IAbstractCharacterController? CharacterController => ActiveController;");
         source.ShouldContain("public IAbstractDynamicRigidBody? RigidBodyReference");
-        source.ShouldContain("[Category(\"Physics / PhysX Extensions\")]");
-        source.ShouldContain("public PhysxCapsuleController? PhysxControllerExtension => _physxController;");
+        source.ShouldContain("public PhysicsCharacterControllerCapabilities BackendCapabilities");
+        source.ShouldContain("(ActiveController as IPhysicsControllerBodySource)?.Actor;");
         source.ShouldContain("physicsScene.BackendService.CreateCharacterController(");
         source.ShouldNotContain("physicsScene is PhysxScene");
         source.ShouldNotContain("physicsScene is JoltScene");
@@ -46,7 +46,7 @@ public sealed class PhysicsP0ApiContractTests
     [Test]
     public void JoltSweepQueries_UseNeutralQueryFilterInsteadOfPhysxCompatibilityFlags()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltScene.cs");
 
         source.ShouldContain("GetQueryActorTypeInclusion(filter, out bool includeStatic, out bool includeDynamic);");
         source.ShouldNotContain("PhysxScene.PhysxQueryFilter physxFilter");
@@ -74,7 +74,7 @@ public sealed class PhysicsP0ApiContractTests
         string authoring = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/PhysicsAuthoring.cs");
         string dynamicBody = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
         string staticBody = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/StaticRigidBodyComponent.cs");
-        string joltScene = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs");
+        string joltScene = ReadWorkspaceFile("XREngine.Runtime.Physics.Jolt/Scene/Physics/Jolt/JoltScene.cs");
 
         authoring.ShouldContain("public enum PhysicsReplicationAuthority");
         dynamicBody.ShouldContain("public PhysicsReplicationAuthority ReplicationAuthority");

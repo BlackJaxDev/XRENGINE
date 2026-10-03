@@ -33,7 +33,12 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - `JobManager` runs continuously on the job worker thread, progressing queued jobs while other phases execute.
 - Main-thread work can be scheduled and is executed during `RenderFrame` just before GPU submission.
 
-## Project Layout
+## Engine Project Organization
+
+Shared managed feature libraries, `Runtime.Core`, `Runtime.Rendering`, and the integration adapters target `net10.0`. Native and OS-specific implementations live in backend modules; desktop Bootstrap and application hosts compose them explicitly. See [Runtime Project Organization](runtime/project-organization.md) for the project map, source ownership, and dependency rules.
+
+## Game Project Layout
+
 - Each game lives inside a project root that contains only `*.xrproj` plus the standard folders listed below; tooling emits warnings when extra files sit beside the descriptor.
 - `Assets/`: gameplay code, content, and any authorable data the editor should watch.
 - `Intermediate/`: generated artifacts (solutions, project files, build outputs) managed by the C# project builder; editors dynamically load DLLs from here.
@@ -44,7 +49,7 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 ## Further Reading
 - [Audio Architecture](audio/audio-architecture.md)
 - [Animation Baked Value Compression](animation/baked-value-compression.md)
-- [VMD Animation Import Design](animation/vmd-animation-import.md)
+- [VMD Animation Import Design](../work/design/animation/vmd-animation-import.md)
 - [Cooked Asset Serialization - AOT And IO Design](assets/cooked-asset-aot-and-io.md)
 - [GPU-Driven Animation Design](../work/design/rendering/gpu/gpu-driven-animation.md)
 - [Modeling XRMesh Editing Architecture](modeling/xrmesh-editing.md)
@@ -55,5 +60,6 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - [Job System](../developer-guides/runtime/job-system.md)
 - [Networking Overview](networking/overview.md)
 - [Control Plane Runtime Architecture](runtime/control-plane.md)
+- [Downloadable Content Execution Policy](runtime/downloadable-content-execution-policy.md)
 - [Networking Developer Guide](../developer-guides/networking/networking.md)
 - [Editor Undo System](editor/undo-system.md)

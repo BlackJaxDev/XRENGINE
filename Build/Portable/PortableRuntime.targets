@@ -1,0 +1,67 @@
+<Project>
+  <UsingTask TaskName="XREngine.Build.PortableSourceApiGuard"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll"
+             Condition="'$(XREnginePortableProject)' == 'true'">
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)PortableSourceApiGuard.cs" />
+    </Task>
+  </UsingTask>
+
+  <Target Name="ValidateXREnginePortableProject"
+          BeforeTargets="CoreCompile;ResolveReferences"
+          Condition="'$(XREnginePortableProject)' == 'true'">
+    <Error Condition="'$(TargetPlatformIdentifier)' == 'Windows' or $([System.String]::Copy('$(TargetFramework)').Contains('-windows'))"
+           Text="Portable project $(MSBuildProjectName) must target a platform-neutral framework: $(TargetFramework)." />
+    <Error Condition="'$(EnableDefaultCompileItems)' == 'false'"
+           Text="Portable project $(MSBuildProjectName) must compile its whole source project, not a filtered source profile." />
+    <Error Condition="'$(RuntimeIdentifier)' == 'browser-wasm' and ('$(PublishTrimmed)' == 'true' or '$(PublishAot)' == 'true' or '$(RunAOTCompilation)' == 'true')"
+           Text="The browser compile lane covers the untrimmed interpreter; trim and AOT need a separate metadata and serializer review." />
+    <Error Condition="'@(Compile)' == ''"
+           Text="Portable project $(MSBuildProjectName) has no Compile items." />
+
+    <XREngine.Build.PortableSourceApiGuard
+        Sources="@(Compile)"
+        ProjectName="$(MSBuildProjectName)"
+        ProjectFile="$(MSBuildProjectFullPath)"
+        ProjectReferences="@(ProjectReference)"
+        Packages="@(PackageReference)"
+        GeneratedRenderCommandRegistrations="$(GeneratedRenderCommandRegistrations)"
+        GeneratedAotFactoryRegistrations="$(GeneratedAotFactoryRegistrations)"
+        GeneratedBrowserStaticRegistrations="$(GeneratedBrowserStaticRegistrations)"
+        RepositoryRoot="$(MSBuildThisFileDirectory)../.."
+        ProjectsFile="$(MSBuildThisFileDirectory)PortableProjects.tsv"
+        PackagesFile="$(MSBuildThisFileDirectory)PortablePackages.tsv"
+        PolicyFile="$(MSBuildThisFileDirectory)SourceApiPolicy.tsv" />
+
+    <ItemGroup>
+      <_PortableNativeFile Include="@(NativeCopyLocalItems);@(NativeFileReference);@(NativeReference)" />
+      <_PortableNativeFile Include="@(Content)"
+                           Condition="('%(Content.CopyToOutputDirectory)' != '' or '%(Content.CopyToPublishDirectory)' != '') and ('%(Content.Extension)' == '.dll' or '%(Content.Extension)' == '.so' or '%(Content.Extension)' == '.dylib' or '%(Content.Extension)' == '.a' or '%(Content.Extension)' == '.lib' or $([System.String]::Copy('%(Content.Identity)').Replace('\', '/').Contains('/runtimes/')))" />
+      <_PortableNativeFile Include="@(None)"
+                           Condition="('%(None.CopyToOutputDirectory)' != '' or '%(None.CopyToPublishDirectory)' != '') and ('%(None.Extension)' == '.dll' or '%(None.Extension)' == '.so' or '%(None.Extension)' == '.dylib' or '%(None.Extension)' == '.a' or '%(None.Extension)' == '.lib' or $([System.String]::Copy('%(None.Identity)').Replace('\', '/').Contains('/runtimes/')))" />
+    </ItemGroup>
+    <Error Condition="'@(_PortableNativeFile)' != ''"
+           Text="Portable project $(MSBuildProjectName) includes native copy item(s): @(_PortableNativeFile, ', ')." />
+  </Target>
+
+  <Target Name="ValidateXREnginePortableResolvedAssets"
+          AfterTargets="ResolveReferences"
+          BeforeTargets="CoreCompile"
+          Condition="'$(XREnginePortableProject)' == 'true'">
+    <PropertyGroup>
+      <_PortableSdkPacksPath>$([System.String]::Copy('$(NetCoreTargetingPackRoot)').Replace('\', '/').TrimEnd('/'))</_PortableSdkPacksPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PortableResolvedCandidate Include="@(NativeCopyLocalItems)" />
+      <_PortableResolvedCandidate Include="@(ReferenceCopyLocalPaths)"
+                                  Condition="'%(ReferenceCopyLocalPaths.AssetType)' == 'native' or $([System.String]::Copy('%(ReferenceCopyLocalPaths.Identity)').Replace('\', '/').Contains('/native/'))" />
+      <_PortableResolvedCandidate Include="@(RuntimeTargetsCopyLocalItems)"
+                                  Condition="'%(RuntimeTargetsCopyLocalItems.AssetType)' == 'native' or $([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.Identity)').Replace('\', '/').Contains('/native/'))" />
+      <_PortableResolvedNative Include="@(_PortableResolvedCandidate)"
+                               Condition="'$(MSBuildProjectName)' != 'XREngine.Browser' or '$(RuntimeIdentifier)' != 'browser-wasm' or '$(_PortableSdkPacksPath)' == '' or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').StartsWith('$(_PortableSdkPacksPath)/Microsoft.NETCore.App.Runtime.Mono.browser-wasm/')) or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').Contains('/runtimes/browser-wasm/native/'))" />
+    </ItemGroup>
+    <Error Condition="'@(_PortableResolvedNative)' != ''"
+           Text="Portable project $(MSBuildProjectName) resolved native runtime asset(s): @(_PortableResolvedNative, ', ')." />
+  </Target>
+</Project>

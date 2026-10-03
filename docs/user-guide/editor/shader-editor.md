@@ -19,6 +19,10 @@ The ImGui editor includes a unified shader editor under **Tools > Shader Editor*
 
 ## Inspector Presets
 
+Use `.comp` for compute shaders discovered by automatic asset import. The `.cs`
+suffix is also used by C# gameplay scripts, so automatic import does not claim
+it as a shader. Explicitly typed `XRShader` loads still accept that alias.
+
 The `XRShader` ImGui inspector can open the selected asset directly in the unified shader editor. The adjacent **Load Preset** dropdown replaces the shader source with a cloned editable `TextFile` loaded from an engine preset, so preset loading does not mutate the shared engine preset asset. The operation is undoable.
 
 ## Includes And Snippets

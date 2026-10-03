@@ -51,6 +51,20 @@ namespace XREngine.Data.Core
 
             try
             {
+                Type[]? generatedParameterTypes = null;
+                if (ParameterTypeNames is { Length: > 0 } generatedNames)
+                {
+                    generatedParameterTypes = new Type[generatedNames.Length];
+                    for (int i = 0; i < generatedNames.Length; i++)
+                    {
+                        Type? resolved = AotRuntimeMetadataStore.ResolveType(generatedNames[i]);
+                        if (resolved is null)
+                            return false;
+                        generatedParameterTypes[i] = resolved;
+                    }
+                }
+                if (RuntimeMemberAccessorRegistry.TryInvoke(target, MethodName, generatedParameterTypes, args))
+                    return true;
 #pragma warning disable IL2072
                 var method = ResolveMethod(target.GetType());
 #pragma warning restore IL2072
@@ -85,14 +99,18 @@ namespace XREngine.Data.Core
                 desiredParamTypes = new Type[typeNames.Length];
                 for (int i = 0; i < typeNames.Length; i++)
                 {
-#pragma warning disable IL2057
-                    var t = Type.GetType(typeNames[i], throwOnError: false);
-#pragma warning restore IL2057
+                    var t = AotRuntimeMetadataStore.ResolveType(typeNames[i]);
                     if (t is null)
                         return null;
                     desiredParamTypes[i] = t;
                 }
             }
+
+            Runtime.AotParity.AotParityDiagnostics.Report(
+                targetType,
+                Runtime.AotParity.EAotParityCategory.ReflectiveMemberBinding,
+                $"{nameof(XRPersistentCall)}.{nameof(ResolveMethod)}",
+                $"Generate a typed invoker for '{targetType.FullName}.{name}' so persistent calls bind without reflecting over methods.");
 
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
             var candidates = targetType.GetMethods(flags)

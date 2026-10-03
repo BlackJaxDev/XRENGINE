@@ -1,0 +1,9 @@
+# Browser frame publication
+
+The browser scene host runs at most four fixed 60 Hz simulation steps for an animation-frame callback. Rendering uses the callback's variable cadence; the reported `VariableDeltaSeconds` is bounded to four steps and does not run a second, variable simulation tick. A pause/reset, surface-generation change, or elapsed gap over 250 ms clears accumulated simulation time and increments `HistoryGeneration`. The current direct raster path has no temporal consumer; a future consumer must discard prior-frame state when the generation changes. Exhausting the generation requires a new session.
+
+After simulation and pending destruction, the portable `RuntimeSceneHost.SwapBuffers()` recalculates the real scene hierarchy and publishes the engine `TransformBase.RenderMatrix` values. The browser session then captures live `BrowserMeshComponent` mesh descriptors, generation handles, and published model matrices into a reusable collection. Both viewports cull and emit from that captured collection, so a frame has one consistent scene state before its synchronous packet import. Scene session mutation APIs reject frame reentry; capacity grows only while the packet is idle. The existing single-argument `RuntimeSceneHost.Advance` still publishes render buffers for its other callers, while the browser opts into explicit frame-boundary publication.
+
+The selected browser profile remains CPU direct indexed draws from `BrowserMeshComponent`, with conservative per-viewport AABB tests. This does not bind arbitrary desktop world components, material graphs, or GPU indirect visibility. Imported model matrices are checked for representable scale, rotation, and translation in the preflight export before a running session is replaced.
+
+Source review only for this change; build and browser runtime acceptance remain outstanding.

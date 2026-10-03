@@ -211,11 +211,11 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     bool OpenXrPrepareFrameAfterDesktopRender { get; }
     float OpenXrDeadlineSafetyMarginMs { get; }
     float OpenXrPoseTimeOffsetMs { get; }
-    OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy { get; }
+    OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy { get; }
     float OpenXrCollectVisibleFrustumPaddingDegrees { get; }
-    OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy { get; }
-    OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy { get; }
-    OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode { get; }
+    OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy { get; }
+    OpenXrActionSyncPolicy OpenXrActionSyncPolicy { get; }
+    OpenXrRenderPacingMode OpenXrRenderPacingMode { get; }
 
     /// <summary>
     /// Ensures a host-owned process-scoped OpenXR runtime service is running before recovery probes continue.

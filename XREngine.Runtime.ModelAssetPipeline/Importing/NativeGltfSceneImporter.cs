@@ -1,5 +1,6 @@
 using Assimp;
-using ImageMagick;
+using XREngine.Imaging;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Text.Json;
@@ -1028,7 +1029,7 @@ internal static class NativeGltfSceneImporter
 
             try
             {
-                using MagickImage image = state.purpose switch
+                using RuntimeImage image = state.purpose switch
                 {
                     "metallic" => CreateSingleChannelImage(state.document, state.sourceFilePath, state.textureIndex, 2),
                     "roughness" => CreateSingleChannelImage(state.document, state.sourceFilePath, state.textureIndex, 1),
@@ -1044,7 +1045,7 @@ internal static class NativeGltfSceneImporter
         }, (document, sourceFilePath, textureIndex, purpose));
     }
 
-    private static MagickImage LoadTextureImage(GltfAssetDocument document, string sourceFilePath, int textureIndex)
+    private static RuntimeImage LoadTextureImage(GltfAssetDocument document, string sourceFilePath, int textureIndex)
     {
         int imageIndex = ResolveTextureImageIndex(document.Root, textureIndex);
         if (imageIndex < 0 || imageIndex >= document.Root.Images.Count)
@@ -1052,34 +1053,45 @@ internal static class NativeGltfSceneImporter
 
         GltfImage image = document.Root.Images[imageIndex];
         byte[] sourceBytes = ResolveImageBytes(document, sourceFilePath, image);
-        return new MagickImage(sourceBytes);
+        return RuntimeImageCodecs.Require().Decode(sourceBytes);
     }
 
-    private static MagickImage CreateSingleChannelImage(GltfAssetDocument document, string sourceFilePath, int textureIndex, int channelIndex)
+    private static RuntimeImage CreateSingleChannelImage(GltfAssetDocument document, string sourceFilePath, int textureIndex, int channelIndex)
     {
-        using MagickImage source = LoadTextureImage(document, sourceFilePath, textureIndex);
-        Channels channel = channelIndex switch
+        if ((uint)channelIndex > 3)
+            throw new ArgumentOutOfRangeException(nameof(channelIndex), channelIndex, "Texture channel must be in the range 0..3.");
+        using RuntimeImage source = LoadTextureImage(document, sourceFilePath, textureIndex);
+        int componentBytes = source.Type switch
         {
-            0 => Channels.Red,
-            1 => Channels.Green,
-            2 => Channels.Blue,
-            3 => Channels.Alpha,
-            _ => throw new ArgumentOutOfRangeException(nameof(channelIndex), channelIndex, "Texture channel must be in the range 0..3."),
+            EPixelType.UnsignedByte => 1,
+            EPixelType.Float => 4,
+            _ => throw new NotSupportedException($"Cannot separate {source.Type} glTF texture channels."),
         };
-
-        IReadOnlyList<IMagickImage<float>> separatedChannels = source.Separate(channel);
-        try
+        if (source.Format != EPixelFormat.Rgba)
+            throw new NotSupportedException($"Cannot separate {source.Format} glTF texture channels.");
+        int rowBytes = checked((int)source.Width * 4 * componentBytes);
+        byte[] grayscale = new byte[checked(rowBytes * (int)source.Height)];
+        ReadOnlySpan<byte> pixels = source.Pixels.Span;
+        for (int y = 0; y < source.Height; y++)
         {
-            if (separatedChannels.Count != 1)
-                throw new InvalidDataException($"ImageMagick returned {separatedChannels.Count} images while separating one texture channel.");
-
-            return (MagickImage)separatedChannels[0].Clone();
+            int sourceRow = source.Origin == RuntimeImageOrigin.BottomLeft
+                ? checked((int)source.Height - y - 1)
+                : y;
+            for (int x = 0; x < source.Width; x++)
+            {
+                int sourceOffset = checked(sourceRow * source.RowStrideBytes + (x * 4 + channelIndex) * componentBytes);
+                int destinationOffset = checked(y * rowBytes + x * 4 * componentBytes);
+                ReadOnlySpan<byte> channel = pixels.Slice(sourceOffset, componentBytes);
+                for (int outputChannel = 0; outputChannel < 3; outputChannel++)
+                    channel.CopyTo(grayscale.AsSpan(destinationOffset + outputChannel * componentBytes, componentBytes));
+                if (componentBytes == 1)
+                    grayscale[destinationOffset + 3] = 255;
+                else
+                    BinaryPrimitives.WriteInt32LittleEndian(grayscale.AsSpan(destinationOffset + 12, 4),
+                        BitConverter.SingleToInt32Bits(1.0f));
+            }
         }
-        finally
-        {
-            foreach (IMagickImage<float> separatedChannel in separatedChannels)
-                separatedChannel.Dispose();
-        }
+        return new RuntimeImage(source.Width, source.Height, EPixelFormat.Rgba, source.Type, grayscale);
     }
 
     private static int ResolveTextureImageIndex(GltfRoot document, int textureIndex)
@@ -1152,7 +1164,7 @@ internal static class NativeGltfSceneImporter
         return true;
     }
 
-    private static XRTexture2D CreateTextureFromImage(string textureKey, MagickImage image, GltfSampler? sampler, string? displayName)
+    private static XRTexture2D CreateTextureFromImage(string textureKey, RuntimeImage image, GltfSampler? sampler, string? displayName)
     {
         XRTexture2D texture = new(image)
         {
@@ -1171,7 +1183,7 @@ internal static class NativeGltfSceneImporter
 
     private static XRTexture2D CreateFallbackTexture(string textureKey, GltfSampler? sampler)
     {
-        using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
+        using RuntimeImage filler = XRTexture2D.FillerImage;
         XRTexture2D texture = new(filler)
         {
             Name = Path.GetFileNameWithoutExtension(textureKey),

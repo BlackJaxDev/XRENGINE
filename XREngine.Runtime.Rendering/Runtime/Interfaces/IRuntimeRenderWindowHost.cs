@@ -14,6 +14,10 @@ public interface IRuntimeRenderWindowHost
     WindowSurfaceSnapshot LatestWindowSurfaceSnapshot { get; }
     WindowEventSnapshot LatestWindowEventSnapshot { get; }
     WindowInputSnapshot LatestWindowInputSnapshot { get; }
+    IRuntimeWindowGlContext? DesktopGlContext { get; }
+    IRuntimeWindowVulkanSurface? DesktopVulkanSurface { get; }
+    nint PlatformWindowHandle { get; }
+    nint OperatingSystemWindowHandle { get; }
     WindowResizeExtents ResizeExtents { get; }
     Vector2D<int> EffectiveFramebufferSize { get; }
     Vector2D<int> EffectiveWindowSize { get; }

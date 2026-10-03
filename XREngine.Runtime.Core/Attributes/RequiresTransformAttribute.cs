@@ -41,10 +41,18 @@ namespace XREngine.Core.Attributes
                 return true;
             }
 
-            if (!XRRuntimeEnvironment.IsAotRuntimeBuild && Activator.CreateInstance(Type, null) is TransformBase dynamicTransform)
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
             {
-                node.SetTransform(dynamicTransform);
-                return true;
+                XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                    Type,
+                    XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                    $"{nameof(RequiresTransformAttribute)}.{nameof(VerifyComponentOnAdd)}",
+                    $"Register the transform with {nameof(TransformFactoryRegistry)} so required transforms are created without Activator.CreateInstance.");
+                if (Activator.CreateInstance(Type, null) is TransformBase dynamicTransform)
+                {
+                    node.SetTransform(dynamicTransform);
+                    return true;
+                }
             }
 
             RuntimeSceneNodeServices.Current.LogWarning(

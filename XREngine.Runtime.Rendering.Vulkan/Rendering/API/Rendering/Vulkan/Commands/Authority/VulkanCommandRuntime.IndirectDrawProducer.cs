@@ -67,19 +67,8 @@ internal sealed partial class VulkanCommandRuntime
         => TryGetIndirectIndexBufferInfo(mesh, out _, out _);
 
     internal bool TrySyncIndirectIndexBuffer(
-        XRMeshRenderer meshRenderer,
-        XRDataBuffer indexBuffer,
-        IndexSize elementSize)
-        => meshRenderer is not null &&
-           indexBuffer is not null &&
-           ResourceRuntime.WrapperLookup.GetOrCreate(meshRenderer.GetDefaultVersion()) is VkMeshRenderer mesh &&
-           ResourceRuntime.WrapperLookup.GetOrCreate(indexBuffer) is VkDataBuffer buffer &&
-           TrySyncIndirectIndexBuffer(mesh, buffer, indexBuffer, elementSize);
-
-    internal bool TrySyncIndirectIndexBuffer(
         VkMeshRenderer mesh,
         VkDataBuffer indexBuffer,
-        XRDataBuffer source,
         IndexSize elementSize)
     {
         mesh.Generate();

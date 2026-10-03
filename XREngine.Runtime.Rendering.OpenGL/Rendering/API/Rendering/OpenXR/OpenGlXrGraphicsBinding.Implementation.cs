@@ -1,7 +1,6 @@
 using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
-using Silk.NET.Windowing;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,8 +19,6 @@ using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.OpenGL;
 
-using OpenXrEyeSwapchainExtent = OpenXRAPI.OpenXrEyeSwapchainExtent;
-
 internal sealed unsafe partial class OpenGlXrGraphicsBinding
 {
     /// <summary>
@@ -37,7 +34,9 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
 
         // OpenXR OpenGL session creation requires the HGLRC/HDC to be current on the calling thread.
         // This method is expected to run on the window render thread (see deferred init in Initialize()).
-        var w = Window.Window;
+        IRuntimeWindowGlContext desktopGlContext = Window.DesktopGlContext
+            ?? throw new InvalidOperationException("OpenXR OpenGL requires a desktop GL context host.");
+        desktopGlContext.AssertOwnerThread();
 
         // IMPORTANT: Do not blindly force a context switch here.
         // The windowing layer is expected to already have the correct render context current when
@@ -47,16 +46,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
         nint preHdcCurrent = wglGetCurrentDC();
         nint preHglrcCurrent = wglGetCurrentContext();
         if (preHdcCurrent == 0 || preHglrcCurrent == 0)
-        {
-            try
-            {
-                w.MakeCurrent();
-            }
-            catch (Exception ex)
-            {
-                Debug.Out($"OpenGL MakeCurrent failed (continuing): {ex.Message}");
-            }
-        }
+            desktopGlContext.MakeCurrent();
 
         try
         {
@@ -75,11 +65,15 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             Type = StructureType.GraphicsRequirementsOpenglKhr
         };
 
-        if (!Api.TryGetInstanceExtension<KhrOpenglEnable>("", _instance, out var openglExtension))
-            throw new Exception("Failed to get OpenGL extension");
-
-        if (openglExtension.GetOpenGlgraphicsRequirements(_instance, _systemId, ref requirements) != Result.Success)
-            throw new Exception("Failed to get OpenGL graphics requirements");
+        using (IOpenXrNativeGraphicsBorrow borrow = Host.BorrowNativeGraphicsDispatch())
+        {
+            nint address = borrow.GetInstanceProcAddress("xrGetOpenGLGraphicsRequirementsKHR");
+            if (address == 0)
+                throw new Exception("OpenXR runtime did not provide xrGetOpenGLGraphicsRequirementsKHR.");
+            var getRequirements = (delegate* unmanaged[Stdcall]<ulong, ulong, GraphicsRequirementsOpenGLKHR*, int>)address;
+            if (getRequirements(borrow.InstanceHandle, _systemId, &requirements) != 0)
+                throw new Exception("Failed to get OpenGL graphics requirements.");
+        }
 
         Debug.Out($"OpenGL requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
         _ = TryResolveOpenXrFoveation(ERenderLibrary.OpenGL, out _);
@@ -96,8 +90,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             // Ignore; we'll still try to create the session and report handles.
         }
 
-        nint hdcFromWindow = w.Native?.Win32?.HDC ?? 0;
-        nint hglrcFromWindow = w.GLContext?.Handle ?? 0;
+        nint hdcFromWindow = desktopGlContext.DeviceContextHandle;
+        nint hglrcFromWindow = desktopGlContext.ContextHandle;
         nint hdcCurrent = wglGetCurrentDC();
         nint hglrcCurrent = wglGetCurrentContext();
 
@@ -124,7 +118,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
         ];
 
         var attemptResults = new List<string>(2);
-        Result lastResult = Result.Success;
+        int lastResult = 0;
         nint selectedHdc = 0;
         nint selectedHglrc = 0;
         string selectedTag = string.Empty;
@@ -173,26 +167,26 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             if (selectedHdc == candidateHdc && selectedHglrc == candidateHglrc)
                 continue;
 
-            _session = default;
-
             var glBinding = new GraphicsBindingOpenGLWin32KHR
             {
                 Type = StructureType.GraphicsBindingOpenglWin32Khr,
                 HDC = candidateHdc,
                 HGlrc = candidateHglrc
             };
-            var createInfo = new SessionCreateInfo
-            {
-                Type = StructureType.SessionCreateInfo,
-                SystemId = _systemId,
-                Next = &glBinding
-            };
-
-            var r = CheckResult(Api.CreateSession(_instance, ref createInfo, ref _session), "xrCreateSession");
+            int r = CheckResult(Host.GraphicsCalls.CreateSession((nint)(&glBinding), out ulong createdSession), "xrCreateSession");
             attemptResults.Add($"{tag}: {r} (HDC=0x{(nuint)candidateHdc:X}, HGLRC=0x{(nuint)candidateHglrc:X})");
             lastResult = r;
-            if (r == Result.Success)
+            if (r == 0)
             {
+                try
+                {
+                    Host.SetSession(createdSession);
+                }
+                catch
+                {
+                    Host.GraphicsCalls.DestroySession(createdSession);
+                    throw;
+                }
                 selectedHdc = candidateHdc;
                 selectedHglrc = candidateHglrc;
                 selectedTag = tag;
@@ -200,7 +194,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             }
         }
 
-        if (_session.Handle == 0)
+        if (Host.SessionHandle == 0)
         {
             string activeRuntime = TryGetOpenXRActiveRuntime() ?? "<unknown>";
             throw new Exception(
@@ -227,16 +221,13 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
 
         // Query supported swapchain formats for the active OpenXR runtime (for OpenGL these are GL internal format enums).
         uint formatCount = 0;
-        var formatResult = Api.EnumerateSwapchainFormats(_session, 0, ref formatCount, null);
-        if (formatResult != Result.Success || formatCount == 0)
+        int formatResult = Host.GraphicsCalls.EnumerateSwapchainFormats(Span<long>.Empty, out formatCount);
+        if (formatResult != 0 || formatCount == 0)
             throw new Exception($"Failed to enumerate OpenXR swapchain formats for OpenGL. Result={formatResult}, Count={formatCount}");
 
         var formats = new long[formatCount];
-        fixed (long* formatsPtr = formats)
-        {
-            formatResult = Api.EnumerateSwapchainFormats(_session, formatCount, ref formatCount, formatsPtr);
-        }
-        if (formatResult != Result.Success || formatCount == 0)
+        formatResult = Host.GraphicsCalls.EnumerateSwapchainFormats(formats, out formatCount);
+        if (formatResult != 0 || formatCount == 0)
             throw new Exception($"Failed to enumerate OpenXR swapchain formats for OpenGL. Result={formatResult}, Count={formatCount}");
 
         static IEnumerable<long> GetPreferredFormats(long[] available)
@@ -273,9 +264,9 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             LogOpenXrEyeSwapchainExtent("OpenGL", (uint)i, extent);
             uint width = extent.Width;
             uint height = extent.Height;
-            uint recommendedSamples = _viewConfigViews[i].RecommendedSwapchainSampleCount;
+            uint recommendedSamples = _viewConfigViews[i].RecommendedSampleCount;
 
-            Result lastResult = Result.Success;
+            int lastResult = 0;
             bool created = false;
             long createdFormat = 0;
             uint createdSamples = 0;
@@ -286,26 +277,21 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
                 {
                     foreach (var samples in recommendedSamples > 1 ? [recommendedSamples, 1u] : new[] { 1u })
                     {
-                        var swapchainCreateInfo = new SwapchainCreateInfo
-                        {
-                            Type = StructureType.SwapchainCreateInfo,
-                            UsageFlags = usage,
-                            Format = format,
-                            SampleCount = samples,
-                            Width = width,
-                            Height = height,
-                            FaceCount = 1,
-                            ArraySize = 1,
-                            MipCount = 1
-                        };
+                        OpenXrSwapchainDescriptor descriptor = new(0, (ulong)usage, format,
+                            width, height, samples, 1, 1, 1);
+                        lastResult = Host.GraphicsCalls.CreateSwapchain(in descriptor, out ulong createdSwapchain);
 
-                        fixed (Swapchain* swapchainPtr = &_swapchains[i])
+                        if (lastResult == 0)
                         {
-                            lastResult = Api.CreateSwapchain(_session, in swapchainCreateInfo, swapchainPtr);
-                        }
-
-                        if (lastResult == Result.Success)
-                        {
+                            try
+                            {
+                                Host.SetSwapchain((uint)i, createdSwapchain, 0);
+                            }
+                            catch
+                            {
+                                Host.GraphicsCalls.DestroySwapchain(createdSwapchain);
+                                throw;
+                            }
                             Debug.Out($"OpenXR swapchain[{i}] created. Format=0x{format:X}, Samples={samples}, Usage={usage}, Size={width}x{height}");
                             createdFormat = format;
                             createdSamples = samples;
@@ -328,8 +314,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
 
             // Get swapchain images
             uint imageCount = 0;
-            var enumerateResult = CheckResult(Api.EnumerateSwapchainImages(_swapchains[i], 0, &imageCount, null), "xrEnumerateSwapchainImages(OpenGL count)");
-            if (enumerateResult != Result.Success || imageCount == 0)
+            int enumerateResult = CheckResult(Host.GraphicsCalls.EnumerateSwapchainImages(_swapchains[i], 0, 0, out imageCount), "xrEnumerateSwapchainImages(OpenGL count)");
+            if (enumerateResult != 0 || imageCount == 0)
                 throw new Exception($"Failed to enumerate OpenXR OpenGL swapchain image count for view {i}. Result={enumerateResult}, Count={imageCount}");
 
             int imageCountInt = checked((int)imageCount);
@@ -341,8 +327,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             for (int j = 0; j < imageCountInt; j++)
                 swapchainImages[j].Type = StructureType.SwapchainImageOpenglKhr;
 
-            enumerateResult = CheckResult(Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)swapchainImages), "xrEnumerateSwapchainImages(OpenGL images)");
-            if (enumerateResult != Result.Success || imageCount == 0 || imageCount > (uint)imageCountInt)
+            enumerateResult = CheckResult(Host.GraphicsCalls.EnumerateSwapchainImages(_swapchains[i], imageCount, (nint)swapchainImages, out imageCount), "xrEnumerateSwapchainImages(OpenGL images)");
+            if (enumerateResult != 0 || imageCount == 0 || imageCount > (uint)imageCountInt)
             {
                 Marshal.FreeHGlobal((nint)swapchainImages);
                 throw new Exception($"Failed to enumerate OpenXR OpenGL swapchain images for view {i}. Result={enumerateResult}, Count={imageCount}, Capacity={imageCountInt}");
@@ -350,7 +336,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
 
             imageCountInt = checked((int)imageCount);
             _swapchainImagesGL[i] = swapchainImages;
-            _swapchainImageCounts[i] = imageCount;
+            Host.SetSwapchain((uint)i, _swapchains[i], imageCount);
             uint[] framebuffers = new uint[imageCountInt];
             _swapchainFramebuffers[i] = framebuffers;
             RecordSmokeSwapchain("OpenGL", i, width, height, createdFormat, createdSamples, imageCount);

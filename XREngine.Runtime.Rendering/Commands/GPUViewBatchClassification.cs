@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Commands;
 /// The exact view mask is copied from culling and is never inferred from a
 /// representative eye.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("GPUViewBatchClassification", "GPUScene")]
 [StructLayout(LayoutKind.Sequential)]
 public struct GPUViewBatchClassification
 {

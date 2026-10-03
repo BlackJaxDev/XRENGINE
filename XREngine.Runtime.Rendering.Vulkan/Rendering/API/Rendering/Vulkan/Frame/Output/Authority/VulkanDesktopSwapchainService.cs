@@ -758,7 +758,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
 
         VulkanDesktopWsiTargetDriver desktopWsiTarget = RequireDesktopWsiTarget();
         Vector2D<int> framebuffer = desktopWsiTarget.EffectiveFramebufferSize;
-        Vector2D<int> window = desktopWsiTarget.Window.Window.Size;
+        Vector2D<int> window = desktopWsiTarget.Window.EffectiveWindowSize;
         if ((framebuffer.X <= 0 || framebuffer.Y <= 0) && (window.X <= 0 || window.Y <= 0))
         {
             extent = default;
