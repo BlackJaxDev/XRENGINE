@@ -454,7 +454,8 @@ Useful diagnostics:
   handles through `XR_KHR_vulkan_enable2`; `Disable` forces app-created Vulkan
   handles for comparison. SteamVR uses the app-created path in `Auto`.
 - `XRE_VULKAN_DIRECTIONAL_CASCADES=1` forces Vulkan directional cascades on;
-  `0` forces them off. By default they are enabled for SteamVR and ordinary
+  `0` forces them off. It is read once, at first use, so set it before launch.
+  By default they are enabled for SteamVR and ordinary
   Vulkan sessions, but still guarded off for known Monado OpenXR runtimes until
   the layered cascade planner path is safe there. Legacy texture-array cascades
   use the requested layered mode when the backend exposes the required layered

@@ -1,17 +1,17 @@
-using System;
-using System.Reflection;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Core;
 
+/// <summary>Invokes the animation integration through its typed runtime contract.</summary>
 public static class RuntimeVRIKCalibrator
 {
-    private const string CalibrationSettingsTypeName = "XREngine.Components.Animation.VRIKCalibrationSettings";
-    private const string VRIKCalibratorTypeName = "XREngine.Components.Animation.VRIKCalibrator";
-    private const string VRIKSolverComponentTypeName = "XREngine.Components.Animation.VRIKSolverComponent";
+    public static VrCalibrationResult Calibrate(object solver, VrCalibrationRequest request)
+        => solver is IVRIKCalibrationHandle handle
+            ? handle.Calibrate(request)
+            : VrCalibrationResult.Failed("The VR solver does not support calibration.");
 
-    private static MethodInfo? _calibrateMethod;
-
+    /// <summary>Compatibility entry point for callers that supply the original six devices.</summary>
     public static object? Calibrate(
         object solver,
         object? settings,
@@ -22,55 +22,19 @@ public static class RuntimeVRIKCalibrator
         TransformBase? leftFootTracker = null,
         TransformBase? rightFootTracker = null)
     {
-        MethodInfo method = ResolveCalibrateMethod()
-            ?? throw new InvalidOperationException("Unable to resolve the runtime VRIK calibrator.");
+        VrCalibrationRequest request = new() { Settings = settings };
+        Add(EHumanoidIKTarget.Head, headTracker);
+        Add(EHumanoidIKTarget.Hips, bodyTracker);
+        Add(EHumanoidIKTarget.LeftHand, leftHandTracker);
+        Add(EHumanoidIKTarget.RightHand, rightHandTracker);
+        Add(EHumanoidIKTarget.LeftFoot, leftFootTracker);
+        Add(EHumanoidIKTarget.RightFoot, rightFootTracker);
+        return solver is IVRIKCalibrationHandle handle ? handle.CalibrateLegacy(request) : null;
 
-        return method.Invoke(null,
-        [
-            solver,
-            settings,
-            headTracker,
-            bodyTracker,
-            leftHandTracker,
-            rightHandTracker,
-            leftFootTracker,
-            rightFootTracker,
-        ]);
+        void Add(EHumanoidIKTarget slot, TransformBase? device)
+        {
+            if (device is not null)
+                request.Slots[(int)slot] = new VrCalibrationCapture(device, device.WorldMatrix);
+        }
     }
-
-    private static MethodInfo? ResolveCalibrateMethod()
-    {
-        if (_calibrateMethod is not null)
-            return _calibrateMethod;
-
-        Type? calibratorType = ResolveRuntimeType(VRIKCalibratorTypeName);
-        Type? solverType = ResolveRuntimeType(VRIKSolverComponentTypeName);
-        Type? calibrationSettingsType = ResolveRuntimeType(CalibrationSettingsTypeName);
-        if (calibratorType is null || solverType is null || calibrationSettingsType is null)
-            return null;
-
-        _calibrateMethod = calibratorType.GetMethod(
-            name: "Calibrate",
-            bindingAttr: BindingFlags.Public | BindingFlags.Static,
-            binder: null,
-            types:
-            [
-                solverType,
-                calibrationSettingsType,
-                typeof(TransformBase),
-                typeof(TransformBase),
-                typeof(TransformBase),
-                typeof(TransformBase),
-                typeof(TransformBase),
-                typeof(TransformBase),
-            ],
-            modifiers: null);
-
-        return _calibrateMethod;
-    }
-
-    private static Type? ResolveRuntimeType(string typeName)
-        => Type.GetType($"{typeName}, XREngine.Runtime.AnimationIntegration")
-        ?? Type.GetType($"{typeName}, XREngine.Animation")
-        ?? Type.GetType($"{typeName}, XRENGINE");
 }

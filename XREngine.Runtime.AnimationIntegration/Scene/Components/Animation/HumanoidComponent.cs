@@ -373,8 +373,76 @@ namespace XREngine.Components.Animation
         SceneNode? IHumanoidVrCalibrationRig.ChestNode => Chest.Node;
         SceneNode? IHumanoidVrCalibrationRig.LeftFootNode => Left.Foot.Node;
         SceneNode? IHumanoidVrCalibrationRig.RightFootNode => Right.Foot.Node;
+        SceneNode? IHumanoidVrCalibrationRig.LeftToesNode => Left.Toes.Node;
+        SceneNode? IHumanoidVrCalibrationRig.RightToesNode => Right.Toes.Node;
         SceneNode? IHumanoidVrCalibrationRig.LeftElbowNode => Left.Elbow.Node;
         SceneNode? IHumanoidVrCalibrationRig.RightElbowNode => Right.Elbow.Node;
+        SceneNode? IHumanoidVrCalibrationRig.LeftShoulderNode => Left.Shoulder.Node;
+        SceneNode? IHumanoidVrCalibrationRig.RightShoulderNode => Right.Shoulder.Node;
+        SceneNode? IHumanoidVrCalibrationRig.LeftUpperArmNode => Left.Arm.Node;
+        SceneNode? IHumanoidVrCalibrationRig.RightUpperArmNode => Right.Arm.Node;
+        SceneNode? IHumanoidVrCalibrationRig.LeftHandNode => Left.Wrist.Node;
+        SceneNode? IHumanoidVrCalibrationRig.RightHandNode => Right.Wrist.Node;
+        private SceneNode? _leftMiddleFingertipNode;
+        /// <summary>Optional mapped fingertip endpoint beyond the middle distal joint.</summary>
+        public SceneNode? LeftMiddleFingertipNode
+        {
+            get => _leftMiddleFingertipNode;
+            set => SetField(ref _leftMiddleFingertipNode, value);
+        }
+
+        private SceneNode? _rightMiddleFingertipNode;
+        /// <summary>Optional mapped fingertip endpoint beyond the middle distal joint.</summary>
+        public SceneNode? RightMiddleFingertipNode
+        {
+            get => _rightMiddleFingertipNode;
+            set => SetField(ref _rightMiddleFingertipNode, value);
+        }
+
+        SceneNode? IHumanoidVrCalibrationRig.LeftMiddleFingertipNode => LeftMiddleFingertipNode;
+        SceneNode? IHumanoidVrCalibrationRig.RightMiddleFingertipNode => RightMiddleFingertipNode;
+
+        /// <summary>Maps the avatar's bind-pose body basis into the engine's forward/up basis.</summary>
+        public bool TryGetVrBindBodyToEngine(out Matrix4x4 correction)
+        {
+            correction = Matrix4x4.Identity;
+            GetBindBodyBasis(out _, out Vector3 up, out Vector3 forward);
+            if (!IsFiniteDirection(up) || !IsFiniteDirection(forward) ||
+                Vector3.Cross(up, forward).LengthSquared() < 1e-8f)
+                return false;
+
+            Matrix4x4 semanticFrame = Matrix4x4.CreateWorld(Vector3.Zero, forward, up);
+            return Matrix4x4.Invert(semanticFrame, out correction);
+        }
+
+        public bool TryGetVrSemanticForwardInRootBindSpace(out Vector3 forward)
+        {
+            GetBindBodyBasis(out _, out _, out forward);
+            if (!IsFiniteDirection(forward))
+            {
+                forward = default;
+                return false;
+            }
+            forward = Vector3.Normalize(forward);
+            return true;
+        }
+
+        public bool TryGetVrSemanticForwardInHipsBindSpace(out Vector3 forward)
+        {
+            forward = default;
+            if (Hips.Node is null || !TryGetVrSemanticForwardInRootBindSpace(out Vector3 rootForward))
+                return false;
+            Vector3 hipsForward = Vector3.TransformNormal(rootForward,
+                Transform.BindMatrix * Hips.Node.Transform.InverseBindMatrix);
+            if (!IsFiniteDirection(hipsForward))
+                return false;
+            forward = Vector3.Normalize(hipsForward);
+            return true;
+        }
+
+        private static bool IsFiniteDirection(Vector3 direction)
+            => float.IsFinite(direction.X) && float.IsFinite(direction.Y) && float.IsFinite(direction.Z)
+                && direction.LengthSquared() > 1e-8f;
         SceneNode? IHumanoidVrCalibrationRig.LeftKneeNode => Left.Knee.Node;
         SceneNode? IHumanoidVrCalibrationRig.RightKneeNode => Right.Knee.Node;
 
@@ -1029,6 +1097,20 @@ namespace XREngine.Components.Animation
             _ikTargetRootNode ??= SceneNode.NewChild("HumanoidIKTargets");
             var targetNode = _ikTargetRootNode.NewChild(nodeName ?? GetDefaultIKTargetNodeName(target));
             transform = targetNode.GetTransformAs<Transform>(true)!;
+            SetIKTarget(target, transform, Matrix4x4.Identity);
+            return transform;
+        }
+
+        /// <summary>Ensure a VR slot uses a target under the avatar, never a raw device child.</summary>
+        public Transform EnsureOwnedVrIKTarget(EHumanoidIKTarget target)
+        {
+            _ikTargetRootNode ??= SceneNode.NewChild("HumanoidIKTargets");
+            if (GetIKTargetTransform(target) is Transform existing
+                && ReferenceEquals(existing.Parent, _ikTargetRootNode.Transform))
+                return existing;
+
+            var node = _ikTargetRootNode.NewChild(GetDefaultIKTargetNodeName(target));
+            Transform transform = node.GetTransformAs<Transform>(true)!;
             SetIKTarget(target, transform, Matrix4x4.Identity);
             return transform;
         }
@@ -5003,6 +5085,53 @@ namespace XREngine.Components.Animation
             ResetMappedTransformsToBindPose(includeEyesTarget: false);
 
             SyncPreviewRenderMatrices();
+        }
+
+        /// <summary>Restore the neutral pose and extend both arms along avatar-local horizontal axes.</summary>
+        public void ApplyVrCanonicalTPose()
+        {
+            ResetPose();
+            Vector3 leftOut = HorizontalSeparation(Left.Shoulder.Node?.Transform, Right.Shoulder.Node?.Transform);
+            if (leftOut.LengthSquared() < 1e-8f)
+                leftOut = HorizontalSeparation(Left.Arm.Node?.Transform, Right.Arm.Node?.Transform);
+            if (leftOut.LengthSquared() < 1e-8f)
+                leftOut = HorizontalSeparation(Left.Elbow.Node?.Transform, Left.Arm.Node?.Transform);
+            if (leftOut.LengthSquared() < 1e-8f)
+                leftOut = -HorizontalSeparation(Right.Elbow.Node?.Transform, Right.Arm.Node?.Transform);
+            if (leftOut.LengthSquared() < 1e-8f)
+                leftOut = -Vector3.Normalize(Transform.WorldRight);
+            else
+                leftOut = Vector3.Normalize(leftOut);
+
+            AlignSegment(Left.Arm.Node?.GetTransformAs<Transform>(true), Left.Elbow.Node?.Transform, leftOut);
+            AlignSegment(Left.Elbow.Node?.GetTransformAs<Transform>(true), Left.Wrist.Node?.Transform, leftOut);
+            AlignSegment(Right.Arm.Node?.GetTransformAs<Transform>(true), Right.Elbow.Node?.Transform, -leftOut);
+            AlignSegment(Right.Elbow.Node?.GetTransformAs<Transform>(true), Right.Wrist.Node?.Transform, -leftOut);
+
+            static Vector3 HorizontalSeparation(TransformBase? left, TransformBase? right)
+            {
+                if (left is null || right is null)
+                    return Vector3.Zero;
+                left.RecalculateMatrices(true);
+                right.RecalculateMatrices(true);
+                Vector3 separation = left.WorldTranslation - right.WorldTranslation;
+                separation.Y = 0f;
+                return separation;
+            }
+
+            static void AlignSegment(Transform? parent, TransformBase? child, Vector3 desired)
+            {
+                if (parent is null || child is null)
+                    return;
+                parent.RecalculateMatrices(true);
+                child.RecalculateMatrices(true);
+                Vector3 direction = child.WorldTranslation - parent.WorldTranslation;
+                if (direction.LengthSquared() < 1e-8f)
+                    return;
+                Quaternion correction = XRMath.RotationBetweenVectors(Vector3.Normalize(direction), desired);
+                parent.SetWorldTranslationRotation(parent.WorldTranslation, Quaternion.Normalize(correction * parent.WorldRotation));
+                parent.RecalculateMatrices(true);
+            }
         }
 
         public void ApplyPosePreviewMode()

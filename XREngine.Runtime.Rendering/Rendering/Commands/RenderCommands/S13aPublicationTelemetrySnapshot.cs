@@ -41,4 +41,15 @@ public readonly record struct S13aPublicationTelemetrySnapshot(
     long AdvancedScenePublicationPrepareCalls, long AdvancedScenePublicationAttempts,
     long AdvancedScenePublicationReuses, long AdvancedScenePublicationPrepareTicks,
     long AdvancedScenePublicationFailures,
-    long AdvancedSceneSlotHits, long AdvancedSceneSlotRealizations);
+    long AdvancedSceneSlotHits, long AdvancedSceneSlotRealizations,
+    long AdvancedPlanDiscoveries, long AdvancedPlanOperations,
+    long AdvancedPlanAdvancedOperations, long AdvancedPlanFamilies,
+    long AdvancedPlanDiscoveryVisits, long AdvancedPlanFamilyScanVisits,
+    long AdvancedPlanLeaseChecks, long AdvancedPlanDiscoveryTicks,
+    long AdvancedPlanPreparationTicks, long AdvancedPlanGateWaitTicks,
+    long AdvancedPlanAllocatedBytes, long AdvancedPlanSealCollections,
+    long AdvancedPlanSealVisits,
+    long[] AdvancedFamilyStepCalls, long[] AdvancedFamilyStepTicks,
+    long[] AdvancedFamilyStepBytes,
+    long AdvancedBinFreezeSorts, long AdvancedBinFreezeRecords,
+    long AdvancedBinFreezeOrderViolations);

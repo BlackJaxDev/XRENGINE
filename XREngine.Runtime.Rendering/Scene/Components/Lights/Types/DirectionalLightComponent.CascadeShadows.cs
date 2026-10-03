@@ -598,12 +598,24 @@ namespace XREngine.Components.Lights
             return !IsKnownMonadoOpenXrRuntime();
         }
 
+        /// <summary>
+        /// The launch-time override from <see cref="XREngineEnvironmentVariables.VulkanDirectionalCascades"/>,
+        /// parsed once: it is consulted for every mesh request that applies shadow uniforms,
+        /// and reading the process environment there cost more than the request itself.
+        /// </summary>
+        private static readonly bool? s_vulkanDirectionalCascadesOverride = ParseVulkanDirectionalCascadesOverride();
+
         private static bool TryResolveVulkanDirectionalCascadesOverride(out bool enabled)
         {
-            enabled = false;
+            enabled = s_vulkanDirectionalCascadesOverride.GetValueOrDefault();
+            return s_vulkanDirectionalCascadesOverride.HasValue;
+        }
+
+        private static bool? ParseVulkanDirectionalCascadesOverride()
+        {
             string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDirectionalCascades);
             if (string.IsNullOrWhiteSpace(value))
-                return false;
+                return null;
 
             value = value.Trim();
             if (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
@@ -612,7 +624,6 @@ namespace XREngine.Components.Lights
                 string.Equals(value, "on", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(value, "force", StringComparison.OrdinalIgnoreCase))
             {
-                enabled = true;
                 return true;
             }
 
@@ -623,21 +634,37 @@ namespace XREngine.Components.Lights
                 string.Equals(value, "disable", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(value, "disabled", StringComparison.OrdinalIgnoreCase))
             {
-                enabled = false;
-                return true;
+                return false;
             }
 
-            return false;
+            return null;
         }
 
+        private static ulong s_knownMonadoRuntimeFrameId = ulong.MaxValue;
+        private static bool s_knownMonadoRuntime;
+
+        /// <summary>
+        /// Whether the configured OpenXR runtime is Monado. It is consulted for every mesh
+        /// request that applies shadow uniforms, so the environment is read at most once per
+        /// render frame; it is not cached longer because the editor can switch
+        /// <c>XR_RUNTIME_JSON</c> while running.
+        /// </summary>
         internal static bool IsKnownMonadoOpenXrRuntime()
         {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (Volatile.Read(ref s_knownMonadoRuntimeFrameId) == frameId)
+                return Volatile.Read(ref s_knownMonadoRuntime);
+
             string runtimePath =
                 Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ??
                 Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ??
                 string.Empty;
 
-            return runtimePath.Contains("monado", StringComparison.OrdinalIgnoreCase);
+            bool known = runtimePath.Contains("monado", StringComparison.OrdinalIgnoreCase);
+            // Publish the answer before its frame id, so a reader that matches the id sees it.
+            Volatile.Write(ref s_knownMonadoRuntime, known);
+            Volatile.Write(ref s_knownMonadoRuntimeFrameId, frameId);
+            return known;
         }
 
         private void PublishVulkanCascadeRenderingDisabledPlan(ShadowRequestSource source)

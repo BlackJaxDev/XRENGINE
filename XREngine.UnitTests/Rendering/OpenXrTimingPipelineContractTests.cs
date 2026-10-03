@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -1155,7 +1156,63 @@ public sealed class OpenXrTimingPipelineContractTests
         CountOccurrences(neutralBindings, "(_handGripPoseAction, \"/user/hand/right/input/grip/pose\")").ShouldBe(5);
         neutralBindings.ShouldContain("(_handAimPoseAction, \"/user/hand/left/input/aim/pose\")");
         neutralBindings.ShouldContain("(_handAimPoseAction, \"/user/hand/right/input/aim/pose\")");
-        input.ShouldContain("if (SyncActionsForFrame())\n                Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);");
+        string poseUpdate = SliceMethod(input, "private void UpdateActionPoseCaches", "private void DestroyInput");
+        int failureStart = poseUpdate.IndexOf("if (!SyncActionsForFrame())", StringComparison.Ordinal);
+        int successStart = poseUpdate.IndexOf("Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);", StringComparison.Ordinal);
+        failureStart.ShouldBeGreaterThanOrEqualTo(0);
+        successStart.ShouldBeGreaterThan(failureStart);
+
+        string failedSync = poseUpdate[failureStart..successStart];
+        failedSync.ShouldContain("_openXrPredInputFrameNumber = 0;");
+        failedSync.ShouldContain("_openXrPredInputPublicationTimestamp = 0;");
+        failedSync.ShouldContain("_openXrPredTrackerLocalPose.Clear();");
+        failedSync.ShouldContain("return;");
+
+        string successfulSync = poseUpdate[successStart..];
+        successfulSync.ShouldContain("lock (_openXrPoseLock)");
+        successfulSync.ShouldContain("_openXrPredInputFrameNumber = frameNo;");
+        successfulSync.ShouldContain("_openXrPredInputSampleTime = displayTime;");
+        successfulSync.ShouldContain("_openXrPredInputPublicationTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();");
+    }
+
+    [Test]
+    public void OpenXrRuntimeNeutralBindingPaths_MatchSupportedProfileComponents()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs");
+        string bindings = SliceMethod(source, "private void SuggestRuntimeNeutralBindings", "private void SuggestRuntimeBindingsForProfile");
+        var supported = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["/interaction_profiles/valve/index_controller"] = ["/input/grip/pose", "/input/thumbstick", "/input/squeeze/value", "/input/a/click", "/input/system/click", "/input/b/click", "/input/trigger/click", "/input/aim/pose", "/output/haptic"],
+            ["/interaction_profiles/htc/vive_controller"] = ["/input/grip/pose", "/input/trackpad", "/input/trigger/value", "/input/trackpad/click", "/input/squeeze/click", "/input/menu/click", "/input/aim/pose", "/output/haptic"],
+            ["/interaction_profiles/khr/simple_controller"] = ["/input/grip/pose", "/input/menu/click", "/input/select/click", "/input/aim/pose", "/output/haptic"],
+            ["/interaction_profiles/oculus/touch_controller"] = ["/input/grip/pose", "/input/thumbstick", "/input/squeeze/value", "/input/a/click", "/input/b/click", "/input/x/click", "/input/y/click", "/input/menu/click", "/input/trigger/value", "/input/aim/pose", "/output/haptic"],
+            ["/interaction_profiles/microsoft/motion_controller"] = ["/input/grip/pose", "/input/thumbstick", "/input/squeeze/click", "/input/trackpad/click", "/input/thumbstick/click", "/input/menu/click", "/input/trigger/value", "/input/aim/pose", "/output/haptic"],
+        };
+
+        MatchCollection profiles = Regex.Matches(bindings, "SuggestRuntimeBindingsForProfile\\(\\s*\"(?<profile>[^\"]+)\"(?<bindings>.*?)\\);", RegexOptions.Singleline);
+        profiles.Count.ShouldBe(supported.Count);
+        foreach (Match profile in profiles)
+        {
+            string profileName = profile.Groups["profile"].Value;
+            supported.TryGetValue(profileName, out HashSet<string>? components).ShouldBeTrue($"Unknown profile {profileName}");
+            components.ShouldNotBeNull();
+
+            MatchCollection paths = Regex.Matches(profile.Groups["bindings"].Value, "\"/user/hand/(?<hand>left|right)(?<component>/(?:input|output)/[^\"]+)\"");
+            paths.Count.ShouldBeGreaterThan(0);
+            foreach (Match path in paths)
+            {
+                string component = path.Groups["component"].Value;
+                components.Contains(component).ShouldBeTrue($"{profileName} does not support {path.Value}");
+                if (profileName == "/interaction_profiles/oculus/touch_controller")
+                {
+                    string hand = path.Groups["hand"].Value;
+                    if (component is "/input/a/click" or "/input/b/click")
+                        hand.ShouldBe("right");
+                    if (component is "/input/x/click" or "/input/y/click" or "/input/menu/click")
+                        hand.ShouldBe("left");
+                }
+            }
+        }
     }
 
     [Test]

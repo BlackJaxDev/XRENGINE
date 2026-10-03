@@ -8,8 +8,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.UnitTests.Animation;
 
 /// <summary>
-/// A self-contained six-device humanoid rig for exercising runtime VRIK calibration.
-/// Device order is head, hips, left hand, right hand, left foot, right foot.
+/// A self-contained humanoid rig with one deterministic device per calibration slot.
 /// </summary>
 public sealed class SyntheticVrCalibrationRig : IDisposable
 {
@@ -28,6 +27,11 @@ public sealed class SyntheticVrCalibrationRig : IDisposable
     public SyntheticVrDeviceTransform RightHand { get; }
     public SyntheticVrDeviceTransform LeftFoot { get; }
     public SyntheticVrDeviceTransform RightFoot { get; }
+    public SyntheticVrDeviceTransform Chest { get; }
+    public SyntheticVrDeviceTransform LeftElbow { get; }
+    public SyntheticVrDeviceTransform RightElbow { get; }
+    public SyntheticVrDeviceTransform LeftKnee { get; }
+    public SyntheticVrDeviceTransform RightKnee { get; }
     public SyntheticVrDeviceTransform[] Devices { get; }
 
     /// <summary>Number of completed VRIK post-update callbacks.</summary>
@@ -45,7 +49,13 @@ public sealed class SyntheticVrCalibrationRig : IDisposable
         RightHand = AddDevice("RightHand", 3, new Vector3(0.65f, 1.2f, 0.25f));
         LeftFoot = AddDevice("LeftFoot", 4, new Vector3(-0.15f, 0.08f, 0.12f));
         RightFoot = AddDevice("RightFoot", 5, new Vector3(0.15f, 0.08f, 0.12f));
-        Devices = [Head, Hips, LeftHand, RightHand, LeftFoot, RightFoot];
+        LeftElbow = AddDevice("LeftElbow", 6, new Vector3(-0.56f, 1.63f, 0.0f));
+        RightElbow = AddDevice("RightElbow", 7, new Vector3(0.56f, 1.63f, 0.0f));
+        LeftKnee = AddDevice("LeftKnee", 8, new Vector3(-0.15f, 0.47f, 0.04f));
+        RightKnee = AddDevice("RightKnee", 9, new Vector3(0.15f, 0.47f, 0.04f));
+        Chest = AddDevice("Chest", 10, new Vector3(0.0f, 1.5f, 0.0f));
+        Devices = [Head, Hips, LeftHand, RightHand, LeftFoot, RightFoot,
+            LeftElbow, RightElbow, LeftKnee, RightKnee, Chest];
 
         SceneNode hips = Bone(AvatarRoot, "Hips", 0.0f, 1.0f, 0.0f);
         SceneNode spine = Bone(hips, "Spine", 0.0f, 0.25f, 0.0f);
@@ -96,13 +106,8 @@ public sealed class SyntheticVrCalibrationRig : IDisposable
         Humanoid.Right.Toes.Node = rightToes;
         Humanoid.PosePreviewMode = EHumanoidPosePreviewMode.AnimatedPose;
 
-        // Match the raw device assignments made by VRPlayerCharacterComponent.
-        Humanoid.SetIKTarget(EHumanoidIKTarget.Head, Head, Matrix4x4.Identity);
-        Humanoid.SetIKTarget(EHumanoidIKTarget.Hips, Hips, Matrix4x4.Identity);
-        Humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftHand, Matrix4x4.Identity);
-        Humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, RightHand, Matrix4x4.Identity);
-        Humanoid.SetIKTarget(EHumanoidIKTarget.LeftFoot, LeftFoot, Matrix4x4.Identity);
-        Humanoid.SetIKTarget(EHumanoidIKTarget.RightFoot, RightFoot, Matrix4x4.Identity);
+        for (int i = 0; i < Devices.Length; i++)
+            Humanoid.SetIKTarget((EHumanoidIKTarget)i, Devices[i], Matrix4x4.Identity);
 
         Solver = AvatarRoot.AddComponent<VRIKSolverComponent>()!;
         Solver.AssignedHumanoid = Humanoid;
@@ -129,14 +134,56 @@ public sealed class SyntheticVrCalibrationRig : IDisposable
         return result;
     }
 
+    /// <summary>Captures the required tracked poses and the selected optional body poses.</summary>
+    public VrCalibrationResult Capture(params EHumanoidIKTarget[] optionalSlots)
+    {
+        UpdateMatrices(SceneRoot.Transform);
+        VrCalibrationRequest request = CreateRequest(optionalSlots);
+        VrCalibrationResult result = Solver.Calibrate(request);
+        UpdateMatrices(SceneRoot.Transform);
+        return result;
+    }
+
+    public VrCalibrationRequest CreateRequest(params EHumanoidIKTarget[] optionalSlots)
+        => CreateRequest(false, optionalSlots);
+
+    public VrCalibrationRequest CreateRequest(bool requireLevelHead, params EHumanoidIKTarget[] optionalSlots)
+    {
+        UpdateMatrices(SceneRoot.Transform);
+        VrCalibrationRequest request = new() { Settings = Settings, RequireLevelHead = requireLevelHead };
+        Add(EHumanoidIKTarget.Head);
+        Add(EHumanoidIKTarget.LeftHand);
+        Add(EHumanoidIKTarget.RightHand);
+        foreach (EHumanoidIKTarget slot in optionalSlots)
+            Add(slot);
+        return request;
+
+        void Add(EHumanoidIKTarget slot)
+        {
+            SyntheticVrDeviceTransform device = Devices[(int)slot];
+            request.Slots[(int)slot] = new VrCalibrationCapture(device, device.WorldMatrix, device.Identity);
+        }
+    }
+
+    public TransformBase?[] GetAllTargets()
+    {
+        TransformBase?[] targets = new TransformBase?[Devices.Length];
+        for (int i = 0; i < targets.Length; i++)
+            targets[i] = Solver.TryGetSlot((EHumanoidIKTarget)i, out VrCalibrationSlotState state)
+                ? state.Target : null;
+        return targets;
+    }
+
+    public void RefreshTransforms() => UpdateMatrices(SceneRoot.Transform);
+
     /// <summary>Returns the six solver-owned targets in device slot order.</summary>
     public TransformBase?[] GetSolverTargets()
         => [Solver.Solver.Spine.HeadTarget, Solver.Solver.Spine.HipsTarget,
             Solver.Solver.LeftArm.Target, Solver.Solver.RightArm.Target,
             Solver.Solver.LeftLeg.Target, Solver.Solver.RightLeg.Target];
 
-    /// <summary>Counts calibrator-created target descendants under the six devices.</summary>
-    public int CountTargetNodes()
+    /// <summary>Counts target descendants that were incorrectly attached to raw devices.</summary>
+    public int CountDeviceTargetDescendants()
     {
         int count = 0;
         foreach (SyntheticVrDeviceTransform device in Devices)

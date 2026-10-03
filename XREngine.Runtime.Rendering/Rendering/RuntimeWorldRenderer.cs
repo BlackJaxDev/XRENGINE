@@ -57,6 +57,8 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     public object? GameModeObject => _gameMode?.Invoke();
     public IRuntimeAmbientSettings? AmbientSettings => _state.AmbientSettings;
     public IReadOnlyList<SceneNode> RootNodes => _rootNodes?.Invoke() ?? [];
+    public ReadOnlySpan<SceneNode> RootNodeSnapshot
+        => WorldContext is RuntimeWorld world ? world.RootNodes.Snapshot : [];
     public bool PreviewOctrees => GetSettings()?.PreviewOctrees ?? false;
     public bool PreviewQuadtrees => GetSettings()?.PreviewQuadtrees ?? false;
 

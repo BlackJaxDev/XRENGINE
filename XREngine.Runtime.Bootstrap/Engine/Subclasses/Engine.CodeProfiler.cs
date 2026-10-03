@@ -19,7 +19,7 @@ namespace XREngine
         /// Start() only captures a timestamp and pushes a lightweight event to a queue.
         /// All tree reconstruction and processing happens on a dedicated stats thread.
         /// </summary>
-        public class CodeProfiler : XRBase
+        public class CodeProfiler : XRBase, IRuntimeComponentTickTimingRecorder
         {
 #if DEBUG
             private bool _enableFrameLogging = true;
@@ -46,6 +46,11 @@ namespace XREngine
                 }
             }
 
+            /// <summary>
+            /// Times world tick callbacks by owning component for the Component Timings
+            /// panel. While on, this profiler is the tick dispatch's timing recorder;
+            /// while off, the dispatch does not time callbacks at all.
+            /// </summary>
             public bool EnableComponentTiming
             {
                 get => _enableComponentTiming;
@@ -54,6 +59,7 @@ namespace XREngine
                     if (!SetField(ref _enableComponentTiming, value))
                         return;
 
+                    RuntimeComponentTickTiming.Recorder = value ? this : null;
                     if (!value)
                     {
                         Interlocked.Exchange(ref _activeComponentTimingFrame, null);
@@ -1960,10 +1966,6 @@ namespace XREngine
             public bool TryRequestSnapshot(float minIntervalSeconds, out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
                 => TryGetSnapshot(out frameSnapshot, out history);
 
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            internal bool HasActiveComponentTimingFrame()
-                => _activeComponentTimingFrame is not null;
-
             public void BeginComponentTimingFrame(float frameTime)
             {
                 if (!EnableComponentTiming)
@@ -1981,14 +1983,19 @@ namespace XREngine
                 _readyComponentTimingSnapshot = BuildComponentTimingSnapshot(state, frameTime);
             }
 
-            internal void RecordComponentTick(XRComponent component, ETickGroup group, long elapsedTicks)
+            /// <summary>
+            /// Accumulates a callback's time into the update frame being timed. Callbacks
+            /// dispatched outside a timed update frame, such as fixed-update ticks between
+            /// frames, are not recorded.
+            /// </summary>
+            void IRuntimeComponentTickTimingRecorder.RecordComponentTick(XRComponent component, ETickGroup group, long elapsedStopwatchTicks)
             {
                 var state = _activeComponentTimingFrame;
                 if (state is null)
                     return;
 
                 var accumulator = state.Components.GetOrAdd(component.ID, static (_, c) => new ComponentTimingAccumulator(c), component);
-                accumulator.Add(elapsedTicks, group);
+                accumulator.Add(elapsedStopwatchTicks, group);
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -2614,19 +2621,11 @@ namespace XREngine
                 return false;
             }
 
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            internal bool HasActiveComponentTimingFrame()
-                => false;
-
             public void BeginComponentTimingFrame(float frameTime)
             {
             }
 
             public void EndComponentTimingFrame(float frameTime)
-            {
-            }
-
-            internal void RecordComponentTick(XRComponent component, ETickGroup group, long elapsedTicks)
             {
             }
 

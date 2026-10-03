@@ -271,6 +271,24 @@ namespace XREngine.Components.Scene.Mesh
             ModelRenderDiagnostics.LogComponentActivated(this);
         }
 
+        /// <summary>
+        /// Disposes the renderable meshes, which own this component's renderers and runtime
+        /// meshes; nothing else releases them once the component is destroyed.
+        /// </summary>
+        protected override void OnDestroying()
+        {
+            if (Model is { } model)
+                UnsubscribeModelMeshEvents(model);
+
+            RenderableMesh[] meshes = Meshes.Count == 0 ? [] : Meshes.ToArray();
+            ClearMeshesWithoutEvents();
+            foreach (RenderableMesh mesh in meshes)
+                mesh.Dispose();
+            _meshLinks.Clear();
+
+            base.OnDestroying();
+        }
+
         private void AddMesh(SubMesh item)
         {
             RenderableMesh mesh = CreateRenderableMesh(item);

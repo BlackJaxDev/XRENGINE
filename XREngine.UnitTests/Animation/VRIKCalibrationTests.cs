@@ -6,25 +6,24 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Animation;
 
-/// <summary>Exercises real calibration and solver updates with deterministic tracking inputs.</summary>
+/// <summary>Exercises calibrated target ownership and solver updates with deterministic tracked poses.</summary>
 [TestFixture]
 [NonParallelizable]
 public sealed class VRIKCalibrationTests
 {
-    private static readonly EHumanoidIKTarget[] Slots =
+    private static readonly EHumanoidIKTarget[] OptionalSlots =
     [
-        EHumanoidIKTarget.Head, EHumanoidIKTarget.Hips,
-        EHumanoidIKTarget.LeftHand, EHumanoidIKTarget.RightHand,
-        EHumanoidIKTarget.LeftFoot, EHumanoidIKTarget.RightFoot,
+        EHumanoidIKTarget.Hips, EHumanoidIKTarget.Chest, EHumanoidIKTarget.LeftFoot,
+        EHumanoidIKTarget.RightFoot, EHumanoidIKTarget.LeftElbow, EHumanoidIKTarget.RightElbow,
+        EHumanoidIKTarget.LeftKnee, EHumanoidIKTarget.RightKnee,
     ];
 
     [Test]
-    public void SyntheticDevice_SamplesKeepIdentityIndependentOfPoseAndAvailability()
+    public void SyntheticDevice_KeepsIdentityIndependentOfPoseAndAvailability()
     {
         using var rig = new SyntheticVrCalibrationRig();
         SyntheticVrDeviceTransform device = rig.LeftFoot;
         string identity = device.Identity;
-        device.PoseCurrentlyUsable.ShouldBeTrue();
         Quaternion rotation = Quaternion.CreateFromYawPitchRoll(0.6f, -0.3f, 0.2f);
         Vector3 position = new(-0.2f, 0.1f, 0.3f);
         device.SetPose(position, rotation, 1234);
@@ -47,139 +46,300 @@ public sealed class VRIKCalibrationTests
     }
 
     [Test]
-    public void Calibration_WithRawDeviceSlots_ReproducesTargetLossDuringSolverUpdates()
-    {
-        using var rig = new SyntheticVrCalibrationRig();
-        rig.Solver.Solver.Initialized.ShouldBeTrue();
-        rig.Devices.Length.ShouldBe(6);
-        rig.Devices.Select(device => device.Identity).Distinct().Count().ShouldBe(6);
-        rig.CountTargetNodes().ShouldBe(0);
-        Matrix4x4 origin = rig.Playspace.Transform.WorldMatrix;
-        Vector3 scale = rig.Solver.Root!.Scale;
-        WriteSnapshot("before calibration", rig);
-
-        rig.Calibrate().ShouldNotBeNull();
-        TransformBase?[] calibrated = rig.GetSolverTargets();
-        AssertCalibratedTargets(rig, calibrated);
-        rig.CountTargetNodes().ShouldBe(6);
-        WriteSnapshot("after calibration", rig);
-
-        // Repeating calibration before synchronization reuses the six children.
-        rig.Calibrate().ShouldNotBeNull();
-        AssertSameTargets(calibrated, rig.GetSolverTargets());
-        rig.CountTargetNodes().ShouldBe(6);
-
-        int updates = rig.PostUpdateCount;
-        for (int tick = 0; tick < 5; tick++)
-        {
-            rig.Tick();
-            TransformBase?[] actual = rig.GetSolverTargets();
-            for (int i = 0; i < Slots.Length; i++)
-            {
-                actual[i].ShouldBeNull($"Current raw-device synchronization clears {Slots[i]} on tick {tick}.");
-                rig.Humanoid.GetIKTargetTransform(Slots[i]).ShouldBeSameAs(rig.Devices[i]);
-                calibrated[i]!.Parent.ShouldBeSameAs(rig.Devices[i]);
-            }
-            rig.CountTargetNodes().ShouldBe(6, "Solver updates must not allocate additional target children.");
-        }
-
-        rig.PostUpdateCount.ShouldBe(updates + 5, "The test must execute the solver, not only synchronization.");
-        rig.Solver.Root.Scale.ShouldBe(scale);
-        rig.Playspace.Transform.WorldMatrix.ShouldBe(origin);
-        rig.Solver.IsActive.ShouldBeTrue();
-        WriteSnapshot("after five solver updates", rig);
-    }
-
-    [Test]
-    public void Calibration_WithAuthoritativeConcreteTargets_PreservesBindingsAndSolvesMovedHand()
-    {
-        using var rig = new SyntheticVrCalibrationRig();
-        rig.Calibrate().ShouldNotBeNull();
-        TransformBase?[] calibrated = rig.GetSolverTargets();
-        AssertCalibratedTargets(rig, calibrated);
-
-        // Positive control for the harness: publish the targets into the store read by the solver.
-        // Production calibration does not yet perform this publication.
-        for (int i = 0; i < Slots.Length; i++)
-            rig.Humanoid.SetIKTarget(Slots[i], calibrated[i], Matrix4x4.Identity);
-
-        rig.Tick();
-        Vector3 before = rig.Humanoid.Left.Wrist.Node!.Transform.WorldTranslation;
-        Matrix4x4 moved = rig.LeftHand.Pose;
-        moved.Translation += new Vector3(0.0f, 0.05f, -0.08f);
-        rig.LeftHand.Pose = moved;
-        int updates = rig.PostUpdateCount;
-        for (int tick = 0; tick < 5; tick++)
-        {
-            rig.Tick();
-            AssertSameTargets(calibrated, rig.GetSolverTargets());
-            rig.CountTargetNodes().ShouldBe(6);
-        }
-
-        rig.PostUpdateCount.ShouldBe(updates + 5);
-        Vector3 after = rig.Humanoid.Left.Wrist.Node.Transform.WorldTranslation;
-        float distance = Vector3.Distance(before, after);
-        float.IsFinite(distance).ShouldBeTrue();
-        distance.ShouldBeGreaterThan(0.001f, "A changing controller pose must reach the avatar through actual IK solving.");
-        WriteSnapshot("positive control after moving left hand", rig);
-    }
-
-    [Test]
-    [Explicit("Known target-ownership defect: run explicitly to verify the required calibration contract before and after its repair.")]
     public void Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates()
     {
         using var rig = new SyntheticVrCalibrationRig();
+        rig.Solver.Solver.Initialized.ShouldBeTrue();
+        rig.Devices.Select(device => device.Identity).Distinct().Count().ShouldBe(11);
+        Matrix4x4 playspaceOrigin = rig.Playspace.Transform.WorldMatrix;
+        Vector3 avatarScale = rig.Solver.Root!.Scale;
+
         rig.Calibrate().ShouldNotBeNull();
-        TransformBase?[] calibrated = rig.GetSolverTargets();
-        AssertCalibratedTargets(rig, calibrated);
-        var observed = new TransformBase?[5][];
+        TransformBase?[] targets = AssertOwnedTargets(rig);
+        AssertSolverTargetsPublished(rig, targets);
         int updates = rig.PostUpdateCount;
-        for (int tick = 0; tick < observed.Length; tick++)
+        for (int tick = 0; tick < 5; tick++)
         {
             rig.Tick();
-            observed[tick] = rig.GetSolverTargets();
+            AssertTargetIdentities(targets, rig.GetAllTargets());
+            AssertSolverTargetsPublished(rig, targets);
         }
+        rig.PostUpdateCount.ShouldBe(updates + 5);
+        rig.CountDeviceTargetDescendants().ShouldBe(0);
+        rig.Solver.Root.Scale.ShouldBe(avatarScale);
+        rig.Playspace.Transform.WorldMatrix.ShouldBe(playspaceOrigin);
 
-        rig.PostUpdateCount.ShouldBe(updates + observed.Length);
-        using (Assert.EnterMultipleScope())
-        {
-            for (int tick = 0; tick < observed.Length; tick++)
-                for (int i = 0; i < Slots.Length; i++)
-                {
-                    Assert.That(observed[tick][i], Is.Not.Null, $"{Slots[i]} at tick {tick}");
-                    Assert.That(observed[tick][i], Is.SameAs(calibrated[i]), $"{Slots[i]} at tick {tick}");
-                }
-
-            Assert.That(rig.Calibrate(), Is.Not.Null);
-            Assert.That(rig.CountTargetNodes(), Is.EqualTo(6), "Recalibration must not leak the previous six target nodes.");
-        }
+        rig.Calibrate().ShouldNotBeNull();
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        AssertSolverTargetsPublished(rig, targets);
     }
 
-    private static void AssertCalibratedTargets(SyntheticVrCalibrationRig rig, TransformBase?[] targets)
+    [Test]
+    public void TypedCapture_ThreeSixAndElevenPointsReuseAllTargets()
     {
-        targets.Length.ShouldBe(6);
-        targets.Distinct().Count().ShouldBe(6);
-        for (int i = 0; i < Slots.Length; i++)
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Capture().Success.ShouldBeTrue();
+        TransformBase?[] targets = AssertOwnedTargets(rig);
+        AssertWeight(rig, EHumanoidIKTarget.Head, 1f);
+        AssertWeight(rig, EHumanoidIKTarget.LeftHand, 1f);
+        AssertWeight(rig, EHumanoidIKTarget.RightHand, 1f);
+        foreach (EHumanoidIKTarget slot in OptionalSlots)
+            AssertWeight(rig, slot, 0f);
+
+        rig.Capture(EHumanoidIKTarget.Hips, EHumanoidIKTarget.LeftFoot, EHumanoidIKTarget.RightFoot)
+            .Success.ShouldBeTrue();
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        AssertWeight(rig, EHumanoidIKTarget.Hips, 1f);
+        AssertWeight(rig, EHumanoidIKTarget.LeftFoot, 1f);
+        AssertWeight(rig, EHumanoidIKTarget.RightFoot, 1f);
+
+        VrCalibrationResult full = rig.Capture(OptionalSlots);
+        full.Success.ShouldBeTrue(full.Error);
+        full.Slots.ShouldNotBeNull();
+        full.Slots!.Count.ShouldBe(11);
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        for (int i = 0; i < rig.Devices.Length; i++)
         {
-            targets[i].ShouldNotBeNull($"Calibration must create {Slots[i]}.");
-            targets[i].ShouldBeOfType<Transform>();
-            targets[i]!.Parent.ShouldBeSameAs(rig.Devices[i]);
+            EHumanoidIKTarget slot = (EHumanoidIKTarget)i;
+            AssertWeight(rig, slot, 1f);
+            VrCalibrationSlotState state = full.Slots[i];
+            state.Target.ShouldBeSameAs(targets[i]);
+            state.Device.ShouldBeSameAs(rig.Devices[i]);
+            state.Identity.ShouldBe(rig.Devices[i].Identity);
         }
+        rig.CountDeviceTargetDescendants().ShouldBe(0);
     }
 
-    private static void AssertSameTargets(TransformBase?[] expected, TransformBase?[] actual)
+    [Test]
+    public void RejectedCapture_PreservesPublishedTargetsOffsetsWeightsAndSolverSettings()
     {
-        for (int i = 0; i < Slots.Length; i++)
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Capture(OptionalSlots).Success.ShouldBeTrue();
+        TransformBase?[] targets = AssertOwnedTargets(rig);
+        VrCalibrationSlotState[] previous = new VrCalibrationSlotState[11];
+        Matrix4x4[] worlds = new Matrix4x4[11];
+        for (int i = 0; i < previous.Length; i++)
         {
-            actual[i].ShouldNotBeNull($"Missing {Slots[i]}.");
-            actual[i].ShouldBeSameAs(expected[i], $"Replaced {Slots[i]}.");
+            previous[i] = ReadSlot(rig, (EHumanoidIKTarget)i);
+            worlds[i] = previous[i].Target.WorldMatrix;
         }
+        float headHeight = rig.Solver.Solver.Spine.MinHeadHeight;
+        bool plantFeet = rig.Solver.Solver.PlantFeet;
+        TransformBase?[] solverTargets = rig.GetSolverTargets();
+
+        VrCalibrationRequest request = rig.CreateRequest(OptionalSlots);
+        Matrix4x4 invalid = rig.Chest.WorldMatrix;
+        invalid.M41 = float.NaN;
+        request.Slots[(int)EHumanoidIKTarget.Chest] = new VrCalibrationCapture(rig.Chest, invalid, rig.Chest.Identity);
+        VrCalibrationResult result = rig.Solver.Calibrate(request);
+        result.Success.ShouldBeFalse();
+        result.Error.ShouldNotBeNullOrWhiteSpace();
+
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        for (int i = 0; i < previous.Length; i++)
+        {
+            VrCalibrationSlotState actual = ReadSlot(rig, (EHumanoidIKTarget)i);
+            actual.Device.ShouldBeSameAs(previous[i].Device);
+            actual.DeviceToTargetOffset.ShouldBe(previous[i].DeviceToTargetOffset);
+            actual.Identity.ShouldBe(previous[i].Identity);
+            actual.Weight.ShouldBe(previous[i].Weight);
+            actual.Target.WorldMatrix.ShouldBe(worlds[i]);
+        }
+        AssertTargetIdentities(solverTargets, rig.GetSolverTargets());
+        rig.Solver.Solver.Spine.MinHeadHeight.ShouldBe(headHeight);
+        rig.Solver.Solver.PlantFeet.ShouldBe(plantFeet);
     }
 
-    private static void WriteSnapshot(string label, SyntheticVrCalibrationRig rig)
-        => TestContext.Out.WriteLine(
-            $"{label}: targets={rig.GetSolverTargets().Count(target => target is not null)}, " +
-            $"targetNodes={rig.CountTargetNodes()}, avatarScale={rig.Solver.Root!.Scale}, " +
-            $"origin={rig.Playspace.Transform.WorldMatrix}, humanoidActive={rig.Humanoid.IsActive}, " +
-            $"solverActive={rig.Solver.IsActive}, initialized={rig.Solver.Solver.Initialized}, updates={rig.PostUpdateCount}");
+    [Test]
+    public void MixedTrackingSnapshot_RejectsCaptureWithoutChangingPublishedRig()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Capture(OptionalSlots).Success.ShouldBeTrue();
+        TransformBase?[] targets = rig.GetAllTargets();
+        VrCalibrationSlotState chest = ReadSlot(rig, EHumanoidIKTarget.Chest);
+        Matrix4x4 targetWorld = chest.Target.WorldMatrix;
+        VrCalibrationRequest request = rig.CreateRequest(OptionalSlots);
+        request.Slots[(int)EHumanoidIKTarget.Chest] = new VrCalibrationCapture(
+            rig.Chest, rig.Chest.WorldMatrix, rig.Chest.Identity, SnapshotId: 2, SampleTime: 20);
+
+        VrCalibrationResult rejected = rig.Solver.Calibrate(request);
+        rejected.Success.ShouldBeFalse();
+        rejected.Error!.ShouldContain("Tracking samples changed");
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        ReadSlot(rig, EHumanoidIKTarget.Chest).DeviceToTargetOffset.ShouldBe(chest.DeviceToTargetOffset);
+        chest.Target.WorldMatrix.ShouldBe(targetWorld);
+    }
+
+    [Test]
+    public void LevelHeadCapture_RejectsTiltWithoutReplacingRigAndAcceptsYaw()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Capture(OptionalSlots).Success.ShouldBeTrue();
+        TransformBase?[] targets = rig.GetAllTargets();
+        VrCalibrationSlotState head = ReadSlot(rig, EHumanoidIKTarget.Head);
+        Vector3 headPosition = rig.Head.Pose.Translation;
+
+        rig.Head.SetPose(headPosition, Quaternion.CreateFromYawPitchRoll(0.45f, 0.35f, 0f));
+        VrCalibrationResult rejected = rig.Solver.Calibrate(rig.CreateRequest(true, OptionalSlots));
+        rejected.Success.ShouldBeFalse();
+        rejected.Error!.ShouldContain("head level");
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        ReadSlot(rig, EHumanoidIKTarget.Head).DeviceToTargetOffset.ShouldBe(head.DeviceToTargetOffset);
+
+        rig.Head.SetPose(headPosition, Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.45f));
+        VrCalibrationResult accepted = rig.Solver.Calibrate(rig.CreateRequest(true, OptionalSlots));
+        accepted.Success.ShouldBeTrue(accepted.Error);
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+    }
+
+    [Test]
+    public void CaptureWithRotatedPlayspaceScaledAvatarAndRotatedMounts_ComposesEveryTargetOnce()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        Transform playspace = (Transform)rig.Playspace.Transform;
+        Transform avatar = (Transform)rig.AvatarRoot.Transform;
+        playspace.Translation = new Vector3(2.4f, 0.3f, -1.7f);
+        playspace.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.43f);
+        avatar.Scale = new Vector3(1.28f);
+        rig.LeftFoot.SetPose(new Vector3(-0.36f, 0.08f, 0.17f),
+            Quaternion.CreateFromYawPitchRoll(0.7f, 0.2f, -0.1f));
+        rig.RightFoot.SetPose(new Vector3(0.36f, 0.08f, 0.17f),
+            Quaternion.CreateFromYawPitchRoll(-0.5f, 0.1f, 0.25f));
+        rig.Chest.SetPose(new Vector3(0f, 1.5f, 0f),
+            Quaternion.CreateFromYawPitchRoll(0.25f, -0.18f, 0.32f));
+        rig.RefreshTransforms();
+        Matrix4x4 avatarBefore = rig.AvatarRoot.Transform.WorldMatrix;
+        VrCalibrationResult result = rig.Capture(OptionalSlots);
+        result.Success.ShouldBeTrue(result.Error);
+        TransformBase?[] targets = AssertOwnedTargets(rig);
+
+        for (int i = 0; i < targets.Length; i++)
+        {
+            VrCalibrationSlotState state = ReadSlot(rig, (EHumanoidIKTarget)i);
+            Matrix4x4 composed = state.DeviceToTargetOffset * rig.Devices[i].WorldMatrix;
+            Vector3.Distance(state.Target.WorldTranslation, composed.Translation).ShouldBeLessThan(0.0002f,
+                $"slot={i}, target={state.Target.WorldTranslation}, composed={composed.Translation}");
+            Matrix4x4.Decompose(composed, out _, out Quaternion expectedRotation, out _).ShouldBeTrue();
+            MathF.Abs(Quaternion.Dot(state.Target.WorldRotation, expectedRotation)).ShouldBeGreaterThan(0.9999f);
+            rig.Solver.UpdateSlot((EHumanoidIKTarget)i, rig.Devices[i].WorldMatrix, 1f).ShouldBeTrue();
+            Vector3.Distance(state.Target.WorldTranslation, composed.Translation).ShouldBeLessThan(0.0002f);
+        }
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        rig.AvatarRoot.Transform.WorldMatrix.ShouldBe(avatarBefore);
+        avatar.Scale.ShouldBe(new Vector3(1.28f));
+    }
+
+    [Test]
+    public void EndingCalibrationPose_RestoresPreviousPreviewMode()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        EHumanoidPosePreviewMode previous = rig.Humanoid.PosePreviewMode;
+        rig.Solver.ApplyCanonicalCalibrationPose(rig.Head.WorldMatrix).Success.ShouldBeTrue();
+        rig.Humanoid.PosePreviewMode.ShouldBe(EHumanoidPosePreviewMode.TPose);
+        rig.Solver.EndCalibrationPose();
+        rig.Humanoid.PosePreviewMode.ShouldBe(previous);
+    }
+
+    [Test]
+    public void MovedDevice_UsesFrozenOffsetAndKeepsAvatarOwnedTarget()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Capture(OptionalSlots).Success.ShouldBeTrue();
+        TransformBase?[] targets = rig.GetAllTargets();
+        VrCalibrationSlotState before = ReadSlot(rig, EHumanoidIKTarget.LeftFoot);
+        Vector3 toeBefore = rig.Humanoid.Left.Toes.Node!.Transform.WorldTranslation;
+        Matrix4x4 movedPose = Matrix4x4.CreateFromQuaternion(
+            Quaternion.CreateFromYawPitchRoll(0.7f, -0.25f, 0.18f));
+        movedPose.Translation = rig.LeftFoot.Pose.Translation + new Vector3(0.08f, 0.11f, -0.07f);
+        rig.LeftFoot.Pose = movedPose;
+        rig.Tick();
+
+        rig.Solver.UpdateSlot(EHumanoidIKTarget.LeftFoot, rig.LeftFoot.WorldMatrix, 1f).ShouldBeTrue();
+        VrCalibrationSlotState after = ReadSlot(rig, EHumanoidIKTarget.LeftFoot);
+        after.Target.ShouldBeSameAs(before.Target);
+        after.DeviceToTargetOffset.ShouldBe(before.DeviceToTargetOffset);
+        Matrix4x4 expected = before.DeviceToTargetOffset * rig.LeftFoot.WorldMatrix;
+        Vector3.Distance(after.Target.WorldTranslation, expected.Translation).ShouldBeLessThan(0.0001f);
+        for (int tick = 0; tick < 3; tick++)
+            rig.Tick();
+        Vector3 toeAfter = rig.Humanoid.Left.Toes.Node.Transform.WorldTranslation;
+        Vector3.Distance(toeBefore, toeAfter).ShouldBeGreaterThan(0.005f);
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+        rig.CountDeviceTargetDescendants().ShouldBe(0);
+    }
+
+    [Test]
+    public void MissingBoundTracker_RestoresOffsetAndRebindsWithoutReplacingTarget()
+    {
+        using var rig = new SyntheticVrCalibrationRig();
+        rig.Capture(OptionalSlots).Success.ShouldBeTrue();
+        EHumanoidIKTarget slot = EHumanoidIKTarget.LeftKnee;
+        VrCalibrationSlotState saved = ReadSlot(rig, slot);
+        TransformBase?[] targets = rig.GetAllTargets();
+
+        VrCalibrationRequest restore = rig.CreateRequest(OptionalSlots);
+        restore.Offsets[(int)slot] = saved.DeviceToTargetOffset;
+        restore.Slots[(int)slot] = new VrCalibrationCapture(null, rig.LeftKnee.WorldMatrix,
+            rig.LeftKnee.Identity);
+        rig.Solver.Calibrate(restore).Success.ShouldBeTrue();
+        VrCalibrationSlotState dormant = ReadSlot(rig, slot);
+        dormant.Target.ShouldBeSameAs(saved.Target);
+        dormant.Device.ShouldBeNull();
+        dormant.Identity.ShouldBe(saved.Identity);
+        dormant.DeviceToTargetOffset.ShouldBe(saved.DeviceToTargetOffset);
+        dormant.Weight.ShouldBe(0f);
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+
+        rig.Solver.RebindSlotDevice(slot, rig.LeftKnee, rig.LeftKnee.Identity).ShouldBeTrue();
+        rig.Solver.UpdateSlot(slot, rig.LeftKnee.WorldMatrix, 1f).ShouldBeTrue();
+        VrCalibrationSlotState restored = ReadSlot(rig, slot);
+        restored.Target.ShouldBeSameAs(saved.Target);
+        restored.Device.ShouldBeSameAs(rig.LeftKnee);
+        restored.DeviceToTargetOffset.ShouldBe(saved.DeviceToTargetOffset);
+        restored.Weight.ShouldBe(1f);
+        AssertTargetIdentities(targets, rig.GetAllTargets());
+    }
+
+    private static TransformBase?[] AssertOwnedTargets(SyntheticVrCalibrationRig rig)
+    {
+        TransformBase?[] targets = rig.GetAllTargets();
+        targets.Length.ShouldBe(11);
+        targets.Distinct().Count().ShouldBe(11);
+        for (int i = 0; i < targets.Length; i++)
+        {
+            TransformBase? target = targets[i];
+            target.ShouldNotBeNull();
+            target.ShouldBeOfType<Transform>();
+            rig.Humanoid.GetIKTargetTransform((EHumanoidIKTarget)i).ShouldBeSameAs(target);
+            TransformBase? ancestor = target!.Parent;
+            while (ancestor is not null && !ReferenceEquals(ancestor, rig.AvatarRoot.Transform))
+                ancestor = ancestor.Parent;
+            ancestor.ShouldBeSameAs(rig.AvatarRoot.Transform);
+        }
+        rig.CountDeviceTargetDescendants().ShouldBe(0);
+        return targets;
+    }
+
+    private static void AssertSolverTargetsPublished(SyntheticVrCalibrationRig rig, TransformBase?[] targets)
+    {
+        TransformBase?[] actual = rig.GetSolverTargets();
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].ShouldBeSameAs(targets[i]);
+    }
+
+    private static void AssertTargetIdentities(TransformBase?[] expected, TransformBase?[] actual)
+    {
+        actual.Length.ShouldBe(expected.Length);
+        for (int i = 0; i < expected.Length; i++)
+            actual[i].ShouldBeSameAs(expected[i]);
+    }
+
+    private static VrCalibrationSlotState ReadSlot(SyntheticVrCalibrationRig rig, EHumanoidIKTarget slot)
+    {
+        rig.Solver.TryGetSlot(slot, out VrCalibrationSlotState state).ShouldBeTrue();
+        return state;
+    }
+
+    private static void AssertWeight(SyntheticVrCalibrationRig rig, EHumanoidIKTarget slot, float expected)
+        => ReadSlot(rig, slot).Weight.ShouldBe(expected);
 }

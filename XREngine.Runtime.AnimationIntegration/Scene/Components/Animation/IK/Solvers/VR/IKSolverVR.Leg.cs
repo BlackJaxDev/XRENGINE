@@ -384,28 +384,45 @@ namespace XREngine.Components.Animation
                 _footPosition = TargetPosition + fromTo.Rotate(targetToFoot);
                 _footRotation = fromTo * _footRotation;
 
-                // Bend normal offset
-                float bAngle = 0.0f;
-
                 if (_kneeTarget != null && _kneeTargetWeight > 0.0f)
                 {
                     _kneeTarget.RecalculateMatrices(true);
-                    var thighToKnee = _kneeTarget.WorldTranslation - Thigh.SolverPosition;
-                    var thighToPos = TargetPosition - Thigh.SolverPosition;
-                    var footToThigh = Thigh.SolverPosition - Foot.SolverPosition;
-
-                    Vector3 b = Vector3.Cross(thighToKnee, thighToPos);
-                    Quaternion l = XRMath.LookRotation(_bendNormal, footToThigh);
-                    Vector3 bRelative = Quaternion.Inverse(l).Rotate(b);
-                    bAngle = float.RadiansToDegrees(MathF.Atan2(bRelative.X, bRelative.Z)) * _kneeTargetWeight;
+                    Vector3 thighToFoot = _footPosition - Thigh.SolverPosition;
+                    float limbDistanceSquared = thighToFoot.LengthSquared();
+                    if (limbDistanceSquared > 1e-8f)
+                    {
+                        Vector3 thighToKnee = _kneeTarget.WorldTranslation - Thigh.SolverPosition;
+                        Vector3 projectedKnee = thighToKnee - thighToFoot
+                            * (Vector3.Dot(thighToKnee, thighToFoot) / limbDistanceSquared);
+                        if (projectedKnee.LengthSquared() > 1e-8f)
+                        {
+                            // The trigonometric solver bends along cross(normal, limb direction).
+                            Vector3 limbAxis = Vector3.Normalize(thighToFoot);
+                            Vector3 desiredNormal = Vector3.Normalize(Vector3.Cross(limbAxis, projectedKnee));
+                            Vector3 currentNormal = _bendNormal - limbAxis * Vector3.Dot(_bendNormal, limbAxis);
+                            if (currentNormal.LengthSquared() > 1e-8f)
+                            {
+                                currentNormal = Vector3.Normalize(currentNormal);
+                                float angle = MathF.Atan2(
+                                    Vector3.Dot(limbAxis, Vector3.Cross(currentNormal, desiredNormal)),
+                                    Vector3.Dot(currentNormal, desiredNormal));
+                                _bendNormal = Quaternion.CreateFromAxisAngle(
+                                    limbAxis, angle * Math.Clamp(_kneeTargetWeight, 0.0f, 1.0f)).Rotate(currentNormal);
+                            }
+                            else
+                            {
+                                _bendNormal = desiredNormal;
+                            }
+                        }
+                    }
                 }
-                float sO = _swivelOffset + bAngle;
+                float sO = _swivelOffset;
                 if (sO != 0.0f)
                 {
                     sO = float.DegreesToRadians(sO);
                     var lastBoneToThigh = Thigh.SolverPosition - LastBone.SolverPosition;
-
-                    _bendNormal = Quaternion.CreateFromAxisAngle(lastBoneToThigh, sO).Rotate(_bendNormal);
+                    if (lastBoneToThigh.LengthSquared() > 1e-8f)
+                        _bendNormal = Quaternion.CreateFromAxisAngle(Vector3.Normalize(lastBoneToThigh), sO).Rotate(_bendNormal);
                     Thigh.SolverRotation = Quaternion.CreateFromAxisAngle(Thigh.SolverRotation.Rotate(Thigh.Axis), -sO) * Thigh.SolverRotation;
                 }
             }

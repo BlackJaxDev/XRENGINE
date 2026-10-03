@@ -22,7 +22,35 @@ public readonly record struct RuntimeVrTrackerInfo(
     string? RolePath,
     string? RoleName,
     bool PoseAvailable,
-    bool RuntimeReported);
+    bool RuntimeReported)
+{
+    /// <summary>True once a valid pose has been observed during this session.</summary>
+    public bool EverTracked { get; init; }
+
+    /// <summary>Frame snapshot containing the current valid pose, or zero when unavailable.</summary>
+    public long SnapshotId { get; init; }
+
+    /// <summary>OpenXR sample time of the current valid pose, or zero when unavailable.</summary>
+    public long SampleTime { get; init; }
+
+    /// <summary>Presence in the provider's latest enumeration; absence does not reveal whether SteamVR disabled the tracker.</summary>
+    public bool Connected { get; init; }
+
+    public bool ActionBound { get; init; }
+    public bool ActionActive { get; init; }
+    public bool PositionValid { get; init; }
+    public bool OrientationValid { get; init; }
+    public bool HasLastValidPose { get; init; }
+    public Matrix4x4 LastValidPose { get; init; }
+    public long LastValidSnapshotId { get; init; }
+    public long LastValidSampleTime { get; init; }
+
+    public RuntimeVrTrackerStatus Status => !Connected ? RuntimeVrTrackerStatus.DisabledOrNotReported :
+        !ActionBound ? RuntimeVrTrackerStatus.DiscoveredUnbound :
+        !ActionActive ? RuntimeVrTrackerStatus.BoundInactive :
+        !PositionValid || !OrientationValid ? RuntimeVrTrackerStatus.TrackingLost :
+        !PoseAvailable ? RuntimeVrTrackerStatus.Stale : RuntimeVrTrackerStatus.Usable;
+}
 
 public enum RuntimeVrActionValueType
 {

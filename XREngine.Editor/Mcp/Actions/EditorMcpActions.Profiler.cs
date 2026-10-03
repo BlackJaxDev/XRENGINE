@@ -162,6 +162,13 @@ namespace XREngine.Editor.Mcp
                 "Retrieved S13a publication telemetry.",
                 S13aPublicationTelemetry.CaptureSnapshot()));
 
+        [XRMcp(Name = "get_world_tick_telemetry", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Read cumulative world tick counters: tick group dispatches, pending registration cost and the costliest kinds of tick callback. Set XRE_WORLD_TICK_TELEMETRY=1 before editor launch to enable observation; compare two reads to observe a window.")]
+        public static Task<McpToolResponse> GetWorldTickTelemetryAsync(McpToolContext context)
+            => Task.FromResult(new McpToolResponse(
+                "Retrieved world tick telemetry.",
+                RuntimeWorldTickTelemetry.CaptureSnapshot()));
+
         [XRMcp(Name = "get_vulkan_live_resource_owners", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame.")]
         public static Task<McpToolResponse> GetVulkanLiveResourceOwnersAsync(

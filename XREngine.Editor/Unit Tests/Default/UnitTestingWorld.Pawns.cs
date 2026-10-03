@@ -14,6 +14,7 @@ using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Scene.Physics.Physx;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
@@ -250,6 +251,8 @@ public static partial class EditorUnitTests
                 vrInput,
                 playspaceNode);
 
+            BootstrapPawnFactory.AddVrSpectator(rootNode, vrPlayspaceNode, characterComp);
+
             //This is the node used as the parent for the avatar model
             return footNode;
         }
@@ -342,6 +345,7 @@ public static partial class EditorUnitTests
 
             controllerTfm = controllerNode.SetTransform<VRControllerTransform>();
             controllerTfm.LeftHand = left;
+            controllerTfm.SyntheticPoseEnabled = Toggles.SceneOnlyVRPawn;
 
             if (Toggles.SceneOnlyVRPawn)
             {
@@ -390,6 +394,7 @@ public static partial class EditorUnitTests
             listener.SpeedOfSound = 343.3f;
 
             hmdTfm = vrHeadsetNode.SetTransform<VRHeadsetTransform>()!;
+            hmdTfm.SyntheticPoseEnabled = Toggles.SceneOnlyVRPawn;
             hmdComp = vrHeadsetNode.AddComponent<VRHeadsetComponent>()!;
 
             AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode);
@@ -402,6 +407,7 @@ public static partial class EditorUnitTests
             SceneNode firstPersonViewNode = new(parentNode) { Name = "FirstPersonViewNode" };
             firstPersonViewNode.SetTransform<Transform>();
             var firstPersonCam = firstPersonViewNode.AddComponent<CameraComponent>()!;
+            firstPersonCam.Camera.CullingMask = DefaultLayers.FirstPersonVr;
             var persp = firstPersonCam.Camera.Parameters as XRPerspectiveCameraParameters;
             persp!.HorizontalFieldOfView = FirstPersonDesktopHorizontalFieldOfView;
             persp.NearZ = 0.1f;
@@ -718,31 +724,19 @@ public static partial class EditorUnitTests
             {
                 var rotationNode = footNode.Parent!;
                 rigidBodyNode = rotationNode.Parent!;
-                heightScale.CharacterMovementComponent = rigidBodyNode.GetComponent<CharacterMovement3DComponent>()!;
-
-                var player = rigidBodyNode.AddComponent<VRPlayerCharacterComponent>()!;
-                player.HeightScaleComponent = heightScale as VRHeightScaleComponent;
-                player.IKSolver = vrIKSolver;
-                player.HumanoidComponent = humanComp;
-                player.EyeLBoneName = EyeLNodeName;
-                player.EyeRBoneName = EyeRNodeName;
-                player.EyesModelResolveName = faceNodeName;
+                var playspaceNode = footNode.FirstChild!;
+                var player = BootstrapPawnFactory.BindVrAvatar(
+                    rootNode,
+                    rigidBodyNode,
+                    playspaceNode,
+                    humanComp,
+                    (VRHeightScaleComponent)heightScale,
+                    vrIKSolver);
 
                 VRPlayerInputSet input = rigidBodyNode.GetComponent<VRPlayerInputSet>()!;
 
-                void EndCalibration(bool enabled)
-                {
-                    if (player.IsCalibrating)
-                        player.EndCalibration();
-                    else
-                        player.BeginCalibration();
-                }
-
-                input.IsMutedChanged += EndCalibration;
-
                 if (Toggles.SceneOnlyVRPawn)
                 {
-                    var playspaceNode = footNode.FirstChild!;
                     var trackerColl = playspaceNode.LastChild!.GetComponent<VRTrackerCollectionComponent>()!;
 
                     var extOpt = rigidBodyNode.AddComponent<ExternalOptionalInputSetComponent>()!;

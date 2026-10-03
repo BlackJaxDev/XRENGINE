@@ -69,7 +69,13 @@ internal sealed partial class FramePlan
     {
         int count = CollectAdvancedVisibilityReservations(_operations, destination, 0);
         count = CollectAdvancedVisibilityReservations(_dynamicOverlayOperations, destination, count);
-        return CollectAdvancedVisibilityReservations(_textureUploadOperations, destination, count);
+        count = CollectAdvancedVisibilityReservations(_textureUploadOperations, destination, count);
+        if (S13aPublicationTelemetry.Enabled)
+        {
+            S13aPublicationTelemetry.AdvancedPlanSealCollection(
+                _operations.Count + _dynamicOverlayOperations.Count + _textureUploadOperations.Count);
+        }
+        return count;
     }
 
     private static int CollectAdvancedVisibilityReservations(

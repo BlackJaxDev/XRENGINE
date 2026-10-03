@@ -4,6 +4,8 @@ using System.Numerics;
 using System.Buffers.Binary;
 using XREngine.Core.Attributes;
 using XREngine.Networking;
+using XREngine.Components;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Animation
@@ -12,12 +14,165 @@ namespace XREngine.Components.Animation
     /// Component that uses the VRIK solver to solve IK for a humanoid character controlled by a VR headset, controllers, and optional trackers.
     /// </summary>
     [RequireComponents(typeof(HumanoidComponent))]
-    public class VRIKSolverComponent : IKSolverComponent, IVRIKSolverHandle
+    public class VRIKSolverComponent : IKSolverComponent, IVRIKCalibrationHandle
     {
         private const double BaselineIntervalSeconds = 1.0;
         private static readonly long BaselineIntervalTicks = Math.Max(1L, (long)Math.Round(BaselineIntervalSeconds * System.Diagnostics.Stopwatch.Frequency));
 
         public IKSolverVR Solver { get; } = new();
+        private VRIKCalibrationRig? _calibrationRig;
+        private EHumanoidPosePreviewMode? _previewModeBeforeCalibration;
+        private readonly List<(XRComponent Component, bool WasActive, EHumanoidRootMotionApplicationMode RootMode)> _suspendedAnimationWriters = [];
+
+        /// <summary>Capture frozen offsets into stable targets owned by the humanoid.</summary>
+        public VrCalibrationResult Calibrate(VrCalibrationRequest request)
+        {
+            VrCalibrationResult result = (_calibrationRig ??= new VRIKCalibrationRig(this)).Capture(request);
+            if (result.Success)
+                SyncSolverTargets();
+            return result;
+        }
+
+        internal bool EnsureInitializedForCalibration()
+        {
+            if (Solver.Initialized)
+                return true;
+            EnsureSolverInitialized();
+            if (!Solver.Initialized)
+                InitializeSolver();
+            return Solver.Initialized;
+        }
+
+        internal HumanoidComponent? CalibrationHumanoid => TryGetHumanoid();
+
+        /// <summary>Adapter for existing callers that consume the former calibration data object.</summary>
+        public object? CalibrateLegacy(VrCalibrationRequest request)
+        {
+            if (!Calibrate(request).Success)
+                return null;
+            VRIKCalibrator.CalibrationData data = new()
+            {
+                Scale = Root?.Scale.Y ?? 1f,
+                Head = new VRIKCalibrator.CalibrationData.Target(Solver.Spine.HeadTarget),
+                Hips = new VRIKCalibrator.CalibrationData.Target(Solver.Spine.HipsTarget),
+                LeftHand = new VRIKCalibrator.CalibrationData.Target(Solver.LeftArm.Target),
+                RightHand = new VRIKCalibrator.CalibrationData.Target(Solver.RightArm.Target),
+                LeftFoot = new VRIKCalibrator.CalibrationData.Target(Solver.LeftLeg.Target),
+                RightFoot = new VRIKCalibrator.CalibrationData.Target(Solver.RightLeg.Target),
+                LeftLegGoal = new VRIKCalibrator.CalibrationData.Target(Solver.LeftLeg.KneeTarget),
+                RightLegGoal = new VRIKCalibrator.CalibrationData.Target(Solver.RightLeg.KneeTarget),
+                HipsPositionWeight = Solver.Spine.HipsPositionWeight,
+                HipsRotationWeight = Solver.Spine.HipsRotationWeight,
+            };
+            return data;
+        }
+
+        /// <summary>Display the avatar's measured T-pose with its eyes at the headset and its body facing headset yaw.</summary>
+        public VrCalibrationResult ApplyCanonicalCalibrationPose(Matrix4x4 headWorld, Vector3 eyeOffsetFromHead = default)
+        {
+            if (!VRIKCalibrationRig.IsRigidPose(headWorld)
+                || !Matrix4x4.Decompose(headWorld, out _, out Quaternion headRotation, out Vector3 headPosition)
+                || !float.IsFinite(eyeOffsetFromHead.X) || !float.IsFinite(eyeOffsetFromHead.Y)
+                || !float.IsFinite(eyeOffsetFromHead.Z) || Root is null)
+                return VrCalibrationResult.Failed("The headset pose is invalid.");
+
+            HumanoidComponent human = Humanoid;
+            if (_previewModeBeforeCalibration is null)
+            {
+                _previewModeBeforeCalibration = human.PosePreviewMode;
+                SuspendAnimationWriters(human.SceneNode);
+                human.PosePreviewMode = EHumanoidPosePreviewMode.TPose;
+                human.ApplyVrCanonicalTPose();
+            }
+
+            Vector3 forward = Vector3.Transform(-Vector3.UnitZ, headRotation);
+            forward.Y = 0f;
+            if (forward.LengthSquared() < 1e-8f)
+            {
+                forward = Root.WorldForward;
+                forward.Y = 0f;
+                if (forward.LengthSquared() < 1e-8f)
+                    forward = -Vector3.UnitZ;
+            }
+            forward = Vector3.Normalize(forward);
+            float yaw = MathF.Atan2(-forward.X, -forward.Z);
+            if (!human.TryGetVrBindBodyToEngine(out Matrix4x4 bindBodyToEngine))
+                return VrCalibrationResult.Failed("The avatar body facing basis is unavailable.");
+            Matrix4x4 bodyOrientation = bindBodyToEngine * Matrix4x4.CreateRotationY(yaw);
+            Quaternion bodyRotation = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(bodyOrientation));
+            Root.SetWorldTranslationRotation(Root.WorldTranslation, bodyRotation);
+            Root.RecalculateMatrices(true);
+            bool hasMeasuredEyeOffset = eyeOffsetFromHead.LengthSquared() > 1e-10f;
+            TransformBase eyes = hasMeasuredEyeOffset
+                ? human.Head.Node?.Transform ?? Root
+                : human.EyesTarget.Node?.Transform ?? human.Head.Node?.Transform ?? Root;
+            eyes.RecalculateMatrices(true);
+            Vector3 eyesPosition = eyes.WorldTranslation;
+            if (hasMeasuredEyeOffset)
+                eyesPosition += Vector3.Transform(eyeOffsetFromHead, bodyRotation);
+            Root.SetWorldTranslationRotation(Root.WorldTranslation + headPosition - eyesPosition, bodyRotation);
+            Root.RecalculateMatrices(true);
+            return VrCalibrationResult.Completed;
+        }
+
+        /// <summary>Restore the animation preview state after capture or cancellation.</summary>
+        public void EndCalibrationPose()
+        {
+            if (_previewModeBeforeCalibration is not EHumanoidPosePreviewMode previous)
+                return;
+            Humanoid.PosePreviewMode = previous;
+            _previewModeBeforeCalibration = null;
+            for (int i = 0; i < _suspendedAnimationWriters.Count; i++)
+            {
+                var (component, wasActive, rootMode) = _suspendedAnimationWriters[i];
+                if (component is AnimStateMachineComponent stateMachine)
+                    stateMachine.RootMotionApplicationMode = rootMode;
+                else if (component is AnimationClipComponent clip)
+                    clip.RootMotionApplicationMode = rootMode;
+                component.IsActive = wasActive;
+            }
+            _suspendedAnimationWriters.Clear();
+        }
+
+        private void SuspendAnimationWriters(SceneNode node)
+        {
+            foreach (XRComponent component in node.GetComponents<XRComponent>())
+            {
+                EHumanoidRootMotionApplicationMode rootMode;
+                if (component is AnimStateMachineComponent stateMachine)
+                    rootMode = stateMachine.RootMotionApplicationMode;
+                else if (component is AnimationClipComponent clip)
+                    rootMode = clip.RootMotionApplicationMode;
+                else
+                    continue;
+                _suspendedAnimationWriters.Add((component, component.IsActive, rootMode));
+                component.IsActive = false;
+            }
+
+            foreach (TransformBase child in node.Transform.Children)
+                if (child.SceneNode is SceneNode childNode)
+                    SuspendAnimationWriters(childNode);
+        }
+
+        public bool TryGetSlot(EHumanoidIKTarget slot, out VrCalibrationSlotState state)
+        {
+            if (_calibrationRig is not null)
+                return _calibrationRig.TryGet(slot, out state);
+            state = default;
+            return false;
+        }
+
+        public bool UpdateSlot(EHumanoidIKTarget slot, Matrix4x4 deviceWorld, float weight)
+            => _calibrationRig?.Update(slot, deviceWorld, weight) ?? false;
+
+        public bool UpdateEstimatedSlot(EHumanoidIKTarget slot, Matrix4x4 targetWorld, float weight)
+            => _calibrationRig?.UpdateEstimate(slot, targetWorld, weight) ?? false;
+
+        public bool RebindSlotDevice(EHumanoidIKTarget slot, TransformBase device, string identity)
+            => _calibrationRig?.Rebind(slot, device, identity) ?? false;
+
+        public bool SetSlotWeight(EHumanoidIKTarget slot, float weight)
+            => _calibrationRig?.SetWeight(slot, weight) ?? false;
 
         public bool UpdateHeadTarget { get; set; } = true;
         public bool UpdateHipsTarget { get; set; } = true;
@@ -197,6 +352,8 @@ namespace XREngine.Components.Animation
 
         protected override void OnDestroying()
         {
+            _calibrationRig?.Dispose();
+            _calibrationRig = null;
             UnsubscribeNetworking();
             ClearReceivedPoseState();
             BoundPoseSessionId = Guid.Empty;
@@ -243,6 +400,7 @@ namespace XREngine.Components.Animation
                 return;
             }
 
+            _calibrationRig?.RefreshTargets();
             SyncSolverTargets();
             base.UpdateSolver();
             TrySendPose();
@@ -364,8 +522,11 @@ namespace XREngine.Components.Animation
             Solver.RightLeg.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.RightFoot);
             Solver.LeftArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftElbow);
             Solver.RightArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.RightElbow);
+            Solver.LeftArm.UpperArmGoal = Solver.LeftArm.BendGoal;
+            Solver.RightArm.UpperArmGoal = Solver.RightArm.BendGoal;
             Solver.LeftLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftKnee);
             Solver.RightLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.RightKnee);
+            Solver.Spine.ChestGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.Chest);
         }
 
         private ushort PoseIdFromSceneNode()

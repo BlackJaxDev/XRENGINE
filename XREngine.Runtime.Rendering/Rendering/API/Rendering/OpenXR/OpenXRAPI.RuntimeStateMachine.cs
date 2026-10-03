@@ -498,6 +498,9 @@ public unsafe partial class OpenXRAPI
 
     private void TryCreateSessionAndSwapchains(AbstractRenderer renderer)
     {
+        if (Volatile.Read(ref _deferredOpenGlSessionCreationPending) != 0)
+            return;
+
         if (DateTime.UtcNow < _nextProbeUtc)
             return;
 
@@ -571,48 +574,71 @@ public unsafe partial class OpenXRAPI
             if (window is null)
                 return;
 
-            if (_deferredOpenGlInit is not null)
-                return;
-
-            IXrGraphicsBinding deferredBinding = _graphicsBinding;
-            _deferredOpenGlInit = () =>
+            lock (_deferredOpenGlSessionCreationLock)
             {
-                if (Window?.Renderer is not AbstractRenderer activeRenderer ||
-                    !deferredBinding.IsCompatible(activeRenderer))
+                if (Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 1, 0) != 0)
                     return;
 
-                if (_runtimeState != OpenXrRuntimeState.XrSystemReady)
-                    return;
+                IXrGraphicsBinding deferredBinding = _graphicsBinding;
+                System.Action? deferredInit = null;
+                deferredInit = () =>
+                {
+                    if (Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 2, 1) != 1)
+                        return;
+                    try
+                    {
+                        if (Window?.Renderer is not AbstractRenderer activeRenderer ||
+                            !deferredBinding.IsCompatible(activeRenderer) ||
+                            _runtimeState != OpenXrRuntimeState.XrSystemReady)
+                            return;
 
-                IXrGraphicsBinding? graphicsBinding = _graphicsBinding;
-                if (graphicsBinding is null || graphicsBinding.BackendId != deferredBinding.BackendId)
-                    return;
+                        IXrGraphicsBinding? graphicsBinding = _graphicsBinding;
+                        if (graphicsBinding is null || graphicsBinding.BackendId != deferredBinding.BackendId)
+                            return;
 
-                Window.RenderViewportsCallback -= _deferredOpenGlInit;
-                _deferredOpenGlInit = null;
+                        graphicsBinding.TryCreateSession(this, activeRenderer);
+                        RecordSmokeSessionCreated(graphicsBinding.BackendName);
+                        CreateReferenceSpace();
+                        graphicsBinding.CreateSwapchains(this, activeRenderer);
+                        RequireCompleteOpenXrSwapchainSet();
+                        RecordSmokeSessionLifecycleStarted();
+                        RecordAppliedOpenXrEyeResolutionSettings();
+                        EnsureInputCreated();
+                        SetRuntimeState(OpenXrRuntimeState.SessionCreated);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"OpenXR OpenGL session init failed: {ex.Message}");
+                        RecordSmokeFailureOnce($"OpenXR OpenGL session init failed: {ex.GetType().Name}: {ex.Message}");
+                        if (TryMarkRuntimeLossForSessionCreationException(ex, "OpenXR OpenGL session initialization"))
+                            TearDownSessionResourcesOnOwningThread(destroyInstance: false);
+                        else
+                            RecoverFromSessionCreationFailure(GetSessionFailureRetryDelay(ex));
+                    }
+                    finally
+                    {
+                        lock (_deferredOpenGlSessionCreationLock)
+                        {
+                            window.RenderViewportsCallback -= deferredInit;
+                            if (ReferenceEquals(_deferredOpenGlInit, deferredInit))
+                                _deferredOpenGlInit = null;
+                            Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 0, 2);
+                        }
+                    }
+                };
 
+                _deferredOpenGlInit = deferredInit;
                 try
                 {
-                    graphicsBinding.TryCreateSession(this, activeRenderer);
-                    RecordSmokeSessionCreated(graphicsBinding.BackendName);
-                    CreateReferenceSpace();
-                    graphicsBinding.CreateSwapchains(this, activeRenderer);
-                    RequireCompleteOpenXrSwapchainSet();
-                    RecordSmokeSessionLifecycleStarted();
-                    RecordAppliedOpenXrEyeResolutionSettings();
-                    EnsureInputCreated();
-                    SetRuntimeState(OpenXrRuntimeState.SessionCreated);
+                    window.RenderViewportsCallback += deferredInit;
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Debug.LogWarning($"OpenXR OpenGL session init failed: {ex.Message}");
-                    RecordSmokeFailureOnce($"OpenXR OpenGL session init failed: {ex.GetType().Name}: {ex.Message}");
-                    if (!TryMarkRuntimeLossForSessionCreationException(ex, "OpenXR OpenGL session initialization"))
-                        RecoverFromSessionCreationFailure(GetSessionFailureRetryDelay(ex));
+                    _deferredOpenGlInit = null;
+                    Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 0, 1);
+                    throw;
                 }
-            };
-
-            window.RenderViewportsCallback += _deferredOpenGlInit;
+            }
             return;
         }
 
@@ -833,6 +859,9 @@ public unsafe partial class OpenXRAPI
         if (_runtimeState == next)
             return;
 
+        if (next == OpenXrRuntimeState.SessionRunning)
+            RuntimeEngine.VRState.NotifySessionGenerationChanged();
+
         _runtimeState = next;
         Volatile.Write(ref _sessionRunning, next == OpenXrRuntimeState.SessionRunning ? 1 : 0);
         RecordSmokeRuntimeState(next);
@@ -987,10 +1016,14 @@ public unsafe partial class OpenXRAPI
         if (!CloseOpenXrEyePublicationAdmission())
             return false;
 
-        if (_deferredOpenGlInit is not null && Window is not null)
+        lock (_deferredOpenGlSessionCreationLock)
         {
-            Window.RenderViewportsCallback -= _deferredOpenGlInit;
-            _deferredOpenGlInit = null;
+            if (_deferredOpenGlInit is not null && Window is not null)
+            {
+                Window.RenderViewportsCallback -= _deferredOpenGlInit;
+                _deferredOpenGlInit = null;
+            }
+            Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 0, 1);
         }
 
         _sessionBegun = false;

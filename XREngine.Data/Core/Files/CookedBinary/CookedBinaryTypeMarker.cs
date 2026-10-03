@@ -71,5 +71,11 @@ internal enum CookedBinaryTypeMarker : byte
     // Low-priority types
     BitArray = 59,
     CultureInfo = 60,
-    Regex = 61
+    Regex = 61,
+
+    // Shared references, written only when a serialization enables
+    // CookedBinarySerializationCallbacks.ShareReference: a definition carries an
+    // identity and the value; a reference carries an identity defined earlier.
+    SharedDefinition = 62,
+    SharedReference = 63
 }

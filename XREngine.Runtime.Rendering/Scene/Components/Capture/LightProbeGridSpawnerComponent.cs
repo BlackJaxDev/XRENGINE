@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Numerics;
+using MemoryPack;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Scene.Mesh;
@@ -11,13 +12,14 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Capture;
 
 /// <summary>
 /// Spawns a grid of child nodes each with a light probe when play begins, and cleans them up when play ends.
 /// </summary>
-public class LightProbeGridSpawnerComponent : XRComponent
+public partial class LightProbeGridSpawnerComponent : XRComponent
 {
     private readonly record struct ProbeOccluder(RenderableMesh[] Renderables);
 
@@ -403,7 +405,14 @@ public class LightProbeGridSpawnerComponent : XRComponent
         }
     }
 
+    /// <summary>
+    /// Model components whose combined world bounds the grid fills. Serialized as
+    /// <see cref="PlacementBoundsModelIds"/> and bound to the live components after
+    /// deserialization.
+    /// </summary>
     [Category("Placement")]
+    [YamlIgnore]
+    [MemoryPackIgnore]
     public ModelComponent[] PlacementBoundsModels
     {
         get => _placementBoundsModels;
@@ -412,6 +421,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             ModelComponent[] normalized = value ?? [];
             if (SetField(ref _placementBoundsModels, normalized))
             {
+                PlacementBoundsModelIds = CollectIds(normalized);
                 RefreshPlacementModelSubscriptions();
                 RegenerateGridIfSpawned();
             }
@@ -422,6 +432,8 @@ public class LightProbeGridSpawnerComponent : XRComponent
     {
         ModelComponent[] normalized = models ?? [];
         bool modelsChanged = SetField(ref _placementBoundsModels, normalized);
+        if (modelsChanged)
+            PlacementBoundsModelIds = CollectIds(normalized);
         bool enabledChanged = SetField(ref _usePlacementBoundsModels, enabled);
         RefreshPlacementModelSubscriptions();
         if (modelsChanged || enabledChanged)
@@ -495,6 +507,8 @@ public class LightProbeGridSpawnerComponent : XRComponent
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        AdoptSerializedGrid();
+        BindPlacementBoundsModels();
 
         if (_spawnedNodes.Count == 0)
         {
@@ -522,6 +536,8 @@ public class LightProbeGridSpawnerComponent : XRComponent
     protected override void OnBeginPlay()
     {
         base.OnBeginPlay();
+        AdoptSerializedGrid();
+        BindPlacementBoundsModels();
         if (AutoSequentialCaptureOnBeginPlay)
             RequestGridBuild(replaceExistingGrid: _spawnedNodes.Count > 0, restartSequentialCapture: true);
         else
@@ -656,6 +672,10 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
     private void StartNextGridBuild()
     {
+        // Models that were still loading when the spawner activated bind here, so a
+        // deferred placement retry sees them once they exist.
+        BindPlacementBoundsModels();
+
         GridBuildRequest request;
         lock (_gridBuildSync)
         {
@@ -890,6 +910,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             }
         }
 
+        SpawnedProbeNodeIds = CollectSpawnedNodeIds();
         _captureStatus = $"Ready: {_spawnedProbes.Count} probes.";
 
         if (request.RestartSequentialCapture && _spawnedNodes.Count > 0)
@@ -941,6 +962,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
         _spawnedNodes.Clear();
         _spawnedProbes.Clear();
+        SpawnedProbeNodeIds = [];
     }
 
     private void TickSequentialCapture()

@@ -30,25 +30,42 @@ internal sealed class SnapshotAssetReference
         return reference;
     }
 
+    /// <summary>
+    /// Finds the referenced asset: the loaded asset with its identity, else the one loaded at
+    /// its path, else a fresh load. A loaded asset is accepted only when it is of the
+    /// referenced type; different asset types can share a path (a shader and its source file).
+    /// </summary>
     public XRAsset? Resolve()
     {
         SnapshotDiagnostics.LogAssetResolveStart(this);
+        Type? targetType = ResolveAssetType();
 
         if (AssetId != Guid.Empty && Engine.Assets.GetAssetByID(AssetId) is XRAsset byId)
         {
-            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", byId);
-            return byId;
-        }
+            if (IsReferencedType(byId, targetType))
+            {
+                SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", byId);
+                return byId;
+            }
 
-        if (AssetId != Guid.Empty)
+            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", null, $"type mismatch: {byId.GetType().FullName}");
+        }
+        else if (AssetId != Guid.Empty)
             SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", null);
 
         if (!string.IsNullOrWhiteSpace(AssetPath)
             && Engine.Assets.TryGetAssetByPath(AssetPath, out XRAsset? byPath)
             && byPath is not null)
         {
-            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-path", byPath);
-            return byPath;
+            if (IsReferencedType(byPath, targetType))
+            {
+                SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-path", byPath);
+                return byPath;
+            }
+
+            // Loading the path as the referenced type would evict the asset loaded there.
+            SnapshotDiagnostics.LogAssetResolveFailure(this, $"the asset loaded at its path is a {byPath.GetType().FullName}");
+            return null;
         }
 
         if (!string.IsNullOrWhiteSpace(AssetPath))
@@ -60,7 +77,6 @@ internal sealed class SnapshotAssetReference
             return null;
         }
 
-        var targetType = ResolveAssetType();
         if (targetType is null)
         {
             SnapshotDiagnostics.LogAssetResolveFailure(this, "asset type could not be resolved");
@@ -69,6 +85,9 @@ internal sealed class SnapshotAssetReference
 
         return LoadAsset(targetType);
     }
+
+    private static bool IsReferencedType(XRAsset asset, Type? targetType)
+        => targetType is null || targetType.IsInstanceOfType(asset);
 
     private Type? ResolveAssetType()
     {

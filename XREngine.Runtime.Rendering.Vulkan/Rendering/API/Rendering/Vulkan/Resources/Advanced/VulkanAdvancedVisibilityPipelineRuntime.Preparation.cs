@@ -25,6 +25,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     internal VulkanAdvancedVisibilityPipelineReadiness GetReadiness(out string reason)
     {
         long pollStart = Stopwatch.GetTimestamp();
+        S13aPublicationTelemetry.StepProbe readinessProbe =
+            S13aPublicationTelemetry.BeginAdvancedFamilyStep();
         try
         {
             if (!_resources.AdvancedSceneResources.IsReady ||
@@ -45,6 +47,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         {
             Interlocked.Add(ref _foregroundPollTicks, Stopwatch.GetTimestamp() - pollStart);
             Interlocked.Increment(ref _foregroundPollCount);
+            readinessProbe.End(S13aAdvancedFamilyStep.ReadinessCall);
         }
     }
 
@@ -142,20 +145,33 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     private void RequestPreparation()
     {
+        S13aPublicationTelemetry.StepProbe lockProbe =
+            S13aPublicationTelemetry.BeginAdvancedFamilyStep();
         lock (_preparationGate)
         {
+            lockProbe.End(S13aAdvancedFamilyStep.ReadinessLockWait);
+            S13aPublicationTelemetry.StepProbe refreshProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             RefreshGeneratedShaderSources();
+            refreshProbe.End(S13aAdvancedFamilyStep.ReadinessSourceRefresh);
             if (_preparationStopped || _preparationTask is { IsCompleted: false })
                 return;
 
             VulkanAdvancedVisibilityPipelineReadiness state =
                 Volatile.Read(ref _preparation).State;
+            S13aPublicationTelemetry.StepProbe identityProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             int identity = CapturePreparationIdentity();
+            identityProbe.End(S13aAdvancedFamilyStep.ReadinessIdentity);
             if (state == VulkanAdvancedVisibilityPipelineReadiness.Ready &&
-                identity == Volatile.Read(ref _completedPreparationIdentity) &&
-                AreRequiredProgramsCurrent())
+                identity == Volatile.Read(ref _completedPreparationIdentity))
             {
-                return;
+                S13aPublicationTelemetry.StepProbe currentnessProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                bool programsCurrent = AreRequiredProgramsCurrent();
+                currentnessProbe.End(S13aAdvancedFamilyStep.ReadinessCurrentness);
+                if (programsCurrent)
+                    return;
             }
             if (state == VulkanAdvancedVisibilityPipelineReadiness.Failed &&
                 identity == Volatile.Read(ref _completedPreparationIdentity))
@@ -380,8 +396,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     {
         if (program is null)
             return;
-        foreach (XRShader shader in program.Shaders)
-            hash.Add(shader.SourceRevision);
+        // Index the shader list: its interface enumerator allocated once per
+        // program on every readiness poll, which the recording thread issues
+        // several times per frame.
+        EventList<XRShader> shaders = program.Shaders;
+        int count = shaders.Count;
+        for (int index = 0; index < count; index++)
+            hash.Add(shaders[index].SourceRevision);
     }
 
     private bool AreRequiredProgramsCurrent()
