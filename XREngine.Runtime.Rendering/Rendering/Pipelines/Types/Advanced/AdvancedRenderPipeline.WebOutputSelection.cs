@@ -7,10 +7,10 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
-    private const ulong WebBloomFeatureBit = 1UL << 49;
-    private const ulong WebMotionBlurFeatureBit = 1UL << 50;
-    private const ulong WebDepthOfFieldFeatureBit = 1UL << 51;
-    private const ulong WebAutoExposureFeatureBit = 1UL << 52;
+    private const ulong WebBloomFeatureBit = 1UL << 58;
+    private const ulong WebMotionBlurFeatureBit = 1UL << 59;
+    private const ulong WebDepthOfFieldFeatureBit = 1UL << 60;
+    private const ulong WebAutoExposureFeatureBit = 1UL << 61;
 
     private ulong BuildAdvancedWebOutputFeatureMask(XRRenderPipelineInstance instance, XRViewport? viewport)
     {

@@ -70,6 +70,14 @@ jobs:
         shell: pwsh
         run: ./Tools/Test-PortableBrowserCompile.ps1 -Configuration Release -JoltBrowserManagedSourceDirectory "$env:VALIDATION_ROOT/jolt/managed/staged" -JoltBrowserArchiveDirectory "$env:VALIDATION_ROOT/jolt/native/archives" -ArtifactsPath "$env:VALIDATION_ROOT/portable"
 
+      - name: Preserve pinned browser physics archives
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-jolt-native-archives
+          path: ${{ env.VALIDATION_ROOT }}/jolt/native/archives
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Publish browser host
         run: dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1 --output "$VALIDATION_ROOT/browser" --artifacts-path "$VALIDATION_ROOT/browser-build" -p:WasmBuildNative=true -p:XREngineJoltBrowser=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
 
