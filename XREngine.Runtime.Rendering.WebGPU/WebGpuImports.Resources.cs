@@ -17,7 +17,7 @@ internal static partial class WebGpuImports
 
     [JSImport("createTextureResource", "xrengine.webgpu")]
     internal static partial int CreateTextureResource(int session, int width, int height,
-        int mipLevelCount, int sampleCount, string format, int usage, string label, int arrayLayerCount);
+        int mipLevelCount, int sampleCount, string format, int usage, string label, int arrayLayerCount, bool allowSrgbView);
 
     [JSImport("uploadTextureMip", "xrengine.webgpu")]
     internal static partial void UploadTextureMip(int session, int handle, int mip,
@@ -29,7 +29,7 @@ internal static partial class WebGpuImports
 
     [JSImport("createTextureView", "xrengine.webgpu")]
     internal static partial int CreateTextureView(int session, int texture, int baseMip, int mipCount, string aspect,
-        string label, int baseArrayLayer, int arrayLayerCount, string dimension);
+        string label, int baseArrayLayer, int arrayLayerCount, string dimension, string format);
 
     [JSImport("createSampler", "xrengine.webgpu")]
     internal static partial int CreateSampler(int session, string addressU, string addressV, string addressW,

@@ -57,6 +57,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     private uint _previousFrameSlot;
     private ulong _frameId;
     private ulong _resourceGeneration = 1UL;
+    private ulong _inputPublicationGeneration;
     private RuntimeGraphicsApiKind _backend;
     private bool _frameOpen;
     private bool _previousOutputValid;
@@ -420,6 +421,10 @@ public sealed partial class AdvancedGpuDeformationResources :
         _controlsByPose.Clear();
         _currentFrameSlot = currentFrameSlot;
         _previousFrameSlot = previousFrameSlot;
+        if (UsesPackedAggregateInputs)
+            BeginPaletteCopies();
+        else
+            _paletteCopyCount = 0;
         _paletteCount = 0u;
         _activeBlendshapeCount = 0u;
         _previousOutputValid =
@@ -486,12 +491,12 @@ public sealed partial class AdvancedGpuDeformationResources :
         XRDataBuffer? paletteSource = inputs.Palette;
         uint paletteBase = inputs.PaletteBase;
         uint paletteCount = inputs.PaletteCount;
-        if (packed && inputs.GpuOwnedPalette)
-            throw new NotSupportedException("AggregateDeformation.GpuPoseCopyUnavailable: a GPU-owned palette requires an ordered GPU copy into the aggregate input arena; its retained CPU mirror is not the current pose.");
+        bool gpuPalette = packed && inputs.GpuOwnedPalette;
         if (skinning && (paletteSource is null ||
-            packed && (paletteSource.GpuProduced || paletteSource.ClientSideSource is not { } paletteMemory ||
-            paletteMemory.Length < paletteSource.Length || !paletteSource.TryGetAddress(out VoidPtr paletteAddress) || paletteAddress == VoidPtr.Zero ||
-            paletteSource.ComponentType != EComponentType.Float || paletteSource.ElementSize != 48) ||
+            paletteSource.IsDestroyed || paletteSource.IsDestroyQueued ||
+            packed && (paletteSource.ComponentType != EComponentType.Float || paletteSource.ElementSize != 48) ||
+            packed && !gpuPalette && (paletteSource.GpuProduced || paletteSource.ClientSideSource is not { } paletteMemory ||
+            paletteMemory.Length < paletteSource.Length || !paletteSource.TryGetAddress(out VoidPtr paletteAddress) || paletteAddress == VoidPtr.Zero) ||
             paletteCount == 0u ||
             paletteBase > paletteSource.ElementCount || paletteCount > paletteSource.ElementCount - paletteBase))
         {
@@ -505,7 +510,9 @@ public sealed partial class AdvancedGpuDeformationResources :
             checked(_activeBlendshapeCount + activeCount);
         EnsureDynamicPoseCapacity(requiredPalette, requiredActive);
 
-        if (paletteCount != 0)
+        if (gpuPalette)
+            CapturePaletteCopy(paletteSource!, paletteBase, paletteCount);
+        else if (paletteCount != 0)
             CopyPalette(paletteSource!, paletteBase, _paletteScratch, _paletteCount, paletteCount);
         CopyActiveBlendshapes(
             inputs.ActiveMorphs,
@@ -593,7 +600,11 @@ public sealed partial class AdvancedGpuDeformationResources :
             _jobVertexOffsetBuffers[_currentFrameSlot],
             checked((uint)jobs.Length),
             checked((uint)groupedJobIndices.Length),
-            _previousOutputValid);
+            _previousOutputValid)
+        {
+            InputGeneration = checked(++_inputPublicationGeneration),
+            GpuPaletteCopies = PublishPaletteCopies(),
+        };
     }
 
     public bool TryExecute(
@@ -833,6 +844,8 @@ public sealed partial class AdvancedGpuDeformationResources :
             generation.ClearMeshSlices();
         }
         _poseEntries.Clear();
+        foreach (AdvancedGpuDeformationPaletteCopy[] copies in _paletteCopies)
+            Array.Clear(copies);
     }
 
     private void BuildBlendshapeSourceIndices(XRMesh mesh)

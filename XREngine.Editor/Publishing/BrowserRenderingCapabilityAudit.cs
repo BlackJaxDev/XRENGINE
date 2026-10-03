@@ -66,8 +66,10 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         component.TryGetCreatedCamera(out XRCamera? camera);
         if (component.DefaultRenderTarget is not null)
             Reject("camera-output", "Offscreen camera targets have no installed browser output route.");
-        if (component.UserInterface is { IsScreenSpace: false })
-            Reject("screen-ui", "The camera output admits screen-space UI only.");
+        if (component.UserInterface is UICanvasComponent canvas)
+            canvas.ValidateWebGpuProfile();
+        else if (component.UserInterface is { IsScreenSpace: false })
+            Reject("screen-ui", "The camera output requires a supported engine canvas route.");
         if (camera?.PostProcessMaterial is { } postprocess)
             Reject("postprocess-material", $"Authored postprocess material '{postprocess.Name}' has no installed browser output route.");
         if (component.OutputHDROverride == true)

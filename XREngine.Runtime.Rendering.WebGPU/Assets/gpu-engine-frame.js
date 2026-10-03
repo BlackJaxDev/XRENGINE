@@ -73,8 +73,8 @@ export class GpuEngineFrame {
                 throw new Error('WebGPU.EngineFrame.ObsoletePlan: rebuild commands after output replacement.');
             const operation = prepared.operations[0];
             this.operations[record] = operation;
-            if (operation.type !== 'render' && operation.type !== 'clear' && operation.type !== 'compute')
-                throw new Error('WebGPU.EngineFrame.CommandType: only retained raster, compute and attachment operations are admitted.');
+            if (operation.type !== 'render' && operation.type !== 'clear' && operation.type !== 'compute' && operation.type !== 'copyBuffer')
+                throw new Error('WebGPU.EngineFrame.CommandType: only retained raster, compute, buffer-copy and attachment operations are admitted.');
             const offsetCount = data.getUint32(base + 4, true);
             if (offsetCount > maximumDynamicOffsets)
                 throw new RangeError('WebGPU.EngineFrame.DynamicOffsets: too many dynamic bindings.');

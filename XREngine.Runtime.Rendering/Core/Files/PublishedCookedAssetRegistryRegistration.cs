@@ -12,6 +12,8 @@ public static class RenderingPublishedCookedAssetRegistration
         {
             CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedStandardLitTextureMaterial),
                 static () => new PublishedStandardLitTextureMaterial());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedUiImageMaterial),
+                static () => new PublishedUiImageMaterial());
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(
                 typeof(XRMesh),
                 static () => XRMesh.CreateDeferredForDeserialization()));

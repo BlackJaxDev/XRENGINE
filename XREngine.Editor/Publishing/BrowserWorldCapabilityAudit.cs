@@ -203,16 +203,16 @@ internal static class BrowserWorldCapabilityAudit
                 }
                 else if (component is UICanvasComponent canvas)
                 {
-                    if (canvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen || canvas.StrictOneByOneRenderCalls)
-                        Collect(() => throw new NotSupportedException($"BrowserCook.UiCanvasUnsupported: '{path}' requires a batched screen-space canvas."),
-                            scenePath, path, componentName, pass: "screen-ui");
+                    Collect(canvas.ValidateWebGpuProfile, scenePath, path, componentName, pass: "screen-ui");
+                    if (canvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+                        Collect(() => RequireCanvasSurfaceVariant(path), scenePath, path, componentName, pass: "canvas-composite");
                 }
                 else if (component is UITextComponent text)
                 {
                     if (!text.SupportsBatchedRendering || text.Font is { AtlasType: not EFontAtlasType.Bitmap })
                         Collect(() => throw new NotSupportedException($"BrowserCook.UiTextUnsupported: '{path}' requires unclipped bitmap text without custom stages or glyph rotation."),
                             scenePath, path, componentName, pass: "screen-ui");
-                    Collect(() => RequireUiVariant(EngineMaterialSemanticIdentity.UITextBatchedBitmapV1,
+                    Collect(() => RequireUiVariant(EngineMaterialSemanticIdentity.UITextBatchedBitmapV2,
                         "instanced-ui-bitmap-text-v1", path), scenePath, path, componentName, pass: "screen-ui");
                 }
                 else if (component is UIMaterialComponent quad)
@@ -228,8 +228,8 @@ internal static class BrowserWorldCapabilityAudit
                     if (!quad.SupportsBatchedRendering)
                         Collect(() => throw new NotSupportedException($"BrowserCook.UiMaterialUnsupported: '{path}' requires a source-free solid-color or single-image screen UI profile with MatColor and the exact raster state."),
                             scenePath, path, componentName, quad.Material?.Name, "screen-ui");
-                    Collect(() => RequireUiVariant(textured ? EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 :
-                                EngineMaterialSemanticIdentity.UIQuadBatchedV1,
+                    Collect(() => RequireUiVariant(textured ? EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2 :
+                                EngineMaterialSemanticIdentity.UIQuadBatchedV2,
                             textured ? "instanced-ui-quad-texture-v1" : "instanced-ui-quad-v1", path),
                         scenePath, path, componentName, quad.Material?.Name, "screen-ui");
                 }
@@ -245,10 +245,19 @@ internal static class BrowserWorldCapabilityAudit
         void RequireUiVariant(EngineMaterialSemanticIdentity semantic, string profile, string path)
         {
             EngineMaterialVariantKey key = new(semantic, ShaderCompileTarget.WebGPUWgsl,
-                "screen-ui", profile, "display-rgba-v1");
+                "screen-ui", profile, "canvas-rgba-v2");
             if (resolver is not BrowserShaderArtifactSource source ||
                 !source.MaterialVariants.Any(variant => variant.Key == key))
                 throw new NotSupportedException($"BrowserCook.UiVariantMissing: '{path}' requires '{key}' in the project shader manifest.");
+        }
+
+        void RequireCanvasSurfaceVariant(string path)
+        {
+            EngineMaterialVariantKey key = new(EngineMaterialSemanticIdentity.UICanvasSurfaceV1,
+                ShaderCompileTarget.WebGPUWgsl, "canvas-composite", "position-uv-v1", "linear-hdr-premultiplied-rgba-v1");
+            if (resolver is not BrowserShaderArtifactSource source ||
+                !source.MaterialVariants.Any(variant => variant.Key == key))
+                throw new NotSupportedException($"BrowserCook.UiCanvasVariantMissing: '{path}' requires '{key}' in the project shader manifest.");
         }
 
         void InspectMaterial(XRMaterial? material, string path, string? meshName, string scenePath,

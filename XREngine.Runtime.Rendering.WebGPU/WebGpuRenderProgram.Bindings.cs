@@ -199,6 +199,13 @@ public sealed partial class WebGpuRenderProgram
     }
 
     private void SetSampler(string name, IRenderTextureResource resource, int textureUnit)
+        => SetSampler(name, resource, textureUnit, false);
+
+    /// <summary>Decodes display image texels before hardware filtering for a linear UI target.</summary>
+    internal void SetLinearUiImageSampler(XRTexture2D image, bool decodeSrgb)
+        => SetSampler("Texture0", image, 0, decodeSrgb);
+
+    private void SetSampler(string name, IRenderTextureResource resource, int textureUnit, bool decodeSrgb)
     {
         if (!_samplers.TryGetValue(name, out SamplerSlots slots)) return;
         ShaderTextureBindingType shape = _textureShapes[slots.Texture];
@@ -206,7 +213,7 @@ public sealed partial class WebGpuRenderProgram
         (AbstractRenderAPIObject api, int view, int sampler) = (shape.ViewDimension, resource) switch
         {
             (_, XRTextureViewBase texture) => Bind((WebGpuTextureView)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0, shape.IsMultisampled),
-            ("2d", XRTexture2D texture) => Bind((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0, shape.IsMultisampled),
+            ("2d", XRTexture2D texture) => Bind((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0, shape.IsMultisampled, decodeSrgb),
             ("2d-array", XRTexture2DArray texture) => Bind((WebGpuTexture2DArray)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0),
             ("cube", XRTextureCube texture) => Bind((WebGpuTextureCube)Renderer.GetOrCreateAPIRenderObject(texture)!, false, slots.Sampler >= 0),
             _ => throw UnsupportedBinding(name, $"the authored texture type does not match binding '{Artifact.Resources[slots.Texture].BindingType}'"),
@@ -228,8 +235,8 @@ public sealed partial class WebGpuRenderProgram
         return (texture, view, sampled ? texture.GetSampler(depth) : 0);
     }
 
-    private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind(WebGpuTexture2D texture, bool depth, bool sampled, bool multisampled)
-        => (texture, texture.GetSampledView(depth, multisampled), sampled ? texture.GetSampler(depth) : 0);
+    private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind(WebGpuTexture2D texture, bool depth, bool sampled, bool multisampled, bool decodeSrgb)
+        => (texture, texture.GetSampledView(depth, multisampled, decodeSrgb), sampled ? texture.GetSampler(depth) : 0);
 
     private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind<T>(WebGpuLayeredTexture<T> texture,
         bool depth, bool sampled) where T : XRTexture

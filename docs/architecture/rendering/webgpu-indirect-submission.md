@@ -74,6 +74,41 @@ Instrumented algorithms that require those synchronous mappings are rejected;
 declaring an instrumented strategy does not authorize a hidden readback-based
 replacement for a zero-readback algorithm.
 
+## Native aggregate GPU palettes
+
+Advanced aggregate deformation captures each admitted GPU-owned palette's exact
+resident buffer generation and compact 48-byte matrix range while the selected
+renderer/mesh pose is leased. Source base, count, and bone order are preserved;
+multiple poses may copy overlapping source ranges into disjoint packed ranges.
+An absent, replaced, destroyed, or layout-mutated GPU source is rejected before
+recording. Replacement detected before any slot work returns an invalid-resource
+result so the next publication can recapture it without poisoning the output
+slot. Capturing a source never generates or uploads its retained CPU seed.
+
+CPU-authored input sections are uploaded first, excluding every GPU-owned
+palette range. The retained engine frame then copies each captured GPU range
+after its ordered producer and before aggregate deformation. All native copy
+plans retain their physical source and destination dependencies. The packed
+input arena cannot receive further preparation writes after its first recorded
+copy or dispatch in that frame. Copy metadata belongs to the completion-protected
+output slot; a new input publication invalidates same-frame reuse even when its
+resource capacity is unchanged.
+
+The current aggregate output remains the only newly produced deformed stream.
+Previous-frame geometry continues to use its existing independently owned
+output and validity fence. Neither palette packing nor previous-output selection
+maps or reads GPU pose, visibility, or count data. Copy-plan storage is bounded
+and retains up to four recurring physical source/range shapes per packed copy.
+This keeps double-buffered GPU palettes warm across the three-slot aggregate
+ring. Replaced generations are evicted; bounded cache eviction uses the existing
+deferred command retirement path. The ordinary engine frame command budget
+still applies. Backends without an ordered palette-copy producer retain
+the explicit unsupported-path rejection.
+
+This producer covers compact GPU-owned bone palettes. GPU-produced active morph
+weights/counts have no corresponding packed-input publication and remain
+explicitly rejected before CPU reads; retained CPU mirrors are not a substitute.
+
 ## Shader and meshlet boundaries
 
 Backend indirect operations do not manufacture missing program companions.
@@ -88,12 +123,18 @@ capability is independent of hardware task/mesh probes and the optional generic
 indexed first-instance feature. Missing native meshlet residency rejects the
 draw; indexed or CPU substitution is not allowed.
 
-The generic Default meshlet route still requires its own production lowering
-and cooked shader family. Its capability remains false, and a requested generic
-meshlet operation fails at its boundary. See the
+Generic Default/custom authored graphs use the canonical meshlet
+cull/refit/finalize family and their original cooked material programs. The
+implemented profile retains one LOD and one logical instance; dynamic LOD,
+multiple instances and view-dependent transparent ordering require their own
+producers and reject explicitly until those producers are installed. Distinct
+submeshes retain their own exact deformation inputs. See the
+[authored meshlet record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
+and the
 [native-family admission record](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
 for exact output reservation, program, and device-limit checks.
 
-Source was reconstructed after the October 3 workspace loss. Historical build
-results do not replace a fresh combined validation gate before publication;
-the earlier local build logs are no longer present.
+The October 3 reconstructed source passed fresh combined builds before its
+publication. Build/cook results establish source integration; browser execution,
+numeric deformation comparisons and completion/recovery behavior have separate
+acceptance records.

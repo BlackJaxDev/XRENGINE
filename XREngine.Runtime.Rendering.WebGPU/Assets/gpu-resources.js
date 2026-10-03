@@ -111,7 +111,7 @@ export class GpuResources {
         return { buffer: entry.buffer, offset, size };
     }
 
-    createTexture(width, height, mipLevelCount, sampleCount, format, usage, label, arrayLayerCount = 1) {
+    createTexture(width, height, mipLevelCount, sampleCount, format, usage, label, arrayLayerCount = 1, allowSrgbView = false) {
         const r = this._ready();
         integer(width, 1, r.device.limits.maxTextureDimension2D, 'texture width');
         integer(height, 1, r.device.limits.maxTextureDimension2D, 'texture height');
@@ -124,6 +124,9 @@ export class GpuResources {
             GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT;
         integer(usage, 1, supported, 'texture usage');
         if (usage & ~supported) throw new RangeError('Texture usage is outside the admitted profile.');
+        if (typeof allowSrgbView !== 'boolean' || allowSrgbView &&
+            (format !== 'rgba8unorm' || sampleCount !== 1 || (usage & GPUTextureUsage.STORAGE_BINDING)))
+            throw new RangeError('sRGB views require a non-storage single-sample RGBA8 texture.');
         if (usage & GPUTextureUsage.STORAGE_BINDING) assertStorageTextureFormat(format, 'write-only', r.device);
         if (sampleCount > 1 && !info.multisample) throw new RangeError(`Texture format '${format}' does not support multisampling.`);
         if (!color && ((usage & GPUTextureUsage.COPY_DST) ||
@@ -140,10 +143,11 @@ export class GpuResources {
         debugLabel(label);
         r._setOperation('create-texture', label);
         const texture = r.device.createTexture({ label, size: { width, height, depthOrArrayLayers: arrayLayerCount },
-            dimension: '2d', format, usage, mipLevelCount, sampleCount });
+            dimension: '2d', format, usage, mipLevelCount, sampleCount,
+            viewFormats: allowSrgbView ? ['rgba8unorm-srgb'] : [] });
         try {
             return r._resources.add('texture', { texture, view: texture.createView(), width, height, arrayLayerCount,
-                format, mipLevelCount, sampleCount, usage, label, state: 'ready', references: 0 }, r._owner);
+                format, mipLevelCount, sampleCount, usage, allowSrgbView, label, state: 'ready', references: 0 }, r._owner);
         } catch (error) { r._retire(texture); throw error; }
     }
 
@@ -203,7 +207,7 @@ export class GpuResources {
         finally { this.submission[0] = null; }
     }
 
-    createTextureView(textureHandle, baseMip, mipCount, aspect, label, baseArrayLayer = 0, arrayLayerCount = 1, dimension = '2d') {
+    createTextureView(textureHandle, baseMip, mipCount, aspect, label, baseArrayLayer = 0, arrayLayerCount = 1, dimension = '2d', format = '') {
         const r = this._ready();
         const texture = r._resources.getHandle(textureHandle, 'texture', r._owner);
         integer(baseMip, 0, texture.mipLevelCount - 1, 'view base mip');
@@ -219,13 +223,20 @@ export class GpuResources {
         if ((aspect === 'depth-only' && textureFormatInfo(texture.format, r.device).sampleType !== 'depth') ||
             (aspect === 'stencil-only' && !['depth24plus-stencil8', 'depth32float-stencil8'].includes(texture.format)))
             throw new RangeError('Texture view aspect is incompatible with its format.');
+        if (typeof format !== 'string') throw new RangeError('Texture view format must be a string.');
+        const viewFormat = format || texture.format;
+        if (viewFormat !== texture.format && !(texture.allowSrgbView && texture.format === 'rgba8unorm' &&
+            viewFormat === 'rgba8unorm-srgb' && aspect === 'all'))
+            throw new RangeError('Texture view format is outside the declared compatible sRGB pair.');
         debugLabel(label);
         r._setOperation('create-texture-view', label);
-        const view = texture.texture.createView({ label, dimension, baseMipLevel: baseMip, mipLevelCount: mipCount,
-            baseArrayLayer, arrayLayerCount, aspect });
+        const descriptor = { label, dimension, baseMipLevel: baseMip, mipLevelCount: mipCount,
+            baseArrayLayer, arrayLayerCount, aspect };
+        if (format) descriptor.format = viewFormat;
+        const view = texture.texture.createView(descriptor);
         const handle = r._resources.add('texture-view', { view, texture, textureHandle, baseMip, mipCount, aspect,
             baseArrayLayer, arrayLayerCount, dimension,
-            format: texture.format, width: Math.max(1, Math.floor(texture.width / 2 ** baseMip)),
+            format: viewFormat, width: Math.max(1, Math.floor(texture.width / 2 ** baseMip)),
             height: Math.max(1, Math.floor(texture.height / 2 ** baseMip)), sampleCount: texture.sampleCount,
             usage: texture.usage, label, state: 'ready', references: 0 }, r._owner);
         texture.references++;

@@ -11,6 +11,27 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
         HasAdvancedLimit("maxComputeWorkgroupSizeX", 256) && HasAdvancedLimit("maxComputeInvocationsPerWorkgroup", 256) &&
         HasAdvancedLimit("maxStorageBuffersPerShaderStage", 2);
 
+    /// <inheritdoc />
+    public bool TryCaptureAggregateGpuPaletteCopy(XRDataBuffer source, uint sourceByteOffset,
+        uint destinationByteOffset, uint byteLength, out AdvancedGpuDeformationPaletteCopy copy)
+    {
+        copy = default;
+        // An external palette may keep a CPU seed without setting GpuProduced.
+        // Never create/generate its wrapper here: only its GPU producer can make
+        // the resident generation authoritative.
+        if (!_engineRecording || !SupportsAggregateDeformation || source.IsDestroyed || source.IsDestroyQueued ||
+            byteLength == 0 || sourceByteOffset % 48 != 0 || destinationByteOffset % 48 != 0 || byteLength % 48 != 0 ||
+            source.ComponentType != XREngine.Data.Rendering.EComponentType.Float || source.ElementSize != 48 ||
+            sourceByteOffset > source.Length || byteLength > source.Length - sourceByteOffset ||
+            !TryGetAPIRenderObject(source, out AbstractRenderAPIObject? owner) || owner is not WebGpuDataBuffer api ||
+            api.IsRetired || api.OwnerGeneration != BackendGeneration || !api.BackendIsReadyForGpuUse ||
+            api.ResourceHandle == 0 || !_resources.Contains(api.ResourceHandle))
+            return false;
+        copy = new(source, api, api.GetHandle(), source.Length, source.Revision,
+            sourceByteOffset, destinationByteOffset, byteLength);
+        return true;
+    }
+
     public ERendererComputeEnqueueStatus TryDispatchAggregateDeformation(
         AdvancedGpuDeformationResources resources, in AdvancedDeformationDispatchBatch batch)
     {
@@ -40,7 +61,11 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
             inputs = new(this, output);
             _advancedDeformationInputs.Add(output, inputs);
         }
-        inputs.Prepare(resources);
+        if (!inputs.TryPrepare(resources))
+        {
+            MarkEngineDrawPending();
+            return ERendererComputeEnqueueStatus.InvalidResource;
+        }
         try
         {
             api.SetNativeBindingCacheOwner(inputs.Storage);

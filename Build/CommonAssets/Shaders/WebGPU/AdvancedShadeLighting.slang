@@ -575,36 +575,46 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     }
     XRAdvancedViewRecord view = XR_ADV_LoadView(surface.viewIndex);
     float linearDepth = -XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), view.view).z;
+    bool blending = false;
+    float primaryVisibility = 1.0;
+    float blendWeight = 0.0;
+    // Traverse the selected cascade and its optional neighbor through one
+    // sample call site, keeping one receiver-helper reconstruction expansion
+    // for native compilers that inline shader functions.
+    [loop]
     for (uint i = 0u; i < root.cascadeCount; ++i)
     {
         XRAdvancedShadowRecord record = XR_ADV_LoadShadow(root.cascadeOffset + i);
+        if (blending && record.type != 0u) continue;
         if (!XR_ADV_ShadowAffectsView(record, view, surface.viewIndex)) continue;
-        if ((record.flags & 1u) == 0u ||
-            (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u && (record.flags & 1024u) == 0u)
+        if (!blending)
         {
-            reason = max(reason, XR_ADV_SHADOW_NOT_RESIDENT);
-            continue;
+            if ((record.flags & 1u) == 0u ||
+                (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u && (record.flags & 1024u) == 0u)
+            {
+                reason = max(reason, XR_ADV_SHADOW_NOT_RESIDENT);
+                continue;
+            }
+            if (record.type == 0u && (record.flags & 512u) == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
         }
-        if (record.type == 0u && (record.flags & 512u) == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
         float3 unusedCoordinate;
         if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
-        float visibility = XR_ADV_SampleShadowRecord(record, surface, N, L, reason);
+        uint sampleReason;
+        float visibility = XR_ADV_SampleShadowRecord(record, surface, N, L, sampleReason);
+        if (blending)
+        {
+            reason = max(reason, sampleReason);
+            return lerp(primaryVisibility, visibility, blendWeight);
+        }
+        reason = sampleReason;
         if (record.type != 0u || (record.flags & 512u) != 0u) return visibility;
         float blendWidth = max(record.depthRangeAndCascade.w, 0.0);
         if (blendWidth <= 0.0 || linearDepth < record.depthRangeAndCascade.z - blendWidth) return visibility;
-        for (uint next = i + 1u; next < root.cascadeCount; ++next)
-        {
-            XRAdvancedShadowRecord adjacent = XR_ADV_LoadShadow(root.cascadeOffset + next);
-            if (adjacent.type != 0u || !XR_ADV_ShadowAffectsView(adjacent, view, surface.viewIndex)) continue;
-            if (!XR_ADV_ProjectShadow(adjacent, surface.worldPosition, unusedCoordinate)) continue;
-            uint adjacentReason;
-            float adjacentVisibility = XR_ADV_SampleShadowRecord(adjacent, surface, N, L, adjacentReason);
-            reason = max(reason, adjacentReason);
-            return lerp(visibility, adjacentVisibility,
-                clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0));
-        }
-        return visibility;
+        primaryVisibility = visibility;
+        blendWeight = clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0);
+        blending = true;
     }
+    if (blending) return primaryVisibility;
     if (reason == XR_ADV_SHADOW_OK) reason = XR_ADV_SHADOW_OUTSIDE;
     return 1.0;
 }

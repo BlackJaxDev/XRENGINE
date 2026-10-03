@@ -1484,6 +1484,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         // Stage execution order comes from the command chain. This collection
         // also holds authored material passes, whose sorted-alpha bucket must
         // preserve painter's order instead of the scene's collection order.
+        passes[(int)EDefaultRenderPass.PreRender] = null;
         passes[(int)EDefaultRenderPass.TransparentForward] = new FarToNearRenderCommandSorter();
         passes[(int)EDefaultRenderPass.PostBloomForward] = new FarToNearRenderCommandSorter();
         passes[(int)EDefaultRenderPass.PostMotionBlurForward] = new FarToNearRenderCommandSorter();

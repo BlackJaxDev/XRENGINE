@@ -4,7 +4,7 @@ namespace XREngine.Rendering.WebGPU;
 
 public sealed unsafe partial class WebGpuTexture2D
 {
-    private readonly record struct SampledViewKey(int BaseMip, int MipCount);
+    private readonly record struct SampledViewKey(int BaseMip, int MipCount, bool DecodeSrgb);
     private readonly record struct SamplerState(string AddressU, string AddressV,
         string MinFilter, string MagFilter, string MipmapFilter, float MinLod, float MaxLod, int Anisotropy,
         string? Compare);
@@ -12,22 +12,25 @@ public sealed unsafe partial class WebGpuTexture2D
     private SamplerState _samplerState;
     private int _samplerHandle;
 
-    internal int GetSampledView(bool depth, bool multisampled = false)
+    internal int GetSampledView(bool depth, bool multisampled = false, bool decodeSrgb = false)
     {
         Generate();
         bool depthFormat = WebGpuTextureFormat.IsDepth(Format);
         if ((_samples > 1) != multisampled || depth != depthFormat)
             throw Unsupported("Sample", "the shader binding requires a matching sample count and color or depth texture");
+        if (decodeSrgb && (Format != "rgba8unorm" || _samples != 1 || _storage))
+            throw Unsupported("Sample", "linear UI image filtering requires a non-storage single-sample RGBA8 texture with its retained sRGB view");
         int baseMip = Data.LargestMipmapLevel;
         int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
         if (baseMip < 0 || baseMip > finalMip)
             throw Unsupported("Sample", "the authored sampled mip range is empty or outside texture storage");
-        SampledViewKey key = new(baseMip, finalMip - baseMip + 1);
+        SampledViewKey key = new(baseMip, finalMip - baseMip + 1, decodeSrgb);
         if (_sampledViews.TryGetValue(key, out int view)) return view;
         if (_sampledViews.Count >= 32)
-            throw Unsupported("Sample", "the texture exceeds 32 retained sampled mip ranges for its current storage generation");
+            throw Unsupported("Sample", "the texture exceeds 32 retained mip/color-space sampled views for its current storage generation");
         view = Renderer.CreateTextureView(new BrowserTextureViewDescription(_handle,
-            key.BaseMip, key.MipCount, depthFormat ? "depth-only" : "all", Data.Name ?? "Engine sampled view"));
+            key.BaseMip, key.MipCount, depthFormat ? "depth-only" : "all", Data.Name ?? "Engine sampled view",
+            Format: decodeSrgb ? "rgba8unorm-srgb" : ""));
         _sampledViews.Add(key, view);
         return view;
     }

@@ -1,6 +1,5 @@
 // Bitmap UI text retains the shared collector's glyph and text storage layout.
-struct UITextView { float4x4 viewProjection; };
-[[vk::binding(0, 0)]] ConstantBuffer<UITextView> view;
+#include "UIOutput.slang"
 [[vk::binding(0, 1)]] StructuredBuffer<float4> glyphTransforms;
 [[vk::binding(1, 1)]] StructuredBuffer<float4> glyphTexCoords;
 [[vk::binding(2, 1)]] StructuredBuffer<float4> textInstances;
@@ -115,11 +114,16 @@ float4 uiTextFragment(UITextOutput input) : SV_Target0
             stroke = max(stroke, strokeRing(input.uv, input.glyphUvBounds, dx, dy, radius));
         outlineMask = stroke * (1.0 - smoothstep(0.25, 0.85, fill));
     }
-    float fillAlpha = input.fillColor.a * fill;
-    float outlineAlpha = input.outlineColor.a * outlineMask;
+    bool linearOutput = uiLinearOffscreenOutput();
+    float3 fillColor = linearOutput ? uiDisplayToLinear(input.fillColor.rgb) : input.fillColor.rgb;
+    float3 outlineColor = linearOutput ? uiDisplayToLinear(input.outlineColor.rgb) : input.outlineColor.rgb;
+    float fillAlpha = (linearOutput ? saturate(input.fillColor.a) : input.fillColor.a) * fill;
+    float outlineAlpha = (linearOutput ? saturate(input.outlineColor.a) : input.outlineColor.a) * outlineMask;
     float alpha = fillAlpha + outlineAlpha * (1.0 - fillAlpha);
-    float3 premulRgb = input.fillColor.rgb * fillAlpha +
-        input.outlineColor.rgb * outlineAlpha * (1.0 - fillAlpha);
+    float3 premulRgb = fillColor * fillAlpha +
+        outlineColor * outlineAlpha * (1.0 - fillAlpha);
+    if (linearOutput)
+        return float4(premulRgb, alpha);
     float3 rgb = alpha > 0.0 ? premulRgb / alpha : float3(0.0, 0.0, 0.0);
     return float4(rgb, alpha);
 }
