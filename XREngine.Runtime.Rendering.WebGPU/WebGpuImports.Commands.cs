@@ -22,6 +22,9 @@ internal static partial class WebGpuImports
     [return: JSMarshalAs<JSType.Promise<JSType.Number>>]
     internal static partial Task<int> CreateComputePipelineAsync(int session, string descriptorJson);
 
+    [JSImport("getResourcePreparationStatus", "xrengine.webgpu")]
+    internal static partial string GetResourcePreparationStatus(int session);
+
     [JSImport("prepareCommands", "xrengine.webgpu")]
     internal static partial int PrepareCommands(int session, string descriptorJson);
 

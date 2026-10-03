@@ -139,6 +139,7 @@ internal static class BrowserWorldCapabilityAudit
                 Collect(() => BrowserPhysicsCapabilityAudit.Inspect(component, path, report, scenePath),
                     scenePath, path, componentName);
                 Collect(() => shadows.Inspect(component, path), scenePath, path, componentName);
+                Collect(() => rendering.InspectGlobalResources(component, scenePath, path), scenePath, path, componentName);
                 if (component is CameraComponent camera)
                     Collect(() => rendering.Inspect(camera, path, report, scenePath), scenePath, path, componentName,
                         pass: "camera-pipeline");

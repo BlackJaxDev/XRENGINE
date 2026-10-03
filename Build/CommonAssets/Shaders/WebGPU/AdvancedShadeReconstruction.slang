@@ -1001,6 +1001,9 @@ bool XR_ADV_TryReconstructSurface(
     surface.layerMask = instance.layerMask;
     surface.requiredAttributeMask = requiredMask;
     surface.worldPosition = worldPosition;
+    surface.interpolatedWorldPosition = interpolatedCurrentWorld;
+    surface.visibilityMetadata = metadata;
+    surface.samplePixelPosition = pixelCenter;
     surface.geometricNormal = geometricNormal;
     surface.shadingNormal = shadingNormal;
     surface.tangent = tangent;

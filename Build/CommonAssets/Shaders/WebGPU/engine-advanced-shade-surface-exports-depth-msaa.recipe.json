@@ -1,16 +1,16 @@
 {
   "schemaVersion": 3,
-  "name": "engine-advanced-shade-native",
-  "pass": "shade-native",
-  "source": "AdvancedShadeNative.slang",
+  "name": "engine-advanced-shade-surface-exports-depth-msaa",
+  "pass": "shade-surface-exports-depth-msaa",
+  "source": "AdvancedShadeNativeMsaa.slang",
   "sourceLanguage": "Slang",
   "target": "WebGPUWgsl",
   "entryPoints": {
-    "compute": "advancedShadeNative"
+    "compute": "advancedShadeNativeMsaa"
   },
   "pipelineArtifact": {
     "scope": "advanced",
-    "pass": "shade-native"
+    "pass": "shade-surface-exports-depth-msaa"
   },
   "workgroupSize": [
     16,
@@ -18,8 +18,10 @@
     1
   ],
   "defines": [
+    "XR_ADV_SURFACE_EXPORTS",
     "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1",
-    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1"
+    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1",
+    "XR_ADV_DEPTH_COMPARISON_BANK=1"
   ],
   "includes": [],
   "specialization": {},
@@ -632,11 +634,11 @@
         ]
       },
       {
-        "name": "VisibilityIdentity",
-        "physicalName": "VisibilityIdentity_0",
+        "name": "RawVisibilityIdentity",
+        "physicalName": "RawVisibilityIdentity_0",
         "group": 1,
         "binding": 0,
-        "kind": "texture-2d-uint",
+        "kind": "texture-multisampled-2d-uint",
         "visibility": [
           "compute"
         ],
@@ -647,11 +649,11 @@
         "members": []
       },
       {
-        "name": "VisibilityMetadata",
-        "physicalName": "VisibilityMetadata_0",
+        "name": "RawVisibilityMetadataSelection",
+        "physicalName": "RawVisibilityMetadataSelection_0",
         "group": 1,
         "binding": 1,
-        "kind": "texture-2d-uint",
+        "kind": "texture-multisampled-2d-uint",
         "visibility": [
           "compute"
         ],
@@ -662,11 +664,11 @@
         "members": []
       },
       {
-        "name": "VisibilityDepth",
-        "physicalName": "VisibilityDepth_0",
+        "name": "RawVisibilityDepth",
+        "physicalName": "RawVisibilityDepth_0",
         "group": 1,
         "binding": 2,
-        "kind": "texture-depth-2d",
+        "kind": "texture-depth-multisampled-2d",
         "visibility": [
           "compute"
         ],
@@ -966,7 +968,7 @@
         "physicalName": "NativeTexture9_0",
         "group": 1,
         "binding": 22,
-        "kind": "texture-2d-float",
+        "kind": "texture-depth-2d",
         "visibility": [
           "compute"
         ],
@@ -981,7 +983,7 @@
         "physicalName": "NativeSampler9_0",
         "group": 1,
         "binding": 23,
-        "kind": "filtering-sampler",
+        "kind": "comparison-sampler",
         "visibility": [
           "compute"
         ],
@@ -1052,8 +1054,8 @@
         "members": []
       },
       {
-        "name": "HDRSceneColor",
-        "physicalName": "HDRSceneColor_0",
+        "name": "EmissionColor",
+        "physicalName": "EmissionColor_0",
         "group": 2,
         "binding": 0,
         "kind": "storage-texture-2d-write-rgba16float",
@@ -1067,8 +1069,8 @@
         "members": []
       },
       {
-        "name": "Velocity",
-        "physicalName": "Velocity_0",
+        "name": "AlbedoOpacity",
+        "physicalName": "AlbedoOpacity_0",
         "group": 2,
         "binding": 1,
         "kind": "storage-texture-2d-write-rgba16float",
@@ -1082,11 +1084,11 @@
         "members": []
       },
       {
-        "name": "ReactiveMask",
-        "physicalName": "ReactiveMask_0",
+        "name": "Normal",
+        "physicalName": "Normal_0",
         "group": 2,
         "binding": 2,
-        "kind": "storage-texture-2d-write-r32float",
+        "kind": "storage-texture-2d-write-rgba16float",
         "visibility": [
           "compute"
         ],
@@ -1097,11 +1099,11 @@
         "members": []
       },
       {
-        "name": "ShadingDiagnostics",
-        "physicalName": "ShadingDiagnostics_0",
+        "name": "RMSE",
+        "physicalName": "RMSE_0",
         "group": 2,
         "binding": 3,
-        "kind": "storage-texture-2d-write-r32uint",
+        "kind": "storage-texture-2d-write-rgba16float",
         "visibility": [
           "compute"
         ],

@@ -2,6 +2,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
@@ -32,6 +33,11 @@ public sealed class RenderPipelineRequirements
     public HashSet<string> RasterPrograms { get; } = new(StringComparer.Ordinal);
     public HashSet<string> ComputePrograms { get; } = new(StringComparer.Ordinal);
     public HashSet<int> ScenePasses { get; } = [];
+    /// <summary>Native geometry routes with optional explicitly authored strategy; null uses the packaged startup policy.</summary>
+    public Dictionary<int, EMeshSubmissionStrategy?> NativeScenePasses { get; } = [];
+    /// <summary>A selected native scene consumer requires explicit routes; logical stage markers do not.</summary>
+    public bool RequiresNativeScenePasses { get; set; }
+    public bool NativeProbeIbl { get; set; }
     public HashSet<XRMaterial> Materials { get; } = new(ReferenceEqualityComparer.Instance);
     public HashSet<XRRenderProgram> RenderPrograms { get; } = new(ReferenceEqualityComparer.Instance);
     public HashSet<XRRenderProgram> ComputeRenderPrograms { get; } = new(ReferenceEqualityComparer.Instance);
@@ -60,6 +66,18 @@ public sealed class RenderPipelineRequirements
     {
         ArgumentNullException.ThrowIfNull(material);
         Materials.Add(material);
+    }
+
+    /// <summary>Declares a native route without applying its restrictions to unrelated late or raster scene passes.</summary>
+    public void RequireNativeScenePass(int pass, EMeshSubmissionStrategy? strategy = null)
+    {
+        RequireOperation("advanced-stage-execution");
+        RequiresNativeScenePasses = true;
+        ScenePasses.Add(pass);
+        if (!NativeScenePasses.TryGetValue(pass, out EMeshSubmissionStrategy? existing) || existing is null)
+            NativeScenePasses[pass] = strategy;
+        else if (strategy is not null && strategy != existing)
+            Diagnostics.Add($"Native scene pass '{pass}' declares conflicting submission strategies '{existing}' and '{strategy}'.");
     }
 
     public void RequireRasterProgram(string pass, string? descriptorIdentity = null)

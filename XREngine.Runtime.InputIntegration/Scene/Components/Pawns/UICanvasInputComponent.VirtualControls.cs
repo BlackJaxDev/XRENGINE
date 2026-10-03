@@ -123,12 +123,5 @@ public partial class UICanvasInputComponent
     }
 
     private static bool IsContactHit(UIComponent component, Vector2 canvasPosition)
-    {
-        if (!component.IsActiveInHierarchy || !component.UITransform.IsVisibleInHierarchy ||
-            component.UITransform is not UIBoundableTransform bounds)
-            return false;
-        Vector2 local = bounds.CanvasToLocal(canvasPosition);
-        Vector2 size = bounds.ActualSize;
-        return local.X >= 0 && local.Y >= 0 && local.X <= size.X && local.Y <= size.Y;
-    }
+        => UIClipRegion.ContainsHit(component, canvasPosition);
 }

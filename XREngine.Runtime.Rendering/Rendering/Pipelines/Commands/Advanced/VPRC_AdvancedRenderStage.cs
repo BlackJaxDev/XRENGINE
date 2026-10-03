@@ -45,6 +45,21 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         return this;
     }
 
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        base.DescribeRequirements(requirements);
+        if (requirements.Backend == RendererBackendId.WebGPU && IsNativeSceneConsumer(Stage))
+            requirements.RequiresNativeScenePasses = true;
+    }
+
+    private static bool IsNativeSceneConsumer(EAdvancedRenderStage stage)
+        => stage is EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster or
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+            EAdvancedRenderStage.AmbientOcclusion or
+            EAdvancedRenderStage.WorkClassification or
+            EAdvancedRenderStage.NativeOpaqueShading;
+
     protected override void Execute()
     {
         XRRenderPipelineInstance.RenderingState state =
@@ -56,12 +71,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
-        if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster or
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility or
-            EAdvancedRenderStage.AmbientOcclusion or
-            EAdvancedRenderStage.WorkClassification or
-            EAdvancedRenderStage.NativeOpaqueShading))
+        if (!IsNativeSceneConsumer(Stage))
         {
             using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
             PublishStageDiagnostic(

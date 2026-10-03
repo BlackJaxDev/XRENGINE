@@ -20,13 +20,14 @@ public abstract partial class LightComponent
 
     private void ResetBrowserShadowReuse()
     {
-        _browserCachedShadowMap = null;
-        _browserCachedShadowReceiver = null;
-        _browserCachedShadowRenderer = null;
-        _browserCachedShadowProductionTicket = 0;
-        _browserCachedShadowSignature = 0;
-        _browserCachedShadowOutputGeneration = 0;
-        _browserCachedShadowFrame = 0;
+        ResetBrowserShadowPublication();
+        SetField(ref _browserCachedShadowMap, null, publishNotifications: false);
+        SetField(ref _browserCachedShadowReceiver, null, publishNotifications: false);
+        SetField(ref _browserCachedShadowRenderer, null, publishNotifications: false);
+        SetField(ref _browserCachedShadowProductionTicket, 0UL, publishNotifications: false);
+        SetField(ref _browserCachedShadowSignature, 0UL, publishNotifications: false);
+        SetField(ref _browserCachedShadowOutputGeneration, 0UL, publishNotifications: false);
+        SetField(ref _browserCachedShadowFrame, 0UL, publishNotifications: false);
     }
 
     /// <summary>Returns the currently owned receiver image, if this light has an admitted browser shadow.</summary>
@@ -183,12 +184,13 @@ public abstract partial class LightComponent
         XRTexture? receiver = GetBrowserShadowReceiver();
         ulong signature = GetBrowserShadowSignature(casterMembershipRevision, out bool requiresRefresh);
         bool refresh = ShadowMap is null || receiver is null ||
-            requiresRefresh ||
+            requiresRefresh || !_browserRenderedShadowValid ||
             !ReferenceEquals(_browserCachedShadowMap, ShadowMap) ||
             !ReferenceEquals(_browserCachedShadowReceiver, receiver) ||
             !ReferenceEquals(_browserCachedShadowRenderer, reuse) ||
             _browserCachedShadowOutputGeneration != outputGeneration ||
             _browserCachedShadowSignature != signature ||
+            !BrowserShadowReuseMatchesCurrentProjection(frameId) ||
             !reuse.CanReuseCommittedShadow(receiver) ||
             _browserCachedShadowProductionTicket != reuse.GetShadowProductionTicket(receiver);
         if (!refresh)
@@ -196,28 +198,27 @@ public abstract partial class LightComponent
         return refresh;
     }
 
-    /// <summary>Records the attempted producer state; uncommitted images remain ineligible for reuse.</summary>
+    /// <summary>
+    /// Records an exact producer receipt, including casters requiring every-frame
+    /// refresh. Submission remains the backend's authority for cadence reuse.
+    /// </summary>
     internal void RecordBrowserShadowRender(ulong frameId, ulong outputGeneration, ulong casterMembershipRevision,
         IBrowserShadowReuseCapability reuse)
     {
-        XRTexture? receiver = GetBrowserShadowReceiver();
-        if (ShadowMap is null || receiver is null || !reuse.WasShadowProducedInCurrentFrame(receiver))
+        if (!TryCompleteBrowserShadowRender(frameId, reuse, out AdvancedShadowRecord record, out XRTexture? receiver))
         {
             ResetBrowserShadowReuse();
             return;
         }
-        ulong signature = GetBrowserShadowSignature(casterMembershipRevision, out bool requiresRefresh);
-        if (requiresRefresh)
-        {
-            ResetBrowserShadowReuse();
-            return;
-        }
-        _browserCachedShadowMap = ShadowMap;
-        _browserCachedShadowReceiver = receiver;
-        _browserCachedShadowRenderer = reuse;
-        _browserCachedShadowProductionTicket = reuse.GetShadowProductionTicket(receiver);
-        _browserCachedShadowSignature = signature;
-        _browserCachedShadowOutputGeneration = outputGeneration;
-        _browserCachedShadowFrame = frameId;
+        ulong signature = GetBrowserShadowSignature(casterMembershipRevision, out _);
+        SetField(ref _browserRenderedShadowRecord, record, publishNotifications: false);
+        SetField(ref _browserRenderedShadowValid, true, publishNotifications: false);
+        SetField(ref _browserCachedShadowMap, ShadowMap, publishNotifications: false);
+        SetField(ref _browserCachedShadowReceiver, receiver, publishNotifications: false);
+        SetField(ref _browserCachedShadowRenderer, reuse, publishNotifications: false);
+        SetField(ref _browserCachedShadowProductionTicket, reuse.GetShadowProductionTicket(receiver!), publishNotifications: false);
+        SetField(ref _browserCachedShadowSignature, signature, publishNotifications: false);
+        SetField(ref _browserCachedShadowOutputGeneration, outputGeneration, publishNotifications: false);
+        SetField(ref _browserCachedShadowFrame, frameId, publishNotifications: false);
     }
 }

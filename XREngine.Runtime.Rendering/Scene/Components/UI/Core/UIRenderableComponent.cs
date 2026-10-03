@@ -104,6 +104,10 @@ namespace XREngine.Rendering.UI
 
             var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
 
+            // Resolve on collection so ancestor motion and clip toggles affect descendants
+            // without subscribing every child to every ancestor's property changes.
+            RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(tfm, ClipToBounds);
+
             // Determine if this item should use the 2D render path:
             // - Screen-space: always yes
             // - Non-screen with offscreen FBO: yes (rendering to canvas's internal FBO)
@@ -289,21 +293,18 @@ namespace XREngine.Rendering.UI
                     }
                     break;
                 case nameof(ClipToBounds):
-                    //Toggle setting the region here
-                    RenderCommand2D.WorldCropRegion = ClipToBounds ? BoundableTransform.AxisAlignedRegion.AsBoundingRectangle() : null;
+                    RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(BoundableTransform, ClipToBounds);
                     break;
                 case nameof(UIBoundableTransform.AxisAlignedRegion):
-                    //But only update the crop region if we're clipping to bounds
-                    if (ClipToBounds)
-                        RenderCommand2D.WorldCropRegion = BoundableTransform.AxisAlignedRegion.AsBoundingRectangle();
+                    RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(BoundableTransform, ClipToBounds);
                     break;
             }
         }
 
         private bool _clipToBounds = false;
         /// <summary>
-        /// If true, this UI component will be scissor-tested (cropped) to its bounds.
-        /// Any pixels outside of the bounds will not be rendered, which is useful for things like text or scrolling regions.
+        /// If true, this UI component and descendants will be scissor-tested to its bounds.
+        /// The effective rectangular crop intersects all clipping ancestors.
         /// </summary>
         public bool ClipToBounds
         {

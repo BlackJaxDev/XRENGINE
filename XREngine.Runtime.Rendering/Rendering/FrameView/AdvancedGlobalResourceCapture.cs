@@ -71,7 +71,10 @@ public readonly record struct AdvancedGlobalResourceCapture(
         for (int lightIndex = 0; lightIndex < index; ++lightIndex)
         {
             int groupStart = shadowRows.Count;
-            if (lightSources[lightIndex] is DirectionalLightComponent directional)
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                lightSources[lightIndex] is LightComponent browserLight)
+                CaptureBrowserStandaloneShadow(frameId, browserLight, lightIndex, shadowRows);
+            else if (lightSources[lightIndex] is DirectionalLightComponent directional)
                 CaptureDirectionalShadows(world.Lights, directional, lightIndex, shadowRows);
             else if (lightSources[lightIndex] is PointLightComponent point)
                 CapturePointAtlasShadows(world.Lights, point, lightIndex, shadowRows);
@@ -124,6 +127,31 @@ public readonly record struct AdvancedGlobalResourceCapture(
         {
             ProbeRows = probeRows.ToArray(),
         };
+    }
+
+    private static void CaptureBrowserStandaloneShadow(ulong frameId, LightComponent light,
+        int lightIndex, List<AdvancedShadowCaptureRow> rows)
+    {
+        if (!light.CastsShadows || light is SpotLightComponent { ShadowFrustumRelevant: false })
+            return;
+        if (light.TryCaptureBrowserStandaloneShadow(frameId, out AdvancedShadowRecord record, out XRTexture? texture))
+        {
+            rows.Add(new(lightIndex, record, texture));
+            return;
+        }
+
+        // Keep an unready required producer explicit. Native consumers must defer
+        // the whole frame until its exact resource and production receipt exist.
+        rows.Add(new(lightIndex, new AdvancedShadowRecord
+        {
+            Type = light is PointLightComponent ? EAdvancedShadowType.PointCube :
+                light is SpotLightComponent ? EAdvancedShadowType.Spot : EAdvancedShadowType.DirectionalCascade,
+            Flags = EAdvancedShadowRecordFlags.BrowserStandalonePcss | EAdvancedShadowRecordFlags.BrowserStandaloneCandidate,
+            Encoding = (uint)light.ShadowMapEncoding,
+            CascadeCount = 1u,
+            LastRenderedFrameLo = (uint)frameId,
+            LastRenderedFrameHi = (uint)(frameId >> 32),
+        }, null));
     }
 
     private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)

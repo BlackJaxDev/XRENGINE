@@ -29,7 +29,8 @@ internal sealed class WebGpuAdvancedShadingCohort : IDisposable
             _textureHandles[slot] == resource.Handle && _mips[slot] == resource.Mips) return;
         ReleaseTextureView(slot);
         Views[slot] = _renderer.CreateTextureView(new BrowserTextureViewDescription(resource.Handle, MipCount: resource.Mips,
-            ArrayLayerCount: resource.Layers, Dimension: slot < 10 ? "2d" : slot == 10 ? "cube" : "2d-array"));
+            ArrayLayerCount: resource.Layers, Dimension: slot < 10 ? "2d" : slot == 10 ? "cube" : "2d-array",
+            Aspect: WebGpuTextureFormatContract.IsDepth(resource.Format) ? "depth-only" : "all"));
         TextureOwners[slot] = resource.Owner; _textureHandles[slot] = resource.Handle; _mips[slot] = resource.Mips;
     }
     internal void ReleaseView(int slot)

@@ -122,6 +122,9 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         CancellationToken cancellationToken)
         => _nativeAdmission.InspectGeometry(mesh, material, scenePath, path, meshName, cancellationToken);
 
+    internal void InspectGlobalResources(XRComponent component, string scenePath, string path)
+        => _nativeAdmission.InspectGlobalResources(component, scenePath, path);
+
     internal void InspectNativeScenes(BrowserCapabilityReport? report, CancellationToken cancellationToken)
     {
         _nativeAdmission.IncludeRequirements(PipelineRequirements);
@@ -145,6 +148,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
             ?? DefaultRenderPipeline.CreateWebDefaultRequirements(outputProfile, authored);
         foreach (string diagnostic in requirements.Diagnostics)
             Reject("pipeline-requirement", diagnostic);
+        if (requirements.RequiresNativeScenePasses && requirements.NativeScenePasses.Count == 0)
+            Reject("native-scene-pass", "The selected native scene consumer must declare its native scene passes explicitly; generic scene routes do not establish native geometry or submission requirements.");
         if (WebGpuPipelineAdmission.GetOutputProfileRejection(requirements) is { } outputReason)
             Reject("output-profile", outputReason);
         foreach (string operation in requirements.Operations)

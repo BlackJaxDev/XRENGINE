@@ -13,6 +13,16 @@ public sealed partial class WebGpuRendererHost
         foreach (AbstractRenderAPIObject resource in RenderObjectCache.Values)
             if (resource is WebGpuRenderProgram program)
                 program.AppendPendingPreparation(output);
+        if (OperatingSystem.IsBrowser() && _session != 0)
+        {
+            string resources = WebGpuImports.GetResourcePreparationStatus(_session);
+            if (resources.Length != 0)
+            {
+                if (output.Length != 0)
+                    output.Append(" | ");
+                output.Append("GPU resources=").Append(resources);
+            }
+        }
         return output.Length == 0 ? "none" : output.ToString();
     }
 

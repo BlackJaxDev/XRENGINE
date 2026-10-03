@@ -355,6 +355,10 @@ struct XRAdvancedSurface
     uint layerMask;
     uint requiredAttributeMask;
     float3 worldPosition;
+    // Invocation-local helper reconstruction state, never part of a buffer ABI.
+    float3 interpolatedWorldPosition;
+    uint visibilityMetadata;
+    float2 samplePixelPosition;
     float3 geometricNormal;
     float3 shadingNormal;
     float3 tangent;
@@ -1140,6 +1144,9 @@ XRAdvancedSurface XR_ADV_InvalidSurface(
     surface.layerMask = 0u;
     surface.requiredAttributeMask = 0u;
     surface.worldPosition = float3(0.0);
+    surface.interpolatedWorldPosition = float3(0.0);
+    surface.visibilityMetadata = 0u;
+    surface.samplePixelPosition = float2(0.0);
     surface.geometricNormal = float3(0.0, 1.0, 0.0);
     surface.shadingNormal = surface.geometricNormal;
     surface.tangent = float3(1.0, 0.0, 0.0);

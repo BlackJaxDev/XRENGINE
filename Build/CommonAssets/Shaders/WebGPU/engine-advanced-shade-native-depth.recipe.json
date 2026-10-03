@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "name": "engine-advanced-shade-native",
-  "pass": "shade-native",
+  "name": "engine-advanced-shade-native-depth",
+  "pass": "shade-native-depth",
   "source": "AdvancedShadeNative.slang",
   "sourceLanguage": "Slang",
   "target": "WebGPUWgsl",
@@ -10,7 +10,7 @@
   },
   "pipelineArtifact": {
     "scope": "advanced",
-    "pass": "shade-native"
+    "pass": "shade-native-depth"
   },
   "workgroupSize": [
     16,
@@ -19,7 +19,8 @@
   ],
   "defines": [
     "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1",
-    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1"
+    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1",
+    "XR_ADV_DEPTH_COMPARISON_BANK=1"
   ],
   "includes": [],
   "specialization": {},
@@ -966,7 +967,7 @@
         "physicalName": "NativeTexture9_0",
         "group": 1,
         "binding": 22,
-        "kind": "texture-2d-float",
+        "kind": "texture-depth-2d",
         "visibility": [
           "compute"
         ],
@@ -981,7 +982,7 @@
         "physicalName": "NativeSampler9_0",
         "group": 1,
         "binding": 23,
-        "kind": "filtering-sampler",
+        "kind": "comparison-sampler",
         "visibility": [
           "compute"
         ],

@@ -26,10 +26,64 @@ public static class WebGpuAdvancedMaterialContract
 
     public static bool SupportsCullMode(uint mode) => mode <= 1;
 
-    public static string? GetSamplingRejection(string format, uint samples, bool? float32Filterable)
-        => samples != 1 || WebGpuTextureFormatContract.IsDepth(format) || WebGpuTextureFormatContract.IsInteger(format) ||
+    /// <summary>Checks the typed texture/sampler pair independently of physical GPU allocation.</summary>
+    public static string? GetTexturePairRejection(in AdvancedTextureRecord texture, in AdvancedSamplerRecord sampler,
+        bool allowDepthComparison, out bool depthComparison)
+    {
+        depthComparison = (texture.Flags & EAdvancedTextureRecordFlags.Depth) != 0;
+        bool comparison = (sampler.Flags & EAdvancedSamplerRecordFlags.ComparisonEnabled) != 0;
+        if (depthComparison != comparison || depthComparison && (!allowDepthComparison ||
+            texture.Dimension != EAdvancedTextureDimension.Texture2D || sampler.CompareOperation != EAdvancedCompareOperation.LessOrEqual))
+            return "Native shadows require the exact 2D less-equal depth-comparison companion; material roles and other bank dimensions require ordinary color sampling.";
+        if (GetTextureDimensionCapacity(texture.Dimension) == 0)
+            return "The texture dimension has no native bank companion.";
+        return GetSamplerRejection(in sampler);
+    }
+
+    /// <summary>Checks the complete per-material union of global and local sampled resources.</summary>
+    public static string? GetTextureBankRejection(int color2D, int depth2D, int cube, int array)
+        => color2D < 0 || depth2D < 0 || cube < 0 || array < 0 || depth2D > 1 ||
+            color2D + depth2D > GetTextureDimensionCapacity(EAdvancedTextureDimension.Texture2D) ||
+            cube > GetTextureDimensionCapacity(EAdvancedTextureDimension.Cube) ||
+            array > GetTextureDimensionCapacity(EAdvancedTextureDimension.Texture2DArray) ||
+            color2D + depth2D + cube + array > TextureSlotCount
+            ? "Native closure exceeds ten 2D pairs (at most one depth-comparison pair), one color cube, and one color 2D-array; the depth companion retains nine independent color 2D pairs within the device's 16 sampled-texture limit."
+            : null;
+
+    /// <summary>Checks the exact frozen sampler state consumed by the browser native bank.</summary>
+    public static string? GetSamplerRejection(in AdvancedSamplerRecord sampler)
+    {
+        const string reason = "The frozen sampler requires a comparison other than less-equal, border, LOD bias, or filtering state outside the exact native bank contract.";
+        const EAdvancedSamplerRecordFlags known = EAdvancedSamplerRecordFlags.UsesMipmaps |
+            EAdvancedSamplerRecordFlags.LinearMipmapInterpolation | EAdvancedSamplerRecordFlags.NearestMinification |
+            EAdvancedSamplerRecordFlags.NearestMagnification | EAdvancedSamplerRecordFlags.ComparisonEnabled |
+            EAdvancedSamplerRecordFlags.AnisotropyEnabled;
+        if (sampler.Filter is not (EAdvancedSamplerFilter.Nearest or EAdvancedSamplerFilter.Linear or EAdvancedSamplerFilter.Anisotropic) ||
+            (sampler.Flags & ~known) != 0 ||
+            (sampler.Flags & EAdvancedSamplerRecordFlags.ComparisonEnabled) != 0 && sampler.CompareOperation != EAdvancedCompareOperation.LessOrEqual ||
+            sampler.LodBiasMinMaxAnisotropy.X != 0 || !float.IsFinite(sampler.LodBiasMinMaxAnisotropy.Y) ||
+            !float.IsFinite(sampler.LodBiasMinMaxAnisotropy.Z) ||
+            !SupportsAddress(sampler.AddressU) || !SupportsAddress(sampler.AddressV) || !SupportsAddress(sampler.AddressW))
+            return reason;
+        bool mips = (sampler.Flags & EAdvancedSamplerRecordFlags.UsesMipmaps) != 0;
+        float anisotropy = (sampler.Flags & EAdvancedSamplerRecordFlags.AnisotropyEnabled) != 0 ? sampler.LodBiasMinMaxAnisotropy.W : 1;
+        if (!float.IsFinite(anisotropy) || anisotropy != MathF.Truncate(anisotropy) || anisotropy is < 1 or > 16 ||
+            anisotropy > 1 && ((sampler.Flags & (EAdvancedSamplerRecordFlags.NearestMinification | EAdvancedSamplerRecordFlags.NearestMagnification)) != 0 ||
+                (sampler.Flags & EAdvancedSamplerRecordFlags.LinearMipmapInterpolation) == 0))
+            return reason;
+        float minLod = mips ? Math.Max(0, sampler.LodBiasMinMaxAnisotropy.Y) : 0;
+        float maxLod = mips ? Math.Min(32, sampler.LodBiasMinMaxAnisotropy.Z) : 0;
+        return minLod > maxLod || minLod > 32 || maxLod < 0 ||
+            !mips && (sampler.LodBiasMinMaxAnisotropy.Y > 0 || sampler.LodBiasMinMaxAnisotropy.Z < 0) ? reason : null;
+
+        static bool SupportsAddress(EAdvancedSamplerAddressMode address)
+            => address is EAdvancedSamplerAddressMode.Repeat or EAdvancedSamplerAddressMode.MirroredRepeat or EAdvancedSamplerAddressMode.ClampToEdge;
+    }
+
+    public static string? GetSamplingRejection(string format, uint samples, bool? float32Filterable, bool depthComparison = false)
+        => samples != 1 || WebGpuTextureFormatContract.IsDepth(format) != depthComparison || WebGpuTextureFormatContract.IsInteger(format) ||
             float32Filterable == false && format is ("r32float" or "rg32float" or "rgba32float")
-            ? "Native bank sampling requires an exact filterable non-depth floating-point texture."
+            ? "Native bank sampling requires an exact single-sample filterable color texture or the typed depth-comparison companion."
             : null;
 
     public static string? GetSourceRejection(EAdvancedMaterialSourceContract source) => source switch

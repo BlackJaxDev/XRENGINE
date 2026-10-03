@@ -632,13 +632,14 @@ namespace XREngine.Components.Capture.Lights.Types
                 if ((faceMask & (1 << i)) == 0)
                     continue;
 
-                _viewports[i].Render(
+                bool recorded = _viewports[i].TryRender(
                     _perFaceFbos[i]!,
                     null,
                     null,
                     true,
                     mat);
-                renderedMask |= 1 << i;
+                if (recorded)
+                    renderedMask |= 1 << i;
             }
 
             SetField(ref _lastRenderedShadowFaceMask, renderedMask, nameof(LastRenderedShadowFaceMask));

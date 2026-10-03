@@ -28,6 +28,7 @@ internal sealed class WebGpuAdvancedShadingFrame : IDisposable
     internal AdvancedGlobalResourceDatabaseGenerations ResourceGenerations;
     internal uint ViewIndex;
     internal bool IblEnabled;
+    internal bool DepthComparisonBank;
     internal uint Width;
     internal uint Height;
     public void Dispose()
