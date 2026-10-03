@@ -926,7 +926,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         // culling; its conservative contribution is refined by visibility later.
         float contribution = 1.0f;
         _boneTierScratch[0] = new AdvancedBoneLodTier(
-            renderer.ActiveSkinPaletteCount,
+            gpuPoseSlice.BoneCount,
             EAdvancedAnimationBoneRequirement.RuntimeRequired |
             EAdvancedAnimationBoneRequirement.IkTarget |
             EAdvancedAnimationBoneRequirement.Attachment |
@@ -936,7 +936,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 poseHandle,
                 contribution,
                 newlyVisible,
-                renderer.ActiveSkinPaletteCount,
+                gpuPoseSlice.BoneCount,
                 frameId);
 
         EAdvancedDeformationFeatureFlags features =
@@ -963,8 +963,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             features |= EAdvancedDeformationFeatureFlags.VelocityInvalid;
 
         uint poseGeneration = FoldGeneration(
-            renderer.SkinnedOutputVersion,
-            renderer.BlendshapeWeightsVersion,
+            gpuPoseSlice.PoseVersion,
+            gpuPoseSlice.BlendshapeVersion,
             schedule.BoneTier);
         ulong vertexLayoutId = AdvancedDeformedVertex.CanonicalLayoutId;
         AdvancedDeformationJobRecord job = new()

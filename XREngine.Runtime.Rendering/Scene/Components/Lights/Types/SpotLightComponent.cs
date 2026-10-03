@@ -293,9 +293,9 @@ namespace XREngine.Components.Capture.Lights.Types
             // to avoid overwriting material texture units.
         }
 
-        public override void SetShadowMapResolution(uint width, uint height)
+        protected override void ResizeShadowMapResources(uint width, uint height)
         {
-            base.SetShadowMapResolution(width, height);
+            base.ResizeShadowMapResources(width, height);
 
             if (ShadowCamera?.Parameters is XRPerspectiveCameraParameters p)
             {

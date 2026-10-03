@@ -208,8 +208,9 @@ namespace XREngine.Components
 
         private void ResizeScreenSpace(BoundingRectangleF bounds)
         {
-            //Recreate the size of the render tree to match the new size.
-            VisualScene2D.SetBounds(bounds);
+            // The 2D target and input tree have a local origin even when the canvas
+            // itself is translated or rotated in the 3D scene.
+            VisualScene2D.SetBounds(new BoundingRectangleF(Vector2.Zero, new Vector2(bounds.Width, bounds.Height)));
 
             //Update the camera parameters to match the new size.
             if (Camera2D.Parameters is XROrthographicCameraParameters orthoParams)

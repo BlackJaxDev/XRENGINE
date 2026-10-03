@@ -5,6 +5,7 @@ using XREngine.Components.Lights;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Extensions;
@@ -28,6 +29,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private XRViewport[] _viewports = [];
         private XRCamera[] _shadowCameras = [];
+        private XRObjectBase[] _ownedShadowCameraObjects = [];
+        private ShadowRenderPipeline[] _ownedShadowPipelines = [];
+        private bool _shadowResourcesDisposed;
 
         private readonly XRFrameBuffer?[] _perFaceFbos =
             new XRFrameBuffer?[ShadowFaceCount];
@@ -208,7 +212,14 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Shadow cameras for the cubemap faces, ordered by the engine cubemap face convention.
         /// </summary>
-        public XRCamera[] ShadowCameras => _shadowCameras;
+        public XRCamera[] ShadowCameras
+        {
+            get
+            {
+                EnsureShadowCameras();
+                return _shadowCameras;
+            }
+        }
 
         [Browsable(false)]
         public bool UsesPointShadowAtlasForCurrentEncoding
@@ -239,22 +250,48 @@ namespace XREngine.Components.Capture.Lights.Types
             SetField(ref _lastShadowRelevanceFrame, frameId, nameof(LastShadowRelevanceFrame));
         }
 
+        internal bool RequiresCompleteStandaloneShadowCube
+            => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked && !UseShadowAtlas;
+
+        /// <summary>Prepares a deferred standalone target before its first caster collection.</summary>
+        internal void PrepareStandaloneShadowCollection()
+        {
+            if (RequiresCompleteStandaloneShadowCube)
+                EnsureShadowMapForActiveDynamicLight();
+        }
+
         private int CurrentShadowFaceRelevanceMask
             // The bounded cooked cubemap receiver filters across face seams. Its
             // six sequential producers must all refresh before it can be sampled.
-            => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked
+            => RequiresCompleteStandaloneShadowCube
                 ? LocalShadowFrustumRelevance.AllPointFacesMask
                 : _shadowFaceRelevanceMask & LocalShadowFrustumRelevance.AllPointFacesMask;
 
-        private XRViewport CreateShadowViewport(uint resolution)
-            => new(null, resolution, resolution)
+        private XRViewport CreateShadowViewport(uint resolution, XRCamera camera, out ShadowRenderPipeline pipeline)
+        {
+            pipeline = new();
+            XRViewport? viewport = null;
+            try
             {
-                RenderPipeline = new ShadowRenderPipeline(),
-                SetRenderPipelineFromCamera = false,
-                AutomaticallyCollectVisible = false,
-                AutomaticallySwapBuffers = false,
-                AllowUIRender = false,
-            };
+                viewport = new(null, resolution, resolution);
+                viewport.RenderPipeline = pipeline;
+                viewport.SetRenderPipelineFromCamera = false;
+                viewport.AutomaticallyCollectVisible = false;
+                viewport.AutomaticallySwapBuffers = false;
+                viewport.AllowUIRender = false;
+                // The physical viewport can still have a queued pipeline transition.
+                // Retain its authored source instead of querying a live default getter.
+                if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                    camera.RenderPipeline = pipeline;
+                viewport.Camera = camera;
+                return viewport;
+            }
+            catch
+            {
+                viewport?.Destroy();
+                throw;
+            }
+        }
 
         internal override BrowserShadowCasterState GetBrowserShadowCasterState()
         {
@@ -280,8 +317,13 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void EnsureShadowResources()
         {
-            if (_viewports.Length == ShadowFaceCount && _shadowCameras.Length == ShadowFaceCount)
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed)
                 return;
+            if (_viewports.Length == ShadowFaceCount && _shadowCameras.Length == ShadowFaceCount)
+            {
+                RefreshShadowViewportWorlds();
+                return;
+            }
 
             EnsureShadowCameras();
 
@@ -292,39 +334,63 @@ namespace XREngine.Components.Capture.Lights.Types
                 resolution = 1024u;
             (resolution, _) = GetEffectiveShadowMapResolution(resolution, resolution);
 
-            _viewports = new XRViewport[ShadowFaceCount].Fill(_ => CreateShadowViewport(resolution));
-
-            for (int i = 0; i < _shadowCameras.Length; i++)
+            XRViewport[] viewports = new XRViewport[ShadowFaceCount];
+            ShadowRenderPipeline[] pipelines = new ShadowRenderPipeline[ShadowFaceCount];
+            try
             {
-                XRCamera cam = _shadowCameras[i];
-                _viewports[i].Camera = cam;
-                if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
-                    cam.RenderPipeline = _viewports[i].RenderPipeline!;
-
-                var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
-                if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
+                for (int i = 0; i < _shadowCameras.Length; i++)
                 {
-                    grading.AutoExposure = false;
-                    grading.Exposure = 1.0f;
+                    XRCamera cam = _shadowCameras[i];
+                    viewports[i] = CreateShadowViewport(resolution, cam, out pipelines[i]);
+                    var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
+                    if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
+                    {
+                        grading.AutoExposure = false;
+                        grading.Exposure = 1.0f;
+                    }
+                    else
+                    {
+                        colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
+                        colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
+                    }
                 }
-                else
-                {
-                    colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
-                    colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
-                }
-
-                _viewports[i].WorldInstanceOverride = IsActiveInHierarchy
-                    ? World.GetRenderWorld()
-                    : null;
             }
+            catch
+            {
+                for (int i = 0; i < viewports.Length; i++) viewports[i]?.Destroy();
+                for (int i = 0; i < pipelines.Length; i++) pipelines[i]?.Destroy();
+                throw;
+            }
+            SetField(ref _viewports, viewports, publishNotifications: false);
+            SetField(ref _ownedShadowPipelines, pipelines, publishNotifications: false);
+            RefreshShadowViewportWorlds();
+        }
+
+        private void RefreshShadowViewportWorlds()
+        {
+            IRuntimeRenderWorld? world = IsActiveInHierarchy ? World.GetRenderWorld() : null;
+            for (int index = 0; index < _viewports.Length; index++)
+                _viewports[index].WorldInstanceOverride = world;
         }
 
         private void EnsureShadowCameras()
         {
+            // Creating child transforms during a containing cooked reader's
+            // suppression skips rotation dirtiness and parent child-list hooks.
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed)
+                return;
             if (_shadowCameras.Length != ShadowFaceCount)
             {
                 float farPlane = MathF.Max(_influenceVolume.Radius, _shadowNearPlaneDistance + 0.001f);
-                _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(_shadowNearPlaneDistance, farPlane, true, _shadowCameraParentTransform);
+                XRCamera[] cameras = XRCubeFrameBuffer.GetCamerasPerFace(_shadowNearPlaneDistance, farPlane, true, _shadowCameraParentTransform);
+                XRObjectBase[] owned = new XRObjectBase[cameras.Length * 2];
+                for (int i = 0; i < cameras.Length; i++)
+                {
+                    owned[i * 2] = cameras[i].Transform;
+                    owned[i * 2 + 1] = cameras[i].Viewports;
+                }
+                SetField(ref _ownedShadowCameraObjects, owned, publishNotifications: false);
+                SetField(ref _shadowCameras, cameras, publishNotifications: false);
             }
 
             if (SceneNode is not null && !SceneNode.IsTransformNull)
@@ -417,7 +483,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
-            if (!CastsShadows || UsesPointShadowAtlasForCurrentEncoding)
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed || !CastsShadows || UsesPointShadowAtlasForCurrentEncoding)
                 return;
 
             EnsureShadowMapForActiveDynamicLight();
@@ -703,7 +769,8 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private bool ShouldProcessShadowViewports()
-            => CastsShadows && (ShadowMap is not null || UsesPointShadowAtlasForCurrentEncoding);
+            => !_shadowResourcesDisposed && !ArePropertyNotificationsSuppressed &&
+                CastsShadows && (ShadowMap is not null || UsesPointShadowAtlasForCurrentEncoding);
 
         private bool ShouldPrepareAtlasGroupedFaceCollection()
         {
@@ -766,19 +833,34 @@ namespace XREngine.Components.Capture.Lights.Types
         public override void SetShadowMapResolution(uint width, uint height)
         {
             uint max = Math.Max(width, height);
+            base.SetShadowMapResolution(max, max);
+        }
 
+        /// <summary>Cube faces use the larger requested dimension without rewriting serialized properties.</summary>
+        public override (uint Width, uint Height) GetShadowMapStorageResolution(uint width, uint height)
+        {
+            uint extent = Math.Max(width, height);
+            return (extent, extent);
+        }
+
+        protected override void ResizeShadowMapResources(uint width, uint height)
+        {
+            // Nested cooked readers can activate this light while callback
+            // suppression still owns its graph. Prepare cube targets afterward.
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed)
+                return;
             // Cubemap textures use immutable storage (Resizable=false) and cannot
             // be resized in place. Destroy the old FBO so the base recreates it
             // with fresh textures of the new size.
             ShadowMap?.Destroy();
             ShadowMap = null;
-            _perFaceFboShadowMap = null;
+            SetField(ref _perFaceFboShadowMap, null, publishNotifications: false);
 
-            base.SetShadowMapResolution(max, max);
+            base.ResizeShadowMapResources(width, height);
 
-            (max, _) = GetEffectiveShadowMapResolution(max, max);
+            (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
             foreach (XRViewport vp in _viewports)
-                vp.Resize(max, max);
+                vp.Resize(resourceWidth, resourceHeight);
         }
 
         private float _brightness = 1.0f;
@@ -828,7 +910,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnTransformChanged()
         {
-            if (_shadowCameras.Length > 0)
+            if (_shadowCameras.Length > 0 && !ArePropertyNotificationsSuppressed)
             {
                 _shadowCameraParentTransform.Parent = Transform;
                 foreach (XRCamera cam in _shadowCameras)
@@ -850,11 +932,12 @@ namespace XREngine.Components.Capture.Lights.Types
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked && CastsShadows)
                 ValidateCookedShadowConfiguration();
             base.OnComponentActivated();
+            if (ArePropertyNotificationsSuppressed)
+                return;
             if (CastsShadows)
                 EnsureShadowResources();
 
-            for (int i = 0; i < _viewports.Length; i++)
-                _viewports[i].WorldInstanceOverride = World.GetRenderWorld();
+            RefreshShadowViewportWorlds();
         }
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
@@ -873,6 +956,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
         {
+            if (ArePropertyNotificationsSuppressed)
+                return;
             EnsureShadowCameras();
             if (SceneNode is not null && !SceneNode.IsTransformNull)
                 SyncShadowCaptureTransforms();
@@ -933,13 +1018,18 @@ namespace XREngine.Components.Capture.Lights.Types
 
         internal bool TryGetShadowFaceCamera(int faceIndex, out XRCamera camera)
         {
-            if ((uint)faceIndex >= ShadowFaceCount)
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed || (uint)faceIndex >= ShadowFaceCount)
             {
                 camera = null!;
                 return false;
             }
 
             EnsureShadowResources();
+            if (_shadowCameras.Length != ShadowFaceCount)
+            {
+                camera = null!;
+                return false;
+            }
             SyncShadowCaptureTransforms();
             camera = _shadowCameras[faceIndex];
             return true;
@@ -947,7 +1037,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         internal bool RenderShadowAtlasFaceTile(int faceIndex, XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
         {
-            if (!CastsShadows ||
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed || !CastsShadows ||
                 World is null ||
                 (uint)faceIndex >= ShadowFaceCount ||
                 renderRect.Width <= 0 ||
@@ -999,7 +1089,7 @@ namespace XREngine.Components.Capture.Lights.Types
             XRFrameBuffer atlasFbo,
             bool collectVisibleNow)
         {
-            if (!CastsShadows ||
+            if (_shadowResourcesDisposed || ArePropertyNotificationsSuppressed || !CastsShadows ||
                 World is null ||
                 group.FaceCount <= 1 ||
                 group.Members is null ||
@@ -1205,6 +1295,30 @@ namespace XREngine.Components.Capture.Lights.Types
                 _viewports[i].WorldInstanceOverride = null;
 
             base.OnComponentDeactivated();
+        }
+
+        protected override void OnDestroying()
+        {
+            SetField(ref _shadowResourcesDisposed, true, publishNotifications: false);
+            // Cameras are runtime-only XRBase objects, but their transforms and
+            // viewport lists are registered owners. Release the exact objects we
+            // created even if a caller has replaced a camera's mutable properties.
+            for (int i = 0; i < _viewports.Length; i++) _viewports[i].Destroy();
+            SetField(ref _viewports, [], publishNotifications: false);
+            for (int i = 0; i < _ownedShadowPipelines.Length; i++) _ownedShadowPipelines[i].Destroy();
+            SetField(ref _ownedShadowPipelines, [], publishNotifications: false);
+            ShadowMap?.Destroy();
+            ShadowMap = null;
+            for (int i = 0; i < _perFaceFbos.Length; i++)
+            {
+                _perFaceFbos[i]?.Destroy();
+                _perFaceFbos[i] = null;
+            }
+            for (int i = 0; i < _ownedShadowCameraObjects.Length; i++) _ownedShadowCameraObjects[i].Destroy(true);
+            SetField(ref _ownedShadowCameraObjects, [], publishNotifications: false);
+            SetField(ref _shadowCameras, [], publishNotifications: false);
+            _shadowCameraParentTransform.Destroy(true);
+            base.OnDestroying();
         }
 
         protected override void RegisterDynamicLight(IRuntimeRenderWorld world)

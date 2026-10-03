@@ -473,7 +473,7 @@ namespace XREngine.Components
                             out Vector3 localIntersectionPoint))
                         {
                             // Check if the point is within the canvas' bounds
-                            var bounds = canvasTransform.GetActualBounds();
+                            var bounds = new BoundingRectangleF(Vector2.Zero, canvasTransform.ActualSize);
                             Vector2 point = localIntersectionPoint.XY();
                             uiCoord = bounds.Contains(point) ? point : null;
                         }

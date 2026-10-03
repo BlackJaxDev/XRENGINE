@@ -12,6 +12,7 @@ public sealed class GpuMeshSubmissionSourceBindings
     private XRMesh? _sourceMesh;
     private XRMeshRenderer? _sourceRenderer;
     private XRMaterial? _sourceMaterial;
+    private bool _usesPrimaryDeformation;
     private XRMesh.BufferCollection? _meshBufferOwner;
     private XRMesh.BufferCollection? _rendererBufferOwner;
     private KeyValuePair<string, XRDataBuffer>[] _meshBuffers;
@@ -30,6 +31,7 @@ public sealed class GpuMeshSubmissionSourceBindings
         _sourceMesh = mesh;
         _sourceRenderer = renderer;
         _sourceMaterial = material;
+        _usesPrimaryDeformation = ReferenceEquals(mesh, renderer.Mesh);
         MaterialShaderRevision = material.ShaderStateRevision;
         _meshBufferOwner = mesh.Buffers;
         _rendererBufferOwner = renderer.Buffers;
@@ -61,6 +63,9 @@ public sealed class GpuMeshSubmissionSourceBindings
         IRenderBindingPublisher[] rendererPublishers = renderer.BindingPublishers.CaptureSnapshot();
         IRenderBindingPublisher[] materialPublishers = material.BindingPublishers.CaptureSnapshot();
         if (previous is not null
+            && ReferenceEquals(previous._sourceMesh, mesh)
+            && ReferenceEquals(previous._sourceRenderer, renderer)
+            && previous._usesPrimaryDeformation == ReferenceEquals(mesh, renderer.Mesh)
             && ReferenceEquals(previous._sourceMaterial, material)
             && previous.MaterialShaderRevision == material.ShaderStateRevision
             && ReferenceEquals(previous._meshBufferOwner, mesh.Buffers)
@@ -79,6 +84,8 @@ public sealed class GpuMeshSubmissionSourceBindings
     /// <summary>Rejects later structural mutation instead of mixing source bindings across publications.</summary>
     public bool AreSourceBindingsCurrent
         => _sourceMesh is not null && _sourceRenderer is not null
+           && _sourceRenderer.OwnsDeformationMesh(_sourceMesh)
+           && _usesPrimaryDeformation == ReferenceEquals(_sourceMesh, _sourceRenderer.Mesh)
            && _sourceMaterial?.ShaderStateRevision == MaterialShaderRevision
            && ReferenceEquals(_sourceMesh.Buffers, _meshBufferOwner)
            && ReferenceEquals(_sourceRenderer.Buffers, _rendererBufferOwner)
@@ -97,6 +104,7 @@ public sealed class GpuMeshSubmissionSourceBindings
         destination._sourceMesh = _sourceMesh;
         destination._sourceRenderer = _sourceRenderer;
         destination._sourceMaterial = _sourceMaterial;
+        destination._usesPrimaryDeformation = _usesPrimaryDeformation;
         destination.MaterialShaderRevision = MaterialShaderRevision;
         destination._meshBufferOwner = _meshBufferOwner;
         destination._rendererBufferOwner = _rendererBufferOwner;

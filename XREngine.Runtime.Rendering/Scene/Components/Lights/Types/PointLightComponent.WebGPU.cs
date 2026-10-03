@@ -38,7 +38,7 @@ public partial class PointLightComponent
         if (UseShadowAtlas || ShadowRenderMode != EPointShadowRenderMode.Sequential ||
             ShadowMapEncoding != EShadowMapEncoding.Depth || ShadowMapStorageFormat != EShadowMapStorageFormat.R16Float ||
             EnableContactShadows || SoftShadowMode != ESoftShadowMode.ContactHardeningPcss || BlockerSamples != 8 || FilterSamples != 8 ||
-            ShadowMapResolutionWidth == 0 || ShadowMapResolutionHeight != ShadowMapResolutionWidth)
+            ShadowMapResolutionWidth == 0 || ShadowMapResolutionHeight == 0)
             throw new NotSupportedException("WebGPU.PointShadow.ProfileUnsupported: requires authored Sequential standalone R16Float radial depth, PCSS 8/8, no contact shadows, and effective square dimensions at most 2048.");
     }
 

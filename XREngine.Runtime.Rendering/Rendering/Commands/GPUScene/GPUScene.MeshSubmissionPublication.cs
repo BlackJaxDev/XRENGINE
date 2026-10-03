@@ -140,6 +140,7 @@ public partial class GPUScene
             SourceBindings = GpuMeshSubmissionSourceBindings.Capture(mesh, renderer, material, previous.SourceBindings),
             Metadata = metadata,
             AuthoredInstanceCount = snapshot.Instances,
+            AuthoredPrimitiveInstanceCount = renderer.Submeshes.Count == 0 ? 1u : renderer.Submeshes[primitiveIndex].InstanceCount,
             Bounds = bounds,
             CurrentWorld = snapshot.ModelMatrix,
             PreviousWorld = snapshot.ModelMatrix,

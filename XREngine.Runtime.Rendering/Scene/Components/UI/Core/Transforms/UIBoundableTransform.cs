@@ -625,6 +625,39 @@ namespace XREngine.Rendering.UI
 
             RegionWorldTransform = mtx;
 
+            AxisAlignedRegion = CalculateAxisAlignedRegion(mtx);
+        }
+
+        /// <summary>
+        /// Gets the element's rectangular bounds in the target canvas's bottom-left coordinate space.
+        /// Transform the corners before finding their bounds so a rotated world canvas does not
+        /// change its offscreen clip or hit-test region.
+        /// </summary>
+        public BoundingRectangleF GetCanvasRegion(UICanvasTransform? canvas)
+        {
+            if (canvas is null || canvas.DrawSpace == ECanvasDrawSpace.Screen)
+                return AxisAlignedRegion;
+
+            if (ReferenceEquals(this, canvas))
+                return new BoundingRectangleF(Vector2.Zero, ActualSize);
+
+            // Canceling a distant or rotated canvas through its world inverse can
+            // turn an exact 30px edge into 29.999998px before integer scissoring.
+            // Compose the UI layout chain directly whenever it reaches this canvas.
+            Matrix4x4 localToCanvas = Matrix4x4.Identity;
+            TransformBase? current = this;
+            while (!ReferenceEquals(current, canvas) && current is UITransform && current is not UICanvasTransform)
+            {
+                localToCanvas *= current.LocalMatrix;
+                current = current.Parent;
+            }
+            if (!ReferenceEquals(current, canvas))
+                localToCanvas = WorldMatrix * canvas.InverseWorldMatrix;
+            return CalculateAxisAlignedRegion(Matrix4x4.CreateScale(ActualWidth, ActualHeight, 1.0f) * localToCanvas);
+        }
+
+        private static BoundingRectangleF CalculateAxisAlignedRegion(Matrix4x4 mtx)
+        {
             Vector2 bottomLeft = Vector2.Transform(Vector2.Zero, mtx);
             Vector2 bottomRight = Vector2.Transform(Vector2.UnitX, mtx);
             Vector2 topLeft = Vector2.Transform(Vector2.UnitY, mtx);
@@ -633,7 +666,7 @@ namespace XREngine.Rendering.UI
             Vector2 min = Vector2.Min(Vector2.Min(bottomLeft, bottomRight), Vector2.Min(topLeft, topRight));
             Vector2 max = Vector2.Max(Vector2.Max(bottomLeft, bottomRight), Vector2.Max(topLeft, topRight));
 
-            AxisAlignedRegion = BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
+            return BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
         }
 
         internal void RefreshAxisAlignedRegion()
@@ -763,12 +796,12 @@ namespace XREngine.Rendering.UI
             float h = ActualHeight;
             foreach (var info in infos)
             {
-                //Don't update render info 3D if this is a 2D canvas and vice versa.
-                //Otherwise, results in unnecessary octree movement updates (for potentially thousands of UI components).
+                // Every canvas uses local 2D bounds for input and offscreen rendering.
+                // Only non-screen canvases also need world-space scene bounds.
                 switch (info)
                 {
-                    case RenderInfo2D renderInfo2D when ParentCanvas?.DrawSpace == ECanvasDrawSpace.Screen:
-                        renderInfo2D.CullingVolume = AxisAlignedRegion;
+                    case RenderInfo2D renderInfo2D:
+                        renderInfo2D.CullingVolume = GetCanvasRegion(ParentCanvas);
                         break;
                     case RenderInfo3D renderInfo3D when ParentCanvas?.DrawSpace != ECanvasDrawSpace.Screen:
                         renderInfo3D.CullingOffsetMatrix = RegionWorldTransform;

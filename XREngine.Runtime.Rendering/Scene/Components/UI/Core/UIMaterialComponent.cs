@@ -312,7 +312,7 @@ namespace XREngine.Rendering.UI
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
             var tfm = BoundableTransform;
-            var worldMatrix = GetRenderWorldMatrix(tfm);
+            var worldMatrix = GetRenderCanvasMatrix(tfm);
 
             // Read the per-instance color from the material's MatColor parameter
             var colorParam = Material?.Parameter<ShaderVector4>("MatColor");

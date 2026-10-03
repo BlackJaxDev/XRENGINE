@@ -44,6 +44,7 @@ public readonly record struct GpuMeshSubmissionRecord
     public long PayloadOwnerGeometryRevision { get; init; }
     public ulong PayloadOwnerValidationToken { get; init; }
     public uint AuthoredInstanceCount { get; init; }
+    public uint AuthoredPrimitiveInstanceCount { get; init; }
     public uint InstanceCount => AuthoredInstanceCount;
 
     /// <summary>Checks the captured owner proof without rereading a mutable mesh payload.</summary>

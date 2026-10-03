@@ -3619,7 +3619,7 @@ namespace XREngine.Components.Lights
             base.OnComponentDeactivated();
         }
 
-        public override void SetShadowMapResolution(uint width, uint height)
+        protected override void ResizeShadowMapResources(uint width, uint height)
         {
             if (UsesCookedWebGpuShadowMaterial && IsActiveInHierarchy && (width == 0u || height == 0u))
                 throw new ArgumentOutOfRangeException(nameof(width), "WebGPU.DirectionalShadow.InvalidResolution: shadow dimensions must be positive.");
@@ -3628,7 +3628,7 @@ namespace XREngine.Components.Lights
                 SetField(ref _constructingCookedShadowTarget, true, publishNotifications: false);
             try
             {
-                base.SetShadowMapResolution(width, height);
+                base.ResizeShadowMapResources(width, height);
             }
             finally
             {

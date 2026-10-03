@@ -1040,7 +1040,7 @@ namespace XREngine.Rendering.UI
                     return UseWebGpuBatchOnly;
 
                 var tfm = BoundableTransform;
-                var worldMatrix = GetRenderWorldMatrix(tfm);
+                var worldMatrix = GetRenderCanvasMatrix(tfm);
                 var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
                 var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
                 var bottomLeft = tfm.ActualLocalBottomLeftTranslation;

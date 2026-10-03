@@ -111,6 +111,8 @@ public sealed partial class WebGpuRendererHost : IMeshletIndexedBackendCapabilit
             if (record.InstanceCount == 0) continue;
             if (!IncludesMeshletPass(in record, request.RenderPass) ||
                 slot.Publication.GetSourceOwnership(record.Source) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu) continue;
+            if (record.AuthoredPrimitiveInstanceCount != 1)
+                return MeshletRejected("PrimitiveInstanceCompositionUnavailable", "a submesh-local instance count requires the shared primitive/command instance-composition publication", out reason);
             if (record.InstanceCount > 1)
                 return MeshletRejected("InstanceProfile", "GPU meshlet instance expansion requires an explicit per-instance transform and bounds publication", out reason);
             if (record.LodCount > 1)

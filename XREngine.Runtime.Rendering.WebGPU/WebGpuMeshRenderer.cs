@@ -10,14 +10,12 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRenderer.BaseVersion data)
     : WebGpuObject<XRMeshRenderer.BaseVersion>(renderer, data), IApiMeshRenderer, IRenderPreparationState
 {
-    private readonly record struct DrawKey(WebGpuMaterial Material, WebGpuRasterState State,
+    private readonly record struct DrawKey(XRMesh Mesh, WebGpuMaterial Material, WebGpuRasterState State,
         WebGpuFrameBuffer? FrameBuffer, ulong AttachmentRevision);
     private readonly Dictionary<DrawKey, WebGpuMeshDraw> _draws = [];
-    private XRMesh? _mesh;
-    private long _geometryRevision;
-    private long _bufferRevision;
+    private readonly Dictionary<XRMesh, (long Geometry, long Buffers, long RendererBuffers, WebGpuMeshDeformation? Deformation)> _meshGenerations =
+        new(ReferenceEqualityComparer.Instance);
     private ulong _surfaceGeneration;
-    private WebGpuMeshDeformation? _deformation;
     private string _lastPrepareDetail = "NeverPrepared";
     private bool _generated;
 
@@ -30,20 +28,28 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
     public bool TryPrepareForRendering()
     {
         ValidateOwnerGeneration();
-        XRMaterial? material = Data.Parent.Material;
-        if (material is null)
-            return Pending("MaterialMissing");
-        if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true)
-            material = MeshRenderMaterialResolver.Resolve(Data.Parent, null, 1).Material;
-        Renderer.ApplyRenderParameters(material.RenderOptions);
-        return TryPrepareDraw(material, out _, out _, recordDeformation: false);
+        RetireUnusedDirectDraws();
+        int count = Math.Max(1, Data.Parent.Submeshes.Count);
+        bool ready = true;
+        for (int index = 0; index < count; index++)
+        {
+            RequireSupportedPrimitiveInstances(index);
+            if (!Data.Parent.TryGetMesh(index, out XRMesh? mesh, out XRMaterial? source) || mesh is null)
+            { ready = Pending("MeshMissing"); continue; }
+            if (source is null && !HasPassMaterialOverride())
+            { ready = Pending("MaterialMissing"); continue; }
+            XRMaterial material = MeshRenderMaterialResolver.Resolve(Data.Parent, source, 1).Material;
+            Renderer.ApplyRenderParameters(material.RenderOptions);
+            ready &= TryPrepareDraw(mesh, material, out _, out _, recordDeformation: false);
+        }
+        return ready;
     }
 
-    private bool TryPrepareDraw(XRMaterial material, out WebGpuMaterial? apiMaterial, out WebGpuMeshDraw? draw, bool recordDeformation = true)
+    private bool TryPrepareDraw(XRMesh? mesh, XRMaterial material, out WebGpuMaterial? apiMaterial,
+        out WebGpuMeshDraw? draw, bool recordDeformation = true)
     {
         apiMaterial = null;
         draw = null;
-        XRMesh? mesh = Data.Parent.Mesh;
         if (mesh is null)
             return Pending("MeshMissing");
         if (mesh.Type != EPrimitiveType.Triangles)
@@ -55,16 +61,18 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         WebGpuFrameBuffer? frameBuffer = Renderer.GetBoundEngineFrameBuffer();
         Renderer.ValidateEngineDrawArea();
         ulong attachmentRevision = frameBuffer?.Revision ?? 0;
-        if (!ReferenceEquals(_mesh, mesh) || _geometryRevision != mesh.GeometryRevision ||
-            _bufferRevision != mesh.Buffers.MutationRevision || _surfaceGeneration != output.TargetGeneration ||
-            !ReferenceEquals(_deformation, deformation))
+        if (_surfaceGeneration != output.TargetGeneration)
         {
             DestroyDraws();
-            SetField(ref _mesh, mesh);
-            SetField(ref _geometryRevision, mesh.GeometryRevision);
-            SetField(ref _bufferRevision, mesh.Buffers.MutationRevision);
             SetField(ref _surfaceGeneration, output.TargetGeneration);
-            SetField(ref _deformation, deformation);
+        }
+        var generation = (mesh.GeometryRevision, mesh.Buffers.MutationRevision, Data.Parent.Buffers.MutationRevision, deformation);
+        if (!_meshGenerations.TryGetValue(mesh, out var current) || current != generation)
+        {
+            foreach (var (oldKey, oldDraw) in _draws)
+                if (ReferenceEquals(oldKey.Mesh, mesh))
+                { _draws.Remove(oldKey); oldDraw.Dispose(); }
+            _meshGenerations[mesh] = generation;
         }
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
@@ -111,13 +119,16 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         XRDataBuffer? indices = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out var indexSize);
         if (indices is null)
             return Pending("IndicesPending");
-        DrawKey key = new(apiMaterial, Renderer.RasterState, frameBuffer, attachmentRevision);
+        DrawKey key = new(mesh, apiMaterial, Renderer.RasterState, frameBuffer, attachmentRevision);
         if (!_draws.TryGetValue(key, out draw))
         {
-            if (_draws.Count >= 32)
+            int meshVariants = 0;
+            foreach (DrawKey existing in _draws.Keys)
+                if (ReferenceEquals(existing.Mesh, mesh)) meshVariants++;
+            if (meshVariants >= 32)
                 throw Unsupported("the mesh exceeds the bounded 32 material/raster variants for its current resource generation");
             draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State,
-                output, frameBuffer, instanceStorage, instanceBuffer, instanceLimit, deformation);
+                output, frameBuffer, instanceStorage, instanceBuffer, instanceLimit, deformation, streamOwner: Data.Parent);
             _draws.Add(key, draw);
         }
         else draw.UpdateInstanceSource(instanceStorage, instanceBuffer, instanceLimit);
@@ -131,20 +142,35 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
     public void Render(Matrix4x4 modelMatrix, Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
         RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode,
         bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
-        => RenderCore(modelMatrix, previousModelMatrix, materialOverride, renderOptionsOverride,
-            instances, billboardMode, forceNoStereo, null, out _);
+    {
+        if (instances == 0) return;
+        RetireUnusedDirectDraws();
+        int count = Math.Max(1, Data.Parent.Submeshes.Count);
+        for (int index = 0; index < count; index++)
+        {
+            RequireSupportedPrimitiveInstances(index);
+            if (!Data.Parent.TryGetMesh(index, out XRMesh? mesh, out XRMaterial? material) || mesh is null)
+            { Pending("MeshMissing"); continue; }
+            if (materialOverride is null && material is null && !HasPassMaterialOverride())
+            { Pending("MaterialMissing"); continue; }
+            RenderCore(mesh, modelMatrix, previousModelMatrix,
+                materialOverride ?? (Data.Parent.Submeshes.Count == 0 ? null : material), renderOptionsOverride,
+                instances, Data.Parent.Submeshes.Count == 0 ? billboardMode : material?.BillboardMode ?? billboardMode,
+                forceNoStereo, null, out _);
+        }
+    }
 
     internal bool TryRenderMeshlet(in GpuMeshSubmissionRecord record, WebGpuMeshletWork work,
         WebGpuMeshletGeometry geometry, XRCamera camera, WebGpuRenderProgram cull,
         WebGpuRenderProgram finalize, WebGpuRenderProgram refit, out bool unbounded)
     {
         WebGpuMeshletDrawRequest request = new(record, work, geometry, camera, cull, finalize, refit);
-        return RenderCore(record.CurrentWorld, record.PreviousWorld, record.MaterialOverride ?? record.Material,
+        return RenderCore(record.Mesh, record.CurrentWorld, record.PreviousWorld, record.MaterialOverride ?? record.Material,
             record.RenderOptionsOverride, record.InstanceCount, record.BillboardMode, record.ForceNoStereo,
             request, out unbounded);
     }
 
-    private bool RenderCore(Matrix4x4 modelMatrix, Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
+    private bool RenderCore(XRMesh mesh, Matrix4x4 modelMatrix, Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
         RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode,
         bool forceNoStereo, WebGpuMeshletDrawRequest? meshlet, out bool unbounded)
     {
@@ -174,7 +200,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         if (Renderer.EngineMeshResolutionTraceEnabled && Renderer.IsRecordingEngineFrame)
         {
             XRMaterial? source = Data.Parent.Material;
-            XRMesh? sourceMesh = Data.Parent.Mesh;
+            XRMesh sourceMesh = mesh;
             var pass = RuntimeEngine.Rendering.State.RenderingPipelineState;
             XRMaterial? globalOverride = pass?.GlobalMaterialOverride;
             XRMaterial? pipelineOverride = pass?.OverrideMaterial;
@@ -281,7 +307,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             }
             else
             {
-                if (!TryPrepareDraw(resolved.Material, out _, out WebGpuMeshDraw? draw))
+                if (!TryPrepareDraw(mesh, resolved.Material, out _, out WebGpuMeshDraw? draw))
                 { Renderer.MarkEngineDrawPending(); return false; }
                 draw!.Record(bindings!, instances);
             }
@@ -317,14 +343,30 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
     }
 
     private bool TryPrepareGeometry(XRMesh mesh, out WebGpuMeshDeformation? deformation, bool record = true)
+        => Renderer.TryPrepareMeshDeformation(Data.Parent, mesh, out deformation, record);
+
+    private void RequireSupportedPrimitiveInstances(int primitive)
     {
-        deformation = null;
-        if (ReferenceEquals(mesh, Data.Parent.Mesh))
-            return Renderer.TryPrepareMeshDeformation(Data.Parent, out deformation, record);
-        bool deformed = mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning ||
-            mesh.HasBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
-        if (!deformed) return true;
-        throw new NotSupportedException("WebGPU.Meshlets.SubmeshDeformationUnavailable: a distinct primitive requires its exact renderer-owned deformation publication.");
+        if (Data.Parent.Submeshes.Count != 0 && Data.Parent.Submeshes[primitive].InstanceCount != 1)
+            throw Unsupported("a submesh-local instance count other than one requires explicit composition with the command instance count");
+    }
+
+    private static bool HasPassMaterialOverride()
+    {
+        var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
+        return state?.GlobalMaterialOverride is not null || state?.OverrideMaterial is not null;
+    }
+
+    private void RetireUnusedDirectDraws()
+    {
+        foreach (var (mesh, _) in _meshGenerations)
+            if (mesh.IsDestroyed || !Data.Parent.OwnsDeformationMesh(mesh))
+            {
+                _meshGenerations.Remove(mesh);
+                foreach (var (key, draw) in _draws)
+                    if (ReferenceEquals(key.Mesh, mesh))
+                    { _draws.Remove(key); draw.Dispose(); }
+            }
     }
 
     private static void RequireCurrentMeshletBindings(in GpuMeshSubmissionRecord record)
@@ -417,6 +459,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         foreach (WebGpuMeshDraw draw in _draws.Values)
             draw.Dispose();
         _draws.Clear();
+        _meshGenerations.Clear();
         SetField(ref _generated, false);
     }
 

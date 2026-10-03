@@ -56,3 +56,35 @@ the derivative algorithm. All eight native shader variants cook successfully;
 inspection confirms function-local pointer arguments and cache publication only
 after the failure guard. This is emitted-source evidence, not a new rendered
 shadow result. The earlier `71684f` physical material run remains valid.
+
+The subsequent `feca3bcc` run passes WGSL validation. On Chromium software Vulkan,
+native compute pipeline creation remains pending for 42.94 seconds at the
+unchanged 45-second first-frame deadline; validation and memory scopes both
+finish successfully after 15.2 milliseconds. This isolates the pending native
+pipeline operation from error-scope handling.
+
+A reviewed source simplification evaluates the two ordered shadow helper axes
+through one retained two-iteration loop. Both evaluations still run when the
+first fails, and cache publication still requires both to succeed. Expanded
+surface-reconstruction calls fall from five to three and texture-pair resolution
+calls from 43 to 31. All eight native/depth/MSAA/export recipes retain the same
+ABI and binding contracts. These structural measurements do not establish an
+actual pipeline compilation speedup.
+
+Physical Intel testing of `feca3bcc` renders the ON/OFF caster/receiver fixtures
+through three startups and resize checks. Directional 256×256 depth records
+three caster draws with GPU completion; shadow-enabled output darkens 4,929
+receiver pixels initially and 2,409 after resize outside the foreground
+occluders. This establishes visible directional occlusion in that fixture, not
+exact PCSS parity. Point shadow targets unexpectedly remain 1024×1024 despite
+authored 256×256 values, and all six completed faces contain no caster draws.
+That point-resolution and collection defect remains under correction; a cleared
+cube is not accepted as point-shadow feature validation.
+
+The subsequent [point restoration fix](../rendering/browser-point-shadow-restoration-2026-10-03.md)
+separates authored dimensions from physical cube sizing, defers runtime camera
+construction until property notifications are active, aligns collection with
+the six-face producer contract, and releases point-owned helper objects.
+It passes 121 managed checks and six repeated lifecycle cycles; physical
+point-shadow pixels remain pending. The measured remaining base-light command
+list is recorded separately.

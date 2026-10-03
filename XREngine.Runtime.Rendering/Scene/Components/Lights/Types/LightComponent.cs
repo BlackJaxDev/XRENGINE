@@ -179,7 +179,7 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 case nameof(CastsShadows):
                     if (CastsShadows)
-                        SetShadowMapResolution(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
+                        ApplyShadowMapResolution(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
                     else
                     {
                         ShadowMap?.Destroy();
@@ -253,7 +253,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (Type != ELightType.Dynamic || !CastsShadows || ShadowMap is not null || UsesAtlasOnlyShadowMapResource)
                 return;
 
-            SetShadowMapResolution(
+            ApplyShadowMapResolution(
                 Math.Max(1u, ShadowMapResolutionWidth),
                 Math.Max(1u, ShadowMapResolutionHeight));
         }
@@ -765,24 +765,34 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private uint _shadowMapResolutionWidth = 1024u;
         /// <summary>
-        /// Width of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
+        /// Authored width of this light's standalone shadow map. Cubemap storage
+        /// uses the larger width/height without changing either authored dimension.
         /// </summary>
         [Category("Shadows")]
         public uint ShadowMapResolutionWidth
         {
             get => _shadowMapResolutionWidth;
-            set => SetShadowMapResolution(value, ShadowMapResolutionHeight);
+            set
+            {
+                if (SetField(ref _shadowMapResolutionWidth, value))
+                    ApplyShadowMapResolution(value, ShadowMapResolutionHeight);
+            }
         }
 
         private uint _shadowMapResolutionHeight = 1024u;
         /// <summary>
-        /// Height of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
+        /// Authored height of this light's standalone shadow map. Property restoration
+        /// never feeds a normalized physical size back into the other dimension.
         /// </summary>
         [Category("Shadows")]
         public uint ShadowMapResolutionHeight
         {
             get => _shadowMapResolutionHeight;
-            set => SetShadowMapResolution(ShadowMapResolutionWidth, value);
+            set
+            {
+                if (SetField(ref _shadowMapResolutionHeight, value))
+                    ApplyShadowMapResolution(ShadowMapResolutionWidth, value);
+            }
         }
 
         /// <summary>
@@ -858,19 +868,31 @@ namespace XREngine.Components.Capture.Lights.Types
         public bool IntersectsActiveCamera => _cameraIntersections.Count > 0;
 
         /// <summary>
-        /// Creates or resizes the light's standalone shadow map resources.
+        /// Sets both authored dimensions and updates the standalone shadow resources.
+        /// Derived paired APIs may normalize the pair; individual property setters
+        /// preserve independent authored values during serialization restoration.
         /// </summary>
         public virtual void SetShadowMapResolution(uint width, uint height)
         {
             SetField(ref _shadowMapResolutionWidth, width, nameof(ShadowMapResolutionWidth));
             SetField(ref _shadowMapResolutionHeight, height, nameof(ShadowMapResolutionHeight));
+            ApplyShadowMapResolution(width, height);
+        }
 
+        private void ApplyShadowMapResolution(uint width, uint height)
+        {
             // Browser assets are configured before activation. Defer runtime targets until
             // the authored shadow settings have been restored and can be validated.
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
                 (!IsActiveInHierarchy || !CastsShadows))
                 return;
 
+            ResizeShadowMapResources(width, height);
+        }
+
+        /// <summary>Refreshes physical targets and cameras without rewriting authored dimensions.</summary>
+        protected virtual void ResizeShadowMapResources(uint width, uint height)
+        {
             (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
 
             if (ShadowMap is null && UsesCookedLocalShadowResources)
@@ -890,9 +912,14 @@ namespace XREngine.Components.Capture.Lights.Types
                 ShadowMap.Resize(resourceWidth, resourceHeight);
         }
 
+        /// <summary>Resolves the standalone storage shape before output-local quality limits.</summary>
+        public virtual (uint Width, uint Height) GetShadowMapStorageResolution(uint width, uint height)
+            => (width, height);
+
         /// <summary>Returns output-local shadow dimensions without changing the authored light resolution.</summary>
         public (uint Width, uint Height) GetEffectiveShadowMapResolution(uint width, uint height)
         {
+            (width, height) = GetShadowMapStorageResolution(width, height);
             if (RuntimeEngineMaterialConstructionServices.Target != EngineMaterialConstructionTarget.WebGpuCooked)
                 return (width, height);
 
@@ -944,7 +971,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             ShadowMap?.Destroy();
             ShadowMap = null;
-            SetShadowMapResolution(
+            ApplyShadowMapResolution(
                 Math.Max(1u, ShadowMapResolutionWidth),
                 Math.Max(1u, ShadowMapResolutionHeight));
         }

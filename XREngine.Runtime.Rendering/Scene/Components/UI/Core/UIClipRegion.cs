@@ -10,19 +10,20 @@ namespace XREngine.Rendering.UI;
 public static class UIClipRegion
 {
     /// <summary>
-    /// Returns the effective crop in UI world coordinates. A null result means no crop.
+    /// Returns the effective crop in bottom-left canvas coordinates. A null result means no crop.
     /// </summary>
     public static BoundingRectangle? ResolveCrop(UIBoundableTransform transform, bool clipSelf)
     {
+        UICanvasTransform? canvas = transform.ParentCanvas;
         BoundingRectangle? crop = clipSelf || HasActiveClip(transform)
-            ? transform.AxisAlignedRegion.AsBoundingRectangle()
+            ? transform.GetCanvasRegion(canvas).AsBoundingRectangle()
             : null;
         for (var parent = transform.Parent; parent is not null; parent = parent.Parent)
         {
             if (parent is not UIBoundableTransform bounds || !HasActiveClip(bounds))
                 continue;
 
-            BoundingRectangle parentCrop = bounds.AxisAlignedRegion.AsBoundingRectangle();
+            BoundingRectangle parentCrop = bounds.GetCanvasRegion(canvas).AsBoundingRectangle();
             crop = crop is { } current ? Intersect(current, parentCrop) : parentCrop;
         }
 
@@ -52,12 +53,10 @@ public static class UIClipRegion
         if (crop is not { } region)
             return true;
 
-        // The backend takes bottom-left UI world pixels and flips Y once when
-        // forming its viewport scissor. Convert the canvas point to that space.
-        Vector2 worldPoint = Vector2.Transform(canvasPoint, bounds.ParentCanvas?.WorldMatrix ?? Matrix4x4.Identity);
-        return float.IsFinite(worldPoint.X) && float.IsFinite(worldPoint.Y) &&
-               worldPoint.X >= region.MinX && worldPoint.X < region.MaxX &&
-               worldPoint.Y >= region.MinY && worldPoint.Y < region.MaxY;
+        // Rendering and input share canvas-local pixels, including offscreen canvases.
+        // Only the backend boundary converts the bottom-left scissor to its raster convention.
+        return canvasPoint.X >= region.MinX && canvasPoint.X < region.MaxX &&
+               canvasPoint.Y >= region.MinY && canvasPoint.Y < region.MaxY;
     }
 
     private static bool HasActiveClip(UIBoundableTransform transform)
