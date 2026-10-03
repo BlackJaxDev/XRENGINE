@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -36,6 +36,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\XREngine.Runtime.Rendering.ImGui\XREngine.Runtime.Rendering.ImGui.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Platform.Desktop\XREngine.Runtime.Platform.Desktop.csproj" />
     <Compile Remove="bin\**" />
     <Compile Remove="ShaderCache\**" />
     <EmbeddedResource Remove="bin\**" />
@@ -46,13 +49,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
-    <PackageReference Include="Google.Cloud.Speech.V1" Version="3.9.0" />
-    <PackageReference Include="Google.Cloud.TextToSpeech.V1" Version="3.18.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
-    <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
-    <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="Microsoft.Build" Version="18.8.2" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.8.2" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
@@ -68,13 +66,6 @@
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Glfw" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR.Extensions.EXT" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR.Extensions.HTC" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR.Extensions.HTCX" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR.Extensions.KHR" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR.Extensions.MSFT" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenXR.Extensions.VALVE" Version="2.23.0" />
     <PackageReference Include="Silk.NET.SDL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Common" Version="2.23.0" />
@@ -91,6 +82,7 @@
     <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
+    <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />
     <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
@@ -104,12 +96,9 @@
     <ProjectReference Include="..\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Physics.Authoring\XREngine.Runtime.Physics.Authoring.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -143,4 +132,8 @@
     </Content>
   </ItemGroup>
 
+  <Import Project="../Build/Shared/BrowserContentPublishing.props" />
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
+  </ItemGroup>
 </Project>

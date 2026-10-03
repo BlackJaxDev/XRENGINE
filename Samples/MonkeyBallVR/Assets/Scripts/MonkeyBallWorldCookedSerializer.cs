@@ -67,9 +67,11 @@ internal static class MonkeyBallWorldCookedSerializer
         Plane,
     }
 
-    public static byte[] Serialize(MonkeyBallWorldAsset world)
+    /// <summary>Serializes the world into the caller's buffer writer. Cooking runs in the editor, so the staging stream here is not a runtime cost.</summary>
+    public static void Serialize(MonkeyBallWorldAsset world, System.Buffers.IBufferWriter<byte> destination)
     {
         ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(destination);
 
         using MemoryStream stream = new();
         using BinaryWriter writer = new(stream, Encoding.UTF8, leaveOpen: true);
@@ -81,15 +83,28 @@ internal static class MonkeyBallWorldCookedSerializer
         for (int i = 0; i < world.Scenes.Count; i++)
             WriteScene(writer, world.Scenes[i]);
         writer.Flush();
-        return stream.ToArray();
+
+        ReadOnlySpan<byte> written = new(stream.GetBuffer(), 0, checked((int)stream.Length));
+        written.CopyTo(destination.GetSpan(written.Length));
+        destination.Advance(written.Length);
     }
 
-    public static MonkeyBallWorldAsset Deserialize(byte[] payload)
+    /// <summary>Reads the world directly from the leased payload span without copying it into an array.</summary>
+    public static unsafe MonkeyBallWorldAsset Deserialize(ReadOnlySpan<byte> payload)
     {
-        ArgumentNullException.ThrowIfNull(payload);
+        if (payload.IsEmpty)
+            throw new InvalidDataException("The cooked MonkeyBall world payload is empty.");
 
-        using MemoryStream stream = new(payload, writable: false);
-        using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: false);
+        fixed (byte* pointer = payload)
+        {
+            using UnmanagedMemoryStream stream = new(pointer, payload.Length);
+            return Deserialize(stream);
+        }
+    }
+
+    private static MonkeyBallWorldAsset Deserialize(Stream stream)
+    {
+        using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
         if (reader.ReadUInt32() != Magic)
             throw new InvalidDataException("The cooked MonkeyBall world has an invalid signature.");
 

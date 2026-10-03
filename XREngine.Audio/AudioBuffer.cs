@@ -1,6 +1,4 @@
 ﻿using MathNet.Numerics.IntegralTransforms;
-using Silk.NET.OpenAL;
-using Silk.NET.OpenAL.Extensions.EXT;
 using System.Numerics;
 using XREngine.Core;
 using XREngine.Data;
@@ -11,31 +9,20 @@ namespace XREngine.Audio
     public sealed class AudioBuffer : XRBase, IDisposable, IPoolable
     {
         public ListenerContext ParentListener { get; }
-        public AL Api { get; }
         private AudioBufferHandle _transportHandle;
 
         public uint Handle => _transportHandle.Id;
         internal AudioBufferHandle TransportHandle => _transportHandle;
 
-        private bool IsV2 => ParentListener.IsV2 && ParentListener.Transport is not null;
-
         internal AudioBuffer(ListenerContext parentListener)
         {
             ParentListener = parentListener;
-            Api = parentListener.Api;
             CreateNativeBuffer();
         }
 
         private void CreateNativeBuffer()
         {
-            if (IsV2)
-            {
-                _transportHandle = ParentListener.Transport!.CreateBuffer();
-                return;
-            }
-
-            _transportHandle = new AudioBufferHandle(Api.GenBuffer());
-            ParentListener.VerifyError();
+            _transportHandle = ParentListener.ActiveTransport.CreateBuffer();
         }
 
         private void DestroyNativeBuffer()
@@ -43,13 +30,7 @@ namespace XREngine.Audio
             if (!_transportHandle.IsValid)
                 return;
 
-            if (IsV2)
-                ParentListener.Transport!.DestroyBuffer(_transportHandle);
-            else
-            {
-                Api.DeleteBuffer(Handle);
-                ParentListener.VerifyError();
-            }
+            ParentListener.ActiveTransport.DestroyBuffer(_transportHandle);
 
             _transportHandle = AudioBufferHandle.Invalid;
         }
@@ -62,23 +43,14 @@ namespace XREngine.Audio
         public int Frequency => _freq;
         public bool Stereo => _stereo;
 
-        public unsafe void SetData(byte[] data, int frequency, bool stereo)
+        public void SetData(byte[] data, int frequency, bool stereo)
         {
             _data = data;
             _freq = frequency;
             _stereo = stereo;
 
-            if (IsV2)
-            {
-                ParentListener.Transport!.UploadBufferData(
-                    _transportHandle, data, frequency,
-                    stereo ? 2 : 1, SampleFormat.Byte);
-            }
-            else
-            {
-                Api.BufferData(Handle, stereo ? BufferFormat.Stereo8 : BufferFormat.Mono8, data, frequency);
-                ParentListener.VerifyError();
-            }
+            ParentListener.ActiveTransport.UploadBufferData(
+                _transportHandle, data, frequency, stereo ? 2 : 1, SampleFormat.Byte);
         }
         public void SetData(short[] data, int frequency, bool stereo)
         {
@@ -86,18 +58,9 @@ namespace XREngine.Audio
             _freq = frequency;
             _stereo = stereo;
 
-            if (IsV2)
-            {
-                ReadOnlySpan<byte> pcm = System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan());
-                ParentListener.Transport!.UploadBufferData(
-                    _transportHandle, pcm, frequency,
-                    stereo ? 2 : 1, SampleFormat.Short);
-            }
-            else
-            {
-                Api.BufferData(Handle, stereo ? BufferFormat.Stereo16 : BufferFormat.Mono16, data, frequency);
-                ParentListener.VerifyError();
-            }
+            ReadOnlySpan<byte> pcm = System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan());
+            ParentListener.ActiveTransport.UploadBufferData(
+                _transportHandle, pcm, frequency, stereo ? 2 : 1, SampleFormat.Short);
         }
         public void SetData(float[] data, int frequency, bool stereo)
         {
@@ -105,18 +68,9 @@ namespace XREngine.Audio
             _freq = frequency;
             _stereo = stereo;
 
-            if (IsV2)
-            {
-                ReadOnlySpan<byte> pcm = System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan());
-                ParentListener.Transport!.UploadBufferData(
-                    _transportHandle, pcm, frequency,
-                    stereo ? 2 : 1, SampleFormat.Float);
-            }
-            else
-            {
-                Api.BufferData(Handle, stereo ? FloatBufferFormat.Stereo : FloatBufferFormat.Mono, data, frequency);
-                ParentListener.VerifyError();
-            }
+            ReadOnlySpan<byte> pcm = System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan());
+            ParentListener.ActiveTransport.UploadBufferData(
+                _transportHandle, pcm, frequency, stereo ? 2 : 1, SampleFormat.Float);
         }
 
         public unsafe void SetData(AudioData buffer)
@@ -128,41 +82,18 @@ namespace XREngine.Audio
             _freq = buffer.Frequency;
             _stereo = buffer.Stereo;
 
-            if (IsV2)
+            void* ptr = buffer.Data.Address.Pointer;
+            int length = (int)buffer.Data.Length;
+            var pcm = new ReadOnlySpan<byte>(ptr, length);
+            SampleFormat format = buffer.Type switch
             {
-                void* ptr = buffer.Data.Address.Pointer;
-                int length = (int)buffer.Data.Length;
-                var pcm = new ReadOnlySpan<byte>(ptr, length);
-                SampleFormat fmt = buffer.Type switch
-                {
-                    AudioData.EPCMType.Byte => SampleFormat.Byte,
-                    AudioData.EPCMType.Short => SampleFormat.Short,
-                    AudioData.EPCMType.Float => SampleFormat.Float,
-                    _ => SampleFormat.Short,
-                };
-                ParentListener.Transport!.UploadBufferData(
-                    _transportHandle, pcm, buffer.Frequency,
-                    buffer.Stereo ? 2 : 1, fmt);
-            }
-            else
-            {
-                void* ptr = buffer.Data.Address.Pointer;
-                int length = (int)buffer.Data.Length;
-                ParentListener.VerifyError();
-                switch (buffer.Type)
-                {
-                    case AudioData.EPCMType.Byte:
-                        Api.BufferData(Handle, buffer.Stereo ? BufferFormat.Stereo8 : BufferFormat.Mono8, ptr, length, buffer.Frequency);
-                        break;
-                    case AudioData.EPCMType.Short:
-                        Api.BufferData(Handle, buffer.Stereo ? BufferFormat.Stereo16 : BufferFormat.Mono16, ptr, length, buffer.Frequency);
-                        break;
-                    case AudioData.EPCMType.Float:
-                        Api.BufferData(Handle, buffer.Stereo ? FloatBufferFormat.Stereo : FloatBufferFormat.Mono, ptr, length, buffer.Frequency);
-                        break;
-                }
-                ParentListener.VerifyError();
-            }
+                AudioData.EPCMType.Byte => SampleFormat.Byte,
+                AudioData.EPCMType.Short => SampleFormat.Short,
+                AudioData.EPCMType.Float => SampleFormat.Float,
+                _ => throw new ArgumentOutOfRangeException(nameof(buffer), buffer.Type, "Unsupported PCM sample type."),
+            };
+            ParentListener.ActiveTransport.UploadBufferData(
+                _transportHandle, pcm, buffer.Frequency, buffer.Stereo ? 2 : 1, format);
         }
 
         /// <summary>

@@ -75,10 +75,11 @@ internal static class BrokerMcpToolCatalog
             ("requested_model", new JsonObject
             {
                 ["type"] = "string",
-                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-5.6 selections are deprecated but remain explicitly callable.",
+                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-6.1 Sol is available for explicit independent runs. GPT-5.6 selections are deprecated but remain explicitly callable.",
                 ["enum"] = new JsonArray(
                     AgentModelCatalog.Luna6,
                     AgentModelCatalog.Sol6,
+                    AgentModelCatalog.Sol61,
                     AgentModelCatalog.Astra6,
                     AgentModelCatalog.Luna,
                     AgentModelCatalog.Terra,
@@ -89,6 +90,7 @@ internal static class BrokerMcpToolCatalog
                 ["type"] = "string",
                 ["enum"] = new JsonArray("none", "low", "medium", "high", "xhigh", "max"),
                 ["default"] = "medium",
+                ["description"] = "Model-specific effort is validated before launch. GPT-6.1 Sol and GPT-6 Astra reject none; minimal is unsupported.",
             }),
             ("text_verbosity", new JsonObject
             {

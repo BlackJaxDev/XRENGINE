@@ -1,6 +1,5 @@
-using OpenVR.NET.Manifest;
 using XREngine;
-using ActionType = OpenVR.NET.Manifest.ActionType;
+using XREngine.Input;
 
 namespace MonkeyBallVR;
 
@@ -9,50 +8,50 @@ internal static class MonkeyBallVrManifest
     private const string AppKey = "com.blackjax.monkeyballvr";
     private const string KnucklesBindingFileName = "bindings_knuckles.json";
 
-    public static VrManifest CreateApplicationManifest()
+    public static RuntimeOpenVrApplicationManifest CreateApplicationManifest()
         => new()
         {
             AppKey = AppKey,
             WindowsPath = Environment.ProcessPath,
             WindowsArguments = string.Empty,
             IsDashboardOverlay = false,
-            LocalizedNames = new Dictionary<string, NameDescription>
+            LocalizedNames = new Dictionary<string, RuntimeOpenVrApplicationNameDescription>
             {
-                ["en_us"] = ("MonkeyBall VR", "Tilt the course and guide the ball into the goal."),
+                ["en_us"] = new("MonkeyBall VR", "Tilt the course and guide the ball into the goal."),
             },
         };
 
-    public static ActionManifest<MonkeyBallActionSet, MonkeyBallAction> CreateActionManifest()
+    public static RuntimeOpenVrActionManifest<MonkeyBallActionSet, MonkeyBallAction> CreateActionManifest()
     {
         string? bindingPath = TryWriteKnucklesBinding();
-        return new ActionManifest<MonkeyBallActionSet, MonkeyBallAction>
+        return new RuntimeOpenVrActionManifest<MonkeyBallActionSet, MonkeyBallAction>
         {
             ActionSets =
             [
-                new ActionSet<MonkeyBallActionSet, MonkeyBallAction>
+                new RuntimeOpenVrActionSet<MonkeyBallActionSet>
                 {
                     Name = MonkeyBallActionSet.Global,
-                    Type = ActionSetType.LeftRight,
+                    Type = RuntimeOpenVrActionSetType.LeftRight,
                     LocalizedNames = new Dictionary<string, string> { ["en_us"] = "Gameplay" },
                 }
             ],
             Actions =
             [
-                CreateAction(MonkeyBallAction.Tilt, ActionType.Vector2, "Tilt course", Requirement.Mandatory),
-                CreateAction(MonkeyBallAction.Reset, ActionType.Boolean, "Reset ball", Requirement.Suggested),
-                CreateAction(MonkeyBallAction.Pause, ActionType.Boolean, "Pause", Requirement.Suggested),
+                CreateAction(MonkeyBallAction.Tilt, RuntimeOpenVrActionType.Vector2, "Tilt course", RuntimeOpenVrActionRequirement.Mandatory),
+                CreateAction(MonkeyBallAction.Reset, RuntimeOpenVrActionType.Boolean, "Reset ball", RuntimeOpenVrActionRequirement.Suggested),
+                CreateAction(MonkeyBallAction.Pause, RuntimeOpenVrActionType.Boolean, "Pause", RuntimeOpenVrActionRequirement.Suggested),
             ],
             DefaultBindings = bindingPath is null
                 ? []
-                : [new DefaultBinding { ControllerType = "knuckles", Path = bindingPath }],
+                : [new RuntimeOpenVrDefaultBinding { ControllerType = "knuckles", Path = bindingPath }],
         };
     }
 
-    private static OpenVR.NET.Manifest.Action<MonkeyBallActionSet, MonkeyBallAction> CreateAction(
+    private static RuntimeOpenVrAction<MonkeyBallActionSet, MonkeyBallAction> CreateAction(
         MonkeyBallAction name,
-        ActionType type,
+        RuntimeOpenVrActionType type,
         string localizedName,
-        Requirement requirement)
+        RuntimeOpenVrActionRequirement requirement)
         => new()
         {
             Name = name,

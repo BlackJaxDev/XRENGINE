@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using XREngine.Core;
 using XREngine.Core.Files;
+using XREngine.Data.Runtime.AotParity;
 
 namespace XREngine;
 
@@ -11,11 +12,23 @@ public static class AotRuntimeMetadataStore
 {
     public const string MetadataFileName = "AotRuntimeMetadata.bin";
 
+    // Asset registration is an optional feature of the desktop asset pipeline.
+    // The registry installs this resolver when initialized; dynamic runtime type
+    // discovery continues to work without an asset registry.
+    internal static Func<string, bool, Type?>? PublishedAssetTypeResolver { get; set; }
+
     private static readonly object Sync = new();
     private static volatile bool _loaded;
     private static AotRuntimeMetadata? _metadata;
     private static readonly ConcurrentDictionary<string, Type?> TypeCache = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, Type?> IgnoreCaseTypeCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Type?> PublishedTypeCache = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, Type?> PublishedIgnoreCaseTypeCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Names whose development resolution succeeded only through Type.GetType or an assembly scan.
+    // Cache hits on these names re-report inside the player path so an editor-time resolution does
+    // not hide a later play-mode gap.
+    private static readonly ConcurrentDictionary<string, byte> ReflectiveResolutions = new(StringComparer.OrdinalIgnoreCase);
 
     public static AotRuntimeMetadata? Metadata
     {
@@ -28,7 +41,7 @@ public static class AotRuntimeMetadataStore
 
     public static AotRuntimeMetadata RequireMetadata()
         => Metadata ?? throw new InvalidOperationException(
-            $"Published AOT runtime metadata is missing. Ensure '{MetadataFileName}' is present in the published config archive.");
+            $"Published runtime metadata is missing. Ensure '{MetadataFileName}' is present in the published config archive.");
 
     public static void ResetForTestsOrReconfiguration()
     {
@@ -38,6 +51,9 @@ public static class AotRuntimeMetadataStore
             _metadata = null;
             TypeCache.Clear();
             IgnoreCaseTypeCache.Clear();
+            PublishedTypeCache.Clear();
+            PublishedIgnoreCaseTypeCache.Clear();
+            ReflectiveResolutions.Clear();
         }
     }
 
@@ -46,7 +62,12 @@ public static class AotRuntimeMetadataStore
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        return TypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key));
+        if (XRRuntimeEnvironment.IsPublishedBuild)
+            return PublishedTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key));
+
+        Type? resolved = TypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key));
+        ReportReflectiveResolution(typeName, resolved);
+        return resolved;
     }
 
     public static Type? ResolveTypeIgnoreCase(string? typeName)
@@ -54,7 +75,25 @@ public static class AotRuntimeMetadataStore
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        return IgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true));
+        if (XRRuntimeEnvironment.IsPublishedBuild)
+            return PublishedIgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true));
+
+        Type? resolved = IgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true));
+        ReportReflectiveResolution(typeName, resolved, ignoreCase: true);
+        return resolved;
+    }
+
+    private static void ReportReflectiveResolution(string typeName, Type? resolved, bool ignoreCase = false)
+    {
+        if (resolved is null || !ReflectiveResolutions.ContainsKey(typeName)
+            || IsResolvableThroughPublishedPaths(typeName, ignoreCase))
+            return;
+
+        AotParityDiagnostics.Report(
+            resolved,
+            EAotParityCategory.TypeResolutionScan,
+            $"{nameof(AotRuntimeMetadataStore)}.{nameof(ResolveType)}",
+            "Install a generated runtime type contract or published asset/formatter registration that resolves this type without Type.GetType or an assembly scan; metadata names alone do not root CLR types.");
     }
 
     public static Type? ResolveType(int typeIndex)
@@ -119,7 +158,7 @@ public static class AotRuntimeMetadataStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyQualifiedName);
 
-        AotRuntimeMetadata metadata = XRRuntimeEnvironment.IsAotRuntimeBuild
+        AotRuntimeMetadata metadata = XRRuntimeEnvironment.IsPublishedBuild
             ? RequireMetadata()
             : Metadata ?? new AotRuntimeMetadata();
         string requestedTypeName = TypeNameOnly(assemblyQualifiedName);
@@ -161,26 +200,50 @@ public static class AotRuntimeMetadataStore
         if (string.IsNullOrWhiteSpace(configArchivePath) || !File.Exists(configArchivePath))
             return null;
 
+        // The config archive stays open for the life of the config root; the metadata entry is
+        // read through a lease so no transient copy of the table is made.
+        PublishedArchiveHandle handle = PublishedArchiveRegistry.GetOrOpen(configArchivePath);
+        if (!handle.TryReadAsset(MetadataFileName, out CookedPayloadLease lease))
+            return null;
+
         try
         {
-            byte[] bytes = AssetArchiveReader.GetAsset(configArchivePath, MetadataFileName);
-            return MemoryPackSerializer.Deserialize<AotRuntimeMetadata>(bytes);
+            return MemoryPackSerializer.Deserialize<AotRuntimeMetadata>(lease.Span);
         }
-        catch (FileNotFoundException)
+        finally
         {
-            return null;
+            lease.Dispose();
         }
     }
 
     private static Type? ResolveTypeCore(string typeName, bool ignoreCase = false)
     {
-        Type? direct = Type.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase);
-        if (direct is not null)
-            return direct;
-
         string fullTypeName = SerializedTypeIdentity.GetUnqualifiedTypeName(typeName);
+        if (RuntimeTypeContractRegistry.TryResolve(fullTypeName, out Type? generatedType, ignoreCase))
+            return generatedType;
+        if (CookedBinaryFormatterRegistry.TryResolve(fullTypeName, out Type? formatterType, ignoreCase))
+            return formatterType;
 
-        AotRuntimeMetadata? metadata = Metadata;
+        if (PublishedAssetTypeResolver?.Invoke(fullTypeName, ignoreCase) is { } publishedType)
+            return publishedType;
+
+#if !XRE_PUBLISHED
+        if (!XRRuntimeEnvironment.IsPublishedBuild)
+        {
+            Type? direct = Type.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase);
+            if (direct is not null)
+            {
+                // Development keeps direct lookup, but records whether statically rooted
+                // published registrations would also have resolved the name.
+                if (!IsResolvableThroughPublishedPaths(typeName, ignoreCase))
+                    ReflectiveResolutions.TryAdd(typeName, 0);
+                return direct;
+            }
+        }
+
+        // Metadata names describe the cooked schema; only explicit registrations root
+        // CLR types in a published player. Development may still resolve authoring names.
+        AotRuntimeMetadata? metadata = XRRuntimeEnvironment.IsPublishedBuild ? null : Metadata;
         if (metadata is not null)
         {
             string? assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames
@@ -194,30 +257,45 @@ public static class AotRuntimeMetadataStore
             {
                 var fromMetadata = Type.GetType(assemblyQualifiedName, throwOnError: false, ignoreCase: ignoreCase);
                 if (fromMetadata is not null)
+                {
+                    ReflectiveResolutions.TryAdd(typeName, 0);
                     return fromMetadata;
+                }
             }
         }
-
-        // Published registrations are explicit AOT roots. They provide a trimmed-safe
-        // path for repository assets whose persisted outer assembly qualifier changed.
-        if (PublishedCookedAssetRegistry.TryResolveByFullName(fullTypeName, ignoreCase, out Type? publishedType))
-            return publishedType;
 
         // Fallback: scan loaded assemblies by FullName.
         // Type.GetType(string) only searches the calling assembly and System.Private.CoreLib
         // when given a namespace-qualified name without assembly qualifier, so types from other
         // engine assemblies (e.g., the main XREngine assembly) won't be found without this scan.
-        if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+        if (!XRRuntimeEnvironment.IsPublishedBuild)
         {
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
                 var found = assembly.GetType(fullTypeName, throwOnError: false, ignoreCase: ignoreCase);
                 if (found is not null)
+                {
+                    ReflectiveResolutions.TryAdd(typeName, 0);
                     return found;
+                }
             }
         }
+#endif
 
         return null;
+    }
+
+    /// <summary>
+    /// Checks statically rooted registrations without treating metadata strings as CLR roots.
+    /// </summary>
+    private static bool IsResolvableThroughPublishedPaths(string typeName, bool ignoreCase)
+    {
+        string fullTypeName = SerializedTypeIdentity.GetUnqualifiedTypeName(typeName);
+        if (RuntimeTypeContractRegistry.TryResolve(fullTypeName, out _, ignoreCase)
+            || CookedBinaryFormatterRegistry.TryResolve(fullTypeName, out _, ignoreCase))
+            return true;
+
+        return PublishedAssetTypeResolver?.Invoke(fullTypeName, ignoreCase) is not null;
     }
 
     private static string TypeNameOnly(string assemblyQualifiedName)

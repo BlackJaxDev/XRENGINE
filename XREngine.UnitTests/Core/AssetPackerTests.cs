@@ -72,7 +72,7 @@ public class AssetPackerTests
         AssetPacker.Pack(src, pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
-        info.Version.ShouldBe(4);
+        info.Version.ShouldBe(5);
         info.FileCount.ShouldBe(2);
         info.Flags.HasFlag(ArchiveFlags.HasContentHashes).ShouldBeTrue();
         info.Flags.HasFlag(ArchiveFlags.HasSourceTimestamps).ShouldBeTrue();
@@ -105,7 +105,7 @@ public class AssetPackerTests
         AssetPacker.Repack(pak, deltaDir, "nested/b.txt");
 
         var infoAfterRepack = AssetPacker.ReadArchiveInfo(pak);
-        infoAfterRepack.Version.ShouldBe(4);
+        infoAfterRepack.Version.ShouldBe(5);
         infoAfterRepack.FileCount.ShouldBe(2);
         infoAfterRepack.DeadBytes.ShouldBeGreaterThan(0);
         ReadAssetUtf8(pak, "a.txt").ShouldBe("alpha-v2");
@@ -174,7 +174,7 @@ public class AssetPackerTests
         AssetPacker.Pack(src, pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
-        info.Version.ShouldBe(4);
+        info.Version.ShouldBe(5);
         info.FileCount.ShouldBe(2);
         info.Entries.ShouldAllBe(e => e.Codec == CompressionCodec.Lz4);
         info.Entries.ShouldAllBe(e => e.UncompressedSize > 0);
@@ -254,7 +254,7 @@ public class AssetPackerTests
         AssetPacker.Pack(src, pak);
 
         var info = AssetPacker.ReadArchiveInfo(pak);
-        info.Version.ShouldBe(4);
+        info.Version.ShouldBe(5);
         info.FileCount.ShouldBe(2);
         info.Entries.ShouldAllBe(e => e.Codec == CompressionCodec.Zstd);
         info.Entries.ShouldAllBe(e => e.UncompressedSize > 0);
@@ -405,21 +405,27 @@ public class AssetPackerTests
     }
 
     [Test]
-    public void NvComp_FallsBackToCpuLz4_WhenUnavailable()
+    [NonParallelizable]
+    public void NvComp_RequiresExplicitManagedFallback_WhenUnavailable()
     {
-        // NvComp should fall back to CPU LZ4 on machines without nvcomp.dll.
-        byte[] data = Encoding.UTF8.GetBytes("nvcomp fallback test data payload");
+        var previous = Compression.NvCompBackend;
+        try
+        {
+            Compression.NvCompBackend = null;
+            byte[] data = Encoding.UTF8.GetBytes("nvcomp explicit fallback payload");
+            Should.Throw<NotSupportedException>(() => Compression.CompressNvComp(data));
+            Should.Throw<NotSupportedException>(() => Compression.Compress(data.AsSpan(), CompressionCodec.NvComp));
 
-        byte[] compressed = Compression.CompressNvComp(data);
-        compressed.Length.ShouldBeGreaterThan(0);
-
-        byte[] decompressed = Compression.DecompressNvComp(compressed);
-        decompressed.ShouldBe(data);
-
-        // Should also work through the unified dispatch.
-        byte[] compressed2 = Compression.Compress(data.AsSpan(), CompressionCodec.NvComp);
-        byte[] decompressed2 = Compression.Decompress(compressed2.AsSpan(), CompressionCodec.NvComp, data.Length);
-        decompressed2.ShouldBe(data);
+            byte[] compressed = Compression.CompressNvComp(data, allowManagedFallback: true);
+            compressed.Length.ShouldBeGreaterThan(0);
+            Should.Throw<NotSupportedException>(() => Compression.DecompressNvComp(compressed));
+            Should.Throw<NotSupportedException>(() => Compression.Decompress(compressed.AsSpan(), CompressionCodec.NvComp, data.Length));
+            Compression.DecompressNvComp(compressed, allowManagedFallback: true).ShouldBe(data);
+        }
+        finally
+        {
+            Compression.NvCompBackend = previous;
+        }
     }
 
     // ═══════════════════ Span-native LZ4 / Zstd specifics ════════════════

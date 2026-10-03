@@ -1,9 +1,7 @@
 using XREngine.Extensions;
-using ImageMagick;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
-using Silk.NET.OpenGL.Extensions.ImGui;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
@@ -37,9 +35,13 @@ public partial class OpenGLRenderer
         // mesh-submission capability query.
         _meshShaderDialect = api.IsExtensionPresent("GL_EXT_mesh_shader")
             ? EMeshShaderDialect.OpenGLEXT
-            : NVMeshShader is not null
+            : api.IsExtensionPresent("GL_NV_mesh_shader")
                 ? EMeshShaderDialect.OpenGLNV
                 : EMeshShaderDialect.None;
+        int majorVersion = api.GetInteger(GLEnum.MajorVersion);
+        int minorVersion = api.GetInteger(GLEnum.MinorVersion);
+        _supportsIndirectCountDraw = majorVersion > 4 || (majorVersion == 4 && minorVersion >= 6) ||
+            api.IsExtensionPresent("GL_ARB_indirect_parameters");
         string version;
         unsafe
         {
@@ -252,7 +254,7 @@ public partial class OpenGLRenderer
         bool windowClosing = XRWindow.IsDisposing || XRWindow.IsDisposed;
         try
         {
-            windowClosing |= Window.IsClosing;
+            windowClosing |= XRWindow.LatestWindowEventSnapshot.IsClosingOrDisposed;
         }
         catch
         {

@@ -2,6 +2,8 @@
 
 XREngine includes an OpenXR runtime path alongside the older OpenVR path. OpenVR remains the currently tested day-to-day VR path, while OpenXR is implemented for engine integration, validation, and runtime portability work.
 
+The native API is owned by `XREngine.Runtime.XR.OpenXR`. Rendering and Bootstrap depend on `IOpenXrRuntime`, graphics-host contracts, and explicit backend registration; OpenGL and Vulkan keep their native graphics bindings in their renderer projects. This source organization has not itself qualified a headset/runtime combination.
+
 This feature doc promotes the implemented reference review from `docs/work/design/VR/openxr-implementation-comparison.md`.
 
 ## Startup Behavior
@@ -132,11 +134,25 @@ The scene components only ask for a left/right controller model or a tracker mod
 
 ## SteamVR VIVE Trackers
 
-`XR_HTCX_vive_tracker_interaction` supplies session-scoped physical identity through persistent paths. The engine suggests pose bindings only on the extension's role paths, including handheld-object, wrist, and ankle paths. It uses enumerated persistent paths only as action subpaths and scene tracker keys. Slot assignment never reads role metadata. The engine enumerates trackers when the extension is enabled and handles `XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX` when a tracker connects or its metadata changes.
+The engine enumerates physical trackers through `XR_HTCX_vive_tracker_interaction` and keys scene nodes by the opaque persistent path within a session generation. Body slots are assigned only by calibration proximity. A transport role change does not change a tracker's identity or assign a body part.
 
-Each reported physical path creates at most one scene tracker. The render owner re-enumerates tracker paths at a throttled interval and records provider presence separately from action binding, action activity, position validity, orientation validity, and current-snapshot pose availability. `RuntimeVrStateServices.GetKnownOpenXrTrackers()` returns an immutable value snapshot under the pose-cache lock; `GetOpenXrTrackerStatus(path)` also reports provider unavailable and undiscovered paths. Absence from enumeration does not reveal whether SteamVR disabled a device. Current pose availability requires an active pose action, valid position and orientation, the matching predicted frame and sample time, a running session, and publication within 250 ms. The same lock guards the pose and its snapshot metadata; a stopped frame loop therefore cannot keep supplying a valid calibration pose. Last-known pose is retained only as a diagnostic. A tracker connected after action creation requires a new action set. Opening calibration requests a refresh; if a newly discovered tracker needs one, the runtime drains an active frame and recreates its OpenXR session. Calibration must be reopened after that interruption. A runtime that does not stream all physical trackers through persistent-path subactions remains a hardware limitation; there is no automatic provider fallback. See the [player calibration guide](../../user-guide/vr/full-body-calibration.md).
+Suggested component bindings contain only profile-supported role paths; persistent paths are used only as action subaction paths. The advertised extension revision determines whether wrist and ankle bindings (revision 3) are included. All other defined roles, including handheld objects, are covered. The engine never enables an alternate pose provider because a tracker fails to stream.
 
-On a SteamVR 2.17.10 hardware run, OpenXR reached a stable Focused session with HMD and controller poses, but the engine received no HTCX tracker paths. An independent instance-level `xrEnumerateViveTrackerPathsHTCX` call through SteamVR's loader returned `XR_SUCCESS` and count zero twice, while OpenVR Background queries found three connected Tundra Trackers. Two had valid poses during the first query; all three did during a later query. This isolates the empty list to current SteamVR OpenXR exposure rather than scene reconciliation; it does not identify why that runtime omitted the paths. The extension permits a null role path, so missing role metadata alone is not proof of the cause. Do not treat OpenVR device indices or last-known matrices as substitute OpenXR calibration samples. A future explicit tracker-provider choice would need stable physical identity, freshness timestamps, and a coherent cross-provider capture contract before use. See the [hardware validation record](../../work/testing/openxr-steamvr-hardware-validation.md).
+Role-independent streaming on SteamVR hardware is still unverified. The extension permits persistent-path subactions but does not establish that every runtime streams devices with default, duplicated, absent, or disabled mappings. A runtime-hidden/disabled device is indistinguishable from a disconnected device when enumeration omits it. Do not infer a disabled status from an inactive action.
+
+Trackers discovered after input attachment are reported as requiring a VR restart. OpenXR action subactions cannot be extended after attachment, and a session cannot attach a second action set. The player must explicitly restart VR after connecting new physical trackers; reconnecting an already admitted persistent identity can resume its existing space. There is no automatic gameplay rebuild or provider switch.
+
+Simulation/calibration reads one caller-buffered predicted snapshot containing headset, controllers, and tracker samples with a session generation, snapshot ID, and OpenXR nanosecond display time. Late poses remain separate render inputs. Current validity requires an active action and valid position/orientation; a failed location clears it immediately. Retained display poses and separate ever-tracked/last-valid diagnostics never qualify as capture samples. Publications older than 250 ms, and all stopped sessions, are unusable.
+
+Native discovery callbacks update transport metadata only. Scene tracker reconciliation and discontinuity delivery happen on the engine's pre-update scene owner. Owned tracker nodes are destroyed on collection deactivation and replaced on session-generation change.
+
+The smoke summary includes extension revision and per-identity connection, binding, activity, validity, sample/snapshot IDs, last valid sample, and restart requirement. For a hardware probe, record the runtime/version and implementation commit, start with every tracker connected, capture the summary with default and duplicate mappings, then test occlusion, reconnection, disabled devices, and late connections. A nonempty enumeration alone is not evidence of streaming. Current pose availability requires an active action, valid position and orientation, a matching predicted snapshot and sample time, and a running session with publication within 250 ms. Last-known pose is diagnostic only.
+
+On a SteamVR 2.17.10 hardware run, OpenXR reached a Focused session with HMD and controller poses but no HTCX tracker paths. Independent instance-level enumeration returned `XR_SUCCESS` and count zero twice while OpenVR found three connected Tundra Trackers. This isolates the empty list to that runtime's OpenXR exposure during the probe; it does not explain why the paths were omitted. See the [hardware validation record](../../work/testing/openxr-steamvr-hardware-validation.md) and [player calibration guide](../../user-guide/vr/full-body-calibration.md).
+
+### Calibration action bindings
+
+The Global action category provides `CalibrationOpen` and `CalibrationCancel` booleans and independent `CalibrationCaptureLeft`/`CalibrationCaptureRight` float actions. Index uses left A/right B to open/cancel; Touch uses left Y/right B; Vive, Microsoft Motion, and simple controllers use left/right menu. Capture uses both triggers; simple controllers use both select buttons. These actions do not share mute bindings. Vive/Motion quick-menu activation uses left trackpad click, keeping left menu dedicated to calibration. Simple controller right-menu jump is omitted so cancel does not also jump.
 
 ## Frame Lifecycle
 
@@ -172,7 +188,7 @@ The OpenXR OpenGL path avoids forced WGL context switching from arbitrary thread
 Per-eye rendering uses:
 
 - acquire/wait/release discipline,
-- release in `finally` paths,
+- release after a successful image wait, including failure cleanup when release is legal,
 - GL flush before release,
 - viewport/scissor/mask sanitation,
 - and state restoration to avoid contaminating desktop rendering.
@@ -193,18 +209,21 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 
 - `XREngine.Input/RuntimeVrInputServices.cs`
 - `XREngine.Input/RuntimeVrStateServices.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RenderModels.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.FrameLifecycle.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.XrCalls.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.RenderModels.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs`
 - `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Pacing.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/IOpenXrRuntime.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/IOpenXrGraphicsHost.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.Pacing.cs`
+- `XREngine.Runtime.XR.OpenXR/OpenXRAPI.RuntimeStateMachine.cs`
 - `XREngine.Runtime.Rendering/Runtime/RuntimeVrRenderingServices.cs`
-- `XREngine/Engine/Engine.VRState.cs`
-- `XREngine/Engine/Engine.RuntimeVrStateServices.cs`
-- `XREngine/Engine/Engine.RuntimeVrRenderingServices.cs`
+- `XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs`
+- `XREngine.Runtime.Bootstrap/SubsystemHost/Engine.RuntimeVrStateServices.cs`
+- `XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeVrRenderingServices.cs`
 - `XREngine.Runtime.Rendering/Rendering/Camera/XROpenXRFovCameraParameters.cs`
 - `XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs`
 - `XREngine.Runtime.InputIntegration/Scene/Components/VR/VRDeviceModelComponent.cs`
@@ -247,19 +266,19 @@ Use small values first, usually within a few milliseconds. Large positive values
 
 The OpenXR adapter logs missing/inactive action diagnostics for the active interaction profile. Open SteamVR's binding UI and verify locomotion, turn, grab, jump, quick menu, mute, and haptic outputs are bound for the controller profile in use.
 
-### Tracker is discovered but has no current pose
-
-Check that `XR_HTCX_vive_tracker_interaction` is advertised, then reopen calibration to request a controlled input refresh for late connections. The diagnostic distinguishes a discovered tracker from one with an active, valid pose. The SteamVR OpenXR runtime's behavior with default, duplicate, or disabled tracker metadata still needs physical hardware validation. Do not infer pose support from enumeration alone.
-
 ### Avatar pose timing and coordinate ownership
 
 The OpenXR adapter publishes predicted device poses with one snapshot identifier and predicted display time. Calibration and the VR player sample every required device from that publication; a mixed publication is rejected. Real samples expire after 250 ms without a new publication. Runtime poses are metric reference-space transforms. Each raw device composes that pose with its explicitly assigned playspace transform to produce a world pose. Avatar scale does not change this tracking basis.
 
-On the scene owner, the VR player reads a coherent sample, updates the room-scale playspace compensation and queues its locomotion delta, then publishes slot sources and targets. Stored device-to-target offsets multiply the device world matrix exactly once. The stable target owner retains world goals and derives target locals through the avatar hierarchy; humanoid tuple offsets remain identity. Animation resets run in the normal animation tick, target publication runs in the normal scene tick, IK evaluates in the late animation tick, and spectator follow runs in the late scene tick after IK. Character-controller movement consumes its queued delta through its existing physics owner.
+On the scene owner, the VR player reads a coherent sample, updates the room-scale playspace compensation and queues its locomotion delta, then publishes slot sources and targets. Stored device-to-target offsets multiply the device world matrix exactly once. The solver owns calibrated child targets under their physical sources and publishes replacements transactionally; humanoid slots retain the raw source and its captured offset. Animation resets run in the normal animation tick, target publication runs in the normal scene tick, IK evaluates in the late animation tick, and spectator follow runs in the late scene tick after IK. Character-controller movement consumes its queued delta through its existing physics owner. Losing a bound hips tracker suspends room-scale compensation rather than treating head lean as locomotion.
 
 The skeleton deliberately uses the simulation pose. The render owner may late-locate headset and controller view transforms, but it does not rerun IK or mutate live bones. Consequently late-located eye views can be newer than the rendered skeleton. This is an explicit latency tradeoff, not a claim of late-latched avatar animation. Hardware timing validation must measure that difference.
 
-Each body slot keeps its physical identity through tracking loss. It briefly holds its last world goal, then fades toward an optional `IVrBodyPoseSource` estimate or to zero weight. Estimates are already calibrated world-space goals. Their weights and poses blend independently from the frozen tracked goal, and the same physical device can fade back without rebinding another device. Unknown reference-space changes invalidate calibration; teleport, snap turn, avatar replacement, and session generation changes reset estimator and spectator history.
+Each body slot keeps its physical identity through tracking loss. It briefly holds its target, then fades to zero weight; the same physical device can fade back without rebinding another device. Estimated body poses are not supplied by the current calibration owner. Unknown reference-space changes invalidate calibration; teleport, snap turn, avatar replacement, and session generation changes reset spectator history. Session restoration requires matching provider generation and reference-space identity.
+
+### A tracker is not streaming
+
+Check the per-identity tracker diagnostics in the smoke summary. Distinguish not enumerated, discovered but requiring a VR restart, unbound, inactive, stale, and tracking-lost states. Connect new trackers before explicitly restarting VR. If a runtime does not stream admitted persistent paths, record its version, extension revision, enumeration and pose results; do not silently switch to OpenVR or require player-side body assignments.
 
 ### Hand tracking extension is unavailable
 

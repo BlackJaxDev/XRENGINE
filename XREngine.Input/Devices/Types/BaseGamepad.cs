@@ -1,4 +1,4 @@
-﻿using XREngine.Input.Devices.DirectX;
+
 
 namespace XREngine.Input.Devices
 {
@@ -10,11 +10,7 @@ namespace XREngine.Input.Devices
     public abstract class BaseGamePad(int index) : InputDevice(index)
     {
         public static BaseGamePad NewInstance(int index, EInputType type)
-            => type switch
-            {
-                EInputType.XInput => new DXGamepad(index),
-                _ => throw new InvalidOperationException(),
-            };
+            => InputBackendRegistry.CreateGamepad(type, index);
 
         protected override int GetButtonCount() => 14;
         protected override int GetAxisCount() => 6;

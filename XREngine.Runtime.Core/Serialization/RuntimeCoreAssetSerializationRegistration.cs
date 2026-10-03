@@ -3,6 +3,7 @@ using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
+using XREngine.Networking;
 using System.Diagnostics.CodeAnalysis;
 using YamlDotNet.Serialization;
 
@@ -20,11 +21,15 @@ public static class RuntimeCoreAssetSerializationRegistration
         {
             leases.Add(AssetSerializationServices.Install(new RuntimeAssetSerializationServices(services)));
             leases.Add(CookedBinaryObjectLifecycleServices.Install(RuntimeCookedBinaryObjectLifecycleServices.Instance));
+            leases.Add(NetworkingAotContractRegistry.Install());
+#if !XRE_PUBLISHED
             leases.Add(YamlSerializationContributions.Install(new RuntimeCoreYamlContribution()));
             leases.Add(AssetTypeHintProviders.Install(new RuntimeCoreAssetTypeHintProvider()));
+#endif
         });
     }
 
+#if !XRE_PUBLISHED
     private sealed class RuntimeCoreYamlContribution : IYamlSerializationContribution
     {
         public string OwnerName => "XREngine.Runtime.Core";
@@ -47,5 +52,6 @@ public static class RuntimeCoreAssetSerializationRegistration
             return candidate is not null && expectedType.IsAssignableFrom(candidate);
         }
     }
+#endif
 
 }

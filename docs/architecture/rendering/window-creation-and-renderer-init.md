@@ -20,7 +20,7 @@ This document describes how XREngine creates OS windows on startup, selects a gr
 
 ## Entry Points
 
-Both the Editor and Server applications share the same startup pattern: configure settings, create a world, then call `Engine.Run()`.
+The Editor and Server both call `Engine.Run()` after configuring startup state. The Editor normally creates a desktop window; the Server requests `RunWithoutWindows` with an empty `StartupWindows` list, so only windowed startup enters the path described below.
 
 ### Editor (`XREngine.Editor/Program.cs`)
 
@@ -31,7 +31,7 @@ private static void Main(string[] args)
     // ... load settings, create world ...
     var startupSettings = GetEngineSettings(targetWorld);
     var gameState = Engine.LoadOrGenerateGameState();
-    Engine.Run(startupSettings, gameState);
+    Engine.Run(startupSettings, gameState, beginPlayingAllWorlds: false);
 }
 ```
 
@@ -40,9 +40,8 @@ private static void Main(string[] args)
 ```csharp
 private static void Main(string[] args)
 {
-    // ... WebAPI setup, load settings ...
-    XRWorld targetWorld = CreateWorld();
-    Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+    // ... server setup; GetEngineSettings() requests RunWithoutWindows ...
+    Engine.Run(GetEngineSettings(), Engine.LoadOrGenerateGameState());
 }
 ```
 
@@ -52,15 +51,24 @@ Both converge on `Engine.Run(GameStartupSettings, GameState)`.
 
 ## Engine.Run() → Engine.Initialize()
 
-Defined in `XRENGINE/Engine/Engine.Lifecycle.cs`:
+Defined in `XREngine.Runtime.Bootstrap/Engine/Engine.Lifecycle.cs`:
 
 ```csharp
-public static void Run(GameStartupSettings startupSettings, GameState state)
+public static void Run(
+    GameStartupSettings startupSettings,
+    GameState state,
+    bool beginPlayingAllWorlds)
 {
-    if (Initialize(startupSettings, state))
+    bool initialized = Initialize(startupSettings, state, beginPlayingAllWorlds);
+    if (initialized)
     {
-        RunGameLoop();        // Starts update/physics threads
-        BlockForRendering();  // Blocks main thread for render submission
+        if (!beginPlayingAllWorlds)
+            BeginEditAllWorlds();
+        RunGameLoop();
+        if (startupSettings.RunWithoutWindows)
+            BlockWithoutRendering();
+        else
+            BlockForRendering();
     }
     Cleanup();
 }
@@ -79,9 +87,9 @@ public static void Run(GameStartupSettings startupSettings, GameState state)
 | 7 | `Time.Initialize()` — start the timing system for update/render ticks |
 | 8 | Initialize networking (if configured) |
 | 9 | Wire up profiler UDP sender |
-| 10 | `BeginPlayAllWorlds()` — activate all scenes |
+| 10 | `BeginPlayAllWorlds()` for standalone play; editor startup enters the edit lifecycle before the game loop |
 
-After `Initialize()` returns, `RunGameLoop()` spawns update and physics threads, and `BlockForRendering()` takes over the main thread for render submission until all windows close.
+After `Initialize()` returns, `RunGameLoop()` starts the timer's update and physics work. Windowed startup uses `BlockForRendering()`; headless startup uses `BlockWithoutRendering()`.
 
 ---
 
@@ -163,7 +171,7 @@ not an implemented backend.
 
 ## Window Creation
 
-### `Engine.CreateWindow()` (`XRENGINE/Engine/Engine.Windows.cs`)
+### `Engine.CreateWindow()` (`XREngine.Runtime.Bootstrap/RenderingHost/Engine.Windows.cs`)
 
 This is where the OS window and renderer are actually created:
 
@@ -171,64 +179,50 @@ This is where the OS window and renderer are actually created:
 public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
 {
     bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
-    var options = GetWindowOptions(windowSettings, preferHdrOutput);
-
-    XRWindow window;
-    try
-    {
-        window = new XRWindow(options, windowSettings.UseNativeTitleBar);
-    }
-    catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
-    {
-        // Vulkan init failed -> fallback only when RenderBackendFallbackPolicy permits it.
-        Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
-        options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core,
-            ContextFlags.ForwardCompatible, new APIVersion(4, 6));
-        window = new XRWindow(options, windowSettings.UseNativeTitleBar);
-    }
-
-    window.PreferHDROutput = preferHdrOutput;
-    CreateViewports(windowSettings.LocalPlayers, window);
-    window.UpdateViewportSizes();
-    _windows.Add(window);
-    Rendering.ApplyRenderPipelinePreference();
-    window.SetWorld(windowSettings.TargetWorld);
+    var resizeStrategy = ResolveInteractiveResizeStrategy(windowSettings);
+    RuntimeWindowCreateOptions options = GetWindowOptions(windowSettings, preferHdrOutput, resizeStrategy);
+    bool useWindowPumpHost = RuntimeWindowApplicationServices.Current.ShouldCreateWindowOnHost(...);
+    XRWindow window = useWindowPumpHost
+        ? RuntimeWindowApplicationServices.Current.CreateWindow(
+            () => CreateWindowInstance(options, RenderBackendFallbackPolicy.RequireRequested), ...)
+        : CreateWindowInstance(options, EffectiveSettings.RenderBackendFallbackPolicy);
+    FinishWindowCreation(windowSettings, window, preferHdrOutput);
     return window;
 }
 ```
 
 Key points:
 
-1. **`GetWindowOptions()`** translates `ERenderLibrary` into a Silk.NET `GraphicsAPI`:
-   - `ERenderLibrary.Vulkan` → `ContextAPI.Vulkan` with API version 1.1
-   - `ERenderLibrary.OpenGL` → `ContextAPI.OpenGL` with version 4.6, Core profile, forward-compatible
-2. **Explicit Vulkan fallback**: If the `XRWindow` constructor throws while in Vulkan mode, the engine retries with OpenGL 4.6 only when `RenderBackendFallbackPolicy` permits fallback. Required Vulkan startup fails with a visible diagnostic instead of silently changing backend.
+1. **`GetWindowOptions()`** translates `ERenderLibrary` into `RuntimeGraphicsApiKind` and packages neutral `RuntimeWindowCreateOptions`; the desktop leaf translates that request into Silk.NET options.
+2. **Explicit Vulkan fallback**: If `XRWindow` construction fails in Vulkan mode, `CreateWindowInstance` retries with OpenGL 4.6 only when `RenderBackendFallbackPolicy` permits fallback. The split window-pump path requires Vulkan and does not retry. Required Vulkan startup fails with a visible diagnostic.
 3. **HDR surface**: For OpenGL, a 64-bit preferred bit depth is requested when HDR is enabled. Vulkan handles HDR through swapchain format negotiation instead.
 4. After the window is created, viewports are created for local players and the target world is assigned.
 
 ### `GetWindowOptions()` Details
 
 ```csharp
-private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSettings, bool preferHdrOutput)
+private static RuntimeWindowCreateOptions GetWindowOptions(
+    GameWindowStartupSettings windowSettings,
+    bool preferHdrOutput,
+    EInteractiveWindowResizeStrategy resizeStrategy)
 {
-    // Determine window state (Fullscreen, Windowed, Borderless)
-    // ...
-
+    // Borderless uses the primary display extent; other states use authored position/size.
     bool requestHdrSurface = preferHdrOutput && Engine.EffectiveSettings.PreferredRenderBackend != ERenderLibrary.Vulkan;
-    int preferredBitDepth = requestHdrSurface ? 64 : 24;
-
-    return new WindowOptions(
-        isVisible: true,
-        position, size,
-        updateRate: 0.0, frameRate: 0.0,
-        api: Engine.EffectiveSettings.PreferredRenderBackend == ERenderLibrary.Vulkan
-            ? new GraphicsAPI(ContextAPI.Vulkan, ...)
-            : new GraphicsAPI(ContextAPI.OpenGL, ...),
-        title, windowState, windowBorder,
-        vSync, shouldSwapAutomatically: true,
-        videoMode: VideoMode.Default,
-        preferredBitDepth, preferredDepthBits: 8,
-        ...
+    return new RuntimeWindowCreateOptions(
+        Startup: ToRuntimeWindowValues(windowSettings, resizeStrategy),
+        GraphicsApi: Engine.EffectiveSettings.PreferredRenderBackend == ERenderLibrary.Vulkan
+            ? RuntimeGraphicsApiKind.Vulkan : RuntimeGraphicsApiKind.OpenGL,
+        ResizeStrategy: resizeStrategy,
+        Purpose: RuntimeWindowPurpose.Presentation,
+        Position: position,
+        Size: size,
+        ColorBits: requestHdrSurface ? 64 : 24,
+        DepthBits: 0,
+        StencilBits: 8,
+        OpenGlMajorVersion: 4,
+        OpenGlMinorVersion: 6,
+        SwapAutomatically: true,
+        /* visibility, VSync, HDR, framebuffer and GL-context flags */
     );
 }
 ```
@@ -237,26 +231,17 @@ private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSe
 
 ## XRWindow Constructor
 
-Defined in `XRENGINE/Rendering/API/XRWindow.cs`:
+Defined in `XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs`:
 
 ```csharp
-public XRWindow(WindowOptions options, bool useNativeTitleBar)
+public XRWindow(RuntimeWindowCreateOptions options)
 {
     _viewports.CollectionChanged += ViewportsChanged;
-
-    Silk.NET.Windowing.Window.PrioritizeGlfw();           // Prefer GLFW backend
-    Window = Silk.NET.Windowing.Window.Create(options);    // Create Silk.NET IWindow
-    UseNativeTitleBar = useNativeTitleBar;
-
-    LinkWindow();          // Subscribe to window events (Render, FocusChanged, Closing, Load)
-    Window.Initialize();   // Initialize the OS window + graphics context
-
-    Renderer = Window.API.API switch
-    {
-        ContextAPI.OpenGL => new OpenGLRenderer(this, true),
-        ContextAPI.Vulkan => new VulkanRenderer(this, true),
-        _ => throw new Exception($"Unsupported API: {Window.API.API}"),
-    };
+    _desktopBackend = RuntimeWindowBackendRegistry.RequireFactory().Create(in options);
+    LinkWindow(); // Engine play-mode transitions.
+    _desktopBackend.Initialize(new DesktopWindowEventSink(this));
+    PublishWindowSurfaceSnapshot(...);
+    _renderer = CreateRendererForCurrentWindow("initial desktop window construction");
 }
 ```
 
@@ -264,26 +249,24 @@ Step by step:
 
 | Step | What Happens |
 |------|--------------|
-| `PrioritizeGlfw()` | Tells Silk.NET to use the GLFW windowing backend (cross-platform, well-tested) |
-| `Window.Create(options)` | Creates the underlying Silk.NET `IWindow` with the requested graphics API |
-| `LinkWindow()` | Subscribes to `Render`, `FocusChanged`, `Closing`, `Load` events on the Silk.NET window |
-| `Window.Initialize()` | Opens the OS window, creates the graphics context (GL context or Vulkan surface) |
-| Pattern match on `ContextAPI` | Instantiates either `OpenGLRenderer` or `VulkanRenderer` |
+| `RuntimeWindowBackendRegistry.RequireFactory()` | Resolves the installed desktop window factory; `DesktopSilkWindowBackendFactory` owns Silk.NET creation. |
+| `LinkWindow()` | Registers engine play-mode transition callbacks. |
+| `_desktopBackend.Initialize(...)` | Opens the OS window and graphics context, routing native events through `DesktopWindowEventSink`. |
+| Snapshot publication | Records effective window/framebuffer extents and event state after native initialization. |
+| `CreateRendererForCurrentWindow(...)` | Resolves the OpenGL or Vulkan renderer from the registered renderer-backend factory using the initialized backend's actual API kind. |
 
-The renderer is chosen by inspecting the **actual** `ContextAPI` from the initialized window, not from `ERenderLibrary` directly. This makes explicit Vulkan-to-OpenGL fallback in `CreateWindow()` work transparently when fallback is allowed: if the retry creates an OpenGL context, the pattern match will create an `OpenGLRenderer`.
+The renderer is chosen from the initialized desktop backend's **actual** `RuntimeGraphicsApiKind`. This makes explicit Vulkan-to-OpenGL retry in `CreateWindowInstance()` work when fallback is allowed: the retry creates an OpenGL backend and the factory creates an `OpenGLRenderer`.
 
 ### Backend Escape Hatches And Safe Access
 
-`XRWindow.ThreadAffinedNativeWindow` is the explicitly named Silk.NET native
-window handle for backend-owned code. The compatibility `XRWindow.Window` and
-`XRWindow.Input` members remain hidden from normal editor/app discovery; new
-gameplay and editor code should use:
+`XRWindow` no longer exposes the Silk.NET window or input context. Gameplay and editor code use:
 
 - `FileDropped`, `ClosingRequested`, `FramebufferResized`, `RequestClose()`,
   `RequestMouseCapture(bool)`, `WindowTitle`, and `WindowSizeSnapshot` for
   common window interactions.
 - `LatestWindowSurfaceSnapshot`, `LatestWindowEventSnapshot`, and
   `LatestWindowInputSnapshot` for state consumption.
+- `DesktopGlContext` and `DesktopVulkanSurface` are typed, borrowed backend services for GL context and Vulkan WSI operations; backend code must preserve their owner-thread and generation rules.
 - `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` /
   `InvokeWindowThreadTask<T>` for native window mutations.
 - `IRuntimeRenderingHostServices.EnqueueRenderThreadTask` /
@@ -299,7 +282,7 @@ window-thread ownership.
 
 ### Renderer Constructor Side Effects
 
-- **`OpenGLRenderer`**: The constructor calls `GetAPI()` → `GL.GetApi(Window.GLContext)` → `InitGL(api)`, which queries GPU info, enumerates extensions, enables multisampling, sets up debug callbacks, and reads the binary shader cache. All OpenGL state setup happens here.
+- **`OpenGLRenderer`**: The constructor calls `GetAPI()` → `GL.GetApi(XRWindow.DesktopGlContext.GetProcAddress)` → `InitGL(api)`, which queries GPU info, enumerates extensions, enables multisampling, sets up debug callbacks, and reads the binary shader cache. All OpenGL state setup happens here.
 - **`VulkanRenderer`**: The constructor freezes the target driver and creates
   managed subsystem owners, but creates no native Vulkan objects. Native
   initialization remains deferred.
@@ -334,8 +317,7 @@ private void BeginTick()
 {
     Renderer.Initialize();                         // API-specific init
     _rendererInitialized = true;
-    Engine.Time.Timer.SwapBuffers += SwapBuffers;  // Register for swap events
-    Engine.Time.Timer.RenderFrame += RenderFrame;  // Register for render events
+    RuntimeRenderingHostServices.Scheduling.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
 }
 ```
 
@@ -343,7 +325,7 @@ This is where:
 - **OpenGL**: `Initialize()` is a no-op (all setup already done in constructor via `InitGL`)
 - **Vulkan**: `Initialize()` creates the Vulkan instance, debug messenger, surface, picks a physical device, creates the logical device, command pool, descriptor set layout, entire swapchain with all dependent objects, and sync primitives
 
-After `BeginTick()`, the window subscribes to the engine timer's `SwapBuffers` and `RenderFrame` events, entering the active render loop.
+After `BeginTick()`, host scheduling connects the window's swap and render callbacks to the engine timer, entering the active render loop.
 
 ---
 
@@ -361,10 +343,13 @@ The timer drives the render loop. Each frame, for each registered window:
 ```
 Timer fires RenderFrame event
   → XRWindow.RenderFrame()
-      → Window.DoEvents()     // Process OS window events
-      → Window.DoRender()     // Triggers Silk.NET Render event
+      → ConsumeLatestWindowSurfaceSnapshotForRenderFrame()
+      → ProcessPendingFramebufferResize()
+      → _desktopBackend.DispatchRender() // Desktop backend delivers render callback
           → XRWindow.RenderCallback(delta)   // The main per-frame method
 ```
+
+The window owner separately pumps native events through `_desktopBackend.PumpEvents()` and publishes surface, close/focus, and input snapshots. The render path consumes those snapshots; it does not call a raw Silk `IWindow`.
 
 ---
 
@@ -381,7 +366,7 @@ Timer fires RenderFrame event
 6. RenderWindowViewports()                     — Render all viewports via their pipelines
 7. TargetWorldInstance.GlobalPostRender()       — Post-render hooks
 8. Renderer.RenderWindow(delta)                — API-specific frame completion:
-     • OpenGL: no-op (Silk.NET handles SwapBuffers automatically)
+     • OpenGL: no-op (desktop backend performs automatic swap)
      • Vulkan: acquire image, record command buffer, submit, present
 9. PostRenderViewportsCallback?.Invoke()       — Post-render external callbacks
 ```
@@ -451,13 +436,12 @@ Program.Main()
             ├─ CreateWindows(startupSettings.StartupWindows)
             │    └─ CreateWindow(windowSettings)
             │         ├─ GetWindowOptions()
-            │         │    └─ ERenderLibrary → ContextAPI.OpenGL | ContextAPI.Vulkan
+            │         │    └─ ERenderLibrary → RuntimeGraphicsApiKind.OpenGL | Vulkan
             │         ├─ new XRWindow(options)
-            │         │    ├─ Window.PrioritizeGlfw()
-            │         │    ├─ Silk.NET.Window.Create(options)   ← OS window created
-            │         │    ├─ LinkWindow()                      ← subscribe events
-            │         │    ├─ Window.Initialize()               ← graphics context created
-            │         │    └─ Renderer = OpenGLRenderer | VulkanRenderer
+            │         │    ├─ RuntimeWindowBackendRegistry.RequireFactory().Create(options)
+            │         │    ├─ LinkWindow()                      ← play-mode subscriptions
+            │         │    ├─ Desktop backend Initialize()     ← OS window/context created
+            │         │    └─ renderer factory → OpenGLRenderer | VulkanRenderer
             │         ├─ [catch: Vulkan fail → retry with OpenGL only when fallback policy permits]
             │         ├─ CreateViewports(localPlayers)
             │         └─ window.SetWorld(targetWorld)
@@ -478,9 +462,10 @@ Program.Main()
 ## Class Hierarchy
 
 ```
-AbstractRenderer                              (XRENGINE/Rendering/API/Rendering/Generic/AbstractRenderer.cs)
-  ├─ Window : IWindow                         (Silk.NET native window)
-  ├─ XRWindow : XRWindow                      (engine window wrapper)
+AbstractRenderer                              (XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs)
+  ├─ XRWindow : XRWindow                      (neutral desktop-window facade)
+  │    ├─ DesktopGlContext : IRuntimeWindowGlContext?
+  │    └─ DesktopVulkanSurface : IRuntimeWindowVulkanSurface?
   ├─ abstract Initialize()
   ├─ abstract CleanUp()
   ├─ abstract WindowRenderCallback(delta)
@@ -495,9 +480,9 @@ AbstractRenderer<TAPI> where TAPI : NativeAPI
   └─ abstract GetAPI()
       │
       ├── OpenGLRenderer : AbstractRenderer<GL>
-      │     GetAPI()        → GL.GetApi(Window.GLContext) + InitGL()
+      │     GetAPI()        → GL.GetApi(DesktopGlContext.GetProcAddress) + InitGL()
       │     Initialize()    → no-op (setup done in GetAPI)
-      │     WindowRenderCallback() → no-op (Silk.NET handles swap)
+      │     WindowRenderCallback() → no-op (desktop backend handles automatic swap)
       │
       └── VulkanRenderer : AbstractRenderer<Vk>
             GetAPI()        → Vk.GetApi()

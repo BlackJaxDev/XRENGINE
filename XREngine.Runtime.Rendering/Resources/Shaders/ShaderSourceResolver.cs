@@ -1,3 +1,4 @@
+using XREngine.Core.Files;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -600,10 +601,10 @@ internal static partial class ShaderSourceResolver
         Dictionary<string, string> pathsByName = new(StringComparer.OrdinalIgnoreCase);
         foreach (string extension in SupportedSnippetExtensions)
         {
-            foreach (string filePath in Directory.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.TopDirectoryOnly))
+            foreach (string filePath in AssetFileSystemServices.Required.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.TopDirectoryOnly))
                 pathsByName.TryAdd(Path.GetFileNameWithoutExtension(filePath), Path.GetFullPath(filePath));
 
-            foreach (string filePath in Directory.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.AllDirectories))
+            foreach (string filePath in AssetFileSystemServices.Required.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.AllDirectories))
                 pathsByName.TryAdd(Path.GetFileNameWithoutExtension(filePath), Path.GetFullPath(filePath));
         }
 
@@ -665,7 +666,7 @@ internal static partial class ShaderSourceResolver
     private static DirectoryDependency[] CaptureDirectoryDependencies(string rootDirectory)
     {
         List<DirectoryDependency> dependencies = [];
-        foreach (string directory in Directory.EnumerateDirectories(rootDirectory, "*", SearchOption.AllDirectories))
+        foreach (string directory in AssetFileSystemServices.Required.EnumerateDirectories(rootDirectory, "*", SearchOption.AllDirectories))
             dependencies.Add(new(Path.GetFullPath(directory), new DirectoryInfo(directory).LastWriteTimeUtc.Ticks));
 
         dependencies.Add(new(Path.GetFullPath(rootDirectory), new DirectoryInfo(rootDirectory).LastWriteTimeUtc.Ticks));
@@ -753,7 +754,7 @@ internal static partial class ShaderSourceResolver
         }
 
         Dictionary<string, string> pathsByName = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string filePath in Directory.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories))
+        foreach (string filePath in AssetFileSystemServices.Required.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories))
             pathsByName.TryAdd(Path.GetFileName(filePath), Path.GetFullPath(filePath));
 
         FileIndexCacheEntry rebuiltIndex = new(pathsByName, CaptureDirectoryDependencies(normalizedRoot));

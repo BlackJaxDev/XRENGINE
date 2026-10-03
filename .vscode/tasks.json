@@ -2,6 +2,14 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Build-RenderBench",
+			"type": "process",
+			"command": "dotnet",
+			"args": ["build", "${workspaceFolder}/XREngine.RenderBench/XREngine.RenderBench.csproj"],
+			"group": "build",
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Build-ControlPlane-Service",
 			"type": "process",
 			"command": "dotnet",
@@ -1472,6 +1480,47 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Benchmark-RenderProfile-Quick",
+			"type": "process",
+			"command": "pwsh",
+			"args": [
+				"-NoProfile", "-File", "${workspaceFolder}/Tools/Benchmarks/Invoke-RenderProfile.ps1",
+				"-Preset", "Quick",
+				"-RunRoot", "${input:renderProfileRunRoot}",
+				"-ExecutablePath", "${workspaceFolder}/Build/RenderBench/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.RenderBench.dll"
+			],
+			"presentation": { "reveal": "always", "panel": "dedicated" },
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-RenderProfile-Compare",
+			"type": "process",
+			"command": "pwsh",
+			"args": [
+				"-NoProfile", "-File", "${workspaceFolder}/Tools/Benchmarks/Invoke-RenderProfile.ps1",
+				"-Preset", "Compare",
+				"-RunRoot", "${input:renderProfileRunRoot}",
+				"-BaselineExecutablePath", "${input:renderProfileBaselineExecutable}",
+				"-CandidateExecutablePath", "${input:renderProfileCandidateExecutable}"
+			],
+			"presentation": { "reveal": "always", "panel": "dedicated" },
+			"problemMatcher": []
+		},
+		{
+			"label": "Benchmark-RenderProfile-Gate",
+			"type": "process",
+			"command": "pwsh",
+			"args": [
+				"-NoProfile", "-File", "${workspaceFolder}/Tools/Benchmarks/Invoke-RenderProfile.ps1",
+				"-Preset", "Gate",
+				"-RunRoot", "${input:renderProfileRunRoot}",
+				"-BaselineExecutablePath", "${input:renderProfileBaselineExecutable}",
+				"-CandidateExecutablePath", "${input:renderProfileCandidateExecutable}"
+			],
+			"presentation": { "reveal": "always", "panel": "dedicated" },
+			"problemMatcher": []
+		},
+		{
 			"label": "Build Editor Validation",
 			"type": "shell",
 			"command": "dotnet",
@@ -1489,6 +1538,21 @@
 		}
 	],
 	"inputs": [
+		{
+			"id": "renderProfileRunRoot",
+			"type": "promptString",
+			"description": "Existing task run root under Build/_AgentValidation; leave blank to reserve a new one"
+		},
+		{
+			"id": "renderProfileBaselineExecutable",
+			"type": "promptString",
+			"description": "Absolute path to an already built baseline XREngine.RenderBench.exe"
+		},
+		{
+			"id": "renderProfileCandidateExecutable",
+			"type": "promptString",
+			"description": "Absolute path to an already built candidate XREngine.RenderBench.exe"
+		},
 		{
 			"id": "controlPlaneConfig",
 			"type": "promptString",

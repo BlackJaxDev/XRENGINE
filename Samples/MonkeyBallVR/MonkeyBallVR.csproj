@@ -65,10 +65,6 @@
     <ProjectReference Include="..\..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
-  </ItemGroup>
-
   <Target Name="ShowResolvedBuildProfile" BeforeTargets="Build;BuildEditorAutomation;CompileGameManagedCode;BuildGameLauncher">
     <Message
       Importance="High"

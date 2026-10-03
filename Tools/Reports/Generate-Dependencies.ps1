@@ -1558,7 +1558,16 @@ foreach ($f in $checkedBinaries) {
     $lines.Add(("| {0} | {1} | {2} | {3} |" -f $f.Path, $f.File, $owner, $lic))
 }
 
-$lines | Out-File -LiteralPath $outPath -Encoding utf8
+# Display placeholders keep reproducible reports independent of the generating machine.
+# License override keys retain their existing identities.
+$documentLines = foreach ($line in $lines) {
+    $displayLine = [regex]::Replace($line, '(?i)[A-Z]:\\Program Files \(x86\)\\', '%ProgramFiles(x86)%\')
+    $displayLine = [regex]::Replace($displayLine, '(?i)[A-Z]:\\Program Files\\', '%ProgramFiles%\')
+    $displayLine = [regex]::Replace($displayLine, '(?i)[A-Z]:\\Users\\[^\\|]+', '<user-profile>')
+    $displayLine = [regex]::Replace($displayLine, '(?i)/Users/[^/|]+', '<user-profile>')
+    $displayLine
+}
+$documentLines | Out-File -LiteralPath $outPath -Encoding utf8
 if ($licenseOverridesChanged) {
     Save-LicenseOverrides -path $licenseOverridesPath -data $licenseOverrides
     Write-Output "Wrote overrides: $licenseOverridesPath"

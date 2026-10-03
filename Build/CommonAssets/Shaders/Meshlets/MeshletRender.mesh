@@ -9,56 +9,7 @@ const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
 const uint MESHLET_TASK_MESHLET_INDEX_MASK = 0x7FFFFFFFu;
 const uint MESH_DATA_ATLAS_TIER_MASK = 0x3u;
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
-
-struct MeshDataEntry
-{
-    uint IndexCount;
-    uint FirstIndex;
-    uint FirstVertex;
-    uint Flags;
-};
-
-struct GpuMeshletTaskRecord
-{
-    uint MeshletIndex;
-    uint DrawID;
-    uint TransformID;
-    uint MaterialID;
-};
-
-struct GpuMeshletDescriptor
-{
-    vec4 BoundsSphere;
-    uint VertexOffset;
-    uint TriangleByteOffset;
-    uint VertexCount;
-    uint TriangleCount;
-    vec4 Cone;
-    vec4 ConeApex;
-    uint PackedCone;
-    uint Reserved0;
-    uint Reserved1;
-    uint Reserved2;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 // Interface block form is required when the task/mesh program is linked as a
 // combined (non-separable) program. Field layout must match the producing

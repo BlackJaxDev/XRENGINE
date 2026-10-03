@@ -136,6 +136,8 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
     [Test]
     public void PresentationlessHost_SubmitsAndReadsBackStableDeterministicFrames()
     {
+        using var workSchedulerScope =
+            VulkanPresentationIndependentHostWorkSchedulerScope.EnsureInstalled();
         RenderTargetOutputProperties output = new(
             16,
             16,
@@ -176,6 +178,89 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
         catch (Exception exception) when (IsUnavailableVulkanEnvironment(exception))
         {
             Assert.Ignore($"Presentationless Vulkan smoke test is unavailable on this machine: {exception.Message}");
+        }
+    }
+
+    [Test]
+    public void PresentationlessHost_DisposesWithSubmittedWorkAndRecreatesAtNewExtent()
+    {
+        using var workSchedulerScope =
+            VulkanPresentationIndependentHostWorkSchedulerScope.EnsureInstalled();
+        try
+        {
+            VulkanExplicitTargetRendererHost first = new(
+                new PresentationlessRenderTarget(16, 16, FrameSlotCount: 2),
+                backendGeneration: 41);
+            try
+            {
+                for (int frame = 0; frame < 5; frame++)
+                    first.SubmitFrame(RecordDeterministicClear);
+                // Leave the final submission without a readback or explicit wait.
+            }
+            finally
+            {
+                first.Dispose();
+            }
+            Should.Throw<ObjectDisposedException>(() => first.SubmitFrame(RecordDeterministicClear));
+            Should.Throw<ObjectDisposedException>(() => first.ComputeLastSubmittedColorHash());
+
+            using VulkanExplicitTargetRendererHost second = new(
+                new PresentationlessRenderTarget(24, 12, FrameSlotCount: 2),
+                backendGeneration: 42);
+            second.OutputProperties.Width.ShouldBe(24u);
+            second.OutputProperties.Height.ShouldBe(12u);
+            second.SubmitFrame(RecordDeterministicClear);
+            string firstHash = second.ComputeLastSubmittedColorHash();
+            second.SubmitFrame(RecordDeterministicClear);
+            second.ComputeLastSubmittedColorHash().ShouldBe(firstHash);
+            firstHash.Length.ShouldBe(64);
+        }
+        catch (Exception exception) when (IsUnavailableVulkanEnvironment(exception))
+        {
+            Assert.Ignore($"Presentationless Vulkan lifecycle test is unavailable on this machine: {exception.Message}");
+        }
+    }
+
+    [Test]
+    public void PresentationlessHost_StandardAndSynchronizationValidationReportNoImageOrRetirementErrors()
+    {
+        using var workSchedulerScope =
+            VulkanPresentationIndependentHostWorkSchedulerScope.EnsureInstalled();
+        string? previousValidation = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanValidation);
+        string? previousSynchronization = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.VulkanSynchronizationValidation);
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanValidation, "1");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanSynchronizationValidation, "1");
+            using VulkanExplicitTargetRendererHost host = new(
+                new PresentationlessRenderTarget(16, 16, FrameSlotCount: 2),
+                backendGeneration: 43);
+            for (int frame = 0; frame < 5; frame++)
+                host.SubmitFrame(RecordDeterministicClear);
+            string hash = host.ComputeLastSubmittedColorHash();
+            hash.Length.ShouldBe(64);
+
+            VulkanValidationDiagnosticSnapshot validation = host.CaptureValidationDiagnostics();
+            validation.ErrorCount.ShouldBe(0,
+                string.Join(Environment.NewLine, validation.Messages.Select(message => message.FirstSample)));
+            validation.OverflowCount.ShouldBe(0);
+            if (!validation.StandardValidationEnabled || !validation.SynchronizationValidationEnabled ||
+                !validation.DebugMessengerActive)
+            {
+                Assert.Ignore("Requested standard/synchronization Vulkan validation layers or debug messenger " +
+                    "are unavailable on this machine.");
+            }
+        }
+        catch (Exception exception) when (IsUnavailableVulkanEnvironment(exception))
+        {
+            Assert.Ignore($"Presentationless Vulkan validation test is unavailable on this machine: {exception.Message}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanValidation, previousValidation);
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanSynchronizationValidation, previousSynchronization);
         }
     }
 

@@ -56,7 +56,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
-            var liveWindowSize = DesktopWsiOutput.Window.Window.Size;
+            var liveWindowSize = DesktopWsiOutput.Window.EffectiveWindowSize;
             attempt.LiveFramebufferWidth = liveFramebufferSize.X;
             attempt.LiveFramebufferHeight = liveFramebufferSize.Y;
             attempt.LiveWindowWidth = liveWindowSize.X;

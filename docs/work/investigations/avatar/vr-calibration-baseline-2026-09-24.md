@@ -38,7 +38,7 @@ All six raw humanoid references and their calibrated child nodes remain present 
 
 The positive control explicitly publishes the calibrated concrete targets to the humanoid in test setup. All six references then survive repeated updates, and a moved controller changes the wrist position through actual IK solving. This establishes a working harness, not a production ownership fix.
 
-The required persistence contract is preserved as the explicit NUnit test `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates`. It checks every target's non-null state and reference identity across five ticks, plus recalibration node count. It currently fails by design when explicitly selected. After the ownership repair, remove its `Explicit` annotation and replace the old loss-characterization expectation with the corrected contract.
+The required persistence contract is preserved as the explicit NUnit test `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates`. It checks every target's non-null state and reference identity across five ticks, plus recalibration node count. At that baseline it failed when explicitly selected. The subsequent ownership repair below promotes it to the normal suite without weakening its assertions.
 
 ## Shared construction decision
 
@@ -69,3 +69,44 @@ For isolated output, first reserve a task run with `pwsh Tools/Limit-AgentValida
 Disposable evidence: `Build/_AgentValidation/20260924-195314-vr-calibration-baseline/`, with build/test logs, NUnit TRX results, and the temporary compile selection. Findings needed for subsequent work are recorded above. The optional broker review was not launched because the available tool contract/routing response only supported deprecated GPT-5.6 models; no model substitution was attempted.
 
 Next: repair authoritative target ownership, offset semantics, rebind/reuse, and teardown; then validate tracking acquisition and transactional player calibration. There has been no user-reported hardware validation of this change.
+
+## Linux headless rerun (2026-09-30)
+
+Rechecked active development commit `00233106ac1abcae4eca70357051182da04ae47b`. The calibration implementation and regression assertions are unchanged from the baseline. Normalizing the tracked Core directory to `XREngine.Runtime.Core/` allows the platform-neutral production dependency closure to compile on a case-sensitive Linux filesystem; no portability guards or production code were bypassed.
+
+The first-class [headless test project](../../../../XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj) links the existing calibration fixture and test sources unchanged. NUnitLite runs them in-process without the editor, a window, GPU, VR runtime, or test-host IPC. It references the real animation/input integration projects, not substitutes.
+
+- Linux build on .NET SDK 10.0.401: **0 warnings, 0 errors**.
+- Default focused suite: **6 passed**, with the known explicit persistence regression skipped.
+- Explicit persistence regression: **1 failed**, reproducing all six cleared target slots across five updates and the recalibration count of **12 instead of 6**.
+- Positive control: all six concrete targets survive and a moved controller changes the wrist through actual IK.
+- Production calibration was not repaired. No rendered-editor, headset, player confirm/cancel, or software-renderer acceptance is implied.
+
+From the repository root, run the normal suite:
+
+```sh
+dotnet run --project XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj -- --workers=0 --result=<run>/reports/headless.xml
+```
+
+Select the persistence contract independently (it failed before the ownership repair below):
+
+```sh
+dotnet run --project XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj -- --workers=0 --test=XREngine.UnitTests.Animation.VRIKCalibrationTests.Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates --result=<run>/reports/persistence.xml
+```
+
+Reserve `<run>` under `Build/_AgentValidation/` as described in `AGENTS.md`. For isolated builds, pass `--artifacts-path <run>/temp-build` to `dotnet build`, then run its `XREngine.HeadlessTests.dll` directly. Restricted executors can build with `-m:1 -nr:false -p:UseSharedCompilation=false` to avoid MSBuild/compiler server IPC. The failing contract retains a nonzero process exit code; it is not converted into a passing test.
+
+## Calibrated target ownership repair (2026-09-30)
+
+`VRIKSolverComponent` now owns the concrete children for its six calibrated slots, independently of both the humanoid's raw source tuples and the solver's transient target fields. Synchronization resolves an owned child only when the humanoid still binds the corresponding source (or explicitly binds that child). A changed or cleared source no longer drives the old child. Raw source tuple offsets are preserved; the existing calibration offset formulas are unchanged.
+
+Calibration reuses the owned child even if synchronization cleared the solver field, reparents it when its source changes, and unwraps an owned child passed back into calibration to its original source before computing offsets. Optional sources removed during calibration release their owned nodes and zero the corresponding positional/rotational weights. Explicit target clearing and solver destruction release owned nodes without destroying source devices or external targets. Ordinary component deactivation retains ownership for recalibration.
+
+Verification against the development baseline `00233106ac1abcae4eca70357051182da04ae47b` plus this repair:
+
+- Headless production-closure build: **0 warnings, 0 errors**.
+- Default suite: **16 passed, 0 failed, 0 skipped**. The persistence contract is no longer `Explicit` and retains all target identity/non-null and six-node assertions.
+- Positive control and a raw-source movement regression both drive the wrist through actual IK.
+- Additional regressions cover clear/restore with non-identity tuple offsets, controller rebinding, calibrated children supplied as inputs, removal/reinstatement of optional trackers, external target preservation, explicit clearing, solver-only destruction with a surviving playspace, and recovery after immediate or deferred child-node destruction.
+
+The clear/restore regression emulates the target-store transitions used during player calibration; it does not execute the player `BeginCalibration`, `EndCalibration`, or `CancelCalibration` state machine. Transactional cancellation, tracker acquisition/assignment, invalid-pose handling, new offset semantics, hardware VR, and the remaining full-body slots are not qualified by this repair. No SteamVR role assumptions were introduced.

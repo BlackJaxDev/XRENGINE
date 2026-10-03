@@ -48,7 +48,8 @@ public static class RuntimeRenderingHostServices
         {
             IRuntimeRenderingHostServices previous = _current;
             IRuntimeRenderingHostServices current = value ?? Uninstalled;
-            if (ReferenceEquals(previous, current))
+            if (ReferenceEquals(previous, current) &&
+                !(current is UninstalledRuntimeRenderingHostServices && (_presentation is not null || _work is not null)))
                 return;
 
             _current = current;
@@ -138,12 +139,41 @@ public static class RuntimeRenderingHostServices
     internal static bool HasConcreteHost => _current is not UninstalledRuntimeRenderingHostServices;
 
     /// <summary>
+    /// Explicitly installs inactive desktop/XR presentation policy for offscreen composition.
+    /// Uses the already configured process work scheduler. This does not install asset IO,
+    /// window factories, or an interactive render-thread scheduler.
+    /// Create and dispose this scope on the composition thread, outside renderer lifetime.
+    /// </summary>
+    public static IDisposable InstallPresentationless()
+    {
+        if (_presentation is not null || _work is not null)
+            throw new InvalidOperationException("A presentation host is already installed.");
+        var scheduler = XREngine.Execution.RuntimeWorkScheduler.Scheduler
+            ?? throw new InvalidOperationException("Configure the runtime work scheduler before offscreen composition.");
+        IRuntimeRenderPresentationServices installed = new UninstalledRuntimeRenderingHostServices();
+        var work = new RuntimePresentationlessWorkServices(scheduler);
+        _presentation = installed;
+        _work = work;
+        return new RuntimePresentationlessInstallationScope(installed, work);
+    }
+
+    internal static void RestorePresentationless(IRuntimeRenderPresentationServices installed, IRuntimeRenderWorkServices work)
+    {
+        if (ReferenceEquals(_presentation, installed))
+            _presentation = null;
+        if (ReferenceEquals(_work, work))
+            _work = null;
+    }
+
+    /// <summary>
     /// Installs a host and returns a scope that restores the previous installation.
     /// Disposing an older scope never tears down a newer replacement.
     /// </summary>
     public static IDisposable Install(IRuntimeRenderingHostServices host)
     {
         ArgumentNullException.ThrowIfNull(host);
+        if (_current is UninstalledRuntimeRenderingHostServices && _presentation is not null)
+            throw new InvalidOperationException("Dispose the presentationless scope before installing a composite host.");
         IRuntimeRenderingHostServices previous = _current;
         Current = host;
         return new RuntimeRenderingHostInstallationScope(host, previous);

@@ -5,7 +5,7 @@ Native FBX support is the engine-owned FBX path behind XRENGINE's model import a
 The implementation lives in two layers:
 
 - `XREngine.Fbx` owns container parsing, semantic FBX documents, binary writing, corpus contracts, and benchmark harnesses.
-- `XRENGINE` bridges the engine-neutral FBX documents into `SceneNode`, `XRMesh`, `XRMaterial`, `XRTexture`, animation clips, remap persistence, and editor import workflows.
+- `XREngine.Runtime.ModelAssetPipeline` bridges the engine-neutral FBX documents into `SceneNode`, `XRMesh`, `XRMaterial`, `XRTexture`, animation clips, and remap persistence. `XREngine.Runtime.Core` provides the asset and scene contracts; application composition installs the importer for editor workflows.
 
 ## User-Facing Behavior
 

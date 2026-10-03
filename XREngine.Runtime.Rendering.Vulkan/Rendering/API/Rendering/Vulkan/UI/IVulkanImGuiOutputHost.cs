@@ -1,7 +1,5 @@
-using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
-using Silk.NET.Windowing;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -12,8 +10,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal unsafe interface IVulkanImGuiOutputHost
 {
-    IWindow MainWindow { get; }
-    IInputContext? Input { get; }
+    IRuntimeWindowBackend MainWindow { get; }
     bool MainWindowFocused { get; }
     bool TargetRequiresSwapchainOutput { get; }
     bool UseDynamicRenderingRenderTargets { get; }
@@ -24,7 +21,7 @@ internal unsafe interface IVulkanImGuiOutputHost
     void UnregisterPlatformWindow(VulkanImGuiPlatformWindow window);
     void ThrowIfDeviceOperationNotAdmitted(string operation);
     bool TryAdmitDeviceOperation(string operation);
-    SurfaceKHR CreatePlatformSurface(IWindow window);
+    SurfaceKHR CreatePlatformSurface(IRuntimeWindowBackend window);
     void DestroyPlatformSurface(ref SurfaceKHR surface);
     void ValidatePlatformPresentSupport(SurfaceKHR surface);
     bool TryCreatePlatformSwapchain(

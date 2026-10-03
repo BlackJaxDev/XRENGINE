@@ -477,6 +477,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         public int _pad1;
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("BoneMappingData", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUDrivenBoneMappingData
     {
@@ -484,6 +485,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         public int ChildParticleIndex;
         public int BoneMatrixIndex;
         public int Flags;
+        [XREngine.Rendering.Shaders.GpuPaddedVector3(nameof(_pad0))]
         public Vector3 RestLocalDirection;
         public float _pad0;
     }

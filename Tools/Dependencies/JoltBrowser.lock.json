@@ -1,0 +1,12 @@
+{
+  "joltcRepository": "https://github.com/amerkoleci/joltc.git",
+  "joltcCommit": "886e088675bae3a086f8318c7803f8ee962c2f2c",
+  "joltRepository": "https://github.com/jrouwe/JoltPhysics.git",
+  "joltCommit": "e77f175595e64cb44218cc9d9d56fc365ad0e36a",
+  "joltTag": "v5.6.0",
+  "emscriptenVersion": "3.1.56",
+  "sdkPackVersion": "10.0.2",
+  "license": "MIT",
+  "desktopSupply": "JoltPhysicsSharp 2.22.0 with JoltPhysics.Native 1.1.0",
+  "crossPlatformDeterministic": false
+}

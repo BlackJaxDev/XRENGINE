@@ -88,6 +88,35 @@ public sealed record RenderProfileRecipe
     [JsonPropertyName("cpu_sampling_policy")]
     public RenderProfileCpuSamplingPolicy CpuSamplingPolicy { get; init; } = RenderProfileCpuSamplingPolicy.AggregateOnly;
 
+    [JsonPropertyName("profile_mode")]
+    public RenderProfileMode ProfileMode { get; init; } = RenderProfileMode.DevelopmentProfile;
+
+    [JsonPropertyName("enable_validation")]
+    public bool EnableValidation { get; init; }
+
+    [JsonPropertyName("enable_synchronization_validation")]
+    public bool EnableSynchronizationValidation { get; init; }
+
+    [JsonPropertyName("cpu_profiling")]
+    public RenderProfileCpuConfiguration CpuProfiling { get; init; } = new();
+
+    [JsonPropertyName("gpu_profiling")]
+    public RenderProfileGpuConfiguration GpuProfiling { get; init; } = new();
+
+    [JsonPropertyName("external_capture")]
+    public RenderProfileExternalCaptureConfiguration ExternalCapture { get; init; } = new();
+
+    /// <summary>Diagnostic observers cannot be used to accept a clean baseline.</summary>
+    [JsonIgnore]
+    public bool IsIntrusive => EnableValidation || EnableSynchronizationValidation || GpuProfiling.CalibratedTimestamps ||
+        ExternalCapture?.IsRequested == true ||
+        LabelPolicy != RenderProfileLabelPolicy.Disabled || CpuProfiling.EmitMarkers ||
+        CpuSamplingPolicy is RenderProfileCpuSamplingPolicy.TargetedSpans or
+            RenderProfileCpuSamplingPolicy.ExternalSamplerOptional or RenderProfileCpuSamplingPolicy.ExternalSamplerRequired ||
+        HardwareCounterPolicy != RenderProfileHardwareCounterPolicy.Disabled ||
+        (Instrumentation & (RenderProfileInstrumentation.TargetedCpuSpans |
+            RenderProfileInstrumentation.TargetedGpuTimestamps | RenderProfileInstrumentation.HardwareCounters)) != 0;
+
     [JsonPropertyName("scene")]
     public RenderProfileSceneConfiguration Scene { get; init; } = new();
 
@@ -148,6 +177,38 @@ public sealed record RenderProfileRecipe
         Contract.Validate();
         Expected.Validate();
         Budgets.Validate();
+        CpuProfiling.Validate();
+        GpuProfiling.Validate();
+        if (ExternalCapture is null)
+            throw new ArgumentException("External capture configuration cannot be null.");
+        ExternalCapture.Validate();
+        const RenderProfileInstrumentation knownInstrumentation = RenderProfileInstrumentation.AggregateCpu |
+            RenderProfileInstrumentation.TargetedCpuSpans | RenderProfileInstrumentation.CoarseGpu |
+            RenderProfileInstrumentation.TargetedGpuTimestamps | RenderProfileInstrumentation.HardwareCounters;
+        if ((Instrumentation & ~knownInstrumentation) != 0 || !Enum.IsDefined(ProfileMode) ||
+            !Enum.IsDefined(CpuSamplingPolicy) || !Enum.IsDefined(HardwareCounterPolicy) ||
+            !Enum.IsDefined(LabelPolicy) || !Enum.IsDefined(ValidationMode) || !Enum.IsDefined(ExecutionMode))
+            throw new ArgumentException("Unknown profiling mode, instrumentation or policy.");
+        if (EnableSynchronizationValidation && !EnableValidation)
+            throw new ArgumentException("Synchronization validation requires validation.");
+        if (ProfileMode is RenderProfileMode.CleanProfile or RenderProfileMode.ReleaseBenchmark && IsIntrusive)
+            throw new ArgumentException("Clean and release profiles prohibit diagnostic observers, validation, labels, spans, sampling and counters.");
+        if (CpuSamplingPolicy == RenderProfileCpuSamplingPolicy.ExternalSamplerRequired && CpuProfiling.SamplerIdentity is null)
+            throw new ArgumentException("Required external sampling needs the identity of the attached sampler.");
+        if (Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedGpuTimestamps) && GpuProfiling.Targets.Length == 0)
+            throw new ArgumentException("Targeted GPU timestamps require at least one selected target.");
+        if (GpuProfiling.Targets.Length != 0 && !Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedGpuTimestamps))
+            throw new ArgumentException("GPU target selection requires targeted GPU timestamp instrumentation.");
+        if ((CpuProfiling.Stages.Length != 0 || CpuProfiling.EmitMarkers) &&
+            !Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedCpuSpans) && CpuSamplingPolicy != RenderProfileCpuSamplingPolicy.TargetedSpans)
+            throw new ArgumentException("CPU stage selection and markers require targeted span instrumentation.");
+        if (Instrumentation.HasFlag(RenderProfileInstrumentation.HardwareCounters) || HardwareCounterPolicy != RenderProfileHardwareCounterPolicy.Disabled)
+        {
+            if (GpuProfiling.HardwareCounterIndices.Length == 0)
+                throw new ArgumentException("Hardware counter capture requires explicitly selected counter indices.");
+            if (ProfileMode != RenderProfileMode.Diagnostics)
+                throw new ArgumentException("Hardware counter replay requires Diagnostics profile mode.");
+        }
         _ = ScaledWidth;
         _ = ScaledHeight;
         _ = TotalCaptureFrames;

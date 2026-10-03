@@ -49,6 +49,8 @@ namespace XREngine.Scene.Transforms
         private void OnSourceMatrixChanged(TransformBase @base, Matrix4x4 worldMatrix)
             => MarkWorldModified();
         
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
             => Source is null
                 ? Parent?.WorldMatrix ?? Matrix4x4.Identity

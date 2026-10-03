@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "name": "browser-unlit-color",
+  "source": "browser-unlit-color.material.json",
+  "sourceLanguage": "MaterialRecipe",
+  "target": "WebGPUWgsl",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "entryPoints": { "vertex": "vertexMain", "fragment": "fragmentMain" },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 2,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 64,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.browser.mesh.v1",
+  "layout": {
+    "vertexStride": 20,
+    "positionOffset": 0,
+    "uvOffset": 12,
+    "transformBytes": 64,
+    "materialBytes": 16,
+    "bindings": [
+      { "group": 0, "binding": 0, "kind": "uniform", "visibility": "vertex", "bytes": 64, "dynamic": true },
+      { "group": 1, "binding": 0, "kind": "uniform", "visibility": "fragment", "bytes": 16, "dynamic": false },
+      { "group": 1, "binding": 1, "kind": "texture-2d-float", "visibility": "fragment" },
+      { "group": 1, "binding": 2, "kind": "filtering-sampler", "visibility": "fragment" }
+    ]
+  },
+  "pipeline": {
+    "topology": "triangle-list", "cullMode": "none", "depthFormat": "depth24plus",
+    "depthWrite": true, "depthCompare": "less", "blend": false, "sampleCount": 1
+  }
+}

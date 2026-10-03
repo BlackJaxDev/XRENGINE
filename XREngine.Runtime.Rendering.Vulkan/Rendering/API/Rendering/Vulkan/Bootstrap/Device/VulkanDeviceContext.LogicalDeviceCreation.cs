@@ -34,8 +34,8 @@ internal sealed partial class VulkanDeviceContext
         {
             if (!OpenXrBootstrapContext.TryCreateVulkanDevice(
                     (nint)PhysicalDevice.Handle,
-                    &createInfo,
-                    getInstanceProcAddr,
+                    (nint)(&createInfo),
+                    (nint)getInstanceProcAddr,
                     out nint openXrCreatedDeviceHandle,
                     out _,
                     out string? openXrCreateFailure))

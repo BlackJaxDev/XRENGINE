@@ -301,13 +301,21 @@ internal sealed partial class VulkanFrameLoop
         _targetOutputSession = null;
     }
 
-    internal void CreateTargetInstanceResources(Vk api, Silk.NET.Windowing.IWindow? window)
+    internal void CreateTargetInstanceResources(Vk api)
         => _targetDriver.CreateInstanceResources(
-            new VulkanTargetSurfaceAuthority(api, _deviceContext, _outputRuntime, window));
+            new VulkanTargetSurfaceAuthority(
+                api,
+                _deviceContext,
+                _outputRuntime,
+                (_targetDriver as VulkanDesktopWsiTargetDriver)?.Window.DesktopVulkanSurface));
 
-    internal void DestroyTargetInstanceResources(Vk api, Silk.NET.Windowing.IWindow? window)
+    internal void DestroyTargetInstanceResources(Vk api)
         => _targetDriver.DestroyInstanceResources(
-            new VulkanTargetSurfaceAuthority(api, _deviceContext, _outputRuntime, window));
+            new VulkanTargetSurfaceAuthority(
+                api,
+                _deviceContext,
+                _outputRuntime,
+                (_targetDriver as VulkanDesktopWsiTargetDriver)?.Window.DesktopVulkanSurface));
 
     internal void DisposeImGuiResources()
     {

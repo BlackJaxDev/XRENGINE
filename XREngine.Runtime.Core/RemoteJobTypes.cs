@@ -1,3 +1,4 @@
+using MemoryPack;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -19,7 +20,8 @@ namespace XREngine
     /// <summary>
     /// An envelope describing a remote job request that can be forwarded to another machine.
     /// </summary>
-    public sealed class RemoteJobRequest
+    [MemoryPackable]
+    public sealed partial class RemoteJobRequest
     {
         public Guid JobId { get; init; } = Guid.NewGuid();
         public string Operation { get; init; } = string.Empty;
@@ -38,7 +40,8 @@ namespace XREngine
     /// <summary>
     /// Response payload for a remote job execution.
     /// </summary>
-    public sealed class RemoteJobResponse
+    [MemoryPackable]
+    public sealed partial class RemoteJobResponse
     {
         public Guid JobId { get; init; }
         public bool Success { get; init; }

@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Data;
 using XREngine.Scene;
 
@@ -13,7 +13,7 @@ public static class BootstrapAudioWorldBuilder
             return;
 
         soundComp!.Name = "TestSound";
-        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        var desktop = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.Desktop);
         var data = RuntimeAudioIntegrationServices.Current.LoadAudioData(Path.Combine(desktop, "test.mp3"));
         soundComp.RelativeToListener = true;
         soundComp.Gain = 0.1f;

@@ -510,16 +510,50 @@ internal sealed class VulkanResourceAllocator
         if (Interlocked.Exchange(ref _retired, 1) != 0)
             return false;
 
-        if (immediate)
+        Exception? firstFailure = null;
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
         {
-            DestroyPhysicalImagesImmediate(backendContext, exceptImageGroups);
-            DestroyPhysicalBuffersImmediate(backendContext);
+            if (ReferenceEquals(group, exceptImageGroup) || exceptImageGroups?.Contains(group) == true)
+                continue;
+
+            ulong handle = group.Image.Handle;
+            try
+            {
+                if (immediate)
+                    group.DestroyImmediate(backendContext);
+                else
+                    group.Destroy(backendContext);
+            }
+            catch (Exception exception)
+            {
+                backendContext.Resources.QuarantineRetirementFailure(
+                    EVulkanRetirementWorkClass.Image, handle, exception, group);
+                firstFailure ??= exception;
+            }
         }
-        else
+
+        foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
         {
-            DestroyPhysicalImages(backendContext, exceptImageGroup, exceptImageGroups);
-            DestroyPhysicalBuffers(backendContext);
+            ulong handle = group.Buffer.Handle;
+            try
+            {
+                if (immediate)
+                    group.DestroyImmediate(backendContext);
+                else
+                    group.Destroy(backendContext);
+            }
+            catch (Exception exception)
+            {
+                backendContext.Resources.QuarantineRetirementFailure(
+                    EVulkanRetirementWorkClass.Buffer, handle, exception, group);
+                firstFailure ??= exception;
+            }
         }
+
+        if (firstFailure is not null)
+            throw new InvalidOperationException(
+                $"Vulkan physical resource retirement failed; affected groups are quarantined: {firstFailure.Message}",
+                firstFailure);
 
         return true;
     }

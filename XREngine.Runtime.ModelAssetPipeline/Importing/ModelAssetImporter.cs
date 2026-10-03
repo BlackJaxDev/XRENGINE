@@ -2,7 +2,7 @@ using Assimp;
 using Assimp.Configs;
 using Assimp.Unmanaged;
 using XREngine.Extensions;
-using ImageMagick;
+using XREngine.Imaging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections;
@@ -400,7 +400,7 @@ namespace XREngine
 
                 try
                 {
-                    string? match = Directory.EnumerateFiles(searchPath, fileName, SearchOption.AllDirectories).FirstOrDefault();
+                    string? match = XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(searchPath, fileName, SearchOption.AllDirectories).FirstOrDefault();
                     if (!string.IsNullOrWhiteSpace(match))
                     {
                         string resolvedMatch = Path.GetFullPath(match);
@@ -567,7 +567,7 @@ namespace XREngine
 
             try
             {
-                using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
+                using RuntimeImage filler = XRTexture2D.FillerImage;
                 placeholder.Mipmaps = [new Mipmap2D(filler)];
                 placeholder.SizedInternalFormat = ESizedInternalFormat.Rgba8;
             }
@@ -646,7 +646,6 @@ namespace XREngine
         private readonly DelMaterialFactory _materialFactory;
 
         private readonly ConcurrentDictionary<(TextureType type, string pathLower), TextureSlot> _textureInfoCache = [];
-        private readonly ConcurrentDictionary<string, MagickImage?> _textureCache = new();
         private readonly Dictionary<string, List<SceneNode>> _nodeCache = [];
         private readonly ConcurrentDictionary<int, Lazy<XRMaterial>> _materialCacheByIndex = [];
 
@@ -887,8 +886,8 @@ namespace XREngine
             => samplerName.Contains("Bump", StringComparison.OrdinalIgnoreCase)
             || samplerName.Contains("Normal", StringComparison.OrdinalIgnoreCase);
 
-        private static MagickImage CreateUberPlaceholderImage(string samplerName)
-            => new(IsNormalLikeSampler(samplerName) ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage);
+        private static RuntimeImage CreateUberPlaceholderImage(string samplerName)
+            => IsNormalLikeSampler(samplerName) ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage;
 
         public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
             => GetOrCreateUberSamplerTexture(
@@ -937,7 +936,8 @@ namespace XREngine
 
                 try
                 {
-                    tex.Mipmaps = [new Mipmap2D(CreateUberPlaceholderImage(key.samplerName))];
+                    using RuntimeImage placeholder = CreateUberPlaceholderImage(key.samplerName);
+                    tex.Mipmaps = [new Mipmap2D(placeholder)];
                 }
                 catch (Exception ex)
                 {
@@ -2966,9 +2966,6 @@ namespace XREngine
 
         public void Dispose()
         {
-            foreach (var tex in _textureCache.Values)
-                tex?.Dispose();
-            _textureCache.Clear();
             _textureInfoCache.Clear();
         }
     }

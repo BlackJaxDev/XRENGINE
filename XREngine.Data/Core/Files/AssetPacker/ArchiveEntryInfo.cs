@@ -34,23 +34,18 @@ namespace XREngine.Core.Files
             /// <summary>Compression algorithm used to encode this entry.</summary>
             public CompressionCodec Codec { get; } = codec;
         }
-        
+
         /// <summary>
-        /// Decompresses a single entry from an already-opened archive. This reads the compressed bytes
-        /// from disk and returns the decompressed content.
+        /// One-shot decompression of a single entry for tooling. Opens a temporary handle, decodes the
+        /// entry into a new array, and closes the archive.
         /// </summary>
         /// <param name="archiveFilePath">Path to the <c>.pak</c> file.</param>
         /// <param name="entry">The entry to decompress (from <see cref="ArchiveInfo.Entries"/>).</param>
         /// <returns>The decompressed bytes.</returns>
         public static byte[] DecompressEntry(string archiveFilePath, ArchiveEntryInfo entry)
         {
-            unsafe
-            {
-                using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
-                using var reader = new CookedBinaryReader((byte*)map.Address, map.Length);
-                ReadOnlySpan<byte> compressedSpan = reader.GetSpan(entry.DataOffset, entry.CompressedSize);
-                return Compression.Decompress(compressedSpan, entry.Codec, (int)entry.UncompressedSize);
-            }
+            using PublishedArchiveHandle handle = PublishedArchiveHandle.Open(archiveFilePath);
+            return handle.ReadAssetBytes(entry.Path);
         }
     }
 }

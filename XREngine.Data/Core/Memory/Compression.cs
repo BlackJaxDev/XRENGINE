@@ -1,9 +1,9 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Numerics;
 using System.Text;
 using K4os.Compression.LZ4;
-using Silk.NET.Core.Native;
-using Silk.NET.DirectStorage;
+
+
 using XREngine.Data.Transforms.Rotations;
 using ZstdSharp;
 
@@ -11,146 +11,23 @@ namespace XREngine.Data
 {
     public static partial class Compression
     {
-        private sealed class GDeflateCodecContext(DStorage api, ComPtr<IDStorageCompressionCodec> codec) : IDisposable
-        {
-            public DStorage Api { get; } = api;
-            public ComPtr<IDStorageCompressionCodec> Codec { get; } = codec;
-            public object SyncRoot { get; } = new();
+        /// <summary>Optional codec installed by the application composition root.</summary>
+        public static IGDeflateCodec? GDeflateBackend { get; set; }
 
-            public void Dispose()
-            {
-                Codec.Dispose();
-                Api.Dispose();
-            }
-        }
-
-        private static readonly Lazy<GDeflateCodecContext?> GDeflateCodec = new(CreateGDeflateCodec, LazyThreadSafetyMode.ExecutionAndPublication);
-
-        private static unsafe GDeflateCodecContext? CreateGDeflateCodec()
-        {
-            if (!OperatingSystem.IsWindows())
-                return null;
-
-            try
-            {
-                DStorage api = DStorage.GetApi();
-                ComPtr<IDStorageCompressionCodec> codec = api.CreateCompressionCodec<IDStorageCompressionCodec>((CompressionFormat)1, 0);
-                if (codec.Handle is null)
-                {
-                    api.Dispose();
-                    return null;
-                }
-
-                return new GDeflateCodecContext(api, codec);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        public static unsafe bool TryCompressGDeflate(ReadOnlySpan<byte> source, out byte[] encoded)
+        public static bool TryCompressGDeflate(ReadOnlySpan<byte> source, out byte[] encoded)
         {
             encoded = [];
             if (source.IsEmpty)
                 return true;
-
-            GDeflateCodecContext? context = GDeflateCodec.Value;
-            if (context is null)
-                return false;
-
-            lock (context.SyncRoot)
-            {
-                try
-                {
-                    nuint bound = context.Codec.CompressBufferBound((nuint)source.Length);
-                    if (bound == 0 || bound > int.MaxValue)
-                        return false;
-
-                    encoded = new byte[(int)bound];
-                    nuint compressedSize = 0;
-
-                    int hr;
-                    fixed (byte* sourcePtr = source)
-                    fixed (byte* encodedPtr = encoded)
-                    {
-                        hr = context.Codec.CompressBuffer(
-                            sourcePtr,
-                            (nuint)source.Length,
-                            (Silk.NET.DirectStorage.Compression)1,
-                            encodedPtr,
-                            (nuint)encoded.Length,
-                            &compressedSize);
-                    }
-
-                    if (hr < 0 || compressedSize == 0 || compressedSize > (nuint)encoded.Length)
-                    {
-                        encoded = [];
-                        return false;
-                    }
-
-                    if (compressedSize != (nuint)encoded.Length)
-                        Array.Resize(ref encoded, (int)compressedSize);
-
-                    return true;
-                }
-                catch
-                {
-                    encoded = [];
-                    return false;
-                }
-            }
+            return GDeflateBackend?.TryCompress(source, out encoded) ?? false;
         }
 
-        public static unsafe bool TryDecompressGDeflate(ReadOnlySpan<byte> encodedSource, int expectedDecodedLength, out byte[] decoded)
+        public static bool TryDecompressGDeflate(ReadOnlySpan<byte> source, int expectedDecodedLength, out byte[] decoded)
         {
             decoded = [];
-            if (expectedDecodedLength < 0)
-                return false;
-
             if (expectedDecodedLength == 0)
-                return encodedSource.IsEmpty;
-
-            if (encodedSource.IsEmpty)
-                return false;
-
-            GDeflateCodecContext? context = GDeflateCodec.Value;
-            if (context is null)
-                return false;
-
-            lock (context.SyncRoot)
-            {
-                try
-                {
-                    decoded = new byte[expectedDecodedLength];
-                    nuint actualDecodedSize = 0;
-
-                    int hr;
-                    fixed (byte* encodedPtr = encodedSource)
-                    fixed (byte* decodedPtr = decoded)
-                    {
-                        hr = context.Codec.DecompressBuffer(
-                            encodedPtr,
-                            (nuint)encodedSource.Length,
-                            decodedPtr,
-                            (nuint)decoded.Length,
-                            &actualDecodedSize);
-                    }
-
-                    if (hr < 0 || actualDecodedSize != (nuint)expectedDecodedLength)
-                    {
-                        decoded = [];
-                        return false;
-                    }
-
-                    return true;
-                }
-                catch
-                {
-                    decoded = [];
-                    return false;
-                }
-            }
+                return source.IsEmpty;
+            return GDeflateBackend?.TryDecompress(source, expectedDecodedLength, out decoded) ?? false;
         }
 
         public static byte[] DecompressFromString(uint? length, string byteStr)
@@ -774,71 +651,31 @@ namespace XREngine.Data
             return decoded;
         }
 
-        // ═══════════════════ nvCOMP stub (GPU-accelerated) ══════════════════════
-        //
-        // NVIDIA nvCOMP provides GPU-accelerated compression/decompression via CUDA.
-        // On Blackwell+, the hardware Decompression Engine handles LZ4/Snappy/Deflate
-        // with zero SM usage.  On older CUDA GPUs, SM-based fallback is used.
-        //
-        // Integration requires:
-        //  1. nvcomp.dll (not on NuGet — separate NVIDIA download)
-        //  2. CUDA runtime (cudart)
-        //  3. P/Invoke bindings to nvcompBatchedLZ4DecompressAsync, etc.
-        //  4. GPU buffer management (cudaMalloc / cudaFree / cudaMemcpy)
-        //
-        // The stub below provides the API surface.  When nvcomp.dll is present,
-        // it will be used; otherwise it falls back to CPU LZ4.
-        // ────────────────────────────────────────────────────────────────────────
+        /// <summary>Optional hardware LZ4 codec installed during application composition.</summary>
+        public static IHardwareLz4Codec? NvCompBackend { get; set; }
+        public static bool IsNvCompAvailable => NvCompBackend?.IsAvailable ?? false;
 
-        /// <summary>Whether the nvCOMP native library is loaded and usable.</summary>
-        public static bool IsNvCompAvailable => NvCompInterop.IsAvailable;
-
-        /// <summary>
-        /// Compresses using nvCOMP (GPU LZ4).  Falls back to CPU <see cref="CompressLz4"/>
-        /// if the GPU path is unavailable.
-        /// </summary>
-        public static byte[] CompressNvComp(ReadOnlySpan<byte> source)
+        /// <summary>Compresses on the installed hardware backend, with explicitly requested managed fallback.</summary>
+        public static byte[] CompressNvComp(ReadOnlySpan<byte> source, bool allowManagedFallback = false)
         {
-            if (NvCompInterop.IsAvailable)
-            {
-                try
-                {
-                    return NvCompInterop.Compress(source);
-                }
-                catch
-                {
-                    // Fall back to CPU path if native interop is present but runtime
-                    // invocation fails (ABI drift, driver/runtime mismatch, etc.).
-                }
-            }
-
-            // Fallback: CPU LZ4
-            return CompressLz4(source);
+            IHardwareLz4Codec? backend = NvCompBackend;
+            if (backend?.IsAvailable == true)
+                return backend.Compress(source);
+            if (allowManagedFallback)
+                return CompressLz4(source);
+            throw new NotSupportedException("nvCOMP compression requires an installed and available CUDA backend.");
         }
 
-        /// <summary>
-        /// Decompresses using nvCOMP (GPU LZ4).  Falls back to CPU <see cref="DecompressLz4"/>
-        /// if the GPU path is unavailable.
-        /// </summary>
-        public static byte[] DecompressNvComp(ReadOnlySpan<byte> compressed)
+        /// <summary>Decompresses on the installed hardware backend, with explicitly requested managed fallback.</summary>
+        public static byte[] DecompressNvComp(ReadOnlySpan<byte> compressed, bool allowManagedFallback = false)
         {
-            if (NvCompInterop.IsAvailable)
-            {
-                try
-                {
-                    return NvCompInterop.Decompress(compressed);
-                }
-                catch
-                {
-                    // Fall back to CPU path if native interop is present but runtime
-                    // invocation fails (ABI drift, driver/runtime mismatch, etc.).
-                }
-            }
-
-            // Fallback: CPU LZ4
-            return DecompressLz4(compressed);
+            IHardwareLz4Codec? backend = NvCompBackend;
+            if (backend?.IsAvailable == true)
+                return backend.Decompress(compressed);
+            if (allowManagedFallback)
+                return DecompressLz4(compressed);
+            throw new NotSupportedException("nvCOMP decompression requires an installed and available CUDA backend.");
         }
-
         // ══════════════════════ Unified codec dispatch ══════════════════════════
 
         /// <summary>
@@ -848,6 +685,7 @@ namespace XREngine.Data
         {
             return codec switch
             {
+                CompressionCodec.Stored => source.ToArray(),
                 CompressionCodec.Lzma => Compress(source.ToArray(), longSize: true),
                 CompressionCodec.Lz4 => CompressLz4(source),
                 CompressionCodec.Zstd => CompressZstd(source),
@@ -866,6 +704,7 @@ namespace XREngine.Data
         {
             return codec switch
             {
+                CompressionCodec.Stored => compressed.ToArray(),
                 CompressionCodec.Lzma => Decompress(compressed, longLength: true),
                 CompressionCodec.Lz4 => DecompressLz4(compressed),
                 CompressionCodec.Zstd => DecompressZstd(compressed),
@@ -948,182 +787,6 @@ namespace XREngine.Data
 
             byte[] compressed = Convert.FromHexString(byteStr);
             return DecompressZstd(compressed);
-        }
-
-        /// <summary>
-        /// Compresses a unit quaternion q = [w, x, y, z] into a compressed form.
-        /// N is the number of bits per component for the quantized components.
-        /// </summary>
-        public static (int index, int signBit, int[] quantizedComponents) CompressQuaternion(Quaternion q, int bitsPerComponent = 8)
-        {
-            // Find the index of the largest component
-            float[] absQ = Array.ConvertAll([q.X, q.Y, q.Z, q.W], MathF.Abs);
-            int i = Array.IndexOf(absQ, MaxValue(absQ));
-
-            // Get the sign of q_i
-            int signBit = q[i] >= 0 ? 0 : 1;
-
-            // Remove q_i to get the remaining components
-            var qRest = new float[3];
-            int restIndex = 0;
-            for (int idx = 0; idx < 4; idx++)
-                if (idx != i)
-                    qRest[restIndex++] = q[idx];
-
-            // Compute the scaling factor
-            float scale = MathF.Sqrt(1 - q[i] * q[i]);
-            float[] scaledComponents = scale > 0 ? Array.ConvertAll(qRest, qi => qi / scale) : ([0.0f, 0.0f, 0.0f]);
-
-            // Quantize the scaled components
-            int[] quantizedComponents = new int[3];
-            int maxInt = (1 << bitsPerComponent) - 1; // 2^N - 1
-            for (int j = 0; j < 3; j++)
-            {
-                // Map from [-1, 1] to [0, maxInt]
-                int qc = (int)MathF.Round((scaledComponents[j] + 1) * (maxInt / 2.0f));
-                qc = Math.Max(0, Math.Min(maxInt, qc)); // Clamp to [0, maxInt]
-                quantizedComponents[j] = qc;
-            }
-
-            // Pack the data
-            return (i, signBit, quantizedComponents);
-        }
-
-        public static Quaternion DecompressQuaternion((int index, int signBit, int[] quantizedComponents) compressedData, int bitsPerComponent = 8)
-        {
-            int i = compressedData.index;
-            int signBit = compressedData.signBit;
-            int[] quantizedComponents = compressedData.quantizedComponents;
-            int maxInt = (1 << bitsPerComponent) - 1; // 2^N - 1
-
-            // Dequantize the components
-            float[] scaledComponents = new float[3];
-            for (int j = 0; j < 3; j++)
-            {
-                float sc = (quantizedComponents[j] / (maxInt / 2.0f)) - 1;
-                sc = Math.Max(-1.0f, Math.Min(1.0f, sc)); // Clamp to [-1, 1]
-                scaledComponents[j] = sc;
-            }
-
-            // Compute q_i
-            float sumOfSquares = scaledComponents.Sum(x => x * x);
-            float q_i = MathF.Sqrt(Math.Max(0.0f, 1.0f - sumOfSquares));
-            if (signBit == 1)
-                q_i = -q_i;
-            
-            // Rescale the components
-            float scale = MathF.Sqrt(1.0f - q_i * q_i);
-            float[] qRest = scale > 0 ? Array.ConvertAll(scaledComponents, sc => sc * scale) : ([0.0f, 0.0f, 0.0f]);
-
-            // Reconstruct the quaternion
-            Quaternion q = new();
-            int restIndex = 0;
-            for (int idx = 0; idx < 4; idx++)
-                q[idx] = idx == i ? q_i : qRest[restIndex++];
-
-            return q;
-        }
-
-        /// <summary>
-        /// Utility method to find the maximum value in a double array.
-        /// </summary>
-        private static float MaxValue(float[] array)
-        {
-            float max = array[0];
-            foreach (var val in array)
-                if (val > max)
-                    max = val;
-            return max;
-        }
-
-        /// <summary>
-        /// Compresses a unit quaternion q = [w, x, y, z] into a byte array.
-        /// N is the number of bits per component for the quantized components.
-        /// </summary>
-        public static byte[] CompressQuaternionToBytes(Quaternion q, int bitsPerComponent = 8)
-        {
-            // Compress the quaternion to get the index, sign bit, and quantized components
-            var (index, signBit, quantizedComponents) = CompressQuaternion(q, bitsPerComponent);
-
-            // Calculate the total number of bits
-            int totalBits = 2 + 1 + 3 * bitsPerComponent; // index (2 bits) + sign bit (1 bit) + 3 components (N bits each)
-
-            // Calculate the number of bytes needed
-            int totalBytes = (totalBits + 7) / 8; // Round up to the nearest whole byte
-
-            byte[] byteArray = new byte[totalBytes];
-
-            // Pack the bits into a single integer or long
-            ulong packedData = 0;
-
-            // Start packing bits from the most significant bit
-            int bitPosition = totalBits;
-
-            // Pack the index (2 bits)
-            bitPosition -= 2;
-            packedData |= ((ulong)index & 0x3) << bitPosition;
-
-            // Pack the sign bit (1 bit)
-            bitPosition -= 1;
-            packedData |= ((ulong)signBit & 0x1) << bitPosition;
-
-            // Pack the quantized components (3 * N bits)
-            for (int j = 0; j < 3; j++)
-            {
-                bitPosition -= bitsPerComponent;
-                packedData |= ((ulong)quantizedComponents[j] & ((1UL << bitsPerComponent) - 1)) << bitPosition;
-            }
-
-            // Now, write the packedData into the byte array
-            for (int i = 0; i < totalBytes; i++)
-            {
-                // Extract the byte at position (from most significant byte)
-                int shiftAmount = (totalBytes - 1 - i) * 8;
-                byteArray[i] = (byte)((packedData >> shiftAmount) & 0xFF);
-            }
-
-            return byteArray;
-        }
-
-        /// <summary>
-        /// Decompresses the quaternion from a byte array back to the quaternion q = [w, x, y, z].
-        /// </summary>
-        public static Quaternion DecompressQuaternion(byte[] byteArray, int offset = 0, int bitsPerComponent = 8)
-        {
-            // Calculate the total number of bits
-            int totalBits = 2 + 1 + 3 * bitsPerComponent; // index (2 bits) + sign bit (1 bit) + 3 components (N bits each)
-            int totalBytes = (totalBits + 7) / 8;
-
-            // Reconstruct the packed data from the byte array
-            ulong packedData = 0;
-
-            for (int i = 0; i < totalBytes; i++)
-            {
-                int shiftAmount = (totalBytes - 1 - i) * 8;
-                packedData |= ((ulong)byteArray[offset + i]) << shiftAmount;
-            }
-
-            // Now, unpack the data
-            int bitPosition = totalBits;
-
-            // Unpack the index (2 bits)
-            bitPosition -= 2;
-            int index = (int)((packedData >> bitPosition) & 0x3);
-
-            // Unpack the sign bit (1 bit)
-            bitPosition -= 1;
-            int signBit = (int)((packedData >> bitPosition) & 0x1);
-
-            // Unpack the quantized components (3 * N bits)
-            int[] quantizedComponents = new int[3];
-            for (int j = 0; j < 3; j++)
-            {
-                bitPosition -= bitsPerComponent;
-                quantizedComponents[j] = (int)((packedData >> bitPosition) & ((1ul << bitsPerComponent) - 1));
-            }
-
-            // Now, use the decompressed data to reconstruct the quaternion
-            return DecompressQuaternion((index, signBit, quantizedComponents), bitsPerComponent);
         }
 
         public static byte[] Compress(Vector3 value, out int bits)

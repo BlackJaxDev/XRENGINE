@@ -16,6 +16,11 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+Zero-readback passes execute from configured GPU-pass topology even when CPU
+visibility collection publishes no mesh commands. The GPU scene and the pass
+culling mask own mesh membership; CPU visibility must not suppress a default,
+capture, or shadow pass before its GPU dispatch.
+
 Advanced late color and participating temporal passes declare filtered
 `CpuDirect` submission independently of the opaque native GPU family. Their
 draws still execute on the GPU; the CPU filters authored late-lane eligibility.
@@ -182,7 +187,7 @@ Mesh-shader dialect availability today:
 
 - `VulkanEXT` (`VK_EXT_mesh_shader`): production. `vkCmdDrawMeshTasksIndirectCountEXT` is wired; `SupportsMeshletDispatch()` returns true.
 - `OpenGLEXT` (`GL_EXT_mesh_shader`): production shader variants exist (`MeshletCullingExt.task`, `MeshletRenderExt.mesh`, `MeshletRenderSkinnedExt.mesh`), but the `glMultiDrawMeshTasksIndirectCountEXT` C# delegate isn't wired and current driver coverage is thin. `SupportsMeshletDispatch()` returns false.
-- `OpenGLNV` (`GL_NV_mesh_shader`): NVIDIA-only, no indirect-count entrypoint exists in the spec; diagnostic / bring-up only.
+- `OpenGLNV` (`GL_NV_mesh_shader`): NVIDIA-only; this engine implements direct task dispatch for diagnostics, while the extension's indirect-count entrypoint is not implemented in the production path.
 - `None`: resolver downgrades any forced meshlet strategy.
 
 ## Production Closeout Status

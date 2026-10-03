@@ -1,4 +1,4 @@
-﻿using XREngine.Animation;
+using XREngine.Animation;
 using XREngine.Data.Components;
 
 namespace XREngine.Components.Animation
@@ -8,7 +8,7 @@ namespace XREngine.Components.Animation
         #region Cheek Puff
         public static BlendTree1D CheekPuffBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_CheekPuffLeft),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_CheekPuffLeft),
             Children =
             [
                 new BlendTree1D.Child()
@@ -28,7 +28,7 @@ namespace XREngine.Components.Animation
             Name = "Cheek Puff",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.CheekPuff, 1.0f))
         };
         private static AnimationClip CheekPuff0() => new()
@@ -36,7 +36,7 @@ namespace XREngine.Components.Animation
             Name = "Cheek Puff 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.CheekPuff, 0.0f))
         };
         #endregion
@@ -44,7 +44,7 @@ namespace XREngine.Components.Animation
         #region Cheek Squint Left
         public static BlendTree1D CheekSquintLeftBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_SmileFrownLeft),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_SmileFrownLeft),
             Children =
             [
                 new BlendTree1D.Child()
@@ -64,7 +64,7 @@ namespace XREngine.Components.Animation
             Name = "Cheek Squint Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.CheekSquintLeft, 1.0f))
         };
         private static AnimationClip CheekSquintLeft0() => new()
@@ -72,7 +72,7 @@ namespace XREngine.Components.Animation
             Name = "Cheek Squint Left 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.CheekSquintLeft, 0.0f))
         };
         #endregion
@@ -80,7 +80,7 @@ namespace XREngine.Components.Animation
         #region Cheek Squint Right
         public static BlendTree1D CheekSquintRightBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_SmileFrownRight),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_SmileFrownRight),
             Children =
             [
                 new BlendTree1D.Child()
@@ -100,7 +100,7 @@ namespace XREngine.Components.Animation
             Name = "Cheek Squint Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.CheekSquintRight, 1.0f))
         };
         private static AnimationClip CheekSquintRight0() => new()
@@ -108,7 +108,7 @@ namespace XREngine.Components.Animation
             Name = "Cheek Squint Right 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.CheekSquintRight, 0.0f))
         };
         #endregion
@@ -116,7 +116,7 @@ namespace XREngine.Components.Animation
         #region Jaw Forward
         public static BlendTree1D JawForwardBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_JawForward),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_JawForward),
             Children =
             [
                 new BlendTree1D.Child()
@@ -136,7 +136,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw Forward",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawForward, 1.0f))
         };
         private static AnimationClip JawForward0() => new()
@@ -144,7 +144,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw Forward 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawForward, 0.0f))
         };
         #endregion
@@ -152,7 +152,7 @@ namespace XREngine.Components.Animation
         #region Jaw Open
         public static BlendTree1D JawOpenBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_JawOpen),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_JawOpen),
             Children =
             [
                 new BlendTree1D.Child()
@@ -169,7 +169,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D JawOpenHelper() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_TongueOut),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_TongueOut),
             Children =
             [
                 new BlendTree1D.Child()
@@ -189,7 +189,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw Open 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawOpen, 0.0f))
         };
         private static AnimationClip JawOpen() => new()
@@ -197,7 +197,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw Open",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawOpen, 1.0f))
         };
         #endregion
@@ -205,7 +205,7 @@ namespace XREngine.Components.Animation
         #region Limit JawX (MouthX)
         public static BlendTree1D LimitJawX_MouthX() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -227,7 +227,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D JawXBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_JawX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_JawX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -252,7 +252,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawRight, 1.0f),
                 (ARKitBlendshapeNames.JawLeft, 0.0f))
         };
@@ -261,7 +261,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawLeft, 1.0f),
                 (ARKitBlendshapeNames.JawRight, 0.0f))
         };
@@ -270,7 +270,7 @@ namespace XREngine.Components.Animation
             Name = "Jaw X 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.JawLeft, 0.0f),
                 (ARKitBlendshapeNames.JawRight, 0.0f))
         };
@@ -279,7 +279,7 @@ namespace XREngine.Components.Animation
         #region Lip Pucker
         public static BlendTree1D LipPuckerBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipPucker),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipPucker),
             Children =
             [
                 new BlendTree1D.Child()
@@ -296,7 +296,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthPucker_LipFunnel() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipFunnel),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipFunnel),
             Children =
             [
                 new BlendTree1D.Child()
@@ -316,7 +316,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Pucker",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthPucker, 1.0f))
         };
         private static AnimationClip MouthPucker0() => new()
@@ -324,7 +324,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Pucker 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthPucker, 0.0f))
         };
         #endregion
@@ -332,7 +332,7 @@ namespace XREngine.Components.Animation
         #region Mouth Closed
         public static BlendTree1D MouthClosedBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthClosed),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthClosed),
             Children =
             [
                 new BlendTree1D.Child()
@@ -352,7 +352,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Closed",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthClose, 1.0f))
         };
         private static AnimationClip MouthClosed0() => new()
@@ -360,7 +360,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Closed 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthClose, 0.0f))
         };
         #endregion
@@ -368,7 +368,7 @@ namespace XREngine.Components.Animation
         #region Mouth Frown Left
         public static BlendTree1D MouthFrownLeftBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_SmileFrownLeft),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_SmileFrownLeft),
             Children =
             [
                 new BlendTree1D.Child()
@@ -388,12 +388,12 @@ namespace XREngine.Components.Animation
             Name = "Mouth Frown Left 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthFrownLeft, 0.0f))
         };
         private static BlendTree1D LimitMouthFrownLeft_MouthXLeft() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -413,7 +413,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Frown Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthFrownLeft, 1.0f))
         };
         #endregion
@@ -421,7 +421,7 @@ namespace XREngine.Components.Animation
         #region Mouth Frown Right
         public static BlendTree1D MouthFrownRightBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_SmileFrownRight),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_SmileFrownRight),
             Children =
             [
                 new BlendTree1D.Child()
@@ -438,7 +438,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthFrownRight_MouthXRight() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -458,7 +458,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Frown Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthFrownRight, 1.0f))
         };
         private static AnimationClip MouthFrownRight0() => new()
@@ -466,7 +466,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Frown Right 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthFrownRight, 0.0f))
         };
         #endregion
@@ -474,7 +474,7 @@ namespace XREngine.Components.Animation
         #region Mouth Funnel
         public static BlendTree1D MouthFunnelBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipFunnel),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipFunnel),
             Children =
             [
                 new BlendTree1D.Child()
@@ -494,7 +494,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Funnel",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthFunnel, 1.0f))
         };
         private static AnimationClip MouthFunnel0() => new()
@@ -502,7 +502,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Funnel 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthFunnel, 0.0f))
         };
         #endregion
@@ -510,7 +510,7 @@ namespace XREngine.Components.Animation
         #region Mouth Lower Down
         public static BlendTree1D MouthLowerDownBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthLowerDown),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthLowerDown),
             Children =
             [
                 new BlendTree1D.Child()
@@ -527,7 +527,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthLowerDown_LipFunnel() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipFunnel),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipFunnel),
             Children =
             [
                 new BlendTree1D.Child()
@@ -547,7 +547,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Lower Down",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthLowerDownLeft, 1.0f),
                 (ARKitBlendshapeNames.MouthLowerDownRight, 1.0f))
         };
@@ -556,7 +556,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Lower Down 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthLowerDownLeft, 0.0f),
                 (ARKitBlendshapeNames.MouthLowerDownRight, 0.0f))
         };
@@ -565,7 +565,7 @@ namespace XREngine.Components.Animation
         #region Mouth Press
         public static BlendTree1D MouthPressBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthPress),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthPress),
             Children =
             [
                 new BlendTree1D.Child()
@@ -585,7 +585,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Press",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthPressLeft, 1.0f),
                 (ARKitBlendshapeNames.MouthPressRight, 1.0f))
         };
@@ -594,7 +594,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Press 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthPressLeft, 0.0f),
                 (ARKitBlendshapeNames.MouthPressRight, 0.0f))
         };
@@ -603,7 +603,7 @@ namespace XREngine.Components.Animation
         #region Mouth Roll Lower
         public static BlendTree1D MouthRollLowerBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipSuckLower),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipSuckLower),
             Children =
             [
                 new BlendTree1D.Child()
@@ -620,7 +620,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthRollLower_MouthClosed() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthClosed),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthClosed),
             Children =
             [
                 new BlendTree1D.Child()
@@ -640,7 +640,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Roll Lower",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthRollLower, 1.0f))
         };
         private static AnimationClip MouthRollLower0() => new()
@@ -648,7 +648,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Roll Lower 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthRollLower, 0.0f))
         };
         #endregion
@@ -656,7 +656,7 @@ namespace XREngine.Components.Animation
         #region Mouth Roll Upper
         public static BlendTree1D MouthRollUpperBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipSuckUpper),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipSuckUpper),
             Children =
             [
                 new BlendTree1D.Child()
@@ -673,7 +673,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthRollUpper_MouthClosed() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthClosed),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthClosed),
             Children =
             [
                 new BlendTree1D.Child()
@@ -693,7 +693,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Roll Upper",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthRollUpper, 1.0f))
         };
         private static AnimationClip MouthRollUpper0() => new()
@@ -701,7 +701,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Roll Upper 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthRollUpper, 0.0f))
         };
         #endregion
@@ -709,7 +709,7 @@ namespace XREngine.Components.Animation
         #region Mouth Shrug Lower
         public static BlendTree1D MouthShrugLowerBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthRaiserLower),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthRaiserLower),
             Children =
             [
                 new BlendTree1D.Child()
@@ -726,7 +726,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthShrugLower_MouthClosed() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthClosed),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthClosed),
             Children =
             [
                 new BlendTree1D.Child()
@@ -746,7 +746,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Shrug Lower",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthShrugLower, 1.0f))
         };
         private static AnimationClip MouthShrugLower0() => new()
@@ -754,7 +754,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Shrug Lower 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthShrugLower, 0.0f))
         };
         #endregion
@@ -762,7 +762,7 @@ namespace XREngine.Components.Animation
         #region Mouth Shrug Upper
         public static BlendTree1D MouthShrugUpperBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthRaiserUpper),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthRaiserUpper),
             Children =
             [
                 new BlendTree1D.Child()
@@ -779,7 +779,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthShrugUpper_MouthClosed() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthClosed),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthClosed),
             Children =
             [
                 new BlendTree1D.Child()
@@ -799,7 +799,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Shrug Upper",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthShrugUpper, 1.0f))
         };
         private static AnimationClip MouthShrugUpper0() => new()
@@ -807,7 +807,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Shrug Upper 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthShrugUpper, 0.0f))
         };
         #endregion
@@ -815,7 +815,7 @@ namespace XREngine.Components.Animation
         #region Mouth Smile Left
         public static BlendTree1D MouthSmileLeftBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_SmileFrownLeft),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_SmileFrownLeft),
             Children =
             [
                 new BlendTree1D.Child()
@@ -835,7 +835,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Smile Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthSmileLeft, 1.0f))
         };
         private static AnimationClip MouthSmileLeft0() => new()
@@ -843,7 +843,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Smile Left 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthSmileLeft, 0.0f))
         };
         #endregion
@@ -851,7 +851,7 @@ namespace XREngine.Components.Animation
         #region Mouth Smile Right
         public static BlendTree1D MouthSmileRightBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_SmileFrownRight),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_SmileFrownRight),
             Children =
             [
                 new BlendTree1D.Child()
@@ -871,7 +871,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Smile Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthSmileRight, 1.0f))
         };
         private static AnimationClip MouthSmileRight0() => new()
@@ -879,7 +879,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Smile Right 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthSmileRight, 0.0f))
         };
         #endregion
@@ -887,7 +887,7 @@ namespace XREngine.Components.Animation
         #region Mouth Stretch Left
         public static BlendTree1D MouthStretchLeftBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthStretchLeft),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthStretchLeft),
             Children =
             [
                 new BlendTree1D.Child()
@@ -907,7 +907,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Stretch Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthStretchLeft, 1.0f))
         };
         private static AnimationClip MouthStretchLeft0() => new()
@@ -915,7 +915,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Stretch Left 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthStretchLeft, 0.0f))
         };
         #endregion
@@ -923,7 +923,7 @@ namespace XREngine.Components.Animation
         #region Mouth Stretch Right
         public static BlendTree1D MouthStretchRightBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthStretchRight),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthStretchRight),
             Children =
             [
                 new BlendTree1D.Child()
@@ -943,7 +943,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Stretch Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthStretchRight, 1.0f))
         };
         private static AnimationClip MouthStretchRight0() => new()
@@ -951,7 +951,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Stretch Right 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthStretchRight, 0.0f))
         };
         #endregion
@@ -959,7 +959,7 @@ namespace XREngine.Components.Animation
         #region Mouth Upper Up Left
         public static BlendTree1D MouthUpperUpLeftBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthUpperUp),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthUpperUp),
             Children =
             [
                 new BlendTree1D.Child()
@@ -976,7 +976,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D MouthRight() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -993,7 +993,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthUpperUpLeft_LipFunnel() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipFunnel),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipFunnel),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1013,7 +1013,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Upper Up Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthUpperUpLeft, 1.0f))
         };
         private static AnimationClip MouthUpperUpLeft0() => new()
@@ -1021,7 +1021,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Upper Up Left 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthUpperUpLeft, 0.0f))
         };
         #endregion
@@ -1029,7 +1029,7 @@ namespace XREngine.Components.Animation
         #region Mouth Upper Up Right
         public static BlendTree1D MouthUpperUpRightBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthUpperUp),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthUpperUp),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1046,7 +1046,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D MouthLeft() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1063,7 +1063,7 @@ namespace XREngine.Components.Animation
         };
         private static BlendTree1D LimitMouthUpperUpRight_LipFunnel() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_LipFunnel),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_LipFunnel),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1083,7 +1083,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Upper Up Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthUpperUpRight, 1.0f))
         };
         private static AnimationClip MouthUpperUpRight0() => new()
@@ -1091,7 +1091,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Upper Up Right 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthUpperUpRight, 0.0f))
         };
         #endregion
@@ -1099,7 +1099,7 @@ namespace XREngine.Components.Animation
         #region MouthX
         public static BlendTree1D MouthXBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_MouthX),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_MouthX),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1124,7 +1124,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Right",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthRight, 1.0f),
                 (ARKitBlendshapeNames.MouthLeft, 0.0f))
         };
@@ -1133,7 +1133,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth Left",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthLeft, 1.0f),
                 (ARKitBlendshapeNames.MouthRight, 0.0f))
         };
@@ -1142,7 +1142,7 @@ namespace XREngine.Components.Animation
             Name = "Mouth X 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.MouthLeft, 0.0f),
                 (ARKitBlendshapeNames.MouthRight, 0.0f))
         };
@@ -1151,7 +1151,7 @@ namespace XREngine.Components.Animation
         #region Nose Sneer
         public static BlendTree1D NoseSneerBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_NoseSneer),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_NoseSneer),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1171,7 +1171,7 @@ namespace XREngine.Components.Animation
             Name = "Nose Sneer",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.NoseSneerLeft, 1.0f),
                 (ARKitBlendshapeNames.NoseSneerRight, 1.0f))
         };
@@ -1180,7 +1180,7 @@ namespace XREngine.Components.Animation
             Name = "Nose Sneer 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.NoseSneerLeft, 0.0f),
                 (ARKitBlendshapeNames.NoseSneerRight, 0.0f))
         };
@@ -1189,7 +1189,7 @@ namespace XREngine.Components.Animation
         #region Tongue Out
         public static BlendTree1D TongueOutBlend() => new()
         {
-            ParameterName = FaceTrackingReceiverComponent.OSCmProxyName(FaceTrackingReceiverComponent.Avatar_TongueOut),
+            ParameterName = FaceTrackingProtocol.OSCmProxyName(FaceTrackingProtocol.Avatar_TongueOut),
             Children =
             [
                 new BlendTree1D.Child()
@@ -1209,7 +1209,7 @@ namespace XREngine.Components.Animation
             Name = "Tongue Out",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.TongueOut, 1.0f))
         };
         private static AnimationClip TongueOut0() => new()
@@ -1217,7 +1217,7 @@ namespace XREngine.Components.Animation
             Name = "Tongue Out 0",
             LengthInSeconds = 0.0f,
             Looped = false,
-            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingReceiverComponent.DefaultFaceTrackedNodeName,
+            RootMember = AnimationMember.SetNormalizedBlendshapeValuesByModelNodeName(FaceTrackingProtocol.DefaultFaceTrackedNodeName,
                 (ARKitBlendshapeNames.TongueOut, 0.0f))
         };
         #endregion

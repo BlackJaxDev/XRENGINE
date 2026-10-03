@@ -103,55 +103,36 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                 XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo);
         }
 
-        KhrVulkanEnable? vulkanExtension = null;
-        string? vulkanLoadError = null;
-        try
-        {
-            if (!Api.TryGetInstanceExtension<KhrVulkanEnable>(null, _instance, out var loadedVulkan))
-                vulkanLoadError = "XR_KHR_vulkan_enable was not returned by the Silk.NET extension loader.";
-            else
-                vulkanExtension = loadedVulkan;
-        }
-        catch (Exception ex)
-        {
-            vulkanLoadError = ex.Message;
-        }
-
-        KhrVulkanEnable2? vulkan2Extension = null;
-        string? vulkan2LoadError = null;
-        try
-        {
-            if (!Api.TryGetInstanceExtension<KhrVulkanEnable2>(null, _instance, out var loadedVulkan2))
-                vulkan2LoadError = "XR_KHR_vulkan_enable2 was not returned by the Silk.NET extension loader.";
-            else
-                vulkan2Extension = loadedVulkan2;
-        }
-        catch (Exception ex)
-        {
-            vulkan2LoadError = ex.Message;
-        }
+        using IOpenXrNativeGraphicsBorrow native = Host.BorrowNativeGraphicsDispatch();
+        nint vulkanRequirements = native.GetInstanceProcAddress("xrGetVulkanGraphicsRequirementsKHR");
+        nint vulkan2Requirements = native.GetInstanceProcAddress("xrGetVulkanGraphicsRequirements2KHR");
+        nint vulkanDevice = native.GetInstanceProcAddress("xrGetVulkanGraphicsDeviceKHR");
+        nint vulkan2Device = native.GetInstanceProcAddress("xrGetVulkanGraphicsDevice2KHR");
 
         bool useEnable2Binding = renderer.DeviceContext.InstanceCreatedThroughOpenXr &&
             renderer.DeviceContext.CreatedThroughOpenXr;
-        if (useEnable2Binding && vulkan2Extension is null)
-            throw new Exception($"Vulkan renderer was created through XR_KHR_vulkan_enable2, but the OpenXR session instance could not load it: {vulkan2LoadError}");
+        if (useEnable2Binding && (vulkan2Requirements == 0 || vulkan2Device == 0))
+            throw new Exception("Vulkan renderer was created through XR_KHR_vulkan_enable2, but its required OpenXR entrypoints are unavailable.");
 
-        if (!useEnable2Binding && vulkanExtension is null && vulkan2Extension is not null)
+        if (!useEnable2Binding && (vulkanRequirements == 0 || vulkanDevice == 0) &&
+            vulkan2Requirements != 0 && vulkan2Device != 0)
             useEnable2Binding = true;
 
-        if (useEnable2Binding && vulkan2Extension is not null)
+        if (useEnable2Binding && vulkan2Requirements != 0)
         {
-            if (vulkan2Extension.GetVulkanGraphicsRequirements2(_instance, _systemId, ref requirements) != Result.Success)
+            var getRequirements = (delegate* unmanaged[Stdcall]<ulong, ulong, GraphicsRequirementsVulkanKHR*, int>)vulkan2Requirements;
+            if (getRequirements(native.InstanceHandle, _systemId, &requirements) != 0)
                 throw new Exception("Failed to get Vulkan graphics requirements through XR_KHR_vulkan_enable2");
         }
-        else if (vulkanExtension is not null)
+        else if (vulkanRequirements != 0)
         {
-            if (vulkanExtension.GetVulkanGraphicsRequirements(_instance, _systemId, ref requirements) != Result.Success)
+            var getRequirements = (delegate* unmanaged[Stdcall]<ulong, ulong, GraphicsRequirementsVulkanKHR*, int>)vulkanRequirements;
+            if (getRequirements(native.InstanceHandle, _systemId, &requirements) != 0)
                 throw new Exception("Failed to get Vulkan graphics requirements through XR_KHR_vulkan_enable");
         }
         else
         {
-            throw new Exception($"Failed to get Vulkan OpenXR extension. XR_KHR_vulkan_enable2: {vulkan2LoadError ?? "<not tried>"}; XR_KHR_vulkan_enable: {vulkanLoadError ?? "<not tried>"}");
+            throw new Exception("OpenXR runtime provides neither complete XR_KHR_vulkan_enable nor XR_KHR_vulkan_enable2 graphics entrypoints.");
         }
 
         Debug.Vulkan($"Vulkan requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
@@ -199,11 +180,11 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
         }
 
         _ = TryResolveOpenXrFoveation(ERenderLibrary.Vulkan, out _);
-        ValidateSessionVulkanGraphicsDevice(renderer, useEnable2Binding, vulkanExtension, vulkan2Extension);
+        ValidateSessionVulkanGraphicsDevice(renderer, useEnable2Binding, vulkanDevice, vulkan2Device, native.InstanceHandle);
 
         GraphicsBindingVulkanKHR vkBinding = default;
         void* graphicsBinding = null;
-        if ((useEnable2Binding && vulkan2Extension is not null) || vulkanExtension is not null)
+        if ((useEnable2Binding && vulkan2Requirements != 0) || vulkanRequirements != 0)
         {
             // XR_KHR_vulkan_enable2 aliases XrGraphicsBindingVulkan2KHR to XrGraphicsBindingVulkanKHR.
             // Silk.NET 2.23 exposes a distinct StructureType for Vulkan2; Monado expects the aliased KHR type.
@@ -219,14 +200,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             graphicsBinding = &vkBinding;
         }
 
-        var createInfo = new SessionCreateInfo
-        {
-            Type = StructureType.SessionCreateInfo,
-            SystemId = _systemId,
-            Next = graphicsBinding
-        };
-        var result = CheckResult(Api.CreateSession(_instance, ref createInfo, ref _session), "xrCreateSession");
-        if (result != Result.Success)
+        int result = CheckResult(Host.GraphicsCalls.CreateSession((nint)graphicsBinding, out ulong createdSession), "xrCreateSession");
+        if (result != 0)
         {
             string bindingExtension = useEnable2Binding ? "XR_KHR_vulkan_enable2" : "XR_KHR_vulkan_enable";
             string message = $"Failed to create Vulkan OpenXR session: {result}. " +
@@ -235,23 +210,33 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                 $"QueueFamilyIndex={graphicsFamilyIndex}, QueueIndex=0, " +
                 $"RuntimeMinVulkan={requirements.MinApiVersionSupported}, RuntimeMaxVulkan={requirements.MaxApiVersionSupported}.";
 
-            if (result == Result.ErrorGraphicsDeviceInvalid)
+            if (result == (int)Result.ErrorGraphicsDeviceInvalid)
                 message += " The OpenXR runtime rejected the active Vulkan device; the Vulkan renderer must be created with the runtime-required OpenXR Vulkan instance/device extensions or through the XR_KHR_vulkan_enable2 creation path.";
 
             throw new OpenXrGraphicsSessionException(result, message);
+        }
+        try
+        {
+            Host.SetSession(createdSession);
+        }
+        catch
+        {
+            Host.GraphicsCalls.DestroySession(createdSession);
+            throw;
         }
     }
 
     private void ValidateSessionVulkanGraphicsDevice(
         VulkanRenderer renderer,
         bool useEnable2Binding,
-        KhrVulkanEnable? vulkanExtension,
-        KhrVulkanEnable2? vulkan2Extension)
+        nint vulkanDevice,
+        nint vulkan2Device,
+        ulong instanceHandle)
     {
         VkHandle requestedDevice = default;
-        Result deviceResult;
+        int deviceResult;
 
-        if (useEnable2Binding && vulkan2Extension is not null)
+        if (useEnable2Binding && vulkan2Device != 0)
         {
             VulkanGraphicsDeviceGetInfoKHR deviceGetInfo = new()
             {
@@ -260,25 +245,21 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                 VulkanInstance = new VkHandle(renderer.Instance.Handle)
             };
 
-            deviceResult = vulkan2Extension.GetVulkanGraphicsDevice2(
-                _instance,
-                ref deviceGetInfo,
-                ref requestedDevice);
+            var getDevice = (delegate* unmanaged[Stdcall]<ulong, VulkanGraphicsDeviceGetInfoKHR*, VkHandle*, int>)vulkan2Device;
+            deviceResult = getDevice(instanceHandle, &deviceGetInfo, &requestedDevice);
         }
-        else if (vulkanExtension is not null)
+        else if (vulkanDevice != 0)
         {
-            deviceResult = vulkanExtension.GetVulkanGraphicsDevice(
-                _instance,
-                _systemId,
-                new VkHandle(renderer.Instance.Handle),
-                ref requestedDevice);
+            var getDevice = (delegate* unmanaged[Stdcall]<ulong, ulong, VkHandle, VkHandle*, int>)vulkanDevice;
+            deviceResult = getDevice(instanceHandle, _systemId,
+                new VkHandle(renderer.Instance.Handle), &requestedDevice);
         }
         else
         {
             throw new Exception("Cannot validate OpenXR Vulkan graphics device because no Vulkan OpenXR extension was loaded.");
         }
 
-        if (deviceResult != Result.Success)
+        if (deviceResult != 0)
             throw new Exception($"Failed to query OpenXR Vulkan graphics device before session creation: {deviceResult}");
 
         if (requestedDevice.Handle == 0)
@@ -365,7 +346,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             long format = _vulkanOpenXrSwapchainFormats[i];
             uint samples = _vulkanOpenXrSwapchainSampleCounts[i];
             SwapchainUsageFlags usage = _vulkanOpenXrSwapchainUsages[i];
-            if (width == 0 || height == 0 || format == 0 || samples == 0 || _swapchains[i].Handle == 0)
+            if (width == 0 || height == 0 || format == 0 || samples == 0 || _swapchains[i] == 0)
             {
                 reason = $"OpenXR view {i} target metadata is incomplete";
                 return false;
@@ -402,7 +383,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
 Target:                 new RenderFrameViewTargetDescriptor(
                     ERenderLibrary.Vulkan,
                     outputIdentity,
-                    _swapchains[i].Handle,
+                    _swapchains[i],
                     attachmentSignature,
                     unchecked((ulong)format),
                     samples,
@@ -631,16 +612,13 @@ Target:                 new RenderFrameViewTargetDescriptor(
     internal unsafe void InitializeVulkanSwapchains(VulkanRenderer renderer)
     {
         uint formatCount = 0;
-        var formatResult = Api.EnumerateSwapchainFormats(_session, 0, ref formatCount, null);
-        if (formatResult != Result.Success || formatCount == 0)
+        int formatResult = Host.GraphicsCalls.EnumerateSwapchainFormats(Span<long>.Empty, out formatCount);
+        if (formatResult != 0 || formatCount == 0)
             throw new Exception($"Failed to enumerate OpenXR swapchain formats for Vulkan. Result={formatResult}, Count={formatCount}");
 
         var formats = new long[formatCount];
-        fixed (long* formatsPtr = formats)
-        {
-            formatResult = Api.EnumerateSwapchainFormats(_session, formatCount, ref formatCount, formatsPtr);
-        }
-        if (formatResult != Result.Success || formatCount == 0)
+        formatResult = Host.GraphicsCalls.EnumerateSwapchainFormats(formats, out formatCount);
+        if (formatResult != 0 || formatCount == 0)
             throw new Exception($"Failed to enumerate OpenXR swapchain formats for Vulkan. Result={formatResult}, Count={formatCount}");
 
         var supportedFormatsLog = string.Join(", ", Array.ConvertAll(formats, FormatVulkanSwapchainFormatForLog));
@@ -656,14 +634,14 @@ Target:                 new RenderFrameViewTargetDescriptor(
         // Create swapchains for each view
         for (int i = 0; i < _viewCount; i++)
         {
-            OpenXRAPI.OpenXrEyeSwapchainExtent extent =
+            OpenXrEyeSwapchainExtent extent =
                 ResolveOpenXrEyeSwapchainExtent((uint)i);
             LogOpenXrEyeSwapchainExtent("Vulkan", (uint)i, extent);
             uint width = extent.Width;
             uint height = extent.Height;
-            uint recommendedSamples = _viewConfigViews[i].RecommendedSwapchainSampleCount;
+            uint recommendedSamples = _viewConfigViews[i].RecommendedSampleCount;
 
-            Result lastResult = Result.Success;
+            int lastResult = 0;
             bool created = false;
             long createdFormat = 0;
             uint createdSamples = 0;
@@ -688,25 +666,21 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 {
                     foreach (uint samples in recommendedSamples > 1 ? [recommendedSamples, 1u] : new[] { 1u })
                     {
-                        var swapchainCreateInfo = new SwapchainCreateInfo
-                        {
-                            Type = StructureType.SwapchainCreateInfo,
-                            UsageFlags = usage,
-                            Format = format,
-                            SampleCount = samples,
-                            Width = width,
-                            Height = height,
-                            FaceCount = 1,
-                            ArraySize = 1,
-                            MipCount = 1
-                        };
+                        OpenXrSwapchainDescriptor descriptor = new(0, (ulong)usage, format,
+                            width, height, samples, 1, 1, 1);
+                        lastResult = Host.GraphicsCalls.CreateSwapchain(in descriptor, out ulong createdSwapchain);
 
-                        lastResult = CreateSwapchain(
-                            in swapchainCreateInfo,
-                            ref _swapchains[i]);
-
-                        if (lastResult == Result.Success)
+                        if (lastResult == 0)
                         {
+                            try
+                            {
+                                Host.SetSwapchain((uint)i, createdSwapchain, 0);
+                            }
+                            catch
+                            {
+                                Host.GraphicsCalls.DestroySwapchain(createdSwapchain);
+                                throw;
+                            }
                             Debug.Out($"OpenXR Vulkan swapchain[{i}] created. Format={FormatVulkanSwapchainFormatForLog(format)}, Samples={samples}, Usage={usage}, Size={width}x{height}");
                             createdFormat = format;
                             _vulkanOpenXrSwapchainUsages[i] = usage;
@@ -737,7 +711,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             // marker and stays zero until registration has completed.
             _swapchainImagesVK[i] = images;
             RegisterOpenXrSwapchainImageLifetimes(renderer, images, imageCount);
-            _swapchainImageCounts[i] = imageCount;
+            Host.SetSwapchain((uint)i, _swapchains[i], imageCount);
             RecordSmokeSwapchain(
                 "Vulkan",
                 i,
@@ -758,26 +732,15 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
     }
 
-    private unsafe Result CreateSwapchain(
-        in SwapchainCreateInfo createInfo,
-        ref Swapchain swapchain)
-    {
-        fixed (Swapchain* swapchainPtr = &swapchain)
-            return Api.CreateSwapchain(_session, in createInfo, swapchainPtr);
-    }
-
     private unsafe uint InitializeVulkanSwapchainImages(
         int viewIndex,
         out SwapchainImageVulkan2KHR* swapchainImages)
     {
         swapchainImages = null;
         uint imageCount = 0;
-        Result enumerateResult = Api.EnumerateSwapchainImages(
-            _swapchains[viewIndex],
-            0,
-            &imageCount,
-            null);
-        if (enumerateResult != Result.Success || imageCount == 0)
+        int enumerateResult = Host.GraphicsCalls.EnumerateSwapchainImages(
+            _swapchains[viewIndex], 0, 0, out imageCount);
+        if (enumerateResult != 0 || imageCount == 0)
         {
             throw new Exception(
                 $"Failed to query Vulkan swapchain image count for view {viewIndex}. " +
@@ -800,12 +763,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
             };
         }
 
-        enumerateResult = Api.EnumerateSwapchainImages(
-            _swapchains[viewIndex],
-            imageCount,
-            &imageCount,
-            (SwapchainImageBaseHeader*)swapchainImages);
-        if (enumerateResult != Result.Success || imageCount == 0)
+        enumerateResult = Host.GraphicsCalls.EnumerateSwapchainImages(
+            _swapchains[viewIndex], imageCount, (nint)swapchainImages, out imageCount);
+        if (enumerateResult != 0 || imageCount == 0)
         {
             Marshal.FreeHGlobal((nint)swapchainImages);
             swapchainImages = null;
@@ -840,11 +800,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 Marshal.FreeHGlobal((nint)_swapchainImagesVK[i]);
                 _swapchainImagesVK[i] = null;
             }
-            _swapchainImageCounts[i] = 0;
-            if (_swapchains[i].Handle != 0)
+            if (_swapchains[i] != 0)
             {
-                Api.DestroySwapchain(_swapchains[i]);
-                _swapchains[i] = default;
+                ulong handle = _swapchains[i];
+                if (Host.GraphicsCalls.DestroySwapchain(handle) == 0)
+                    Host.DetachSwapchain((uint)i);
             }
         }
     }
@@ -855,7 +815,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             return false;
 
         SwapchainImageVulkan2KHR* images = _swapchainImagesVK[viewIndex];
-        if (images == null || imageIndex >= _swapchainImageCounts[viewIndex])
+        if (images == null || imageIndex >= _swapchainImageCounts[checked((int)viewIndex)])
             return false;
 
         uint width = GetOpenXrSwapchainWidth(viewIndex);
@@ -1270,7 +1230,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         _vulkanEyeMirrorHeight = 0;
     }
 
-    private bool TryRenderVulkanEyesBatch(CompositionLayerProjectionView* projectionViews, out bool handled)
+    private bool TryRenderVulkanEyesBatch(out bool handled)
     {
         bool strictSinglePassStereoRequested =
             RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
@@ -1376,6 +1336,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint rightImageIndex = 0;
         bool leftAcquired = false;
         bool rightAcquired = false;
+        bool leftWaitCompleted = false;
+        bool rightWaitCompleted = false;
         bool permitSequentialFallback = modeResolution.RequestedMode != EVrViewRenderMode.SinglePassStereo;
         bool requestSequentialFallback = false;
         int frameNo = Context.PendingFrameNumber;
@@ -1425,7 +1387,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitLeft"))
             {
-                if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, frameNo))
+                if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, ref leftWaitCompleted, frameNo))
                 {
                     requestSequentialFallback = permitSequentialFallback;
                     return false;
@@ -1434,7 +1396,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitRight"))
             {
-                if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, frameNo))
+                if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, ref rightWaitCompleted, frameNo))
                 {
                     requestSequentialFallback = permitSequentialFallback;
                     return false;
@@ -1518,8 +1480,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
                 RecordSmokeEyePublish(0);
                 RecordSmokeEyePublish(1);
-                FillProjectionView(0, projectionViews);
-                FillProjectionView(1, projectionViews);
+                StageProjectionView(0);
+                StageProjectionView(1);
             }
             if (strictSinglePassStereoRequested && trueSinglePassStereo)
                 RecordStrictSpsSuccessfulSubmission();
@@ -1573,8 +1535,16 @@ Target:                 new RenderFrameViewTargetDescriptor(
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.ReleaseEyes"))
             {
-                ReleaseOpenXrEyeImageIfAcquired(0, leftAcquired, frameNo);
-                ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
+                bool leftReleased = ReleaseOpenXrEyeImageIfReady(0, leftWaitCompleted, frameNo);
+                bool rightReleased = ReleaseOpenXrEyeImageIfReady(1, rightWaitCompleted, frameNo);
+                if (!leftReleased || !rightReleased ||
+                    (leftAcquired && Host.HasAcquiredImage(_swapchains[0])) ||
+                    (rightAcquired && Host.HasAcquiredImage(_swapchains[1])))
+                {
+                    handled = true;
+                    throw new InvalidOperationException(
+                        "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                }
             }
 
             if (requestSequentialFallback)
@@ -1632,10 +1602,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint viewIndex,
         ref uint imageIndex,
         ref bool acquired,
+        ref bool waitCompleted,
         int frameNo)
     {
-        var acquireResult = CheckResult(AcquireSwapchainImage(Host, _swapchains[viewIndex], out imageIndex), "xrAcquireSwapchainImage");
-        if (acquireResult != Result.Success)
+        var acquireResult = CheckResult(AcquireSwapchainImage(Host, _swapchains[checked((int)viewIndex)], out imageIndex), "xrAcquireSwapchainImage");
+        if (acquireResult != 0)
             return false;
 
         acquired = true;
@@ -1644,10 +1615,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Acquire(batch) => {acquireResult} imageIndex={imageIndex}");
 
-        var waitResult = CheckResult(WaitSwapchainImage(Host, _swapchains[viewIndex], long.MaxValue), "xrWaitSwapchainImage");
-        if (waitResult != Result.Success)
+        var waitResult = CheckResult(WaitSwapchainImage(Host, _swapchains[checked((int)viewIndex)], long.MaxValue), "xrWaitSwapchainImage");
+        if (waitResult != 0)
             return false;
 
+        waitCompleted = true;
         RecordSmokeEyeWait(viewIndex);
 
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -1656,16 +1628,17 @@ Target:                 new RenderFrameViewTargetDescriptor(
         return true;
     }
 
-    private void ReleaseOpenXrEyeImageIfAcquired(uint viewIndex, bool acquired, int frameNo)
+    private bool ReleaseOpenXrEyeImageIfReady(uint viewIndex, bool waitCompleted, int frameNo)
     {
-        if (!acquired)
-            return;
+        if (!waitCompleted)
+            return true;
 
-        var releaseResult = CheckResult(ReleaseSwapchainImage(Host, _swapchains[viewIndex]), "xrReleaseSwapchainImage");
-        if (releaseResult == Result.Success)
+        var releaseResult = CheckResult(ReleaseSwapchainImage(Host, _swapchains[checked((int)viewIndex)]), "xrReleaseSwapchainImage");
+        if (releaseResult == 0)
             RecordSmokeEyeRelease(viewIndex);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release(batch) => {releaseResult}");
+        return releaseResult == 0;
     }
 
     private bool TryRenderVulkanEyeSinglePassStereoToSwapchains(

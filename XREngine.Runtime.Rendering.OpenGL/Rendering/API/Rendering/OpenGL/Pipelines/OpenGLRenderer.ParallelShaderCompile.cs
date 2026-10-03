@@ -183,11 +183,7 @@ public partial class OpenGLRenderer
         if (_glMaxShaderCompilerThreadsKhr != 0)
             return;
 
-        if (Window.GLContext is not INativeContext nativeContext)
-            return;
-
-        if (nativeContext.TryGetProcAddress("glMaxShaderCompilerThreadsKHR", out IntPtr proc) && proc != IntPtr.Zero)
-            _glMaxShaderCompilerThreadsKhr = proc;
+        _glMaxShaderCompilerThreadsKhr = ResolveWindowProcAddress("glMaxShaderCompilerThreadsKHR");
     }
 
     private static uint ResolveParallelShaderCompilerThreadCount()

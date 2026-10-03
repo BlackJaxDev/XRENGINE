@@ -253,7 +253,8 @@ internal sealed partial class VulkanFrameLoop
                 out string meshFailure,
                 out bool coldSliceDeferred,
                 ref watchdog,
-                sourceFrameId: attempt.FrameNumber))
+                sourceFrameId: attempt.FrameNumber,
+                allowFrameOwnedAuthoringOperations: true))
         {
             if (coldSliceDeferred)
             {

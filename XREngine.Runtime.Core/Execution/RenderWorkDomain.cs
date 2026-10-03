@@ -603,7 +603,7 @@ public sealed partial class RenderWorkDomain : IDisposable
         try
         {
             if (_qos == ERenderWorkerQos.High)
-                WindowsThreadQos.ApplyHighRenderPriority();
+                RenderWorkerPlatformServices.ApplyHighRenderPriority();
         }
         catch (Exception exception)
         {

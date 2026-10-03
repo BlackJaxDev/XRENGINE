@@ -6,6 +6,8 @@ This page is the practical reference for native and external dependencies used b
 - a few optional tools and SDKs need to be installed or dropped into known folders
 - if you change a native dependency, validate the specific subsystem it affects
 
+Native calls and their build/copy declarations belong to the modules in [Runtime Project Organization](../../architecture/runtime/project-organization.md). Shared `net10.0` projects consume neutral contracts. A preserved staging folder under a shared project directory does not make that project the native dependency owner.
+
 For the broadest built-in setup path, start with:
 
 ```powershell
@@ -36,7 +38,7 @@ That bootstrap flow covers the standard repo bootstrap path, but it should be tr
 
 ### CoACD
 
-Used for convex decomposition workflows.
+Used for convex decomposition workflows by `XREngine.Runtime.Physics.Authoring` in editor/cook hosts. The existing Core staging directory is preserved; Authoring links the binary into its outputs. Core does not package or invoke CoACD, and shipping hosts consume cooked geometry.
 
 - Build path: triggered by `dotnet build` when needed
 - Script: `Tools/Dependencies/Build-CoACD.ps1`
@@ -87,7 +89,7 @@ VMA is not retrieved from upstream as a prebuilt DLL. GPUOpen VMA is a header-on
 - Native project: `Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.vcxproj`
 - Runtime DLL: `VulkanMemoryAllocatorBridge.Native.dll`
 - Packaged runtime location: `XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native`
-- Generated build location: `Build/_AgentValidation/00000000-000000-shared/tools/bin/VulkanMemoryAllocatorBridge/<Configuration>`
+- Generated build location: `Build/_AgentValidation/00000000-000000-shared/tools/bin/VulkanMemoryAllocatorBridge/<Debug-or-Release>`
 - Vendored source snapshot: `Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator` (VMA v3.3.0, MIT)
 - Fetch script: `Tools/Dependencies/Get-VulkanMemoryAllocator.ps1`
 - Direct build script: `Tools/Build-VulkanMemoryAllocatorBridge.ps1`
@@ -105,10 +107,12 @@ For a fresh checkout:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-VulkanMemoryAllocator.ps1
-dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
+dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj
 ```
 
-The managed project builds the native bridge automatically on Windows before preparing build output. Debug and Release outputs stay in separate ignored build directories and are copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading. Normal managed builds do not modify the packaged runtime DLL.
+The Vulkan module builds the native bridge automatically on Windows before preparing build output. Debug and Release outputs stay in separate ignored build directories and are copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading. Normal managed builds do not modify the packaged runtime DLL.
+
+The Vulkan project maps managed configurations ending in `Debug` or `Release` (for example, `Development Debug`) to the native bridge's `Debug` or `Release` configuration. Set `VmaBridgeNativeConfiguration=Debug` or `VmaBridgeNativeConfiguration=Release` explicitly when using another managed configuration; the bridge build rejects values outside those two native configurations. The mapped value also selects the generated bridge directory and its build-state stamp.
 
 If you are changing the native bridge and want to rebuild it directly:
 
@@ -135,16 +139,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Reports\Generate-Dep
 
 ### MagicPhysX
 
-Used for the current PhysX integration.
+Owned by `XREngine.Runtime.Physics.PhysX`, which declares its package and native output/publish items.
 
 - Runtime DLL: `libmagicphysx.dll`
-- Expected location: `XREngine.Runtime.Core/runtimes/win-x64/native`
+- Expected location: `XREngine.Runtime.Physics.PhysX/runtimes/win-x64/native`
 
 If you update the MagicPhysX submodule or its native output, rebuild and revalidate physics-focused flows afterward.
 
 ### Rive
 
-Used for Rive-based UI rendering.
+Used for Rive-based UI rendering by `XREngine.Runtime.UI.Rive`. The module references RiveSharp and copies the native binary from the preserved Rendering staging location below.
 
 - Source submodule: `Build/Submodules/rive-sharp`
 - Runtime DLL: `rive.dll`
@@ -172,7 +176,7 @@ disabled at runtime until the native `rive.dll` is built and staged.
 
 Used for video/media decode, streaming, and audio extraction.
 
-- Runtime DLLs are staged by `XREngine.Runtime.Rendering` from `Build/Dependencies/FFmpeg/`
+- `XREngine.Runtime.Media.FFmpeg` owns runtime DLL staging from `Build/Dependencies/FFmpeg/HlsReference/win-x64/`, seeded from `Build/Dependencies/FFmpeg/Seed/win-x64/` when needed.
 - Optional seed/reference files live under `Build/Dependencies/FFmpeg/`
 
 To retrieve the repo's FFmpeg seed binaries:
@@ -183,7 +187,7 @@ pwsh Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1
 
 ### yt-dlp
 
-Optional. Used for resolving YouTube URLs to directly playable media URLs.
+Optional. `XREngine.Runtime.Media.FFmpeg` owns discovery and process execution for resolving YouTube URLs to directly playable media URLs. Executable copying remains in the shared desktop build targets.
 
 Install it into the repo-standard location with:
 
@@ -203,7 +207,7 @@ Install it with:
 pwsh Tools/Dependencies/Get-MsdfAtlasGen.ps1
 ```
 
-The importer looks for it under `Build/Dependencies/MsdfAtlasGen/`.
+`XREngine.Runtime.Text.FreeType` owns atlas-tool discovery and execution, including the repository location `Build/Dependencies/MsdfAtlasGen/`. Rendering consumes the font backend contract and neutral glyph/atlas data.
 
 ### NVIDIA SDK binaries
 
@@ -260,7 +264,7 @@ blit.
 
 ### OVRLipSync
 
-Optional Meta/Oculus lip sync runtime.
+Optional Meta/Oculus lip sync runtime owned by `XREngine.Audio.OVRLipSync`.
 
 - Expected location: `ThirdParty/Meta/OVRLipSync/win-x64/OVRLipSync.dll`
 

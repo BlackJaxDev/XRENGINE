@@ -564,6 +564,20 @@ namespace XREngine.Components
         /// <summary>
         /// Handles gamepad horizontal look (right thumbstick X axis).
         /// </summary>
+        /// <summary>Applies a discrete body-yaw turn and resets dependent VR pose histories.</summary>
+        public bool SnapTurn(float degrees)
+        {
+            if (!float.IsFinite(degrees) || MathF.Abs(degrees) > 180 || _ignoreViewYawInputs || ViewRotationTransform is not { } rotation)
+                return false;
+            _viewRotation.Yaw += degrees;
+            RemapYaw();
+            _lastYaw = _viewRotation.Yaw;
+            rotation.Rotator = _viewRotation;
+            rotation.RecalculateMatrices(true);
+            XREngine.Input.RuntimeVrDiscontinuityServices.Publish(XREngine.Input.EVrPoseDiscontinuity.SnapTurn);
+            return true;
+        }
+
         public void LookRight(float dx)
         {
             float dt = ViewRotationDeltaSeconds;

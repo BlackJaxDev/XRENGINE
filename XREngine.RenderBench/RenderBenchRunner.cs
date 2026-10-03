@@ -44,17 +44,35 @@ public sealed class RenderBenchRunner(
             },
         };
         RenderBenchProfileExecutor executor = new(options, state, recipe);
-        RenderProfilePreparation preparation = executor.PrepareAsync(recipe, CancellationToken.None).GetAwaiter().GetResult();
-        executor.StabilizeAsync(recipe, CancellationToken.None).GetAwaiter().GetResult();
-        executor.WarmCaptureThread(recipe);
-        int firstFrame = checked((int)executor.NextFrameId);
-        for (int index = 0; index < recipe.TotalCaptureFrames; index++)
+        using CancellationTokenSource timeout = new();
+        if (options.RecipeFile is not null)
+            timeout.CancelAfter(TimeSpan.FromSeconds(recipe.TimeoutSeconds));
+        try
         {
-            if (shutdownRequested())
-                throw new OperationCanceledException("RenderBench shutdown was requested.");
-            executor.ExecuteMeasuredFrame(recipe, firstFrame + index);
+            RenderProfilePreparation preparation = executor.PrepareAsync(recipe, timeout.Token).GetAwaiter().GetResult();
+            if (preparation.UnsupportedRequirements is { Count: > 0 })
+                throw new NotSupportedException(string.Join(Environment.NewLine, preparation.UnsupportedRequirements));
+            executor.StabilizeAsync(recipe, timeout.Token).GetAwaiter().GetResult();
+            executor.WarmCaptureThread(recipe);
+            int firstFrame = checked((int)executor.NextFrameId);
+            for (int index = 0; index < recipe.TotalCaptureFrames; index++)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                if (shutdownRequested())
+                    throw new OperationCanceledException("RenderBench shutdown was requested.");
+                executor.ExecuteMeasuredFrame(recipe, firstFrame + index);
+            }
+            RenderProfileResult result = executor.DrainAsync(recipe, preparation, timeout.Token).GetAwaiter().GetResult();
+            return result.Artifacts["result"];
         }
-        RenderProfileResult result = executor.DrainAsync(recipe, preparation, CancellationToken.None).GetAwaiter().GetResult();
-        return result.Artifacts["result"];
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Render profile exceeded its {recipe.TimeoutSeconds}-second whole-session timeout.", exception);
+        }
+        finally
+        {
+            executor.CancelAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
     }
 }

@@ -1,7 +1,8 @@
 using System;
 using System.Numerics;
+using System.Text.Json.Nodes;
 using System.Threading;
-using ImageMagick;
+using XREngine.Imaging;
 using Silk.NET.Vulkan;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -58,7 +59,7 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanCommandRuntime _commandRuntime = new();
     internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
-    private int _explicitProductionPreparationStarted;
+    private int _explicitProductionPreparationCompleted;
 
     /// <summary>
     /// Captures the exactly-once diagnostic recorded when PresentNow readiness
@@ -212,11 +213,7 @@ public sealed partial class VulkanRenderer :
             _frameTelemetry,
             targetDriver,
             this,
-            BackendGeneration,
-            hostContext.TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? windowHost) &&
-            windowHost is XRWindow desktopWindow
-                ? desktopWindow.Window
-                : null);
+            BackendGeneration);
         _commandRuntime.AdvancedVisibilityDiagnosticCopy =
             _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
         _commandRuntime.AdvancedCounterDiagnosticCopy =
@@ -458,7 +455,7 @@ public sealed partial class VulkanRenderer :
             callback,
             out failure);
     public override bool ScreenshotRequiresVerticalFlip => _frameLoop.ScreenshotRequiresVerticalFlip;
-    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback) => _frameLoop.GetScreenshotAsync(region, withTransparency, imageCallback);
+    public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<RuntimeImage, int> imageCallback) => _frameLoop.GetScreenshotAsync(region, withTransparency, imageCallback);
     public override bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow) => _frameLoop.CalcDotLuminance(texture, luminance, out dotLuminance, genMipmapsNow);
     public override bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow) => _frameLoop.CalcDotLuminance(texture, luminance, out dotLuminance, genMipmapsNow);
     public override bool TryReadTextureMipRgbaFloat(XRTexture texture, int mipLevel, int layerIndex, out float[]? rgbaFloats, out int width, out int height, out string failure) => _frameLoop.TryReadTextureMipRgbaFloat(texture, mipLevel, layerIndex, out rgbaFloats, out width, out height, out failure);
@@ -549,7 +546,18 @@ public sealed partial class VulkanRenderer :
     public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version) => _commandRuntime.BindIndirectMesh(version is null ? null : GenericToAPI<VkMeshRenderer>(version));
     public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version) => _commandRuntime.ValidateIndirectIndexedMesh(version is null ? null : GenericToAPI<VkMeshRenderer>(version));
     public override bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount) => _commandRuntime.TryGetIndirectIndexBufferInfo(version is null ? null : GenericToAPI<VkMeshRenderer>(version), out indexElementSize, out indexCount);
-    public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize) => _commandRuntime.TrySyncIndirectIndexBuffer(meshRenderer, indexBuffer, elementSize);
+    public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
+    {
+        if (meshRenderer is null || indexBuffer is null)
+            return false;
+
+        // Atlas index buffers can be first used by raster submission. Resolve their
+        // cold wrappers here; command-runtime lookup deliberately cannot create them.
+        indexBuffer.EnsureOwnerFirstConstructionCompleted();
+        return GenericToAPI<VkMeshRenderer>(meshRenderer.GetDefaultVersion()) is { } mesh &&
+            GenericToAPI<VkDataBuffer>(indexBuffer) is { } buffer &&
+            _commandRuntime.TrySyncIndirectIndexBuffer(mesh, buffer, elementSize);
+    }
     public override void BindDrawIndirectBuffer(XRDataBuffer buffer) => _commandRuntime.BindIndirectBuffer(GenericToAPI<VkDataBuffer>(buffer));
     public override void UnbindDrawIndirectBuffer() => _commandRuntime.BindIndirectBuffer(null);
     public override void BindParameterBuffer(XRDataBuffer buffer) => _commandRuntime.BindIndirectCountBuffer(GenericToAPI<VkDataBuffer>(buffer));
@@ -587,6 +595,215 @@ public sealed partial class VulkanRenderer :
         // unlike OpenGL there is no thread-local error queue to drain here.
     }
     object IRenderBackendDiagnosticsCapability.GetLiveImageAllocationDiagnostics(int limit) => _resourceRuntime.GetLiveImageAllocationDiagnostics(limit);
+    object IRenderBackendDiagnosticsCapability.GetLiveResourceOwnerDiagnostics(int top, bool collapseOwnerSuffix, out int groupCount)
+    {
+        IReadOnlyList<VulkanLiveResourceOwnerCount> groups = CaptureLiveResourceOwners(top, collapseOwnerSuffix);
+        groupCount = groups.Count;
+        int live = 0;
+        JsonArray ownerGroups = new();
+        for (int index = 0; index < groups.Count; index++)
+        {
+            live += groups[index].Live;
+            VulkanLiveResourceOwnerCount group = groups[index];
+            ownerGroups.Add(new JsonObject
+            {
+                ["type"] = group.Type,
+                ["owner"] = group.Owner,
+                ["live"] = group.Live,
+                ["pendingRetirement"] = group.PendingRetirement,
+            });
+        }
+        return new JsonObject { ["returned_live"] = live, ["groups"] = ownerGroups };
+    }
+    object? IRenderBackendDiagnosticsCapability.GetPresentNowTerminalDiagnostics()
+    {
+        VulkanPresentNowTerminalDiagnostic diagnostic = CapturePresentNowTerminalDiagnostic();
+        if (!diagnostic.IsValid)
+            return null;
+
+        return new JsonObject
+        {
+            ["transition_id"] = diagnostic.TransitionId,
+            ["frame_id"] = diagnostic.FrameId,
+            ["frame_slot"] = diagnostic.FrameSlot,
+            ["accepted_scene_epoch"] = diagnostic.AcceptedSceneEpoch,
+            ["output_generation"] = diagnostic.OutputGeneration,
+            ["readiness_stage"] = diagnostic.ReadinessStage,
+            ["active_ticket"] = diagnostic.ActiveTicket,
+            ["dependency_chain"] = diagnostic.DependencyChain,
+            ["disposition"] = diagnostic.Disposition,
+            ["elapsed_ms"] = diagnostic.ElapsedMilliseconds,
+            ["since_last_progress_ms"] = diagnostic.SinceLastProgressMilliseconds,
+            ["mesh_request_count"] = diagnostic.MeshRequestCount,
+            ["failure_type"] = diagnostic.FailureType,
+            ["detail"] = diagnostic.Detail,
+        };
+    }
+    object? IRenderBackendDiagnosticsCapability.GetPresentNowFailureDiagnostics()
+    {
+        VulkanPresentNowFailureDiagnostic diagnostic = CapturePresentNowFailureDiagnostic();
+        if (!diagnostic.IsValid)
+            return null;
+
+        return new JsonObject
+        {
+            ["sequence"] = diagnostic.Sequence,
+            ["frame_id"] = diagnostic.FrameId,
+            ["frame_slot"] = diagnostic.FrameSlot,
+            ["accepted_scene_epoch"] = diagnostic.AcceptedSceneEpoch,
+            ["output_generation"] = diagnostic.OutputGeneration,
+            ["readiness_stage"] = diagnostic.ReadinessStage,
+            ["active_ticket"] = diagnostic.ActiveTicket,
+            ["dependency_chain"] = diagnostic.DependencyChain,
+            ["disposition"] = diagnostic.Disposition,
+            ["elapsed_ms"] = diagnostic.ElapsedMilliseconds,
+            ["since_last_progress_ms"] = diagnostic.SinceLastProgressMilliseconds,
+            ["mesh_request_count"] = diagnostic.MeshRequestCount,
+            ["failure_type"] = diagnostic.FailureType,
+            ["detail"] = diagnostic.Detail,
+        };
+    }
+    object? IRenderBackendDiagnosticsCapability.GetDesktopFrameTerminalDiagnostics()
+    {
+        VulkanDesktopFrameTerminalDiagnostic diagnostic = CaptureDesktopFrameTerminalDiagnostic();
+        if (!diagnostic.IsValid)
+            return null;
+
+        return new JsonObject
+        {
+            ["sequence"] = diagnostic.Sequence,
+            ["frame_id"] = diagnostic.FrameId,
+            ["frame_slot"] = diagnostic.FrameSlot,
+            ["outcome"] = diagnostic.Outcome,
+            ["reason"] = diagnostic.Reason,
+            ["failure_kind"] = diagnostic.FailureKind,
+            ["failure_stage"] = diagnostic.FailureStage,
+            ["native_result"] = diagnostic.NativeResult,
+            ["exception_type"] = diagnostic.ExceptionType,
+            ["detail"] = diagnostic.Detail,
+            ["ownership_settled"] = diagnostic.OwnershipSettled,
+        };
+    }
+    object IRenderBackendDiagnosticsCapability.GetRetirementDiagnostics()
+    {
+        VulkanRetirementDiagnostic diagnostic = CaptureRetirementDiagnostics();
+        JsonArray classes = new();
+        foreach (VulkanRetirementClassDiagnostic item in diagnostic.Classes)
+        {
+            classes.Add(new JsonObject
+            {
+                ["class"] = item.Class,
+                ["ordinaryCap"] = item.OrdinaryCap,
+                ["highWaterMark"] = item.HighWaterMark,
+                ["admitted"] = item.Admitted,
+                ["completed"] = item.Completed,
+                ["deferred"] = item.Deferred,
+                ["backlog"] = item.Backlog,
+                ["oldestPendingAgeMilliseconds"] = item.OldestPendingAgeMilliseconds,
+                ["uncappedSafetyDrain"] = item.UncappedSafetyDrain,
+                ["uncappedSafetyDrainActivations"] = item.UncappedSafetyDrainActivations,
+            });
+        }
+
+        return new JsonObject
+        {
+            ["frameSerial"] = diagnostic.FrameSerial,
+            ["drainElapsedMilliseconds"] = diagnostic.DrainElapsedMilliseconds,
+            ["drainDurationSampleCount"] = diagnostic.DrainDurationSampleCount,
+            ["drainDurationOverflowCount"] = diagnostic.DrainDurationOverflowCount,
+            ["maximumPublishedDrainDurationMilliseconds"] = diagnostic.MaximumPublishedDrainDurationMilliseconds,
+            ["drainDurationP50Milliseconds"] = diagnostic.DrainDurationP50Milliseconds,
+            ["drainDurationP95Milliseconds"] = diagnostic.DrainDurationP95Milliseconds,
+            ["drainDurationP99Milliseconds"] = diagnostic.DrainDurationP99Milliseconds,
+            ["classes"] = classes,
+            ["quarantinedFailures"] = diagnostic.QuarantinedFailures,
+            ["presentationMaintenanceEnabled"] = diagnostic.PresentationMaintenanceEnabled,
+            ["desktopGeneration"] = diagnostic.DesktopGeneration,
+            ["currentGenerationPresentsSubmitted"] = diagnostic.CurrentGenerationPresentsSubmitted,
+            ["currentGenerationPresentsCompleted"] = diagnostic.CurrentGenerationPresentsCompleted,
+            ["currentGenerationCapacityDeferrals"] = diagnostic.CurrentGenerationCapacityDeferrals,
+            ["hasUnprovenLegacyPresent"] = diagnostic.HasUnprovenLegacyPresent,
+            ["deviceWaitIdleCalls"] = diagnostic.DeviceWaitIdleCalls,
+            ["liveResourceCount"] = diagnostic.LiveResourceCount,
+            ["trackedDescriptorSetCount"] = diagnostic.TrackedDescriptorSetCount,
+            ["pendingRetirementCount"] = diagnostic.PendingRetirementCount,
+            ["oldestPendingRetirementAgeMilliseconds"] = diagnostic.OldestPendingRetirementAgeMilliseconds,
+        };
+    }
+    object IRenderBackendDiagnosticsCapability.GetValidationDiagnostics()
+    {
+        VulkanValidationDiagnosticSnapshot diagnostic = CaptureValidationDiagnostics();
+        JsonArray messages = new();
+        foreach (VulkanValidationDiagnosticMessage item in diagnostic.Messages)
+        {
+            messages.Add(new JsonObject
+            {
+                ["identity"] = item.Identity,
+                ["count"] = item.Count,
+                ["errorCount"] = item.ErrorCount,
+                ["warningCount"] = item.WarningCount,
+                ["firstFrameId"] = item.FirstFrameId,
+                ["lastFrameId"] = item.LastFrameId,
+                ["firstSample"] = item.FirstSample,
+                ["lastSample"] = item.LastSample,
+            });
+        }
+
+        return new JsonObject
+        {
+            ["standardValidationEnabled"] = diagnostic.StandardValidationEnabled,
+            ["synchronizationValidationEnabled"] = diagnostic.SynchronizationValidationEnabled,
+            ["debugMessengerActive"] = diagnostic.DebugMessengerActive,
+            ["errorCount"] = diagnostic.ErrorCount,
+            ["warningCount"] = diagnostic.WarningCount,
+            ["suppressedWarningCount"] = diagnostic.SuppressedWarningCount,
+            ["overflowCount"] = diagnostic.OverflowCount,
+            ["messages"] = messages,
+        };
+    }
+    bool IRenderBackendDiagnosticsCapability.TryCapturePresentNowFailureForFrame(
+        long frameAuthorityId,
+        out RenderBackendPresentNowFailureSnapshot diagnostic)
+    {
+        diagnostic = default;
+        if (!TryCapturePresentNowFailureDiagnostic(frameAuthorityId, out VulkanPresentNowFailureDiagnostic native))
+            return false;
+
+        diagnostic = new(
+            native.Sequence,
+            native.FrameId,
+            native.FrameSlot,
+            native.AcceptedSceneEpoch,
+            native.OutputGeneration,
+            native.ReadinessStage,
+            native.ActiveTicket,
+            native.DependencyChain,
+            native.Disposition,
+            native.FailureType,
+            native.Detail);
+        return true;
+    }
+    bool IRenderBackendDiagnosticsCapability.TryCaptureMaterialTableDiagnosticsForFrame(
+        long frameAuthorityId,
+        out RenderBackendMaterialTableDiagnosticsSnapshot diagnostic)
+    {
+        diagnostic = default;
+        if (!TryCaptureMaterialTableDiagnostics(frameAuthorityId, out VulkanMaterialTableDiagnosticCounters native))
+            return false;
+
+        diagnostic = new(
+            native.NativeAllocations,
+            native.GrowthPending,
+            native.Banks,
+            native.PendingAllocations,
+            native.StandbyAllocationsQueued,
+            native.StandbyAllocationsReady,
+            native.StandbyClaims,
+            native.StandbyReplenishmentFailures,
+            native.StandbyBanks,
+            native.StandbyPendingAllocations);
+        return true;
+    }
     object IRenderBackendDiagnosticsCapability.GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains, int? pipelineIdentity) => _commandRuntime.GetLastFrameOpTraceDiagnostics(limit, targetContains, pipelineIdentity);
     object IRenderBackendDiagnosticsCapability.GetFinalPresentationLedgerDiagnostics(int limit) => _frameLoop.GetFinalPresentationLedgerDiagnostics(limit);
     object IRenderBackendDiagnosticsCapability.ConfigureFinalPresentationLedgerDiagnostics(bool enabled, bool frozen, bool clear) => _frameLoop.ConfigureFinalPresentationLedgerDiagnostics(enabled, frozen, clear);
@@ -846,13 +1063,15 @@ public sealed partial class VulkanRenderer :
         // than silently turning every recording into a synchronous shader link.
         using var programPreparation = new VulkanProgramLinkPreparationScope(
             _resourceRuntime,
-            Interlocked.CompareExchange(ref _explicitProductionPreparationStarted, 1, 0) == 0);
+            Volatile.Read(ref _explicitProductionPreparationCompleted) == 0);
         using var currentRenderer = AbstractRenderer.PushThreadCurrent(this);
         bool previousActive = Active;
         Active = true;
         try
         {
-            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame, backgroundCapture);
+            VulkanExplicitProductionSubmissionReceipt receipt = _frameLoop.ExecuteExplicitProductionFrame(buildFrame, backgroundCapture);
+            Volatile.Write(ref _explicitProductionPreparationCompleted, 1);
+            return receipt;
         }
         finally
         {
@@ -868,13 +1087,15 @@ public sealed partial class VulkanRenderer :
         using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(this);
         using var programPreparation = new VulkanProgramLinkPreparationScope(
             _resourceRuntime,
-            Interlocked.CompareExchange(ref _explicitProductionPreparationStarted, 1, 0) == 0);
+            Volatile.Read(ref _explicitProductionPreparationCompleted) == 0);
         using var currentRenderer = AbstractRenderer.PushThreadCurrent(this);
         bool previousActive = Active;
         Active = true;
         try
         {
-            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame, probeRequest);
+            VulkanExplicitProductionSubmissionReceipt receipt = _frameLoop.ExecuteExplicitProductionFrame(buildFrame, probeRequest);
+            Volatile.Write(ref _explicitProductionPreparationCompleted, 1);
+            return receipt;
         }
         finally
         {

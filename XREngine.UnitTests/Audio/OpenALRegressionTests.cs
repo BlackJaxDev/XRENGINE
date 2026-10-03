@@ -25,7 +25,7 @@ namespace XREngine.UnitTests.Audio
             {
                 _listener = new ListenerContext();
             }
-            catch (Exception ex)
+            catch (InvalidOperationException ex) when (ex.Message.Contains("could not open playback device", StringComparison.OrdinalIgnoreCase))
             {
                 Assert.Inconclusive($"OpenAL device unavailable — skipping: {ex.Message}");
             }
@@ -351,6 +351,21 @@ namespace XREngine.UnitTests.Audio
 
             // Cleanup — stop and release
             source.Stop();
+            Listener.ReleaseSource(source);
+        }
+
+        [Test]
+        public void Source_RejectsBuffersOwnedByAnotherListener()
+        {
+            using var otherListener = new ListenerContext();
+            var source = Listener.TakeSource();
+            var foreignBuffer = otherListener.TakeBuffer();
+
+            Should.Throw<InvalidOperationException>(() => source.Buffer = foreignBuffer);
+            Should.Throw<InvalidOperationException>(() => source.QueueBuffers(10, foreignBuffer));
+            Should.Throw<InvalidOperationException>(() => Listener.ReleaseBuffer(foreignBuffer));
+
+            otherListener.ReleaseBuffer(foreignBuffer);
             Listener.ReleaseSource(source);
         }
 

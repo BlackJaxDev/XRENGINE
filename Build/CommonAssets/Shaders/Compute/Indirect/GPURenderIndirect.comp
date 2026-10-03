@@ -31,13 +31,8 @@ layout(std430, binding = 4) buffer DrawCountBuffer { uint DrawCount; };
 // Overflow flag specific to indirect build (distinct from culling overflow)
 layout(std430, binding = 5) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
 layout(std430, binding = 10) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
-struct DrawMetadata
-{
-    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
-    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
-    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
-    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
+
 layout(std430, binding = 9) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 
 // Optional sorted key-index list: pairs [key, originalIndex]
@@ -70,23 +65,6 @@ layout(std430, binding = 8) buffer StatsBuffer
 };
 
 
-struct GPUViewDescriptor
-{
-    uint ViewId;
-    uint ParentViewId;
-    uint Flags;
-    uint RenderPassMaskLo;
-    uint RenderPassMaskHi;
-    uint OutputLayer;
-    uint ViewRectX;
-    uint ViewRectY;
-    uint ViewRectW;
-    uint ViewRectH;
-    uint VisibleOffset;
-    uint VisibleCapacity;
-    vec4 FoveationA;
-    vec4 FoveationB;
-};
 
 
 layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };

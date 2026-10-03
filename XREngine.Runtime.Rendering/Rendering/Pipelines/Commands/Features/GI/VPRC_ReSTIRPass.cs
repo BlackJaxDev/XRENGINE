@@ -41,6 +41,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         public uint RayTracingSbtOffset { get; set; } = 0;
         public uint RayTracingSbtStride { get; set; } = 0;
 
+        private bool _allowComputeFallback;
+
+        /// <summary>Allows the compute path when an authored native ray tracing request fails.</summary>
+        public bool AllowComputeFallback
+        {
+            get => _allowComputeFallback;
+            set => SetField(ref _allowComputeFallback, value);
+        }
+
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
         public string RestirOutputTextureName { get; set; } = "RestirGITexture";
@@ -95,6 +104,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (!rtDispatched)
             {
+                if (RayTracingPipelineId != 0 && !AllowComputeFallback)
+                    throw new InvalidOperationException(RestirGI.LastFailure ?? "The authored ReSTIR ray tracing request could not run.");
                 // Fallback to compute-based path
                 DispatchInitial(width, height, invProj, cameraToWorld, cameraPosition, depthTex, normalTex);
                 DispatchResample(width, height, invProj, cameraToWorld, depthTex, normalTex);
@@ -108,8 +119,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private bool TryRayTrace(uint width, uint height)
         {
-            // Vulkan-only optional RT path.
-            if (!RuntimeEngine.Rendering.State.IsVulkan)
+            // The native bridge owns OpenGL shader binding tables.
+            if (AbstractRenderer.Current?.BackendId != RendererBackendId.OpenGL)
                 return false;
 
             // Only try when fully configured

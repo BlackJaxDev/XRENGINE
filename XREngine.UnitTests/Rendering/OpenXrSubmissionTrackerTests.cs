@@ -42,7 +42,7 @@ public sealed class OpenXrSubmissionTrackerTests
     [Test]
     public void RetiredOpenXrSwapchainGeneration_RetainsProperties()
     {
-        Swapchain[] swapchains = [new Swapchain(101UL), new Swapchain(102UL)];
+        ulong[] swapchains = [101UL, 102UL];
         uint[] counts = [3u, 3u];
         Semaphore semaphore = new(201UL);
         ulong timelineValue = 42UL;
@@ -62,11 +62,12 @@ public sealed class OpenXrSubmissionTrackerTests
                 HasResourceLifetimeAuthority: false,
                 LifetimeImages: [],
                 DetachedLifetimeSlots: [],
-                ExternalImageLifetimesDetached: false,
-                ChildRetirementReceipt: default,
-                RuntimeImagesReleased: false,
+                InitialExternalImageLifetimesDetached: false,
+                InitialChildRetirementReceipt: default,
+                InitialRuntimeImagesReleased: false,
                 EnqueuedTimestamp: timestamp,
-                RetirementGenerationId: 17L);
+                RetirementGenerationId: 17L,
+                RetirementToken: default);
 
             generation.ViewCount.ShouldBe(2u);
             generation.TombstoneTimelineValue.ShouldBe(42UL);
@@ -74,8 +75,8 @@ public sealed class OpenXrSubmissionTrackerTests
             generation.EnqueuedTimestamp.ShouldBe(123456789L);
             generation.RequiresGpuCompletion.ShouldBeTrue();
             generation.RetirementGenerationId.ShouldBe(17L);
-            generation.Swapchains[0].Handle.ShouldBe(101UL);
-            generation.Swapchains[1].Handle.ShouldBe(102UL);
+            generation.Swapchains[0].ShouldBe(101UL);
+            generation.Swapchains[1].ShouldBe(102UL);
         }
     }
 

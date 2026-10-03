@@ -1,9 +1,7 @@
 using XREngine.Extensions;
-using ImageMagick;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
-using Silk.NET.OpenGL.Extensions.ImGui;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
@@ -350,29 +348,7 @@ public partial class OpenGLRenderer
     //}
 
     public override bool SupportsIndirectCountDraw()
-    {
-        try
-        {
-            string? verStr = Version;
-            if (!string.IsNullOrWhiteSpace(verStr))
-            {
-                ReadOnlySpan<char> version = verStr.AsSpan();
-                int majorEnd = version.IndexOf('.');
-                if (majorEnd > 0 && int.TryParse(version[..majorEnd], out int maj))
-                {
-                    ReadOnlySpan<char> minorVersion = version[(majorEnd + 1)..];
-                    int minorEnd = minorVersion.IndexOfAny('.', ' ');
-                    if (minorEnd >= 0)
-                        minorVersion = minorVersion[..minorEnd];
-                    if (int.TryParse(minorVersion, out int min) &&
-                        (maj > 4 || (maj == 4 && min >= 6)))
-                        return true;
-                }
-            }
-        }
-        catch { }
-        return Api.IsExtensionPresent("GL_ARB_indirect_parameters");
-    }
+        => _supportsIndirectCountDraw;
 
     private static DrawElementsType ToDrawElementsType(IndexSize type) => type switch
     {

@@ -1,4 +1,4 @@
-﻿using NAudio.Wave;
+﻿using XREngine.Audio;
 
 namespace XREngine.Components
 {
@@ -276,9 +276,6 @@ namespace XREngine.Components
                     // Convert audio data to 16-bit PCM at target sample rate
                     using var memoryStream = new MemoryStream();
                     
-                    // Create wave format for target
-                    var targetFormat = new NAudio.Wave.WaveFormat(targetSampleRate, 16, 1);
-                    
                     // Convert audio data to the target format
                     byte[] convertedData;
                     
@@ -331,12 +328,7 @@ namespace XREngine.Components
                 try
                 {
                     // Convert MP3 back to the original format
-                    using var mp3Stream = new MemoryStream(mp3Data);
-                    using var mp3Reader = new Mp3FileReader(mp3Stream);
-                    
-                    // Read the converted audio
-                    var convertedSamples = new byte[mp3Reader.Length];
-                    mp3Reader.ReadExactly(convertedSamples);
+                    byte[] convertedSamples = AudioCodecServices.Current.DecodeMp3(mp3Data);
 
                     // Resize and copy to original buffer
                     if (convertedSamples.Length <= originalBuffer.Length)

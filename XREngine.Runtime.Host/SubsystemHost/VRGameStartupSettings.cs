@@ -1,0 +1,81 @@
+
+
+using XREngine.Input;
+
+namespace XREngine
+{
+    public class VRGameStartupSettings<TCategory, TAction> : GameStartupSettings, IVRGameStartupSettings
+        where TCategory : struct, Enum
+        where TAction : struct, Enum
+    {
+        private RuntimeOpenVrApplicationManifest? _vrManifest;
+        private RuntimeOpenVrActionManifest<TCategory, TAction>? _actionManifest;
+        private (Environment.SpecialFolder folder, string relativePath)[] _gameSearchPaths = [];
+        private string _gameName = "XREngine Game";
+        private EVRRuntime _vrRuntime = EVRRuntime.Auto;
+        private bool _startVrOnLaunch = true;
+        private EVrViewRenderMode _vrViewRenderMode = EVrViewRenderMode.SequentialViews;
+        private bool _enableOpenXrVulkanParallelRendering = true;
+
+        /// <summary>
+        /// The name of the process to search for when running in client mode.
+        /// </summary>
+        public string GameName
+        {
+            get => _gameName;
+            set => SetField(ref _gameName, value);
+        }
+        /// <summary>
+        /// Paths to search for game exe server when running in client mode.
+        /// </summary>
+        public (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths
+        {
+            get => _gameSearchPaths;
+            set => SetField(ref _gameSearchPaths, value);
+        }
+        public RuntimeOpenVrApplicationManifest? VRManifest
+        {
+            get => _vrManifest;
+            set => SetField(ref _vrManifest, value);
+        }
+        public RuntimeOpenVrActionManifest<TCategory, TAction>? ActionManifest
+        {
+            get => _actionManifest;
+            set => SetField(ref _actionManifest, value);
+        }
+        RuntimeOpenVrApplicationManifest? IVRGameStartupSettings.VRManifest
+        {
+            get => VRManifest;
+            set => VRManifest = value;
+        }
+
+        IRuntimeOpenVrActionManifest? IVRGameStartupSettings.ActionManifest => ActionManifest;
+
+        public EVRRuntime VRRuntime
+        {
+            get => _vrRuntime;
+            set => SetField(ref _vrRuntime, value);
+        }
+
+        public bool StartVrOnLaunch
+        {
+            get => _startVrOnLaunch;
+            set => SetField(ref _startVrOnLaunch, value);
+        }
+
+        public EVrViewRenderMode VrViewRenderMode
+        {
+            get => _vrViewRenderMode;
+            set => SetField(ref _vrViewRenderMode, value);
+        }
+
+        /// <summary>
+        /// Legacy allow gate for the OpenXR Vulkan parallel command-buffer recording mode.
+        /// </summary>
+        public bool EnableOpenXrVulkanParallelRendering
+        {
+            get => _enableOpenXrVulkanParallelRendering;
+            set => SetField(ref _enableOpenXrVulkanParallelRendering, value);
+        }
+    }
+}

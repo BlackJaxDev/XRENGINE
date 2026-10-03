@@ -17,10 +17,19 @@ public static class RenderingSerializationRegistration
     public static IDisposable Install()
         => RegistrationLeaseGroup.Create(static leases =>
         {
+            leases.Add(global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Runtime_Rendering.Install());
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<XRShader>(static () => new XRShader()));
             leases.Add(ThirdPartyCacheCodecRegistry.Install(new TextureStreamingCacheCodec()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRTexture2D)));
-            leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRShader)));
+            // .cs also names C# scripts; only an explicitly typed shader load may claim it.
+            leases.Add(ThirdPartyAssetTypeRegistry.Install(
+                "XREngine.Runtime.Rendering",
+                typeof(XRShader),
+                typeof(XRShaderImportOptions),
+                ["glsl", "shader", "slang", "frag", "vert", "geom", "tesc", "tese",
+                    "comp", "task", "mesh", "fs", "vs", "gs", "tcs", "tes", "ts", "ms"]));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(FontGlyphSet)));
+#if !XRE_PUBLISHED
             leases.Add(YamlSerializationContributions.Install(new RenderingYamlContribution()));
             leases.Add(AssetTypeHintProviders.Install(new RenderingAssetTypeHintProvider()));
             leases.Add(YamlEnumAliasRegistry.Install(
@@ -28,9 +37,10 @@ public static class RenderingSerializationRegistration
                 EMeshSubmissionStrategyExtensions.LegacyGpuMeshletName,
                 EMeshSubmissionStrategy.GpuMeshletZeroReadback));
             leases.Add(RenderingPolymorphicYamlFallbacks.Install());
-            leases.Add(RenderingPublishedCookedAssetRegistration.Install());
+#endif
         });
 
+#if !XRE_PUBLISHED
     private sealed class RenderingYamlContribution : IYamlSerializationContribution
     {
         public string OwnerName => "XREngine.Runtime.Rendering";
@@ -81,5 +91,6 @@ public static class RenderingSerializationRegistration
             return candidate is not null && expectedType.IsAssignableFrom(candidate);
         }
     }
+#endif
 
 }

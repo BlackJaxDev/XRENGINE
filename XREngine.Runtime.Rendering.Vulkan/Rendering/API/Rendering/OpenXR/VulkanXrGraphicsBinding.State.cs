@@ -1,22 +1,19 @@
-using Silk.NET.OpenXR;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using VkFormat = Silk.NET.Vulkan.Format;
+using SwapchainImageVulkan2KHR = Silk.NET.OpenXR.SwapchainImageVulkan2KHR;
 
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed unsafe partial class VulkanXrGraphicsBinding
 {
-    private OpenXRAPI.OpenXrGraphicsBindingHost Context => Host.GraphicsBindingHost;
+    private IOpenXrGraphicsHost Context => Host;
 
-    private XR Api => Context.Api;
     private XRWindow? Window => Context.Window;
-    private ref Instance _instance => ref Context.Instance;
-    private ref Session _session => ref Context.Session;
     private ulong _systemId => Context.SystemId;
     private uint _viewCount => Context.ViewCount;
-    private ViewConfigurationView[] _viewConfigViews => Context.ViewConfigurationViews;
-    private Swapchain[] _swapchains => Context.Swapchains;
-    private uint[] _swapchainImageCounts => Context.SwapchainImageCounts;
+    private ReadOnlySpan<OpenXrViewConfiguration> _viewConfigViews => Context.ViewConfigurationViews;
+    private ReadOnlySpan<ulong> _swapchains => Context.Swapchains;
+    private ReadOnlySpan<uint> _swapchainImageCounts => Context.SwapchainImageCounts;
 
     private IRuntimeRenderWorld? _openXrFrameWorld => Context.FrameWorld;
     private XRCamera? _openXrLeftEyeCamera => Context.LeftEyeCamera;
@@ -76,7 +73,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private readonly SwapchainImageVulkan2KHR*[] _swapchainImagesVK =
         new SwapchainImageVulkan2KHR*[RenderFrameViewSet.MaxViewCount];
 
-    private Result CheckResult(Result result, string operation)
+    private int CheckResult(int result, string operation)
         => Context.CheckResult(result, operation);
 
     private bool TryResolveOpenXrFoveation(
@@ -93,8 +90,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private EVrOutputViewKind ResolveOpenXrRvcViewKind(uint viewIndex)
         => Context.ResolveOpenXrRvcViewKind(viewIndex);
 
-    private static bool IsLeftEyeLikeOpenXrView(uint viewIndex)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.IsLeftEyeLikeOpenXrView(viewIndex);
+    private bool IsLeftEyeLikeOpenXrView(uint viewIndex)
+        => Context.IsLeftEyeLikeOpenXrView(viewIndex);
 
     private XRViewport? GetOpenXrEyeViewport(uint viewIndex)
         => Context.GetOpenXrEyeViewport(viewIndex);
@@ -102,15 +99,15 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private XRCamera? GetOpenXrEyeCamera(uint viewIndex)
         => Context.GetOpenXrEyeCamera(viewIndex);
 
-    private static ulong GetOpenXrHistoryKey(EVrOutputViewKind kind)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.GetOpenXrHistoryKey(kind);
+    private ulong GetOpenXrHistoryKey(EVrOutputViewKind kind)
+        => Context.GetOpenXrHistoryKey(kind);
 
     private XRTexture2D? GetOpenXrPreviewTexture(uint viewIndex)
         => IsLeftEyeLikeOpenXrView(viewIndex)
             ? _previewLeftEyeTexture
             : _previewRightEyeTexture;
 
-    private OpenXRAPI.OpenXrEyeSwapchainExtent ResolveOpenXrEyeSwapchainExtent(uint viewIndex)
+    private OpenXrEyeSwapchainExtent ResolveOpenXrEyeSwapchainExtent(uint viewIndex)
         => Context.ResolveOpenXrEyeSwapchainExtent(viewIndex);
 
     private uint GetOpenXrSwapchainWidth(uint viewIndex)
@@ -125,7 +122,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private void LogOpenXrEyeSwapchainExtent(
         string backend,
         uint viewIndex,
-        OpenXRAPI.OpenXrEyeSwapchainExtent extent)
+        OpenXrEyeSwapchainExtent extent)
         => Context.LogOpenXrEyeSwapchainExtent(backend, viewIndex, extent);
 
     private void EnsureOpenXrViewports(uint width, uint height)
@@ -138,11 +135,11 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
         uint rightHeight)
         => Context.EnsureOpenXrViewports(leftWidth, leftHeight, rightWidth, rightHeight);
 
-    private static void EnsureOpenXrViewportExtent(
+    private void EnsureOpenXrViewportExtent(
         XRViewport viewport,
         uint width,
         uint height)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.EnsureOpenXrViewportExtent(
+        => Context.EnsureOpenXrViewportExtent(
             viewport,
             width,
             height);
@@ -153,12 +150,12 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private RenderPipeline GetOrCreateOpenXrStereoPipeline(RenderPipeline? sourcePipeline)
         => Context.GetOrCreateOpenXrStereoPipeline(sourcePipeline);
 
-    private static void CopyPostProcessState(
+    private void CopyPostProcessState(
         RenderPipeline sourcePipeline,
         RenderPipeline destinationPipeline,
         XRCamera sourceCamera,
         XRCamera destinationCamera)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.CopyPostProcessState(
+        => Context.CopyPostProcessState(
             sourcePipeline,
             destinationPipeline,
             sourceCamera,
@@ -170,10 +167,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private void ReleaseOpenXrStereoViewportPipelineForExternalEyes()
         => Context.ReleaseOpenXrStereoViewportPipelineForExternalEyes();
 
-    private void FillProjectionView(
-        uint viewIndex,
-        CompositionLayerProjectionView* projectionViews)
-        => Context.FillProjectionView(viewIndex, projectionViews);
+    private void StageProjectionView(uint viewIndex)
+        => Context.StageProjectionView(viewIndex);
 
     private void RecordSmokeViewRenderModeResolution(VrViewRenderModeResolution resolution)
         => Context.RecordSmokeViewRenderModeResolution(resolution);
@@ -236,6 +231,6 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private void RecordSmokeFailureOnce(string failure)
         => Context.RecordSmokeFailureOnce(failure);
 
-    private static bool ShouldLogLifecycle(int frameNumber)
-        => OpenXRAPI.OpenXrGraphicsBindingHost.ShouldLogLifecycle(frameNumber);
+    private bool ShouldLogLifecycle(int frameNumber)
+        => Context.ShouldLogLifecycle(frameNumber);
 }

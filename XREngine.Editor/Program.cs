@@ -21,6 +21,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Tools;
 using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Editor.Importers;
@@ -36,7 +37,9 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
+using XREngine.Runtime.Physics.Authoring;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using XREngine.Settings;
@@ -87,11 +90,16 @@ internal partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        ImGuiBackend.Register();
+        CoACD.InstallBackend(new CoAcdNativeBackend());
+        using IDisposable colliderAuthoringServices =
+            PhysicsColliderAuthoringServices.Install(new CoAcdPhysicsColliderAuthoringService());
         using IDisposable editorSecretCipherServices =
             SecretCipherServices.Install(new EditorSecretCipherServices());
         XREnvironment.Initialize();
         using IDisposable editorWorldHostCompositionServices =
             RuntimeWorldHostCompositionServices.Install(new EditorRuntimeWorldHostCompositionServices());
+        RuntimeApplicationBootstrap.PrepareDesktopServices();
         using IDisposable modelAssetPipelineRegistration =
             ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
         using IDisposable applicationServices =
@@ -103,6 +111,9 @@ internal partial class Program
         using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(Engine.Assets);
         WriteBootstrapTrace("Editor process entry.");
         InstallGlobalCrashDiagnostics();
+
+        if (TryRunGpuRecordLayoutCommand(args))
+            return;
 
         if (TryRunCookCommonAssetsCommand(args))
             return;
@@ -118,6 +129,8 @@ internal partial class Program
 
         if (TryRunDefaultRenderPipelineScriptExportCommand(args))
             return;
+
+        ValidateDebugGpuRecordLayouts();
 
         //Begin tracking how long editor startup takes, preferring the first non-black frame but
         //falling back to the first stable rendered frame so dark scenes do not keep the timer running indefinitely.
@@ -278,7 +291,7 @@ internal partial class Program
 
     private static void ApplyOpenXrRenderPacingOverride(UnitTestingWorldSettings settings)
     {
-        if (TryGetOpenXrRenderPacingModeEnv(out OpenXRAPI.OpenXrRenderPacingMode envMode))
+        if (TryGetOpenXrRenderPacingModeEnv(out OpenXrRenderPacingMode envMode))
         {
             XREngine.RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode = envMode;
             WriteBootstrapTrace($"OpenXR render pacing overridden to {envMode} via {XREngineEnvironmentVariables.OpenXrRenderPacingMode}.");
@@ -288,12 +301,12 @@ internal partial class Program
         if (!IsVulkanOpenXrUnitTestingLaunch(settings))
             return;
 
-        OpenXRAPI.OpenXrRenderPacingMode mode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+        OpenXrRenderPacingMode mode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
         XREngine.RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode = mode;
         WriteBootstrapTrace($"OpenXR Vulkan unit-testing launch forcing render pacing to {mode} after editor preferences loaded.");
     }
 
-    private static bool TryGetOpenXrRenderPacingModeEnv(out OpenXRAPI.OpenXrRenderPacingMode mode)
+    private static bool TryGetOpenXrRenderPacingModeEnv(out OpenXrRenderPacingMode mode)
     {
         mode = default;
         string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrRenderPacingMode);
@@ -305,7 +318,7 @@ internal partial class Program
 
         EngineDebug.LogWarning(
             $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: " +
-            string.Join(", ", Enum.GetNames<OpenXRAPI.OpenXrRenderPacingMode>()) + ".");
+            string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>()) + ".");
         return false;
     }
 
@@ -331,7 +344,7 @@ internal partial class Program
 
         EngineDebug.LogWarning(
             $"Invalid {XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs} value '{raw}'. Expected a signed millisecond value, " +
-            $"clamped to {OpenXRAPI.OpenXrMinPoseTimeOffsetMs:F0}..{OpenXRAPI.OpenXrMaxPoseTimeOffsetMs:F0}.");
+            $"clamped to {OpenXrRuntimeSettings.MinPoseTimeOffsetMs:F0}..{OpenXrRuntimeSettings.MaxPoseTimeOffsetMs:F0}.");
         return false;
     }
 
@@ -1559,6 +1572,8 @@ internal partial class Program
         {
             throw new ArgumentException($"Unknown build platform '{platformArg}'.");
         }
+        if (platform == EBuildPlatform.BrowserWebGPU)
+            throw new NotSupportedException("BrowserWebGPU builds publish the portable application and content together; use --build-project.");
 
         string managedConfiguration = ResolveManagedBuildConfiguration(configuration);
         string managedPlatform = ResolveManagedBuildPlatform(platform);
@@ -1800,7 +1815,9 @@ internal partial class Program
         Engine.BuildSettings = settings;
         Console.WriteLine($"Resolved build settings: BuildManagedAssemblies={settings.BuildManagedAssemblies}, CopyGameAssemblies={settings.CopyGameAssemblies}, BuildLauncherExecutable={settings.BuildLauncherExecutable}");
 
-        Console.WriteLine($"Cooking project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
+        Console.WriteLine(settings.Platform == EBuildPlatform.BrowserWebGPU
+            ? $"Publishing project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' as browser content..."
+            : $"Cooking project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
         ProjectBuilder.BuildCurrentProjectSynchronously(settings, progress =>
         {
             int percent = (int)Math.Clamp(progress.Value * 100f, 0f, 100f);
@@ -1812,6 +1829,14 @@ internal partial class Program
             return;
 
         string buildRoot = Path.Combine(Engine.CurrentProject.BuildDirectory, settings.OutputSubfolder ?? string.Empty);
+        if (settings.Platform == EBuildPlatform.BrowserWebGPU)
+        {
+            string indexPath = Path.Combine(buildRoot, "index.html");
+            if (!File.Exists(indexPath))
+                throw new FileNotFoundException("Browser build finished without the static application entrypoint.", indexPath);
+            Console.WriteLine($"Browser static bundle ready: {buildRoot}");
+            return;
+        }
         string binariesPath = Path.Combine(buildRoot, settings.BinariesOutputFolder);
         string exeName = string.IsNullOrWhiteSpace(settings.LauncherExecutableName)
             ? "Game.exe"

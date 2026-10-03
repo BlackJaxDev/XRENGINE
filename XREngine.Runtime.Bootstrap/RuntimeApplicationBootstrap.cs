@@ -8,6 +8,9 @@ public static class RuntimeApplicationBootstrap
     private static readonly object Sync = new();
     private static ApplicationInstallation? _current;
 
+    /// <summary>Installs packaged desktop providers before reading launch assets to select an application profile.</summary>
+    public static void PrepareDesktopServices() => DesktopRuntimeBackendBootstrap.EnsureRegistered();
+
     public static RuntimeApplicationProfile? CurrentProfile
     {
         get
@@ -21,6 +24,7 @@ public static class RuntimeApplicationBootstrap
     {
         ArgumentNullException.ThrowIfNull(profile);
         Validate(profile);
+        DesktopRuntimeBackendBootstrap.EnsureRegistered();
 
         lock (Sync)
         {
@@ -82,8 +86,13 @@ public static class RuntimeApplicationBootstrap
             {
                 // Published worlds require the same serialization/cooked-asset roots as
                 // windowed hosts even though a headless process installs no renderer.
+                leases.Add(RuntimeEngineStartupPolicyServices.Install(DesktopEngineStartupPolicy.Instance));
                 leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
-                leases.Add(RuntimeAdapterBootstrap.InstallEngineHostServices(profile.AdapterProfile));
+                leases.Add(EngineRuntimeShaderServices.Install());
+                leases.Add(RuntimeAdapterBootstrap.InstallEngineHostServices(
+                    profile.AdapterProfile,
+                    static () => new Scene.Physics.Jolt.JoltScene(),
+                    composeRenderedWorlds: false));
             });
 
         public void Dispose()

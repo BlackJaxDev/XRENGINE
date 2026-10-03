@@ -78,22 +78,66 @@ vec4 SolveHornQuaternion(
     float szy,
     float szz)
 {
-    vec4 quaternionWxyz = vec4(1.0, 0.0, 0.0, 0.0);
-    for (int i = 0; i < 8; ++i)
+    // Covariance is current * rest^T. Select the largest algebraic Horn
+    // eigenvalue; power iteration can oscillate or miss exact half turns.
+    mat4 a = mat4(
+        sxx + syy + szz, szy - syz, sxz - szx, syx - sxy,
+        szy - syz, sxx - syy - szz, sxy + syx, szx + sxz,
+        sxz - szx, sxy + syx, -sxx + syy - szz, syz + szy,
+        syx - sxy, szx + sxz, syz + szy, -sxx - syy + szz);
+    float scale = 0.0;
+    for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+            scale = max(scale, abs(a[column][row]));
+    if (scale == 0.0 || isnan(scale) || isinf(scale))
+        return vec4(1.0, 0.0, 0.0, 0.0);
+    a /= scale;
+    mat4 eigenvectors = mat4(1.0);
+    for (int sweep = 0; sweep < 6; ++sweep)
     {
-        vec4 next = vec4(
-            (sxx + syy + szz) * quaternionWxyz.x + (syz - szy) * quaternionWxyz.y + (szx - sxz) * quaternionWxyz.z + (sxy - syx) * quaternionWxyz.w,
-            (syz - szy) * quaternionWxyz.x + (sxx - syy - szz) * quaternionWxyz.y + (sxy + syx) * quaternionWxyz.z + (szx + sxz) * quaternionWxyz.w,
-            (szx - sxz) * quaternionWxyz.x + (sxy + syx) * quaternionWxyz.y + (-sxx + syy - szz) * quaternionWxyz.z + (syz + szy) * quaternionWxyz.w,
-            (sxy - syx) * quaternionWxyz.x + (szx + sxz) * quaternionWxyz.y + (syz + szy) * quaternionWxyz.z + (-sxx - syy + szz) * quaternionWxyz.w);
-
-        float magnitude = length(next);
-        if (magnitude <= 0.000001)
-            return vec4(1.0, 0.0, 0.0, 0.0);
-
-        quaternionWxyz = next / magnitude;
+        bool changed = false;
+        for (int p = 0; p < 3; ++p)
+        {
+            for (int q = p + 1; q < 4; ++q)
+            {
+                float offDiagonal = a[p][q];
+                if (abs(offDiagonal) <= 0.000001)
+                    continue;
+                changed = true;
+                float tau = (a[q][q] - a[p][p]) / (2.0 * offDiagonal);
+                float t = (tau >= 0.0 ? 1.0 : -1.0) / (abs(tau) + sqrt(1.0 + tau * tau));
+                float c = inversesqrt(1.0 + t * t);
+                float s = t * c;
+                a[p][p] -= t * offDiagonal;
+                a[q][q] += t * offDiagonal;
+                a[p][q] = a[q][p] = 0.0;
+                for (int k = 0; k < 4; ++k)
+                {
+                    if (k != p && k != q)
+                    {
+                        float kp = a[p][k];
+                        float kq = a[q][k];
+                        a[p][k] = a[k][p] = c * kp - s * kq;
+                        a[q][k] = a[k][q] = s * kp + c * kq;
+                    }
+                }
+                vec4 vp = eigenvectors[p];
+                vec4 vq = eigenvectors[q];
+                eigenvectors[p] = c * vp - s * vq;
+                eigenvectors[q] = s * vp + c * vq;
+            }
+        }
+        if (!changed)
+            break;
     }
-
+    int best = 0;
+    for (int i = 1; i < 4; ++i)
+        if (a[i][i] > a[best][best] + 0.000001 ||
+            (abs(a[i][i] - a[best][best]) <= 0.000001 && abs(eigenvectors[i].x) > abs(eigenvectors[best].x)))
+            best = i;
+    vec4 quaternionWxyz = normalize(eigenvectors[best]);
+    if (any(isnan(quaternionWxyz)) || any(isinf(quaternionWxyz)))
+        return vec4(1.0, 0.0, 0.0, 0.0);
     if (quaternionWxyz.x < 0.0)
         quaternionWxyz = -quaternionWxyz;
     return quaternionWxyz;

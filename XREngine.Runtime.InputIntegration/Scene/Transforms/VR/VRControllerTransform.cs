@@ -1,4 +1,3 @@
-using OpenVR.NET.Devices;
 using XREngine.Input;
 using XREngine.Scene.Transforms;
 
@@ -8,7 +7,7 @@ namespace XREngine.Data.Components.Scene
     /// The transform for the left or right VR controller.
     /// </summary>
     /// <param name="parent"></param>
-    public class VRControllerTransform : VRDeviceTransformBase
+    public class VRControllerTransform : VRDeviceTransformBase, IVrControllerPoseSource
     {
         public VRControllerTransform() { }
         public VRControllerTransform(TransformBase parent) : base(parent) { }
@@ -20,10 +19,12 @@ namespace XREngine.Data.Components.Scene
             set => SetField(ref _leftHand, value);
         }
 
-        public Controller? Controller => LeftHand
-            ? RuntimeVrStateServices.LeftController as Controller
-            : RuntimeVrStateServices.RightController as Controller;
+        public RuntimeVrDeviceInfo? Controller => LeftHand
+            ? RuntimeVrStateServices.LeftController
+            : RuntimeVrStateServices.RightController;
 
-        public override VrDevice? Device => Controller;
+        public override RuntimeVrDeviceInfo? Device => Controller;
+        public string? InteractionProfile => RuntimeVrStateServices.GetControllerInteractionProfile(LeftHand);
+        public System.Numerics.Vector3 GripToWristOffset => VrControllerWristPresets.Resolve(InteractionProfile, RuntimeVrStateServices.PlayerSettings);
     }
 }

@@ -3,7 +3,7 @@
 **Project:** XRENGINE  
 **Created:** September 26, 2026  
 **Status:** Planned; nothing is implemented. `IKSolverVR`'s procedural leg locomotion is commented out, so 3-point play has no stepping today.  
-**Depends on:** the [calibration TODO][calibration-todo]: W10 (per-slot source contract), W45 (body measurements and scale), W50 (fallback crossfade and discontinuity events), W35 (chest, upper-arm, and knee consumers), and W60 (spectator view for evaluation).
+**Depends on:** the implemented [body tracking contract][body-tracking]: per-slot sources, body measurements and scale, fallback crossfade and discontinuity events, chest/upper-arm/knee consumers, and spectator output for evaluation. Hardware qualification remains separate from those software contracts.
 
 ## 1. Goal
 
@@ -34,7 +34,7 @@ One coherent snapshot per frame:
 - the headset and both controller grip poses, each with validity and sample time;
 - for each of the eight slots, the bound tracker's calibrated target when currently valid;
 - the tracking floor, the up axis, and the playspace-to-world transform;
-- discontinuity events from calibration W50.09: teleport, snap turn, recenter, avatar replacement, and session change;
+- shared calibration discontinuity events: teleport, snap turn, recenter, avatar replacement, and session change;
 - artificial locomotion velocity from character movement, kept separate from physical motion;
 - body proportions: the avatar's segment lengths at the scale set by the player's measurement, and the standing eye height that scale implies.
 
@@ -55,11 +55,11 @@ The calibration TODO's per-slot source mixer chooses between tracker and estimat
 
 | Work package | Priority | Dependencies | Exit condition |
 |---|---|---|---|
-| E00 — Contract, harness, and metrics | P0 | Calibration W10 | The replay harness reports metrics for a stub estimator |
-| E10 — Standing | P0 | E00, calibration W45 | Stable standing and look-around at 3 points |
+| E00 — Contract, harness, and metrics | P0 | Calibration per-slot source contract | The replay harness reports metrics for a stub estimator |
+| E10 — Standing | P0 | E00, body measurement scale owner | Stable standing and look-around at 3 points |
 | E20 — Height changes | P1 | E10 | Crouching and bowing without foot sliding |
 | E30 — Stepping and turning | P1 | E10 | Room-scale walking, turning, and artificial locomotion step naturally |
-| E40 — Hybrid fill-in and handoff | P1 | E30, calibration W50 | Partial tracker sets and tracker loss blend seamlessly |
+| E40 — Hybrid fill-in and handoff | P1 | E30, calibration source crossfade | Partial tracker sets and tracker loss blend seamlessly |
 | E50 — Seated | P2 | E20 | Sitting is detected and posed, with a player override |
 | E60 — Lying | P2 | E50 | Lying in any orientation with smooth transitions |
 | E70 — Tuning, settings, and documentation | Release gate | All above | The section 4 quality bar is met on hardware |
@@ -126,7 +126,7 @@ The calibration TODO's per-slot source mixer chooses between tracker and estimat
 - [ ] **E70.01** Expose `EstimateMissingBodyParts` (default on) and the posture override. Keep thresholds and gains in one internal settings object until hardware tuning justifies exposing them.
 - [ ] **E70.02** Tune on hardware at 3 points, 4 (hips only), 5 (feet only), and 6, with trackers hidden or powered off mid-session.
 - [ ] **E70.03** Document behavior, settings, and known limits in the VR user and developer guides.
-- [ ] **E70.04** Record hardware evidence alongside the calibration TODO's W80 results.
+- [ ] **E70.04** Record hardware evidence alongside the [calibration acceptance results](../../testing/avatar/openxr-calibration-spectator-validation.md).
 
 ## 4. Quality bar
 
@@ -154,4 +154,4 @@ Every work package's acceptance uses these invariants:
 - Never key behavior to a specific avatar, player, or recording.
 - Keep OpenXR and OpenVR types out of the estimator; it consumes runtime-neutral snapshots only.
 
-[calibration-todo]: openxr-full-body-calibration-spectator-todo.md
+[body-tracking]: ../../../developer-guides/vr/openxr-body-tracking.md

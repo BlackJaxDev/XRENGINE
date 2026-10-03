@@ -423,7 +423,9 @@ namespace XREngine.Components.Animation
                     var lastBoneToThigh = Thigh.SolverPosition - LastBone.SolverPosition;
                     if (lastBoneToThigh.LengthSquared() > 1e-8f)
                         _bendNormal = Quaternion.CreateFromAxisAngle(Vector3.Normalize(lastBoneToThigh), sO).Rotate(_bendNormal);
-                    Thigh.SolverRotation = Quaternion.CreateFromAxisAngle(Thigh.SolverRotation.Rotate(Thigh.Axis), -sO) * Thigh.SolverRotation;
+                    Vector3 thighAxis = Thigh.SolverRotation.Rotate(Thigh.Axis);
+                    if (thighAxis.LengthSquared() > 1e-8f)
+                        Thigh.SolverRotation = Quaternion.CreateFromAxisAngle(Vector3.Normalize(thighAxis), -sO) * Thigh.SolverRotation;
                 }
             }
 

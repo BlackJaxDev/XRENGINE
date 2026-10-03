@@ -4,6 +4,8 @@ Status: proposed - upstream alpha; blocked on dependency approval
 
 Last Updated: 2026-07-27
 
+Direction update (2026-09-29): the [current project organization](../../../architecture/runtime/project-organization.md) places physics backends in leaf projects behind a physics module catalog; integration validation remains open. Box3D code, interop, and native assets therefore target `XREngine.Runtime.Physics.Box3D` instead of `XREngine.Runtime.Core/Scene/Physics/Box3D` and `XREngine.Runtime.Core/runtimes/`, and registration goes through the catalog instead of the `CreatePhysicsScene()` switch. Jolt is proposed as the primary cross-platform backend; Box3D remains a candidate to re-evaluate when it leaves alpha, including its official Emscripten build for browser use.
+
 Owner: Physics Runtime / Native Integration
 
 Related docs:
@@ -111,7 +113,10 @@ Box3D's ID/event model rather than copying JoltPhysicsSharp patterns blindly.
 Keep every type in its own file.
 
 ```text
-XREngine.Runtime.Core/Scene/Physics/Box3D/
+XREngine.Runtime.Physics.Box3D/
+  XREngine.Runtime.Physics.Box3D.csproj
+  Box3DBackendModule.cs
+  runtimes/win-x64/native/
   Box3DNative.cs
   Box3DNativeLibrary.cs
   Box3DInteropTypes.cs
@@ -662,4 +667,3 @@ Ignoring a field during native creation is not acceptable.
 - Treating Box3D recording as a saved-game format.
 - Hiding missing native support or unsupported fields behind PhysX/Jolt
   fallback behavior.
-

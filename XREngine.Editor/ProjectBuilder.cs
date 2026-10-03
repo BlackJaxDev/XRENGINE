@@ -22,7 +22,7 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Editor;
 
-internal static class ProjectBuilder
+internal static partial class ProjectBuilder
 {
     #region Nested Types
 
@@ -59,7 +59,10 @@ internal static class ProjectBuilder
         string BinariesOutputDirectory,
         string ConfigStagingDirectory,
         string ContentArchivePath,
-        string ConfigArchivePath);
+        string ConfigArchivePath)
+    {
+        internal Action? CleanupAfterBuild { get; set; }
+    }
 
     private sealed record BuildStep(string Description, Action Action);
 
@@ -88,6 +91,9 @@ internal static class ProjectBuilder
         var project = EnsureProjectLoaded();
         var settings = settingsOverride ?? SnapshotSettings();
         AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
+        // Published archives keep incompressible entries uncompressed so the runtime can lease them
+        // straight from the mapped file.
+        AssetPacker.StoreIncompressibleEntries = true;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -97,16 +103,19 @@ internal static class ProjectBuilder
             return;
         }
 
-        for (int i = 0; i < steps.Count; i++)
+        try
         {
-            var step = steps[i];
-            Debug.Out(step.Description);
-            step.Action();
-            float progress = (i + 1f) / steps.Count;
-            progressCallback?.Invoke(new JobProgress(progress, step.Description));
+            for (int i = 0; i < steps.Count; i++)
+            {
+                var step = steps[i];
+                Debug.Out(step.Description);
+                step.Action();
+                float progress = (i + 1f) / steps.Count;
+                progressCallback?.Invoke(new JobProgress(progress, step.Description));
+            }
+            progressCallback?.Invoke(new JobProgress(1f, "Build completed"));
         }
-
-        progressCallback?.Invoke(new JobProgress(1f, "Build completed"));
+        finally { context.CleanupAfterBuild?.Invoke(); }
     }
 
     public static void RequestBuild()
@@ -160,6 +169,7 @@ internal static class ProjectBuilder
         var project = EnsureProjectLoaded();
         var settings = SnapshotSettings();
         AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
+        AssetPacker.StoreIncompressibleEntries = true;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -169,16 +179,19 @@ internal static class ProjectBuilder
             yield break;
         }
 
-        for (int i = 0; i < steps.Count; i++)
+        try
         {
-            var step = steps[i];
-            Debug.Out(step.Description);
-            step.Action();
-            float progress = (i + 1f) / steps.Count;
-            yield return new JobProgress(progress, step.Description);
+            for (int i = 0; i < steps.Count; i++)
+            {
+                var step = steps[i];
+                Debug.Out(step.Description);
+                step.Action();
+                float progress = (i + 1f) / steps.Count;
+                yield return new JobProgress(progress, step.Description);
+            }
+            yield return new JobProgress(1f, "Build completed");
         }
-
-        yield return new JobProgress(1f, "Build completed");
+        finally { context.CleanupAfterBuild?.Invoke(); }
     }
 
     private static XRProject EnsureProjectLoaded()
@@ -222,6 +235,9 @@ internal static class ProjectBuilder
 
     private static List<BuildStep> CreateSteps(BuildSettings settings, BuildContext context)
     {
+        if (settings.Platform == EBuildPlatform.BrowserWebGPU)
+            return CreateBrowserSteps(settings, context);
+
         List<BuildStep> steps = [];
         string configuration = ResolveConfiguration(settings.Configuration);
         string platform = ResolvePlatform(settings.Platform);
@@ -647,6 +663,9 @@ internal static class ProjectBuilder
         string? engineAssetsPath = Engine.Assets?.EngineAssetsPath;
         if (string.IsNullOrWhiteSpace(engineAssetsPath) || !Directory.Exists(engineAssetsPath))
             throw new DirectoryNotFoundException("The engine common-assets directory is unavailable.");
+
+        XREngine.Editor.GpuLayouts.GpuRecordSpirvValidator.ValidateShaderDirectory(
+            Path.Combine(engineAssetsPath, "Shaders"));
 
         if (packageMode == ECommonAssetsPackageMode.RuntimeShaders)
         {
@@ -1265,7 +1284,7 @@ internal static class ProjectBuilder
 
     private static void WriteCookedBlob(string destination, CookedAssetBlob blob)
     {
-        byte[] cookedBytes = MemoryPackSerializer.Serialize(blob);
+        byte[] cookedBytes = CookedAssetEnvelope.Serialize(blob);
         File.WriteAllBytes(destination, cookedBytes);
     }
 
@@ -1356,6 +1375,7 @@ internal static class ProjectBuilder
         => platform switch
         {
             EBuildPlatform.Windows64 => global::CodeManager.Platform_x64,
+            EBuildPlatform.BrowserWebGPU => global::CodeManager.Platform_AnyCPU,
             _ => global::CodeManager.Platform_AnyCPU
         };
 

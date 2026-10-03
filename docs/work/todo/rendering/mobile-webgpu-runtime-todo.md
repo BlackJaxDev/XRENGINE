@@ -2,7 +2,9 @@
 
 [Companion renderer design](../../design/rendering/browser-wasm-renderer-design.md) · [Work docs index](../../README.md) · [Rendering architecture](../../../architecture/rendering/README.md)
 
-**Status:** Proposed implementation checklist; browser/device validation has not been performed for this document.  
+> **Direction update (2026-09-30):** the [unified desktop and browser runtime design](../../design/platform/unified-desktop-browser-runtime-design.md) replaces this tracker's separate browser runtime (same-identity portable source profiles, browser-only scene/component/pipeline types, and the flattening world exporter) with the real engine running on both platforms. Bridge, WebGPU resource, delivery, recovery, budget, hosting, and device-validation items remain valid; see the [carry-over table](../platform/unified-desktop-browser-runtime-todo.md#mobile-todo-carry-over). The earlier `System.Drawing` source-guard failure is repaired, full `net10.0` projects pass the desktop/browser build gate, and local reference/published-world browser smokes are recorded. See [current project organization](../../../architecture/runtime/project-organization.md), [harness findings](../../investigations/rendering/desktop-browser-reference-harness.md) and [integration validation](../platform/native-subsystem-project-split-todo.md). Checked source rows below do not certify every runtime or device requirement.
+
+**Status:** The separate browser runtime is frozen as a reference harness; fixes may keep it running, while new functionality belongs to the unified engine path. Code deliverables through the selected portable kernel, browser host and focused forward pipeline are implemented. The desktop and browser project build gate passed on 2026-09-30; browser/device qualification and the unified engine integration remain open. See the [build record](../../progress/platform/unified-runtime-build-stabilization.md) and [harness investigation](../../investigations/rendering/desktop-browser-reference-harness.md).
 **Created:** September 23, 2026.  
 **Repository:** `BlackJaxDev/XRENGINE`.  
 **Source-review baseline:** [`4a0d4a2f6a815040b6ab3a4847f9aff995c3ab63`][baseline] — “More Vulkan work,” September 23, 2026.  
@@ -25,12 +27,130 @@ The first local rendering milestone does not require multiplayer, voice chat, th
 
 ### Checklist rules
 
-- Every unchecked item is work to implement, reconcile, or validate. Existing code is recorded separately rather than marked browser-tested.
-- Use stable task IDs in changes, issues, and validation evidence. Check an item only after its deliverable and applicable acceptance criteria are satisfied.
+- Main task-ID checkboxes track the full deliverable and its acceptance criteria. The code-completion checklists below track source implementation separately; a checked code row does not certify a browser, GPU or device result.
+- Keep stable task IDs in this active tracker and validation evidence. Check a main item only after its deliverable and applicable acceptance criteria are satisfied; describe behavior rather than task IDs in lasting code and change summaries.
 - A working stub, enum, interface, successful desktop build, or dependency declaration does not establish browser functionality.
 - Keep implementation status and validation status separate. Record untested environments explicitly.
 - Preserve desktop OpenGL/Vulkan behavior while extracting shared code. Do not force desktop renderers through browser-specific abstractions.
 - Validate a live feature slice before adding its regression coverage, following the repository's applicable contribution/test policy.
+
+### Code completion through the browser host
+
+The September 30 build record supersedes earlier "no build performed" notes at
+the project level: all 14 portable projects compile for `browser-wasm`, the
+browser app publishes, and the desktop applications and test project build.
+This compiles the host, bridge, WebGPU executor, focused pipeline, delivery and
+service sources included by those projects; it does not individually qualify
+every source checklist row. The isolated C# shader cooker also builds without
+warnings. Shader recipe execution, Slang, GPU reference cases, authored-project
+delivery, recovery, networking and physical-device results require separate
+evidence. Historical source-completion checkboxes retain that meaning. No row
+is marked "never compiled" without an evaluated source-inclusion check proving
+it was excluded.
+
+The selected profile is the minimum engine scene plus indexed unlit WebGPU canvas,
+using the untrimmed interpreter on one caller thread. These source rows cover all
+implementation requirements through MW02; the main task checkboxes below retain
+acceptance meaning. Physical-device selection/evidence, evaluated restored-graph
+results, runtime and desktop regression evidence are not code deliverables and
+remain open. Trimming/AOT, arbitrary cooked worlds and later rendering features
+are outside this selected profile.
+
+- [x] **MW00.01–MW00.05/MW00.07–MW00.08 source and planning deliverables:** Scope reconciliation, source dependency classifications/owners, sample specification, budgets and service requirements; evaluated graph/restore-asset reporting and initializer/API inventory tooling. The evaluated report has not been run for this delivery.
+- [ ] **MW00.06 qualification evidence:** Proposed reference devices are recorded; hardware availability and exact tested OS/browser versions are unconfirmed.
+- [x] **MW01.01–MW01.04 code:** Full-source `net10.0` shared projects (superseding the original subset profiles), isolated native leaves, neutral-project auditing, and focused resource/frame/presentation descriptions. Current boundaries are maintained in the project organization guide.
+- [x] **MW01.05 code:** Resource, pass/packet submission, texture-copy, presentation and asynchronous completion capabilities implemented by the WebGPU leaf without the legacy desktop renderer surface.
+- [x] **MW01.06–MW01.07 code:** Explicit browser composition, deterministic generated registrations for admitted component/transform/resource/serializer/module identities, and generated scene-JSON metadata.
+- [x] **MW01.08–MW01.10 code:** Whole-project API/reflection inventory and SDK-hosted C# source guard (no Python build prerequisite), explicit reviewed exceptions, trim/AOT rejection, isolated cook/generator tooling and project/package/native-asset guards.
+- [ ] **MW01.11 remaining evidence:** Earlier scene-only browser evidence exists; the expanded graph and affected desktop paths still need build/runtime qualification.
+- [x] **MW02.01–MW02.04 code:** Supplied-canvas executable/bootstrap, portable surface/input/presentation contracts and asynchronous pending/ready/failure/loss transitions.
+- [x] **MW02.05–MW02.07 code:** Single-frame fixed-step simulation, explicit engine transform-buffer publication, frozen renderable collection, per-view visibility and packet production, caller-thread scheduling, bounded catch-up and history invalidation on suspension/large time gaps.
+- [x] **MW02.08–MW02.10 code:** CSS/backing/DPR/orientation/attachment handling, budget caps, generations, per-canvas ownership, viewports, freeze/resume, cancellation and repeatable teardown.
+
+Source details: [portable host implementation](../../progress/rendering/browser-portable-host-completion.md).
+
+### Code completion on the implementation branch
+
+These rows answer what has actually been coded without changing the acceptance
+meaning of the main checklist. The canvas and later renderer work remains
+unvalidated under the user's explicit waiver. The earlier scene-only evidence
+still applies only to its recorded scope.
+
+- [x] **MW02.01–MW02.03 code:** Browser entry point, explicit canvas target and portable surface/input contracts.
+- [x] **MW02.04, MW02.07–MW02.10 code:** Asynchronous startup, bounded simulation, resize/suspension, multiple views and cancel-safe teardown.
+- [x] **MW03.01 code:** Generated interop for session bootstrap/lifecycle, resource controls and diagnostic snapshots; cold capability snapshots include supported packet versions and device/arena limits.
+- [x] **MW03.03 code:** Versioned little-endian frame and upload headers with typed draw, vertex/index, texture-region and material-tint commands.
+- [x] **MW03.04–MW03.07 code:** Reusable frame/command/payload arenas, explicit synchronous consumption, typed required-capacity faults, idle growth/generation publication, whole-batch validation and separate CPU/GPU lifetimes. JavaScript owns copies before imports return; no transient view enters a promise.
+- [x] **MW03.08 code:** Device/session-checked completion and retirement callbacks, epoch-checked host failures, deferred failure notification outside a borrowed-span stack, and pipeline publication only after cancellation/lifetime checks.
+- [x] **MW03.10 instrumentation code:** Packet/draw/upload/copy/growth/submission counters, command index/opcode/offset failure context, cold capability snapshots and managed current-thread frame allocation counters. The demo exposes a retained-pixel texture update through the upload lane.
+- [x] **MW04.01–MW04.02 seed code:** Explicit position/UV, transform and tint layouts with depth-tested unlit texture WGSL.
+- [x] **MW04.03 code:** Target-tagged artifact payload and WebGPU WGSL target; Vulkan constructor/accessor compatibility retained.
+- [x] **MW04.04 explicit-WGSL code:** Deterministic descriptor identity includes source/dependency hashes, target, entry points, compiler identity, schema, layout and requirements. Unsupported preprocessing/specialization options fail explicitly.
+- [x] **MW04.06 explicit-WGSL code:** Offline packager and browser loading of cooked WGSL/metadata without a native runtime compiler.
+- [x] **MW04.10–MW04.11 explicit-WGSL code:** Named recipe errors, content-addressed assets, integrity/schema/layout checks and source-location shader diagnostics.
+- [x] **MW04.12 readiness code:** Await shader diagnostics and asynchronous pipeline creation before allowing frames; warm-up measurements remain open.
+- [x] **MW04.04/MW04.06/MW04.10 cooking code:** Standalone C# cooker supports explicit WGSL and schema 2 material/Slang recipes, source/include/recipe hashes, pinned compiler identities, bounded inputs, contextual rejection and atomic manifest publication. The new cooker has not been executed; checked-in schema 1 assets remain usable.
+- [x] **MW04.05 toolchain adapter code:** Optional externally provisioned Slang 2026.8 WGSL process route reuses the existing pin without a dependency upgrade, with version/library identity, dependency snapshots, bounded diagnostics/deadlines and cancellation. WGSL toolchain qualification remains open.
+- [x] **MW04.07 selected-profile generation code:** Target-aware typed opaque unlit tint/texture generator, connected to `BrowserMaterialRecipe`; unsupported targets and material features fail explicitly without translating desktop GLSL.
+- [x] **MW04.08–MW04.09 selected-profile ABI code:** Shared matrix/tint writers, scalar/offset/alignment/stride constants, fixed binding and vertex schema, coordinate identity and explicit winding. A bounded emitted-WGSL lexer checks the actual four resources, uniform types/extents/offsets and matrix stride before cooking. Storage, reversed-Z and render-to-texture variants remain outside this profile.
+- [x] **MW04.11–MW04.12 runtime code:** Strict schema/compiler/source-origin compatibility, selectable named cooked artifacts, exact authored-WGSL locations and honest generated-source diagnostics, scoped GPU errors, bounded cancellable shader/pipeline warm-up and timing counters.
+- [x] **MW05.02 initial-profile code:** Check declared adapter limits and request the exact supported shader requirements before creating the device.
+- [x] **MW05.05–MW05.06 minimum-raster code:** Vertex/index/uniform buffers, aligned matrix upload, single-mip RGBA8 textures and material bind groups.
+- [x] **MW05.09, MW05.12–MW05.13 minimum-raster code:** Indexed packet submission, depth attachment, asynchronous retirement and terminal failure/loss handling.
+- [x] **MW03.09, MW05.01 code:** WebGPU assembly, metadata/factory/lifecycle, static registration through the existing catalog, module-owned imports/executor/shader assets and browser publish wiring.
+- [x] **MW05.04/MW05.14 static asset bridge code:** Supported `XRMesh` CPU data, explicit `XRMaterial` browser recipes and standard `XRCamera` snapshots export through a shared, versioned resource bundle. Browser imports create real scene nodes and submit through `IBrowserRendererHost`.
+- [x] **MW02.04/MW05.13 module readiness code:** Catalog creation returns a pending renderer; asynchronous browser startup acknowledges readiness, terminal errors/loss reject work, and teardown releases the session executor.
+- [x] **MW05.10 canvas output code:** The existing `RenderFrameOutputDescription` and scheduling DTOs are portable; drawable canvases publish extent, logical and exact backend formats, sample/layer/slot counts and surface generation without GPU handles.
+- [x] **MW03.03/MW05.14 canvas pass code:** Packet v2 carries an explicit opaque clear pass and output extent; managed and JS consumers reject stale owner/generation/extent. Color is stored and transient depth discarded.
+- [x] **MW02.05 bounded visibility code:** Conservative per-view AABB frustum collection over real scene components, cached live camera snapshots, a culling toggle and last-frame counters.
+- [x] **MW05.04/MW05.14 live descriptor code:** Scene-owned mesh/material replacement and removal with shared resource reference counts, acquisition before replacement, and asynchronous backend retirement; an explicit page action updates a material.
+- [x] **MW05.02–MW05.03 device publication code:** Exact requirement requests, selected-device checks and immutable feature/limit snapshots published after shader/pipeline readiness. The core resource profile explicitly does not claim full baseline qualification.
+- [x] **MW05.04–MW05.06 resource code:** Generation-owned buffer, texture/view, sampler, shader, layout/group and render/compute pipeline wrappers; bounded writes/copies, explicit usage/alignment, mip uploads, linear/sRGB intent and initial 2D color/depth formats. Persistent mapping is replaced by copied queue writes; optional formats remain excluded.
+- [x] **MW05.07–MW05.08 attachment/cache code:** Real `XRFrameBuffer` attachment adapter, portable load/store/clear/depth/stencil/resolve plans, subresource and pipeline compatibility checks, and bounded complete immutable layout/pipeline descriptor caching.
+- [x] **MW05.09 command code:** Prepared ordered render/compute/buffer-copy/texture-copy sequences retain their dependencies and replay without per-draw description allocation; canvas output is acquired each submission and resize rejects obsolete plans. The existing binary engine mesh packet path remains CPU-direct.
+- [x] **MW05.11–MW05.13 lifetime code:** Bounded asynchronous buffer/color-texture readback and completion tickets, cancellation, scoped errors, session checks, explicit dependency release and GPU retirement. Failure/loss/disposal cancel pending requests and stop publication into obsolete sessions.
+- [x] **MW05.14 engine path code:** Existing engine camera/static resource adapters and live browser-scene mesh/material ownership feed the registered renderer, cached pipeline, binary packet pass and described canvas target. Runtime G1 acceptance remains open.
+- [x] **MW06.01–MW06.03 code:** Explicit CPU-direct `BrowserRenderPipeline`, retained per-view stable sorting, opaque/masked/sorted-transparent material policies, depth/culling, indexed instancing and selected unlit/flat Lambert shading. This initial raster slice does not claim the complete WebGPU baseline.
+- [x] **MW06.04 code:** Directional opaque/masked shadows with retained offscreen casters and update cadence, sky gradient/constant ambient, linear scene targets, optional RGBA16F HDR, exposure/Reinhard tonemapping and final SDR/sRGB presentation.
+- [x] **MW06.05–MW06.07 code:** Bounded material/texture bindings independent of engine identities, explicit UI atlas constraints without automatic packing/arrays, stable frame/material/policy/instance layouts, fixed warmed pipeline variants and capped material residency.
+- [x] **MW06.08 code:** Focused device requirements merged before acquisition, explicit material/quality selection diagnostics, named unsupported requirements and published profile exclusions without silent fallback.
+- [x] **MW06.09 code:** Painter-ordered engine-colored/textured UI rectangles with clips, a sample overlay and continued DOM keyboard/accessibility cooperation; font shaping and a widget framework are outside this primitive.
+- [x] **MW06.10 code:** Low/balanced/high backing-resolution/DPR, shadow size/cadence, light count, texture limits/tier, material complexity/residency and HDR/post-effect settings, including live-content incompatibility rejection.
+- [x] **MW06.11 reference-content code:** Asymmetric texture corners, opaque/cutout/translucent surfaces, a shadow receiver, split cameras and GPU UI for later inspection. Visual validation is still open below.
+- [ ] **MW06 acceptance:** Build/shader/browser/GPU qualification; known-value orientation, offscreen composition, depth, linear/sRGB, alpha, transparency, shadow, tonemap and UI evidence; resize/loss/resource/allocation evidence and G2 representative-world acceptance remain deferred.
+- [x] **MW07.01–MW07.04 code:** Versioned browser content manifest with stable IDs, hashes, dependency graph, shader/material profile, toolchain identity and payload variants; standalone C# offline packager; browser async fetch-to-byte consumption and generated managed interop without local paths or synchronous network wrappers. Import/conversion/collision/font/shader tooling stays offline.
+- [x] **MW07.05–MW07.06 code:** Essential and streamed dependency closures, bounded download concurrency and staging, cancellation/deadlines/retry backoff, progress and integrity diagnostics, one bounded asset integration per animation frame and small scene chunks sharing engine resources.
+- [x] **MW07.07 code:** Immutable SHA-256 payload URLs, revalidated bootstrap, profile/version rejection and publish-payloads-before-manifest policy. Old content is never silently reinterpreted under a different admitted profile.
+- [x] **MW07.08–MW07.09 selected-profile code:** Adapter-supported ASTC 4×4 and ETC2 RGBA8 feature negotiation, matched full-mip RGBA8 fallback, block-aware mip upload, explicit linear/sRGB, straight alpha and normal semantics. Color material sampling remains linear/clamp; unsupported semantics fail. KTX2/Basis and compression encoders remain outside this packager, reconciled with the texture roadmap.
+- [x] **MW07.10 code:** Separate received/verified compressed and uncompressed payload counters, staging ownership, decoded-equivalent estimates, retained managed bytes and estimated GPU resource bytes; release fetch buffers after upload, retain only selected immutable resource data and an explicit manifest reload URL.
+- [x] **MW07.11–MW07.12 code/policy:** Strict size/count/depth/type/URL/credential controls, whole dependency-graph checks, same-origin credential-free fetches and hash verification before installation. Persistent CacheStorage/IndexedDB is omitted; optional HTTP caching can be evicted or bypassed without becoming a required asset store.
+- [ ] **MW07 acceptance:** Build/cook/browser qualification; cold/warm cache, throttled and failed downloads, corrupt/missing payloads, cancellation/restart, compressed fallback/mip/semantic rendering and memory/frame-budget evidence remain deferred.
+- [x] **MW08.01–MW08.04 code:** Retained multi-pointer snapshots, capture/cancel, independent touch move/look, keyboard/IME separation, accessible jump, normalized wheel and optional focused gamepad input; safe-area and visual-viewport handling preserve CSS/backing coordinate conventions.
+- [x] **MW08.05 selected-profile code:** Bounded portable local-TRS clips, parent hierarchy/inverse binds, movement-driven idle/walk blending and four-weight CPU position skinning with retained buffers. A two-bone reference uploads once per render frame; arbitrary cooked animators and smooth-normal/tangent skinning remain outside this profile.
+- [x] **MW08.06–MW08.07 selected-profile code:** Source inventory of PhysX/Jolt/Jitter2 boundaries, explicit managed swept-AABB character profile with matching demo proxies, gravity/jump/sliding and fixed-step ordering. Imported scenes without collision descriptors do not receive demo physics. Runtime backend/collision qualification remains open.
+- [x] **MW08.08–MW08.09 code:** Canvas-owned Web Audio playback/decoding, positional sources/listener, gain/loop/pause, bounded ownership and cancellation, gesture-driven activation and explicit pending/ready/denied/suspended states. Required audio gates simulation on actual context readiness.
+- [x] **MW08.10–MW08.11 code:** Selected DOM/system-font navigation, status/error, scene-label and audio controls; schema-2 required/optional service declarations with named unsupported reasons. Required unsupported services fail rather than becoming no-ops; schema 1 stays compatible.
+- [x] **MW07/MW08 cooked animation and collision code:** Schema-3 assets supply bounded baked clips, hierarchy/inverse binds and canonical packed deformation inputs, with per-instance output ownership and shared authored cadence/engine transforms. Explicit collision payloads feed the existing character solver. Required services gate on actual essential scene owners; immutable payloads, limits and dependency checks extend the existing cooker/loader.
+- [ ] **MW08 acceptance:** Build/browser/device qualification for multitouch/IME/gamepads, viewport/keyboard behavior, animation/skinning and collision, audio gestures/codecs/suspension, service gating, unload/restart and allocation budgets. G3 remains open; native state-machine cooking and broader production services remain outside the bounded profile.
+- [x] **MW09.01–MW09.05 baseline code:** Storage/compute work flows through retained prepared sequences and the shared resource lifetime. Explicit workgroup metadata, binding/dispatch/device limits, indexed/non-indexed indirect buffer ranges, portable zero-first-instance policy, zero draws/dispatches and conservative pass-local alias checks are implemented. Native validation remains authoritative for WGSL and GPU-produced arguments.
+- [x] **MW09.06 reference source:** Opt-in offscreen arithmetic, compute-to-instance/indirect rendering and asynchronous readback cases cover empty/zero-visible/mixed/eight-slot-capacity data, index formats and malformed command reporting. The host pauses scene frames during the action; no reference case has been executed for this delivery.
+- [x] **MW09 reuse audit:** Reviewed the branch's existing skinning dispatcher/packed formats, shared SkinPaletteMatrix/BoundsGpu, GPUScene publication/IDs and canonical conservative Hi-Z kernels before porting. Portable compilation reuses the existing C# contracts; WebGPU lowers existing published candidates and packed animation output rather than adding another scene database or production animation controller. Earlier browser animation and offscreen cases remain explicitly reference fixtures.
+- [x] **MW09.07 selected-profile code:** Compute deformation consumes canonical affine palettes, Core4x8/x16 and spill weights, quantized sparse morph records, influence caps and accumulation policy. Dirty outputs feed mesh vertices before all render passes; normal/tangent results are produced separately. Explicit sample CPU/compute selection, matching packed reference weights/morphs, bounded active jobs/vertices/bytes and safe visible/non-occluder treatment of uncertain deformation bounds are implemented. Parity, smooth-normal material integration and device benefit are not claimed.
+- [x] **MW09.08 focused-scene code:** The existing sorted candidate publication carries canonical world bounds and per-view projection in packet ABI2. GPU frustum culling writes fixed indexed argument slots, firstInstance zero, and culled instanceCount zero. Actual focused scene rendering consumes those slots without count readback, retaining material/transparent order. This is not a duplicate GPUScene database or a port of the full desktop GPUScene/BVH.
+- [x] **MW09.08 hierarchical visibility code:** Explicit BvhCulling/BvhHiZ use the canonical LBVH node layout, Morton ordering and Karras topology, with separate WebGPU build/refit/traversal passes and retained bounded buffers. Published packet slots remain the adapter identity; no second stable-ID database is introduced. Native GPUScene ownership/publication and meshlet integration remain outside this adapter.
+- [x] **MW09.09 selected-profile code:** Canonical conservative Hi-Z semantics are ported to separate WebGPU mip passes, odd-size-safe MAX reduction and bounded AABB sampling. A dedicated current-frame pass admits explicitly designated opaque rigid occluders and excludes them from candidate rejection. Resize stages targets/pyramid/groups before generation replacement. Reversed-Z, temporal history and runtime correctness remain outside this unqualified profile.
+- [x] **MW09.10–MW09.12 controls/instrumentation code:** Bounded material bindings remain independent of bindless support. Explicit CPU-direct, initialized-indirect, compute-frustum, Hi-Z and CPU/compute-deformation controls expose the actual selection and work/residency counters. Automatic defaults remain CPU-direct/CPU deformation. Unknown, unsupported device/meshlet and missing required animation-data requests fail visibly. A fixed-workload sustained-device comparison procedure is documented; no measurements were performed.
+- [ ] **MW09 acceptance and promotion:** Execute baseline/reference correctness, argument-boundary/instance-addressing, CPU/GPU skin/morph/normal/tangent parity, conservative Hi-Z, resize/loss/lifetime and device coverage; compare variants under sustained physical-device load before promoting any advanced path or changing defaults. The bounded selected-profile code is delivered; full baseline and advanced optimizations remain unqualified.
+- [x] **MW07/MW08/MW12 shared desktop publish code:** Existing editor build jobs/settings/progress and CLI accept BrowserWebGPU, export the saved startup world, publish the portable app and call one shared content packager. Runtime DTOs, native asset/camera adapters, texture APIs, canonical skin buffers and native curve evaluators are reused. A bounded generic clip adapter preserves the final authored sample; named errors reject unsupported active content.
+- [x] **MW12.01–MW12.02 selected-profile bundle code:** Staged static output contains runtime/module assets, cooked world and a schema-checked launch descriptor; browser startup automatically selects that world. Cancellation cleanup and activation rollback preserve previous local output. Compatible SDK/workload qualification, hosting and clean-publish execution remain open.
+- [ ] **Broader engine integration beyond the selected profile:** Arbitrary desktop camera/material binding, native GPUScene ownership/publication, optional texture dimensions/formats, richer shading, native morph/root-space/state-machine cooking and native gameplay/physics/UI/audio authoring conversion remain later work. Bounded saved-world publishing, generic clip cooking and GPU-driven scene submission are implemented; these source additions do not establish arbitrary live-world portability.
+- [ ] **MW05 acceptance:** Build/browser/GPU qualification, real indexed scene output, mixed command ordering, mip/resolve/depth/stencil cases, clean diagnostics, resize, cancellation/loss and resource/bridge allocation evidence remain deferred.
+- [ ] **MW03.02/MW03.10–MW03.11 acceptance:** Exact-runtime memory-view/copy/disposal proof, increasing-draw crossing/allocation measurements, and malformed/stale/growth/cancellation/disposal/memory-pressure evidence. Code additions are not a substitute for this deliberately deferred validation.
+- [ ] **MW04.05/MW04.08/MW04.11 remaining qualification and coverage:** Qualify the pinned compiler and selected-profile WGSL layout checks; implement full original-source mappings for generated Slang. The adapter's reflection JSON is not treated as host-ABI proof; emitted WGSL has a separate bounded checker whose unsupported layouts fail closed. Arbitrary desktop shader/material translation is not claimed.
+- [ ] **MW04 acceptance:** Compile/layout/coordinate checks, Vulkan compatibility, cooked material rendering and supported browser/device evidence.
+
+Latest source delivery: [Browser project publishing](../../progress/rendering/browser-project-publishing.md); prior [compute reuse audit and integration](../../progress/rendering/browser-compute-reuse-audit.md).
+The selected rendering, content, interactive sample, compute/indirect, deformation, Hi-Z, bounded BVH, cooked animation/collision and shared desktop publishing source implementations are delivered. Native GPUScene ownership/publication, arbitrary live-world portability, broader native animation/gameplay authoring conversion, earlier Slang source mapping, and all deferred runtime/mobile qualification remain open. Experimental paths are explicit opt-ins, not accepted defaults.
 
 ## 2. Source baseline: reuse versus missing work
 
@@ -99,16 +219,26 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Priority:** P0. **Depends on:** None. **Gate:** G0 planning inputs.
 
-- [ ] **MW00.01** Compare the implementation branch with the review baseline. Record new browser, shader, platform, or asset work and link its evidence before removing or completing tasks here.
+- [x] **MW00.01** Compare the implementation branch with the review baseline. Record new browser, shader, platform, or asset work and link its evidence before removing or completing tasks here.
 - [ ] **MW00.02** Inventory the transitive project/package graph required to construct, update, load, and render one minimal world. Include build targets, native assets, static initializers, module initializers, and implicit service registration.
 - [ ] **MW00.03** Classify every reachable dependency as portable, browser-replaceable, offline-cook-only, desktop-only, or excluded from the selected milestone. Assign an extraction or substitution owner.
-- [ ] **MW00.04** Confirm the first delivery is browser canvas/WebGPU. Record the WebGPU-only packaging policy and which broader WebGL2/`Auto` behavior remains pending.
-- [ ] **MW00.05** Choose a deterministic sample world: one camera, static and skinned geometry, textured opaque/masked/transparent materials, a light/shadow receiver, environment, and basic UI. Keep a smaller static subset for G1.
+- [x] **MW00.04** Confirm the first delivery is browser canvas/WebGPU. Record the WebGPU-only packaging policy and which broader WebGL2/`Auto` behavior remains pending.
+- [x] **MW00.05** Choose a deterministic sample world: one camera, static and skinned geometry, textured opaque/masked/transparent materials, a light/shadow receiver, environment, and basic UI. Keep a smaller static subset for G1.
 - [ ] **MW00.06** Select physical iOS and Android reference devices and record exact OS/browser versions during testing. Define expected behavior for unsupported devices without asserting support from a user-agent string.
-- [ ] **MW00.07** Set numeric startup, first-interaction, frame-time, resolution, memory, texture, upload, and content budgets before performance sign-off. Use the budget worksheet below; do not substitute unmeasured performance promises.
-- [ ] **MW00.08** Record required versus optional gameplay services for G3 and G4. An explicitly required service must work or produce a blocking diagnostic, not silently become a no-op.
+- [x] **MW00.07** Set numeric startup, first-interaction, frame-time, resolution, memory, texture, upload, and content budgets before performance sign-off. Use the budget worksheet below; do not substitute unmeasured performance promises.
+- [x] **MW00.08** Record required versus optional gameplay services for G3 and G4. An explicitly required service must work or produce a blocking diagnostic, not silently become a no-op.
 
 **Acceptance:** A reviewed dependency inventory, sample-world manifest, device matrix, and measurable gate definitions exist. A package's presence is not used as proof that its implementation works in WASM.
+
+**Implementation record (2026-09-28):** [Readiness audit and delivery contract](../../progress/rendering/mobile-browser-readiness.md), [declared dependency inventory](../../progress/rendering/mobile-browser-dependencies.json), and [planned sample manifest](../../progress/rendering/mobile-browser-sample.json). Reproduce the source audit with `python3 Tools/Reports/audit_browser_dependencies.py`.
+
+- MW00.01: Reconciled against `9fee4b983efda6f3f79ac107eba2137a5ab8c5fa`; current runtime source changes and unchanged project/backend boundaries recorded.
+- MW00.02–MW00.03: Declared project/package inventory, initializer/build hazards, disposition and subsystem owners recorded. Remain open for evaluated MSBuild/source reachability, restored transitive NuGet/runtime assets and missing submodule contents. This is not a complete browser dependency closure.
+- MW00.04–MW00.05: WebGPU-only canvas scope and deterministic sample contract selected. The manifest is a specification, not an implemented engine fixture.
+- MW00.06: Proposed iPhone 15/Safari and Pixel 8/Chrome qualification rows; hardware availability and actual OS/browser versions remain pending. No device support is claimed.
+- MW00.07–MW00.08: Numeric engineering targets, run conditions, and required/optional services recorded; no measured performance results claimed.
+
+**Follow-up:** The [portable browser scene boot](../../progress/rendering/portable-browser-scene-boot.md) now provides live evidence for the minimum scene path. The original audit alone did not qualify a browser build.
 
 ## MW01 — Extract and validate the portable runtime/rendering kernel
 
@@ -116,19 +246,28 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Starting points:** [Core project][core-project], [Rendering project][rendering-project], [Data project][data-project], [Bootstrap project][bootstrap-project], [AbstractRenderer][abstract-renderer].
 
-- [ ] **MW01.01** Extract the minimum scene, transform, component, world-update, data, and rendering contracts into browser-compatible project boundaries. Preserve public identities/serialization compatibility where needed.
-- [ ] **MW01.02** Remove desktop/native dependencies from the browser's reachable graph. Isolate GLFW/SDL desktop hosting, OpenVR/OpenXR, DirectStorage, native ImageMagick/FFmpeg, Ultralight, native font processing, CUDA, and native physics/audio integrations according to MW00's inventory.
+- [x] **MW01.01** Extract the minimum scene, transform, component, world-update, data, and rendering contracts into browser-compatible project boundaries. Preserve public identities/serialization compatibility where needed.
+- [x] **MW01.02** Remove desktop/native dependencies from the browser's reachable graph. Isolate GLFW/SDL desktop hosting, OpenVR/OpenXR, DirectStorage, native ImageMagick/FFmpeg, Ultralight, native font processing, CUDA, and native physics/audio integrations according to MW00's inventory.
 - [ ] **MW01.03** Audit neutral-target projects such as Data and Audio independently. Move unsupported implementations and runtime assets out of the browser graph rather than assuming `net10.0` makes them portable.
 - [ ] **MW01.04** Separate the useful generic renderer/resource contracts from desktop, ImGui, native-window, image-processing, and native API dependencies in the current rendering assembly.
 - [ ] **MW01.05** Introduce focused resource/pass/command/copy/presentation/completion capabilities. Keep legacy stateful renderer adapters where necessary without requiring WebGPU to emulate the entire GL-shaped API.
-- [ ] **MW01.06** Create a browser composition root with explicit service installation. Do not reference `XREngine.Runtime.Bootstrap` unchanged or transitively register all desktop integrations.
+- [x] **MW01.06** Create a browser composition root with explicit service installation. Do not reference `XREngine.Runtime.Bootstrap` unchanged or transitively register all desktop integrations.
 - [ ] **MW01.07** Reuse the static factory/provider mechanisms, but generate registrations only for browser-included components, resources, serializers, and modules. Preserve stable type IDs needed by cooked assets.
 - [ ] **MW01.08** Audit reflection discovery, dynamic code generation, dynamic expressions, runtime assembly loading, serializers, and generic construction for the selected WASM/trimming/AOT modes. Treat AOT as a separately tested publish option, not a blanket ban on all reflection.
-- [ ] **MW01.09** Split build-time generators/cook tools from runtime dependencies. Ensure the browser build cannot invoke unrelated native submodule preparation, native DLL copy targets, or desktop-only tooling by accident.
+- [x] **MW01.09** Split build-time generators/cook tools from runtime dependencies. Ensure the browser build cannot invoke unrelated native submodule preparation, native DLL copy targets, or desktop-only tooling by accident.
 - [ ] **MW01.10** Add a portability guard for the browser graph and applicable forbidden APIs/dependencies. Record justified exceptions rather than suppressing all analyzer warnings.
 - [ ] **MW01.11** Validate the extracted scene kernel in an actual browser publish, then retain desktop build/runtime coverage for moved code.
 
 **Acceptance:** G0 constructs a real engine scene, advances lifecycle and transforms, and reports startup success without loading desktop services. Portable changes preserve the existing desktop composition.
+
+**Implementation record (2026-09-28):** [Portable browser scene boot](../../progress/rendering/portable-browser-scene-boot.md).
+
+- MW01.01–MW01.02, MW01.06, MW01.09: Completed for the explicitly selected scene kernel using same-assembly source profiles and a standalone browser composition root. This does not include cooked resources or a renderer.
+- MW01.03–MW01.05: Data/Extensions use reviewed managed source profiles; Audio is excluded. Portable contracts now include the real catalog/output types and focused resource, pass/packet, texture-copy, presentation and asynchronous-completion capabilities. Expanded evaluated-graph results remain pending.
+- MW01.07–MW01.08: The selected interpreter has generated browser registrations, scoped stable IDs and source-generated scene JSON metadata. API/reflection inventory and reviewed exception policy are implemented. Serializer round trips and expanded runtime evidence remain pending; trim/AOT publish modes are rejected until separately qualified.
+- MW01.10: Project/package/native-asset guards retain a narrow official SDK runtime exception. Evaluated-source forbidden-API/reflection scanning is implemented with documented lexical limits; it does not prove semantic reachability.
+- MW01.11: Published scene passed three browser runs and desktop Data rebuild passed. Full desktop scene/Core/Rendering coverage remains open. Minimal G0 scene behavior is demonstrated; broader phase qualification is not complete.
+- MW02 code is now implemented for the selected canvas host, including binding, startup, packets, input, resize and explicit frame publication. The earlier scene-only evidence does not validate these additions.
 
 ## MW02 — Browser application host, canvas target, and frame scheduling
 
@@ -149,6 +288,15 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** The browser updates an engine scene, remains responsive, handles resize and page suspension, and reports startup failures. No desktop loop runs inside a browser callback.
 
+**Code implementation record (2026-09-28):** [Browser WebGPU canvas host](../../progress/rendering/browser-webgpu-canvas-host.md), extended by the [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md). Code rows above track completed source; main acceptance checkboxes remain open where qualification is required.
+
+- MW02.01–MW02.04: Canvas binding, portable target/surface/input contracts and asynchronous adapter/device/pipeline startup are implemented. The browser composition owns the pending startup; it does not block or pretend the existing synchronous desktop factory created a ready renderer.
+- MW02.05: Single-frame simulation publishes the real engine transform buffers once, freezes resource handles/transforms in reusable storage, and performs per-view visibility and packet production from that snapshot. Structural/resource mutations during a frame are rejected. Arbitrary world renderer adapters belong to later integration work.
+- MW02.06–MW02.07: Single-thread caller scheduling, bounded 60 Hz fixed updates and variable-cadence rendering are implemented. Suspension, resize, view changes and excessive time gaps reset timing and invalidate a monotonic history generation. The unlit renderer has no temporal image history yet.
+- MW02.08–MW02.10: Resize/DPR/device limits, surface generations, zero-size/detach/reattach, independent canvas sessions, split view, cancellation, observer/listener cleanup and explicit stop/restart are implemented but unvalidated.
+- The WebGPU executor consumes one batched draw packet with focused resource descriptors and supports explicit texture copies and asynchronous completion. Static asset adapters and module registration are implemented. Streaming uploads, broader live-world integration and device qualification remain open; G1 acceptance is not asserted.
+
+
 ## MW03 — Batched .NET/JavaScript command and upload bridge
 
 **Priority:** P0. **Depends on:** MW01–MW02. **Gate:** G1; maintained through G3.
@@ -167,6 +315,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** G1 uses the real packet path. Many ordinary draws may produce many JavaScript WebGPU API calls, but they do not produce one managed-to-JavaScript transition per draw or state mutation. No stale arena access or implicit per-frame GPU wait is needed for correctness.
 
+**Implementation record (2026-09-28):** [Batched browser upload bridge](../../progress/rendering/browser-upload-bridge.md) completes the selected-profile source work with reusable command/payload arenas, vertex/index/texture/tint updates, one synchronous generated import per batch, pre-execution validation, required-capacity failures, lifetime guards and allocation/crossing diagnostics. The existing draw ABI stays at v2; the separate upload ABI is v1. Resource creation remains a bounded control call. The bridge deliberately copies transient managed views into retained JavaScript arrays and does not claim persistent-view or zero-copy proof. The user's validation waiver permits source implementation to proceed, but the exact-runtime prerequisite in MW03.02 and the measurement/adversarial acceptance in MW03.10–MW03.11 remain unfulfilled. No Python, build, test, browser run or audit execution was used for this delivery. Readback and broader renderer integration remain later capabilities, not claimed here.
+
 ## MW04 — WGSL shader artifacts and material/layout contracts
 
 **Priority:** P0. **Depends on:** MW01; progresses alongside MW03–MW05. **Gates:** G1 seed shaders, G2 cooked materials.
@@ -178,7 +328,13 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW04.01** Add a small explicit WGSL set for unlit color/texturing and the first depth-tested engine mesh. Keep bindings and layouts explicit so this validates backend integration, not a separate rendering system.
 - [ ] **MW04.02** Define the initial portable vertex, frame, object, and material data layouts with matching C# packing and shader declarations. Add known-value visual/readback checks for offsets and transforms.
 
+**Implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) supplies explicit position/UV, matrix and tint layouts plus depth-tested unlit color/texturing WGSL. The shader now lives in the registered WebGPU module; shared ABI writers and typed material generation are implemented below. MW04.01–MW04.02 retain open acceptance for known-value visual/readback evidence.
+
 ### Production artifact path
+
+**Implementation record (2026-09-28):** [Cooked browser shader artifacts](../../progress/rendering/browser-shader-artifacts.md) adds target-tagged C# shader results, an explicit-WGSL offline packager, a versioned content-addressed descriptor/manifest, an abortable bounded browser loader, exact initial-profile requirement checks and source-location diagnostics. The sample package was generated. No .NET build, WGSL compilation, browser run, regression test or physical-device validation was performed. Main checkboxes retain their acceptance meaning; the checked code rows above show the delivered subset.
+
+**Expanded source implementation (2026-09-28):** [Browser shader cooking and material generation](../../progress/rendering/browser-shader-cooking.md) adds a Python-free C# cooker, a typed target-aware unlit generator connected to engine material recipes, an optional pinned Slang 2026.8 WGSL route, shared ABI writers, schema 2 provenance/coordinate contracts and cancellable bounded pipeline warm-up. Source examples include both generated material variants and a Slang counterpart. No cook/build/test/browser execution was performed. Full original-source Slang mapping and emitted-layout reflection qualification remain open, along with runtime acceptance; MW04 is not declared fully accepted.
 
 - [ ] **MW04.03** Extend the existing compile-target contract with WGSL. Generalize the result's SPIR-V-specific payload into a target-tagged artifact representation while preserving existing Vulkan behavior and provenance.
 - [ ] **MW04.04** Define source language, entry point, stage, includes, defines, specialization, required capabilities, compiler identity, and reflection/schema identity in artifact/cache keys.
@@ -214,6 +370,12 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 
 **Acceptance:** G1 renders through the real engine path with clean WebGPU diagnostics, stable resource ownership, working resize, and no desktop renderer dependency. Remaining baseline compute/indirect behavior is tracked in MW09 rather than silently claimed complete.
 
+**Initial implementation record (2026-09-28):** The [mesh and packet bridge](../../progress/rendering/browser-mesh-packet-bridge.md) introduced indexed buffers, RGBA8 textures, material bind groups, depth attachments and packets. Its original app-leaf limitation was superseded by the registered module below.
+
+**Module and static-resource implementation record (2026-09-28):** [WebGPU module and engine snapshot bridge](../../progress/rendering/browser-webgpu-module-assets.md) extracts the existing catalog contracts into the portable graph, registers a real WebGPU leaf, moves API-specific imports/JS/assets to that leaf, and connects supported existing engine resources through explicit export/import adapters. Static snapshots support one captured camera and authored unlit material recipes. Later work added the existing frame-output contract and the resource mechanisms below; live desktop pipeline portability and acceptance remain open.
+
+**Resource and submission source completion (2026-09-28):** [Browser GPU resources and ordered submission](../../progress/rendering/browser-gpu-resources-submission.md) implements the selected initial profile across MW05.01–MW05.14: selected capabilities, general buffer/texture/view/sampler and shader/binding/pipeline wrappers, mip uploads, framebuffer attachment lowering, complete bounded pipeline caches, retained ordered command plans and cancellable bounded readback/completion. The source-completion rows above are checked. Main checkboxes retain their full acceptance meaning: no builds, tests, shader execution, browser/GPU runs or Python execution were performed. Optional formats and dimensions, the broader pipeline, GPU-scene/indirect behavior and full recovery remain explicitly outside this initial resource profile.
+
 ## MW06 — Focused browser pipeline and portable material binding
 
 **Priority:** P0. **Depends on:** MW04–MW05. **Gate:** G2.
@@ -231,6 +393,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW06.09** Add engine UI composition using portable assets/shaders. Keep browser DOM cooperation for text entry/accessibility where appropriate without making native ImGui or Ultralight a runtime prerequisite.
 - [ ] **MW06.10** Add mobile quality settings for backing resolution/DPR, shadow size/update rate, light count, texture tier, material complexity, and selected post effects. Avoid allocating resources for disabled desktop effects.
 - [ ] **MW06.11** Validate asymmetric test patterns for orientation, offscreen composition, depth/reversed-Z if enabled, linear/sRGB sampling, alpha conventions, transparency order, shadows, and tonemapping.
+
+**Source implementation (2026-09-28):** [Focused browser forward pipeline](../../progress/rendering/browser-focused-pipeline.md) implements the selected CPU-direct raster/material/UI/quality scope of MW06.01–MW06.10 and reference content for MW06.11. Code-completion rows above are checked; the main acceptance boxes remain open. No builds, tests, shader cook/compiler execution, browser/GPU runs, benchmarks or Python execution were performed, per the user's validation waiver. PBR, skinning, general interactive UI and GPU-driven submission remain outside this selected slice.
 
 **Acceptance:** G2 displays the representative world through engine objects and a declared browser profile. Visual differences from desktop are deliberate, documented profile choices, not missing passes hidden by catch-all fallback.
 
@@ -253,6 +417,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW07.11** Apply strict size/count/dependency-depth limits to untrusted world manifests and payloads. Restrict asset URLs and credentials by policy; reject path traversal, incompatible types, and uncontrolled allocation requests.
 - [ ] **MW07.12** Keep persistent browser caching optional initially. When added, handle quota/eviction, partial downloads, version changes, cancellation, and unavailable storage without corrupting the world cache.
 
+**Source implementation (2026-09-29):** [Browser cooked content delivery](../../progress/rendering/browser-cooked-content.md) records the selected scope of MW07.01–MW07.12: offline packaging, asynchronous bounded delivery, incremental engine resource integration and preconverted mobile texture variants. Source-completion rows above are checked. Main boxes retain acceptance meaning: no builds, tests, cooker/compiler execution, browser/GPU runs, cache/network experiments or Python execution were performed. No persistent browser database, runtime importer or KTX2/Basis transcoder is introduced.
+
 **Acceptance:** A static browser deployment loads a cooked world on cold and warm cache paths, handles throttled or failed downloads, and never requires desktop importers or local path-based downloads at runtime.
 
 ## MW08 — Mobile interaction, animation, physics, audio, and UI
@@ -270,6 +436,8 @@ The browser shared layer must not import the desktop bootstrap or a concrete ren
 - [ ] **MW08.09** Handle audio start/resume in an appropriate user-gesture flow, plus pause, denied access, and context suspension. Do not declare required audio ready before it actually is.
 - [ ] **MW08.10** Use cooked font/UI assets or a deliberately selected browser implementation. Complete essential navigation, loading/error state, interaction, and text-entry behavior without importing the desktop editor.
 - [ ] **MW08.11** Install explicit unsupported-service implementations only for excluded optional services, with visible reasons. Never silently disable a service required by the loaded world's manifest/profile.
+
+**Source implementation (2026-09-29):** [Browser interaction and runtime services](../../progress/rendering/browser-interactive-services.md) records the selected sample scope of MW08.01–MW08.11 and candidate inventory. Code rows above are checked; main acceptance boxes remain open. No builds, tests, browser/GPU/audio runs, cooker execution or Python execution were performed. The sample's managed character and CPU animation are explicit limited profiles, not claims that native physics or the complete desktop animator were ported. Static packages requiring absent collision/animation payloads are rejected by name.
 
 **Acceptance:** A user can load the sample, move and interact by touch, see required animation, and use its declared physics/audio/UI features. No essential control requires desktop-only interaction.
 
@@ -298,6 +466,8 @@ The companion's `BrowserWebGPUBaseline` includes storage buffers, compute, suppo
 - [ ] **MW09.12** Keep forced strategy requests honest: unsupported required compute/indirect/meshlet settings fail visibly; automatic choices may select only a documented permitted strategy and must report it.
 
 **Acceptance:** The declared WebGPU baseline's compute/indirect behavior passes correctness checks. Advanced GPU-resident features are enabled individually only when their visual correctness and mobile cost are measured.
+
+**Source delivery (2026-09-29):** [Reuse audit and integration](../../progress/rendering/browser-compute-reuse-audit.md) records shared canonical contracts, the implemented bounded deformation/visibility backends and explicit experimental controls. Main acceptance bullets above remain unchecked because shader/browser/device validation and sustained measurements were deferred. These source controls do not constitute promotion or qualification of the advanced profile.
 
 ## MW10 — Device recovery, mobile lifecycle, memory, and performance
 
@@ -357,7 +527,7 @@ The companion's `BrowserWebGPUBaseline` includes storage buffers, compute, suppo
 - [ ] **MW12.09** Exercise all applicable failure/recovery cases in the matrix below. Keep expected unsupported-device errors distinct from regressions and unexpected validation errors.
 - [ ] **MW12.10** Record exact build command/configuration, commit, device/OS/browser, capabilities/profile, scene, measurements, diagnostics, and pass/fail evidence for each gate. Preserve failed-run evidence and outstanding limitations.
 - [ ] **MW12.11** Retain relevant desktop OpenGL/Vulkan regression checks for extracted code and changed shader contracts. Confirm WebGPU-only publishes omit excluded renderer modules and native assets.
-- [ ] **MW12.12** Add this file to `docs/work/todo/rendering/`. Link it from the companion design using `../../todo/rendering/mobile-webgpu-runtime-todo.md` and from `docs/work/README.md` using `todo/rendering/mobile-webgpu-runtime-todo.md`.
+- [x] **MW12.12** Add this file to `docs/work/todo/rendering/`. Link it from the companion design using `../../todo/rendering/mobile-webgpu-runtime-todo.md` and from `docs/work/README.md` using `todo/rendering/mobile-webgpu-runtime-todo.md`.
 - [ ] **MW12.13** Update the companion's landed-work notes for the existing shader request/result contracts and each newly validated browser slice. Preserve the distinction between WebGPU-first delivery and complete dual-backend v1.
 - [ ] **MW12.14** Publish user-facing build, cook, host, support, and troubleshooting instructions after validation. Include explicit known limitations, required services, fallback rules, and how to export browser diagnostics.
 
@@ -398,23 +568,23 @@ Run the relevant subset at each gate, then the complete selected product matrix 
 
 ## 7. Budget worksheet
 
-Set target values under MW00.07; collect results under MW10/MW12. No performance result is asserted by this initial checklist.
+Initial engineering targets are recorded below and in the [readiness contract](../../progress/rendering/mobile-browser-readiness.md#devices-and-measurable-budgets), which defines device proposals, workloads and run conditions. Collect results under MW10/MW12; no performance result is asserted.
 
 | Metric | Target/limit to define | Measured result | Run conditions |
 | --- | --- | --- | --- |
-| Initial compressed application payload | Define before G3 sign-off. | Not measured. | Runtime mode, content split, compression. |
-| Cold time to useful frame and first interaction | Define on a named connection/device. | Not measured. | Cache/network/device conditions. |
-| Warm time to useful frame | Define separately from cold startup. | Not measured. | Cache state and manifest version. |
-| Sustained frame-time p50/p95/p99 | Define per device/profile and chosen refresh target. | Not measured. | Scene, resolution, session duration. |
-| Managed simulation/collection/packet CPU time | Set per-frame limits. | Not measured. | Workload and runtime configuration. |
-| JavaScript executor CPU time | Set per-frame limit. | Not measured. | Draw/pass/command counts. |
-| Managed/JS interop crossings per frame | Bounded independently of ordinary draw count. | Not measured. | Low/high draw-count comparison. |
+| Initial compressed application payload | 20 MiB including initial sample. | Not measured. | Runtime mode, content split, compression. |
+| Cold time to useful frame and first interaction | 12 s useful frame; 15 s first interaction; 20 Mbit/s and 80 ms RTT. | Not measured. | Cache/network/device conditions. |
+| Warm time to useful frame | 3 s useful frame; 4 s first interaction. | Not measured. | Cache state and manifest version. |
+| Sustained frame-time p50/p95/p99 | 16.7 / 20 / 33.3 ms; 60-Hz target; 1280-pixel maximum backing edge. | Not measured. | Scene, resolution, session duration. |
+| Managed simulation/collection/packet CPU time | 4 ms p95. | Not measured. | Workload and runtime configuration. |
+| JavaScript executor CPU time | 2 ms p95. | Not measured. | Draw/pass/command counts. |
+| Managed/JS interop crossings per frame | At most 4 ordinary-frame crossings at both 1 and 128 draws. | Not measured. | Low/high draw-count comparison. |
 | Steady-state managed render allocations | Target no recurring per-draw allocations; document remaining sources. | Not measured. | Warm-up state and sampling method. |
-| Upload bytes/resource creations per frame | Set steady and burst limits. | Not measured. | Scene streaming/startup/recovery. |
-| Packet/upload arena capacity and growth | Set resident/peak limits and overflow policy. | Not measured. | Normal and stress workloads. |
-| Managed/decoded/staging/GPU residency | Set separate steady/peak budgets; GPU bytes may be estimated. | Not measured. | Startup, scene change, recovery. |
-| Recovery time and retained resource count | Define successful-resume and leak thresholds. | Not measured. | Loss/shutdown/resize scenario. |
-| G4 transport queue and latency bounds | Define by message class and delivery semantics. | Not measured. | Server/network/session conditions. |
+| Upload bytes/resource creations per frame | 256 KiB steady / 4 MiB burst; 0 steady / at most 8 streaming creations. | Not measured. | Scene streaming/startup/recovery. |
+| Packet/upload arena capacity and growth | Packets 4/8 MiB; upload arena 16/32 MiB; reject overflow and report required capacity. | Not measured. | Normal and stress workloads. |
+| Managed/decoded/staging/GPU residency | 128/64/32/128 MiB steady; aggregate peak 512 MiB; label estimates. | Not measured. | Startup, scene change, recovery. |
+| Recovery time and retained resource count | 5 s after replacement device availability; no resource-count growth across 10 recoveries. | Not measured. | Loss/shutdown/resize scenario. |
+| G4 transport queue and latency bounds | 256 KiB coalesced state / 1 MiB control queues; state age p95 200 ms; resync 5 s. | Not measured. | Server/network/session conditions. |
 
 ## 8. Completion evidence and release checklist
 

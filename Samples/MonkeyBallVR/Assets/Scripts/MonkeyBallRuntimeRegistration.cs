@@ -24,7 +24,7 @@ internal static class MonkeyBallRuntimeRegistration
 
         PublishedCookedAssetRegistry.Register(
             typeof(MonkeyBallWorldAsset),
-            static asset => MonkeyBallWorldCookedSerializer.Serialize((MonkeyBallWorldAsset)asset),
+            static (asset, writer) => MonkeyBallWorldCookedSerializer.Serialize((MonkeyBallWorldAsset)asset, writer),
             static (payload, assetType) => assetType == typeof(MonkeyBallWorldAsset)
                 ? MonkeyBallWorldCookedSerializer.Deserialize(payload)
                 : null);

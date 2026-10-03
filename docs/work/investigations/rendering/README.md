@@ -7,6 +7,20 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Advanced pipeline (Vulkan) directional shadows — Resolved](advanced-vulkan-dirlight-shadows-2026-10-02.md)
+  records the cascade slope-bias unit mismatch that made every receiver lit, the
+  back-facing and footprint bias corrections, and the still-intermittent
+  CastsShadows re-enable failure.
+- [Production component-profile admission and output](2026-10-01-component-profile-production.md)
+  records construction publication, cold shader admission, exact output evidence,
+  and GPU topology validation for the presentationless production fixture.
+
+- [Remaining GPUScene and Vulkan storage synchronization](2026-10-01-remaining-synchronization-gates.md) records separate gate distributions, real transform churn, concurrency limits and the measured synchronization deferral.
+
+- [Warmed Advanced pipeline readiness allocations](2026-10-01-warmed-pipeline-readiness.md) records allocation removal, the measured CPU gate, live invalidation coverage and existing regression-test limits.
+
+- [Advanced operation metadata scan attribution](2026-10-01-advanced-operation-metadata.md) records the measured structural-scan deferral and conditions for reopening.
+
 - [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](vulkan-camera-motion-black-flicker-2026-08-10.md)
   is the canonical desktop camera/input/cadence triage guide. Its stale-frame
   correctness fixes are live-validated; remaining prepared-producer CPU work is

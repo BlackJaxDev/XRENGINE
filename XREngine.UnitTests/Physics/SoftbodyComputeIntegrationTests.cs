@@ -402,6 +402,235 @@ public sealed class SoftbodyComputeIntegrationTests : GpuTestBase
     }
 
     [Test]
+    public unsafe void Finalize_RecoversRotatedOffsetsAcrossClusterShapes()
+    {
+        RunWithGLContext(gl =>
+        {
+            AssertHardwareComputeOrInconclusive(gl);
+            uint shader = CompileComputeShader(gl, LoadShaderSource("Compute/Softbody/Finalize.comp"));
+            uint program = CreateComputeProgram(gl, shader);
+            try
+            {
+                Vector3[] planar =
+                [
+                    new(2.0f, 0.0f, 0.0f), new(-2.0f, 0.0f, 0.0f),
+                    new(0.0f, 0.5f, 0.0f), new(0.0f, -0.5f, 0.0f),
+                ];
+                Vector3[] nonplanar =
+                [
+                    .. planar,
+                    new(0.0f, 0.0f, 1.2f), new(0.0f, 0.0f, -1.2f),
+                ];
+                Vector3[] collinear =
+                [
+                    new(2.0f, 0.0f, 0.0f), new(-2.0f, 0.0f, 0.0f),
+                    new(1.0f, 0.0f, 0.0f), new(-1.0f, 0.0f, 0.0f),
+                ];
+                Vector3[] coincident = [Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero];
+                Quaternion oblique = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1.0f, 2.0f, 3.0f)), 1.1f);
+                (string Name, Vector3[] Offsets, Quaternion Rotation)[] cases =
+                [
+                    ("planar +90 X", planar, Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 2.0f)),
+                    ("planar -90 Y", planar, Quaternion.CreateFromAxisAngle(Vector3.UnitY, -MathF.PI / 2.0f)),
+                    ("planar 180 Z", planar, Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI)),
+                    ("nonplanar -90 X", nonplanar, Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.PI / 2.0f)),
+                    ("nonplanar +90 Y", nonplanar, Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI / 2.0f)),
+                    ("nonplanar -90 Z", nonplanar, Quaternion.CreateFromAxisAngle(Vector3.UnitZ, -MathF.PI / 2.0f)),
+                    ("nonplanar 180 X", nonplanar, Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI)),
+                    ("nonplanar 180 Y", nonplanar, Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI)),
+                    ("nonplanar oblique", nonplanar, oblique),
+                    ("collinear +90 Z", collinear, Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2.0f)),
+                    ("coincident", coincident, oblique),
+                ];
+
+                foreach (var (name, offsets, rotation) in cases)
+                    AssertFinalizeCase(gl, program, name, offsets, rotation);
+            }
+            finally
+            {
+                gl.DeleteProgram(program);
+                gl.DeleteShader(shader);
+            }
+        });
+    }
+
+    private static unsafe void AssertFinalizeCase(GL gl, uint program, string name, Vector3[] offsets, Quaternion rotation)
+    {
+        Vector3 translation = new(2.0f, 3.0f, 4.0f);
+        GPUSoftbodyParticleData[] particles = new GPUSoftbodyParticleData[offsets.Length];
+        GPUSoftbodyClusterMemberData[] members = new GPUSoftbodyClusterMemberData[offsets.Length];
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            Vector3 position = translation + Vector3.Transform(offsets[i], rotation);
+            particles[i] = new GPUSoftbodyParticleData
+            {
+                CurrentPosition = position,
+                PreviousPosition = position,
+                RestPosition = offsets[i],
+                InverseMass = 1.0f,
+                InstanceIndex = 0,
+            };
+            members[i] = new GPUSoftbodyClusterMemberData
+            {
+                ClusterIndex = 0,
+                ParticleIndex = i,
+                Weight = 1.0f,
+                LocalOffset = offsets[i],
+            };
+        }
+        GPUSoftbodyClusterData[] clusters =
+        [
+            new() { RestCenter = Vector3.Zero, MemberStart = 0, MemberCount = offsets.Length, InstanceIndex = 0 },
+        ];
+        GPUSoftbodyClusterTransformData[] transforms = [new()];
+
+        GPUSoftbodyClusterMath.TrySolveClusterTransform(particles, members, clusters[0], out Vector3 cpuCenter, out Quaternion cpuRotation)
+            .ShouldBeTrue($"CPU cluster solve failed for {name}");
+        AssertFiniteAndClose(cpuCenter, translation, name);
+        AssertRecoveredOffsets(cpuRotation, offsets, rotation, name);
+
+        uint particleBuffer = CreateShaderStorageBuffer(gl, particles, BufferUsageARB.DynamicDraw);
+        uint clusterBuffer = CreateShaderStorageBuffer(gl, clusters, BufferUsageARB.DynamicDraw);
+        uint memberBuffer = CreateShaderStorageBuffer(gl, members, BufferUsageARB.DynamicDraw);
+        uint transformBuffer = CreateShaderStorageBuffer(gl, transforms, BufferUsageARB.DynamicDraw);
+        try
+        {
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, particleBuffer);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, clusterBuffer);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, memberBuffer);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 7, transformBuffer);
+            gl.UseProgram(program);
+            gl.Uniform1(gl.GetUniformLocation(program, "clusterCount"), 1);
+            gl.DispatchCompute(1, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+
+            GPUSoftbodyClusterData result = ReadShaderStorageBuffer<GPUSoftbodyClusterData>(gl, clusterBuffer, 1)[0];
+            GPUSoftbodyClusterTransformData transform = ReadShaderStorageBuffer<GPUSoftbodyClusterTransformData>(gl, transformBuffer, 1)[0];
+            AssertFiniteAndClose(result.CurrentCenter, translation, name);
+            AssertFiniteAndClose(transform.Position, translation, name);
+            AssertRecoveredOffsets(transform.Rotation, offsets, rotation, name);
+        }
+        finally
+        {
+            gl.DeleteBuffer(particleBuffer);
+            gl.DeleteBuffer(clusterBuffer);
+            gl.DeleteBuffer(memberBuffer);
+            gl.DeleteBuffer(transformBuffer);
+        }
+    }
+
+    private static void AssertFiniteAndClose(Vector3 actual, Vector3 expected, string name)
+    {
+        float.IsFinite(actual.X).ShouldBeTrue($"{name}: non-finite X");
+        float.IsFinite(actual.Y).ShouldBeTrue($"{name}: non-finite Y");
+        float.IsFinite(actual.Z).ShouldBeTrue($"{name}: non-finite Z");
+        Vector3.Distance(actual, expected).ShouldBeLessThan(0.02f, name);
+    }
+
+    private static void AssertRecoveredOffsets(Quaternion actual, Vector3[] offsets, Quaternion expected, string name)
+    {
+        float.IsFinite(actual.X).ShouldBeTrue($"{name}: non-finite quaternion X");
+        float.IsFinite(actual.Y).ShouldBeTrue($"{name}: non-finite quaternion Y");
+        float.IsFinite(actual.Z).ShouldBeTrue($"{name}: non-finite quaternion Z");
+        float.IsFinite(actual.W).ShouldBeTrue($"{name}: non-finite quaternion W");
+        actual.Length().ShouldBe(1.0f, 0.02f, name);
+        for (int i = 0; i < offsets.Length; i++)
+            Vector3.Distance(Vector3.Transform(offsets[i], actual), Vector3.Transform(offsets[i], expected))
+                .ShouldBeLessThan(0.05f, $"{name}: offset {i}");
+    }
+
+    [Test]
+    public unsafe void Finalize_ReportsRepresentativeGpuTime()
+    {
+        RunWithGLContext(gl =>
+        {
+            AssertHardwareComputeOrInconclusive(gl);
+            const int clusterCount = 128;
+            Vector3[] offsets =
+            [
+                new(2.0f, 0.0f, 0.0f), new(-2.0f, 0.0f, 0.0f),
+                new(0.0f, 0.5f, 0.0f), new(0.0f, -0.5f, 0.0f),
+                new(0.0f, 0.0f, 1.2f), new(0.0f, 0.0f, -1.2f),
+            ];
+            Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1.0f, 2.0f, 3.0f)), 1.1f);
+            GPUSoftbodyParticleData[] particles = new GPUSoftbodyParticleData[clusterCount * offsets.Length];
+            GPUSoftbodyClusterMemberData[] members = new GPUSoftbodyClusterMemberData[particles.Length];
+            GPUSoftbodyClusterData[] clusters = new GPUSoftbodyClusterData[clusterCount];
+            GPUSoftbodyClusterTransformData[] transforms = new GPUSoftbodyClusterTransformData[clusterCount];
+            for (int clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++)
+            {
+                int start = clusterIndex * offsets.Length;
+                Vector3 translation = new(clusterIndex * 3.0f, 2.0f, 3.0f);
+                clusters[clusterIndex] = new GPUSoftbodyClusterData
+                {
+                    RestCenter = Vector3.Zero,
+                    MemberStart = start,
+                    MemberCount = offsets.Length,
+                    InstanceIndex = 0,
+                };
+                for (int i = 0; i < offsets.Length; i++)
+                {
+                    int index = start + i;
+                    particles[index] = new GPUSoftbodyParticleData
+                    {
+                        CurrentPosition = translation + Vector3.Transform(offsets[i], rotation),
+                        RestPosition = offsets[i],
+                        InverseMass = 1.0f,
+                        InstanceIndex = 0,
+                    };
+                    members[index] = new GPUSoftbodyClusterMemberData
+                    {
+                        ClusterIndex = clusterIndex,
+                        ParticleIndex = index,
+                        Weight = 1.0f,
+                        LocalOffset = offsets[i],
+                    };
+                }
+            }
+
+            uint shader = CompileComputeShader(gl, LoadShaderSource("Compute/Softbody/Finalize.comp"));
+            uint program = CreateComputeProgram(gl, shader);
+            uint particleBuffer = CreateShaderStorageBuffer(gl, particles, BufferUsageARB.DynamicDraw);
+            uint clusterBuffer = CreateShaderStorageBuffer(gl, clusters, BufferUsageARB.DynamicDraw);
+            uint memberBuffer = CreateShaderStorageBuffer(gl, members, BufferUsageARB.DynamicDraw);
+            uint transformBuffer = CreateShaderStorageBuffer(gl, transforms, BufferUsageARB.DynamicDraw);
+            uint query = gl.GenQuery();
+            try
+            {
+                gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, particleBuffer);
+                gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, clusterBuffer);
+                gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, memberBuffer);
+                gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 7, transformBuffer);
+                gl.UseProgram(program);
+                gl.Uniform1(gl.GetUniformLocation(program, "clusterCount"), clusterCount);
+                long[] nanoseconds = new long[5];
+                for (int iteration = 0; iteration < 7; iteration++)
+                {
+                    gl.BeginQuery(GLEnum.TimeElapsed, query);
+                    gl.DispatchCompute(1, 1, 1);
+                    gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+                    gl.EndQuery(GLEnum.TimeElapsed);
+                    long elapsed = gl.GetQueryObject(query, GLEnum.QueryResult);
+                    if (iteration >= 2)
+                        nanoseconds[iteration - 2] = elapsed;
+                }
+                Array.Sort(nanoseconds);
+                TestContext.Progress.WriteLine($"Finalize.comp GPU time: 128 clusters x 6 members, median {nanoseconds[2]} ns; samples {string.Join(",", nanoseconds)} ns");
+            }
+            finally
+            {
+                gl.DeleteQuery(query);
+                gl.DeleteBuffer(particleBuffer);
+                gl.DeleteBuffer(clusterBuffer);
+                gl.DeleteBuffer(memberBuffer);
+                gl.DeleteBuffer(transformBuffer);
+                gl.DeleteProgram(program);
+                gl.DeleteShader(shader);
+            }
+        });
+    }
+
+    [Test]
     public unsafe void ApplyClusterShapeMatching_BlendsOverlappingClusterGoals()
     {
         RunWithGLContext(gl =>

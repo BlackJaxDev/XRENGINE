@@ -1,8 +1,6 @@
 using XREngine.Extensions;
 using System;
 using System.Numerics;
-using Valve.VR;
-using XREngine.Core;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
@@ -48,7 +46,7 @@ namespace XREngine.Rendering
         
         protected override Matrix4x4 CalculateProjectionMatrix()
         {
-            // OpenXR: use per-eye asymmetric FOV from xrLocateViews (stored in OpenXRAPI).
+            // OpenXR: use the runtime's per-eye asymmetric FOV from xrLocateViews.
             if (RuntimeEngine.VRState.IsOpenXRActive)
             {
                 var oxr = RuntimeEngine.VRState.OpenXRApi;
@@ -68,27 +66,14 @@ namespace XREngine.Rendering
                 }
             }
 
-            var api = RuntimeEngine.VRState.OpenVRApi;
-            if (!api.IsHeadsetPresent || api.CVR is null)
-                return Matrix4x4.CreatePerspectiveFieldOfView(float.DegreesToRadians(90.0f), 1.0f, NearZ, FarZ);
+            if (RuntimeEngine.VRState.IsOpenVRActive &&
+                RuntimeOpenVrStateServices.Current is { } openVr &&
+                openVr.TryGetEyeProjectionMatrix(LeftEye, NearZ, FarZ, out Matrix4x4 projection))
+            {
+                return projection;
+            }
 
-            EVREye eye = LeftEye ? EVREye.Eye_Left : EVREye.Eye_Right;
-
-            //float left = 0.0f, right = 0.0f, top = 0.0f, bottom = 0.0f;
-            //api.CVR.GetProjectionRaw(eye, ref left, ref right, ref top, ref bottom);
-
-            ////See https://github.com/ValveSoftware/openvr/wiki/IVRSystem::GetProjectionRaw
-            //left *= NearZ;
-            //right *= NearZ;
-            //top *= NearZ;
-            //bottom *= NearZ;
-
-            //Debug.Out($"Projection matrix for {eye}: [l:{left}, r:{right}, t:{top}, b:{bottom}]");
-
-            //Top and bottom are swapped
-            //return Matrix4x4.CreatePerspectiveOffCenter(left, right, top, bottom, NearZ, FarZ);
-
-            return api.CVR.GetProjectionMatrix(eye, NearZ, FarZ).ToNumerics().Transposed();
+            return Matrix4x4.CreatePerspectiveFieldOfView(float.DegreesToRadians(90.0f), 1.0f, NearZ, FarZ);
         }
 
         protected override void UpdateUntransformedFrustum(

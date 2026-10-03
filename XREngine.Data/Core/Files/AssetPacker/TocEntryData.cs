@@ -7,7 +7,7 @@ namespace XREngine.Core.Files
         /// <summary>
         /// TOC entry data read from an archive.
         /// </summary>
-        private readonly struct TocEntryData(
+        internal readonly struct TocEntryData(
             uint hash, int stringOffset, long dataOffset, int compressedSize,
             long uncompressedSize = 0, ulong contentHash = 0, long sourceTimestampUtcTicks = 0,
             CompressionCodec codec = CompressionCodec.Lzma)

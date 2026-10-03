@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 
 namespace XREngine.Rendering;
 
@@ -12,7 +12,7 @@ namespace XREngine.Rendering;
 public sealed class ScreenshotReadbackResult
 {
     private ScreenshotReadbackResult(
-        MagickImage? image,
+        RuntimeImage? image,
         int pixelCount,
         int width,
         int height,
@@ -43,7 +43,7 @@ public sealed class ScreenshotReadbackResult
         Error = error;
     }
 
-    public MagickImage? Image { get; }
+    public RuntimeImage? Image { get; }
     public int PixelCount { get; }
     public int Width { get; }
     public int Height { get; }
@@ -60,7 +60,7 @@ public sealed class ScreenshotReadbackResult
     public bool Succeeded => Image is not null && string.IsNullOrWhiteSpace(Error);
 
     public static ScreenshotReadbackResult Success(
-        MagickImage image,
+        RuntimeImage image,
         int pixelCount,
         int width,
         int height,
@@ -73,7 +73,12 @@ public sealed class ScreenshotReadbackResult
         DateTimeOffset? completedAtUtc = null,
         double? gpuCompletionSeconds = null,
         double? cpuProcessingSeconds = null)
-        => new(
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        int expectedPixelCount = checked((int)((long)image.Width * image.Height));
+        if (pixelCount != expectedPixelCount || width != image.Width || height != image.Height)
+            throw new ArgumentException("Screenshot dimensions and pixel count must match the image.", nameof(image));
+        return new(
             image,
             pixelCount,
             width,
@@ -88,6 +93,7 @@ public sealed class ScreenshotReadbackResult
             gpuCompletionSeconds,
             cpuProcessingSeconds,
             error: null);
+    }
 
     public static ScreenshotReadbackResult Failure(
         string error,

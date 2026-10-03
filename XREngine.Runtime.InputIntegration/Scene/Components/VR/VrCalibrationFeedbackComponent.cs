@@ -1,207 +1,195 @@
 using System.Numerics;
-using System.Collections.Generic;
 using XREngine.Components.Animation;
 using XREngine.Data.Colors;
+using XREngine.Data.Components.Scene;
+using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.VR;
 
-/// <summary>Shows the live binding proposal and capture feedback inside the headset view.</summary>
+/// <summary>World-space calibration instructions, assignment labels, and stance guides visible to both XR eyes.</summary>
 public sealed class VrCalibrationFeedbackComponent : XRComponent
 {
-    private readonly List<SceneNode> _markers = [];
-    private readonly List<UITextComponent> _markerLabels = [];
-    private SceneNode? _ownerRoot;
+    private static readonly string[] SlotLabels =
+        ["Head", "Hips", "Left hand", "Right hand", "Left foot", "Right foot", "Left upper arm", "Right upper arm", "Left knee", "Right knee", "Chest"];
+    private readonly (SceneNode Node, Transform Transform, UITextComponent Label)[] _markers = new (SceneNode, Transform, UITextComponent)[16];
     private VRPlayerCharacterComponent? _player;
-    private IHumanoidVrCalibrationRig? _humanoid;
-    private UITextComponent? _statusText;
-    private SceneNode? _statusNode;
-    private SceneNode? _leftFootprint;
-    private SceneNode? _rightFootprint;
+    private IHumanoidVrCalibrationRig? _rig;
+    private VRTrackerCollectionComponent? _trackers;
+    private SceneNode? _messageRoot, _leftFootprint, _rightFootprint;
+    private UITextComponent? _message;
     private string? _lastMessage;
-
+    private float _noticeSeconds;
+    private long _discontinuityVersion = -1;
     public VRPlayerCharacterComponent? Player
     {
         get => _player;
-        set => SetField(ref _player, value);
-    }
-
-    public IHumanoidVrCalibrationRig? Humanoid
-    {
-        get => _humanoid;
-        set => SetField(ref _humanoid, value);
-    }
-
-    /// <summary>Creates reusable display nodes once, outside pose-update ticks.</summary>
-    public void Initialize(SceneNode ownerRoot, SceneNode headsetNode)
-    {
-        if (_statusNode is not null)
-            return;
-        _ownerRoot = ownerRoot;
-
-        SceneNode statusPlacement = headsetNode.NewChild("Calibration Status Placement");
-        Transform statusPlacementTransform = statusPlacement.GetTransformAs<Transform>(true)!;
-        statusPlacementTransform.Translation = new Vector3(0.0f, 0.0f, -1.2f);
-        statusPlacementTransform.Scale = new Vector3(0.001f);
-        _statusNode = CreateLabelCanvas(statusPlacement, "Calibration Status", 900.0f, 160.0f, out _statusText);
-        _statusText!.Text = "Open calibration from the VR controller menu.";
-
-        EnsureMarkerCapacity(8);
-
-        _leftFootprint = CreateFootprint(ownerRoot, "Left Calibration Footprint", ColorF4.DarkTeal);
-        _rightFootprint = CreateFootprint(ownerRoot, "Right Calibration Footprint", ColorF4.DarkTeal);
-        _leftFootprint.IsActiveSelf = false;
-        _rightFootprint.IsActiveSelf = false;
+        set
+        {
+            if (!SetField(ref _player, value)) return;
+            _rig = value?.GetHumanoid();
+            _trackers = value?.GetTrackerCollection();
+        }
     }
 
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateFeedback);
+        EnsureVisuals();
+        RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene + 2, UpdateFeedback);
     }
-
     protected override void OnComponentDeactivated()
     {
-        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateFeedback);
+        UnregisterTick(ETickGroup.Late, (int)ETickOrder.Scene + 2, UpdateFeedback);
+        if (_messageRoot is not null) _messageRoot.IsActiveSelf = false;
+        SetGuidesVisible(false);
         base.OnComponentDeactivated();
+    }
+
+    private void EnsureVisuals()
+    {
+        if (_messageRoot is not null) return;
+        (_messageRoot, _, _message) = CreateLabel("VR Calibration Instructions", 1000, 180, .001f);
+        for (int index = 0; index < _markers.Length; ++index)
+        {
+            _markers[index] = CreateLabel($"VR Tracker Label {index}", 240, 50, .0015f);
+            DebugDrawComponent marker = _markers[index].Node.AddComponent<DebugDrawComponent>()!;
+            marker.AddSphere(.025f, Vector3.Zero, ColorF4.Cyan, false);
+            _markers[index].Node.IsActiveSelf = false;
+        }
+        _leftFootprint = CreateFootprint("Calibration Left Footprint");
+        _rightFootprint = CreateFootprint("Calibration Right Footprint");
+    }
+
+    private (SceneNode, Transform, UITextComponent) CreateLabel(string name, float width, float height, float scale)
+    {
+        SceneNode anchor = SceneNode.NewChild(name);
+        Transform transform = anchor.SetTransform<Transform>();
+        SceneNode canvasNode = anchor.NewChild("World Canvas");
+        UICanvasComponent canvas = canvasNode.AddComponent<UICanvasComponent>()!;
+        canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+        UICanvasTransform canvasTransform = canvas.CanvasTransform;
+        canvasTransform.DrawSpace = ECanvasDrawSpace.World;
+        canvasTransform.Width = width;
+        canvasTransform.Height = height;
+        canvasTransform.Scale = new(scale);
+        canvasTransform.Translation = new(-width * scale * .5f, 0);
+        SceneNode textNode = canvasNode.NewChild("Text");
+        UITextComponent text = textNode.AddComponent<UITextComponent>()!;
+        UIBoundableTransform textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
+        textTransform.Width = width;
+        textTransform.Height = height;
+        text.FontSize = 28;
+        text.HorizontalAlignment = EHorizontalAlignment.Center;
+        text.VerticalAlignment = EVerticalAlignment.Center;
+        text.WrapMode = FontGlyphSet.EWrapMode.Character;
+        text.Color = ColorF4.White;
+        text.OutlineColor = ColorF4.Black;
+        text.OutlineThickness = 1.5f;
+        return (anchor, transform, text);
+    }
+
+    private SceneNode CreateFootprint(string name)
+    {
+        SceneNode node = SceneNode.NewChild(name);
+        node.SetTransform<Transform>();
+        DebugDrawComponent draw = node.AddComponent<DebugDrawComponent>()!;
+        draw.AddBox(new(.075f, .003f, .14f), Vector3.Zero, ColorF4.Cyan, false);
+        node.IsActiveSelf = false;
+        return node;
     }
 
     private void UpdateFeedback()
     {
         VRPlayerCharacterComponent? player = Player;
-        if (player is null || _statusNode is null)
+        if (player?.Headset is not { } headset || _messageRoot?.Transform is not Transform messageTransform || _message is null)
             return;
-
-        string message = player.CalibrationMessage;
-        if (!ReferenceEquals(message, _lastMessage) && message != _lastMessage)
+        long version = XREngine.Input.RuntimeVrDiscontinuityServices.Version;
+        if (version != _discontinuityVersion)
         {
-            _statusText!.Text = message;
-            _lastMessage = message;
+            _discontinuityVersion = version;
+            _rig = player.GetHumanoid();
+            _trackers = player.GetTrackerCollection();
         }
-
-        bool calibrating = player.CalibrationState == VrCalibrationState.Calibrating;
-        bool calibratedNotice = player.CalibrationState == VrCalibrationState.Calibrated &&
-            (message.Contains("tracker", StringComparison.OrdinalIgnoreCase) ||
-             message.Contains("differs", StringComparison.OrdinalIgnoreCase));
-        _statusNode.IsActiveSelf = calibrating || calibratedNotice ||
-            player.CalibrationState is VrCalibrationState.Failed or VrCalibrationState.Uncalibrated;
-        if (!calibrating)
+        if (!string.Equals(_lastMessage, player.CalibrationMessage, StringComparison.Ordinal))
         {
-            HideMarkersAndFootprints();
-            return;
+            _lastMessage = player.CalibrationMessage;
+            _message.Text = _lastMessage + "\nStand in the footprints. Pull both triggers to capture. Use Calibration Cancel to restore the previous rig.";
+            _noticeSeconds = 5;
+            _rig = player.GetHumanoid();
+            _trackers = player.GetTrackerCollection();
         }
-
-        IReadOnlyList<VrTrackerBindingPreview> proposals = player.TrackerBindingPreview;
-        EnsureMarkerCapacity(proposals.Count);
-        int count = proposals.Count;
-        for (int i = 0; i < _markers.Count; i++)
+        _noticeSeconds = Math.Max(0, _noticeSeconds - (RuntimeTransformServices.Current?.UndilatedUpdateDeltaSeconds ?? 0));
+        _messageRoot.IsActiveSelf = player.IsCalibrating || _noticeSeconds > 0;
+        Vector3 forward = headset.WorldForward;
+        forward.Y = 0;
+        if (forward.LengthSquared() < 1e-8f) forward = -Vector3.UnitZ;
+        forward = Vector3.Normalize(forward);
+        Vector3 position = headset.WorldTranslation + forward * 1.4f - Vector3.UnitY * .15f;
+        Matrix4x4 messageWorld = Matrix4x4.CreateWorld(position, -forward, Vector3.UnitY);
+        VrSpectatorFollowState.ApplyWorldPose(messageTransform, messageWorld);
+        if (!player.IsCalibrating || _rig is null)
         {
-            SceneNode marker = _markers[i];
-            if (i >= count || !proposals[i].Tracker.TryGetCurrentWorldPose(out Matrix4x4 pose, out _, out _))
-            {
-                marker.IsActiveSelf = false;
-                continue;
-            }
-
-            marker.IsActiveSelf = true;
-            marker.GetTransformAs<Transform>(false)!.SetWorldTranslationRotation(pose.Translation, Quaternion.Identity);
-            string label = GetSlotLabel(proposals[i].Slot);
-            if (_markerLabels[i].Text != label)
-                _markerLabels[i].Text = label;
-        }
-
-        UpdateFootprint(_leftFootprint, Humanoid?.LeftFootNode?.Transform, player);
-        UpdateFootprint(_rightFootprint, Humanoid?.RightFootNode?.Transform, player);
-    }
-
-    private void HideMarkersAndFootprints()
-    {
-        for (int i = 0; i < _markers.Count; i++)
-            _markers[i].IsActiveSelf = false;
-        if (_leftFootprint is not null)
-            _leftFootprint.IsActiveSelf = false;
-        if (_rightFootprint is not null)
-            _rightFootprint.IsActiveSelf = false;
-    }
-
-    private void EnsureMarkerCapacity(int count)
-    {
-        SceneNode? ownerRoot = _ownerRoot;
-        if (ownerRoot is null) return;
-        while (_markers.Count < count)
-        {
-            int number = _markers.Count + 1;
-            SceneNode marker = ownerRoot.NewChild($"Calibration Tracker Marker {number}");
-            marker.GetTransformAs<Transform>(true);
-            marker.AddComponent<DebugDrawComponent>()!.AddSphere(0.045f, Vector3.Zero, ColorF4.DarkTeal, false);
-            SceneNode placement = marker.NewChild("Tracker Label Placement");
-            Transform placementTransform = placement.GetTransformAs<Transform>(true)!;
-            placementTransform.Translation = new Vector3(0.0f, 0.12f, 0.0f);
-            placementTransform.Scale = new Vector3(0.0006f);
-            _ = CreateLabelCanvas(placement, "Tracker Slot Label", 320.0f, 70.0f, out UITextComponent? label);
-            _markers.Add(marker);
-            _markerLabels.Add(label!);
-            marker.IsActiveSelf = false;
-        }
-    }
-
-    private static void UpdateFootprint(SceneNode? footprint, TransformBase? bone, VRPlayerCharacterComponent player)
-    {
-        if (footprint is null)
-            return;
-        if (bone is null || player.PlayspaceRoot is null)
-        {
-            footprint.IsActiveSelf = false;
+            SetGuidesVisible(false);
             return;
         }
-
-        Vector3 position = bone.WorldTranslation;
-        position.Y = player.PlayspaceRoot.WorldTranslation.Y + 0.005f;
-        footprint.GetTransformAs<Transform>(false)!.SetWorldTranslationRotation(position, Quaternion.Identity);
-        footprint.IsActiveSelf = true;
-    }
-
-    private static SceneNode CreateFootprint(SceneNode ownerRoot, string name, ColorF4 color)
-    {
-        SceneNode node = ownerRoot.NewChild(name);
-        node.GetTransformAs<Transform>(true);
-        node.AddComponent<DebugDrawComponent>()!.AddCircle(0.13f, Vector3.Zero, Globals.Up, color, false);
-        return node;
-    }
-
-    private static SceneNode CreateLabelCanvas(SceneNode parent, string name, float width, float height, out UITextComponent? label)
-    {
-        SceneNode canvasNode = parent.NewChild(name);
-        var canvas = canvasNode.AddComponent<UICanvasComponent>()!;
-        canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
-        canvas.CanvasTransform.DrawSpace = ECanvasDrawSpace.World;
-        canvas.CanvasTransform.SetSize(new Vector2(width, height));
-        canvas.CanvasTransform.NormalizedPivot = new Vector2(0.5f);
-        SceneNode textNode = canvasNode.NewChild("Text");
-        label = textNode.AddComponent<UITextComponent>()!;
-        label.FontSize = 48;
-        label.HorizontalAlignment = EHorizontalAlignment.Center;
-        label.VerticalAlignment = EVerticalAlignment.Center;
-        var bounds = textNode.GetTransformAs<UIBoundableTransform>(true)!;
-        bounds.Width = width;
-        bounds.Height = height;
-        bounds.NormalizedPivot = new Vector2(0.5f);
-        return canvasNode;
-    }
-
-    private static string GetSlotLabel(EHumanoidIKTarget? slot)
-        => slot switch
+        int count = 0;
+        if (_trackers is not null)
         {
-            EHumanoidIKTarget.Hips => "Hips",
-            EHumanoidIKTarget.Chest => "Chest",
-            EHumanoidIKTarget.LeftFoot => "Left foot",
-            EHumanoidIKTarget.RightFoot => "Right foot",
-            EHumanoidIKTarget.LeftElbow => "Left upper arm",
-            EHumanoidIKTarget.RightElbow => "Right upper arm",
-            EHumanoidIKTarget.LeftKnee => "Left knee",
-            EHumanoidIKTarget.RightKnee => "Right knee",
-            _ => "Unassigned",
-        };
+            foreach (VRTrackerTransform tracker in _trackers.OpenXrTrackers.Values)
+                UpdateMarker(tracker, ref count, headset.WorldTranslation);
+            if (!XREngine.Input.RuntimeVrStateServices.IsOpenXRActive)
+                foreach (var entry in _trackers.Trackers.Values)
+                    UpdateMarker(entry.Item2, ref count, headset.WorldTranslation);
+        }
+        for (int index = count; index < _markers.Length; ++index)
+            _markers[index].Node.IsActiveSelf = false;
+        UpdateFootprint(_leftFootprint, _rig.LeftFootNode, player);
+        UpdateFootprint(_rightFootprint, _rig.RightFootNode, player);
+    }
+
+    private void UpdateMarker(VRTrackerTransform tracker, ref int count, Vector3 viewer)
+    {
+        if (!tracker.PoseCurrentlyUsable || count >= _markers.Length || _rig is null) return;
+        var marker = _markers[count++];
+        marker.Node.IsActiveSelf = true;
+        marker.Label.Text = DescribeBinding(_rig, tracker);
+        Vector3 position = tracker.WorldTranslation + Vector3.UnitY * .07f;
+        Quaternion rotation = VrSpectatorFollowState.LookAt(position, viewer, Quaternion.Identity);
+        Matrix4x4 world = Matrix4x4.CreateFromQuaternion(rotation);
+        world.Translation = position;
+        VrSpectatorFollowState.ApplyWorldPose(marker.Transform, world);
+    }
+
+    /// <summary>Reads the assignment preview used by capture; it does not run an independent matcher.</summary>
+    public static string DescribeBinding(IHumanoidVrCalibrationRig rig, TransformBase tracker)
+    {
+        for (int slot = 0; slot < SlotLabels.Length; ++slot)
+            if (slot is not (0 or 2 or 3) && ReferenceEquals(rig.GetIKTarget((EHumanoidIKTarget)slot).tfm, tracker))
+                return SlotLabels[slot];
+        return "Unassigned";
+    }
+
+    private void UpdateFootprint(SceneNode? node, SceneNode? foot, VRPlayerCharacterComponent player)
+    {
+        if (node is null) return;
+        node.IsActiveSelf = foot is not null;
+        if (foot is null || node.Transform is not Transform transform) return;
+        Vector3 position = foot.Transform.WorldTranslation;
+        position.Y = (player.PlayspaceRoot?.WorldTranslation.Y ?? _rig!.RootTransform.WorldTranslation.Y) + .015f;
+        Vector3 forward = _rig!.RootTransform.WorldForward;
+        forward.Y = 0;
+        if (forward.LengthSquared() < 1e-8f) forward = -Vector3.UnitZ;
+        VrSpectatorFollowState.ApplyWorldPose(transform, Matrix4x4.CreateWorld(position, Vector3.Normalize(forward), Vector3.UnitY));
+    }
+
+    private void SetGuidesVisible(bool visible)
+    {
+        foreach (var marker in _markers)
+            if (marker.Node is not null) marker.Node.IsActiveSelf = visible;
+        if (_leftFootprint is not null) _leftFootprint.IsActiveSelf = visible;
+        if (_rightFootprint is not null) _rightFootprint.IsActiveSelf = visible;
+    }
 }

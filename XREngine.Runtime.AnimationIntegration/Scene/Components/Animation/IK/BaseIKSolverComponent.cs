@@ -102,9 +102,6 @@ namespace XREngine.Components.Animation
 
         private void FixedUpdate()
         {
-            if (_skipSolverUpdate)
-                _skipSolverUpdate = false;
-
             if (!ShouldApplySolverPose())
             {
                 _updateFrame = false;
@@ -119,7 +116,16 @@ namespace XREngine.Components.Animation
 
         private void LateUpdate()
         {
-            if (_skipSolverUpdate || !ShouldApplySolverPose())
+            // An external evaluation replaces one scheduled animation solve, not
+            // an arbitrary number of frames until the next physics update.
+            if (_skipSolverUpdate)
+            {
+                _skipSolverUpdate = false;
+                _updateFrame = false;
+                return;
+            }
+
+            if (!ShouldApplySolverPose())
                 return;
 
             // Check if either animatePhysics is false or FixedUpdate has been called

@@ -1,9 +1,5 @@
 ﻿using ImGuiNET;
-using Silk.NET.Input;
-using Silk.NET.Maths;
 using Silk.NET.OpenGL;
-using Silk.NET.OpenGL.Extensions.ImGui;
-using Silk.NET.Windowing;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -56,7 +52,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     try
                     {
-                        _mainWindow.MakeCurrent();
+                        _mainWindow.GlContext?.MakeCurrent();
                     }
                     catch (Exception ex)
                     {
@@ -85,9 +81,11 @@ namespace XREngine.Rendering.OpenGL
                     if (GetPlatformWindow(viewport) is not { } window)
                         return;
 
-                    window.Window.MakeCurrent();
-                    Vector2D<int> framebufferSize = window.Window.FramebufferSize;
-                    _renderer.Api.Viewport(0, 0, (uint)Math.Max(1, framebufferSize.X), (uint)Math.Max(1, framebufferSize.Y));
+                    window.Window.GlContext?.MakeCurrent();
+                    WindowSurfaceSnapshot surface = window.Window.Surface;
+                    _renderer.Api.Viewport(0, 0,
+                        (uint)Math.Max(1, surface.FramebufferWidth),
+                        (uint)Math.Max(1, surface.FramebufferHeight));
 
                     if ((viewport.Flags & ImGuiViewportFlags.NoRendererClear) == 0)
                     {
@@ -106,7 +104,7 @@ namespace XREngine.Rendering.OpenGL
                 try
                 {
                     if (GetPlatformWindow(new ImGuiViewportPtr(nativeViewport)) is { } window)
-                        window.Window.GLContext?.SwapBuffers();
+                        window.Window.GlContext?.SwapBuffers();
                 }
                 catch (Exception ex)
                 {
@@ -131,11 +129,13 @@ namespace XREngine.Rendering.OpenGL
                     // belongs to the primary window. Re-establish the platform context's
                     // framebuffer viewport after that restoration and immediately before the
                     // ImGui draw that consumes it.
-                    Vector2D<int> framebufferSize = window.Window.FramebufferSize;
-                    _renderer.Api.Viewport(0, 0, (uint)Math.Max(1, framebufferSize.X), (uint)Math.Max(1, framebufferSize.Y));
+                    WindowSurfaceSnapshot surface = window.Window.Surface;
+                    _renderer.Api.Viewport(0, 0,
+                        (uint)Math.Max(1, surface.FramebufferWidth),
+                        (uint)Math.Max(1, surface.FramebufferHeight));
                     using var srgbScope = FramebufferSrgbScope.Disable(_renderer.Api);
-                    if (_controller is { } controller)
-                        RenderImDrawData!(controller, drawData);
+                    if (_controller is { } controller && window.Window.GlContext is { } context)
+                        controller.RenderDrawData(drawData, context);
                 }
                 catch (Exception ex)
                 {

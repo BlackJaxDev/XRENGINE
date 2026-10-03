@@ -3548,25 +3548,7 @@ namespace XREngine.Rendering
 
         private static void AppendDrawMetadataStructGlsl(StringBuilder sb)
         {
-            sb.AppendLine("struct DrawMetadata");
-            sb.AppendLine("{");
-            sb.AppendLine("    uint DrawID;");
-            sb.AppendLine("    uint MeshID;");
-            sb.AppendLine("    uint SubmeshID;");
-            sb.AppendLine("    uint MaterialID;");
-            sb.AppendLine("    uint TransformID;");
-            sb.AppendLine("    uint SkinID;");
-            sb.AppendLine("    uint RenderPassMask;");
-            sb.AppendLine("    uint LayerMask;");
-            sb.AppendLine("    uint Flags;");
-            sb.AppendLine("    uint LodPolicy;");
-            sb.AppendLine("    uint StateClassID;");
-            sb.AppendLine("    uint InstanceCount;");
-            sb.AppendLine("    uint RenderPass;");
-            sb.AppendLine("    uint RenderIdentityID;");
-            sb.AppendLine("    uint LogicalMeshID;");
-            sb.AppendLine("    uint BoundsID;");
-            sb.AppendLine("};");
+            sb.AppendLine("#include \"Advanced/Generated/GPUSceneRecords.glslinc\"");
             sb.AppendLine();
             sb.AppendLine("DrawMetadata XRE_DefaultDrawMetadata(uint drawID)");
             sb.AppendLine("{");
@@ -3879,17 +3861,7 @@ namespace XREngine.Rendering
             sb.AppendLine("const uint XRE_TRANSPARENCY_MASKED = 1u;");
             sb.AppendLine("const uint XRE_TRANSPARENCY_ALPHA_TO_COVERAGE = 9u;");
             sb.AppendLine();
-            sb.AppendLine("struct MaterialStateGpu");
-            sb.AppendLine("{");
-            sb.AppendLine("    uint StateClassID;");
-            sb.AppendLine("    uint MaterialID;");
-            sb.AppendLine("    uint PipelineKey;");
-            sb.AppendLine("    uint OptionsBits;");
-            sb.AppendLine("    uint TransparencyMode;");
-            sb.AppendLine("    uint DescriptorStart;");
-            sb.AppendLine("    uint DescriptorCount;");
-            sb.AppendLine("    uint Flags;");
-            sb.AppendLine("};");
+            sb.AppendLine("#include \"Advanced/Generated/GPUSceneRecords.glslinc\"");
             sb.AppendLine($"layout(std430, binding = {MeshletMaterialStateSsboBinding}) readonly buffer MaterialStateBuffer {{ MaterialStateGpu MaterialStates[]; }};");
             sb.AppendLine();
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");

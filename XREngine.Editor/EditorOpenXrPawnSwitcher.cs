@@ -4,6 +4,7 @@ using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
 using XREngine.Components.VR;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Runtime.Bootstrap;
@@ -47,11 +48,11 @@ internal static class EditorOpenXrPawnSwitcher
             if (!_configured || _preparing)
                 return false;
 
-            OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+            IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
             if (_requested && _startsOnLaunch && api is null)
                 return false;
 
-            return _requested || api is null || api.RuntimeState == OpenXRAPI.OpenXrRuntimeState.DesktopOnly;
+            return _requested || api is null || api.RuntimeState == RuntimeOpenXrState.DesktopOnly;
         }
     }
 
@@ -65,20 +66,20 @@ internal static class EditorOpenXrPawnSwitcher
             if (_preparing)
                 return "Preparing selected VR runtime";
 
-            OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+            IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
             if (api is null)
                 return _requested ? "OpenXR startup pending" : "Desktop";
 
             return api.RuntimeState switch
             {
-                OpenXRAPI.OpenXrRuntimeState.SessionRunning => _requested
+                RuntimeOpenXrState.SessionRunning => _requested
                     ? _vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>() is { HumanoidComponent: null }
                         ? "VR session running; no avatar for body calibration"
                         : "VR session running"
                     : "Stopping VR",
-                OpenXRAPI.OpenXrRuntimeState.SessionStopping or OpenXRAPI.OpenXrRuntimeState.SessionLost => "Stopping VR",
-                OpenXRAPI.OpenXrRuntimeState.Unavailable => "OpenXR unavailable; see diagnostics",
-                OpenXRAPI.OpenXrRuntimeState.DesktopOnly => _requested ? "Starting VR" : "Desktop",
+                RuntimeOpenXrState.SessionStopping or RuntimeOpenXrState.SessionLost => "Stopping VR",
+                RuntimeOpenXrState.Unavailable => "OpenXR unavailable; see diagnostics",
+                RuntimeOpenXrState.DesktopOnly => _requested ? "Starting VR" : "Desktop",
                 _ => _requested ? "Starting VR" : "Stopping VR",
             };
         }
@@ -134,8 +135,8 @@ internal static class EditorOpenXrPawnSwitcher
                 return false;
             }
 
-            OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
-            if (api is not null && api.RuntimeState != OpenXRAPI.OpenXrRuntimeState.DesktopOnly)
+            IOpenXrRuntime? api = RuntimeEngine.VRState.OpenXRApi;
+            if (api is not null && api.RuntimeState != RuntimeOpenXrState.DesktopOnly)
             {
                 LastError = "Wait for OpenXR session teardown before starting it again.";
                 return false;
@@ -169,12 +170,28 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void ApplyDesktopView()
     {
-        if (_vrPawn?.SceneNode?.GetComponent<VrSpectatorOutputComponent>() is not { } output)
+        if (_vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>() is not { } player)
             return;
 
-        output.EditorCamera = _desktopPawn?.CameraComponent as CameraComponent;
-        output.DesktopView = _desktopView;
-        output.ApplyDesktopView();
+        player.SpectatorEnabled = _desktopView is EVrDesktopView.Spectator or EVrDesktopView.TextureOutput;
+        player.ShowSpectatorOnDesktop = _desktopView == EVrDesktopView.Spectator;
+        if (player.ShowSpectatorOnDesktop)
+            return;
+
+        if (RuntimePlayerControllerServices.Current?.GetLocalPlayer(ELocalPlayerIndex.One)?.Viewport is not XRViewport viewport
+            || ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport)
+            || ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport)
+            || ReferenceEquals(viewport, RuntimeEngine.VRState.StereoViewport))
+            return;
+
+        CameraComponent? camera = _desktopView == EVrDesktopView.EditorCamera
+            ? _desktopPawn?.CameraComponent as CameraComponent
+            : _vrPawn.CameraComponent as CameraComponent;
+        if (camera is not null && !ReferenceEquals(viewport.CameraComponent, camera))
+        {
+            viewport.CameraComponent = camera;
+            camera.Camera.InvalidateTemporalHistory();
+        }
     }
 
     private static async Task StartSelectedRuntimeAsync(EditorOpenXrRuntimeChoice choice)

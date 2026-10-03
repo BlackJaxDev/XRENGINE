@@ -8,11 +8,12 @@
     <Platforms>AnyCPU;x64</Platforms>
     <VmaBridgeProject>$(MSBuildProjectDirectory)\..\Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj</VmaBridgeProject>
     <VmaBridgePackagedDll>$(MSBuildProjectDirectory)\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll</VmaBridgePackagedDll>
-    <VmaBridgeGeneratedDir>$(MSBuildProjectDirectory)\..\Build\_AgentValidation\00000000-000000-shared\tools\bin\VulkanMemoryAllocatorBridge\$(Configuration)\</VmaBridgeGeneratedDir>
+    <VmaBridgeNativeConfiguration Condition="'$(VmaBridgeNativeConfiguration)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(Configuration)', '^.*(Debug|Release)$', '$1'))</VmaBridgeNativeConfiguration>
+    <VmaBridgeGeneratedDir>$(MSBuildProjectDirectory)\..\Build\_AgentValidation\00000000-000000-shared\tools\bin\VulkanMemoryAllocatorBridge\$(VmaBridgeNativeConfiguration)\</VmaBridgeGeneratedDir>
     <VmaBridgeNativeDll Condition="'$(XREngineUseExistingNativeBridges)' != 'true'">$(VmaBridgeGeneratedDir)VulkanMemoryAllocatorBridge.Native.dll</VmaBridgeNativeDll>
     <VmaBridgeNativeDll Condition="'$(XREngineUseExistingNativeBridges)' == 'true'">$(VmaBridgePackagedDll)</VmaBridgeNativeDll>
-    <VmaBridgeBuildStateFile>$(BaseIntermediateOutputPath)vma-active-native-configuration.txt</VmaBridgeBuildStateFile>
-    <VmaBridgeBuildStampFile>$(BaseIntermediateOutputPath)vma-native-build.stamp</VmaBridgeBuildStampFile>
+    <VmaBridgeBuildStateFile>$(BaseIntermediateOutputPath)vma-$(VmaBridgeNativeConfiguration)-active-native-configuration.txt</VmaBridgeBuildStateFile>
+    <VmaBridgeBuildStampFile>$(BaseIntermediateOutputPath)vma-$(VmaBridgeNativeConfiguration)-native-build.stamp</VmaBridgeBuildStampFile>
     <NvidiaSdkWinX64Dir Condition="'$(NvidiaSdkWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\SDK\win-x64\</NvidiaSdkWinX64Dir>
   </PropertyGroup>
 
@@ -40,7 +41,6 @@
     <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.KHR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Shaderc" Version="2.23.0" />
@@ -65,10 +65,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(XREngineUseExistingNativeBridges)' != 'true'">
@@ -105,9 +101,10 @@
   </Target>
 
   <Target Name="PrepareVulkanMemoryAllocatorBridgeBuildState" BeforeTargets="BuildVulkanMemoryAllocatorBridge" Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(VmaBridgeProject)')">
+    <Error Condition="'$(VmaBridgeNativeConfiguration)' != 'Debug' and '$(VmaBridgeNativeConfiguration)' != 'Release'" Text="VulkanMemoryAllocatorBridge native configuration must be Debug or Release. Managed configuration '$(Configuration)' did not map to either; set VmaBridgeNativeConfiguration explicitly if needed." />
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(VmaBridgeBuildStateFile)'))" />
     <PropertyGroup>
-      <VmaBridgeCurrentBuildState>$(Configuration)|x64|$(VULKAN_SDK)</VmaBridgeCurrentBuildState>
+      <VmaBridgeCurrentBuildState>$(VmaBridgeNativeConfiguration)|x64|$(VULKAN_SDK)</VmaBridgeCurrentBuildState>
     </PropertyGroup>
     <WriteLinesToFile File="$(VmaBridgeBuildStateFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
@@ -127,7 +124,7 @@
     <Error Condition="'$(VmaBridgeMsBuildPath)' == '' and !Exists('$(VmaBridgeNativeDll)')" Text="Could not locate Visual Studio MSBuild with C++ tools required to build VulkanMemoryAllocatorBridge.vcxproj, and no packaged bridge is available. Install Visual Studio or Build Tools with Desktop development with C++ and the MSVC v143 x64/x86 build tools." />
     <Error Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' == '' and !Exists('$(VmaBridgeNativeDll)')" Text="VULKAN_SDK must be set to build VulkanMemoryAllocatorBridge.vcxproj, and no packaged bridge is available." />
 
-    <Exec Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' != ''" Command="&quot;$(VmaBridgeMsBuildPath)&quot; &quot;$(VmaBridgeProject)&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
+    <Exec Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' != ''" Command="&quot;$(VmaBridgeMsBuildPath)&quot; &quot;$(VmaBridgeProject)&quot; /m /nologo &quot;/p:Configuration=$(VmaBridgeNativeConfiguration);Platform=x64&quot;" />
     <WriteLinesToFile File="$(VmaBridgeBuildStampFile)" Lines="$(VmaBridgeCurrentBuildState)" Overwrite="true" />
   </Target>
 

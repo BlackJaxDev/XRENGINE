@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using MemoryPack;
 using XREngine.Animation;
 using XREngine.Animation.Importers;
@@ -205,12 +204,13 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
 
 internal static class AnimationClipSerialization
 {
-    private static readonly PropertyInfo? XRObjectIdProperty = typeof(XREngine.Data.Core.XRObjectBase)
-        .GetProperty(nameof(XREngine.Data.Core.XRObjectBase.ID), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-    private static readonly PropertyInfo? AnimationMemberParentClipProperty = typeof(AnimationMember)
-        .GetProperty(nameof(AnimationMember.ParentClip), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
     public static AnimationClipSerializedModel CreateModel(AnimationClip clip)
+        => CreateModel(clip, published: false);
+
+    public static AnimationClipSerializedModel CreatePublishedModel(AnimationClip clip)
+        => CreateModel(clip, published: true);
+
+    private static AnimationClipSerializedModel CreateModel(AnimationClip clip, bool published)
     {
         ArgumentNullException.ThrowIfNull(clip);
 
@@ -229,7 +229,7 @@ internal static class AnimationClipSerialization
             HasRootMotion = clip.HasRootMotion,
             HasIKGoals = clip.HasIKGoals,
             SampleRate = clip.SampleRate,
-            RootMember = CreateModel(clip.RootMember),
+            RootMember = CreateModel(clip.RootMember, published, clip.Name ?? nameof(AnimationClip)),
             ImportedHumanoidRootMotionSettings = clip.ImportedHumanoidRootMotionSettings,
             ImportedMetadata = clip.ImportedMetadata,
             ImportedEvents = clip.ImportedEvents,
@@ -239,6 +239,12 @@ internal static class AnimationClipSerialization
     }
 
     public static void ApplyModel(AnimationClip clip, AnimationClipSerializedModel? model)
+        => ApplyModel(clip, model, published: false);
+
+    public static void ApplyPublishedModel(AnimationClip clip, AnimationClipSerializedModel? model)
+        => ApplyModel(clip, model, published: true);
+
+    private static void ApplyModel(AnimationClip clip, AnimationClipSerializedModel? model, bool published)
     {
         ArgumentNullException.ThrowIfNull(clip);
 
@@ -267,12 +273,12 @@ internal static class AnimationClipSerialization
         clip.ImportedGenericBindings = model.ImportedGenericBindings ?? [];
         clip.SourceImportManifest = model.SourceImportManifest;
 
-        AnimationMember? rootMember = CreateRuntimeMember(model.RootMember);
+        AnimationMember? rootMember = CreateRuntimeMember(model.RootMember, published, model.Name ?? nameof(AnimationClip));
         clip.RootMember = rootMember;
         clip.TotalAnimCount = AttachClip(rootMember, clip);
     }
 
-    private static AnimationMemberSerializedModel? CreateModel(AnimationMember? member)
+    private static AnimationMemberSerializedModel? CreateModel(AnimationMember? member, bool published, string path)
     {
         if (member is null)
             return null;
@@ -280,7 +286,7 @@ internal static class AnimationClipSerialization
         List<AnimationMemberSerializedModel> children = new(member.Children.Count);
         foreach (AnimationMember child in member.Children)
         {
-            AnimationMemberSerializedModel? childModel = CreateModel(child);
+            AnimationMemberSerializedModel? childModel = CreateModel(child, published, $"{path}.{child.MemberName}");
             if (childModel is not null)
                 children.Add(childModel);
         }
@@ -289,15 +295,19 @@ internal static class AnimationClipSerialization
         {
             MemberName = member.MemberName,
             MemberType = member.MemberType,
-            Animation = AnimationPropertySerialization.CreateModel(member.Animation),
-            MethodArguments = CreateMethodArgumentModels(member.MethodArguments),
+            Animation = published
+                ? PublishedAnimationPropertyCodec.CreateModel(member.Animation, path)
+                : AnimationPropertySerialization.CreateModel(member.Animation),
+            MethodArguments = published
+                ? CreatePublishedMethodArgumentModels(member.MethodArguments, path)
+                : CreateMethodArgumentModels(member.MethodArguments),
             AnimatedMethodArgumentIndex = member.AnimatedMethodArgumentIndex,
             CacheReturnValue = member.CacheReturnValue,
             Children = children
         };
     }
 
-    private static AnimationMember? CreateRuntimeMember(AnimationMemberSerializedModel? model)
+    private static AnimationMember? CreateRuntimeMember(AnimationMemberSerializedModel? model, bool published, string path)
     {
         if (model is null)
             return null;
@@ -306,8 +316,12 @@ internal static class AnimationClipSerialization
         {
             MemberName = model.MemberName ?? string.Empty,
             MemberType = model.MemberType,
-            Animation = AnimationPropertySerialization.CreateRuntimeAnimation(model.Animation),
-            MethodArguments = CreateMethodArguments(model.MethodArguments),
+            Animation = published
+                ? PublishedAnimationPropertyCodec.CreateRuntimeAnimation(model.Animation, path)
+                : AnimationPropertySerialization.CreateRuntimeAnimation(model.Animation),
+            MethodArguments = published
+                ? CreatePublishedMethodArguments(model.MethodArguments, path)
+                : CreateMethodArguments(model.MethodArguments),
             AnimatedMethodArgumentIndex = model.AnimatedMethodArgumentIndex,
             CacheReturnValue = model.CacheReturnValue
         };
@@ -316,7 +330,7 @@ internal static class AnimationClipSerialization
         {
             foreach (AnimationMemberSerializedModel childModel in model.Children)
             {
-                AnimationMember? child = CreateRuntimeMember(childModel);
+                AnimationMember? child = CreateRuntimeMember(childModel, published, $"{path}.{childModel.MemberName}");
                 if (child is not null)
                     member.Children.Add(child);
             }
@@ -327,10 +341,10 @@ internal static class AnimationClipSerialization
 
     private static void SetAssetId(AnimationClip clip, Guid id)
     {
-        if (id == Guid.Empty || XRObjectIdProperty?.SetMethod is null)
+        if (id == Guid.Empty)
             return;
 
-        XRObjectIdProperty.SetValue(clip, id);
+        clip.AdoptPersistentID(id);
     }
 
     private static int AttachClip(AnimationMember? member, AnimationClip clip)
@@ -338,7 +352,7 @@ internal static class AnimationClipSerialization
         if (member is null)
             return 0;
 
-        AnimationMemberParentClipProperty?.SetValue(member, clip);
+        member.ParentClip = clip;
 
         int count = member.Animation is null ? 0 : 1;
         foreach (AnimationMember child in member.Children)
@@ -370,6 +384,35 @@ internal static class AnimationClipSerialization
         }
 
         return models;
+    }
+
+    private static List<SerializedMethodArgumentModel>? CreatePublishedMethodArgumentModels(object?[]? arguments, string path)
+    {
+        if (arguments is null)
+            return null;
+
+        List<SerializedMethodArgumentModel> models = new(arguments.Length);
+        for (int i = 0; i < arguments.Length; i++)
+        {
+            object? argument = arguments[i];
+            models.Add(new SerializedMethodArgumentModel
+            {
+                TypeName = argument?.GetType().FullName,
+                Payload = PublishedAnimationValueCodec.Encode(argument, $"{path}.argument[{i}]")
+            });
+        }
+        return models;
+    }
+
+    private static object?[] CreatePublishedMethodArguments(List<SerializedMethodArgumentModel>? models, string path)
+    {
+        if (models is null)
+            return [null];
+
+        object?[] arguments = new object?[models.Count];
+        for (int i = 0; i < models.Count; i++)
+            arguments[i] = PublishedAnimationValueCodec.Decode(models[i].Payload, $"{path}.argument[{i}]");
+        return arguments;
     }
 
     private static object?[] CreateMethodArguments(List<SerializedMethodArgumentModel>? models)

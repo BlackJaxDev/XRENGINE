@@ -1,337 +1,131 @@
 using ImGuiNET;
-using Silk.NET.Input;
-using System;
-using System.Collections.Generic;
-using System.Numerics;
+using System.Runtime.InteropServices;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class VulkanImGuiInputRouter : IDisposable
+/// <summary>Replays the independent desktop UI cursor in native event order.</summary>
+internal sealed class VulkanImGuiInputRouter(XRWindow windowHost) : IDisposable
 {
-    private readonly XRWindow _windowHost;
-    private readonly object _pendingInputLock = new();
-    private readonly Queue<Action<ImGuiIOPtr>> _pendingInputEvents = new();
-    private IMouse? _mouse;
-    private readonly HashSet<IKeyboard> _keyboards = [];
-    private bool _mouseSubscribed;
-    private bool _disposed;
+    private readonly List<WindowInputEvent> _events = new(64);
+    private bool _leftCtrl, _rightCtrl, _leftShift, _rightShift;
+    private bool _leftAlt, _rightAlt, _leftSuper, _rightSuper;
 
-    public VulkanImGuiInputRouter(XRWindow windowHost)
-        => _windowHost = windowHost;
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        DetachInputHandlers();
-    }
-
-    internal void TryAttachInputHandlers()
-    {
-        if (_disposed)
-            return;
-
-        IInputContext? input = _windowHost.Input;
-        if (input is null)
-            return;
-
-        if (!_mouseSubscribed)
-        {
-            IMouse? mouse = null;
-            if (input.Mice is { Count: > 0 })
-                mouse = input.Mice[0];
-
-            if (mouse is not null)
-            {
-                _mouse = mouse;
-                _mouse.MouseMove += OnMouseMove;
-                _mouse.MouseDown += OnMouseDown;
-                _mouse.MouseUp += OnMouseUp;
-                _mouse.Scroll += OnMouseScroll;
-                _mouseSubscribed = true;
-            }
-        }
-
-        if (input.Keyboards is { Count: > 0 } keyboards)
-        {
-            for (int keyboardIndex = 0; keyboardIndex < keyboards.Count; keyboardIndex++)
-            {
-                IKeyboard keyboard = keyboards[keyboardIndex];
-                if (!_keyboards.Add(keyboard))
-                    continue;
-
-                keyboard.KeyDown += OnKeyDown;
-                keyboard.KeyUp += OnKeyUp;
-                keyboard.KeyChar += OnKeyChar;
-            }
-        }
-    }
-
-    private void DetachInputHandlers()
-    {
-        if (_mouse is not null)
-        {
-            try
-            {
-                _mouse.MouseMove -= OnMouseMove;
-                _mouse.MouseDown -= OnMouseDown;
-                _mouse.MouseUp -= OnMouseUp;
-                _mouse.Scroll -= OnMouseScroll;
-            }
-            catch
-            {
-            }
-
-            _mouse = null;
-        }
-
-        _mouseSubscribed = false;
-
-        foreach (IKeyboard keyboard in _keyboards)
-        {
-            try
-            {
-                keyboard.KeyDown -= OnKeyDown;
-                keyboard.KeyUp -= OnKeyUp;
-                keyboard.KeyChar -= OnKeyChar;
-            }
-            catch
-            {
-            }
-        }
-
-        _keyboards.Clear();
-
-        lock (_pendingInputLock)
-            _pendingInputEvents.Clear();
-    }
-
-    private void EnqueueInputEvent(Action<ImGuiIOPtr> inputEvent)
-    {
-        if (_disposed)
-            return;
-
-        lock (_pendingInputLock)
-            _pendingInputEvents.Enqueue(inputEvent);
-    }
+    public void Dispose() => _events.Clear();
 
     internal void FlushPendingInputEvents(ImGuiIOPtr io)
     {
-        while (true)
+        WindowInputSnapshot input = windowHost.ConsumeUiInputSnapshot(_events);
+        bool viewports = (io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) != 0;
+        var origin = windowHost.DesktopWindowBackend?.ClientScreenPosition ?? default;
+        ReadOnlySpan<WindowInputEvent> events = CollectionsMarshal.AsSpan(_events);
+        for (int i = 0; i < events.Length; i++)
         {
-            Action<ImGuiIOPtr>? next;
-            lock (_pendingInputLock)
+            WindowInputEvent item = events[i];
+            switch (item.Kind)
             {
-                if (_pendingInputEvents.Count == 0)
+                case WindowInputEventKind.Key:
+                    if (TryConvertKey(item.Key, out ImGuiKey key))
+                        io.AddKeyEvent(key, item.IsDown);
+                    ReplayModifier(io, item.Key, item.IsDown);
                     break;
-
-                next = _pendingInputEvents.Dequeue();
+                case WindowInputEventKind.MouseButton:
+                    io.AddMouseButtonEvent((int)item.MouseButton, item.IsDown);
+                    break;
+                case WindowInputEventKind.Text:
+                    io.AddInputCharacter(item.Character);
+                    break;
+                case WindowInputEventKind.Pointer:
+                    io.AddMousePosEvent(item.X + (viewports ? origin.X : 0), item.Y + (viewports ? origin.Y : 0));
+                    break;
+                case WindowInputEventKind.Scroll:
+                    io.AddMouseWheelEvent(item.X, item.Y);
+                    break;
             }
+        }
+        io.AddFocusEvent(input.IsFocused);
+    }
 
-            next(io);
+    private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)
+    {
+        switch (key)
+        {
+            case EKey.ControlLeft: _leftCtrl = down; io.AddKeyEvent(ImGuiKey.ModCtrl, _leftCtrl || _rightCtrl); break;
+            case EKey.ControlRight: _rightCtrl = down; io.AddKeyEvent(ImGuiKey.ModCtrl, _leftCtrl || _rightCtrl); break;
+            case EKey.ShiftLeft: _leftShift = down; io.AddKeyEvent(ImGuiKey.ModShift, _leftShift || _rightShift); break;
+            case EKey.ShiftRight: _rightShift = down; io.AddKeyEvent(ImGuiKey.ModShift, _leftShift || _rightShift); break;
+            case EKey.AltLeft: _leftAlt = down; io.AddKeyEvent(ImGuiKey.ModAlt, _leftAlt || _rightAlt); break;
+            case EKey.AltRight: _rightAlt = down; io.AddKeyEvent(ImGuiKey.ModAlt, _leftAlt || _rightAlt); break;
+            case EKey.WinLeft: _leftSuper = down; io.AddKeyEvent(ImGuiKey.ModSuper, _leftSuper || _rightSuper); break;
+            case EKey.WinRight: _rightSuper = down; io.AddKeyEvent(ImGuiKey.ModSuper, _leftSuper || _rightSuper); break;
         }
     }
 
-    internal void PushModifierKeyState(ImGuiIOPtr io)
-    {
-        bool ctrl = false;
-        bool shift = false;
-        bool alt = false;
-        bool super = false;
-
-        foreach (IKeyboard keyboard in _keyboards)
-        {
-            ctrl |= keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
-            shift |= keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight);
-            alt |= keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight);
-            super |= keyboard.IsKeyPressed(Key.SuperLeft) || keyboard.IsKeyPressed(Key.SuperRight);
-        }
-
-        io.AddKeyEvent(ImGuiKey.ModCtrl, ctrl);
-        io.AddKeyEvent(ImGuiKey.ModShift, shift);
-        io.AddKeyEvent(ImGuiKey.ModAlt, alt);
-        io.AddKeyEvent(ImGuiKey.ModSuper, super);
-    }
-
-    private void OnMouseMove(IMouse mouse, Vector2 position)
-        => EnqueueInputEvent(io => io.AddMousePosEvent(position.X, position.Y));
-
-    private void OnMouseDown(IMouse mouse, MouseButton button)
-    {
-        if (!TryConvertMouseButton(button, out int imguiButton))
-            return;
-
-        EnqueueInputEvent(io => io.AddMouseButtonEvent(imguiButton, true));
-    }
-
-    private void OnMouseUp(IMouse mouse, MouseButton button)
-    {
-        if (!TryConvertMouseButton(button, out int imguiButton))
-            return;
-
-        EnqueueInputEvent(io => io.AddMouseButtonEvent(imguiButton, false));
-    }
-
-    private void OnMouseScroll(IMouse mouse, ScrollWheel wheel)
-    {
-        float x = wheel.X;
-        float y = wheel.Y;
-        EnqueueInputEvent(io => io.AddMouseWheelEvent(x, y));
-    }
-
-    private void OnKeyDown(IKeyboard keyboard, Key key, int repeat)
-    {
-        if (!TryConvertKey(key, out ImGuiKey imguiKey))
-            return;
-
-        EnqueueInputEvent(io => io.AddKeyEvent(imguiKey, true));
-    }
-
-    private void OnKeyUp(IKeyboard keyboard, Key key, int repeat)
-    {
-        if (!TryConvertKey(key, out ImGuiKey imguiKey))
-            return;
-
-        EnqueueInputEvent(io => io.AddKeyEvent(imguiKey, false));
-    }
-
-    private void OnKeyChar(IKeyboard keyboard, char character)
-    {
-        if (character == '\0')
-            return;
-
-        EnqueueInputEvent(io => io.AddInputCharacter(character));
-    }
-
-    internal static bool TryConvertMouseButton(MouseButton button, out int imguiButton)
-    {
-        imguiButton = button switch
-        {
-            MouseButton.Left => 0,
-            MouseButton.Right => 1,
-            MouseButton.Middle => 2,
-            MouseButton.Button4 => 3,
-            MouseButton.Button5 => 4,
-            _ => -1
-        };
-
-        return imguiButton >= 0;
-    }
-
-    internal static bool TryConvertKey(Key key, out ImGuiKey imguiKey)
+    internal static bool TryConvertKey(EKey key, out ImGuiKey imguiKey)
     {
         imguiKey = key switch
         {
-            Key.Tab => ImGuiKey.Tab,
-            Key.Left => ImGuiKey.LeftArrow,
-            Key.Right => ImGuiKey.RightArrow,
-            Key.Up => ImGuiKey.UpArrow,
-            Key.Down => ImGuiKey.DownArrow,
-            Key.PageUp => ImGuiKey.PageUp,
-            Key.PageDown => ImGuiKey.PageDown,
-            Key.Home => ImGuiKey.Home,
-            Key.End => ImGuiKey.End,
-            Key.Insert => ImGuiKey.Insert,
-            Key.Delete => ImGuiKey.Delete,
-            Key.Backspace => ImGuiKey.Backspace,
-            Key.Space => ImGuiKey.Space,
-            Key.Enter => ImGuiKey.Enter,
-            Key.Escape => ImGuiKey.Escape,
-            Key.Apostrophe => ImGuiKey.Apostrophe,
-            Key.Comma => ImGuiKey.Comma,
-            Key.Minus => ImGuiKey.Minus,
-            Key.Period => ImGuiKey.Period,
-            Key.Slash => ImGuiKey.Slash,
-            Key.Semicolon => ImGuiKey.Semicolon,
-            Key.Equal => ImGuiKey.Equal,
-            Key.LeftBracket => ImGuiKey.LeftBracket,
-            Key.BackSlash => ImGuiKey.Backslash,
-            Key.RightBracket => ImGuiKey.RightBracket,
-            Key.GraveAccent => ImGuiKey.GraveAccent,
-            Key.CapsLock => ImGuiKey.CapsLock,
-            Key.ScrollLock => ImGuiKey.ScrollLock,
-            Key.NumLock => ImGuiKey.NumLock,
-            Key.PrintScreen => ImGuiKey.PrintScreen,
-            Key.Pause => ImGuiKey.Pause,
-            Key.Keypad0 => ImGuiKey.Keypad0,
-            Key.Keypad1 => ImGuiKey.Keypad1,
-            Key.Keypad2 => ImGuiKey.Keypad2,
-            Key.Keypad3 => ImGuiKey.Keypad3,
-            Key.Keypad4 => ImGuiKey.Keypad4,
-            Key.Keypad5 => ImGuiKey.Keypad5,
-            Key.Keypad6 => ImGuiKey.Keypad6,
-            Key.Keypad7 => ImGuiKey.Keypad7,
-            Key.Keypad8 => ImGuiKey.Keypad8,
-            Key.Keypad9 => ImGuiKey.Keypad9,
-            Key.KeypadDecimal => ImGuiKey.KeypadDecimal,
-            Key.KeypadDivide => ImGuiKey.KeypadDivide,
-            Key.KeypadMultiply => ImGuiKey.KeypadMultiply,
-            Key.KeypadSubtract => ImGuiKey.KeypadSubtract,
-            Key.KeypadAdd => ImGuiKey.KeypadAdd,
-            Key.KeypadEnter => ImGuiKey.KeypadEnter,
-            Key.KeypadEqual => ImGuiKey.KeypadEqual,
-            Key.ShiftLeft => ImGuiKey.LeftShift,
-            Key.ControlLeft => ImGuiKey.LeftCtrl,
-            Key.AltLeft => ImGuiKey.LeftAlt,
-            Key.SuperLeft => ImGuiKey.LeftSuper,
-            Key.ShiftRight => ImGuiKey.RightShift,
-            Key.ControlRight => ImGuiKey.RightCtrl,
-            Key.AltRight => ImGuiKey.RightAlt,
-            Key.SuperRight => ImGuiKey.RightSuper,
-            Key.Menu => ImGuiKey.Menu,
-            Key.Number0 => ImGuiKey._0,
-            Key.Number1 => ImGuiKey._1,
-            Key.Number2 => ImGuiKey._2,
-            Key.Number3 => ImGuiKey._3,
-            Key.Number4 => ImGuiKey._4,
-            Key.Number5 => ImGuiKey._5,
-            Key.Number6 => ImGuiKey._6,
-            Key.Number7 => ImGuiKey._7,
-            Key.Number8 => ImGuiKey._8,
-            Key.Number9 => ImGuiKey._9,
-            Key.A => ImGuiKey.A,
-            Key.B => ImGuiKey.B,
-            Key.C => ImGuiKey.C,
-            Key.D => ImGuiKey.D,
-            Key.E => ImGuiKey.E,
-            Key.F => ImGuiKey.F,
-            Key.G => ImGuiKey.G,
-            Key.H => ImGuiKey.H,
-            Key.I => ImGuiKey.I,
-            Key.J => ImGuiKey.J,
-            Key.K => ImGuiKey.K,
-            Key.L => ImGuiKey.L,
-            Key.M => ImGuiKey.M,
-            Key.N => ImGuiKey.N,
-            Key.O => ImGuiKey.O,
-            Key.P => ImGuiKey.P,
-            Key.Q => ImGuiKey.Q,
-            Key.R => ImGuiKey.R,
-            Key.S => ImGuiKey.S,
-            Key.T => ImGuiKey.T,
-            Key.U => ImGuiKey.U,
-            Key.V => ImGuiKey.V,
-            Key.W => ImGuiKey.W,
-            Key.X => ImGuiKey.X,
-            Key.Y => ImGuiKey.Y,
-            Key.Z => ImGuiKey.Z,
-            Key.F1 => ImGuiKey.F1,
-            Key.F2 => ImGuiKey.F2,
-            Key.F3 => ImGuiKey.F3,
-            Key.F4 => ImGuiKey.F4,
-            Key.F5 => ImGuiKey.F5,
-            Key.F6 => ImGuiKey.F6,
-            Key.F7 => ImGuiKey.F7,
-            Key.F8 => ImGuiKey.F8,
-            Key.F9 => ImGuiKey.F9,
-            Key.F10 => ImGuiKey.F10,
-            Key.F11 => ImGuiKey.F11,
-            Key.F12 => ImGuiKey.F12,
+            EKey.Tab => ImGuiKey.Tab,
+            EKey.Left => ImGuiKey.LeftArrow,
+            EKey.Right => ImGuiKey.RightArrow,
+            EKey.Up => ImGuiKey.UpArrow,
+            EKey.Down => ImGuiKey.DownArrow,
+            EKey.PageUp => ImGuiKey.PageUp,
+            EKey.PageDown => ImGuiKey.PageDown,
+            EKey.Home => ImGuiKey.Home,
+            EKey.End => ImGuiKey.End,
+            EKey.Insert => ImGuiKey.Insert,
+            EKey.Delete => ImGuiKey.Delete,
+            EKey.Backspace => ImGuiKey.Backspace,
+            EKey.Space => ImGuiKey.Space,
+            EKey.Enter => ImGuiKey.Enter,
+            EKey.Escape => ImGuiKey.Escape,
+            EKey.Apostrophe => ImGuiKey.Apostrophe,
+            EKey.Comma => ImGuiKey.Comma,
+            EKey.Minus => ImGuiKey.Minus,
+            EKey.Period => ImGuiKey.Period,
+            EKey.Slash => ImGuiKey.Slash,
+            EKey.Semicolon => ImGuiKey.Semicolon,
+            EKey.Equal => ImGuiKey.Equal,
+            EKey.BracketLeft => ImGuiKey.LeftBracket,
+            EKey.BackSlash => ImGuiKey.Backslash,
+            EKey.BracketRight => ImGuiKey.RightBracket,
+            EKey.Tilde => ImGuiKey.GraveAccent,
+            EKey.CapsLock => ImGuiKey.CapsLock,
+            EKey.ScrollLock => ImGuiKey.ScrollLock,
+            EKey.NumLock => ImGuiKey.NumLock,
+            EKey.PrintScreen => ImGuiKey.PrintScreen,
+            EKey.Pause => ImGuiKey.Pause,
+            EKey.Keypad0 => ImGuiKey.Keypad0,
+            EKey.Keypad1 => ImGuiKey.Keypad1,
+            EKey.Keypad2 => ImGuiKey.Keypad2,
+            EKey.Keypad3 => ImGuiKey.Keypad3,
+            EKey.Keypad4 => ImGuiKey.Keypad4,
+            EKey.Keypad5 => ImGuiKey.Keypad5,
+            EKey.Keypad6 => ImGuiKey.Keypad6,
+            EKey.Keypad7 => ImGuiKey.Keypad7,
+            EKey.Keypad8 => ImGuiKey.Keypad8,
+            EKey.Keypad9 => ImGuiKey.Keypad9,
+            EKey.KeypadDecimal => ImGuiKey.KeypadDecimal,
+            EKey.KeypadDivide => ImGuiKey.KeypadDivide,
+            EKey.KeypadMultiply => ImGuiKey.KeypadMultiply,
+            EKey.KeypadMinus => ImGuiKey.KeypadSubtract,
+            EKey.KeypadAdd => ImGuiKey.KeypadAdd,
+            EKey.KeypadEnter => ImGuiKey.KeypadEnter,
+            EKey.ShiftLeft => ImGuiKey.LeftShift,
+            EKey.ControlLeft => ImGuiKey.LeftCtrl,
+            EKey.AltLeft => ImGuiKey.LeftAlt,
+            EKey.WinLeft => ImGuiKey.LeftSuper,
+            EKey.ShiftRight => ImGuiKey.RightShift,
+            EKey.ControlRight => ImGuiKey.RightCtrl,
+            EKey.AltRight => ImGuiKey.RightAlt,
+            EKey.WinRight => ImGuiKey.RightSuper,
+            EKey.Menu => ImGuiKey.Menu,
+            >= EKey.Number0 and <= EKey.Number9 => ImGuiKey._0 + (key - EKey.Number0),
+            >= EKey.A and <= EKey.Z => ImGuiKey.A + (key - EKey.A),
+            >= EKey.F1 and <= EKey.F24 => ImGuiKey.F1 + (key - EKey.F1),
             _ => ImGuiKey.None,
         };
-
         return imguiKey != ImGuiKey.None;
     }
 }

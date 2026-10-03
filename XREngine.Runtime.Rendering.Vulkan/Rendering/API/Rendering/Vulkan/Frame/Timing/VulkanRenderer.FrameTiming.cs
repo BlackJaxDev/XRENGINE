@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
@@ -215,6 +214,9 @@ internal sealed partial class VulkanFrameLoop
         if (_deviceContext.Device.Handle == 0)
             return;
 
+        _telemetry._vulkanGpuProfilerTimestampValidBits =
+            _resourceRuntime.Queries.Capabilities.GraphicsTimestampValidBits;
+
         int profilerSlotCount = Math.Max(_outputRuntime.Desktop.Images?.Length ?? 0, FrameSlotCount);
         _telemetry._vulkanGpuProfilerQueryPools = new QueryPool[profilerSlotCount];
         _telemetry._vulkanGpuProfilerQueryReady = new bool[profilerSlotCount];
@@ -231,7 +233,7 @@ internal sealed partial class VulkanFrameLoop
 
         for (int i = 0; i < _telemetry._vulkanGpuProfilerQueryPools.Length; i++)
         {
-            _telemetry._vulkanGpuProfilerPendingScopes[i] = [];
+            _telemetry._vulkanGpuProfilerPendingScopes[i] = new List<VulkanGpuProfilerPendingScope>((int)VulkanFrameTelemetry.GpuProfilerMaxScopesPerFrame);
             if (_deviceContext.Api.CreateQueryPool(_deviceContext.Device, ref createInfo, null, out _telemetry._vulkanGpuProfilerQueryPools[i]) != Result.Success)
             {
                 DestroyVulkanGpuProfilerResources();
@@ -276,7 +278,7 @@ internal sealed partial class VulkanFrameLoop
 
         for (int i = oldLength; i < slotCount; i++)
         {
-            _telemetry._vulkanGpuProfilerPendingScopes[i] = [];
+            _telemetry._vulkanGpuProfilerPendingScopes[i] = new List<VulkanGpuProfilerPendingScope>((int)VulkanFrameTelemetry.GpuProfilerMaxScopesPerFrame);
             if (_deviceContext.Api.CreateQueryPool(_deviceContext.Device, ref createInfo, null, out _telemetry._vulkanGpuProfilerQueryPools[i]) != Result.Success)
             {
                 Debug.VulkanWarning("[Vulkan] GPU pipeline profiler query pool growth failed for frame slot {0}; render-pipeline GPU timings disabled for that slot.", i);
@@ -381,56 +383,43 @@ internal sealed partial class VulkanFrameLoop
         if (queryPool.Handle == 0 || queryCount <= 0 || samples.Count == 0 || frameId == 0UL)
             return;
 
-        ulong[] rented = ArrayPool<ulong>.Shared.Rent(queryCount);
-        try
+        if ((uint)queryCount > VulkanFrameTelemetry.GpuProfilerQueryCount)
+            throw new InvalidOperationException("GPU profiler query count exceeded its fixed pool budget.");
+        ulong* timestamps = stackalloc ulong[queryCount * 2];
+        Result result = _deviceContext.Api.GetQueryPoolResults(
+            _deviceContext.Device, queryPool, 0, (uint)queryCount,
+            (nuint)(sizeof(ulong) * queryCount * 2), timestamps,
+            (ulong)(sizeof(ulong) * 2),
+            QueryResultFlags.Result64Bit | QueryResultFlags.ResultWithAvailabilityBit);
+        if (result == Result.NotReady)
+            return;
+        if (result != Result.Success)
+            throw new InvalidOperationException($"GPU profiler query read failed: {result}.");
+        for (int query = 0; query < queryCount; query++)
+            if (timestamps[query * 2 + 1] == 0)
+                return;
+
+        _resourceRuntime.NotifyResourceUseCompleted(ObjectType.QueryPool, queryPool.Handle);
+        for (int i = 0; i < samples.Count; i++)
         {
-            fixed (ulong* timestamps = rented)
-            {
-                Result result = _deviceContext.Api.GetQueryPoolResults(
-                    _deviceContext.Device,
-                    queryPool,
-                    0,
-                    (uint)queryCount,
-                    (nuint)(sizeof(ulong) * queryCount),
-                    timestamps,
-                    (ulong)sizeof(ulong),
-                    QueryResultFlags.Result64Bit);
-
-                if (result != Result.Success)
-                    return;
-
-                _resourceRuntime.NotifyResourceUseCompleted(ObjectType.QueryPool, queryPool.Handle);
-
-                for (int i = 0; i < samples.Count; i++)
-                {
-                    VulkanGpuProfilerPendingScope sample = samples[i];
-                    if (sample.EndQuery >= queryCount || sample.StartQuery >= queryCount)
-                        continue;
-
-                    ulong start = timestamps[sample.StartQuery];
-                    ulong end = timestamps[sample.EndQuery];
-                    ulong elapsedTicks = RenderQueryTimestampMath.DeltaTicks(
-                        start, end, _resourceRuntime.Queries.Capabilities.GraphicsTimestampValidBits);
-                    ulong nanoseconds = RenderQueryTimestampMath.TicksToNanoseconds(
-                        elapsedTicks, _telemetry._frameTimingTimestampPeriodNanoseconds);
-                    RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingSample(
-                        frameId,
-                        VulkanFrameTelemetry.GpuProfilerBackendName,
-                        sample.Path,
-                        nanoseconds);
-                }
-
-                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryReadbackBytes, queryCount * sizeof(ulong));
-            }
+            VulkanGpuProfilerPendingScope sample = samples[i];
+            if (sample.EndQuery >= queryCount || sample.StartQuery >= queryCount)
+                continue;
+            ulong start = timestamps[sample.StartQuery * 2];
+            ulong end = timestamps[sample.EndQuery * 2];
+            ulong elapsedTicks = RenderQueryTimestampMath.DeltaTicks(
+                start, end, _resourceRuntime.Queries.Capabilities.GraphicsTimestampValidBits);
+            ulong nanoseconds = RenderQueryTimestampMath.TicksToNanoseconds(
+                elapsedTicks, _telemetry._frameTimingTimestampPeriodNanoseconds);
+            RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingSample(
+                frameId, VulkanFrameTelemetry.GpuProfilerBackendName, sample.Path, nanoseconds);
         }
-        finally
-        {
-            ArrayPool<ulong>.Shared.Return(rented);
-            samples.Clear();
-            _telemetry._vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
-            _telemetry._vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0UL;
-            _telemetry._vulkanGpuProfilerQueryReady[frameSlot] = false;
-        }
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(
+            ERendererProfilerCounter.TimestampQueryReadbackBytes, queryCount * sizeof(ulong) * 2);
+        samples.Clear();
+        _telemetry._vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
+        _telemetry._vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0UL;
+        _telemetry._vulkanGpuProfilerQueryReady[frameSlot] = false;
     }
 
 }

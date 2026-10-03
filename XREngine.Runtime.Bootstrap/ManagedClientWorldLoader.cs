@@ -63,11 +63,16 @@ public static class ManagedClientWorldLoader
         if (launch.ContractVersion != 1 || string.IsNullOrWhiteSpace(launch.PackageRootPath) || string.IsNullOrWhiteSpace(launch.CacheRootPath) || string.IsNullOrWhiteSpace(launch.WorldEntryPoint))
             throw new InvalidOperationException("Managed client configuration is incomplete.");
         if (launch.WorldPackage.SchemaVersion != 1
-            || !string.Equals(launch.GameBootstrapId, "world-v1", StringComparison.Ordinal)
+            || !WorldPackageBootstrapIds.IsCompiledIn(launch.GameBootstrapId)
             || !string.IsNullOrWhiteSpace(launch.WorldPackage.GameBootstrapId) && !string.Equals(launch.GameBootstrapId, launch.WorldPackage.GameBootstrapId, StringComparison.Ordinal))
         {
             throw new NotSupportedException("Managed client package requests an unsupported content schema or game bootstrap.");
         }
+
+        // Downloaded content is data only. Register the roots before anything under them is read so a
+        // development editor joining a managed session cannot hot-load an assembly delivered as content.
+        XREngine.Components.Scripting.GameCSProjLoader.ProtectContentRoot(launch.PackageRootPath);
+        XREngine.Components.Scripting.GameCSProjLoader.ProtectContentRoot(launch.CacheRootPath);
 
         WorldPackageVerificationResult verification = WorldPackageManifestBuilder.Verify(launch.WorldPackage, launch.PackageRootPath, cancellationToken, requireAssetContentHashMatch: true);
         if (!verification.Success)

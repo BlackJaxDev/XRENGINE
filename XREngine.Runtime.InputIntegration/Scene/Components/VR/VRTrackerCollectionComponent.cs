@@ -1,5 +1,3 @@
-using OpenVR.NET.Devices;
-using System.Threading;
 using XREngine.Components;
 using XREngine.Components.VR;
 using XREngine.Input;
@@ -12,57 +10,34 @@ namespace XREngine.Data.Components.Scene
     /// </summary>
     public class VRTrackerCollectionComponent : XRComponent
     {
-        private DateTime _nextTrackerReverifyUtc = DateTime.MinValue;
-        private int _reverifyRequested = 1;
-        private readonly List<SceneNode> _ownedTrackerNodes = [];
-        private readonly Dictionary<string, VRTrackerTransform> _openVrTrackers = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, uint> _openVrIndices = new(StringComparer.Ordinal);
+        private DateTime _nextOpenXrTrackerReverifyUtc = DateTime.MinValue;
+        private readonly HashSet<SceneNode> _ownedTrackerNodes = [];
+        private readonly List<VRTrackerTransform> _retiredTrackers = [];
+        private RuntimeVrTrackerPose[] _snapshotTrackers = new RuntimeVrTrackerPose[16];
+        private RuntimeVrRuntimeKind _lastRuntime;
+        private long _sessionGeneration;
+        private long _referenceSpaceVersion;
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            RuntimeVrStateServices.DeviceDetected += OnDeviceDetected;
-            RegisterTick(ETickGroup.Normal, ETickOrder.Scene, ReverifyOnSceneThread);
-            Interlocked.Exchange(ref _reverifyRequested, 1);
+            ReverifyTrackedDevices();
+            RuntimeVrStateServices.FrameAdvanced += ReverifyOpenXrTrackersThrottled;
         }
 
         protected override void OnComponentDeactivated()
         {
-            UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, ReverifyOnSceneThread);
-            RuntimeVrStateServices.DeviceDetected -= OnDeviceDetected;
-            base.OnComponentDeactivated();
-        }
-
-        protected override void OnDestroying()
-        {
-            for (int i = 0; i < _ownedTrackerNodes.Count; i++)
-                _ownedTrackerNodes[i].Destroy(true);
+            RuntimeVrStateServices.FrameAdvanced -= ReverifyOpenXrTrackersThrottled;
+            foreach (SceneNode node in _ownedTrackerNodes)
+                node.Destroy(true);
             _ownedTrackerNodes.Clear();
             Trackers.Clear();
             OpenXrTrackers.Clear();
-            _openVrTrackers.Clear();
-            _openVrIndices.Clear();
-            base.OnDestroying();
+            base.OnComponentDeactivated();
         }
 
-        public Dictionary<uint, (VrDevice?, VRTrackerTransform)> Trackers { get; } = [];
+        public Dictionary<uint, (RuntimeVrDeviceInfo?, VRTrackerTransform)> Trackers { get; } = [];
         public Dictionary<string, VRTrackerTransform> OpenXrTrackers { get; } = new(StringComparer.Ordinal);
-
-        private void OnDeviceDetected(VrDevice device)
-            => RequestReverify();
-
-        private void RequestReverify()
-            => Interlocked.Exchange(ref _reverifyRequested, 1);
-
-        private void ReverifyOnSceneThread()
-        {
-            DateTime now = DateTime.UtcNow;
-            if (Volatile.Read(ref _reverifyRequested) == 0 && now < _nextTrackerReverifyUtc)
-                return;
-            Interlocked.Exchange(ref _reverifyRequested, 0);
-            _nextTrackerReverifyUtc = now + TimeSpan.FromSeconds(1);
-            ReverifyTrackedDevices();
-        }
 
         private void ReverifyTrackedDevices()
         {
@@ -72,46 +47,91 @@ namespace XREngine.Data.Components.Scene
                 return;
             }
 
-            foreach (VrDevice device in RuntimeVrStateServices.TrackedDevices)
+            foreach (RuntimeVrDeviceInfo device in RuntimeVrStateServices.TrackedDevices)
             {
-                if (!RuntimeVrStateServices.IsGenericTracker(device.DeviceIndex))
+                if (device.DeviceClass != RuntimeVrDeviceClass.GenericTracker)
                     continue;
-
-                string? identity;
-                try { identity = device.GetString(Valve.VR.ETrackedDeviceProperty.Prop_SerialNumber_String); }
-                catch { continue; }
-                if (string.IsNullOrWhiteSpace(identity))
-                    continue;
-
-                if (!_openVrTrackers.TryGetValue(identity, out VRTrackerTransform? transform))
+                if (Trackers.TryGetValue(device.DeviceIndex, out var existing))
                 {
-                    transform = AddRealTracker(device);
-                    _openVrTrackers.Add(identity, transform);
+                    // A recycled index may refer to a different device. Never transfer its node/binding.
+                    if (existing.Item1?.PersistentIdentity != device.PersistentIdentity)
+                    {
+                        RemoveOwnedTracker(existing.Item2);
+                        if (device.IsConnected) AddRealTracker(device);
+                    }
+                    else
+                    {
+                        existing.Item2.Tracker = device;
+                        Trackers[device.DeviceIndex] = (device, existing.Item2);
+                    }
+                }
+                else if (device.IsConnected)
+                    AddRealTracker(device);
+            }
+        }
+
+        private void ReverifyOpenXrTrackersThrottled()
+        {
+            // FrameAdvanced is the host's PreUpdateFrame hook, never a native input callback.
+            bool openXr = RuntimeVrStateServices.IsOpenXRActive;
+            if (openXr)
+            {
+                bool copied = RuntimeVrStateServices.TryCopyTrackingSnapshot(_snapshotTrackers, out RuntimeVrTrackingSnapshot snapshot, out int count);
+                if (count > _snapshotTrackers.Length)
+                {
+                    Array.Resize(ref _snapshotTrackers, count);
+                    copied = RuntimeVrStateServices.TryCopyTrackingSnapshot(_snapshotTrackers, out snapshot, out count);
+                }
+                if (copied)
+                {
+                    if (_sessionGeneration != snapshot.SessionGeneration)
+                    {
+                        _sessionGeneration = snapshot.SessionGeneration;
+                        _referenceSpaceVersion = snapshot.ReferenceSpaceVersion;
+                        _nextOpenXrTrackerReverifyUtc = DateTime.MinValue;
+                        RuntimeVrDiscontinuityServices.Publish(EVrPoseDiscontinuity.SessionGeneration);
+                    }
+                    else if (_referenceSpaceVersion != snapshot.ReferenceSpaceVersion)
+                    {
+                        _referenceSpaceVersion = snapshot.ReferenceSpaceVersion;
+                        RuntimeVrDiscontinuityServices.Publish(EVrPoseDiscontinuity.Recenter);
+                    }
+                    for (int i = 0; i < count; i++)
+                        if (OpenXrTrackers.TryGetValue(_snapshotTrackers[i].Info.UserPath, out VRTrackerTransform? tracker)
+                            && tracker.OpenXrTrackerInfo.SessionGeneration == snapshot.SessionGeneration)
+                            tracker.ApplyOpenXrTrackerInfo(_snapshotTrackers[i].Info);
                 }
                 else
-                    transform.Tracker = device;
+                    foreach (VRTrackerTransform tracker in OpenXrTrackers.Values)
+                        tracker.ApplyOpenXrTrackerInfo(tracker.OpenXrTrackerInfo with { PoseAvailable = false, IsStale = true });
+            }
 
-                if (_openVrIndices.TryGetValue(identity, out uint oldIndex) && oldIndex != device.DeviceIndex)
-                {
-                    if (Trackers.TryGetValue(oldIndex, out var oldEntry) && ReferenceEquals(oldEntry.Item2, transform))
-                        Trackers.Remove(oldIndex);
-                }
-                _openVrIndices[identity] = device.DeviceIndex;
-                Trackers[device.DeviceIndex] = (device, transform);
+            DateTime now = DateTime.UtcNow;
+            RuntimeVrRuntimeKind runtime = RuntimeVrStateServices.ActiveRuntime;
+            if (now < _nextOpenXrTrackerReverifyUtc && _lastRuntime == runtime)
+                return;
+            _lastRuntime = runtime;
+            _nextOpenXrTrackerReverifyUtc = now + TimeSpan.FromSeconds(1);
+            if (openXr)
+                ReverifyOpenXrTrackers();
+            else
+            {
+                RetireMissingOpenXrTrackers([]);
+                ReverifyTrackedDevices();
             }
         }
 
         private void ReverifyOpenXrTrackers()
         {
             RuntimeVrTrackerInfo[] trackers = RuntimeVrStateServices.GetKnownOpenXrTrackers();
+            RetireMissingOpenXrTrackers(trackers);
             for (int i = 0; i < trackers.Length; i++)
             {
                 RuntimeVrTrackerInfo tracker = trackers[i];
-                string? identity = tracker.PersistentPath;
-                if (string.IsNullOrWhiteSpace(identity))
+                if (string.IsNullOrWhiteSpace(tracker.PersistentPath))
                     continue;
 
-                if (OpenXrTrackers.TryGetValue(identity, out VRTrackerTransform? existing))
+                if (OpenXrTrackers.TryGetValue(tracker.UserPath, out VRTrackerTransform? existing))
                     existing.ApplyOpenXrTrackerInfo(tracker);
                 else
                     AddOpenXrTracker(tracker);
@@ -122,7 +142,7 @@ namespace XREngine.Data.Components.Scene
         /// Adds a real VR tracker discovered from the VR API to the collection.
         /// </summary>
         /// <param name="device"></param>
-        private VRTrackerTransform AddRealTracker(VrDevice device)
+        private void AddRealTracker(RuntimeVrDeviceInfo device)
         {
             SceneNode trackerNode = SceneNode.NewChild();
             _ownedTrackerNodes.Add(trackerNode);
@@ -134,7 +154,7 @@ namespace XREngine.Data.Components.Scene
             VRTrackerModelComponent modelComponent = trackerNode.AddComponent<VRTrackerModelComponent>()!;
             modelComponent.DeviceIndex = device.DeviceIndex;
 
-            return tfm;
+            Trackers.Add(device.DeviceIndex, (device, tfm));
         }
 
         private void AddOpenXrTracker(RuntimeVrTrackerInfo tracker)
@@ -147,14 +167,14 @@ namespace XREngine.Data.Components.Scene
             tfm.ApplyOpenXrTrackerInfo(tracker);
 
             VRTrackerModelComponent modelComponent = trackerNode.AddComponent<VRTrackerModelComponent>()!;
-            modelComponent.OpenXrTrackerUserPath = tracker.PersistentPath;
+            modelComponent.OpenXrTrackerUserPath = tracker.UserPath;
 
             uint syntheticDeviceIndex = uint.MaxValue - (uint)Trackers.Count;
             while (Trackers.ContainsKey(syntheticDeviceIndex))
                 syntheticDeviceIndex--;
 
             Trackers.Add(syntheticDeviceIndex, (null, tfm));
-            OpenXrTrackers.Add(tracker.PersistentPath!, tfm);
+            OpenXrTrackers.Add(tracker.UserPath, tfm);
         }
 
         /// <summary>
@@ -168,7 +188,6 @@ namespace XREngine.Data.Components.Scene
             trackerNode.Name = name ?? "Manual Tracker";
 
             VRTrackerTransform tfm = trackerNode.SetTransform<VRTrackerTransform>();
-            tfm.SyntheticIdentity = "manual:" + Guid.NewGuid().ToString("N");
 
             uint manualTrackerDeviceIndex = uint.MaxValue;
             while (Trackers.ContainsKey(manualTrackerDeviceIndex))
@@ -189,13 +208,46 @@ namespace XREngine.Data.Components.Scene
             return null;
         }
 
+        private void RetireMissingOpenXrTrackers(RuntimeVrTrackerInfo[] trackers)
+        {
+            _retiredTrackers.Clear();
+            foreach (var entry in OpenXrTrackers)
+            {
+                bool present = false;
+                for (int i = 0; i < trackers.Length; i++)
+                    if (trackers[i].UserPath == entry.Key && trackers[i].SessionGeneration == entry.Value.OpenXrTrackerInfo.SessionGeneration)
+                    {
+                        present = true;
+                        break;
+                    }
+                if (!present)
+                    _retiredTrackers.Add(entry.Value);
+            }
+            foreach (VRTrackerTransform tracker in _retiredTrackers)
+            {
+                if (tracker.OpenXrTrackerUserPath is { } path)
+                    OpenXrTrackers.Remove(path);
+                RemoveOwnedTracker(tracker);
+            }
+        }
+
+        private void RemoveOwnedTracker(VRTrackerTransform tracker)
+        {
+            foreach (var entry in Trackers)
+                if (ReferenceEquals(entry.Value.Item2, tracker))
+                {
+                    Trackers.Remove(entry.Key);
+                    break;
+                }
+            if (tracker.SceneNode is { } node && _ownedTrackerNodes.Remove(node))
+                node.Destroy(true);
+        }
+
         private static string GetOpenXrTrackerDisplayName(RuntimeVrTrackerInfo tracker)
         {
-            string userPath = tracker.PersistentPath ?? tracker.UserPath;
-            int slash = userPath.LastIndexOf('/');
-            return slash >= 0 && slash + 1 < userPath.Length
-                ? userPath[(slash + 1)..]
-                : userPath;
+            string path = tracker.PersistentPath ?? tracker.UserPath;
+            int slash = path.LastIndexOf('/');
+            return slash >= 0 && slash + 1 < path.Length ? path[(slash + 1)..] : path;
         }
     }
 }

@@ -1,0 +1,26 @@
+<Project>
+  <PropertyGroup Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest'">
+    <XREngineFactoryRegistrationGenerator>$(MSBuildThisFileDirectory)../../Tools/Generate-AotFactoryRegistrations.ps1</XREngineFactoryRegistrationGenerator>
+    <XREngineFactoryRegistrationHost Condition="'$(OS)' == 'Windows_NT'">powershell -NoProfile -ExecutionPolicy Bypass</XREngineFactoryRegistrationHost>
+    <XREngineFactoryRegistrationHost Condition="'$(OS)' != 'Windows_NT'">pwsh -NoProfile</XREngineFactoryRegistrationHost>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest' and '$(DesignTimeBuild)' != 'true'">
+    <Compile Include="$(XREngineFactoryRegistrationOutput)" />
+  </ItemGroup>
+  <Target Name="InvalidateMissingXREngineFactoryRegistrationOutput"
+          BeforeTargets="GenerateXREngineFactoryRegistrations"
+          Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest' and '$(DesignTimeBuild)' != 'true' and !Exists('$(XREngineFactoryRegistrationOutput)') and Exists('$(XREngineFactoryRegistrationStamp)')">
+    <Delete Files="$(XREngineFactoryRegistrationStamp)" />
+  </Target>
+  <Target Name="GenerateXREngineFactoryRegistrations"
+          BeforeTargets="ValidateXREnginePortableProject;CoreCompile"
+          Inputs="$(XREngineFactoryRegistrationGenerator);$(MSBuildThisFileDirectory)BrowserStaticRegistrations.template.txt;$(MSBuildProjectFullPath);$(XREngineBrowserRegistrationManifest)"
+          Outputs="$(XREngineFactoryRegistrationStamp)"
+          Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest' and '$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(XREngineFactoryRegistrationOutput)' == '' or '$(XREngineFactoryRegistrationStamp)' == ''"
+           Text="Browser registration output and stamp paths are required for $(MSBuildProjectName)." />
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(XREngineFactoryRegistrationOutput)'))" />
+    <Exec Command="$(XREngineFactoryRegistrationHost) -File &quot;$(XREngineFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(XREngineFactoryRegistrationOutput)&quot; -BrowserManifest &quot;$(XREngineBrowserRegistrationManifest)&quot;" />
+    <Touch Files="$(XREngineFactoryRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
+  </Target>
+</Project>

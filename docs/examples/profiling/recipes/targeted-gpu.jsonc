@@ -1,0 +1,43 @@
+{
+  "$schema": "../../../../.vscode/schemas/render-profile-recipe.schema.json",
+  "schema_version": 1,
+  "name": "targeted-gpu",
+  "component": "DeferredFrame",
+  "execution_mode": "presentationless",
+  "backend": "vulkan",
+  "fixture": "presentationless-deferred",
+  "width": 640,
+  "height": 360,
+  "frame_slots": 3,
+  "warmup_frames": 120,
+  "stability_frames": 30,
+  "capture_frames": 180,
+  "repetitions": 1,
+  "timeout_seconds": 180,
+  "instrumentation": "aggregate_cpu, targeted_cpu_spans, coarse_gpu, targeted_gpu_timestamps",
+  "profile_mode": "diagnostics",
+  "validation_mode": "counters_hash_and_image",
+  "cpu_sampling_policy": "targeted_spans",
+  "cpu_profiling": {
+    "stages": ["ComponentFrame", "PrimaryCommandEncoding", "QueueSubmit"],
+    "capacity_per_thread": 65536,
+    "emit_markers": false
+  },
+  "gpu_profiling": {
+    "targets": ["presentationless-deferred.Pass3"],
+    "maximum_scope_depth": 1,
+    "maximum_queries_per_frame": 16,
+    "calibrated_timestamps": true,
+    "require_calibration": false
+  },
+  "scene": {
+    "scene_identity": "synthetic:fullscreen-deferred",
+    "camera_identity": "synthetic:fixed-camera",
+    "animation_identity": "frozen",
+    "output_identities": ["deferred-final-color"]
+  },
+  "mutation": { "policy": "stable_reuse" },
+  "workload": { "draw_count": 9, "barrier_count": 18, "pass_iterations": 9 },
+  "worker_counts": [1],
+  "budgets": { "max_capture_thread_allocated_bytes": 0, "require_output_hash": true }
+}

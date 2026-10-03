@@ -84,7 +84,7 @@ public sealed class PublishedCookedAssetTests
             CookedAssetFormat.BinaryV1,
             []);
 
-        byte[] cooked = MemoryPackSerializer.Serialize(blob);
+        byte[] cooked = CookedAssetEnvelope.Serialize(blob);
 
         NotSupportedException ex = Should.Throw<NotSupportedException>(() => CookedAssetReader.LoadAsset<XRMesh>(cooked));
         ex.Message.ShouldContain(CookedAssetFormat.BinaryV1.ToString());
@@ -267,7 +267,7 @@ public sealed class PublishedCookedAssetTests
             CookedAssetFormat.RuntimeBinaryV1,
             payload);
 
-        return MemoryPackSerializer.Serialize(blob);
+        return CookedAssetEnvelope.Serialize(blob);
     }
 
     private static XRMesh CreateSampleMesh()

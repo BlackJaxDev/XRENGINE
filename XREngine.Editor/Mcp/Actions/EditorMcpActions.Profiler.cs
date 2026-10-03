@@ -178,17 +178,14 @@ namespace XREngine.Editor.Mcp
         {
             if (top is < 1 or > 10000)
                 return Task.FromResult(new McpToolResponse("top must be between 1 and 10000.", isError: true));
-            VulkanRenderer? renderer =
-                (AbstractRenderer.Current ?? RuntimeEngine.Windows.FirstOrDefault()?.Renderer) as VulkanRenderer;
-            if (renderer is null)
+            AbstractRenderer? renderer =
+                AbstractRenderer.Current ?? RuntimeEngine.Windows.FirstOrDefault()?.Renderer;
+            if (renderer?.BackendId != RendererBackendId.Vulkan ||
+                renderer is not IRenderBackendDiagnosticsCapability diagnostics)
                 return Task.FromResult(new McpToolResponse("No active Vulkan renderer.", isError: true));
-            IReadOnlyList<VulkanLiveResourceOwnerCount> groups = renderer.CaptureLiveResourceOwners(top, collapseOwnerSuffix);
-            int live = 0;
-            for (int index = 0; index < groups.Count; index++)
-                live += groups[index].Live;
+            object snapshot = diagnostics.GetLiveResourceOwnerDiagnostics(top, collapseOwnerSuffix, out int groupCount);
             return Task.FromResult(new McpToolResponse(
-                $"Captured {groups.Count} live Vulkan resource owner groups.",
-                new { returned_live = live, groups }));
+                $"Captured {groupCount} live Vulkan resource owner groups.", snapshot));
         }
 
         [XRMcp(Name = "get_s13a_publication_trace", Permission = McpPermissionLevel.ReadOnly)]
@@ -326,25 +323,15 @@ namespace XREngine.Editor.Mcp
                 RenderForegroundWorkCoordinator.CaptureSnapshot();
             VulkanFrameHotPathSnapshot hotPath =
                 VulkanFrameHotPathTelemetry.CaptureSnapshot();
-            VulkanRenderer? activeVulkanRenderer =
-                (AbstractRenderer.Current ??
-                    RuntimeEngine.Windows.FirstOrDefault()?.Renderer) as
-                VulkanRenderer;
-            VulkanPresentNowTerminalDiagnostic presentNowTerminal =
-                activeVulkanRenderer is not null
-                    ? activeVulkanRenderer.CapturePresentNowTerminalDiagnostic()
-                    : default;
-            VulkanPresentNowFailureDiagnostic presentNowFailure =
-                activeVulkanRenderer is not null
-                    ? activeVulkanRenderer.CapturePresentNowFailureDiagnostic()
-                    : default;
-            VulkanDesktopFrameTerminalDiagnostic desktopFrameTerminal =
-                activeVulkanRenderer is not null
-                    ? activeVulkanRenderer.CaptureDesktopFrameTerminalDiagnostic()
-                    : default;
+            AbstractRenderer? activeRenderer = AbstractRenderer.Current ??
+                RuntimeEngine.Windows.FirstOrDefault()?.Renderer;
+            IRenderBackendDiagnosticsCapability? vulkanDiagnostics =
+                activeRenderer?.BackendId == RendererBackendId.Vulkan
+                    ? activeRenderer as IRenderBackendDiagnosticsCapability
+                    : null;
             OcclusionGpuElapsedRingDiagnostic hiZGpuTimingRing =
-                activeVulkanRenderer is not null
-                    ? OcclusionGpuElapsedTiming.Instance.CaptureRingDiagnostic(activeVulkanRenderer)
+                vulkanDiagnostics is not null && activeRenderer is not null
+                    ? OcclusionGpuElapsedTiming.Instance.CaptureRingDiagnostic(activeRenderer)
                     : default;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
             XRMeshCpuPreparationTelemetrySnapshot meshCpuPreparation =
@@ -807,60 +794,9 @@ namespace XREngine.Editor.Mcp
                             output_index = vulkanFrame.Identity.Output.OutputIndex,
                             output_generation = vulkanFrame.Identity.Output.OutputGeneration,
                             outcome = vulkanFrame.Outcome.ToString(),
-                            terminal_result = desktopFrameTerminal.IsValid
-                                ? new
-                                {
-                                    sequence = desktopFrameTerminal.Sequence,
-                                    frame_id = desktopFrameTerminal.FrameId,
-                                    frame_slot = desktopFrameTerminal.FrameSlot,
-                                    outcome = desktopFrameTerminal.Outcome,
-                                    reason = desktopFrameTerminal.Reason,
-                                    failure_kind = desktopFrameTerminal.FailureKind,
-                                    failure_stage = desktopFrameTerminal.FailureStage,
-                                    native_result = desktopFrameTerminal.NativeResult,
-                                    exception_type = desktopFrameTerminal.ExceptionType,
-                                    detail = desktopFrameTerminal.Detail,
-                                    ownership_settled = desktopFrameTerminal.OwnershipSettled,
-                                }
-                                : null,
-                            present_now_terminal = presentNowTerminal.IsValid
-                                ? new
-                                {
-                                    transition_id = presentNowTerminal.TransitionId,
-                                    frame_id = presentNowTerminal.FrameId,
-                                    frame_slot = presentNowTerminal.FrameSlot,
-                                    accepted_scene_epoch = presentNowTerminal.AcceptedSceneEpoch,
-                                    output_generation = presentNowTerminal.OutputGeneration,
-                                    readiness_stage = presentNowTerminal.ReadinessStage,
-                                    active_ticket = presentNowTerminal.ActiveTicket,
-                                    dependency_chain = presentNowTerminal.DependencyChain,
-                                    disposition = presentNowTerminal.Disposition,
-                                    elapsed_ms = presentNowTerminal.ElapsedMilliseconds,
-                                    since_last_progress_ms = presentNowTerminal.SinceLastProgressMilliseconds,
-                                    mesh_request_count = presentNowTerminal.MeshRequestCount,
-                                    failure_type = presentNowTerminal.FailureType,
-                                    detail = presentNowTerminal.Detail,
-                                }
-                                : null,
-                            present_now_latest_failure = presentNowFailure.IsValid
-                                ? new
-                                {
-                                    sequence = presentNowFailure.Sequence,
-                                    frame_id = presentNowFailure.FrameId,
-                                    frame_slot = presentNowFailure.FrameSlot,
-                                    accepted_scene_epoch = presentNowFailure.AcceptedSceneEpoch,
-                                    output_generation = presentNowFailure.OutputGeneration,
-                                    readiness_stage = presentNowFailure.ReadinessStage,
-                                    active_ticket = presentNowFailure.ActiveTicket,
-                                    dependency_chain = presentNowFailure.DependencyChain,
-                                    disposition = presentNowFailure.Disposition,
-                                    elapsed_ms = presentNowFailure.ElapsedMilliseconds,
-                                    since_last_progress_ms = presentNowFailure.SinceLastProgressMilliseconds,
-                                    mesh_request_count = presentNowFailure.MeshRequestCount,
-                                    failure_type = presentNowFailure.FailureType,
-                                    detail = presentNowFailure.Detail,
-                                }
-                                : null,
+                            terminal_result = vulkanDiagnostics?.GetDesktopFrameTerminalDiagnostics(),
+                            present_now_terminal = vulkanDiagnostics?.GetPresentNowTerminalDiagnostics(),
+                            present_now_latest_failure = vulkanDiagnostics?.GetPresentNowFailureDiagnostics(),
                             total_ms = vulkanFrame.TotalElapsed.TotalMilliseconds,
                             gpu_command_buffer_ms = VulkanStats.VulkanFrameGpuCommandBufferMs,
                             gpu_command_buffer_timing = new
@@ -1489,7 +1425,7 @@ namespace XREngine.Editor.Mcp
                         },
                         retired_resources = new
                         {
-                            metering = activeVulkanRenderer?.CaptureRetirementDiagnostics(),
+                            metering = vulkanDiagnostics?.GetRetirementDiagnostics(),
                             pending_count = VulkanStats.VulkanLifetimePendingRetirementCount,
                             oldest_pending_age_ms = VulkanStats.VulkanLifetimeOldestPendingRetirementAgeMilliseconds,
                             plan_replacements = VulkanStats.VulkanRetiredResourcePlanReplacements,
@@ -1516,7 +1452,7 @@ namespace XREngine.Editor.Mcp
                             message_count = VulkanStats.VulkanValidationMessageCount,
                             error_count = VulkanStats.VulkanValidationErrorCount,
                             last_message = VulkanStats.VulkanLastValidationMessage,
-                            cumulative = activeVulkanRenderer?.CaptureValidationDiagnostics(),
+                            cumulative = vulkanDiagnostics?.GetValidationDiagnostics(),
                         },
                         diagnostics = new
                         {

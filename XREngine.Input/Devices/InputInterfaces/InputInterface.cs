@@ -1,4 +1,3 @@
-﻿using OpenVR.NET.Input;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Input.Devices.Types.OpenVR;

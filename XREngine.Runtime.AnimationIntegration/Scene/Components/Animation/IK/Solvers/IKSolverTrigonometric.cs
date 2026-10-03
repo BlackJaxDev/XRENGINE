@@ -1,5 +1,4 @@
 using XREngine.Extensions;
-using MathNet.Numerics;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Data.Colors;
@@ -47,12 +46,12 @@ namespace XREngine.Components.Animation
         {
             var weight = IKRotationWeight;
 
-            if (weight.AlmostEqual(0.0f))
+            if (weight.EqualTo(0.0f))
                 return _bone3._transform?.WorldRotation ?? Quaternion.Identity;
 
             var worldRotation = GetUnweightedWorldIKRotation();
 
-            if (weight.AlmostEqual(1.0f))
+            if (weight.EqualTo(1.0f))
                 return worldRotation;
 
             return Quaternion.Slerp(_bone3._transform?.WorldRotation ?? Quaternion.Identity, worldRotation, weight);
@@ -347,12 +346,12 @@ namespace XREngine.Components.Animation
         {
             var weight = IKPositionWeight;
 
-            if (weight.AlmostEqual(0.0f))
+            if (weight.EqualTo(0.0f))
                 return _bone3._transform?.WorldTranslation ?? Vector3.Zero;
 
             var worldPos = GetWorldIKPositionUnweighted();
 
-            if (weight.AlmostEqual(1.0f))
+            if (weight.EqualTo(1.0f))
                 return worldPos;
 
             return Vector3.Lerp(_bone3._transform?.WorldTranslation ?? Vector3.Zero, worldPos, weight);
@@ -419,6 +418,11 @@ namespace XREngine.Components.Animation
                 Quaternion bone1Rot = _bone1.GetRotation(bendDirection, currentBendNormal);
                 _bone1._transform.SetWorldRotation(bone1Rot);
 
+                // World matrices are cached: the lower joint must move with the
+                // upper rotation before computing its aim and parent-space rotation.
+                RefreshBonePath(_bone2._transform, _bone1._transform);
+                bone2WorldPos = _bone2._transform.WorldTranslation;
+
                 // Rotating bone 2
                 var bone2ToIK = weightedWorldPos - bone2WorldPos;
                 Vector3 bendNormal = _bone2.GetBendNormalFromCurrentRotation();
@@ -428,17 +432,25 @@ namespace XREngine.Components.Animation
 
                 Quaternion bone2Rot = _bone2.GetRotation(bone2ToIK, bendNormal);
                 _bone2._transform.SetWorldRotation(bone2Rot);
+                RefreshBonePath(_bone3._transform, _bone2._transform);
             }
 
             // Rotating bone3
             float rotationWeight = IKRotationWeight;
-            if (!rotationWeight.AlmostEqual(0.0f))
+            if (!rotationWeight.EqualTo(0.0f))
             {
                 Quaternion endIKRot = GetWorldIKRotation();
-                _bone3._transform.SetWorldRotation(rotationWeight.AlmostEqual(1.0f) ? endIKRot : Quaternion.Slerp(_bone3._transform.WorldRotation, endIKRot, rotationWeight));
+                _bone3._transform.SetWorldRotation(rotationWeight.EqualTo(1.0f) ? endIKRot : Quaternion.Slerp(_bone3._transform.WorldRotation, endIKRot, rotationWeight));
             }
 
             PostSolve();
+        }
+
+        private static void RefreshBonePath(TransformBase bone, TransformBase ancestor)
+        {
+            if (!ReferenceEquals(bone, ancestor) && bone.Parent is TransformBase parent)
+                RefreshBonePath(parent, ancestor);
+            bone.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
         }
 
         private void ApplyTargetStretch(

@@ -78,7 +78,7 @@ THIS IS NOT VALID GLSL;";
         primary.MakeCurrent();
 
         var ctx = new GLSharedContext();
-        if (!ctx.Initialize(sharedWindow))
+        if (!ctx.Initialize(new SilkSharedWindowTestBackend(sharedWindow)))
         {
             ctx.Dispose();
             DisposeContext(sharedWindow);

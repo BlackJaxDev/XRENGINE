@@ -890,7 +890,7 @@ namespace XREngine.Editor.Mcp
                         hasKeyboard = input?.Keyboard is not null,
                         hasMouse = input?.Mouse is not null,
                         hasGamepad = input?.Gamepad is not null,
-                        hasOpenVRActions = input?.OpenVRActions is not null
+                        hasOpenVRActions = input?.HasVrActions == true
                     };
                 })
                 .ToArray();

@@ -9,10 +9,13 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
   information, contribution terms, and release guidance.
 - [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
+[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in the [native subsystem debugging and validation TODO](work/todo/platform/native-subsystem-project-split-todo.md); completed local browser, desktop and native callback smokes, full test execution and qualification limits are recorded in the [reference harness investigation](work/investigations/rendering/desktop-browser-reference-harness.md).
+
 ## Architecture
 
 - [Architecture Overview](architecture/README.md)
 - [Getting Started In The Codebase](architecture/getting-started-in-codebase.md)
+- [Runtime Project Organization](architecture/runtime/project-organization.md)
 - [Rendering Architecture](architecture/rendering/README.md)
 - [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
 - [Advanced TSR Sampling, History, And Diagnostics](architecture/rendering/default-render-pipeline-notes.md#advanced-tsr-sample-and-history-contract)
@@ -33,6 +36,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 ## Developer Guides
 
+- [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
@@ -49,10 +53,14 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics API](developer-guides/physics/physics-api.md)
 - [Scene Graph Developer Guide](developer-guides/scene/scene-graph.md)
 - [Engine API](developer-guides/runtime/engine-api.md)
+- [Portable Project Rules](developer-guides/runtime/portable-projects.md)
 - [Runtime Environment Settings](developer-guides/runtime/runtime-environment-settings.md)
 - [Hot-Path Memory Control](developer-guides/runtime/hot-path-memory.md)
 - [Job System](developer-guides/runtime/job-system.md)
 - [Profiler](developer-guides/diagnostics/profiler.md)
+- [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
+- [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)
+- [Runtime Regression And NativeAOT Hardening](work/todo/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
 - [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
@@ -61,6 +69,11 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)
+- [OpenXR Body Tracking and Spectator Integration](developer-guides/vr/openxr-body-tracking.md)
+- [Full-Body VR Calibration](developer-guides/vr/full-body-calibration.md)
+- [VR Body Measurements](developer-guides/vr/body-measurements.md)
+- [VR Spectator Camera](developer-guides/vr/spectator-camera.md)
+- [VR Calibration Session Continuity](developer-guides/vr/calibration-session-continuity.md)
 - [VR Developer Guide](developer-guides/vr/vr-development.md)
 
 ## User Guide
@@ -83,9 +96,16 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
+- [Shadow and Pipeline Validation — Completed](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
 - [OpenXR Full-body Implementation Record](work/progress/avatar/openxr-full-body-calibration-spectator-implementation.md)
+- [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)
+- [OpenXR Calibration and Spectator Acceptance](work/testing/avatar/openxr-calibration-spectator-validation.md)
+- [Windows Calibration and Spectator Validation](work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
+- [Animation and IK Stability](work/investigations/avatar/animation-ik-stability-2026-09-30.md)
+- [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)
+- [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
 - [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
@@ -113,3 +133,44 @@ dotnet docfx docs/docfx/docfx.json --serve --port 8080
 ```
 
 Generated output stays in `docs/docfx/_site`, which is ignored by Git.
+
+## Browser runtime planning
+
+[Portable engine host ownership](work/progress/platform/portable-engine-host-ownership.md) records the shared facade, timer, services and desktop composition boundary. The [host validation record](work/investigations/platform/portable-engine-host-validation.md) contains the desktop/browser build gate, Editor camera/UI restore and Server/VRClient startup evidence, including current limitations. Real browser-world startup remains active in the [unified runtime checklist](work/todo/platform/unified-desktop-browser-runtime-todo.md).
+
+[Portable browser engine boot qualification](work/progress/platform/portable-browser-engine-boot.md) records partial real asset round-trips and the external asset/native binding boundaries. The unified runtime effort is paused at the owner's request, with its resume order recorded in the checklist.
+
+[Browser project publishing](work/progress/rendering/browser-project-publishing.md) connects the existing editor/CLI build flow to saved-world export, a shared content packager and a complete static browser bundle. It documents admitted native asset coverage and the remaining authoring and validation gaps.
+
+[Browser compute reuse audit and integration](work/progress/rendering/browser-compute-reuse-audit.md) maps existing skinning, GPU scene and Hi-Z contracts to their WebGPU backend implementations, experimental controls and deferred qualification. Canonical palette/bounds types are shared; no second production animator or scene database is introduced.
+
+[Browser compute and indirect commands](work/progress/rendering/browser-compute-indirect.md) records device-limited compute, indirect draw submission, usage-scope checks, opt-in offscreen references and honest scene strategy selection. Runtime and mobile performance acceptance remain deferred.
+
+[Browser interaction and runtime services](work/progress/rendering/browser-interactive-services.md) records touch/IME/gamepad input, CPU skeletal animation, bounded character collision, Web Audio and required-service declarations. Runtime acceptance remains deferred.
+
+[Browser cooked content delivery](work/progress/rendering/browser-cooked-content.md) records the offline packager, hash-addressed manifest, asynchronous budgeted engine uploads, texture variants and optional HTTP caching policy. Source implementation remains unvalidated.
+
+[Focused browser forward pipeline](work/progress/rendering/browser-focused-pipeline.md) records CPU-direct opaque/masked/transparent rendering, bounded material bindings, directional shadows, HDR/SDR composition, engine UI and mobile quality settings. Runtime acceptance remains deferred.
+
+[WebGPU module and engine snapshot bridge](work/progress/rendering/browser-webgpu-module-assets.md) records real catalog registration, module-owned browser assets and static XRMesh/material/camera export and import. Source implementation remains unvalidated.
+
+[Cooked browser shader artifacts](work/progress/rendering/browser-shader-artifacts.md) records target-tagged shader results, deterministic WGSL packaging, integrity/layout checks and requirement-aware startup. The TODO now separately checks off completed code and pending acceptance.
+
+[Browser mesh and packet bridge](work/progress/rendering/browser-mesh-packet-bridge.md) records indexed geometry, textured unlit materials, depth testing, generation-stamped resources and batched submissions. Build and runtime validation remain deferred.
+
+[Browser WebGPU canvas host](work/progress/rendering/browser-webgpu-canvas-host.md) records the new canvas, startup, scheduling and diagnostic draw implementation. Validation was explicitly deferred for this change.
+
+[Portable browser scene boot](work/progress/rendering/portable-browser-scene-boot.md) records the implemented shared runtime, browser validation, build instructions and remaining rendering work.
+
+[Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU runtime TODO](work/todo/rendering/mobile-webgpu-runtime-todo.md).
+
+
+[Canvas output, visibility and live resource updates](work/progress/rendering/browser-webgpu-frame-output.md) records portable output metadata, the explicit canvas pass, per-view culling and resource replacement. Source implementation remains unvalidated.
+
+[Portable browser host implementation](work/progress/rendering/browser-portable-host-completion.md) records generated registration, portability/API guards, focused renderer capabilities and explicit frame publication. Code completion is separate from deferred acceptance evidence.
+
+[Batched browser upload bridge](work/progress/rendering/browser-upload-bridge.md) records reusable upload arenas, typed resource updates, ownership/overflow rules and bridge diagnostics. Exact-runtime lifetime and performance acceptance remains deferred.
+
+[Browser shader cooking and material generation](work/progress/rendering/browser-shader-cooking.md) records the C# cooker, typed WGSL generation, optional pinned Slang route, coordinate/layout contracts and bounded startup. Compiler/layout qualification and runtime acceptance remain deferred.
+
+[Browser GPU resources and ordered submission](work/progress/rendering/browser-gpu-resources-submission.md) records selected-device capabilities, buffers and texture subresources, framebuffer lowering, bounded pipeline caches, reusable commands and cancellable readback. Runtime acceptance remains deferred.

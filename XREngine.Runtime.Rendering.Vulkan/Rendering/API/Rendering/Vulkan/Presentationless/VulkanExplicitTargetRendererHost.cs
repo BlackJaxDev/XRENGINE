@@ -79,6 +79,8 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
     /// <summary>Graphics queue family used for fixture-owned secondary command pools.</summary>
     public uint GraphicsQueueFamilyIndex => _renderer.DeviceContext.QueueFamilies.GraphicsFamilyIndex
         ?? throw new InvalidOperationException("The Vulkan host has no selected graphics queue family.");
+    /// <summary>Selected graphics, present, compute, and transfer family identities for this device.</summary>
+    public QueueFamilyIndices QueueFamilies => _renderer.DeviceContext.QueueFamilies;
     /// <summary>Whether dynamic rendering is enabled for the selected device.</summary>
     public bool SupportsDynamicRendering => _renderer.DeviceContext.SupportsDynamicRendering;
     /// <summary>Whether VK_KHR_unified_image_layouts was enabled on this logical device.</summary>
@@ -243,7 +245,11 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(buildFrame);
-        return _renderer.SubmitExplicitProductionFrame(buildFrame);
+        ValidateSelectedGpuPassQueue();
+        IVulkanSelectedGpuPassSink? previous = VulkanSelectedGpuPassContext.Current;
+        VulkanSelectedGpuPassContext.Current = SelectedGpuPassSink;
+        try { return _renderer.SubmitExplicitProductionFrame(buildFrame); }
+        finally { VulkanSelectedGpuPassContext.Current = previous; }
     }
 
     public VulkanExplicitProductionSubmissionReceipt SubmitProductionFrame(
@@ -251,7 +257,11 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
         VulkanExplicitProductionBufferStressProbeRequest probeRequest)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _renderer.SubmitExplicitProductionFrame(buildFrame, probeRequest);
+        ValidateSelectedGpuPassQueue();
+        IVulkanSelectedGpuPassSink? previous = VulkanSelectedGpuPassContext.Current;
+        VulkanSelectedGpuPassContext.Current = SelectedGpuPassSink;
+        try { return _renderer.SubmitExplicitProductionFrame(buildFrame, probeRequest); }
+        finally { VulkanSelectedGpuPassContext.Current = previous; }
     }
 
     public bool TryGetLastProductionBufferStressProbeEvidence(out VulkanExplicitProductionBufferStressProbeEvidence? evidence)

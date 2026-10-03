@@ -3,7 +3,7 @@
 XRENGINE composes behaviour through components that attach to `SceneNode`s. Each component inherits from `XRComponent`, gains access to the world tick scheduler, and reacts to transform changes without owning its own hierarchy. This document explains how the runtime actually builds, activates, and executes components.
 
 ## Anatomy of `XRComponent`
-- Components are instantiated through `SceneNode.AddComponent`. The engine creates the object with `FormatterServices.GetUninitializedObject`, binds it to the node, calls its private constructor, fires `OnTransformChanged`, and finally assigns `World` so replication and ticks are available before any user code runs.
+- Components are instantiated through `SceneNode.AddComponent`. A registered or explicit constructor factory binds `SceneNode` in the `XRComponent` base constructor, before the derived constructor runs. After construction, the engine subscribes to scene-node events, calls `OnTransformChanged`, assigns `World`, and raises `ComponentCreated`. Published builds require a registered factory for runtime-type creation; development builds retain a reflective fallback with strict-parity diagnostics.
 - `SceneNode.ComponentAdded` / `ComponentRemoved` invoke the component’s `AddedToSceneNode` / `RemovedFromSceneNode` methods, which default to no-op but allow subclasses to hook world-level resources.
 - `IsActive` controls whether the component participates in ticks and interface binding. Flipping the flag drives `OnComponentActivated` and `OnComponentDeactivated`. The helper property `IsActiveInHierarchy` additionally checks the owning node’s activation state.
 - Transform changes propagate through `OnTransformChanging` / `OnTransformChanged`. By default the component subscribes to `Transform.RenderMatrixChanged`, so renderable components receive render-thread matrices without polling. See [Transform Architecture](../../architecture/scene/transforms.md) for device- and thread-safe matrix publication details.
@@ -29,6 +29,16 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 3. Each frame the engine executes registered ticks according to group/order. Components may toggle `IsActive` or `UnregisterTicksOnStop` to refine participation.
 4. When the node is deactivated or the component is removed, `OnComponentDeactivated` fires, ticks are cleared (unless configured otherwise), and `ComponentDestroyed` raises before the object is disposed.
 
+Cooked scene restoration suppresses ordinary property notifications while restoring
+the graph. Components that derive geometry, subscriptions, or render state from
+authored properties must rebuild those invariants in `OwningSceneNodePostDeserialize`;
+they cannot rely on setters having raised change events. Procedural shape components
+use this hook to recreate their mesh and release replaced render wrappers.
+
+World begin-play callbacks may possess an authored pawn before the game mode starts.
+Automatic player spawning preserves an existing live pawn in that world. Explicit
+game-mode spawn calls can still replace possession.
+
 ## Extending the System
 - Derive from `XRComponent` and override lifecycle hooks to manage resources. Always call base implementations when overriding `OnComponentActivated` / `OnComponentDeactivated` unless you intend to bypass interface verification.
 - Use `RegisterTick` overloads that accept generic callbacks (`RegisterAnimationTick<T>`) when you need strongly typed `this` references without allocations.
@@ -42,7 +52,7 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 
 ## Rendering Volumes
 ### `VolumetricFogVolumeComponent`
-- Located at `XRENGINE/Scene/Components/Volumes/VolumetricFog.cs`; registers a bounded box volume consumed by the separated volumetric fog pipeline for local volumetric fog.
+- Located at `XREngine.Runtime.Rendering/Scene/Components/Volumes/VolumetricFog.cs`; registers a bounded box volume consumed by the separated volumetric fog pipeline for local volumetric fog.
 - Shape is driven by the node transform plus the component's `HalfExtents`, so non-uniform scaling and rotation are respected automatically.
 - Selecting the component in the ImGui editor draws a wireframe bounds preview over the volume; inactive or non-renderable volumes use an orange preview color.
 - Use the component to author local fog banks, god-ray pockets, or dusty interior shafts without changing global world fog.
@@ -137,7 +147,7 @@ listener.StartListening();
 ```
 
 ### `TcpClientComponent`
-- Located at `XREngine.Runtime.Core/Scene/Components/Networking/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
+- Located at `XREngine.Runtime.Net.Sockets/Components/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
 - Supports auto-reconnect, configurable timeouts, optional text dispatch, and main-thread events for connection, data, and errors.
 - Call `SendAsync` for arbitrary bytes or `SendStringAsync` for UTF-8 payloads; enable TLS by toggling `UseTls` and providing `TlsHostName` when required.
 
@@ -155,7 +165,7 @@ await client.SendStringAsync("ping\n");
 ```
 
 ### `UdpSocketComponent`
-- Located at `XREngine.Runtime.Core/Scene/Components/Networking/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
+- Located at `XREngine.Runtime.Net.Sockets/Components/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
 - Offers optional multicast join, auto-rebind on failure, and helper events for raw payloads plus decoded text.
 - Use `SendAsync`/`SendStringAsync` for unicast traffic or override the host/port per call when broadcasting.
 
@@ -172,7 +182,7 @@ await udp.SendStringAsync("discover");
 ```
 
 ### `TcpServerComponent`
-- Located at `XREngine.Runtime.Core/Scene/Components/Networking/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
+- Located at `XREngine.Runtime.Net.Sockets/Components/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
 - Exposes `ClientConnected`, `ClientDisconnected`, and data events on the main thread while providing `SendAsync`/`BroadcastAsync` helpers.
 - Configure `ListenAddress`, `ListenPort`, and `AutoStartOnActivate` for quick local test servers or in-game debugging consoles.
 

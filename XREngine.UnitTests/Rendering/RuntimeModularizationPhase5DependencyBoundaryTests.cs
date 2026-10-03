@@ -15,7 +15,6 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     {
         ["XREngine.Runtime.AnimationIntegration"] =
         [
-            "OscCore",
             "XREngine.Animation",
             "XREngine.Data",
             "XREngine.Runtime.Core",
@@ -163,7 +162,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     }
 
     [Test]
-    public void BootstrapOwnsHostCompositionAndCoreAdapterAotRoots()
+    public void BootstrapOwnsHostCompositionAndApprovedFactoryInputs()
     {
         string root = ResolveWorkspaceRoot();
         string bootstrapRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap");
@@ -198,7 +197,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         adapterBootstrap.ShouldContain("DisposeWithoutLock()");
         foreach (string adapterName in BootstrapAotAdapterNames)
             bootstrapProject.ShouldContain($"..\\{adapterName}\\**\\*.cs");
-        bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
+        bootstrapProject.ShouldContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
         bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
         File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }
@@ -207,20 +206,18 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     public void FeatureNativeCargo_IsOwnedBelowTheFacade()
     {
         string root = ResolveWorkspaceRoot();
-        string audioAdapterProject = File.ReadAllText(Path.Combine(
-            root, "XREngine.Runtime.AudioIntegration", "XREngine.Runtime.AudioIntegration.csproj"));
-        string inputProject = File.ReadAllText(Path.Combine(root, "XREngine.Input", "XREngine.Input.csproj"));
-        string audioProject = File.ReadAllText(Path.Combine(root, "XREngine.Audio", "XREngine.Audio.csproj"));
-        string renderingProject = File.ReadAllText(Path.Combine(
-            root, "XREngine.Runtime.Rendering", "XREngine.Runtime.Rendering.csproj"));
+        string lipSyncProject = File.ReadAllText(Path.Combine(root, "XREngine.Audio.OVRLipSync", "XREngine.Audio.OVRLipSync.csproj"));
+        string openVrProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.XR.OpenVR", "XREngine.Runtime.XR.OpenVR.csproj"));
+        string openAlProject = File.ReadAllText(Path.Combine(root, "XREngine.Audio.OpenAL", "XREngine.Audio.OpenAL.csproj"));
+        string freeTypeProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Text.FreeType", "XREngine.Runtime.Text.FreeType.csproj"));
 
         File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
-        audioAdapterProject.ShouldContain("OVRLipSync.dll");
-        inputProject.ShouldContain("openvr_api.dll");
-        inputProject.ShouldContain("ActionManifest.json");
-        audioProject.ShouldContain("Silk.NET.OpenAL.Soft.Native");
-        renderingProject.ShouldContain("SharpFont.Dependencies");
-        renderingProject.ShouldContain("ExcludeAssets=\"build\"");
+        lipSyncProject.ShouldContain("OVRLipSync.dll");
+        openVrProject.ShouldContain("openvr_api.dll");
+        openVrProject.ShouldContain("ActionManifest.json");
+        openAlProject.ShouldContain("Silk.NET.OpenAL.Soft.Native");
+        freeTypeProject.ShouldContain("SharpFont.Dependencies");
+        freeTypeProject.ShouldContain("ExcludeAssets=\"build\"");
     }
 
     [Test]

@@ -296,7 +296,7 @@ public sealed class VrViewRenderModeContractTests
     [Test]
     public void OpenXrEyeResolutionResolver_UsesPresetsScaleAndClampsRuntimeMaxMismatch()
     {
-        OpenXRAPI.OpenXrEyeSwapchainExtent valveIndex =
+        OpenXrEyeSwapchainExtent valveIndex =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.ValveIndex,
                 1.25f,
@@ -312,7 +312,7 @@ public sealed class VrViewRenderModeContractTests
         valveIndex.Source.ShouldContain("Valve");
         valveIndex.ExceedsRuntimeMax.ShouldBeFalse();
 
-        OpenXRAPI.OpenXrEyeSwapchainExtent questPro =
+        OpenXrEyeSwapchainExtent questPro =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.QuestPro,
                 0.5f,
@@ -326,7 +326,7 @@ public sealed class VrViewRenderModeContractTests
         questPro.Width.ShouldBe(900u);
         questPro.Height.ShouldBe(960u);
 
-        OpenXRAPI.OpenXrEyeSwapchainExtent beyond2 =
+        OpenXrEyeSwapchainExtent beyond2 =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.BigscreenBeyond2,
                 2.0f,
@@ -343,7 +343,7 @@ public sealed class VrViewRenderModeContractTests
         beyond2.Height.ShouldBe(2800u);
         beyond2.ExceedsRuntimeMax.ShouldBeTrue();
 
-        OpenXRAPI.OpenXrEyeSwapchainExtent custom =
+        OpenXrEyeSwapchainExtent custom =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.Custom,
                 0.5f,
@@ -824,12 +824,12 @@ public sealed class VrViewRenderModeContractTests
         });
         string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string stats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.FrameOutputs.cs");
-        string host = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+        string host = ReadWorkspaceFile("XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
         string viewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
         string timerFrame = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeTimerFrame.cs");
         string window = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
-        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
 
         contracts.ShouldContain("enum EFrameOutputKind");
         contracts.ShouldContain("enum EVrMirrorMode");
@@ -863,10 +863,10 @@ public sealed class VrViewRenderModeContractTests
     {
         string settings = string.Join("\n", new[]
         {
-            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingWorldSettings.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingVrSettings.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingVrFoveationSettings.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingOpenXrEyeResolutionSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Host/Settings/UnitTestingWorldSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Host/Settings/UnitTestingVrSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Host/Settings/UnitTestingVrFoveationSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Host/Settings/UnitTestingOpenXrEyeResolutionSettings.cs"),
         });
         string store = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
         string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs");
@@ -879,18 +879,18 @@ public sealed class VrViewRenderModeContractTests
         });
         string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
         string vulkanOpenXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.State.cs");
-        string openXrSceneViews = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
-        string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
-        string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs");
-        string openXrRuntimeState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
-        string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
-        string openXrFoveation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Foveation.cs");
+        string openXrSceneViews = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.SceneViews.cs");
+        string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.FrameLifecycle.cs");
+        string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.Resolution.cs");
+        string openXrRuntimeState = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
+        string openXrState = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs");
+        string openXrFoveation = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.Foveation.cs");
         string environment = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
-        string smoke = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
+        string smoke = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
         string engineVrState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs");
         string engineStats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.cs");
         string rendererState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.RendererState.cs");
-        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string schema = ReadWorkspaceFile(".vscode/schemas/unit-testing-world-settings.schema.json");
         string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs");

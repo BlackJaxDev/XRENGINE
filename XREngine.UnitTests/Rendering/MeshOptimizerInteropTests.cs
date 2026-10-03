@@ -16,6 +16,9 @@ namespace XREngine.UnitTests.Rendering;
 [NonParallelizable]
 public sealed class MeshOptimizerInteropTests
 {
+    [OneTimeSetUp]
+    public void InstallMeshProcessing() => MeshOptimizerBackend.Register();
+
     [Test]
     public void OptimizeMeshletLevel_UsesAvailableNativeExportWithoutThrowing()
     {

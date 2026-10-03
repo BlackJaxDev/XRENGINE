@@ -1,6 +1,4 @@
-using Silk.NET.Maths;
 using Silk.NET.OpenGL;
-using Silk.NET.Windowing;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -13,7 +11,7 @@ namespace XREngine.Rendering.OpenGL
     {
         /// <summary>
         /// A lightweight shared OpenGL context running on a dedicated background thread.
-        /// Created via <see cref="WindowOptions.SharedContext"/> so that GL program objects
+        /// Created with a shared desktop GL context so that GL program objects
         /// (and other shared resources) are accessible from both the main render context
         /// and this background thread.
         /// </summary>
@@ -30,10 +28,12 @@ namespace XREngine.Rendering.OpenGL
             private readonly AutoResetEvent _signal = new(false);
             private CancellationTokenSource? _cts;
             private Thread? _thread;
-            private IWindow? _window;
+            private IRuntimeWindowBackend? _window;
+            private XRWindow? _ownerWindow;
             private int _disposeRequested;
             private int _disposeResourcesOnWorkerExit;
             private int _resourcesReleased;
+            private int _contextDetachFailed;
             private volatile bool _running;
             private long _currentJobStartTimestamp;
             private string? _currentJobName;
@@ -110,33 +110,50 @@ namespace XREngine.Rendering.OpenGL
                 if (_running)
                     return true;
 
-                var primaryGLContext = primaryWindow.Window.GLContext;
+                if (Environment.CurrentManagedThreadId != primaryWindow.NativeWindowThreadId)
+                {
+                    Debug.RenderingWarning("[SharedContext] Creation requires the primary desktop window owner thread.");
+                    return false;
+                }
+
+                var primaryGLContext = primaryWindow.DesktopGlContext;
                 if (primaryGLContext is null)
                 {
                     Debug.RenderingWarning("[SharedContext] Primary window has no GL context.");
                     return false;
                 }
 
-                IWindow? window = null;
+                IRuntimeWindowBackend? window = null;
                 try
                 {
-                    var options = WindowOptions.Default;
-                    options.Size = new Vector2D<int>(1, 1);
-                    options.IsVisible = false;
-                    options.API = primaryWindow.Window.API;
-                    options.SharedContext = primaryGLContext;
-                    options.ShouldSwapAutomatically = false;
+                    var startup = WindowStartupValues.Default with
+                    {
+                        Title = _threadName,
+                        Width = 1,
+                        Height = 1,
+                    };
+                    var request = new RuntimeWindowCreateOptions(
+                        startup,
+                        RuntimeGraphicsApiKind.OpenGL,
+                        EInteractiveWindowResizeStrategy.Default,
+                        RuntimeWindowPurpose.SecondaryGpuContext,
+                        new XREngine.Data.Vectors.IVector2(0, 0),
+                        new XREngine.Data.Vectors.IVector2(1, 1),
+                        false, false, false, false, false,
+                        32, 24, 8, 4, 6, false, false, false,
+                        primaryGLContext);
 
                     lock (GlfwSharedContextStartupLock)
                     {
                         Debug.OpenGL($"[SharedContext] Creating hidden GLFW shared context '{_threadName}'.");
-                        Silk.NET.Windowing.Window.PrioritizeGlfw();
-                        window = Silk.NET.Windowing.Window.Create(options);
-                        window.Initialize();
+                        window = RuntimeWindowBackendRegistry.RequireFactory().Create(in request);
+                        window.Initialize(new SharedWindowEventSink());
                         _window = window;
+                        _ownerWindow = primaryWindow;
 
-                        // Ensure the primary context is current on this thread after creating the shared window.
-                        primaryWindow.Window.MakeCurrent();
+                        // Only the detached GL context crosses to the worker; native window APIs stay here.
+                        window.GlContext?.ClearCurrent();
+                        primaryGLContext.MakeCurrent();
                         Debug.OpenGL($"[SharedContext] Hidden GLFW shared context '{_threadName}' initialized.");
                     }
                 }
@@ -145,6 +162,7 @@ namespace XREngine.Rendering.OpenGL
                     Debug.RenderingWarning($"[SharedContext] Failed to create shared GL context '{_threadName}': {ex.Message}");
                     (window ?? _window)?.Dispose();
                     _window = null;
+                    _ownerWindow = null;
                     return false;
                 }
 
@@ -172,17 +190,17 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// Initializes the shared context using a pre-created shared window.
-            /// The caller is responsible for creating the window with
-            /// <see cref="WindowOptions.SharedContext"/> pointing at the primary context
-            /// and for restoring the primary context as current afterwards.
+            /// Initializes a pre-created backend whose native window is owned by the caller's window thread.
+            /// With an <paramref name="ownerWindow"/>, disposal destroys the native window on that window's
+            /// thread; without one, the caller keeps ownership and destroys the native window itself.
             /// </summary>
-            public bool Initialize(IWindow preCreatedSharedWindow)
+            public bool Initialize(IRuntimeWindowBackend preCreatedSharedWindow, XRWindow? ownerWindow = null)
             {
                 if (_running)
                     return true;
 
                 _window = preCreatedSharedWindow;
+                _ownerWindow = ownerWindow;
                 _cts = new CancellationTokenSource();
                 var token = _cts.Token;
 
@@ -299,7 +317,7 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private void Run(IWindow window, CancellationToken token)
+            private void Run(IRuntimeWindowBackend window, CancellationToken token)
             {
                 try
                 {
@@ -307,8 +325,10 @@ namespace XREngine.Rendering.OpenGL
                     lock (GlfwSharedContextStartupLock)
                     {
                         Debug.OpenGL($"[SharedContext] Worker '{_threadName}' making hidden shared context current.");
-                        window.MakeCurrent();
-                        gl = GL.GetApi(window.GLContext);
+                        IRuntimeWindowGlContext context = window.GlContext
+                            ?? throw new InvalidOperationException("The shared desktop window has no GL context.");
+                        context.MakeCurrent();
+                        gl = GL.GetApi(context.GetProcAddress);
                         _running = true;
                         Debug.OpenGL($"[SharedContext] Worker '{_threadName}' is running.");
                     }
@@ -355,12 +375,21 @@ namespace XREngine.Rendering.OpenGL
                 finally
                 {
                     _running = false;
+                    try
+                    {
+                        window.GlContext?.ClearCurrent();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.RenderingWarning($"[SharedContext] Worker context detach failed: {ex.Message}");
+                        Volatile.Write(ref _contextDetachFailed, 1);
+                    }
                     if (Volatile.Read(ref _disposeResourcesOnWorkerExit) != 0)
                         ReleaseStoppedResources(window);
                 }
             }
 
-            private void ReleaseStoppedResources(IWindow? workerWindow = null)
+            private void ReleaseStoppedResources(IRuntimeWindowBackend? workerWindow = null)
             {
                 if (Interlocked.Exchange(ref _resourcesReleased, 1) != 0)
                     return;
@@ -373,13 +402,15 @@ namespace XREngine.Rendering.OpenGL
                 {
                 }
 
-                try
-                {
-                    (workerWindow ?? _window)?.Dispose();
-                }
-                catch
-                {
-                }
+                IRuntimeWindowBackend? nativeWindow = workerWindow ?? _window;
+                XRWindow? owner = _ownerWindow;
+                if (nativeWindow is not null && owner is not null)
+                    RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
+                        owner,
+                        Volatile.Read(ref _contextDetachFailed) != 0
+                            ? nativeWindow.RetainAbandonedResources
+                            : nativeWindow.Dispose,
+                        $"GLSharedContext.DestroyNative[{_threadName}]");
 
                 try
                 {
@@ -392,6 +423,21 @@ namespace XREngine.Rendering.OpenGL
                 _thread = null;
                 _cts = null;
                 _window = null;
+                _ownerWindow = null;
+            }
+
+            private sealed class SharedWindowEventSink : IRuntimeWindowEventSink
+            {
+                public void SurfaceChanged(WindowSurfaceSnapshot _) { }
+                public void FocusChanged(bool _) { }
+                public void FileDropped(string[] _) { }
+                public void KeyDown(XREngine.Input.Devices.EKey _) { }
+                public bool CloseRequested() => true;
+                public void InteractiveResizeStarted() { }
+                public void InteractiveResizeUpdated(XREngine.Data.Vectors.IVector2 _) { }
+                public void InteractiveResizeEnded() { }
+                public void RepaintRequested() { }
+                public void RenderRequested(double _) { }
             }
 
             private static double StopwatchTicksToSeconds(long ticks)

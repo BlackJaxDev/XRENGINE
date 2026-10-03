@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
@@ -73,12 +73,14 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
         {
             long totalStartTimestamp = XRTexture2D.StartImportedTextureTiming();
             long readStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(assetPath);
+            // The cache file is leased through an owner so the encoded bytes never reach the large
+            // object heap; only the selected resident mips are copied out during parsing.
+            using XREngine.Core.Files.CookedPayloadOwner assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(assetPath);
             double cacheReadMilliseconds = XRTexture2D.CompleteImportedTextureTiming(readStartTimestamp);
             cancellationToken.ThrowIfCancellationRequested();
 
             long parseStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
+            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes.Span, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
             {
                 double cacheParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
                 TextureRuntimeDiagnostics.LogCacheRead(
@@ -102,7 +104,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_fallbackSource is not null &&
-                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes))
+                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes.Span))
             {
                 return LoadFallbackResidentData(
                     maxResidentDimension,
@@ -198,12 +200,12 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
         {
-            using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
+            using RuntimeImage filler = XRTexture2D.FillerImage;
             return XRTexture2D.BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
         }
 
         long decodeStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-        using MagickImage sourceImage = new(sourcePath);
+        using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(sourcePath));
         double decodeMilliseconds = XRTexture2D.CompleteImportedTextureTiming(decodeStartTimestamp);
         cancellationToken.ThrowIfCancellationRequested();
         return XRTexture2D.BuildResidentDataFromImage(

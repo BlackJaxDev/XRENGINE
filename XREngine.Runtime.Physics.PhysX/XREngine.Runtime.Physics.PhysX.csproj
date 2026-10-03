@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
+    <PackageReference Include="MagicPhysX" Version="1.0.0" />
+    <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+    <None Update="runtimes/win-x64/native/libmagicphysx.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

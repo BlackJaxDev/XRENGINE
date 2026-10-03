@@ -125,7 +125,8 @@ internal abstract class VkObject<T> : VkObjectBase
         finally
         {
             _dataLinked = false;
-            _data.RemoveWrapper(this);
+            // Finalization can observe a wrapper whose construction never assigned data.
+            _data?.RemoveWrapper(this);
         }
     }
 

@@ -1,41 +1,41 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-  
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Platforms>AnyCPU;x64</Platforms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <IsTrimmable>True</IsTrimmable>
     <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IsTrimmable>True</IsTrimmable>
     <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
     <IsTrimmable>True</IsTrimmable>
     <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
-  
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IsTrimmable>True</IsTrimmable>
     <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
-  
+
   <ItemGroup>
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
   </ItemGroup>
-  
+
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
   </ItemGroup>
@@ -43,5 +43,5 @@
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
-
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 </Project>

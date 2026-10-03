@@ -4077,7 +4077,10 @@ namespace XREngine.Components.Lights
         /// Builds the per-cascade command buffers needed only when a grouped atlas
         /// render fails after the normal union command buffer has been prepared.
         /// </summary>
-        internal bool PrepareSequentialCascadeShadowAtlasCommands(ShadowRequestSource source, int requestedCascadeCount)
+        internal bool PrepareSequentialCascadeShadowAtlasCommands(
+            ShadowRequestSource source,
+            int requestedCascadeCount,
+            out string? declineReason)
         {
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
@@ -4088,7 +4091,7 @@ namespace XREngine.Components.Lights
                 Math.Clamp(requestedCascadeCount, 0, MaxCascadeRenderCount),
                 GetPublishedCascadeViewportCount(resolvedSource, viewports));
             if (cascadeCount <= 0)
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "No published cascade viewports.");
 
             using var sample = RuntimeEngine.Profiler.Start("ShadowAtlas.Directional.SequentialCommandGeneration");
             bool gpuOwned = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy();
@@ -4097,7 +4100,7 @@ namespace XREngine.Components.Lights
                 if (gpuOwned)
                 {
                     if (!viewports[i].PrepareGpuShadowFramePackage())
-                        return false;
+                        return DeclineCascadeAtlasRender(out declineReason, "A cascade GPU shadow frame package was not prepared.");
                 }
                 else
                 {
@@ -4111,8 +4114,19 @@ namespace XREngine.Components.Lights
             // Viewport zero now contains a single-cascade set rather than the union
             // required by the next grouped attempt. Force that union to be rebuilt.
             InvalidateDirectionalCascadeAtlasVisibleSetCache(resolvedSource, cascadeCount);
+            declineReason = null;
             return true;
         }
+
+        private static bool DeclineCascadeAtlasRender(out string? declineReason, string reason)
+        {
+            declineReason = reason;
+            return false;
+        }
+
+        private static string DescribeCascadeViewportRenderDecline(XRViewport viewport)
+            => viewport.RenderPipelineInstance.LastRenderDeclineReason ??
+               "The cascade shadow viewport declined rendering without a pipeline reason.";
 
         private bool ShouldPrepareAtlasGroupedCascadeCollection(int cascadeCount)
             => CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount) &&
@@ -4294,27 +4308,33 @@ namespace XREngine.Components.Lights
         /// Renders a cascade shadow camera into a reserved shadow-atlas tile.
         /// </summary>
         internal bool RenderCascadeShadowAtlasTile(int cascadeIndex, XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
-            => RenderCascadeShadowAtlasTile(ShadowRequestSource.Desktop, cascadeIndex, atlasFbo, renderRect, collectVisibleNow);
+            => RenderCascadeShadowAtlasTile(ShadowRequestSource.Desktop, cascadeIndex, atlasFbo, renderRect, collectVisibleNow, out _);
 
-        internal bool RenderCascadeShadowAtlasTile(ShadowRequestSource source, int cascadeIndex, XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
+        internal bool RenderCascadeShadowAtlasTile(
+            ShadowRequestSource source,
+            int cascadeIndex,
+            XRFrameBuffer atlasFbo,
+            BoundingRectangle renderRect,
+            bool collectVisibleNow,
+            out string? declineReason)
         {
             if (!CastsShadows ||
                 !EnableCascadedShadows ||
                 !CanRenderDirectionalCascadesForCurrentBackend() ||
-                World is null ||
-                renderRect.Width <= 0 ||
-                renderRect.Height <= 0)
-                return false;
+                World is null)
+                return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
+            if (renderRect.Width <= 0 || renderRect.Height <= 0)
+                return DeclineCascadeAtlasRender(out declineReason, "The cascade atlas tile rectangle is empty.");
 
             DirectionalCascadeSourceState sourceState = GetCascadeSourceState(source);
             XRViewport[] cascadeShadowViewports = sourceState.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
             if ((uint)cascadeIndex >= (uint)cascadeCount)
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "The cascade has no published viewport.");
 
             XRViewport viewport = cascadeShadowViewports[cascadeIndex];
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "The cascade viewport has no shadow render pipeline.");
 
             if (collectVisibleNow)
             {
@@ -4332,7 +4352,7 @@ namespace XREngine.Components.Lights
                 using var cropArea = state.PushCropArea(renderRect);
                 using var renderSample = RuntimeEngine.Profiler.Start("DirectionalCascade.Cascade.CommandRecording");
                 if (!viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial))
-                    return false;
+                    return DeclineCascadeAtlasRender(out declineReason, DescribeCascadeViewportRenderDecline(viewport));
             }
             finally
             {
@@ -4340,6 +4360,7 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasTileRender(source, "cascade", cascadeIndex, renderRect, collectVisibleNow, viewport);
+            declineReason = null;
             return true;
         }
 
@@ -4349,20 +4370,20 @@ namespace XREngine.Components.Lights
         internal bool RenderGroupedCascadeShadowAtlasTiles(
             in ShadowAtlasGroupedDirectionalCascadeAllocation group,
             XRFrameBuffer atlasFbo,
-            bool collectVisibleNow)
+            bool collectVisibleNow,
+            out string? declineReason)
         {
             if (!CastsShadows ||
                 !EnableCascadedShadows ||
                 !CanRenderDirectionalCascadesForCurrentBackend() ||
-                World is null ||
-                group.CascadeCount <= 1 ||
+                World is null)
+                return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
+            if (group.CascadeCount <= 1 ||
                 group.Members is null ||
-                group.Members.Length < group.CascadeCount ||
-                atlasFbo.Width <= 0 ||
-                atlasFbo.Height <= 0)
-            {
-                return false;
-            }
+                group.Members.Length < group.CascadeCount)
+                return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade allocation is incomplete.");
+            if (atlasFbo.Width <= 0 || atlasFbo.Height <= 0)
+                return DeclineCascadeAtlasRender(out declineReason, "The atlas page framebuffer has no extent.");
 
             ShadowRequestSource source = group.Source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
@@ -4371,22 +4392,22 @@ namespace XREngine.Components.Lights
             XRViewport[] cascadeShadowViewports = sourceState.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
             if (cascadeCount <= 0)
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "No published cascade viewports.");
 
             if (!SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount))
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "Grouped cascade rendering is unsupported for this mode or backend.");
 
             DirectionalCascadeShadowRenderPlan plan = CreateAtlasCascadeShadowRenderPlan(source, cascadeCount, hasGroupedAtlasAllocation: true);
             PublishCascadeShadowRenderPlan(plan);
             if (!plan.IsLayered)
             {
                 LogCascadeRenderModeFallbackIfNeeded(plan);
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "The cascade render plan is not layered.");
             }
 
             XRViewport viewport = cascadeShadowViewports[0];
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
-                return false;
+                return DeclineCascadeAtlasRender(out declineReason, "The cascade viewport has no shadow render pipeline.");
 
             if (collectVisibleNow)
             {
@@ -4408,7 +4429,7 @@ namespace XREngine.Components.Lights
                     member.InnerPixelRect.Width <= 0 ||
                     member.InnerPixelRect.Height <= 0)
                 {
-                    return false;
+                    return DeclineCascadeAtlasRender(out declineReason, "A grouped cascade member has no published matrix or tile.");
                 }
 
                 groupedMatrices[member.ViewportScissorIndex] = publishedMatrices[member.CascadeIndex];
@@ -4442,7 +4463,7 @@ namespace XREngine.Components.Lights
                     : CascadeAtlasGeometryShadowMaterial;
                 using var renderSample = RuntimeEngine.Profiler.Start("DirectionalCascade.Group.CommandRecording");
                 if (!viewport.TryRender(atlasFbo, null, null, true, groupedMaterial))
-                    return false;
+                    return DeclineCascadeAtlasRender(out declineReason, DescribeCascadeViewportRenderDecline(viewport));
             }
             finally
             {
@@ -4452,6 +4473,7 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasGroupedRender(group, collectVisibleNow, viewport.Camera);
+            declineReason = null;
             return true;
         }
 

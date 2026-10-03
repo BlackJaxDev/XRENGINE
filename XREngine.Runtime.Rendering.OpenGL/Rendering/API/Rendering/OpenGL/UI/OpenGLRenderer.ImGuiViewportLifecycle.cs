@@ -1,15 +1,11 @@
 using ImGuiNET;
-using Silk.NET.Input;
-using Silk.NET.Maths;
-using Silk.NET.OpenGL;
-using Silk.NET.OpenGL.Extensions.ImGui;
-using Silk.NET.Windowing;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using XREngine.Rendering.UI;
+using XREngine.Data.Vectors;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -18,20 +14,14 @@ namespace XREngine.Rendering.OpenGL
         private sealed unsafe partial class OpenGLImGuiMultiViewportController : IDisposable
         {
 
-            private delegate void RenderImDrawDataDelegate(ImGuiController controller, ImDrawDataPtr drawData);
-            private delegate ImGuiKey TranslateInputKeyDelegate(Key key);
-
-            private static readonly RenderImDrawDataDelegate? RenderImDrawData = CreateRenderImDrawDataDelegate();
-            private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
-            private static readonly List<IWindow> AbandonedShutdownWindows = [];
-            private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
+            private static readonly List<IRuntimeWindowBackend> AbandonedShutdownWindows = [];
             private static bool DisposeNativeViewportWindows
                 => XREnvironment.IsEnabled(XREngineEnvironmentVariables.ImGuiViewportDisposeNative);
 
             private readonly OpenGLRenderer _renderer;
-            private ImGuiController? _controller;
+            private OpenGLImGuiController? _controller;
             private readonly nint _context;
-            private readonly IWindow _mainWindow;
+            private readonly IRuntimeWindowBackend _mainWindow;
             private readonly Dictionary<uint, PlatformWindow> _platformWindows = [];
             private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
             private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
@@ -63,13 +53,6 @@ namespace XREngine.Rendering.OpenGL
 
             private bool _installed;
             private bool _disposed;
-            private bool _lastLeftMouseDown;
-            private bool _lastRightMouseDown;
-            private bool _lastMiddleMouseDown;
-            private IMouse? _mainMouse;
-            private readonly Queue<Vector2> _pendingMainMouseWheelDeltas = [];
-            private readonly List<Vector2> _mainMouseWheelDispatchBuffer = [];
-            private readonly object _mainMouseWheelLock = new();
             private nint _monitorData;
             private int _monitorCapacity;
             private IDisposable? _callbackRegistration;
@@ -78,7 +61,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 _renderer = renderer;
                 _context = context;
-                _mainWindow = renderer.XRWindow.Window;
+                _mainWindow = renderer.XRWindow.DesktopWindowBackend
+                    ?? throw new InvalidOperationException("OpenGL ImGui multi-viewports require a desktop window backend.");
 
                 _platformCreateWindowPtr = RendererImGuiViewportCallbackBridge.PlatformCreateWindow;
                 _platformDestroyWindowPtr = RendererImGuiViewportCallbackBridge.PlatformDestroyWindow;
@@ -109,13 +93,14 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public static OpenGLImGuiMultiViewportController? TryCreate(OpenGLRenderer renderer)
             {
-                if (RenderImDrawData is null)
+                if (renderer.XRWindow.NativeWindowThreadId != renderer.XRWindow.RenderOwnerThreadId)
                 {
-                    Debug.RenderingWarning("ImGui multi-viewports disabled: Silk.NET ImGuiController RenderImDrawData hook was unavailable.");
+                    Debug.RenderingWarning(
+                        "ImGui multi-viewports require a collapsed desktop window/render owner; this split window topology does not support synchronous viewport creation.");
                     return null;
                 }
 
-                if (renderer.XRWindow.Window.GLContext is null)
+                if (renderer.XRWindow.DesktopWindowBackend?.GlContext is null)
                 {
                     Debug.RenderingWarning("ImGui multi-viewports disabled: the main OpenGL window has no GL context.");
                     return null;
@@ -132,9 +117,9 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// Attaches the Silk controller after its constructor finishes the first ImGui frame.
+            /// Attaches the editor controller after its ImGui context and GL objects are ready.
             /// </summary>
-            public void AttachController(ImGuiController controller)
+            public void AttachController(OpenGLImGuiController controller)
             {
                 if (controller.Context != _context)
                     throw new InvalidOperationException("Cannot attach an ImGui controller for a different context.");
@@ -190,7 +175,6 @@ namespace XREngine.Rendering.OpenGL
 
                 EnsureMainViewportPlatformData();
                 UpdatePlatformMonitors();
-                AttachMainInput();
                 LogInitialViewportState();
 
                 io.BackendFlags |=
@@ -245,18 +229,21 @@ namespace XREngine.Rendering.OpenGL
                 {
                     MakeCurrent();
                     PrepareImplicitWindowForNewFrame();
-                    AttachMainInput();
                     EnsureMainViewportPlatformData();
+
+                    var io = ImGui.GetIO();
+                    foreach (PlatformWindow window in _platformWindows.Values)
+                        window.DrainInput(io);
+
+                    if (!_mainWindow.Events.IsFocused)
+                        return;
 
                     if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
                         return;
 
-                    var io = ImGui.GetIO();
                     io.AddMousePosEvent(position.X, position.Y);
                     io.AddMouseViewportEvent(viewportId);
                     io.MouseHoveredViewport = viewportId;
-                    QueueMainMouseButtonEvents(io);
-                    QueueMainMouseWheelEvents(io, viewportId);
                 }
                 catch (Exception ex)
                 {
@@ -275,8 +262,10 @@ namespace XREngine.Rendering.OpenGL
                 try
                 {
                     MakeCurrent();
-                    AttachMainInput();
                     EnsureMainViewportPlatformData();
+
+                    if (!_mainWindow.Events.IsFocused)
+                        return;
 
                     if (!TryGetMousePosition(out Vector2 position, out uint viewportId))
                         return;
@@ -290,12 +279,6 @@ namespace XREngine.Rendering.OpenGL
                 {
                     LogCallbackException(nameof(UpdateMainViewportInput), ex);
                 }
-            }
-
-            public void ClearQueuedMainMouseWheelEvents()
-            {
-                lock (_mainMouseWheelLock)
-                    _pendingMainMouseWheelDeltas.Clear();
             }
 
             /// <summary>
@@ -317,7 +300,6 @@ namespace XREngine.Rendering.OpenGL
 
                     ClearPlatformMonitors();
                     ClearPlatformCallbacks();
-                    DetachMainInput();
 
                     var io = ImGui.GetIO();
                     io.ConfigFlags &= ~ImGuiConfigFlags.ViewportsEnable;
@@ -381,8 +363,13 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private IWindow GetWindow(ImGuiViewportPtr viewport)
-                => GetPlatformWindow(viewport)?.Window ?? _mainWindow;
+            private IRuntimeWindowBackend GetWindow(ImGuiViewportPtr viewport)
+            {
+                if (viewport.ID == ImGui.GetMainViewport().ID)
+                    return _mainWindow;
+                return GetPlatformWindow(viewport)?.Window
+                    ?? throw new InvalidOperationException($"ImGui viewport {viewport.ID} has no registered desktop window.");
+            }
 
             private void QueuePlatformWindowDispose(PlatformWindow window)
             {
@@ -428,7 +415,7 @@ namespace XREngine.Rendering.OpenGL
                         preparedMainContext = true;
                         try
                         {
-                            _mainWindow.MakeCurrent();
+                            _mainWindow.GlContext?.MakeCurrent();
                         }
                         catch (Exception ex)
                         {
@@ -472,8 +459,8 @@ namespace XREngine.Rendering.OpenGL
 
                     PlatformWindow window = new(this, viewport);
                     viewport.PlatformUserData = window.Handle;
-                    viewport.PlatformHandle = window.Window.Handle;
-                    viewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window.Window);
+                    viewport.PlatformHandle = window.Window.PlatformWindowHandle;
+                    viewport.PlatformHandleRaw = window.Window.OperatingSystemWindowHandle;
                     _platformWindows[viewport.ID] = window;
                 }
                 catch (Exception ex)
@@ -513,8 +500,8 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     window.UpdateViewportFlags(viewport.Flags);
-                    if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window.Window, viewport.Flags))
-                        window.Window.IsVisible = true;
+                    if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window.Window.OperatingSystemWindowHandle, (uint)viewport.Flags))
+                        window.Window.RequestVisibility(true);
                 }
                 catch (Exception ex)
                 {
@@ -539,7 +526,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    Vector2D<int> position = GetClientScreenPosition(GetWindow(new ImGuiViewportPtr(nativeViewport)));
+                    IVector2 position = GetClientScreenPosition(GetWindow(new ImGuiViewportPtr(nativeViewport)));
                     *outPosition = new Vector2(position.X, position.Y);
                 }
                 catch (Exception ex)
@@ -554,7 +541,7 @@ namespace XREngine.Rendering.OpenGL
                 try
                 {
                     if (GetPlatformWindow(new ImGuiViewportPtr(nativeViewport)) is { } window)
-                        window.Window.Size = ToWindowSize(size);
+                        window.Window.RequestSize(ToWindowSize(size));
                 }
                 catch (Exception ex)
                 {
@@ -566,8 +553,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    Vector2D<int> size = GetWindow(new ImGuiViewportPtr(nativeViewport)).Size;
-                    *outSize = new Vector2(size.X, size.Y);
+                    WindowSurfaceSnapshot surface = GetWindow(new ImGuiViewportPtr(nativeViewport)).Surface;
+                    *outSize = new Vector2(surface.ClientWidth, surface.ClientHeight);
                 }
                 catch (Exception ex)
                 {
@@ -580,7 +567,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    GetWindow(new ImGuiViewportPtr(nativeViewport)).Focus();
+                    GetWindow(new ImGuiViewportPtr(nativeViewport)).RequestFocus();
                 }
                 catch (Exception ex)
                 {
@@ -609,21 +596,19 @@ namespace XREngine.Rendering.OpenGL
             private void UpdatePlatformMonitors()
             {
                 _monitorScratch.Clear();
-
-                if (OperatingSystem.IsWindows())
+                ReadOnlySpan<RuntimeDesktopMonitor> monitors = _mainWindow.Monitors.Span;
+                for (int i = 0; i < monitors.Length; i++)
                 {
-                    try
+                    RuntimeDesktopMonitor monitor = monitors[i];
+                    _monitorScratch.Add(new ImGuiPlatformMonitor
                     {
-                        EnumDisplayMonitors(
-                            nint.Zero,
-                            nint.Zero,
-                            RendererImGuiViewportCallbackBridge.MonitorEnumeration,
-                            nint.Zero);
-                    }
-                    catch (Exception ex)
-                    {
-                        LogCallbackException(nameof(UpdatePlatformMonitors), ex);
-                    }
+                        MainPos = new Vector2(monitor.X, monitor.Y),
+                        MainSize = new Vector2(monitor.Width, monitor.Height),
+                        WorkPos = new Vector2(monitor.WorkX, monitor.WorkY),
+                        WorkSize = new Vector2(monitor.WorkWidth, monitor.WorkHeight),
+                        DpiScale = monitor.DpiScale,
+                        PlatformHandle = (void*)monitor.PlatformHandle,
+                    });
                 }
 
                 if (_monitorScratch.Count == 0)
@@ -632,55 +617,16 @@ namespace XREngine.Rendering.OpenGL
                 WritePlatformMonitorBuffer();
             }
 
-            private bool EnumMonitor(nint monitor, nint hdc, ref NativeRect rect, nint data)
-            {
-                NativeMonitorInfo monitorInfo = new()
-                {
-                    Size = Marshal.SizeOf<NativeMonitorInfo>()
-                };
-
-                if (!GetMonitorInfo(monitor, ref monitorInfo))
-                    return true;
-
-                _monitorScratch.Add(new ImGuiPlatformMonitor
-                {
-                    MainPos = new Vector2(monitorInfo.Monitor.Left, monitorInfo.Monitor.Top),
-                    MainSize = new Vector2(monitorInfo.Monitor.Width, monitorInfo.Monitor.Height),
-                    WorkPos = new Vector2(monitorInfo.Work.Left, monitorInfo.Work.Top),
-                    WorkSize = new Vector2(monitorInfo.Work.Width, monitorInfo.Work.Height),
-                    DpiScale = GetMonitorDpiScale(monitor),
-                    PlatformHandle = (void*)monitor
-                });
-
-                return true;
-            }
-
             private void AddFallbackMonitor()
             {
-                IMonitor? monitor = _mainWindow.Monitor;
-                if (monitor is not null)
-                {
-                    Rectangle<int> bounds = monitor.Bounds;
-                    _monitorScratch.Add(new ImGuiPlatformMonitor
-                    {
-                        MainPos = new Vector2(bounds.Origin.X, bounds.Origin.Y),
-                        MainSize = new Vector2(bounds.Size.X, bounds.Size.Y),
-                        WorkPos = new Vector2(bounds.Origin.X, bounds.Origin.Y),
-                        WorkSize = new Vector2(bounds.Size.X, bounds.Size.Y),
-                        DpiScale = 1.0f,
-                        PlatformHandle = null
-                    });
-                    return;
-                }
-
-                Vector2D<int> position = GetClientScreenPosition(_mainWindow);
-                Vector2D<int> size = _mainWindow.Size;
+                IVector2 position = GetClientScreenPosition(_mainWindow);
+                WindowSurfaceSnapshot surface = _mainWindow.Surface;
                 _monitorScratch.Add(new ImGuiPlatformMonitor
                 {
                     MainPos = new Vector2(position.X, position.Y),
-                    MainSize = new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y)),
+                    MainSize = new Vector2(Math.Max(1, surface.ClientWidth), Math.Max(1, surface.ClientHeight)),
                     WorkPos = new Vector2(position.X, position.Y),
-                    WorkSize = new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y)),
+                    WorkSize = new Vector2(Math.Max(1, surface.ClientWidth), Math.Max(1, surface.ClientHeight)),
                     DpiScale = 1.0f,
                     PlatformHandle = null
                 });
@@ -738,7 +684,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    return GetWindow(new ImGuiViewportPtr(nativeViewport)).WindowState == WindowState.Minimized
+                    return GetWindow(new ImGuiViewportPtr(nativeViewport)).Surface.IsMinimized
                         ? (byte)1
                         : (byte)0;
                 }
@@ -758,7 +704,7 @@ namespace XREngine.Rendering.OpenGL
 
                     string? value = title is null ? null : Marshal.PtrToStringUTF8((nint)title);
                     if (!string.IsNullOrWhiteSpace(value))
-                        window.Window.Title = value;
+                        window.Window.RequestTitle(value);
                 }
                 catch (Exception ex)
                 {
@@ -782,7 +728,6 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     window.UpdateViewportFlags(viewport.Flags);
-                    window.Window.DoEvents();
                     if (window.Window.IsClosing)
                         viewport.PlatformRequestClose = true;
                 }
@@ -796,7 +741,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    IWindow window = GetWindow(new ImGuiViewportPtr(nativeViewport));
+                    IRuntimeWindowBackend window = GetWindow(new ImGuiViewportPtr(nativeViewport));
                     return GetWindowDpiScale(window);
                 }
                 catch (Exception ex)
@@ -806,15 +751,11 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private static float GetWindowDpiScale(IWindow window)
+            private static float GetWindowDpiScale(IRuntimeWindowBackend window)
             {
-                Vector2D<int> size = window.Size;
-                Vector2D<int> framebufferSize = window.FramebufferSize;
-                if (size.X <= 0 || size.Y <= 0)
-                    return 1.0f;
-
-                float x = framebufferSize.X / (float)size.X;
-                float y = framebufferSize.Y / (float)size.Y;
+                WindowSurfaceSnapshot surface = window.Surface;
+                float x = surface.DpiScaleX;
+                float y = surface.DpiScaleY;
                 float scale = MathF.Max(x, y);
                 return float.IsFinite(scale) && scale > 0.0f && scale < 99.0f
                     ? scale
@@ -851,9 +792,6 @@ namespace XREngine.Rendering.OpenGL
             {
                 private readonly OpenGLImGuiMultiViewportController _owner;
                 private readonly GCHandle _handle;
-                private IInputContext? _input;
-                private IMouse? _mouse;
-                private readonly List<IKeyboard> _keyboards = [];
                 private bool _disposeStarted;
                 private bool _disposed;
 
@@ -864,35 +802,75 @@ namespace XREngine.Rendering.OpenGL
                     ViewportFlags = viewport.Flags;
                     _handle = GCHandle.Alloc(this);
 
-                    var options = WindowOptions.Default;
-                    options.API = owner._mainWindow.API;
-                    options.SharedContext = owner._mainWindow.GLContext;
-                    options.Size = ToWindowSize(viewport.Size);
-                    options.Position = ToWindowPosition(viewport.Pos);
-                    options.Title = "XREngine";
-                    options.WindowBorder = (viewport.Flags & ImGuiViewportFlags.NoDecoration) != 0
-                        ? WindowBorder.Hidden
-                        : WindowBorder.Resizable;
-                    options.TopMost = (viewport.Flags & ImGuiViewportFlags.TopMost) != 0;
-                    options.IsVisible = false;
-                    options.ShouldSwapAutomatically = false;
-
-                    Window = Silk.NET.Windowing.Window.Create(options);
-                    Window.Load += OnLoad;
-                    Window.FocusChanged += OnFocusChanged;
-                    Window.Closing += OnClosing;
-                    Window.Initialize();
-                    ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, viewport.Flags);
-                    SetClientScreenPosition(Window, ToWindowPosition(viewport.Pos));
-                    Window.MakeCurrent();
-                    Window.GLContext?.SwapInterval(0);
+                    var size = ToWindowSize(viewport.Size);
+                    var position = ToWindowPosition(viewport.Pos);
+                    var startup = WindowStartupValues.Default with
+                    {
+                        Title = "XREngine",
+                        X = position.X,
+                        Y = position.Y,
+                        Width = size.X,
+                        Height = size.Y,
+                        UseNativeTitleBar = (viewport.Flags & ImGuiViewportFlags.NoDecoration) == 0,
+                    };
+                    var request = new RuntimeWindowCreateOptions(
+                        Startup: startup,
+                        GraphicsApi: RuntimeGraphicsApiKind.OpenGL,
+                        ResizeStrategy: EInteractiveWindowResizeStrategy.Default,
+                        Purpose: RuntimeWindowPurpose.EditorViewport,
+                        Position: position,
+                        Size: size,
+                        VSyncEnabled: false,
+                        Visible: false,
+                        TopMost: (viewport.Flags & ImGuiViewportFlags.TopMost) != 0,
+                        PreferHdrOutput: false,
+                        TransparentFramebuffer: false,
+                        ColorBits: 32,
+                        DepthBits: 24,
+                        StencilBits: 8,
+                        OpenGlMajorVersion: 4,
+                        OpenGlMinorVersion: 6,
+                        OpenGlDebugContext: false,
+                        OpenGlForwardCompatible: false,
+                        SwapAutomatically: false,
+                        SharedContext: owner._mainWindow.GlContext);
+                    IRuntimeWindowBackend? created = null;
+                    try
+                    {
+                        created = RuntimeWindowBackendRegistry.RequireFactory().Create(in request);
+                        created.Initialize(new ViewportWindowEventSink());
+                        ImGuiPlatformWindowBehavior.ConfigureNativeWindow(created.OperatingSystemWindowHandle, (uint)viewport.Flags);
+                        created.RequestClientScreenPosition(position);
+                        IRuntimeWindowGlContext context = created.GlContext
+                            ?? throw new InvalidOperationException("An OpenGL editor viewport requires a desktop GL context.");
+                        context.MakeCurrent();
+                        context.SetSwapInterval(0);
+                        Window = created;
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            if (created is not null)
+                            {
+                                ImGuiPlatformWindowBehavior.ReleaseNativeWindow(created.OperatingSystemWindowHandle);
+                                created.Dispose();
+                            }
+                        }
+                        finally
+                        {
+                            owner._mainWindow.GlContext?.MakeCurrent();
+                            _handle.Free();
+                        }
+                        throw;
+                    }
                 }
 
-                public IWindow Window { get; }
+                public IRuntimeWindowBackend Window { get; }
                 public uint ViewportId { get; }
                 public ImGuiViewportFlags ViewportFlags { get; private set; }
-                public bool AcceptsInputs => !ImGuiPlatformWindowBehavior.IsInputTransparent(ViewportFlags);
-                public bool Focused { get; private set; }
+                public bool AcceptsInputs => !ImGuiPlatformWindowBehavior.IsInputTransparent((uint)ViewportFlags);
+                public bool Focused => Window.Events.IsFocused;
                 public bool IsDisposed => _disposeStarted;
                 public nint Handle => GCHandle.ToIntPtr(_handle);
 
@@ -902,7 +880,7 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     ViewportFlags = flags;
-                    ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, flags);
+                    ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window.OperatingSystemWindowHandle, (uint)flags);
                 }
 
                 public bool BeginDispose()
@@ -912,15 +890,11 @@ namespace XREngine.Rendering.OpenGL
 
                     _disposeStarted = true;
 
-                    Window.Load -= OnLoad;
-                    Window.FocusChanged -= OnFocusChanged;
-                    Window.Closing -= OnClosing;
-                    DetachInputHandlers();
-                    ImGuiPlatformWindowBehavior.ReleaseNativeWindow(Window);
+                    ImGuiPlatformWindowBehavior.ReleaseNativeWindow(Window.OperatingSystemWindowHandle);
 
                     try
                     {
-                        Window.IsVisible = false;
+                        Window.RequestVisibility(false);
                     }
                     catch
                     {
@@ -940,12 +914,18 @@ namespace XREngine.Rendering.OpenGL
 
                     try
                     {
-                        (Window as IDisposable)?.Dispose();
-                        ReleaseInputContext();
+                        if (Window.GlContext is { } context)
+                        {
+                            context.MakeCurrent();
+                            _owner._controller?.ReleaseContextResources(context);
+                            context.ClearCurrent();
+                            _owner._mainWindow.GlContext?.MakeCurrent();
+                        }
+                        Window.Dispose();
                     }
                     catch
                     {
-                        AbandonInputContextForShutdown();
+                        Window.RetainAbandonedResources();
                         AbandonedShutdownWindows.Add(Window);
                     }
 
@@ -980,122 +960,52 @@ namespace XREngine.Rendering.OpenGL
                     if (_handle.IsAllocated)
                         _handle.Free();
 
-                    AbandonInputContextForShutdown();
-                    AbandonedShutdownWindows.Add(Window);
-                }
-
-                private void OnLoad()
-                {
                     try
                     {
-                        _input = Window.CreateInput();
-                        AttachInput();
+                        if (Window.GlContext is { } context)
+                        {
+                            context.MakeCurrent();
+                            _owner._controller?.ReleaseContextResources(context);
+                            context.ClearCurrent();
+                            _owner._mainWindow.GlContext?.MakeCurrent();
+                        }
                     }
                     catch (Exception ex)
                     {
-                        LogCallbackException("PlatformWindow.OnLoad", ex);
+                        LogCallbackException("RetireViewportGlContext", ex);
                     }
+
+                    Window.RetainAbandonedResources();
+                    AbandonedShutdownWindows.Add(Window);
                 }
 
-                private void AttachInput()
+                public void DrainInput(ImGuiIOPtr io)
                 {
-                    if (_input is null)
+                    if (_disposeStarted || _owner._controller is null)
                         return;
-
-                    if (_input.Mice.Count > 0)
-                    {
-                        _mouse = _input.Mice[0];
-                        _mouse.MouseMove += OnMouseMove;
-                        _mouse.MouseDown += OnMouseDown;
-                        _mouse.MouseUp += OnMouseUp;
-                        _mouse.Scroll += OnMouseScroll;
-                    }
-
-                    foreach (IKeyboard keyboard in _input.Keyboards)
-                    {
-                        keyboard.KeyDown += OnKeyDown;
-                        keyboard.KeyUp += OnKeyUp;
-                        keyboard.KeyChar += OnKeyChar;
-                        _keyboards.Add(keyboard);
-                    }
+                    var origin = Window.ClientScreenPosition;
+                    _owner._controller.ReplayViewportInput(
+                        Window, origin.X, origin.Y, ViewportId);
+                    if (Window.Events.IsFocused)
+                        io.MouseHoveredViewport = ViewportId;
                 }
 
-                private void DetachInputHandlers()
+                private sealed class ViewportWindowEventSink : IRuntimeWindowEventSink
                 {
-                    if (_mouse is not null)
+                    public void SurfaceChanged(WindowSurfaceSnapshot _) { }
+                    public void FocusChanged(bool _) { }
+                    public void FileDropped(string[] _) { }
+                    public void KeyDown(EKey _) { }
+                    public bool CloseRequested()
                     {
-                        _mouse.MouseMove -= OnMouseMove;
-                        _mouse.MouseDown -= OnMouseDown;
-                        _mouse.MouseUp -= OnMouseUp;
-                        _mouse.Scroll -= OnMouseScroll;
-                        _mouse = null;
+                        return true;
                     }
-
-                    foreach (IKeyboard keyboard in _keyboards)
-                    {
-                        keyboard.KeyDown -= OnKeyDown;
-                        keyboard.KeyUp -= OnKeyUp;
-                        keyboard.KeyChar -= OnKeyChar;
-                    }
-                    _keyboards.Clear();
+                    public void InteractiveResizeStarted() { }
+                    public void InteractiveResizeUpdated(IVector2 _) { }
+                    public void InteractiveResizeEnded() { }
+                    public void RepaintRequested() { }
+                    public void RenderRequested(double _) { }
                 }
-
-                private void ReleaseInputContext()
-                {
-                    // Silk.NET.Input.Glfw unregisters GLFW callbacks by calling glfwSet*Callback
-                    // during Dispose. Destroying a short-lived ImGui viewport already tears down
-                    // the native GLFW window, so avoid callback restoration on this crash-prone path.
-                    _input = null;
-                }
-
-                private void AbandonInputContextForShutdown()
-                {
-                    if (_input is null)
-                        return;
-
-                    AbandonedShutdownInputContexts.Add(_input);
-                    _input = null;
-                }
-
-                private void OnFocusChanged(bool focused)
-                    => Focused = focused;
-
-                private void OnClosing()
-                {
-                    if (_disposeStarted)
-                        return;
-
-                    _owner.RequestClose(ViewportId);
-
-                    try
-                    {
-                        Window.IsClosing = false;
-                    }
-                    catch
-                    {
-                    }
-                }
-
-                private void OnMouseMove(IMouse mouse, Vector2 position)
-                    => _owner.PushMousePosition(ViewportId, Window, position);
-
-                private void OnMouseDown(IMouse mouse, MouseButton button)
-                    => _owner.PushMouseButton(ViewportId, button, true);
-
-                private void OnMouseUp(IMouse mouse, MouseButton button)
-                    => _owner.PushMouseButton(ViewportId, button, false);
-
-                private void OnMouseScroll(IMouse mouse, ScrollWheel wheel)
-                    => _owner.PushMouseWheel(ViewportId, wheel);
-
-                private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
-                    => _owner.PushKey(keyboard, key, scancode, true);
-
-                private void OnKeyUp(IKeyboard keyboard, Key key, int scancode)
-                    => _owner.PushKey(keyboard, key, scancode, false);
-
-                private void OnKeyChar(IKeyboard keyboard, char value)
-                    => _owner.PushChar(value);
             }
         }
     }

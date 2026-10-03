@@ -33,6 +33,18 @@ namespace XREngine.Scene.Components.Editing
             RenderInfo = RenderInfo3D.New(this, _rc);
             RenderInfo.Layer = DefaultLayers.GizmosIndex;
             RenderedObjects = [RenderInfo];
+        }
+
+        private bool _modelInitialized;
+
+        protected override void OnTransformChanged()
+        {
+            base.OnTransformChanged();
+            if (_modelInitialized)
+                return;
+
+            // Component factories attach the scene node after construction.
+            SetField(ref _modelInitialized, true);
             UpdateModelComponent();
         }
 
@@ -124,7 +136,8 @@ namespace XREngine.Scene.Components.Editing
                 world.AddToEditorScene(_instanceNode);
             }
 
-            TransformTool3D instance = _instanceNode.GetOrAddComponent<TransformTool3D>(out _)!;
+            TransformTool3D instance = _instanceNode.GetComponent<TransformTool3D>() ??
+                _instanceNode.AddComponent(static () => new TransformTool3D())!;
             instance.RegisterDisplayTransformTick();
             instance.TargetSocket = comp;
 
@@ -176,22 +189,22 @@ namespace XREngine.Scene.Components.Editing
             rootBillboardTfm.DistanceScale = ToolScale;
             rootBillboardTfm.ScaleByVerticalFov = true;
 
-            ModelComponent translationModelComp = skelRoot.AddComponent<ModelComponent>("Translation Model")!;
+            ModelComponent translationModelComp = skelRoot.AddComponent(static () => new ModelComponent(), "Translation Model")!;
             translationModelComp.Model = new Model(translationMeshes);
             ConfigureGizmoModel(translationModelComp);
             _translationModel = translationModelComp;
 
-            ModelComponent nonRotationModelComp = skelRoot.AddComponent<ModelComponent>("Non-Rotation Model")!;
+            ModelComponent nonRotationModelComp = skelRoot.AddComponent(static () => new ModelComponent(), "Non-Rotation Model")!;
             nonRotationModelComp.Model = new Model(nonRotationMeshes);
             ConfigureGizmoModel(nonRotationModelComp);
             _nonRotationModel = nonRotationModelComp;
 
-            ModelComponent scaleModelComp = skelRoot.AddComponent<ModelComponent>("Scale Model")!;
+            ModelComponent scaleModelComp = skelRoot.AddComponent(static () => new ModelComponent(), "Scale Model")!;
             scaleModelComp.Model = new Model(scaleMeshes);
             ConfigureGizmoModel(scaleModelComp);
             _scaleModel = scaleModelComp;
 
-            ModelComponent rotationModelComp = skelRoot.AddComponent<ModelComponent>("Rotation Model")!;
+            ModelComponent rotationModelComp = skelRoot.AddComponent(static () => new ModelComponent(), "Rotation Model")!;
             rotationModelComp.Model = new Model(rotationMeshes);
             ConfigureGizmoModel(rotationModelComp);
             _rotationModel = rotationModelComp;
@@ -202,12 +215,12 @@ namespace XREngine.Scene.Components.Editing
             screenBillboard.Perspective = false;
             screenBillboard.BillboardActive = true;
 
-            ModelComponent screenRotationModelComp = screenNode.AddComponent<ModelComponent>("Screen Rotation Model")!;
+            ModelComponent screenRotationModelComp = screenNode.AddComponent(static () => new ModelComponent(), "Screen Rotation Model")!;
             screenRotationModelComp.Model = new Model(screenRotationMeshes);
             ConfigureGizmoModel(screenRotationModelComp);
             _screenRotationModel = screenRotationModelComp;
 
-            ModelComponent screenTranslationModelComp = screenNode.AddComponent<ModelComponent>("Screen Translation Model")!;
+            ModelComponent screenTranslationModelComp = screenNode.AddComponent(static () => new ModelComponent(), "Screen Translation Model")!;
             screenTranslationModelComp.Model = new Model(screenTranslationMeshes);
             ConfigureGizmoModel(screenTranslationModelComp);
             _screenTranslationModel = screenTranslationModelComp;

@@ -3763,20 +3763,33 @@ public sealed partial class ShadowAtlasManager
 
         bool canRenderFullGroup = entry.MemberCount == group.CascadeCount;
         bool canRenderGrouped = CanRenderDirectionalCascadeGroup(seedRequest, group);
-        if (!canRenderFullGroup ||
-            !canRenderGrouped ||
-            !light.RenderGroupedCascadeShadowAtlasTiles(group, entry.Page.FrameBuffer, collectVisibleNow))
+        string? groupedDeclineReason = !canRenderFullGroup
+            ? "The render plan holds only part of the cascade group."
+            : !canRenderGrouped
+                ? "The light cannot render this cascade group as one layered pass."
+                : null;
+        if (groupedDeclineReason is not null ||
+            !light.RenderGroupedCascadeShadowAtlasTiles(group, entry.Page.FrameBuffer, collectVisibleNow, out groupedDeclineReason))
         {
             usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(
                 plan,
                 light,
                 entry,
                 prepareSequentialCommands: canRenderGrouped,
-                collectVisibleNow: collectVisibleNow);
+                collectVisibleNow: collectVisibleNow,
+                out string? sequentialDeclineReason);
             if (!usedSequentialFallback)
             {
                 elapsedMs = ElapsedMilliseconds(start);
-                RecordDirectionalGroupedRenderEvent(seedRequest, group, elapsedMs, succeeded: false, usedSequentialFallback: false, criticalBudgetBypassUsed: false);
+                RecordDirectionalGroupedRenderEvent(
+                    seedRequest,
+                    group,
+                    elapsedMs,
+                    succeeded: false,
+                    usedSequentialFallback: false,
+                    criticalBudgetBypassUsed: false,
+                    groupedDeclineReason,
+                    sequentialDeclineReason);
                 return false;
             }
         }
@@ -3807,16 +3820,21 @@ public sealed partial class ShadowAtlasManager
         DirectionalLightComponent light,
         in ShadowAtlasRenderPlanEntry entry,
         bool prepareSequentialCommands,
-        bool collectVisibleNow)
+        bool collectVisibleNow,
+        out string? declineReason)
     {
         if (!TryValidatePlanMemberRange(plan, entry, "directional-cascade-sequential"))
+        {
+            declineReason = "The render plan member range is stale.";
             return false;
+        }
 
         if (prepareSequentialCommands)
         {
             if (!light.PrepareSequentialCascadeShadowAtlasCommands(
                 entry.DirectionalGroup.Source,
-                entry.DirectionalGroup.CascadeCount))
+                entry.DirectionalGroup.CascadeCount,
+                out declineReason))
                 return false;
             collectVisibleNow = false;
         }
@@ -3824,7 +3842,10 @@ public sealed partial class ShadowAtlasManager
         for (int i = 0; i < entry.MemberCount; i++)
         {
             if (!plan.TryGetMember(entry.MemberStart + i, out ShadowAtlasRenderPlanMember member))
+            {
+                declineReason = "A render plan member is missing.";
                 return false;
+            }
 
             ShadowMapRequest request = member.Request;
             ShadowAtlasAllocation allocation = member.Allocation;
@@ -3832,17 +3853,22 @@ public sealed partial class ShadowAtlasManager
                 request.ProjectionType != EShadowProjectionType.DirectionalCascade ||
                 !TryGetPageResource(allocation, request.Encoding, out ShadowAtlasPageResource? page) ||
                 page is null)
+            {
+                declineReason = "A cascade member has no matching atlas page resource.";
                 return false;
+            }
 
             if (!light.RenderCascadeShadowAtlasTile(
                     request.Key.Source,
                     request.FaceOrCascadeIndex,
                     page.FrameBuffer,
                     allocation.InnerPixelRect,
-                    collectVisibleNow))
+                    collectVisibleNow,
+                    out declineReason))
                 return false;
         }
 
+        declineReason = entry.MemberCount > 0 ? null : "The cascade group has no members.";
         return entry.MemberCount > 0;
     }
 
@@ -4011,7 +4037,9 @@ public sealed partial class ShadowAtlasManager
         double elapsedMs,
         bool succeeded,
         bool usedSequentialFallback,
-        bool criticalBudgetBypassUsed)
+        bool criticalBudgetBypassUsed,
+        string? groupedDeclineReason = null,
+        string? sequentialDeclineReason = null)
     {
         if (seedRequest.Light is not DirectionalLightComponent light)
             return;
@@ -4029,10 +4057,12 @@ public sealed partial class ShadowAtlasManager
             XREngine.Debug.LightingWarningEvery(
                 $"ShadowAtlas.GroupedDirectionalCascade.Failed.{seedRequest.Key.LightId}",
                 TimeSpan.FromSeconds(2.0),
-                "[ShadowAtlas] Grouped directional cascade render failed for '{0}', cascades={1}, page={2}; sequential fallback also failed, leaving atlas tiles stale.",
+                "[ShadowAtlas] Grouped directional cascade render failed for '{0}', cascades={1}, page={2}; sequential fallback also failed, leaving atlas tiles stale. Grouped: {3} Sequential: {4}",
                 LightName(light),
                 group.CascadeCount,
-                group.PageIndex);
+                group.PageIndex,
+                groupedDeclineReason ?? "unknown",
+                sequentialDeclineReason ?? "unknown");
         }
 
         if (!RenderDiagnosticsFlags.DirectionalShadowAudit)
@@ -4180,7 +4210,7 @@ public sealed partial class ShadowAtlasManager
             EShadowProjectionType.DirectionalPrimary when request.Light is DirectionalLightComponent primaryDirectionalLight
                 => primaryDirectionalLight.RenderPrimaryShadowAtlasTile(page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             EShadowProjectionType.DirectionalCascade when request.Light is DirectionalLightComponent cascadeDirectionalLight
-                => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
+                => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow, out _),
             EShadowProjectionType.PointFace when request.Light is PointLightComponent pointLight
                 => pointLight.RenderShadowAtlasFaceTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             _ => false,

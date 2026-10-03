@@ -11,7 +11,7 @@ internal sealed class LocalPackageCatalog(LocalServiceOptions options)
     /// <param name="packageId">The ID of the package to load.</param>
     /// <returns>The manifest of the specified package.</returns>
     /// <exception cref="KeyNotFoundException">Thrown if the package is not in the configured catalog.</exception>
-    /// <exception cref="InvalidOperationException">Thrown if the package manifest is unavailable, invalid, or does not match the catalog key.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the package manifest is unavailable, invalid, does not match the catalog key, or contains executable content.</exception>
     public WorldPackageManifest Load(string packageId)
     {
         if (!options.Packages.TryGetValue(packageId, out string? path))
@@ -28,6 +28,18 @@ internal sealed class LocalPackageCatalog(LocalServiceOptions options)
             throw new InvalidOperationException("The configured catalog key does not match the package identity.");
         
         package.RootPath = Path.GetDirectoryName(path)!;
+
+        // The registered directory can change after registration. Refuse to serve executable content
+        // before any endpoint exposes the manifest or a file; see WorldPackageExecutablePayloadPolicy.
+        WorldPackageVerificationResult dataOnly = WorldPackageManifestBuilder.VerifyDataOnlyContent(package, package.RootPath);
+        if (!dataOnly.Success)
+        {
+            string reason = dataOnly.ExecutablePayloads.FirstOrDefault()
+                ?? (dataOnly.UnsafePaths.Count > 0 ? $"unsafe path '{dataOnly.UnsafePaths[0]}'"
+                    : $"missing file '{dataOnly.MissingFiles.FirstOrDefault()}'");
+            throw new InvalidOperationException($"The configured package cannot be served: {reason}. See {WorldPackageExecutablePayloadPolicy.PolicyDocumentPath}.");
+        }
+
         return package;
     }
 

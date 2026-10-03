@@ -9,6 +9,15 @@ namespace XREngine.Animation
         public abstract EAnimationValueCompressionAlgorithm Algorithm { get; }
         public abstract T GetValue(int frameIndex);
 
+        /// <summary>Captures the actual encoded samples without reevaluating mutable keyframes.</summary>
+        public T[] CaptureValues()
+        {
+            T[] values = new T[Count];
+            for (int i = 0; i < values.Length; i++)
+                values[i] = GetValue(i);
+            return values;
+        }
+
         public static BakedValueStore<T> Empty { get; } = new RawBakedValueStore<T>([]);
 
         public static BakedValueStore<T> Encode(T[] values, EAnimationValueCompressionAlgorithm algorithm)

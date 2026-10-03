@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('..\XREngine.Audio\runtimes\win-x64\native\phonon.dll')">
+    <None Include="..\XREngine.Audio\runtimes\win-x64\native\phonon.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>phonon.dll</Link>
+    </None>
+  </ItemGroup>
+</Project>

@@ -21,6 +21,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Serialization;
 using XREngine.Core;
 
@@ -1080,7 +1081,8 @@ public static partial class CookedBinarySerializer
         if (TryGetImmutableArrayElementType(listType, out Type? immutableElementType))
             return ReadImmutableArray(reader, immutableElementType, callbacks);
 
-        IList list = (IList)(CreateInstance(listType) ?? new List<object?>());
+        IList list = (IList)(CookedBinaryFormatterRegistry.TryCreateCollection(listType, out object? generated)
+            ? generated! : CreateInstance(listType) ?? new List<object?>());
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
         {
@@ -1100,6 +1102,11 @@ public static partial class CookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private static IList ReadImmutableArray(CookedBinaryReader reader, Type elementType, CookedBinarySerializationCallbacks? callbacks)
     {
+        AotParityDiagnostics.Report(
+            elementType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadImmutableArray)}",
+            "Register a published cooked codec for the owning asset type to construct immutable arrays without reflection.");
         int count = reader.ReadInt32();
         Array items = Array.CreateInstance(elementType, count);
         for (int i = 0; i < count; i++)
@@ -1141,7 +1148,8 @@ public static partial class CookedBinarySerializer
     {
         string dictTypeName = reader.ReadString();
         Type dictType = ResolveType(dictTypeName) ?? typeof(Dictionary<object, object?>);
-        IDictionary dictionary = (IDictionary)(CreateInstance(dictType) ?? new Dictionary<object, object?>());
+        IDictionary dictionary = (IDictionary)(CookedBinaryFormatterRegistry.TryCreateCollection(dictType, out object? generated)
+            ? generated! : CreateInstance(dictType) ?? new Dictionary<object, object?>());
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
         {
@@ -1488,7 +1496,12 @@ public static partial class CookedBinarySerializer
             throw CreatePublishedAotUnsupportedException($"generic XREvent<{elementType.Name}> deserialization");
 
         Type eventType = typeof(XREvent<>).MakeGenericType(elementType);
-        
+        AotParityDiagnostics.Report(
+            eventType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadXREventGeneric)}",
+            "Register a published cooked codec for the owning asset type so generic events are deserialized without Activator.CreateInstance.");
+
         var evt = Activator.CreateInstance(eventType)!;
         var calls = ReadXRPersistentCallList(reader);
         
@@ -1575,6 +1588,8 @@ public static partial class CookedBinarySerializer
     {
         string underlyingTypeName = reader.ReadString();
         Type underlyingType = ResolveType(underlyingTypeName);
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild && !CookedBinaryFormatterRegistry.IsNullableRegistered(underlyingType))
+            throw CreatePublishedAotUnsupportedException($"Nullable<{underlyingType.Name}> deserialization");
         bool hasValue = reader.ReadBoolean();
         
         if (!hasValue)
@@ -1631,9 +1646,6 @@ public static partial class CookedBinarySerializer
         if (count == 0)
             return default(ValueTuple);
 
-        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-            throw CreatePublishedAotUnsupportedException("ValueTuple deserialization");
-
         Type[] typeArgs = new Type[count];
         object?[] values = new object?[count];
 
@@ -1643,6 +1655,11 @@ public static partial class CookedBinarySerializer
             typeArgs[i] = ResolveType(typeName);
             values[i] = ReadValue(reader, typeArgs[i], callbacks);
         }
+
+        if (CookedBinaryFormatterRegistry.TryCreateTuple(typeArgs, values, out object? generatedTuple))
+            return generatedTuple!;
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw CreatePublishedAotUnsupportedException("ValueTuple deserialization");
 
         // Create the appropriate ValueTuple type and instantiate it
         Type tupleType = count switch
@@ -1658,6 +1675,11 @@ public static partial class CookedBinarySerializer
             _ => throw new NotSupportedException($"ValueTuple with {count} elements is not supported.")
         };
 
+        AotParityDiagnostics.Report(
+            tupleType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadValueTuple)}",
+            "Register a published cooked codec for the owning asset type so value tuples are deserialized without Activator.CreateInstance.");
         return Activator.CreateInstance(tupleType, values)!;
     }
 
@@ -1699,12 +1721,23 @@ public static partial class CookedBinarySerializer
     {
         string elementTypeName = reader.ReadString();
         Type elementType = ResolveType(elementTypeName);
+        int count = reader.ReadInt32();
+        if (CookedBinaryFormatterRegistry.TryCreateHashSet(elementType, count, out object? generatedSet, out Action<object, object?>? addGenerated))
+        {
+            for (int i = 0; i < count; i++)
+                addGenerated!(generatedSet!, ReadValue(reader, elementType, callbacks));
+            return generatedSet!;
+        }
         if (XRRuntimeEnvironment.IsAotRuntimeBuild)
             throw CreatePublishedAotUnsupportedException($"HashSet<{elementType.Name}> deserialization");
 
         Type hashSetType = typeof(HashSet<>).MakeGenericType(elementType);
+        AotParityDiagnostics.Report(
+            hashSetType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadHashSet)}",
+            "Register a published cooked codec for the owning asset type so hash sets are deserialized without Activator.CreateInstance.");
 
-        int count = reader.ReadInt32();
         object hashSet = Activator.CreateInstance(hashSetType)!;
         var addMethod = hashSetType.GetMethod("Add")!;
 
@@ -1858,14 +1891,21 @@ public static partial class CookedBinarySerializer
             if (resolved is not null)
                 return resolved;
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-                throw new InvalidOperationException($"Unable to resolve type '{key}' from published AOT metadata.");
+            if (XRRuntimeEnvironment.IsPublishedBuild)
+                throw new InvalidOperationException($"Unable to resolve type '{key}' from published metadata.");
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
                 resolved = assembly.GetType(key, throwOnError: false, ignoreCase: false);
                 if (resolved is not null)
+                {
+                    AotParityDiagnostics.Report(
+                        resolved,
+                        EAotParityCategory.TypeResolutionScan,
+                        $"{nameof(CookedBinarySerializer)}.{nameof(ResolveType)}",
+                        "Add the type to the published runtime metadata known-type table so cooked payloads resolve it without scanning assemblies.");
                     return resolved;
+                }
             }
 
             throw new InvalidOperationException($"Unable to resolve type '{key}'.");
@@ -1995,6 +2035,66 @@ public static partial class CookedBinarySerializer
     {
         MemoryPack = 0,
         Reflection = 1
+    }
+
+    /// <summary>Writes a generated MemoryPack model using the ordinary cooked object envelope.</summary>
+    public static void WriteTypedMemoryPackModel<TModel>(CookedBinaryWriter writer, TModel model)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(model);
+
+        byte[] payload = MemoryPackSerializer.Serialize(model);
+        writer.Write((byte)CookedBinaryTypeMarker.Object);
+        WriteTypeName(writer, typeof(TModel));
+        writer.Write((byte)CookedBinaryObjectEncoding.MemoryPack);
+        writer.Write(payload.Length);
+        writer.Write(payload);
+    }
+
+    /// <summary>Reads a generated MemoryPack model while accepting older reflection-encoded authoring data.</summary>
+    public static TModel? ReadTypedMemoryPackModel<TModel>(CookedBinaryReader reader)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+
+        long start = reader.Position;
+        CookedBinaryTypeMarker marker = (CookedBinaryTypeMarker)reader.ReadByte();
+        if (marker == CookedBinaryTypeMarker.Null)
+            return null;
+        if (marker != CookedBinaryTypeMarker.Object)
+            throw new InvalidDataException($"Expected a cooked object model, got '{marker}'.");
+
+        string typeName = reader.ReadString();
+        string expectedTypeName = typeof(TModel).AssemblyQualifiedName ?? typeof(TModel).FullName ?? typeof(TModel).Name;
+        if (!string.Equals(typeName, expectedTypeName, StringComparison.Ordinal))
+            throw new InvalidDataException($"Expected cooked model '{expectedTypeName}', got '{typeName}'.");
+
+        CookedBinaryObjectEncoding encoding = (CookedBinaryObjectEncoding)reader.ReadByte();
+        if (encoding == CookedBinaryObjectEncoding.MemoryPack)
+        {
+            int length = reader.ReadInt32();
+            byte[] payload = reader.ReadBytes(length);
+            return MemoryPackSerializer.Deserialize<TModel>(payload);
+        }
+
+#if !XRE_PUBLISHED
+        if (encoding == CookedBinaryObjectEncoding.Reflection)
+        {
+            reader.Position = start;
+            return reader.ReadValue<TModel>();
+        }
+#endif
+        throw new InvalidDataException($"Unsupported cooked model encoding '{encoding}'.");
+    }
+
+    /// <summary>Returns the exact cooked object envelope and generated MemoryPack payload size.</summary>
+    public static long CalculateTypedMemoryPackModelSize<TModel>(TModel model)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
+        return checked(1 + SizeOfTypeName(typeof(TModel)) + 1 + sizeof(int) + payload.Length);
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]

@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// Canonical immutable geometry row used by visibility and shading.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedGeometryRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedGeometryRecord
 {

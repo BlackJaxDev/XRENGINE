@@ -1,6 +1,7 @@
 using System.Reflection;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.GI;
 
 namespace XREngine.Rendering.OpenGL;
 
@@ -35,6 +36,7 @@ public sealed class OpenGlRendererBackendModuleEntry : IRendererBackendModule
             RuntimeGraphicsApiKind.OpenGL,
             OpenGlTextureStreamingBackendProvider.Instance);
         IDisposable? webRendererLease = null;
+        IDisposable? rayTracingLease = null;
         try
         {
             webRendererLease = WebRendererBackendRegistry.RegisterAccelerated(
@@ -43,13 +45,15 @@ public sealed class OpenGlRendererBackendModuleEntry : IRendererBackendModule
             IDisposable openXrLease = OpenXrGraphicsBindingRegistry.Register(
                 RendererBackendId.OpenGL,
                 static () => new OpenGlXrGraphicsBinding());
+            rayTracingLease = RestirRayTracingBackendServices.Register(new OpenGlRestirRayTracingBackend());
             _registrations = new CompositeModuleRegistrationLease(
-                textureLease,
+                new CompositeModuleRegistrationLease(textureLease, rayTracingLease),
                 new CompositeModuleRegistrationLease(webRendererLease, openXrLease));
         }
         catch
         {
             webRendererLease?.Dispose();
+            rayTracingLease?.Dispose();
             textureLease.Dispose();
             throw;
         }

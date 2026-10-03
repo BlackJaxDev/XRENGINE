@@ -89,7 +89,7 @@ public sealed class SourceToonVisualPerformanceTests
             "docs", "architecture", "rendering", "poiyomi-import-reporting.md"));
         architecture.ShouldContain("native-equivalent");
         string todo = File.ReadAllText(SourceToonParityCorpusTests.FindRepositoryFile(
-            "docs", "work", "todo", "rendering", "poiyomi-toon-93-parity-checklist.md"));
+            "docs", "work", "todo", "COMPLETED", "poiyomi-toon-93-parity-checklist.md"));
         todo.ShouldContain("Use RenderDoc for pass/resource discrepancies");
         string fixturePolicy = File.ReadAllText(SourceToonParityCorpusTests.FindRepositoryFile(
             "XREngine.UnitTests", "TestData", "Poiyomi", "README.md"));

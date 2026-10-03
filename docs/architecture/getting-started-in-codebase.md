@@ -39,13 +39,15 @@ These are the projects most people touch first:
 
 | Project | Why you would open it |
 |--------|------------------------|
-| `XREngine/` | Core engine runtime, scene graph, rendering, XR systems |
+| `XREngine.Runtime.Core/` | Shared runtime, scene graph, neutral physics/XR contracts, and replication |
+| `XREngine.Runtime.Rendering/` | Backend-neutral render objects, pipelines, windows/viewports, and renderer contracts |
+| `XREngine.Runtime.Bootstrap/` | Desktop `Engine` facade, application startup, settings, and explicit backend/service registration |
 | `XREngine.Editor/` | Editor startup, tooling, unit-testing world bootstrap |
 | `XREngine.Server/` | Dedicated server executable |
 | `XREngine.VRClient/` | Legacy OpenVR companion process. It owns the SteamVR/OpenVR connection, sends VR input to the main engine app through a pipe, and presents per-eye frames streamed back from the engine. |
 | `XREngine.UnitTests/` | Automated tests for engine/editor subsystems |
 
-Other projects such as `XREngine.Animation`, `XREngine.Audio`, `XREngine.Input`, and `XREngine.Modeling` are subsystem-specific modules that support the main runtime.
+`XREngine.Animation`, `XREngine.Audio`, `XREngine.Input`, and `XREngine.Modeling` contain managed feature logic; their runtime integration projects connect that logic to scenes and components. Native implementations live in separate physics, audio, input, XR, renderer, media, and platform projects. See [Runtime Project Organization](runtime/project-organization.md) for the full map and dependency direction. The old monolithic `XRENGINE` project is removed.
 
 ## Where to begin by task type
 
@@ -53,7 +55,8 @@ Other projects such as `XREngine.Animation`, `XREngine.Audio`, `XREngine.Input`,
 
 Start with:
 
-- `XREngine/`
+- `XREngine.Runtime.Rendering/` for shared contracts and pipelines
+- `XREngine.Runtime.Rendering.OpenGL/`, `.Vulkan/`, or `.WebGPU/` for the selected backend
 - `docs/user-guide/rendering.md`
 - `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`
 
@@ -70,6 +73,7 @@ Start with:
 - `docs/user-guide/scene.md`
 - `docs/user-guide/components.md`
 - `docs/user-guide/transforms.md`
+- `XREngine.Runtime.Core/Scene/` and the relevant runtime integration project
 
 The engine uses a scene node hierarchy with components attached to nodes. If you are changing behavior propagation, transforms, or state updates, start there before touching rendering or editor code.
 
@@ -78,6 +82,7 @@ The engine uses a scene node hierarchy with components attached to nodes. If you
 Start with:
 
 - `docs/user-guide/physics.md`
+- `XREngine.Runtime.Core/Scene/Physics/` for neutral contracts; `XREngine.Runtime.Physics.PhysX/` or `.Jolt/` for implementations; `.Authoring/` for collider generation
 - the unit-testing world settings and physics-related toggles
 
 PhysX is the current default path, so changes there should be validated in the editor test world first.
@@ -87,6 +92,7 @@ PhysX is the current default path, so changes there should be validated in the e
 Start with:
 
 - `docs/user-guide/vr-development.md`
+- `XREngine.Runtime.XR.OpenXR/` or `.OpenVR/` for runtime ownership; renderer-specific graphics bindings remain in the OpenGL/Vulkan projects
 - editor/unit-test-world XR toggles
 - `XREngine.VRClient/` if the change is client-specific
 
@@ -99,17 +105,18 @@ If you are touching runtime selection or controller/pose behavior, validate the 
 Start with:
 
 - `XREngine.Editor/`
-- `docs/architecture/editor/editor/editor/undo-system.md`
+- `docs/architecture/editor/undo-system.md`
 
 The day-to-day editor UI is the ImGui path. There is also a native UI pipeline under active development, but it is not the default path for most tasks.
 
-The ImGui editor enables Dear ImGui multi-viewports on the OpenGL backend, so dockable editor panels can be dragged outside the main window as native OS windows. The platform-window bridge lives beside `OpenGLRenderer`; Vulkan still renders ImGui inside the main swapchain until it gets its own per-viewport swapchain path.
+Shared ImGui integration lives in `XREngine.Runtime.Rendering.ImGui`; renderer-specific controllers and viewport rendering stay in OpenGL/Vulkan. Native window creation and event pumping belong to `XREngine.Runtime.Platform.Desktop`. Start with those owners when investigating detached editor panels, input, or window/context lifetime.
 
 ### Networking work
 
 Start with:
 
 - `docs/architecture/networking/overview.md`
+- `XREngine.Runtime.Core/Networking/` for protocols/replication and `XREngine.Runtime.Net.Sockets/` or `.Net.Osc/` for concrete transports
 - the VS Code tasks for server/client and pose sync
 - the Unit Testing World networking pose setup
 

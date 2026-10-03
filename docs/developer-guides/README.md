@@ -15,6 +15,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Audio](audio/openal-streaming-audio.md)
 - [Components](components/component-api.md)
 - [Diagnostics And Profiler](diagnostics/profiler.md)
+- [Runtime Data Layout Measurements](diagnostics/runtime-data-layout-measurements.md)
 - [Self-Iterating Rendering Performance Loop](diagnostics/self-iterating-performance-loop.md)
 - [Global Illumination](gi/global-illumination.md)
 - [Networking](networking/networking.md)
@@ -22,13 +23,17 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Rendering](rendering/skinning.md)
 - [Rendering Buffer Writes](rendering/xrdatabuffer-write-model.md)
 - [Runtime](runtime/engine-api.md)
+- [Runtime Project Organization](../architecture/runtime/project-organization.md)
+- [Portable Project Rules](runtime/portable-projects.md)
 - [Runtime Environment Settings](runtime/runtime-environment-settings.md)
 - [AOT Final Game Builds](runtime/aot-final-game-builds.md)
 - [Hot-Path Memory Control](runtime/hot-path-memory.md)
 - [Scene](scene/scene-graph.md)
 - [Testing](testing/unit-testing-world.md)
+- [Software Vulkan Correctness Validation](testing/software-vulkan-validation.md)
 - [UI](ui/native-hierarchy-panel.md)
 - [VR](vr/openxr-runtime.md)
+- [VR Body Tracking and Spectator Integration](vr/openxr-body-tracking.md)
 
 ## Rendering Features
 

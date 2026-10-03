@@ -1,5 +1,4 @@
 ﻿using MemoryPack;
-using NAudio.Wave;
 using NVorbis;
 using XREngine.Core;
 using XREngine.Core.Files;
@@ -10,6 +9,9 @@ namespace XREngine.Data
     [XR3rdPartyExtensions(typeof(XRDefault3rdPartyImportOptions), "wav", "ogg", "mp3", "flac")]
     public partial class AudioData : XRAsset, IPoolable
     {
+        /// <summary>File decoder supplied by the active host.</summary>
+        public static IAudioFileDecoder? FileDecoder { get; set; }
+
         private DataSource? _data;
         private int _frequency;
         private int _channelCount;
@@ -134,67 +136,25 @@ namespace XREngine.Data
 
         public unsafe void LoadMp3(string filePath)
         {
-            using Mp3FileReader reader = new(filePath);
-            using WaveStream pcmStream = WaveFormatConversionStream.CreatePcmStream(reader);
-
-            // Get total bytes needed for PCM data
-            long totalBytes = pcmStream.Length;
-            byte[] bytes = new byte[totalBytes];
-
-            // Read chunks until we have all data
-            int totalBytesRead = 0;
-            int bytesRead;
-            while ((bytesRead = pcmStream.Read(bytes, totalBytesRead, bytes.Length - totalBytesRead)) > 0)
-                totalBytesRead += bytesRead;
-            
-            _data = new DataSource(bytes);
-
-            // PCM format will always be 16-bit after conversion
-            _type = EPCMType.Short;
-            _frequency = pcmStream.WaveFormat.SampleRate;
-            _channelCount = pcmStream.WaveFormat.Channels;
+            SetDecodedData(GetFileDecoder().DecodeMp3(filePath));
         }
 
         public void LoadWav(string filePath)
         {
-            using FileStream fs = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using WaveFileReader reader = new(fs);
-            byte[] bytes = new byte[reader.Length];
-            ReadExactly(reader, bytes);
-            switch (reader.WaveFormat.BitsPerSample)
-            {
-                case 8:
-                    _data = new DataSource(bytes);
-                    _type = EPCMType.Byte;
-                    break;
-                case 16:
-                    _data = new DataSource(bytes);
-                    _type = EPCMType.Short;
-                    break;
-                case 32:
-                    _data = new DataSource(bytes);
-                    _type = EPCMType.Float;
-                    break;
-                default:
-                    float[] floatData = ConvertToFloat(bytes, reader.WaveFormat.BitsPerSample, false);
-                    _data = DataSource.FromArray(floatData);
-                    _type = EPCMType.Float;
-                    break;
-            }
-            _frequency = reader.WaveFormat.SampleRate;
-            _channelCount = reader.WaveFormat.Channels;
+            SetDecodedData(GetFileDecoder().DecodeWav(filePath));
         }
 
-        private static void ReadExactly(Stream stream, byte[] buffer)
+        private static IAudioFileDecoder GetFileDecoder()
+            => FileDecoder ?? throw new InvalidOperationException(
+                "No audio file decoder is registered for WAV or MP3 imports.");
+
+        private void SetDecodedData(DecodedAudioFile decoded)
         {
-            int totalRead = 0;
-            while (totalRead < buffer.Length)
-            {
-                int bytesRead = stream.Read(buffer, totalRead, buffer.Length - totalRead);
-                if (bytesRead == 0)
-                    throw new EndOfStreamException($"Stream ended early: expected {buffer.Length} bytes, got {totalRead} bytes.");
-                totalRead += bytesRead;
-            }
+            _data?.Dispose();
+            _data = new DataSource(decoded.Samples);
+            _type = decoded.Type;
+            _frequency = decoded.Frequency;
+            _channelCount = decoded.ChannelCount;
         }
 
         /// <summary>

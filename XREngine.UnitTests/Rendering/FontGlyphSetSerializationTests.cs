@@ -8,6 +8,7 @@ using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Imaging;
 using XREngine.Rendering;
 
 namespace XREngine.UnitTests.Rendering;
@@ -255,7 +256,9 @@ public sealed class FontGlyphSetSerializationTests
         string fontPath = Path.Combine(tempRoot, "EmbeddedFont.ttf");
         string atlasPath = Path.Combine(tempRoot, "EmbeddedFont.png");
 
-        using MagickImage image = new(MagickColors.White, 8, 8);
+        byte[] rgba = new byte[8 * 8 * 4];
+        Array.Fill(rgba, (byte)255);
+        using RuntimeImage image = new(8, 8, RuntimePixelFormat.Rgba8, rgba);
         XRTexture2D atlas = new(image)
         {
             Name = "EmbeddedAtlas",

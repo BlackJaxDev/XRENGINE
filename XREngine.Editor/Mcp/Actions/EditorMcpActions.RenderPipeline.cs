@@ -8,12 +8,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using ImageMagick;
 using XREngine;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Core.Files;
+using XREngine.Data.Rendering;
+using XREngine.Imaging;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Resources;
@@ -1570,7 +1571,7 @@ namespace XREngine.Editor.Mcp
                     WriteRadianceHdr(path, rgbaFloats, width, height, orientation.FlipVertically);
                     break;
                 default:
-                    using (MagickImage image = CreateDebugImage(
+                    using (RuntimeImage image = CreateDebugImage(
                         rgbaFloats,
                         width,
                         height,
@@ -1581,12 +1582,10 @@ namespace XREngine.Editor.Mcp
                         exposure,
                         gamma,
                         mobiusTransition,
-                        encodeSrgb))
+                        encodeSrgb,
+                        orientation.FlipVertically))
                     {
-                        if (orientation.FlipVertically)
-                            image.Flip();
-
-                        image.Write(path);
+                        File.WriteAllBytes(path, RuntimeImageCodecs.Require().EncodePng(image));
                     }
                     break;
             }
@@ -1693,7 +1692,7 @@ namespace XREngine.Editor.Mcp
                 finiteAlphaSamples == 0 ? 0.0f : (float)(alphaSum / finiteAlphaSamples));
         }
 
-        private static MagickImage CreateDebugImage(
+        private static RuntimeImage CreateDebugImage(
             float[] rgbaFloats,
             int width,
             int height,
@@ -1704,7 +1703,8 @@ namespace XREngine.Editor.Mcp
             float exposure,
             float gamma,
             float mobiusTransition,
-            bool encodeSrgb)
+            bool encodeSrgb,
+            bool flipVertically)
         {
             byte[] rgba8 = new byte[rgbaFloats.Length];
             bool canNormalize = tonemap is null && normalize && stats.MaxRgb > stats.MinRgb;
@@ -1744,13 +1744,10 @@ namespace XREngine.Editor.Mcp
                 }
             }
 
-            return new MagickImage(rgba8, new MagickReadSettings
-            {
-                Width = (uint)width,
-                Height = (uint)height,
-                Format = MagickFormat.Rgba,
-                Depth = 8,
-            });
+            return new RuntimeImage((uint)width, (uint)height, EPixelFormat.Rgba,
+                EPixelType.UnsignedByte, rgba8, origin: flipVertically
+                    ? RuntimeImageOrigin.BottomLeft
+                    : RuntimeImageOrigin.TopLeft);
         }
 
         private static void WriteExr(string path, float[] rgbaFloats, int width, int height, bool flipVertically)

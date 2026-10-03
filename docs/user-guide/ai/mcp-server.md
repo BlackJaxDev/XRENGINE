@@ -410,7 +410,20 @@ worker preparation and retained ownership separately from queued transfers and
 descriptor publication. These are backend-wide counters, not an atomic frame
 sample. Use repeated observations and completed uploads to establish progress.
 
+## RenderBench Profiling
+
+For windowless Vulkan component profiling, start a named RenderBench MCP
+session with `Tools/Manage-McpRenderBenchSession.ps1 Start -Name <name>`, then
+use `list_render_profile_targets`, `load_render_profile_recipe`,
+`prepare_render_profile`, `wait_render_profile_ready`, `arm_render_profile`,
+and `start_render_profile`. Read the terminal result with
+`get_render_profile_result` and stop the named session with the manager.
+The listener pauses during measured capture. Direct Quick, Compare, and Gate
+commands and the diagnostic recipe choices are in the
+[profiler guide](../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench).
+
 ## Safety Notes
+
 
 - Use read-only mode for inspection-only sessions.
 - Require auth when exposing the server beyond trusted local processes.

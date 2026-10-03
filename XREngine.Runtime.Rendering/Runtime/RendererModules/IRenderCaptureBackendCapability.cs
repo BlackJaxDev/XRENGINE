@@ -1,4 +1,4 @@
-using ImageMagick;
+using XREngine.Imaging;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
@@ -6,22 +6,22 @@ namespace XREngine.Rendering;
 
 /// <summary>
 /// Captures backend render resources for tooling without exposing a concrete renderer.
-/// Callback ownership of each <see cref="MagickImage"/> transfers to the callback; callback implementations must dispose it.
+/// Callback ownership of each <see cref="RuntimeImage"/> transfers to the callback; callback implementations must dispose it.
 /// </summary>
 public interface IRenderCaptureBackendCapability
 {
     bool TryCaptureTexture(
         XRTexture texture,
         BoundingRectangle region,
-        Action<MagickImage, int, int> callback,
+        Action<RuntimeImage, int, int> callback,
         int mipLevel,
         int layerIndex);
 
     bool TryCaptureFrameBufferAttachment(
         XRFrameBuffer frameBuffer,
         BoundingRectangle region,
-        bool flipY,
-        Action<MagickImage, int> callback,
+        bool withTransparency,
+        Action<RuntimeImage, int> callback,
         EFrameBufferAttachment attachment);
 
     bool TryCaptureTextureBytes(
@@ -36,15 +36,15 @@ public interface IRenderCaptureBackendCapability
 
     void CaptureTexture(
         BoundingRectangle region,
-        Action<MagickImage, int, int> callback,
+        Action<RuntimeImage, int, int> callback,
         uint bindingId,
         int mipLevel,
         int layerIndex);
 
     void CaptureFrameBufferAttachment(
         BoundingRectangle region,
-        bool flipY,
-        Action<MagickImage, int> callback,
+        bool withTransparency,
+        Action<RuntimeImage, int> callback,
         uint frameBufferBindingId,
         EFrameBufferAttachment attachment);
 

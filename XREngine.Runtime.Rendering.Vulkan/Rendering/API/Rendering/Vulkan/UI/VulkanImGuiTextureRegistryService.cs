@@ -1,5 +1,4 @@
 using ImGuiNET;
-using Silk.NET.Input;
 using Silk.NET.Vulkan;
 using System;
 using System.Collections.Generic;

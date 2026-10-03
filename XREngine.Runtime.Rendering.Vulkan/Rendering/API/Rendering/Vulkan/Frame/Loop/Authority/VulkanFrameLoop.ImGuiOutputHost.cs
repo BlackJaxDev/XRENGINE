@@ -1,10 +1,8 @@
 using System.Threading;
 using Silk.NET.Core;
-using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
-using Silk.NET.Windowing;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -13,8 +11,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
 {
     private readonly VulkanImGuiPlatformViewportRecorder _imguiPlatformViewportRecorder = new();
 
-    IWindow IVulkanImGuiOutputHost.MainWindow => _imguiWindowHost!.Window;
-    IInputContext? IVulkanImGuiOutputHost.Input => _imguiWindowHost!.Input;
+    IRuntimeWindowBackend IVulkanImGuiOutputHost.MainWindow => _imguiWindowHost!.DesktopWindowBackend
+        ?? throw new InvalidOperationException("Detached Vulkan editor windows require a desktop window backend.");
     bool IVulkanImGuiOutputHost.MainWindowFocused => _imguiWindowHost!.IsFocused;
     bool IVulkanImGuiOutputHost.TargetRequiresSwapchainOutput => TargetRequiresSwapchainOutput;
     bool IVulkanImGuiOutputHost.UseDynamicRenderingRenderTargets
@@ -46,7 +44,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         => TargetOutputSession.ThrowIfVulkanDeviceOperationNotAdmitted(operation);
     bool IVulkanImGuiOutputHost.TryAdmitDeviceOperation(string operation)
         => TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _);
-    SurfaceKHR IVulkanImGuiOutputHost.CreatePlatformSurface(IWindow window)
+    SurfaceKHR IVulkanImGuiOutputHost.CreatePlatformSurface(IRuntimeWindowBackend window)
         => ImGuiPlatformWindows.CreateSurface(_deviceContext, window);
     void IVulkanImGuiOutputHost.DestroyPlatformSurface(ref SurfaceKHR surface)
         => ImGuiPlatformWindows.DestroySurface(_deviceContext, _outputRuntime.SurfaceApi, ref surface);

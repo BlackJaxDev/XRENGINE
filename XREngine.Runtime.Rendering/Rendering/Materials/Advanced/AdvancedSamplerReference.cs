@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Backend-neutral sampler reference stored independently from texture identity.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedSamplerReference")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedSamplerReference(
     AdvancedGpuHandle Handle,

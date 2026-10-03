@@ -9,6 +9,7 @@ using XREngine.Editor.Mcp;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Prefabs;
 
 namespace XREngine.UnitTests.Editor;
@@ -39,6 +40,53 @@ public sealed class EditorMcpComponentResolutionTests
 
         error.ShouldBeNull();
         resolved.ShouldBeSameAs(liveComponent);
+    }
+
+    [TestCase("node")]
+    [TestCase("transform")]
+    [TestCase("component")]
+    [NonParallelizable]
+    public void TryResolveXRObject_PrefersActiveWorldObjectOverDormantCacheEntry(string objectKind)
+    {
+        using RuntimeWorld world = new(new JitterScene());
+        SceneNode dormantNode = new("Dormant");
+        SceneNode liveNode = new("Live");
+        PhysicsChainComponent dormantComponent = dormantNode.AddComponent<PhysicsChainComponent>()!;
+        PhysicsChainComponent liveComponent = liveNode.AddComponent<PhysicsChainComponent>()!;
+        XRObjectBase dormant = objectKind switch
+        {
+            "node" => dormantNode,
+            "transform" => dormantNode.Transform,
+            _ => dormantComponent,
+        };
+        XRObjectBase live = objectKind switch
+        {
+            "node" => liveNode,
+            "transform" => liveNode.Transform,
+            _ => liveComponent,
+        };
+
+        try
+        {
+            ObjectIdProperty.SetValue(live, dormant.ID);
+            world.RootNodes.Add(liveNode);
+            XRObjectBase.ObjectsCache[dormant.ID].ShouldBeSameAs(dormant);
+
+            bool found = EditorMcpActions.TryResolveXRObject(
+                world,
+                dormant.ID.ToString(),
+                out XRObjectBase? resolved,
+                out string? error);
+
+            found.ShouldBeTrue(error);
+            resolved.ShouldBeSameAs(live);
+        }
+        finally
+        {
+            world.RootNodes.Remove(liveNode);
+            liveNode.Destroy(now: true);
+            dormantNode.Destroy(now: true);
+        }
     }
 
     [Test]

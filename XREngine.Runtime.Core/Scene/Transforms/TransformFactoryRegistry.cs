@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace XREngine.Scene.Transforms;
 
-public static class TransformFactoryRegistry
+public static partial class TransformFactoryRegistry
 {
     private static readonly object Sync = new();
     private static readonly Dictionary<Type, Func<TransformBase>> Factories = [];
@@ -11,8 +12,10 @@ public static class TransformFactoryRegistry
     static TransformFactoryRegistry()
     {
         Register<Transform>(static () => new Transform());
-        Register<RigidBodyTransform>(static () => new RigidBodyTransform());
+        RegisterPlatformTransforms();
     }
+
+    static partial void RegisterPlatformTransforms();
 
     public static void Register<TTransform>(Func<TTransform> factory)
         where TTransform : TransformBase
@@ -33,7 +36,7 @@ public static class TransformFactoryRegistry
             Factories[transformType] = factory;
     }
 
-    public static bool TryCreate(Type transformType, out TransformBase? transform)
+    public static bool TryCreate(Type transformType, [NotNullWhen(true)] out TransformBase? transform)
     {
         ArgumentNullException.ThrowIfNull(transformType);
 

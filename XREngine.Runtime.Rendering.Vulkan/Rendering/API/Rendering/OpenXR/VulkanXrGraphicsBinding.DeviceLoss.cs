@@ -1,7 +1,7 @@
-using Silk.NET.OpenXR;
 using System.Collections.Generic;
 using System.Threading;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using SwapchainImageVulkan2KHR = Silk.NET.OpenXR.SwapchainImageVulkan2KHR;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -17,11 +17,11 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     /// No native destroy, release, free, timeline query, or resource retirement is legal here.
     /// </summary>
     public OpenXrDeviceLossBindingAbandonment AbandonAfterDeviceLoss(
-        OpenXRAPI api,
+        IOpenXrGraphicsHost host,
         AbstractRenderer renderer,
         string reason)
     {
-        Attach(api);
+        Attach(host);
         if (renderer is not VulkanRenderer vulkanRenderer || !vulkanRenderer.IsDeviceLost)
             return default;
 
@@ -34,7 +34,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                     _deviceLossAbandonedAcquiredSwapchainCount);
 
             int activeSwapchainCount = 0;
-            Swapchain[] activeSwapchains = new Swapchain[_swapchains.Length];
+            ulong[] activeSwapchains = new ulong[_swapchains.Length];
             uint[] activeImageCounts = new uint[_swapchainImageCounts.Length];
             SwapchainImageVulkan2KHR*[] activeImages = new SwapchainImageVulkan2KHR*[_swapchainImagesVK.Length];
             for (int i = 0; i < activeSwapchains.Length; ++i)
@@ -42,17 +42,18 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                 activeSwapchains[i] = _swapchains[i];
                 activeImageCounts[i] = _swapchainImageCounts[i];
                 activeImages[i] = _swapchainImagesVK[i];
-                if (activeSwapchains[i].Handle != 0)
+                if (activeSwapchains[i] != 0)
                     activeSwapchainCount++;
                 _swapchainImagesVK[i] = null;
             }
+            host.AbandonActiveSwapchainsAfterDeviceLoss();
 
             if (activeSwapchainCount != 0)
             {
                 _deviceLossQuarantine.Add(new RetiredOpenXrSwapchainGeneration(
                     activeSwapchains, activeImages, activeImageCounts, _viewCount,
                     0, default, false, default, false, [], [], false,
-                    default, false, System.Diagnostics.Stopwatch.GetTimestamp(), -1));
+                    default, false, System.Diagnostics.Stopwatch.GetTimestamp(), -1, default));
                 _deviceLossAbandonedGenerationCount++;
                 _deviceLossAbandonedSwapchainCount += activeSwapchainCount;
             }
@@ -60,15 +61,17 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             for (int i = 0; i < _retiredSwapchainGenerations.Count; ++i)
             {
                 RetiredOpenXrSwapchainGeneration generation = _retiredSwapchainGenerations[i];
+                host.AbandonRetirement(generation.RetirementToken);
                 _deviceLossQuarantine.Add(generation);
                 _deviceLossAbandonedGenerationCount++;
                 for (int view = 0; view < generation.Swapchains.Length; ++view)
-                    if (generation.Swapchains[view].Handle != 0)
+                    if (generation.Swapchains[view] != 0)
                         _deviceLossAbandonedSwapchainCount++;
             }
             _retiredSwapchainGenerations.Clear();
             _deviceLossAbandonedAcquiredSwapchainCount += _runtimeAcquiredSwapchainHandles.Count;
             _runtimeAcquiredSwapchainHandles.Clear();
+            host.AbandonAcquiredImagesAfterDeviceLoss();
             _lastRetirementAdmissionBlockers |= EOpenXrSwapchainRetirementBlockers.DeviceLost;
 
             return new OpenXrDeviceLossBindingAbandonment(

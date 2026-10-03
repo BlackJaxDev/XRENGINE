@@ -1,7 +1,6 @@
 using System.Numerics;
 using MonkeyBallVR;
 using NUnit.Framework;
-using OpenVrAction = OpenVR.NET.Input.Action;
 using Shouldly;
 using XREngine.Components;
 using XREngine.Input;
@@ -35,9 +34,9 @@ public sealed class MonkeyBallInputIntegrationTests
             controller = new LocalPlayerController(ELocalPlayerIndex.One);
             WindowSnapshotKeyboard keyboard = new(0);
             WindowSnapshotGamepad gamepad = new(0);
-            controller.Input.UpdateDevices(keyboard, null, gamepad, vrServices.Actions);
+            controller.Input.UpdateDevices(keyboard, null, gamepad);
             ((IPawnController)controller).ControlledPawnComponent = pawn;
-            controller.Input.UpdateDevices(keyboard, null, gamepad, vrServices.Actions);
+            controller.Input.UpdateDevices(keyboard, null, gamepad);
 
             pawn.Controller.ShouldBeSameAs(controller);
             ((IPawnController)controller).ControlledPawnComponent.ShouldBeSameAs(pawn);
@@ -189,8 +188,9 @@ public sealed class MonkeyBallInputIntegrationTests
             "Cooked MonkeyBall Input World",
             new XRScene("Cooked MonkeyBall Input Scene", root));
 
-        byte[] payload = MonkeyBallWorldCookedSerializer.Serialize(authored);
-        MonkeyBallWorldAsset cooked = MonkeyBallWorldCookedSerializer.Deserialize(payload);
+        var payload = new System.Buffers.ArrayBufferWriter<byte>();
+        MonkeyBallWorldCookedSerializer.Serialize(authored, payload);
+        MonkeyBallWorldAsset cooked = MonkeyBallWorldCookedSerializer.Deserialize(payload.WrittenSpan);
         cooked.Scenes.Count.ShouldBe(1);
         cooked.Scenes[0].RootNodes.Count.ShouldBe(1);
         return cooked.Scenes[0].RootNodes[0]
@@ -216,7 +216,7 @@ public sealed class MonkeyBallInputIntegrationTests
 
     private sealed class RecordingVrInputServices :
         IRuntimeVrInputServices,
-        IRuntimeVrLegacyActionServices
+        IRuntimeVrActionSetServices
     {
         private readonly Dictionary<(string Category, string Name), System.Action<bool>> _boolActions = [];
         private readonly Dictionary<(string Category, string Name), RuntimeVrVector2Changed> _vector2Actions = [];
@@ -224,8 +224,8 @@ public sealed class MonkeyBallInputIntegrationTests
         public RuntimeVrRuntimeKind ActiveRuntime => RuntimeVrRuntimeKind.OpenXR;
         public string ActiveServiceName => "MonkeyBall Test OpenXR";
         public int Vector2RegistrationCount { get; private set; }
-        public Dictionary<string, Dictionary<string, OpenVrAction>> Actions { get; } = [];
-        public event System.Action<Dictionary<string, Dictionary<string, OpenVrAction>>>? ActionsChanged;
+        public bool HasActions => true;
+        public event System.Action? ActionsChanged;
 
         public bool HasBoolRegistration(string category, string name)
             => _boolActions.ContainsKey((category, name));
@@ -240,7 +240,7 @@ public sealed class MonkeyBallInputIntegrationTests
             => _vector2Actions[(category, name)](Vector2.Zero, value);
 
         public void RaiseActionsChanged()
-            => ActionsChanged?.Invoke(Actions);
+            => ActionsChanged?.Invoke();
 
         public void Update(float delta)
         {

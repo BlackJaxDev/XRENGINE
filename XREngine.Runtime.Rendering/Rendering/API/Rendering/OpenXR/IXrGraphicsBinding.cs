@@ -1,190 +1,93 @@
-using Silk.NET.OpenXR;
-
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
-/// <summary>
-/// Implements the graphics-API-specific portion of an OpenXR session.
-/// Concrete renderer assemblies register an implementation explicitly at composition time.
-/// </summary>
+/// <summary>Renderer-specific graphics resources for one OpenXR runtime host.</summary>
 public interface IXrGraphicsBinding
 {
     RendererBackendId BackendId { get; }
     string BackendName { get; }
-
     bool IsCompatible(AbstractRenderer renderer);
-
     bool RequiresDeferredSessionCreation => false;
-
     bool DestroysRuntimeInstanceOnRendererTeardown => false;
-
     bool RequiresRenderThreadForTeardown => false;
-
     XRTexture2D? PreviewLeftEyeTexture => null;
-
     XRTexture2D? PreviewRightEyeTexture => null;
-
-    /// <summary>Render-frame ID for the last API-issued successful left preview copy, or zero when unavailable.</summary>
     ulong PreviewLeftEyeFrameId => 0;
-
-    /// <summary>Render-frame ID for the last API-issued successful right preview copy, or zero when unavailable.</summary>
     ulong PreviewRightEyeFrameId => 0;
-
     XRTexture2D? DesktopMirrorTexture => null;
-
-    OpenXrSmokeCaptureLedgerEntry[] GetStrictSpsBoundaryCaptureLedger()
-        => [];
-
-    bool RequiresRuntimeStateRenderThread(
-        OpenXRAPI.OpenXrRuntimeState runtimeState,
-        bool runtimeLossPending)
-        => false;
-
+    OpenXrSmokeCaptureLedgerEntry[] GetStrictSpsBoundaryCaptureLedger() => [];
+    bool RequiresRuntimeStateRenderThread(RuntimeOpenXrState runtimeState, bool runtimeLossPending) => false;
     bool ShouldDeferSessionStart(AbstractRenderer renderer, out string reason)
     {
         reason = string.Empty;
         return false;
     }
 
-    void ExecuteRuntimeGraphicsTransition(
-        AbstractRenderer renderer,
-        string operation,
-        System.Action action)
+    void ExecuteRuntimeGraphicsTransition(AbstractRenderer renderer, string operation, Action action)
         => action();
 
-    bool TryGetRendererOwnedInstance(
-        AbstractRenderer renderer,
-        out XR? rendererOwnedApi,
-        out Instance rendererOwnedInstance,
-        out string[] rendererOwnedExtensions)
+    bool TryGetRendererOwnedInstance(AbstractRenderer renderer, out IOpenXrVulkanBootstrapLease? lease)
     {
-        rendererOwnedApi = null;
-        rendererOwnedInstance = default;
-        rendererOwnedExtensions = [];
+        lease = null;
         return false;
     }
 
-    bool InvalidateRendererOwnedInstance(AbstractRenderer renderer, string reason)
-        => false;
-
-    /// <summary>
-    /// Abandons renderer-owned OpenXR children after terminal device loss without
-    /// issuing Vulkan completion, retirement, or resource-destruction work.
-    /// </summary>
+    bool InvalidateRendererOwnedInstance(AbstractRenderer renderer, string reason) => false;
     OpenXrDeviceLossBindingAbandonment AbandonAfterDeviceLoss(
-        OpenXRAPI api,
-        AbstractRenderer renderer,
-        string reason)
-        => default;
-
-    /// <summary>Destroys a renderer-owned OpenXR bootstrap instance after device loss.</summary>
-    Result TryDestroyRendererOwnedInstanceAfterDeviceLoss(AbstractRenderer renderer, string reason)
-        => Result.ErrorFunctionUnsupported;
-
-    bool UsesOpenXrVulkanEnable2Creation(AbstractRenderer renderer)
-        => false;
-
-    void ResetRenderingResourcesForRuntimeRecreate(AbstractRenderer renderer, string reason)
-    {
-    }
-
-    bool SupportsVulkanFragmentShadingRate(AbstractRenderer renderer)
-        => false;
-
-    bool SupportsVulkanFragmentDensityMap(AbstractRenderer renderer)
-        => false;
-
+        IOpenXrGraphicsHost host, AbstractRenderer renderer, string reason) => default;
+    int TryDestroyRendererOwnedInstanceAfterDeviceLoss(AbstractRenderer renderer, string reason)
+        => OpenXrResultCodes.ErrorFunctionUnsupported;
+    bool UsesOpenXrVulkanEnable2Creation(AbstractRenderer renderer) => false;
+    void ResetRenderingResourcesForRuntimeRecreate(AbstractRenderer renderer, string reason) { }
+    bool SupportsVulkanFragmentShadingRate(AbstractRenderer renderer) => false;
+    bool SupportsVulkanFragmentDensityMap(AbstractRenderer renderer) => false;
     bool CanUseTrueSinglePassStereo => false;
-
-    bool TryResolveViewRenderMode(
-        OpenXRAPI api,
-        out VrViewRenderModeResolution resolution)
+    bool TryResolveViewRenderMode(IOpenXrGraphicsHost host, out VrViewRenderModeResolution resolution)
     {
         resolution = default;
         return false;
     }
 
-    bool TryRenderViewsBatch(
-        OpenXRAPI api,
-        nint projectionViews,
-        out bool handled)
+    bool TryRenderViewsBatch(IOpenXrGraphicsHost host, out bool handled)
     {
         handled = false;
         return false;
     }
 
-    bool TryRenderEye(
-        OpenXRAPI api,
-        uint viewIndex,
-        uint imageIndex,
-        OpenXRAPI.DelRenderToFBO? renderCallback)
+    bool TryRenderEye(IOpenXrGraphicsHost host, uint viewIndex, uint imageIndex, OpenXrRenderToEyeCallback? renderCallback)
         => false;
-
-    bool ShouldPrewarmEyeResources(OpenXRAPI api, uint viewIndex)
+    bool ShouldPrewarmEyeResources(IOpenXrGraphicsHost host, uint viewIndex) => false;
+    void PrewarmEyeResources(IOpenXrGraphicsHost host, uint viewIndex) { }
+    void Flush(IOpenXrGraphicsHost host) { }
+    void CaptureRenderCallbackState(IOpenXrGraphicsHost host) { }
+    void RestoreRenderCallbackState(IOpenXrGraphicsHost host) { }
+    bool TryRenderDesktopMirrorComposition(IOpenXrGraphicsHost host, uint targetWidth, uint targetHeight)
         => false;
+    void EnsureStereoViewport(IOpenXrGraphicsHost host, uint width, uint height) { }
+    void ResetBackendDiagnostics(IOpenXrGraphicsHost host) { }
+    void DestroyBackendResources(IOpenXrGraphicsHost host) { }
 
-    void PrewarmEyeResources(OpenXRAPI api, uint viewIndex)
-    {
-    }
-
-    void Flush(OpenXRAPI api)
-    {
-    }
-
-    void CaptureRenderCallbackState(OpenXRAPI api)
-    {
-    }
-
-    void RestoreRenderCallbackState(OpenXRAPI api)
-    {
-    }
-
-    bool TryRenderDesktopMirrorComposition(
-        OpenXRAPI api,
-        uint targetWidth,
-        uint targetHeight)
-        => false;
-
-    void EnsureStereoViewport(OpenXRAPI api, uint width, uint height)
-    {
-    }
-
-    void ResetBackendDiagnostics(OpenXRAPI api)
-    {
-    }
-
-    void DestroyBackendResources(OpenXRAPI api)
-    {
-    }
-
-    bool TryCreateSession(OpenXRAPI api, AbstractRenderer renderer);
-    void CreateSwapchains(OpenXRAPI api, AbstractRenderer renderer);
-    void CleanupSwapchains(OpenXRAPI api);
-    OpenXrSwapchainRetirementOutcome RetireSwapchainsForDeferredDestruction(OpenXRAPI api, AbstractRenderer renderer)
+    bool TryCreateSession(IOpenXrGraphicsHost host, AbstractRenderer renderer);
+    void CreateSwapchains(IOpenXrGraphicsHost host, AbstractRenderer renderer);
+    void CleanupSwapchains(IOpenXrGraphicsHost host);
+    OpenXrSwapchainRetirementOutcome RetireSwapchainsForDeferredDestruction(
+        IOpenXrGraphicsHost host, AbstractRenderer renderer)
         => OpenXrSwapchainRetirementOutcome.Unsupported;
-    OpenXrSwapchainRetirementSnapshot CaptureSwapchainRetirementSnapshot()
-        => new();
-    void PollDeferredSwapchainRetirement(OpenXRAPI api, AbstractRenderer renderer)
-    {
-    }
-    /// <summary>
-    /// Prevents the API layer from falling back to immediate OpenXR swapchain
-    /// destruction when the backend has deferred GPU-owned generations.
-    /// </summary>
+    OpenXrSwapchainRetirementSnapshot CaptureSwapchainRetirementSnapshot() => new();
+    void PollDeferredSwapchainRetirement(IOpenXrGraphicsHost host, AbstractRenderer renderer) { }
     bool RequiresDeferredSwapchainRetirement => false;
     bool HasPendingDeferredSwapchainRetirement => false;
-    /// <summary>Whether the backend still owns an accepted OpenXR submission.</summary>
     bool HasPendingOpenXrSubmissionOwnership => false;
-
     int PendingOpenXrSubmissionCount => 0;
-
     string? PendingOpenXrSubmissionReceiptSource => null;
-    bool WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer);
-    Result BeginFrame(OpenXRAPI api, in FrameBeginInfo frameBeginInfo)
-        => api.Api.BeginFrame(api.GraphicsBindingHost.Session, in frameBeginInfo);
-    Result AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex);
-    Result WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs);
-    Result ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain);
-    Result EndFrame(OpenXRAPI api, in FrameEndInfo frameEndInfo)
-        => api.Api.EndFrame(api.GraphicsBindingHost.Session, in frameEndInfo);
-    void RenderViews(OpenXRAPI api, in CompositionLayerProjectionView projectionView, uint viewIndex);
+    bool WaitForGpuIdle(IOpenXrGraphicsHost host, AbstractRenderer renderer);
+    int BeginFrame(IOpenXrGraphicsHost host) => host.GraphicsCalls.BeginFrame();
+    int AcquireSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain, out uint imageIndex)
+        => host.GraphicsCalls.AcquireSwapchainImage(swapchain, out imageIndex);
+    int WaitSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain, long timeoutNs)
+        => host.GraphicsCalls.WaitSwapchainImage(swapchain, timeoutNs);
+    int ReleaseSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain)
+        => host.GraphicsCalls.ReleaseSwapchainImage(swapchain);
+    int EndFrame(IOpenXrGraphicsHost host, bool submitLayer)
+        => host.GraphicsCalls.EndFrame(submitLayer);
+    void RenderViews(IOpenXrGraphicsHost host, uint viewIndex) { }
 }

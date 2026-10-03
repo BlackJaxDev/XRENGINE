@@ -2,6 +2,13 @@
 
 Use `XREngine.ControlPlane.Service` for managed local instances. The reusable library owns contracts/accounting; the service supplies authentication, HTTP and observed process lifecycle. See the [architecture](../../architecture/runtime/control-plane.md).
 
+Runtime.Core handles realtime protocol and replication through neutral transport
+contracts. `XREngine.Runtime.Net.Sockets` supplies UDP/TCP/TLS operations, and
+Bootstrap installs that backend before networking starts. Control-plane HTTP,
+worker supervision, and package staging stay in the separate service. The
+[project organization guide](../../architecture/runtime/project-organization.md)
+maps these assemblies and their dependencies.
+
 ## Build and configure
 
 Requires Windows and .NET 10. Build first, then launch workers from artifacts without parallel builds.

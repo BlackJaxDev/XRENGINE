@@ -39,5 +39,11 @@ namespace XREngine.Data
         /// if the GPU path is unavailable.
         /// </summary>
         NvComp = 4,
+
+        /// <summary>
+        /// Uncompressed. The packer selects this when compression would not shrink an entry, and the
+        /// published reader returns a span directly over the mapped archive for it.
+        /// </summary>
+        Stored = 5,
     }
 }

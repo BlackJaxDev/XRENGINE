@@ -762,6 +762,7 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
 
     private static bool SupportsReasoning(string model)
         => model.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase)
+            || model.StartsWith("gpt-6", StringComparison.OrdinalIgnoreCase)
             || model.StartsWith("o1", StringComparison.OrdinalIgnoreCase)
             || model.StartsWith("o3", StringComparison.OrdinalIgnoreCase)
             || model.StartsWith("o4", StringComparison.OrdinalIgnoreCase);

@@ -158,6 +158,22 @@ namespace XREngine.Animation
             return store;
         }
 
+        /// <summary>Restores baked playback metadata without reevaluating the keyframe track.</summary>
+        internal void RestorePublishedBakedState(
+            int framesPerSecond,
+            int frameCount,
+            EAnimationValueCompressionAlgorithm requestedCompression,
+            EAnimationValueCompressionAlgorithm encodedCompression,
+            bool isBaked)
+        {
+            SetField(ref _bakedFPS, framesPerSecond);
+            SetField(ref _bakedFrameCount, frameCount);
+            SetField(ref _bakedValueCompressionAlgorithm, requestedCompression);
+            EncodedBakedValueCompressionAlgorithm = encodedCompression;
+            SetField(ref _isBaked, isBaked);
+            BakedChanged();
+        }
+
         protected bool TryGetCadenceFrameWindow(float second, out int frame, out int nextFrame, out float floorSec, out float ceilSec, out float frameFraction)
         {
             frame = 0;

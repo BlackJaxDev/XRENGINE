@@ -103,6 +103,15 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _shoulderPitchOffset, value);
                 }
 
+                private float _upperArmTargetWeight = 1.0f;
+                /// <summary>Weight of the calibrated upper-arm pose; hand reach remains authoritative.</summary>
+                [Range(0.0f, 1.0f)]
+                public float UpperArmTargetWeight
+                {
+                    get => _upperArmTargetWeight;
+                    set => SetField(ref _upperArmTargetWeight, float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 0.0f);
+                }
+
                 private float _bendGoalWeight = 0.0f;
                 /// <summary>
                 /// If greater than 0, will bend the elbow towards the 'Bend Goal' Transform.
@@ -307,6 +316,18 @@ namespace XREngine.Components.Animation
                 YawPitch,
                 FromTo
             }
+
+            private Transform? _upperArmTarget;
+            /// <summary>Calibrated upper-arm bone pose, supplying clavicle direction and elbow bend plane.</summary>
+            public Transform? UpperArmTarget
+            {
+                get => _upperArmTarget;
+                set => SetField(ref _upperArmTarget, value);
+            }
+
+            private bool _hasUpperArmTargetPose;
+            private Vector3 _upperArmTargetPosition;
+            private Quaternion _upperArmTargetRotation;
 
             private Transform? _target = null;
 			/// <summary>
@@ -567,6 +588,18 @@ namespace XREngine.Components.Animation
 
             public override void PreSolve(float scale)
             {
+                _hasUpperArmTargetPose = false;
+                if (_upperArmTarget is not null && Settings.UpperArmTargetWeight > 0.0f)
+                {
+                    _upperArmTarget.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+                    _upperArmTargetPosition = _upperArmTarget.WorldTranslation;
+                    _upperArmTargetRotation = _upperArmTarget.WorldRotation;
+                    float lengthSquared = _upperArmTargetRotation.LengthSquared();
+                    _hasUpperArmTargetPose = float.IsFinite(_upperArmTargetPosition.X)
+                        && float.IsFinite(_upperArmTargetPosition.Y) && float.IsFinite(_upperArmTargetPosition.Z)
+                        && float.IsFinite(lengthSquared) && lengthSquared > 1e-8f;
+                }
+
                 if (_target != null)
                 {
                     _target.RecalculateMatrices(true);
@@ -705,11 +738,29 @@ namespace XREngine.Components.Animation
             private Vector3 SolveTrigonometric()
             {
                 Vector3 bendNormal;
-                if (_hasShoulder && Settings.ShoulderRotationWeight > 0.0f && Quality < EQuality.Semi)
+                if (_hasUpperArmTargetPose)
+                {
+                    ApplyTrackedShoulder();
+                    NoShoulderSolve(out bendNormal);
+                }
+                else if (_hasShoulder && Settings.ShoulderRotationWeight > 0.0f && Quality < EQuality.Semi)
                     FullShoulderSolve(out bendNormal);
                 else
                     NoShoulderSolve(out bendNormal);
                 return bendNormal;
+            }
+
+            private void ApplyTrackedShoulder()
+            {
+                if (!_hasShoulder)
+                    return;
+                Vector3 current = UpperArm.SolverPosition - Shoulder.SolverPosition;
+                Vector3 desired = _upperArmTargetPosition - Shoulder.SolverPosition;
+                if (current.LengthSquared() <= 1e-8f || desired.LengthSquared() <= 1e-8f)
+                    return;
+                Quaternion rotation = XRMath.RotationBetweenVectors(current, desired).Normalized();
+                rotation = Quaternion.Slerp(Quaternion.Identity, rotation, Settings.UpperArmTargetWeight);
+                VirtualBone.RotateAroundPoint(_bones, 0, Shoulder.SolverPosition, rotation);
             }
 
             private void NoShoulderSolve(out Vector3 bendNormal)
@@ -1021,6 +1072,16 @@ namespace XREngine.Components.Animation
             private Vector3 GetBendNormal()
             {
                 Vector3 upperArmToTarget = TargetPosition - UpperArm.SolverPosition;
+
+                if (_hasUpperArmTargetPose)
+                {
+                    Vector3 current = Forearm.SolverPosition - UpperArm.SolverPosition;
+                    Vector3 desired = _upperArmTargetRotation.Rotate(UpperArm.Axis);
+                    Vector3 direction = Vector3.Lerp(current, desired, Settings.UpperArmTargetWeight);
+                    Vector3 normal = Vector3.Cross(upperArmToTarget, direction);
+                    if (normal.LengthSquared() > 1e-8f)
+                        return normal;
+                }
 
                 if (_bendGoal != null)
                     _bendDirection = _bendGoal.WorldTranslation - _bones[1].SolverPosition;
