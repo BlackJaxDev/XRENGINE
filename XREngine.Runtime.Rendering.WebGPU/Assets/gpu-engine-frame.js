@@ -5,9 +5,10 @@ const recordBytes = 112;
 const maximumRecords = 4097;
 const maximumDynamicOffsets = 16;
 const uploadBytes = 24;
-const maximumUploads = 4096;
+const maximumUploads = 8192;
 const uniformCapacity = 4 * 1024 * 1024;
-const storageCapacity = 8 * 1024 * 1024;
+// Managed recording and an abandoned attempt's preamble each own an 8 MiB budget.
+const storageCapacity = 16 * 1024 * 1024;
 
 /** Imports one bounded engine frame, including uniform snapshots, without retaining managed views. */
 export class GpuEngineFrame {
@@ -43,7 +44,7 @@ export class GpuEngineFrame {
         const data = this.view;
         const count = data.getUint32(12, true), sequence = data.getUint32(40, true);
         const uploadCount = data.getUint32(44, true);
-        if (data.getUint32(0, true) !== 0x45475258 || data.getUint32(4, true) !== 3 ||
+        if (data.getUint32(0, true) !== 0x45475258 || data.getUint32(4, true) !== 4 ||
             data.getUint32(8, true) !== length || count < 1 || count > maximumRecords || uploadCount > maximumUploads ||
             length !== headerBytes + count * recordBytes + uploadCount * uploadBytes ||
             data.getUint32(16, true) !== r._owner || data.getUint32(20, true) !== r._generation ||
@@ -136,12 +137,12 @@ export class GpuEngineFrame {
             const payloadOffset = data.getUint32(base + 8, true);
             const byteLength = data.getUint32(base + 12, true);
             const beforeRecord = data.getUint32(base + 16, true);
-            if (data.getUint32(base + 20, true) !== 0 || beforeRecord >= count || beforeRecord < previousRecord ||
+            if (data.getUint32(base + 20, true) > 1 || beforeRecord > count || beforeRecord < previousRecord ||
                 !byteLength || (destinationOffset | payloadOffset | byteLength) % 4 ||
                 payloadOffset !== expectedPayloadOffset || payloadOffset > storageLength - byteLength ||
                 destinationOffset > destination.size - byteLength ||
-                !(destination.usage & GPUBufferUsage.STORAGE) || !(destination.usage & GPUBufferUsage.COPY_DST))
-                throw new RangeError('WebGPU.EngineFrame.StorageUpload: invalid owner, range, usage, order or alignment.');
+                !(destination.usage & GPUBufferUsage.COPY_DST))
+                throw new RangeError('WebGPU.EngineFrame.BufferUpload: invalid owner, range, usage, order or alignment.');
             const entry = this.uploads[index];
             entry.destination = destination.buffer;
             entry.destinationOffset = destinationOffset;
@@ -188,12 +189,13 @@ export class GpuEngineFrame {
             stats.commandEncoderCreates++;
             if (uniformLength) encoder.copyBufferToBuffer(this.staging, 0, arena.buffer, 0, uniformLength);
             let uploadIndex = 0;
-            for (let record = 0; record < count; record++) {
+            for (let record = 0; record <= count; record++) {
                 while (uploadIndex < uploadCount && this.uploads[uploadIndex].beforeRecord === record) {
                     const entry = this.uploads[uploadIndex++];
                     encoder.copyBufferToBuffer(this.staging, uniformCapacity + entry.payloadOffset,
                         entry.destination, entry.destinationOffset, entry.byteLength);
                 }
+                if (record === count) break;
                 const base = headerBytes + record * recordBytes;
                 const operation = this.operations[record];
                 c.encodeOperation(encoder, operation, data, base + 8, record, stats);

@@ -465,6 +465,7 @@ namespace XREngine.Rendering
         public XRMeshRenderer(XRMesh? mesh, XRMaterial? material)
             : base(deferObjectCachePublication: true)
         {
+            _ownedSubmeshes = _submeshes;
             try
             {
                 using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
@@ -487,6 +488,7 @@ namespace XREngine.Rendering
         public XRMeshRenderer(IEnumerable<(XRMesh mesh, XRMaterial material)> submeshes)
             : base(deferObjectCachePublication: true)
         {
+            _ownedSubmeshes = _submeshes;
             try
             {
                 using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
@@ -515,6 +517,7 @@ namespace XREngine.Rendering
         private XRMeshRenderer(bool detachedStagingRenderer)
             : base(deferObjectCachePublication: true)
         {
+            _ownedSubmeshes = _submeshes;
         }
 
         private void AbortRendererConstruction()
@@ -829,6 +832,8 @@ namespace XREngine.Rendering
 
         internal bool HasSettingUniformsHandlers => _settingUniforms is not null;
 
+        internal bool HasOnlySettingUniformsHandler(DelSetUniforms handler) => _settingUniforms == handler;
+
         /// <summary>
         /// Typed, generation-owned numeric binding publishers eligible for
         /// immutable backend capture and frequency-scoped reuse.
@@ -889,6 +894,10 @@ namespace XREngine.Rendering
         }
 
         private EventList<SubMesh> _submeshes = [];
+        private readonly EventList<SubMesh> _ownedSubmeshes;
+        private EventList<SubMesh>? _subscribedSubmeshes;
+        private int _submeshSetterDepth;
+        private bool _submeshTeardownRequested;
         /// <summary>
         /// Represents multiple submeshes, each with their own mesh and material.
         /// Use for the optimized case multiple meshes with multiple materials.
@@ -896,7 +905,17 @@ namespace XREngine.Rendering
         public EventList<SubMesh> Submeshes
         {
             get => _submeshes;
-            set => SetField(ref _submeshes, value);
+            set
+            {
+                ObjectDisposedException.ThrowIf(_submeshTeardownRequested, this);
+                _submeshSetterDepth++;
+                try { SetField(ref _submeshes, value); }
+                finally
+                {
+                    if (--_submeshSetterDepth == 0)
+                        ReconcileSubmeshHandlers();
+                }
+            }
         }
 
         [MemoryPackIgnore]
@@ -1261,33 +1280,28 @@ namespace XREngine.Rendering
 
         #endregion
 
-        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        private void ReconcileSubmeshHandlers()
         {
-            base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
+            if (_submeshTeardownRequested)
             {
-                case nameof(Submeshes):
-                    //Link added and removed events
-                    Submeshes.PostAnythingAdded += Submeshes_PostAnythingAdded;
-                    Submeshes.PostAnythingRemoved += Submeshes_PostAnythingRemoved;
-                    break;
+                DetachSubmeshHandlers();
+                return;
             }
+            if (ReferenceEquals(_subscribedSubmeshes, _submeshes))
+                return;
+            DetachSubmeshHandlers();
+            _subscribedSubmeshes = _submeshes;
+            _subscribedSubmeshes.PostAnythingAdded += Submeshes_PostAnythingAdded;
+            _subscribedSubmeshes.PostAnythingRemoved += Submeshes_PostAnythingRemoved;
         }
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+
+        private void DetachSubmeshHandlers()
         {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-            {
-                switch (propName)
-                {
-                    case nameof(Submeshes):
-                        //Unlink added and removed events
-                        Submeshes.PostAnythingAdded -= Submeshes_PostAnythingAdded;
-                        Submeshes.PostAnythingRemoved -= Submeshes_PostAnythingRemoved;
-                        break;
-                }
-            }
-            return change;
+            if (_subscribedSubmeshes is not { } subscribed)
+                return;
+            subscribed.PostAnythingAdded -= Submeshes_PostAnythingAdded;
+            subscribed.PostAnythingRemoved -= Submeshes_PostAnythingRemoved;
+            _subscribedSubmeshes = null;
         }
 
         private void Submeshes_PostAnythingRemoved(SubMesh item)
@@ -1596,6 +1610,20 @@ namespace XREngine.Rendering
                 _optimizeMeshDeformToVec4);
         }
 
+        /// <summary>Restores owned submesh storage and current list callbacks after explicit revival.</summary>
+        public override void Generate()
+        {
+            bool reviving = IsDestroyed;
+            base.Generate();
+            if (!reviving || IsDestroyed)
+                return;
+
+            if (_ownedSubmeshes.IsDestroyed)
+                _ownedSubmeshes.Generate();
+            _submeshTeardownRequested = false;
+            ReconcileSubmeshHandlers();
+        }
+
         public override void Destroy(bool now = false)
         {
             if (!now || IsDestroyed)
@@ -1628,8 +1656,10 @@ namespace XREngine.Rendering
 
         protected override void OnDestroying()
         {
+            _submeshTeardownRequested = true;
             try
             {
+                DetachSubmeshHandlers();
                 DestroyDeformationInputs();
                 ResetDrivableBuffers();
                 IndirectDrawBuffer?.Dispose();
@@ -1646,7 +1676,19 @@ namespace XREngine.Rendering
             }
             finally
             {
-                base.OnDestroying();
+                try
+                {
+                    if (!_ownedSubmeshes.IsDestroyed)
+                    {
+                        _ownedSubmeshes.Destroy(true);
+                        if (!_ownedSubmeshes.IsDestroyed)
+                            throw new InvalidOperationException("Mesh renderer submesh-list destruction was vetoed.");
+                    }
+                }
+                finally
+                {
+                    base.OnDestroying();
+                }
             }
         }
 

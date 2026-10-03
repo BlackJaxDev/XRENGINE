@@ -2,6 +2,7 @@ using XREngine.Core.Files;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
+using XREngine.Execution;
 
 namespace XREngine.Rendering;
 
@@ -41,6 +42,17 @@ internal static partial class ShaderSourceResolver
 
     private static long _registeredSnippetVersion;
 
+    internal static long RegisteredSnippetVersion => Volatile.Read(ref _registeredSnippetVersion);
+
+    // The shader service reflects the bound asset owner; the execution checks also
+    // cover direct resolver calls made before that service has been installed.
+    internal static bool CanAccessHostShaderFiles
+        => !OperatingSystem.IsBrowser()
+        && !RuntimeWorkScheduler.IsCallerThread
+        && DirectStorageIO.Source is not IRuntimeAssetCatalog
+        && DirectStorageIO.Source is not { SupportsSynchronousReads: false }
+        && RuntimeShaderServices.Current?.SupportsSynchronousShaderWork != false;
+
     // Default-disabled. See ExpandIncludesRecursive for rationale.
     private static bool EmitIncludeDceMarkers
         => XREnvironment.IsEnabled(XREngineEnvironmentVariables.GlslDceIncludes);
@@ -56,6 +68,7 @@ internal static partial class ShaderSourceResolver
     private readonly record struct SnippetResolutionCacheKey(
         string ExpandedSource,
         string SearchRootsKey,
+        bool HostFileAccess,
         long RegisteredSnippetVersion,
         bool EnableDeadCodeElimination);
     private readonly record struct DirectoryDependency(string Path, long LastWriteTimeUtcTicks);
@@ -63,13 +76,14 @@ internal static partial class ShaderSourceResolver
     private sealed class SearchContext
     {
         public SearchContext(string? sourceDirectory, string[] shaderRoots, string searchRootsKey, Action<string>? warningLogger,
-            IReadOnlyDictionary<string, string>? canonicalSnippets = null)
+            IReadOnlyDictionary<string, string>? canonicalSnippets = null, bool hostFileAccess = true)
         {
             SourceDirectory = sourceDirectory;
             ShaderRoots = shaderRoots;
             SearchRootsKey = searchRootsKey;
             WarningLogger = warningLogger;
             CanonicalSnippets = canonicalSnippets;
+            HostFileAccess = hostFileAccess;
         }
 
         public string? SourceDirectory { get; }
@@ -77,6 +91,7 @@ internal static partial class ShaderSourceResolver
         public string SearchRootsKey { get; }
         public Action<string>? WarningLogger { get; }
         public IReadOnlyDictionary<string, string>? CanonicalSnippets { get; }
+        public bool HostFileAccess { get; }
     }
 
     private sealed class CachedTextFile
@@ -161,6 +176,9 @@ internal static partial class ShaderSourceResolver
         if (string.IsNullOrWhiteSpace(source))
             return new(source, [], []);
 
+        if (!CanAccessHostShaderFiles && IncludeRegex().IsMatch(source))
+            throw new NotSupportedException("ShaderSource.HostFileIncludeUnavailable: shader includes require host files; use already resolved source or an explicit cooked shader artifact on this runtime.");
+
         SearchContext context = CreateSearchContext(sourcePath, options);
         List<string> resolvedPaths = [];
         Dictionary<string, ShaderSourceFileDependency> fileDependencies = new(StringComparer.OrdinalIgnoreCase);
@@ -198,6 +216,11 @@ internal static partial class ShaderSourceResolver
     {
         if (dependencies is null)
             return true;
+
+        // A file-expanded cache from a prior owner cannot be validated against
+        // virtual catalog paths or a host without synchronous file access.
+        if (dependencies.Count != 0 && !CanAccessHostShaderFiles)
+            return false;
 
         for (int i = 0; i < dependencies.Count; i++)
         {
@@ -315,6 +338,14 @@ internal static partial class ShaderSourceResolver
 
     private static SearchContext CreateSearchContext(string? sourcePath, ShaderSourceResolverOptions? options)
     {
+        if (!CanAccessHostShaderFiles)
+        {
+            Action<string>? nonFileWarningLogger = options?.WarningLogger;
+            if (nonFileWarningLogger is null && RuntimeShaderServices.Current is IRuntimeShaderServices nonFileShaderServices)
+                nonFileWarningLogger = nonFileShaderServices.LogWarning;
+            return new(null, [], string.Empty, nonFileWarningLogger, hostFileAccess: false);
+        }
+
         string? sourceDirectory = string.IsNullOrWhiteSpace(sourcePath)
             ? null
             : Path.GetDirectoryName(sourcePath);
@@ -498,6 +529,7 @@ internal static partial class ShaderSourceResolver
         SnippetResolutionCacheKey cacheKey = new(
             source,
             context.SearchRootsKey,
+            context.HostFileAccess,
             registeredSnippetVersion,
             enableDeadCodeElimination);
         if (SnippetResolutionCache.TryGetValue(cacheKey, out SnippetResolutionCacheEntry? cachedEntry) &&
@@ -582,6 +614,8 @@ internal static partial class ShaderSourceResolver
         }
         if (RegisteredSnippets.TryGetValue(snippetName, out string? registeredSnippetSource))
         {
+            if (!context.HostFileAccess && IncludeRegex().IsMatch(registeredSnippetSource))
+                throw new NotSupportedException($"ShaderSource.HostFileIncludeUnavailable: registered snippet '{snippetName}' contains a file include on this runtime.");
             snippetSource = registeredSnippetSource;
             fileDependency = default;
             return true;
@@ -595,6 +629,9 @@ internal static partial class ShaderSourceResolver
             snippetSource = ReadTextFile(snippetPath, out fileDependency);
             return true;
         }
+
+        if (!context.HostFileAccess)
+            throw new NotSupportedException($"ShaderSource.HostFileSnippetUnavailable: snippet '{snippetName}' is not registered in memory; file-backed snippets are unavailable on this runtime.");
 
         snippetSource = null;
         fileDependency = default;

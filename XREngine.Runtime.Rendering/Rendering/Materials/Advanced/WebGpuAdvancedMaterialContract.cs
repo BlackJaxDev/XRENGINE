@@ -88,7 +88,8 @@ public static class WebGpuAdvancedMaterialContract
 
     public static string? GetSourceRejection(EAdvancedMaterialSourceContract source) => source switch
     {
-        EAdvancedMaterialSourceContract.StandardSurface or EAdvancedMaterialSourceContract.ProjectiveMirror => null,
+        EAdvancedMaterialSourceContract.StandardSurface or EAdvancedMaterialSourceContract.EngineGeneratedSurface or
+            EAdvancedMaterialSourceContract.ProjectiveMirror => null,
         EAdvancedMaterialSourceContract.AuthoredStandardSurface => "An authored raster cook identity does not prove native surface equivalence; verified engine-generated provenance or an executable native shading companion is required.",
         EAdvancedMaterialSourceContract.UnsupportedTextureSemantics => "Independent red-channel Metallic/Roughness textures require an exact native companion; the canonical RM slot samples roughness/metallic from one texture's RG channels.",
         EAdvancedMaterialSourceContract.CustomVertexProgram => "Authored vertex displacement or replacement requires an exact native vertex companion.",

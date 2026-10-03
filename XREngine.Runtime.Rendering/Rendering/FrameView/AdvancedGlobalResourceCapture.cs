@@ -24,14 +24,16 @@ public readonly record struct AdvancedGlobalResourceCapture(
 {
     /// <summary>Texture-owning probe rows paired with the numeric probe capture.</summary>
     public ReadOnlyMemory<AdvancedProbeCaptureRow> ProbeRows { get; init; }
+    // This exclusive producer input never escapes GPUScene into a render-world
+    // snapshot. Frozen output ownership is the canonical publication's responsibility.
+    internal AdvancedAuthoredDecalCaptureLease AuthoredDecals { get; init; }
 
     public static AdvancedGlobalResourceCapture Empty(ulong frameId)
         => new(frameId, default, default, default, default, default, default, default, default);
 
     /// <summary>
-    /// Captures only world-owned light/probe numeric state. Environment, decal,
-    /// and GI collection owners are not exposed by <see cref="IRuntimeRenderWorld"/>
-    /// and intentionally remain valid-empty rather than inferred from pipelines.
+    /// Captures world-owned light/probe state and explicitly requested browser
+    /// authored decals. Environment and GI owners remain valid-empty.
     /// </summary>
     public static AdvancedGlobalResourceCapture Capture(
         ulong frameId,
@@ -126,6 +128,8 @@ public readonly record struct AdvancedGlobalResourceCapture(
         return new(frameId, lightSources, lights, default, shadowRows.ToArray(), probes, default, default, default)
         {
             ProbeRows = probeRows.ToArray(),
+            AuthoredDecals = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                world.VisualScene.GPUCommands.AdvancedAuthoredDecalsRequested ? AdvancedAuthoredDecalRegistry.Capture(world, frameId) : default,
         };
     }
 

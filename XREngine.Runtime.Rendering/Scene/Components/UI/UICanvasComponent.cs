@@ -518,6 +518,7 @@ namespace XREngine.Components
             Release(_renderPipeline.RequestTerminalTeardown);
             Release(BatchCollector.Dispose);
             Release(() => _visualScene2D?.Destroy());
+            Release(() => _worldSpaceQuadRenderInfo?.Dispose());
             Release(() => _offscreenFbo?.Destroy(true));
             Release(() => _ownedOffscreenRenderer?.Destroy(true));
             Release(() => _ownedOffscreenMesh?.Destroy(true));

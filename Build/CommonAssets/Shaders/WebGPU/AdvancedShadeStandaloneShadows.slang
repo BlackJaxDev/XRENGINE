@@ -59,9 +59,9 @@ bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
         normal = normalize(helper.tangent * normalTex.x + helper.bitangent * normalTex.y + normal * normalTex.z);
     }
     float3 unusedAlbedo = float3(0.0);
-    float unusedRoughness = 0.0, unusedMetallic = 0.0;
-    for (uint decal = 0u; decal < SceneCount(15u); decal++)
-        XR_ADV_ApplyDecalToSurface(decal, helper, unusedAlbedo, normal, unusedRoughness, unusedMetallic);
+    float unusedRoughness = 0.0, unusedMetallic = 0.0, unusedSpecular = 0.0;
+    float3 unusedEmission = float3(0.0);
+    XR_ADV_ApplySelectedDecals(helper, unusedAlbedo, normal, unusedRoughness, unusedMetallic, unusedSpecular, unusedEmission);
     return XR_ADV_IsFinite(position) && XR_ADV_IsFinite(normal);
 }
 

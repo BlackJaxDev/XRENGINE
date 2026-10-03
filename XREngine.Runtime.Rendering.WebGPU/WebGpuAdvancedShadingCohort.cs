@@ -8,7 +8,8 @@ internal sealed class WebGpuAdvancedShadingCohort : IDisposable
     private readonly int[] _textureHandles = new int[SlotCount];
     private readonly int[] _mips = new int[SlotCount];
     internal readonly WebGpuAdvancedTexturePair[] Pairs = new WebGpuAdvancedTexturePair[SlotCount];
-    internal readonly uint[] BindingWords = new uint[SlotCount * 8];
+    internal uint[] BindingWords = new uint[SlotCount * 8];
+    internal int BindingWordCount = SlotCount * 8;
     internal readonly AbstractRenderAPIObject?[] TextureOwners = new AbstractRenderAPIObject?[SlotCount];
     internal readonly WebGpuAdvancedSampler?[] SamplerOwners = new WebGpuAdvancedSampler?[SlotCount];
     internal readonly int[] Views = new int[SlotCount];

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.Shaders.Generation;
@@ -28,27 +29,42 @@ public static partial class EngineLitMaterialShaderGenerator
     {
         ArgumentNullException.ThrowIfNull(material);
         plan = default;
-        if (material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitV1 || material.ID == Guid.Empty)
+        if (!material.EngineSemantic.IsAuthoredLit() || material.ID == Guid.Empty)
         {
-            reason = "The material must be produced as AuthoredLitV1 with a persistent identity.";
+            reason = "The material must have a supported authored lit semantic and a persistent identity.";
             return false;
         }
         if (target != ShaderCompileTarget.WebGPUWgsl)
         {
-            reason = $"AuthoredLitV1 has no generator for target '{target}'.";
+            reason = $"Authored lit materials have no generator for target '{target}'.";
             return false;
         }
         if (material.UberAuthoredState.Features.Length != 0 || material.UberAuthoredState.Properties.Length != 0 ||
             !material.RequestedUberVariant.IsEmpty)
         {
-            reason = "AuthoredLitV1 currently admits the engine's PBR factors and surface texture roles, but no Uber feature or static-property override.";
+            reason = "Authored lit materials admit the engine's PBR factors and supported surface texture roles, but no Uber feature or static-property override.";
             return false;
         }
         if (material.SurfaceTextureBindings.Length == 0)
         {
             if (!StandardLitColorSurfaceBinding.TryCreateAuthoredCooked(material, out _, out reason)) return false;
-            plan = Plan(CookName(material.ID), "lit", "opaque", "tint", "vertex", target);
+            string coverage = material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2
+                ? material.GetEffectiveTransparencyMode() switch
+                {
+                    ETransparencyMode.Opaque => "opaque-coverage",
+                    ETransparencyMode.Masked => "masked",
+                    ETransparencyMode.AlphaBlend => "alpha-blend",
+                    ETransparencyMode.PremultipliedAlpha => "premultiplied-alpha",
+                    ETransparencyMode.Additive => "additive",
+                    _ => throw new InvalidOperationException("The validated color coverage mode has no target surface profile."),
+                } : "opaque";
+            plan = Plan(CookName(material.ID), "lit", coverage, "tint", "vertex", target);
             return true;
+        }
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2)
+        {
+            reason = "AuthoredLitV2 supports uniform-alpha color coverage only; texture maps require the unchanged opaque V1 surface contract.";
+            return false;
         }
         StandardLitTextureSurface surface;
         if (equivalentTexture is null)
@@ -76,7 +92,7 @@ public static partial class EngineLitMaterialShaderGenerator
             schemaVersion = 2,
             name = plan.Name,
             shadingModel = "lit",
-            surface = "opaque",
+            surface = plan.Surface,
             baseColor = plan.UsesBaseColorTexture ? "texture" : "tint",
             normal = plan.UsesNormalTexture ? "texture" : "vertex",
         }, new JsonSerializerOptions { WriteIndented = true });

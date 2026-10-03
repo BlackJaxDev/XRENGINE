@@ -39,6 +39,16 @@ namespace XREngine.Build
 
         public string GeneratedBrowserGameRegistrations { get; set; } = string.Empty;
 
+        public string GeneratedOutputRoot { get; set; } = string.Empty;
+
+        public string GeneratedIntermediateRoot { get; set; } = string.Empty;
+
+        public string GeneratedGlobalUsingsFile { get; set; } = string.Empty;
+
+        public string GeneratedAssemblyInfoFile { get; set; } = string.Empty;
+
+        public string TargetFrameworkMonikerAssemblyAttributesPath { get; set; } = string.Empty;
+
         public string BrowserGameProject { get; set; } = string.Empty;
 
         public ITaskItem[] ProjectReferences { get; set; } = Array.Empty<ITaskItem>();
@@ -107,12 +117,15 @@ namespace XREngine.Build
                     bool generatedGameAnchor = ProjectName == "XREngine.Browser"
                         && !string.IsNullOrWhiteSpace(GeneratedBrowserGameRegistrations)
                         && fullPath.Equals(Path.GetFullPath(GeneratedBrowserGameRegistrations), comparison);
-                    if ((!fullPath.StartsWith(root, comparison) && !generatedGameAnchor) || !File.Exists(fullPath))
+                    bool generatedPublisherSource = IsPublisherGeneratedSource(fullPath, comparison);
+                    bool sdkGeneratedSource = IsSdkGeneratedSource(fullPath, comparison);
+                    if ((!fullPath.StartsWith(root, comparison) && !generatedGameAnchor && !generatedPublisherSource && !sdkGeneratedSource) || !File.Exists(fullPath))
                     {
                         Log.LogError("Portable Compile item is absent or outside the repository: {0}", source.ItemSpec);
                         continue;
                     }
                     string relative = generatedGameAnchor ? "Generated/BrowserGameComposition.g.cs"
+                        : generatedPublisherSource || sdkGeneratedSource ? "Generated/" + Path.GetFileName(fullPath)
                         : fullPath.Substring(root.Length).Replace('\\', '/');
                     string code = mask.Replace(File.ReadAllText(fullPath), BlankLiteral);
                     foreach (KeyValuePair<string, Regex> rule in forbidden)
@@ -133,6 +146,67 @@ namespace XREngine.Build
                 return false;
             }
         }
+
+        private bool IsPublisherGeneratedSource(string fullPath, StringComparison comparison)
+        {
+            if (string.IsNullOrWhiteSpace(GeneratedOutputRoot))
+                return false;
+            string outputRoot = Path.GetFullPath(GeneratedOutputRoot).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(outputRoot, comparison))
+                return false;
+
+            string expectedName;
+            string expectedPath;
+            if (ProjectName == "XREngine.Runtime.Rendering")
+            {
+                expectedName = "RenderCommandRegistrations.g.cs";
+                expectedPath = GeneratedRenderCommandRegistrations;
+            }
+            else if (ProjectName == "XREngine.Runtime.Host")
+            {
+                expectedName = "AotFactoryRegistrations.g.cs";
+                expectedPath = GeneratedAotFactoryRegistrations;
+            }
+            else if (ProjectName == "XREngine.Browser")
+            {
+                expectedName = "BrowserStaticRegistrations.g.cs";
+                expectedPath = GeneratedBrowserStaticRegistrations;
+            }
+            else
+                return false;
+
+            if (string.IsNullOrWhiteSpace(expectedPath) ||
+                !Path.GetFileName(fullPath).Equals(expectedName, StringComparison.Ordinal))
+                return false;
+            string candidate = Path.IsPathRooted(expectedPath) ? expectedPath
+                : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ProjectFile)) ?? string.Empty, expectedPath);
+            return fullPath.Equals(Path.GetFullPath(candidate), comparison);
+        }
+
+        private bool IsSdkGeneratedSource(string fullPath, StringComparison comparison)
+        {
+            if (string.IsNullOrWhiteSpace(GeneratedOutputRoot) || string.IsNullOrWhiteSpace(GeneratedIntermediateRoot))
+                return false;
+            string outputRoot = Path.GetFullPath(GeneratedOutputRoot).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string intermediateRoot = ResolveProjectPath(GeneratedIntermediateRoot).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!intermediateRoot.StartsWith(outputRoot, comparison) || !fullPath.StartsWith(intermediateRoot, comparison))
+                return false;
+
+            return MatchesGeneratedPath(fullPath, GeneratedGlobalUsingsFile, comparison)
+                || MatchesGeneratedPath(fullPath, GeneratedAssemblyInfoFile, comparison)
+                || MatchesGeneratedPath(fullPath, TargetFrameworkMonikerAssemblyAttributesPath, comparison);
+        }
+
+        private bool MatchesGeneratedPath(string fullPath, string generatedPath, StringComparison comparison)
+            => !string.IsNullOrWhiteSpace(generatedPath) &&
+                fullPath.Equals(ResolveProjectPath(generatedPath), comparison);
+
+        private string ResolveProjectPath(string path)
+            => Path.GetFullPath(Path.IsPathRooted(path) ? path :
+                Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ProjectFile)) ?? string.Empty, path));
 
         private HashSet<string> ReadProjects()
         {

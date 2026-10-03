@@ -20,6 +20,7 @@ public static partial class BrowserEngineExports
     private static BrowserEngineAssetSource? _source;
     private static IDisposable? _assetRegistrations;
     private static IDisposable? _materialConstruction;
+    private static IDisposable? _materialArtifacts;
     private static BrowserEngineSession? _session;
     private static bool _assetOwnerBound;
     private static ShaderProgramArtifactCatalog? _shaderArtifacts;
@@ -110,6 +111,7 @@ public static partial class BrowserEngineExports
             bootstrap?.InitializeRegistrations();
             stage = "load shader catalog";
             _shaderArtifacts = await _source.LoadShaderArtifactsAsync(token);
+            _materialArtifacts = RuntimeEngineMaterialArtifactServices.Install(_shaderArtifacts);
             _materialVariants = _source.LoadEngineMaterialVariants(_shaderArtifacts);
             WebComputeArtifactCatalog computeArtifacts = _source.LoadComputeArtifacts(_shaderArtifacts);
             _session = new BrowserEngineSession(PhysicsBackends);
@@ -397,6 +399,10 @@ public static partial class BrowserEngineExports
         _materialConstruction = null;
         if (materialConstruction is not null)
             Capture(errors, materialConstruction.Dispose);
+        IDisposable? materialArtifacts = _materialArtifacts;
+        _materialArtifacts = null;
+        if (materialArtifacts is not null)
+            Capture(errors, materialArtifacts.Dispose);
         _shaderArtifacts = null;
         _materialVariants = null;
         Capture(errors, () =>

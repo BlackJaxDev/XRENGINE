@@ -10,13 +10,7 @@ public sealed partial class WebGpuRendererHost
     private const int EngineFrameRecordBytes = 112;
     private const int EngineFrameMaximumRecords = 4097;
     private const int EngineUniformCapacity = 4 * 1024 * 1024;
-    private const int EngineStorageCapacity = 8 * 1024 * 1024;
-    private const int EngineMaximumUploads = 4096;
-    private const int EngineUploadRecordBytes = 24;
-    private readonly byte[] _engineCommandArena = new byte[EngineFrameHeaderBytes + EngineFrameMaximumRecords * EngineFrameRecordBytes + EngineMaximumUploads * EngineUploadRecordBytes];
-    private readonly byte[] _engineUploadArena = new byte[EngineMaximumUploads * EngineUploadRecordBytes];
-    private readonly byte[] _engineStorageArena = new byte[EngineStorageCapacity];
-    private readonly List<WebGpuDataBuffer> _enginePendingStorage = new(8);
+    private readonly byte[] _engineCommandArena = new byte[EngineFrameHeaderBytes + EngineFrameMaximumRecords * EngineFrameRecordBytes + EngineMaximumPacketUploads * EngineUploadRecordBytes];
     private readonly List<IWebGpuProducedTexture> _engineProducedTextures = new(16);
     private readonly List<int> _engineDeferredReleases = new(EngineFrameMaximumRecords);
     private byte[]? _engineUniformArena;
@@ -24,8 +18,6 @@ public sealed partial class WebGpuRendererHost
     private int _engineUniformBytes;
     private int _engineUniformAlignment;
     private int _engineCommandCount;
-    private int _engineUploadCount;
-    private int _engineStorageBytes;
     private uint _engineFrameSequence;
     private bool _engineRecording;
     private XRViewport? _engineViewport;
@@ -140,12 +132,11 @@ public sealed partial class WebGpuRendererHost
             throw new InvalidOperationException("WebGPU.Frame.SequenceExhausted: restart the canvas renderer.");
         DiscardEngineViewHistory();
         ReclaimAdvancedSceneSlots();
-        ReclaimMeshletSlots();
+        ReclaimAuthoredIndexedSlots();
         SetField(ref _engineFrameSequence, _engineFrameSequence + 1, publishNotifications: false);
         SetField(ref _engineCommandCount, 0, publishNotifications: false);
         SetField(ref _engineUniformBytes, 0, publishNotifications: false);
-        SetField(ref _engineUploadCount, 0, publishNotifications: false);
-        SetField(ref _engineStorageBytes, 0, publishNotifications: false);
+        BeginEngineBufferUploads();
         SetField(ref _engineDrawPending, false, publishNotifications: false);
         _engineProducedTextures.Clear();
         ResetAuthorizedShadowReuse();
@@ -254,35 +245,10 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteUInt32LittleEndian(destination[12..], (uint)region.Height);
     }
 
-    internal void RegisterPendingStorage(WebGpuDataBuffer buffer)
-    {
-        if (!_enginePendingStorage.Contains(buffer))
-            _enginePendingStorage.Add(buffer);
-    }
-
     internal void RegisterProducedTexture(IWebGpuProducedTexture texture)
     {
         if (!_engineProducedTextures.Contains(texture))
             _engineProducedTextures.Add(texture);
-    }
-
-    internal void StageEngineStorageUpload(int handle, int destinationOffset, ReadOnlySpan<byte> bytes)
-    {
-        if (!_engineRecording || !_resources.Contains(handle))
-            throw new InvalidOperationException("WebGPU.Frame.StorageOwner: storage uploads require an active owned frame.");
-        if (bytes.IsEmpty || (destinationOffset | bytes.Length) % 4 != 0 ||
-            _engineUploadCount == EngineMaximumUploads || bytes.Length > EngineStorageCapacity - _engineStorageBytes)
-            throw new InvalidOperationException("WebGPU.Frame.StorageCapacity: the aligned storage upload exceeds the bounded frame arena.");
-        bytes.CopyTo(_engineStorageArena.AsSpan(_engineStorageBytes, bytes.Length));
-        Span<byte> upload = _engineUploadArena.AsSpan(_engineUploadCount * EngineUploadRecordBytes, EngineUploadRecordBytes);
-        upload.Clear();
-        BinaryPrimitives.WriteInt32LittleEndian(upload, handle);
-        BinaryPrimitives.WriteInt32LittleEndian(upload[4..], destinationOffset);
-        BinaryPrimitives.WriteInt32LittleEndian(upload[8..], _engineStorageBytes);
-        BinaryPrimitives.WriteInt32LittleEndian(upload[12..], bytes.Length);
-        BinaryPrimitives.WriteInt32LittleEndian(upload[16..], _engineCommandCount);
-        SetField(ref _engineStorageBytes, _engineStorageBytes + bytes.Length, publishNotifications: false);
-        SetField(ref _engineUploadCount, _engineUploadCount + 1, publishNotifications: false);
     }
 
     private void SubmitEngineFrame(in RenderFrameOutputDescription output, ref bool submitted)
@@ -294,7 +260,7 @@ public sealed partial class WebGpuRendererHost
         Span<byte> header = _engineCommandArena.AsSpan(0, EngineFrameHeaderBytes);
         header.Clear();
         BinaryPrimitives.WriteUInt32LittleEndian(header, 0x45475258);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 4);
         BinaryPrimitives.WriteInt32LittleEndian(header[8..], length);
         BinaryPrimitives.WriteInt32LittleEndian(header[12..], _engineCommandCount);
         BinaryPrimitives.WriteInt32LittleEndian(header[16..], _session);
@@ -311,8 +277,12 @@ public sealed partial class WebGpuRendererHost
             _engineStorageArena.AsSpan(0, _engineStorageBytes));
         // Queue ownership survives any failure in subsequent managed bookkeeping.
         submitted = true;
+        SetField(ref _engineUploadsSubmitted, true, publishNotifications: false);
         try
         {
+            // Once the queue owns the bytes, no later receipt or notification
+            // failure may leave a buffer waiting for an already accepted snapshot.
+            AcceptSubmittedBufferUploads();
             // The complete-frame gate has passed. Canvas presentation alone is not a
             // color-write receipt: settle only the exact authored and attested views.
             // These CPU metadata slots do not wait for the GPU completion watermark.
@@ -323,14 +293,9 @@ public sealed partial class WebGpuRendererHost
             // The executor returning confirms queue submission even when no canvas
             // pass was present. Seal GPU ownership even if metadata settlement fails.
             try { EndAdvancedSceneRecording(submitted: true); }
-            finally { EndMeshletRecording(submitted: true); }
+            finally { EndAuthoredIndexedRecording(submitted: true); }
         }
         CountEngineFrameSubmissionResult(presented);
-        for (int index = _enginePendingStorage.Count - 1; index >= 0; index--)
-        {
-            if (_enginePendingStorage[index].AcceptSubmittedUploads())
-                _enginePendingStorage.RemoveAt(index);
-        }
         CommitDirectionalShadowDefaults();
         if (presented && !_engineDrawPending)
         {

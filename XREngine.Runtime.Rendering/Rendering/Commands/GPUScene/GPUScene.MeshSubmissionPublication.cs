@@ -144,6 +144,7 @@ public partial class GPUScene
             Bounds = bounds,
             CurrentWorld = snapshot.ModelMatrix,
             PreviousWorld = snapshot.ModelMatrix,
+            LodTransforms = snapshot.LodTransforms,
             WorldMatrixIsModelMatrix = snapshot.WorldMatrixIsModelMatrix,
             ForceCpuRendering = snapshot.ForceCpuRendering,
             HasSkinning = mesh.HasSkinning,
@@ -170,10 +171,14 @@ public partial class GPUScene
             return;
         int capacity = (int)System.Numerics.BitOperations.RoundUpToPowerOf2(Math.Max(64u, requiredCapacity));
         Array.Resize(ref _updatingMeshSubmissions, capacity);
+        Array.Resize(ref _publishedMeshSubmissionLodTransforms, capacity);
+        Array.Resize(ref _publishedMeshSubmissionSkinning, capacity);
     }
 
     private void RemoveUpdatingMeshSubmission(uint targetIndex, uint lastIndex)
     {
+        ClearUpdatingMeshSubmissionLods(targetIndex);
+        ClearUpdatingMeshSubmissionLods(lastIndex);
         if (lastIndex >= _updatingMeshSubmissions.Length)
             return;
         if (targetIndex != lastIndex)
@@ -188,8 +193,12 @@ public partial class GPUScene
                 SourceOrder = ((ulong)targetIndex << 32) | unchecked((uint)moved.PrimitiveIndex),
                 Metadata = metadata,
             };
+            _publishedMeshSubmissionLodTransforms[targetIndex] = _publishedMeshSubmissionLodTransforms[lastIndex];
+            _publishedMeshSubmissionSkinning[targetIndex] = _publishedMeshSubmissionSkinning[lastIndex];
         }
         _updatingMeshSubmissions[lastIndex] = default;
+        _publishedMeshSubmissionLodTransforms[lastIndex] = null;
+        _publishedMeshSubmissionSkinning[lastIndex] = false;
     }
 
     private void RefreshMeshSubmissionPayloadAtFrameBoundary(XRMesh mesh)
@@ -268,6 +277,19 @@ public partial class GPUScene
             // swap boundary. No visibility, counts, or GPU-written data is read back.
             DrawMetadata metadata = DrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>((uint)index);
             _logicalMeshStates.TryGetValue(metadata.LogicalMeshID, out LogicalMeshState? lodState);
+            GpuMeshSubmissionLodTransforms? lodTransforms = record.LodTransforms;
+            GpuMeshSubmissionLodTransforms? priorLodTransforms = _publishedMeshSubmissionLodTransforms[index];
+            if (lodTransforms is { } currentLodTransforms)
+            {
+                GpuMeshSubmissionLodTransforms previousLodTransforms = priorLodTransforms ?? currentLodTransforms;
+                // Component and source-model history advance at the same scene
+                // publication boundary, including public live Add/Update calls.
+                lodTransforms = currentLodTransforms with
+                {
+                    PreviousComponentWorld = previousLodTransforms.CurrentComponentWorld,
+                    PreviousSkinningEnabled = previousLodTransforms.SkinningEnabled,
+                };
+            }
             records[index] = record with
             {
                 Metadata = metadata,
@@ -276,9 +298,17 @@ public partial class GPUScene
                 Bounds = BoundsBuffer.GetDataRawAtIndex<BoundsGpu>(metadata.BoundsID),
                 CurrentWorld = TransformBuffer.GetDataRawAtIndex<TransformGpu>(metadata.TransformID).WorldMatrix,
                 PreviousWorld = PrevTransformBuffer.GetDataRawAtIndex<TransformGpu>(metadata.TransformID).WorldMatrix,
+                LodTransforms = lodTransforms,
             };
+            CaptureMeshSubmissionLods(destination, index, in records[index], lodState,
+                priorLodTransforms.HasValue ? _publishedMeshSubmissionSkinning[index] : record.HasSkinning);
         }
         destination.CompleteCapture();
+        for (int index = 0; index < records.Length; index++)
+        {
+            _publishedMeshSubmissionLodTransforms[index] = records[index].LodTransforms;
+            _publishedMeshSubmissionSkinning[index] = records[index].HasSkinning;
+        }
         GpuMeshSubmissionPublication? prior = _currentMeshSubmissionPublication;
         _currentMeshSubmissionPublication = destination;
         prior?.ClearRetainedSources();
@@ -317,6 +347,10 @@ public partial class GPUScene
         {
             Interlocked.Exchange(ref _meshSubmissionPublicationRequested, 0);
             Array.Clear(_updatingMeshSubmissions);
+            Array.Clear(_updatingMeshSubmissionLodBindings);
+            Array.Clear(_updatingMeshSubmissionOutlineBindings);
+            Array.Clear(_publishedMeshSubmissionLodTransforms);
+            Array.Clear(_publishedMeshSubmissionSkinning);
             _meshSubmissionCaptureEnabled = false;
             _hasMeshSubmissionFrameId = false;
             _currentMeshSubmissionPublication = null;

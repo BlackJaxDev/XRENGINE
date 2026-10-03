@@ -50,6 +50,7 @@ internal partial class CodeManager
 
     /// <summary>Publishes the browser application with the existing child-MSBuild logging path.</summary>
     internal string PublishBrowserApplication(string configuration, string publishDirectory, bool includePdbFiles,
+        string intermediateDirectory,
         CancellationToken cancellationToken = default)
     {
         string project = ResolveBrowserProject();
@@ -73,6 +74,12 @@ internal partial class CodeManager
             ["PublishTrimmed"] = "false",
             ["RunAOTCompilation"] = "false"
         };
+        if (IsPackagedBrowserProject(project))
+        {
+            properties["UseArtifactsOutput"] = "true";
+            properties["ArtifactsPath"] = GetPackagedBrowserArtifactsPath(intermediateDirectory);
+            properties["XREngineBrowserPackagedToolchain"] = "true";
+        }
         // Restricted local task hosts can request a single MSBuild node without
         // changing the ordinary publisher's build scheduling.
         bool singleNode = UseSingleNodeBrowserPublish();
@@ -129,16 +136,52 @@ internal partial class CodeManager
 
     internal static string ResolveBrowserProject()
     {
-        foreach (string start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
+        string packagedRoot = Path.Combine(AppContext.BaseDirectory, "BrowserPublishing");
+        if (Directory.Exists(packagedRoot))
         {
-            DirectoryInfo? directory = new(Path.GetFullPath(start));
-            while (directory is not null)
-            {
-                string candidate = Path.Combine(directory.FullName, "XREngine.Browser", "XREngine.Browser.csproj");
-                if (File.Exists(candidate)) return candidate;
-                directory = directory.Parent;
-            }
+            string packagedProject = Path.Combine(packagedRoot, "XREngine.Browser", "XREngine.Browser.csproj");
+            if (!File.Exists(packagedProject) ||
+                !File.Exists(Path.Combine(packagedRoot, "Directory.Build.props")) ||
+                !File.Exists(Path.Combine(packagedRoot, "Build", "Portable", "PortableProjects.tsv")) ||
+                !File.Exists(Path.Combine(packagedRoot, "Tools", "Generate-AotFactoryRegistrations.ps1")))
+                throw new FileNotFoundException("BrowserPublisher.PayloadIncomplete: the packaged Editor browser publishing payload is incomplete.", packagedProject);
+            BrowserPublisherPayloadManifest.Validate(packagedRoot);
+            return packagedProject;
         }
-        throw new FileNotFoundException("The XREngine.Browser source project is required to publish a browser target.");
+
+        DirectoryInfo? directory = new(Path.GetFullPath(AppContext.BaseDirectory));
+        while (directory is not null)
+        {
+            string candidate = Path.Combine(directory.FullName, "XREngine.Browser", "XREngine.Browser.csproj");
+            if (File.Exists(candidate) && File.Exists(Path.Combine(directory.FullName, "XREngine.Editor", "XREngine.Editor.csproj")))
+                return candidate;
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException("BrowserPublisher.PayloadMissing: publish the Editor with its BrowserPublishing payload before building a browser target.");
+    }
+
+    internal static string ResolveBrowserAssemblyDirectory(string configuration, string intermediateDirectory)
+    {
+        string project = ResolveBrowserProject();
+        if (IsPackagedBrowserProject(project))
+            return Path.Combine(GetPackagedBrowserArtifactsPath(intermediateDirectory), "bin", "XREngine.Browser",
+                configuration.ToLowerInvariant());
+
+        return Path.Combine(Path.GetDirectoryName(project)!, "bin", Platform_AnyCPU, configuration, "net10.0");
+    }
+
+    private static bool IsPackagedBrowserProject(string project)
+    {
+        string packagedProject = Path.Combine(AppContext.BaseDirectory, "BrowserPublishing", "XREngine.Browser", "XREngine.Browser.csproj");
+        return string.Equals(Path.GetFullPath(project), Path.GetFullPath(packagedProject),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    private static string GetPackagedBrowserArtifactsPath(string intermediateDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(intermediateDirectory))
+            throw new InvalidOperationException("BrowserPublisher.ProjectIntermediateMissing: the active project needs a writable Intermediate directory.");
+        return Path.GetFullPath(Path.Combine(intermediateDirectory, "BrowserPublishing", "Artifacts"));
     }
 }

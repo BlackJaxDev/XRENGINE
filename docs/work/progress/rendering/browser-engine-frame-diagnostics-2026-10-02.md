@@ -53,6 +53,10 @@ incomplete/faulted attempts, command/mesh/upload records, uniform/storage arena
 bytes and attempted interop crossings. They exclude world update/collection
 outside the callback, other threads and JavaScript/GPU allocations. Uniform byte
 counts include alignment padding; mesh counts do not claim to count every GPU draw.
+The historical storage upload record/byte counters cover the shared buffer-upload
+arena, including non-storage authored buffers and retained retry preambles.
+Discarded attempts remain counted as recording attempts; later retry compaction
+can remove fully superseded or logically retired mutations before submission.
 
 A capture window can be reset between frames, enabled after warm-up, then disabled
 without reset to preserve measured totals. Configuration and snapshot requests

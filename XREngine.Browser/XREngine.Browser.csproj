@@ -31,7 +31,9 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(XREngineBrowserGameProject)' != ''">
-    <ProjectReference Include="$(XREngineBrowserGameProject)" />
+    <ProjectReference Include="$(XREngineBrowserGameProject)">
+      <GlobalPropertiesToRemove Condition="'$(XREngineBrowserPackagedToolchain)' == 'true'">UseArtifactsOutput;ArtifactsPath</GlobalPropertiesToRemove>
+    </ProjectReference>
     <Compile Include="$(XREngineBrowserGameRegistrationSource)" />
   </ItemGroup>
   <Target Name="ValidateBrowserNativeSourceSelection" BeforeTargets="CollectPackageReferences;PrepareForBuild">

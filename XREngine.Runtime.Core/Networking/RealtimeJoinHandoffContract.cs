@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using XREngine.Core.Files;
 
 namespace XREngine.Networking;
 
@@ -23,6 +24,11 @@ public static class RealtimeJoinHandoffContract
         string? payloadPath = GetOptionalEnvironmentValue(PayloadFileEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(payloadPath))
         {
+            if (OperatingSystem.IsBrowser()
+                || DirectStorageIO.Source is { SupportsSynchronousReads: false } or IRuntimeAssetCatalog)
+                throw new NotSupportedException(
+                    "RealtimeJoinHandoff.FileSourceUnavailable: this host requires the inline realtime join payload instead of a handoff file.");
+
             string resolvedPath = Path.GetFullPath(payloadPath);
             if (!File.Exists(resolvedPath))
                 throw new FileNotFoundException("Realtime join handoff payload file was not found.", resolvedPath);

@@ -1,0 +1,938 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-uber-outline-dissolve",
+  "pass": "outline",
+  "source": "UberOutline.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "uberOutlineVertex",
+    "fragment": "uberOutlineFragment"
+  },
+  "defines": [
+    "XRE_OUTLINE_DISSOLVE"
+  ],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 7,
+    "maxVertexBuffers": 7,
+    "maxVertexBufferArrayStride": 72,
+    "maxBindGroups": 3,
+    "maxBindingsPerBindGroup": 16,
+    "maxUniformBufferBindingSize": 592,
+    "maxDynamicUniformBuffersPerPipelineLayout": 3,
+    "maxUniformBuffersPerShaderStage": 3,
+    "maxSampledTexturesPerShaderStage": 8,
+    "maxSamplersPerShaderStage": 8
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.uber-outline.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "materialVariant": {
+    "semantic": "UberOutline",
+    "semanticVersion": 1,
+    "vertexProfile": "position-normal-uv4-color-v1",
+    "outputProfile": "linear-hdr-dissolve-v1"
+  },
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 72,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          },
+          {
+            "location": 1,
+            "offset": 12,
+            "format": "float32x3",
+            "semantic": "normal"
+          },
+          {
+            "location": 2,
+            "offset": 24,
+            "format": "float32x2",
+            "semantic": "uv0"
+          },
+          {
+            "location": 3,
+            "offset": 32,
+            "format": "float32x2",
+            "semantic": "uv1"
+          },
+          {
+            "location": 4,
+            "offset": 40,
+            "format": "float32x2",
+            "semantic": "uv2"
+          },
+          {
+            "location": 5,
+            "offset": 48,
+            "format": "float32x2",
+            "semantic": "uv3"
+          },
+          {
+            "location": 6,
+            "offset": 56,
+            "format": "float32x4",
+            "semantic": "color0"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 112,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "cameraPosition_0",
+            "provider": "CameraPosition",
+            "offset": 64,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "u_ScreenParams_0",
+            "provider": "u_ScreenParams",
+            "offset": 80,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "u_Time_0",
+            "provider": "u_Time",
+            "offset": 96,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "object_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "modelMatrix_0",
+            "provider": "ModelMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "normalMatrix_0",
+            "provider": "NormalMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "UberOutlineMaterial",
+        "physicalName": "material_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 592,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "OutlineFeatures_0",
+            "provider": "OutlineFeatures",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "_MainTex_ST_0",
+            "provider": "_MainTex_ST",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_MainTexPan_0",
+            "provider": "_MainTexPan",
+            "offset": 32,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_MainTexUV_0",
+            "provider": "_MainTexUV",
+            "offset": 40,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_Color_0",
+            "provider": "_Color",
+            "offset": 48,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_MainVertexColoringEnabled_0",
+            "provider": "_MainVertexColoringEnabled",
+            "offset": 64,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_MainVertexColoringLinearSpace_0",
+            "provider": "_MainVertexColoringLinearSpace",
+            "offset": 68,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_MainVertexColoring_0",
+            "provider": "_MainVertexColoring",
+            "offset": 72,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_MainUseVertexColorAlpha_0",
+            "provider": "_MainUseVertexColorAlpha",
+            "offset": 76,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMask_ST_0",
+            "provider": "_AlphaMask_ST",
+            "offset": 80,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_AlphaMaskPan_0",
+            "provider": "_AlphaMaskPan",
+            "offset": 96,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_AlphaMaskUV_0",
+            "provider": "_AlphaMaskUV",
+            "offset": 104,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_MainAlphaMaskMode_0",
+            "provider": "_MainAlphaMaskMode",
+            "offset": 108,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_AlphaMaskBlendStrength_0",
+            "provider": "_AlphaMaskBlendStrength",
+            "offset": 112,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMaskValue_0",
+            "provider": "_AlphaMaskValue",
+            "offset": 116,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMaskInvert_0",
+            "provider": "_AlphaMaskInvert",
+            "offset": 120,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_Cutoff_0",
+            "provider": "_Cutoff",
+            "offset": 124,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_Mode_0",
+            "provider": "_Mode",
+            "offset": 128,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_AlphaForceOpaque_0",
+            "provider": "_AlphaForceOpaque",
+            "offset": 132,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMod_0",
+            "provider": "_AlphaMod",
+            "offset": 136,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineColor_0",
+            "provider": "_OutlineColor",
+            "offset": 144,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_OutlineWidth_0",
+            "provider": "_OutlineWidth",
+            "offset": 160,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineEmission_0",
+            "provider": "_OutlineEmission",
+            "offset": 164,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineLit_0",
+            "provider": "_OutlineLit",
+            "offset": 168,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineDistanceFadeStart_0",
+            "provider": "_OutlineDistanceFadeStart",
+            "offset": 172,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineDistanceFadeEnd_0",
+            "provider": "_OutlineDistanceFadeEnd",
+            "offset": 176,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineTextureTint_0",
+            "provider": "_OutlineTextureTint",
+            "offset": 180,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineVertexColorTint_0",
+            "provider": "_OutlineVertexColorTint",
+            "offset": 184,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineExpansionMode_0",
+            "provider": "_OutlineExpansionMode",
+            "offset": 188,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_OutlineSpace_0",
+            "provider": "_OutlineSpace",
+            "offset": 192,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_OutlinePersonaDirection_0",
+            "provider": "_OutlinePersonaDirection",
+            "offset": 208,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "_OutlineDropShadowOffset_0",
+            "provider": "_OutlineDropShadowOffset",
+            "offset": 224,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "_OutlineFixedSize_0",
+            "provider": "_OutlineFixedSize",
+            "offset": 236,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineUseVertexColors_0",
+            "provider": "_OutlineUseVertexColors",
+            "offset": 240,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineZOffset_0",
+            "provider": "_OutlineZOffset",
+            "offset": 244,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineTexture_ST_0",
+            "provider": "_OutlineTexture_ST",
+            "offset": 256,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_OutlineTexturePan_0",
+            "provider": "_OutlineTexturePan",
+            "offset": 272,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_OutlineTextureUV_0",
+            "provider": "_OutlineTextureUV",
+            "offset": 280,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_OutlineMask_ST_0",
+            "provider": "_OutlineMask_ST",
+            "offset": 288,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_OutlineMaskPan_0",
+            "provider": "_OutlineMaskPan",
+            "offset": 304,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_OutlineMaskUV_0",
+            "provider": "_OutlineMaskUV",
+            "offset": 312,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_OutlineHueShift_0",
+            "provider": "_OutlineHueShift",
+            "offset": 316,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineHueShiftSpeed_0",
+            "provider": "_OutlineHueShiftSpeed",
+            "offset": 320,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineShadowStrength_0",
+            "provider": "_OutlineShadowStrength",
+            "offset": 324,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveType_0",
+            "provider": "_DissolveType",
+            "offset": 328,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveProgress_0",
+            "provider": "_DissolveProgress",
+            "offset": 332,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveEdgeColor_0",
+            "provider": "_DissolveEdgeColor",
+            "offset": 336,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveEdgeWidth_0",
+            "provider": "_DissolveEdgeWidth",
+            "offset": 352,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveEdgeEmission_0",
+            "provider": "_DissolveEdgeEmission",
+            "offset": 356,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveNoiseTexture_ST_0",
+            "provider": "_DissolveNoiseTexture_ST",
+            "offset": 368,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveNoiseStrength_0",
+            "provider": "_DissolveNoiseStrength",
+            "offset": 384,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveStartPoint_0",
+            "provider": "_DissolveStartPoint",
+            "offset": 400,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "_DissolveEndPoint_0",
+            "provider": "_DissolveEndPoint",
+            "offset": 416,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "_DissolveInvert_0",
+            "provider": "_DissolveInvert",
+            "offset": 428,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveNoiseTexturePan_0",
+            "provider": "_DissolveNoiseTexturePan",
+            "offset": 432,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_DissolveNoiseTextureUV_0",
+            "provider": "_DissolveNoiseTextureUV",
+            "offset": 440,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_DissolveDetailNoise_ST_0",
+            "provider": "_DissolveDetailNoise_ST",
+            "offset": 448,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveDetailNoisePan_0",
+            "provider": "_DissolveDetailNoisePan",
+            "offset": 464,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_DissolveDetailNoiseUV_0",
+            "provider": "_DissolveDetailNoiseUV",
+            "offset": 472,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_DissolveDetailStrength_0",
+            "provider": "_DissolveDetailStrength",
+            "offset": 476,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveMask_ST_0",
+            "provider": "_DissolveMask_ST",
+            "offset": 480,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveMaskPan_0",
+            "provider": "_DissolveMaskPan",
+            "offset": 496,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_DissolveMaskUV_0",
+            "provider": "_DissolveMaskUV",
+            "offset": 504,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_DissolveMaskInvert_0",
+            "provider": "_DissolveMaskInvert",
+            "offset": 508,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveContinuous_0",
+            "provider": "_DissolveContinuous",
+            "offset": 512,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveCoordinateSpace_0",
+            "provider": "_DissolveCoordinateSpace",
+            "offset": 516,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_DissolveTileGrid_0",
+            "provider": "_DissolveTileGrid",
+            "offset": 520,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_DissolveHueShift_0",
+            "provider": "_DissolveHueShift",
+            "offset": 528,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_DissolveEdgeGradient_ST_0",
+            "provider": "_DissolveEdgeGradient_ST",
+            "offset": 544,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveEdgeTexture_ST_0",
+            "provider": "_DissolveEdgeTexture_ST",
+            "offset": 560,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveEdgeTexturePan_0",
+            "provider": "_DissolveEdgeTexturePan",
+            "offset": 576,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_DissolveEdgeTextureUV_0",
+            "provider": "_DissolveEdgeTextureUV",
+            "offset": 584,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_DissolveCutoff_0",
+            "provider": "_DissolveCutoff",
+            "offset": 588,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ]
+      },
+      {
+        "name": "_MainTex",
+        "physicalName": "_MainTex_0",
+        "group": 2,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_MainTex",
+        "physicalName": "_MainTexSampler_0",
+        "group": 2,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_OutlineTexture",
+        "physicalName": "_OutlineTexture_0",
+        "group": 2,
+        "binding": 2,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_OutlineTexture",
+        "physicalName": "_OutlineTextureSampler_0",
+        "group": 2,
+        "binding": 3,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_OutlineMask",
+        "physicalName": "_OutlineMask_0",
+        "group": 2,
+        "binding": 4,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_OutlineMask",
+        "physicalName": "_OutlineMaskSampler_0",
+        "group": 2,
+        "binding": 5,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveNoiseTexture",
+        "physicalName": "_DissolveNoiseTexture_0",
+        "group": 2,
+        "binding": 8,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveNoiseTexture",
+        "physicalName": "_DissolveNoiseTextureSampler_0",
+        "group": 2,
+        "binding": 9,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveDetailNoise",
+        "physicalName": "_DissolveDetailNoise_0",
+        "group": 2,
+        "binding": 10,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveDetailNoise",
+        "physicalName": "_DissolveDetailNoiseSampler_0",
+        "group": 2,
+        "binding": 11,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveMask",
+        "physicalName": "_DissolveMask_0",
+        "group": 2,
+        "binding": 12,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveMask",
+        "physicalName": "_DissolveMaskSampler_0",
+        "group": 2,
+        "binding": 13,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveEdgeGradient",
+        "physicalName": "_DissolveEdgeGradient_0",
+        "group": 2,
+        "binding": 14,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveEdgeGradient",
+        "physicalName": "_DissolveEdgeGradientSampler_0",
+        "group": 2,
+        "binding": 15,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveEdgeTexture",
+        "physicalName": "_DissolveEdgeTexture_0",
+        "group": 2,
+        "binding": 16,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_DissolveEdgeTexture",
+        "physicalName": "_DissolveEdgeTextureSampler_0",
+        "group": 2,
+        "binding": 17,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {}
+}

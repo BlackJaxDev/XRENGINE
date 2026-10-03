@@ -2,7 +2,7 @@ struct FinalizeParameters {
     meshletCount: u32,
     indexCapacity: u32,
     sourceTriangleCount: u32,
-    reserved0: u32,
+    instanceCount: u32,
 };
 @group(0) @binding(0) var<storage, read_write> state: array<atomic<u32>>;
 @group(0) @binding(1) var<uniform> parameters: FinalizeParameters;
@@ -17,5 +17,5 @@ fn meshletsFinalizeIndexed() {
         atomicLoad(&state[7u]) > parameters.sourceTriangleCount) { atomicOr(&state[5u], 2u); }
     if (atomicLoad(&state[5u]) != 0u || atomicLoad(&state[7u]) == 0u) { return; }
     atomicStore(&state[0u], parameters.sourceTriangleCount * 3u);
-    atomicStore(&state[1u], 1u);
+    atomicStore(&state[1u], parameters.instanceCount);
 }

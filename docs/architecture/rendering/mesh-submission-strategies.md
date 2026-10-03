@@ -16,13 +16,22 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
-WebGPU preserves the requested authored strategy. Its generic meshlet route
-uses a material-independent resident `GPUScene` publication, cooked GPU
+WebGPU preserves the requested authored strategy, including instrumented modes
+when diagnostics are disabled. Generic traditional indirect and compute-meshlet
+routes share a material-independent resident `GPUScene` publication and exact
+authored raster preparation. Traditional indirect uses a cooked GPU producer to
+refit current position bounds and publish one whole-primitive argument record
+over the frozen original index stream; it requires no meshlet payload. The
+generic meshlet route uses cooked GPU
 cull/expand and bounds-refit companions, and GPU-written uint32 indices and
 `drawIndexedIndirect` arguments. It reuses the original authored raster program
 and does not require Advanced native material eligibility or hardware task/mesh
 stages. Pending or rejected meshlet work never falls through to original
-indexed replay. Dynamic LOD, transparent GPU ordering, and other unavailable
+indexed replay. Both routes use the shared GPU-selected resident LOD candidates. Runtime instance
+publishers provide exact current/previous transforms and bounds under the authored
+raster ABI; conservative GPU union visibility preserves the full native instance
+count and first-instance zero without optional instance remapping.
+Transparent GPU ordering and other unavailable
 selected profiles report specific diagnostics. The [authored meshlet lowering
 record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
 describes ownership, conservative bounds, capacities, and pending runtime
@@ -70,10 +79,11 @@ The browser's native Advanced stage family has a separate compute/indirect
 meshlet capability. It consumes canonical resident meshlet records, compacts
 triangle identities on the GPU, and issues vertex-pulled indirect raster work
 without reading visibility or counts back to the CPU. This does not advertise
-hardware task/mesh shader extensions, and it does not admit the still-missing
-generic Default/custom meshlet command path. WebGPU preserves an explicitly
-requested submission strategy and reports unsupported operations instead of
-applying the desktop fallback policy described below. See
+hardware task/mesh shader extensions. The separate generic Default/custom
+compute-meshlet route preserves authored raster programs and has its own
+residency, deformation and indirect-index contracts described above. WebGPU
+preserves an explicitly requested submission strategy and reports unsupported
+operations instead of applying the desktop fallback policy described below. See
 [WebGPU indirect submission](webgpu-indirect-submission.md).
 
 The lower-level hardware probes describe partial backend support:

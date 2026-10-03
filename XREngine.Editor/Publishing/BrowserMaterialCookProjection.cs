@@ -17,7 +17,7 @@ namespace XREngine.Editor.Publishing;
 /// Projects built-in UI images and built-in or exact-companion authored lit textures while the browser serializer
 /// walks an ordinary engine world. Authored objects remain borrowed and are never rewritten.
 /// </summary>
-internal sealed class BrowserMaterialCookProjection : IDisposable
+internal sealed partial class BrowserMaterialCookProjection : IDisposable
 {
     private readonly string? _engineRoot;
     private readonly BrowserShaderArtifactSource? _shaderSource;
@@ -37,14 +37,40 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
     private object? Project(object? value)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial or PublishedUiImageMaterial)
+        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial or PublishedUiImageMaterial or PublishedDeferredDecalMaterial)
             return value;
+        try
+        {
+            return ProjectMaterial(source);
+        }
+        catch (Exception error) when (error is NotSupportedException or InvalidDataException or ShaderCompilationException)
+        {
+            error.Data["BrowserCook.Material"] = source.Name;
+            if (!error.Data.Contains("BrowserCook.Pass"))
+                error.Data["BrowserCook.Pass"] = source.EngineSemantic.IsAuthoredLit()
+                    ? source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2 ? "forward-coverage" : "opaque-forward"
+                    : source.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            XRShader? stage = source.Shaders.FirstOrDefault();
+            string? sourcePath = stage?.Source?.FilePath ?? stage?.FilePath ?? source.FilePath;
+            if (!string.IsNullOrWhiteSpace(sourcePath))
+                error.Data["BrowserCook.SourcePath"] = sourcePath;
+            throw;
+        }
+    }
+
+    private object ProjectMaterial(XRMaterial source)
+    {
+        if (source.RenderPass == (int)EDefaultRenderPass.DeferredDecals ||
+            IsDecalStageCandidate(source) || IsDecalSlotCandidate(source))
+            return ProjectDeferredDecal(source);
+        if (source.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outline) && outline.Enabled)
+            return ProjectOutlineSource(source, outline);
         if (source.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1)
             return ProjectUiImage(source);
-        if (source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+        if (source.EngineSemantic.IsAuthoredLit())
             return ProjectAuthored(source);
         if (source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1)
-            return value;
+            return source;
         if (_copies.TryGetValue(source, out XRMaterial? existing)) return existing;
         if (source.GetType() != typeof(XRMaterial))
             throw new NotSupportedException($"BrowserCook.TexturedProjectionUnsupported: '{source.Name}' requires the exact built-in material type.");
@@ -178,6 +204,14 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
             copy.AdoptPersistentID(source.ID);
             copy.Name = source.Name;
             copy.Shaders = [new XRShader(EShaderType.Fragment) { CookedArtifactIdentity = artifact.Identity }];
+            if (plan.UsesCoverage)
+            {
+                // Transparency setters synchronize cutoff parameters. Establish
+                // detached state before borrowing the authored parameter objects.
+                copy.AlphaCutoff = source.AlphaCutoff;
+                copy.TransparencyMode = source.TransparencyMode;
+                copy.TransparentTechniqueOverride = source.TransparentTechniqueOverride;
+            }
             copy.Parameters = source.Parameters;
             if (textured)
             {
@@ -187,7 +221,7 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
             copy.RenderOptions = source.RenderOptions;
             copy.RenderPass = source.RenderPass;
             copy.TransparentSortPriority = source.TransparentSortPriority;
-            copy.EngineSemantic = EngineMaterialSemanticIdentity.AuthoredLitV1;
+            copy.EngineSemantic = source.EngineSemantic;
             if (!EngineAuthoredLitMaterialAdmission.TryAdmit(copy, artifact, out _, out _, out reason))
                 throw new InvalidDataException($"BrowserCook.AuthoredLitProjectionMismatch: '{source.Name}': {reason}");
             _copies.Add(source, copy);
@@ -260,7 +294,9 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
             !shader.SlangOptions.Defines.IsDefaultOrEmpty || !shader.SlangOptions.Includes.IsDefaultOrEmpty ||
             !shader.SlangOptions.RequiredCapabilities.IsDefaultOrEmpty || !shader.SlangOptions.Resources.IsDefaultOrEmpty)
             throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' requires the canonical engine GLSL PBR fragment without extensions.");
-        string path = Path.GetFullPath(Path.Combine(_engineRoot, "Shaders", "Common", "ColoredDeferred.fs"));
+        string file = material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2
+            ? "StandardLitColorCoverageForward.fs" : "ColoredDeferred.fs";
+        string path = Path.GetFullPath(Path.Combine(_engineRoot, "Shaders", "Common", file));
         string? sourcePath = shader.Source?.FilePath ?? shader.FilePath;
         if (sourcePath is null || !string.Equals(Path.GetFullPath(sourcePath), path,
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
@@ -272,7 +308,8 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
         }
         if (!string.Equals(shader.Source?.Text, canonical, StringComparison.Ordinal))
             throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' desktop GLSL source differs from the engine PBR fragment.");
-        VerifySnippets(material, shader, canonical);
+        VerifySnippets(material, shader, canonical,
+            allowCoverageGraph: material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2);
     }
 
     private void VerifyImageStage(XRMaterial material)
@@ -331,31 +368,52 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
         VerifySnippets(material, shader, canonical);
     }
 
-    private void VerifySnippets(XRMaterial material, XRShader shader, string canonical)
+    private void VerifySnippets(XRMaterial material, XRShader shader, string canonical, bool allowCoverageGraph = false)
     {
         if (!shader.TryGetResolvedSource(out string resolved, annotateIncludes: true, logFailures: false))
             throw Unsupported(material);
-        // These exact deferred programs currently use flat engine snippets. A future
-        // include or nested snippet is a contract change requiring explicit review.
+        // The coverage stage has one explicitly reviewed transitive graph. Other
+        // canonical programs retain the original flat-snippet requirement.
         if (Regex.IsMatch(canonical, @"(?m)^\s*#\s*include\b")) throw Unsupported(material);
-        Dictionary<string, string> canonicalSnippets = new(StringComparer.OrdinalIgnoreCase);
-        foreach (Match match in Regex.Matches(canonical, "(?m)^[ \\t]*#[ \\t]*pragma[ \\t]+snippet[ \\t]+\"(?<name>[A-Za-z][A-Za-z0-9_]*)\""))
+        HashSet<string>? coverageSnippets = allowCoverageGraph ? new(StringComparer.OrdinalIgnoreCase)
         {
-            string name = match.Groups["name"].Value;
+            "ShadowMomentEncoding", "NormalEncoding", "ForwardLighting", "AmbientOcclusionSampling",
+            "LightStructs", "LightAttenuation", "ShadowSampling"
+        } : null;
+        Dictionary<string, string> canonicalSnippets = new(StringComparer.OrdinalIgnoreCase);
+        Queue<string> pending = new();
+        EnqueueSnippets(canonical);
+        while (pending.TryDequeue(out string? name))
+        {
+            if (canonicalSnippets.ContainsKey(name))
+                continue;
+            if (canonicalSnippets.Count >= 128 || coverageSnippets is not null && !coverageSnippets.Contains(name))
+                throw Unsupported(material);
             string path = Path.Combine(_engineRoot!, "Shaders", "Snippets", name + ".glsl");
             if (!_canonicalSources.TryGetValue(path, out string? snippet))
             {
                 snippet = File.ReadAllText(path);
                 _canonicalSources.Add(path, snippet);
             }
-            if (Regex.IsMatch(snippet, @"(?m)^\s*#\s*(include|pragma\s+snippet)\b") ||
+            if (Regex.IsMatch(snippet, allowCoverageGraph ? @"(?m)^\s*#\s*include\b" :
+                    @"(?m)^\s*#\s*(include|pragma\s+snippet)\b") ||
                 !ShaderSnippets.TryGet(name, out string? active) || !string.Equals(active, snippet, StringComparison.Ordinal))
                 throw new NotSupportedException($"BrowserCook.TexturedProjectionSnippetMismatch: '{material.Name}' uses a noncanonical '{name}' snippet or unresolved dependency.");
-            canonicalSnippets.TryAdd(name, snippet);
+            canonicalSnippets.Add(name, snippet);
+            if (allowCoverageGraph)
+                EnqueueSnippets(snippet);
         }
+        if (coverageSnippets is not null && canonicalSnippets.Count != coverageSnippets.Count)
+            throw Unsupported(material);
         string expected = ShaderSnippets.ResolveCanonical(canonical, canonicalSnippets);
         if (!string.Equals(resolved, expected, StringComparison.Ordinal))
             throw new NotSupportedException($"BrowserCook.TexturedProjectionResolvedSourceMismatch: '{material.Name}' does not resolve to the complete canonical engine program.");
+
+        void EnqueueSnippets(string source)
+        {
+            foreach (Match match in Regex.Matches(source, "(?m)^[ \\t]*#[ \\t]*pragma[ \\t]+snippet[ \\t]+\"(?<name>[A-Za-z][A-Za-z0-9_]*)\""))
+                pending.Enqueue(match.Groups["name"].Value);
+        }
     }
 
     private static NotSupportedException Unsupported(XRMaterial material)
@@ -364,7 +422,9 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
     private static void Release(XRMaterial copy)
     {
         copy.Parameters = [];
-        copy.Textures = [];
+        // Every projection owns its detached list; images remain borrowed.
+        // Replacing it here would register an unowned empty EventList at disposal.
+        copy.Textures.Clear();
         copy.SurfaceTextureBindings = [];
         copy.Shaders.Clear();
         copy.DestroyShaderPipelineProgram();
@@ -377,6 +437,7 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
         foreach (XRMaterial copy in _copies.Values) Release(copy);
         _copies.Clear();
         _canonicalSources.Clear();
+        _outlineCanonicalSources.Clear();
         _disposed = true;
     }
 }

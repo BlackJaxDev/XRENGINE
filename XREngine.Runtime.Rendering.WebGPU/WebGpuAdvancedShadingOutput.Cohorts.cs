@@ -22,6 +22,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             // the previously accepted publication on a later frame.
             frame.DatabaseEpoch = 0;
             _globalCount = 0;
+            PrepareAuthoredDecals(in request, snapshot, frame);
             uint view = request.NativeViewIndex;
             if (request.EnableLightProbesAndIbl)
                 foreach (ref readonly AdvancedProbeRecord probe in snapshot.GlobalResources.Probes.PhysicalRecords)
@@ -40,6 +41,8 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             }
             foreach (ref readonly AdvancedDecalRecord decal in snapshot.GlobalResources.Decals.PhysicalRecords)
             {
+                if ((decal.Flags & (AdvancedDecalRecord.AuthoredAlbedoFlag | AdvancedDecalRecord.UnsupportedAuthoredFlag)) != 0) continue;
+                if (!snapshot.GlobalResources.Decals.TryGetDenseIndex(decal.Identity, out _)) continue;
                 if ((decal.Flags & AdvancedDecalRecord.EnabledFlag) == 0 || !ViewMatches(decal.ViewMaskLo, decal.ViewMaskHi, view)) continue;
                 AddGlobal(snapshot, decal.MaskTexture);
                 if (!snapshot.Materials.TryGet(decal.Material, out AdvancedMaterialRecord material))
@@ -76,12 +79,12 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                         throw Invalid("CohortCapacity", "the complete publication exceeds 127 native cohorts plus the diagnostic cohort");
                     selected = frame.CohortCount++;
                     WebGpuAdvancedShadingCohort cohort = frame.Cohorts[selected] ??= new(_renderer);
-                    PrepareCohort(snapshot, cohort, kernelDense, _working.AsSpan(0, count));
+                    PrepareCohort(snapshot, cohort, kernelDense, _working.AsSpan(0, count), frame: frame);
                 }
                 frame.MaterialRows[dense] = (uint)selected;
             }
             WebGpuAdvancedShadingCohort diagnostic = frame.Cohorts[frame.CohortCount] ??= new(_renderer);
-            PrepareCohort(snapshot, diagnostic, uint.MaxValue, []);
+            PrepareCohort(snapshot, diagnostic, uint.MaxValue, [], frame: frame);
             frame.CohortCount++;
             for (int index = frame.CohortCount; index < frame.Cohorts.Length; index++)
             {
@@ -94,6 +97,8 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             frame.Materials.UploadPreparation(MemoryMarshal.AsBytes(frame.MaterialRows.AsSpan(0, Math.Max(materials.Length, 1))));
             frame.DatabaseEpoch = snapshot.DatabaseEpoch; frame.MaterialGenerations = snapshot.MaterialPayloads.Generations;
             frame.ResourceGenerations = snapshot.ResourceGenerations; frame.ViewIndex = request.NativeViewIndex; frame.IblEnabled = request.EnableLightProbesAndIbl;
+            frame.AuthoredDecalsEnabled = request.EnableAuthoredDecals;
+            frame.AuthoredDecalCommandSignature = AuthoredDecalCommandSignature(in request);
         }
         else
             for (int index = 0; index < frame.CohortCount; index++)
@@ -120,7 +125,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput
     {
         if (frame.CohortCount == 0 || frame.DatabaseEpoch != snapshot.DatabaseEpoch ||
             frame.MaterialGenerations != snapshot.MaterialPayloads.Generations || frame.ResourceGenerations != snapshot.ResourceGenerations ||
-            frame.ViewIndex != request.NativeViewIndex || frame.IblEnabled != request.EnableLightProbesAndIbl) return false;
+            frame.ViewIndex != request.NativeViewIndex || frame.IblEnabled != request.EnableLightProbesAndIbl ||
+            frame.AuthoredDecalsEnabled != request.EnableAuthoredDecals ||
+            frame.AuthoredDecalCommandSignature != AuthoredDecalCommandSignature(in request)) return false;
         for (int index = 0; index < frame.CohortCount; index++)
         {
             WebGpuAdvancedShadingCohort cohort = frame.Cohorts[index]!;
@@ -204,11 +211,17 @@ internal sealed partial class WebGpuAdvancedShadingOutput
     }
 
     private void PrepareCohort(AdvancedGpuScenePublicationSnapshot snapshot, WebGpuAdvancedShadingCohort cohort,
-        uint kernel, ReadOnlySpan<WebGpuAdvancedTexturePair> pairs, bool uploadMap = true)
+        uint kernel, ReadOnlySpan<WebGpuAdvancedTexturePair> pairs, bool uploadMap = true, WebGpuAdvancedShadingFrame? frame = null)
     {
         cohort.Kernel = kernel; cohort.PairCount = pairs.Length;
         pairs.CopyTo(cohort.Pairs);
-        cohort.BindingWords.AsSpan().Clear();
+        int bindingWordCount = checked(WebGpuAdvancedShadingCohort.SlotCount * 8 + (frame?.AuthoredDecalCount ?? 0));
+        if (uploadMap)
+        {
+            if (cohort.BindingWords.Length < bindingWordCount) Array.Resize(ref cohort.BindingWords, bindingWordCount);
+            cohort.BindingWords.AsSpan(0, bindingWordCount).Clear();
+            cohort.BindingWordCount = bindingWordCount;
+        }
         Span<bool> occupied = stackalloc bool[WebGpuAdvancedShadingCohort.SlotCount];
         occupied.Clear();
         int next2D = 0;
@@ -256,8 +269,13 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             words[6] = pair.DepthComparison ? 1u : 0u;
         }
         for (int slot = 0; slot < occupied.Length; slot++) if (!occupied[slot]) cohort.ReleaseView(slot);
-        cohort.Bindings.EnsureCapacity(WebGpuAdvancedShadingCohort.SlotCount * 32);
-        if (uploadMap) cohort.Bindings.UploadPreparation(MemoryMarshal.AsBytes(cohort.BindingWords.AsSpan()));
+        if (uploadMap)
+        {
+            if (frame is not null) frame.AuthoredDecalIndices.AsSpan(0, frame.AuthoredDecalCount).CopyTo(
+                cohort.BindingWords.AsSpan(WebGpuAdvancedShadingCohort.SlotCount * 8));
+            cohort.Bindings.EnsureCapacity(checked(bindingWordCount * sizeof(uint)));
+            cohort.Bindings.UploadPreparation(MemoryMarshal.AsBytes(cohort.BindingWords.AsSpan(0, bindingWordCount)));
+        }
     }
 
     private void ReleaseSampler(WebGpuAdvancedSampler sampler)

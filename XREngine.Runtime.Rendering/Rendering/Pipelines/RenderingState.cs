@@ -144,6 +144,7 @@ public sealed partial class XRRenderPipelineInstance
         /// The logical view set remains unchanged for history-ledger ownership.
         /// </summary>
         internal RenderFrameViewSet? TemporalAuthoringViewSet { get; set; }
+        RenderFrameViewSet? IRuntimeRenderCommandExecutionState.TemporalAuthoringViewSet => TemporalAuthoringViewSet;
         /// <summary>
         /// Frame-owned publication of stable render-side scene buffers and logical views.
         /// </summary>
@@ -363,7 +364,7 @@ public sealed partial class XRRenderPipelineInstance
                     _renderingScenes.Push(Scene);
 
                 if (SceneCamera is not null)
-                    _renderingCameras.Push(SceneCamera);
+                    _renderingCameras.Push((SceneCamera, null));
 
                 // Visibility collection must capture logical view state without touching the
                 // renderer's global viewport/scissor tracker. Deferred Vulkan recording can
@@ -705,16 +706,25 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         public XRCamera? RenderingCamera
-            => _renderingCameras.TryPeek(out var c) ? c : null;
+            => _renderingCameras.TryPeek(out var entry) ? entry.Camera : null;
+        RenderFrameViewDescriptor? IRuntimeRenderCommandExecutionState.ScopedFrameView
+            => _renderingCameras.TryPeek(out var entry) ? entry.View : null;
         public bool HasRenderingCameraScope => _renderingCameras.Count > 0;
-        private readonly Stack<XRCamera?> _renderingCameras = new();
+        private readonly Stack<(XRCamera? Camera, RenderFrameViewDescriptor? View)> _renderingCameras = new();
         public StateObject PushRenderingCamera(XRCamera? camera)
         {
             PushRenderingCameraState(camera);
             return StateObject.New(PopRenderingCameraAction, this);
         }
         internal void PushRenderingCameraState(XRCamera? camera)
-            => _renderingCameras.Push(camera);
+        {
+            RenderFrameViewDescriptor? view = camera is not null &&
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.WebGPU
+                ? RenderFrameViewSetCapture.CaptureScopedView(this, camera,
+                    (uint)Math.Max(1, CurrentRenderRegion.Width), (uint)Math.Max(1, CurrentRenderRegion.Height))
+                : null;
+            _renderingCameras.Push((camera, view));
+        }
         public void PopRenderingCamera()
             => _renderingCameras.Pop();
 

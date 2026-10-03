@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
         {
+            requirements.ObserveSwitchCases(this);
             if (Cases is not null)
                 foreach (ViewportRenderCommandContainer commands in Cases.Values)
                     requirements.Include(commands);
@@ -35,12 +36,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _cases;
             set
             {
-                _cases = value;
+                if (!SetField(ref _cases, value)) return;
                 if (_cases is not null)
-                {
-                    foreach (var container in _cases.Values)
-                        AttachPipeline(container);
-                }
+                    foreach (var container in _cases.Values) AttachPipeline(container);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 
@@ -50,8 +49,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _defaultCase;
             set
             {
-                _defaultCase = value;
+                if (!SetField(ref _defaultCase, value)) return;
                 AttachPipeline(_defaultCase);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 
@@ -110,6 +110,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             var pipeline = CommandContainer?.ParentPipeline;
             if (container is not null && pipeline is not null && !ReferenceEquals(container.ParentPipeline, pipeline))
                 container.ParentPipeline = pipeline;
+        }
+
+        internal void AttachCaseContainers()
+        {
+            if (_cases is not null)
+                foreach (var container in _cases.Values) AttachPipeline(container);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

@@ -81,11 +81,17 @@ public sealed partial class WebGpuRendererHost
     public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)
     {
         ArgumentNullException.ThrowIfNull(camera);
+        RenderFrameViewSelection view = RequireFrozenView();
+        if (!Matrix4x4.Invert(view.View.ViewMatrix, out Matrix4x4 inverseView) ||
+            !Matrix4x4.Invert(view.ProjectionMatrix, out Matrix4x4 inverseProjection))
+            throw new NotSupportedException("WebGPU.View.SingularMatrix: camera uniforms require invertible frozen view and projection matrices.");
         WebGpuRenderProgram api = (WebGpuRenderProgram)GetOrCreateAPIRenderObject(program)!;
-        api.SetMatrix("ViewProjection", camera.ViewProjectionMatrix);
-        api.SetVector4("CameraPosition", new Vector4(camera.Transform.RenderMatrix.Translation, 1));
-        api.SetMatrix("InverseViewMatrix", camera.Transform.RenderMatrix);
-        api.SetMatrix("InverseProjMatrix", camera.InverseProjectionMatrix);
+        api.SetMatrix("ViewProjection", view.ViewProjectionMatrix);
+        api.SetMatrix("PreviousViewProjection", view.PreviousViewProjectionMatrix);
+        Vector4 position = view.View.CameraPositionAndNear;
+        api.SetVector4("CameraPosition", new Vector4(position.X, position.Y, position.Z, 1));
+        api.SetMatrix("InverseViewMatrix", inverseView);
+        api.SetMatrix("InverseProjMatrix", inverseProjection);
     }
 
     public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)

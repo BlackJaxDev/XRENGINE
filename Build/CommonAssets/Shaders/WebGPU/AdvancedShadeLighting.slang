@@ -621,76 +621,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
 
 
 
-#define XR_ADV_DECAL_ENABLED 1u
-#define XR_ADV_DECAL_AFFECT_NORMALS 2u
-
-void XR_ADV_ApplyDecalToSurface(
-    uint decalIndex,
-    inout XRAdvancedSurface surface,
-    inout float3 albedo, inout float3 normal, inout float roughness, inout float metallic)
-{
-    if (decalIndex >= SceneCount(15u)) return;
-    XRAdvancedDecalRecord decal = XR_ADV_LoadDecal(decalIndex);
-    if ((decal.flags & XR_ADV_DECAL_ENABLED) == 0u) return;
-    if ((decal.viewMaskLo | decal.viewMaskHi) != 0u &&
-        (surface.viewIndex < 32u ? (decal.viewMaskLo & (1u << surface.viewIndex)) == 0u :
-            (surface.viewIndex >= 64u || (decal.viewMaskHi & (1u << (surface.viewIndex - 32u))) == 0u))) return;
-    if (decal.layerMask != 0u && (decal.layerMask & surface.layerMask) == 0u) return;
-
-    float4 decalLocalPos = XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), decal.worldToDecal);
-    if (abs(decalLocalPos.w) < 0.00001 || !XR_ADV_IsFinite(decalLocalPos)) return;
-    decalLocalPos /= decalLocalPos.w;
-
-    // Box bounds test in decal local space.
-    float3 halfExtents = decal.halfExtentsAndFade.xyz;
-    if (any(lessThanEqual(halfExtents, float3(0.00001)))) return;
-    if (abs(decalLocalPos.x) > halfExtents.x ||
-        abs(decalLocalPos.y) > halfExtents.y ||
-        abs(decalLocalPos.z) > halfExtents.z)
-    {
-        return;
-    }
-
-    // Normalized decal UVs in [0, 1]
-    float2 decalUv = (decalLocalPos.xy / halfExtents.xy) * 0.5 + 0.5;
-
-    // Edge falloff based on fade distance
-    float fade = decal.halfExtentsAndFade.w;
-    float edgeDist = min(
-        min(halfExtents.x - abs(decalLocalPos.x), halfExtents.y - abs(decalLocalPos.y)),
-        halfExtents.z - abs(decalLocalPos.z));
-    float weight = clamp(edgeDist / max(fade, 0.001), 0.0, 1.0);
-
-    uint materialDense = XR_ADV_ResolveVisibilityHandle(decal.material, VisibilityMaterialLookupSegment, XR_ADV_DIAGNOSTIC_MATERIAL);
-    if (materialDense == XR_ADV_INVALID_DENSE_INDEX || materialDense >= SceneCount(3u)) return;
-    XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
-    if (!XR_ADV_IsStandardMaterial(material)) return;
-    uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
-    float4 decalBase = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD);
-    if ((flags & 1u) != 0u) decalBase *= XR_ADV_StandardTexture(material, 0u, decalUv, float2(0.0), float2(0.0), float4(1.0));
-    float opacity = clamp(decalBase.a * weight, 0.0, 1.0);
-    XRAdvancedTextureRecord maskTexture;
-    XRAdvancedEncodedTextureReference maskReference;
-    if (XR_ADV_TryResolveTextureReference(decal.maskTexture.handle,
-        VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment, maskTexture, maskReference))
-        opacity *= XR_ADV_SampleTexture2DGrad(maskReference, decalUv, float2(0.0), float2(0.0)).a;
-    if (opacity <= 0.0) return;
-    float4 decalRmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
-    if ((flags & 4u) != 0u) decalRmse.xy *= XR_ADV_StandardTexture(material, 2u, decalUv, float2(0.0), float2(0.0), float4(1.0)).rg;
-    albedo = lerp(albedo, decalBase.rgb, opacity);
-    roughness = lerp(roughness, clamp(decalRmse.x, 0.04, 1.0), opacity);
-    metallic = lerp(metallic, clamp(decalRmse.y, 0.0, 1.0), opacity);
-    if ((decal.flags & XR_ADV_DECAL_AFFECT_NORMALS) != 0u && (flags & 2u) != 0u)
-    {
-        float3 localNormal = XR_ADV_StandardTexture(material, 1u, decalUv, float2(0.0), float2(0.0), float4(0.5,0.5,1.0,1.0)).xyz * 2.0 - 1.0;
-        // For p_local = p_world * worldToDecal, the local plane normal maps
-        // to world space through worldToDecal itself. This preserves the OBB
-        // tangent basis under non-uniform decal transforms.
-        float3 projectedNormal = normalize(mul((float3x3)decal.worldToDecal, localNormal));
-        normal = normalize(lerp(normal, projectedNormal, opacity));
-    }
-}
-
+#include "AdvancedShadeDecals.slang"
 
 bool XR_ADV_LightAffectsView(XRAdvancedLightRecord light, uint viewIndex)
 {
@@ -987,8 +918,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     float metallic = clamp(rmse.y, 0.0, 1.0);
     float linearDepth = -XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), view.view).z;
     // Exact canonical overflow evaluation, with the same view/layer/volume tests.
-    for (uint decalIndex = 0u; decalIndex < SceneCount(15u); ++decalIndex)
-        XR_ADV_ApplyDecalToSurface(decalIndex, surface, base.rgb, N, roughness, metallic);
+    XR_ADV_ApplySelectedDecals(surface, base.rgb, N, roughness, metallic, rmse.z, emittedRadiance);
 
     float3 color = emittedRadiance;
     bool unlit = (material.eligibilityFlags & 16u) != 0u;

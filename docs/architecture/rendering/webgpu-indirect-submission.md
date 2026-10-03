@@ -124,11 +124,34 @@ indexed first-instance feature. Missing native meshlet residency rejects the
 draw; indexed or CPU substitution is not allowed.
 
 Generic Default/custom authored graphs use the canonical meshlet
-cull/refit/finalize family and their original cooked material programs. The
-implemented profile retains one LOD and one logical instance; dynamic LOD,
-multiple instances and view-dependent transparent ordering require their own
-producers and reject explicitly until those producers are installed. Distinct
-submeshes retain their own exact deformation inputs. See the
+cull/refit/finalize family for meshlet strategies. Traditional indirect instead
+uses `indirect::cull-primitive`, retaining the exact original uint16/uint32 index
+buffer and cooked material program without requiring meshlet data. Its 64-lane
+GPU reduction reads the exact raster position stream, including current
+deformation, before publishing a single whole-primitive indexed argument.
+Unproven vertex behavior, invalid bounds, or a position stream exceeding the
+refit/storage budget retains conservative visibility. There is no geometric
+readback and no CPU-generated visibility decision.
+
+Both families share the complete resident source publication, frozen view,
+four-level GPU LOD selection, exact submesh/material binding closure, modeled
+outline participation, and completion-owned frame slots. Original index
+identity, scalar encoding, count and committed revision are frozen separately
+from vertex buffers. Missing asynchronous index preparation defers the atomic
+frame; terminal preparation failure or later ownership mutation rejects it
+explicitly. Neither case enters desktop GLSL or CPU fallback.
+
+Runtime authored instance publishers supply real current/previous transforms and
+pre-instance bounds through the same renderer-owned storage used by raster. GPU
+union visibility retains one native instanced draw with its exact command count
+and zero first instance; invisible instances may remain in a visible cohort.
+Unknown vertex behavior is conservatively uncullable. Shared non-temporal
+skin/morph output requires an explicit pre-instance contract; temporal deformation
+without previous vertex geometry rejects precisely. Unproven mixed transform
+conventions, differing LOD primitive membership and view-dependent transparent
+ordering still require their own producers. Distinct submeshes retain their
+own exact deformation inputs. Strict and instrumented strategy identities remain
+distinct even when no instrumentation is enabled. See the
 [authored meshlet record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
 and the
 [native-family admission record](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)

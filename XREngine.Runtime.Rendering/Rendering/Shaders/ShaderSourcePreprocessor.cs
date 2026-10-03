@@ -28,6 +28,9 @@ public static class ShaderSourcePreprocessor
 
     private static RuntimeResolverOptions CreateResolverOptions()
     {
+        if (!global::XREngine.Rendering.ShaderSourceResolver.CanAccessHostShaderFiles)
+            return new RuntimeResolverOptions();
+
         List<string> additionalRoots = [];
         if (GetEngineShaderRoot() is string engineShaderRoot)
             additionalRoots.Add(engineShaderRoot);

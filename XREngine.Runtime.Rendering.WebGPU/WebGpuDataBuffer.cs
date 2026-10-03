@@ -13,8 +13,8 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
     private uint _uploadedBytes;
     private int _pendingStart = int.MaxValue;
     private int _pendingEnd;
-    private uint _stagedFrameSequence;
-    private readonly List<int> _supersededHandles = new(2);
+    private uint _replacementFrameSequence;
+    private int _replacementCount;
 
     public int ResourceHandle => _handle;
     public override bool IsGenerated => _handle != 0;
@@ -34,8 +34,8 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             return;
         if (IsGenerated && ((ResolveUsage(Data.Target) & BrowserBufferUsage.Storage) == 0 || Data.GpuProduced))
             throw Unsupported("Resize", "only CPU-backed storage-capable buffers may grow while dependent bindings exist");
-        if (IsGenerated && Renderer.IsRecordingEngineFrame && _supersededHandles.Count >= 32)
-            throw Unsupported("Resize", "too many uncommitted storage generations are awaiting an accepted frame");
+        if (IsGenerated && Renderer.IsRecordingEngineFrame && _replacementFrameSequence == Renderer.EngineFrameSequence && _replacementCount >= 32)
+            throw Unsupported("Resize", "the active frame exceeds thirty-two storage generation replacements");
 
         int length = checked((int)Data.Length);
         int allocationLength = checked((Math.Max(length, 1) + 3) & ~3);
@@ -77,11 +77,12 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             // packet records retain the old handle until their frame is submitted.
             Renderer.ReleaseEngineStorageGeneration(this, oldHandle);
             if (Renderer.IsRecordingEngineFrame)
-                _supersededHandles.Add(oldHandle);
-            else
             {
-                Renderer.RetireEngineResourceAfterFrame(oldHandle);
+                SetField(ref _replacementCount, _replacementFrameSequence == Renderer.EngineFrameSequence ? _replacementCount + 1 : 1,
+                    publishNotifications: false);
+                SetField(ref _replacementFrameSequence, Renderer.EngineFrameSequence, publishNotifications: false);
             }
+            Renderer.RetireEngineResourceAfterFrame(oldHandle);
         }
     }
 
@@ -91,12 +92,8 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             return;
         Renderer.ReleaseEngineDrawDependencies(this);
         if (Renderer.State != BrowserRendererState.Disposed)
-        {
             Renderer.RetireEngineResourceAfterFrame(_handle);
-            foreach (int handle in _supersededHandles)
-                Renderer.RetireEngineResourceAfterFrame(handle);
-        }
-        _supersededHandles.Clear();
+        Renderer.UnregisterPendingStorage(this);
         SetField(ref _handle, 0);
         SetField(ref _allocatedBytes, 0);
         SetField(ref _uploadedBytes, 0u);
@@ -158,18 +155,13 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         int start = offset & ~3;
         int end = checked(offset + length);
         int alignedEnd = end & ~3;
-        if (!candidateAllocation && (ResolveUsage(Data.Target) & BrowserBufferUsage.Storage) != 0 && Renderer.IsRecordingEngineFrame)
+        if (!candidateAllocation)
         {
             int uploadEnd = checked((end + 3) & ~3);
+            SnapshotBufferUpload(start, uploadEnd, (byte*)address.Pointer);
             SetField(ref _pendingStart, Math.Min(_pendingStart, start), publishNotifications: false);
             SetField(ref _pendingEnd, Math.Max(_pendingEnd, uploadEnd), publishNotifications: false);
             Renderer.RegisterPendingStorage(this);
-            if (_stagedFrameSequence == Renderer.EngineFrameSequence)
-                SnapshotStorageUpload(start, uploadEnd, (byte*)address.Pointer);
-            else
-                SnapshotStorageUpload(_pendingStart, Math.Min(_pendingEnd, checked((checked((int)Data.Length) + 3) & ~3)),
-                    (byte*)address.Pointer);
-            SetField(ref _stagedFrameSequence, Renderer.EngineFrameSequence, publishNotifications: false);
             SetField(ref _uploadedBytes, Math.Max(_uploadedBytes, (uint)end), publishNotifications: false);
             return;
         }
@@ -192,57 +184,42 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         SetField(ref _uploadedBytes, Math.Max(_uploadedBytes, (uint)end), publishNotifications: false);
     }
 
-    private void SnapshotStorageUpload(int start, int end, byte* address)
+    private void SnapshotBufferUpload(int start, int end, byte* address)
     {
         int sourceLength = checked((int)Data.Length);
         int available = Math.Min(end, sourceLength) - start;
+        int records = available == end - start || available < 4 ? 1 : 2;
+        if (records > 1)
+            Renderer.PrepareEngineBufferMutation(_handle, start, end - start, records);
         if (available == end - start)
         {
-            Renderer.StageEngineStorageUpload(_handle, start, new ReadOnlySpan<byte>(address + start, available));
+            Renderer.StageEngineBufferUpload(_handle, start, new ReadOnlySpan<byte>(address + start, available));
             return;
         }
         // Only the final three bytes can be outside the CPU allocation.
         int aligned = available & ~3;
         if (aligned > 0)
-            Renderer.StageEngineStorageUpload(_handle, start, new ReadOnlySpan<byte>(address + start, aligned));
+            Renderer.StageEngineBufferUpload(_handle, start, new ReadOnlySpan<byte>(address + start, aligned));
         Span<byte> tail = stackalloc byte[4];
         tail.Clear();
         new ReadOnlySpan<byte>(address + start + aligned, available - aligned).CopyTo(tail);
-        Renderer.StageEngineStorageUpload(_handle, start + aligned, tail);
+        Renderer.StageEngineBufferUpload(_handle, start + aligned, tail);
     }
 
+    /// <summary>Checks pending publication without borrowing mutable CPU bytes again on a retry.</summary>
     internal void StagePendingUpload()
     {
-        if (_pendingStart == int.MaxValue || !IsGenerated || !Renderer.IsRecordingEngineFrame ||
-            _stagedFrameSequence == Renderer.EngineFrameSequence)
-            return;
-        if (!Data.TryGetAddress(out VoidPtr address) || address == VoidPtr.Zero ||
-            Data.ClientSideSource is not { } source || source.Length < Data.Length)
-            throw Unsupported("Upload", "the pending storage source is unavailable");
-        int end = Math.Min(_pendingEnd, checked((checked((int)Data.Length) + 3) & ~3));
-        if (_pendingStart >= end)
-        {
-            SetField(ref _pendingStart, int.MaxValue, publishNotifications: false);
-            SetField(ref _pendingEnd, 0, publishNotifications: false);
-            return;
-        }
-        SnapshotStorageUpload(_pendingStart, end, (byte*)address.Pointer);
-        SetField(ref _stagedFrameSequence, Renderer.EngineFrameSequence, publishNotifications: false);
+        ValidateOwnerGeneration();
+        if (_pendingStart != int.MaxValue && IsGenerated && Renderer.IsRecordingEngineFrame &&
+            !Renderer.HasPendingEngineBufferUpload(_handle))
+            throw Unsupported("Upload", "the pending buffer mutation has no owned immutable snapshot");
     }
 
-    internal bool AcceptSubmittedUploads()
+    internal void AcceptSubmittedUploads()
     {
-        if (_pendingStart != int.MaxValue && _stagedFrameSequence != Renderer.EngineFrameSequence)
-            return false;
         SetField(ref _pendingStart, int.MaxValue, publishNotifications: false);
         SetField(ref _pendingEnd, 0, publishNotifications: false);
-        foreach (int handle in _supersededHandles)
-        {
-            Renderer.RetireEngineResourceAfterFrame(handle);
-        }
-        _supersededHandles.Clear();
         ReportState();
-        return true;
     }
 
     public void EnsureStorageAllocatedForGpuUse() => Generate();

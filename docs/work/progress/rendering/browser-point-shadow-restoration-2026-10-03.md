@@ -31,9 +31,18 @@ framebuffer, camera-transform, camera-list and synthetic-parent owners. Viewport
 creation publishes the six-member family together or cleans up partial candidates.
 Late processing calls cannot recreate or index a disposed family.
 
+The base light also disposes its `RenderInfo` when the component is destroyed.
+`RenderInfo` unregisters from its world or canvas, detaches command callbacks
+and renderer-mutation tracking, and destroys the command list it created.
+Replacing that list detaches the previous commands and retains the original
+owned list until terminal disposal, including when replacement occurs inside a
+deferred construction scope. A caller-supplied replacement remains caller-owned
+and survives render-info disposal; its command connections are detached without
+destroying its contents.
+
 ## Validation and remaining acceptance
 
-The focused managed probe passed 121 checks with a warning-free build. It covers
+The focused managed probe passed 139 checks with a warning-free build. It covers
 both property orders, the paired API, desktop lifecycle refresh, quality limits,
 YAML and nested SceneNode cooked restoration, six distinct face orientations,
 translated face positions, the fixture occluder's frustum visibility, and immutable
@@ -41,11 +50,22 @@ target/per-face framebuffer replacement. A direct suppressed factory call reprod
 six identity local matrices and zero parent-child registrations.
 
 Before teardown correction, three camera-only cycles each retained 21 registered
-objects after light destruction. Afterward, three camera-only and three fully
-initialized cycles each retained one object: the separate base-light
-`RenderInfo.RenderCommands` list. The 20 point camera-family objects and initialized
-viewport, pipeline and framebuffer owners retire. This does not establish the cause
-or resolution of the separate eight-object canvas lifecycle observation.
+objects after light destruction. The camera-family correction retired 20 point
+helpers per cycle and exposed the separate base-light `RenderInfo.RenderCommands`
+list. With render-info disposal, three camera-only and three fully initialized
+cycles now retain zero registered objects and restore the exact cache baseline.
+The probe also confirms that component teardown destroys the original command
+list and leaves a caller-supplied replacement alive. The earlier eight-object
+canvas-composed observation had separate GPU-scene and fallback-material owners,
+as recorded in the unified browser checkpoint; this point probe does not
+attribute that historical observation to render-info lists.
+
+The final probe also covers a nested command-list replacement and confirms only
+the final borrowed list receives later commands. A world-registration callback
+that throws after the property changes still records the actual target; terminal
+cleanup removes that registration even when a later property change is vetoed.
+Both borrowed command lists remain alive, and their command callbacks detach
+when the light is destroyed.
 
 Probe source and logs are under
 `Build/_AgentValidation/20261001-225000-lit-surface/scratch/point-shadow-contract/`.

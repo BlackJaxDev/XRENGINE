@@ -156,6 +156,18 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
     }
 
     /// <summary>Finds the explicit per-material cook, then verifies its modeled surface profile.</summary>
+    internal bool TryResolveMaterialVariant(EngineMaterialVariantKey key,
+        [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+    {
+        key.Validate();
+        foreach (EngineMaterialVariantEntry entry in _materialVariants)
+            if (entry.Key == key)
+                return TryResolve(entry.DescriptorIdentity, key.Target, out artifact);
+        artifact = null;
+        return false;
+    }
+
+    /// <summary>Finds the explicit per-material cook, then verifies its modeled surface profile.</summary>
     internal bool TryResolveAuthoredLit(XRMaterial material, EngineLitMaterialShaderPlan plan,
         [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
     {
@@ -165,7 +177,7 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
             TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out artifact) &&
             artifact.Name == name && artifact.SourceLanguage == "MaterialRecipe" &&
             artifact.SemanticSchemaIdentity == plan.SemanticSchemaIdentity &&
-            artifact.Pass == "opaque-forward";
+            artifact.Pass == plan.Pass;
     }
 
     private static byte[] ReadBounded(string path, int maximum)

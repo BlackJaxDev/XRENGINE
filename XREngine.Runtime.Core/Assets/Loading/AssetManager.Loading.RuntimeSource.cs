@@ -11,6 +11,16 @@ public partial class AssetManager
     /// <summary>Whether this owner loads virtual packaged identities rather than host files.</summary>
     internal bool UsesRuntimeAssetCatalog => _runtimeCatalogOwner || _runtimeAssetSource is IRuntimeAssetCatalog;
 
+    /// <summary>Whether this owner can perform asset work synchronously without waiting on a caller-thread job or asynchronous source.</summary>
+    public bool SupportsSynchronousAssetWork
+        => !OperatingSystem.IsBrowser()
+        && !XREngine.Execution.RuntimeWorkScheduler.IsCallerThread
+        && !UsesRuntimeAssetCatalog
+        && _runtimeAssetSource is not { SupportsSynchronousReads: false };
+
+    /// <summary>Changes when a runtime catalog owner is bound or invalidated.</summary>
+    public int RuntimeSourceEpoch => Volatile.Read(ref _runtimeSourceEpoch);
+
     /// <summary>Binds a replacement catalog after the previous world's assets have been released.</summary>
     public void BindRuntimeSource(IRuntimeAssetSource source)
     {
@@ -288,6 +298,26 @@ public partial class AssetManager
         if (TryGetAssetByPath(path, out XRAsset? asset))
             return RequireRuntimeAssetType(path, asset, expectedType);
         throw new NotSupportedException($"AssetSource.AsyncReadRequired: '{path}' must be loaded asynchronously before synchronous reference resolution.");
+    }
+
+    /// <summary>Finds an already published engine asset without starting an I/O operation.</summary>
+    public bool TryGetCachedEngineAsset<T>(string assetRoot, string relativePath, out T? asset) where T : XRAsset
+    {
+        string path = Path.GetFullPath(ResolveEngineAssetPath(assetRoot, relativePath));
+        lock (_runtimePublicationGate)
+        {
+            asset = null;
+            if (_runtimeSourceTeardown || _runtimeSourceUnbinding || _runtimeSourceDisposing)
+                return false;
+            if (UsesRuntimeAssetCatalog &&
+                (_runtimeAssetSource is not IRuntimeAssetCatalog catalog || !catalog.TryGetAsset(path, out _)))
+                return false;
+            if (!TryGetAssetByPath(path, out XRAsset? cached) || cached.IsDestroyed)
+                return false;
+
+            asset = (T)RequireRuntimeAssetType(path, cached, typeof(T));
+            return true;
+        }
     }
 
     private void EnsureRuntimeSourceCurrent(IRuntimeAssetSource source, int epoch)

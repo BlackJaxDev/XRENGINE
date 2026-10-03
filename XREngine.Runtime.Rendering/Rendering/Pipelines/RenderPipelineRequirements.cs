@@ -13,6 +13,69 @@ namespace XREngine.Rendering;
 public sealed class RenderPipelineRequirements
 {
     private readonly HashSet<ViewportRenderCommandContainer> _containers = new(ReferenceEqualityComparer.Instance);
+    private readonly List<(RenderPipelineRequirementsDeclaration Declaration, uint State)> _authoredDecalDeclarations = [];
+    private readonly List<(VPRC_Switch Command, Dictionary<int, ViewportRenderCommandContainer>? Source,
+        Dictionary<int, ViewportRenderCommandContainer> Snapshot)> _switchCases = [];
+
+    internal void ObserveSwitchCases(VPRC_Switch command)
+        => _switchCases.Add((command, command.Cases, command.Cases is { } cases ? new(cases) : []));
+
+    internal void ObserveAuthoredDecalDeclaration(RenderPipelineRequirementsDeclaration declaration)
+        => _authoredDecalDeclarations.Add((declaration, declaration.AuthoredDecalConsumerState));
+
+    internal bool CommandTopologyUnchanged
+    {
+        get
+        {
+            for (int index = 0; index < _switchCases.Count; index++)
+            {
+                var observed = _switchCases[index];
+                Dictionary<int, ViewportRenderCommandContainer>? current = observed.Command.Cases;
+                bool unchanged = ReferenceEquals(current, observed.Source) && (current?.Count ?? 0) == observed.Snapshot.Count;
+                if (unchanged && current is not null)
+                    foreach (var entry in current)
+                        if (!observed.Snapshot.TryGetValue(entry.Key, out var container) || !ReferenceEquals(container, entry.Value))
+                        { unchanged = false; break; }
+                if (unchanged) continue;
+                observed.Command.AttachCaseContainers();
+                // Dictionary mutation has no setter event. Record the observed
+                // topology before notifying, so reentrant discovery cannot repeat it.
+                observed.Snapshot.Clear();
+                if (current is not null)
+                    foreach (var entry in current) observed.Snapshot.Add(entry.Key, entry.Value);
+                _switchCases[index] = (observed.Command, current, observed.Snapshot);
+                observed.Command.ParentPipeline?.NotifyCommandChainStructureChanged();
+                return false;
+            }
+            return true;
+        }
+    }
+
+    internal bool AuthoredDecalDeclarationsUnchanged
+    {
+        get
+        {
+            if (!CommandTopologyUnchanged) return false;
+            for (int index = 0; index < _authoredDecalDeclarations.Count; index++)
+            {
+                var observed = _authoredDecalDeclarations[index];
+                if (observed.State != observed.Declaration.AuthoredDecalConsumerState) return false;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>Preserves executable decal ownership in profiles with an optimized program closure.</summary>
+    internal void IncludeAuthoredDecalConsumers(ViewportRenderCommandContainer commands)
+    {
+        RenderPipelineRequirements graph = new(Backend, PostProcessState, OutputProfile);
+        graph.Include(commands);
+        if (graph.Operations.Contains("native-authored-decals")) RequireOperation("native-authored-decals");
+        if (graph.RasterScenePasses.Contains((int)EDefaultRenderPass.DeferredDecals))
+            RequireRasterScenePass((int)EDefaultRenderPass.DeferredDecals);
+        _authoredDecalDeclarations.AddRange(graph._authoredDecalDeclarations);
+        _switchCases.AddRange(graph._switchCases);
+    }
 
     public RenderPipelineRequirements(RendererBackendId backend, PipelinePostProcessState postProcessState)
         : this(backend, postProcessState, RenderPipelineResourceProfile.Empty) { }
@@ -33,6 +96,9 @@ public sealed class RenderPipelineRequirements
     public HashSet<string> RasterPrograms { get; } = new(StringComparer.Ordinal);
     public HashSet<string> ComputePrograms { get; } = new(StringComparer.Ordinal);
     public HashSet<int> ScenePasses { get; } = [];
+    public HashSet<int> RasterScenePasses { get; } = [];
+    public bool HasConflictingAuthoredDecalConsumers
+        => RasterScenePasses.Contains((int)EDefaultRenderPass.DeferredDecals) && Operations.Contains("native-authored-decals");
     /// <summary>Native geometry routes with optional explicitly authored strategy; null uses the packaged startup policy.</summary>
     public Dictionary<int, EMeshSubmissionStrategy?> NativeScenePasses { get; } = [];
     /// <summary>A selected native scene consumer requires explicit routes; logical stage markers do not.</summary>
@@ -49,6 +115,20 @@ public sealed class RenderPipelineRequirements
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
         Operations.Add(operation);
+        if (operation == "native-authored-decals")
+        {
+            ScenePasses.Add((int)EDefaultRenderPass.DeferredDecals);
+            if (RasterScenePasses.Contains((int)EDefaultRenderPass.DeferredDecals))
+                Diagnostics.Add("The selected graph applies DeferredDecals through both a native authored-decal operation and a raster pass.");
+        }
+    }
+
+    public void RequireRasterScenePass(int pass)
+    {
+        ScenePasses.Add(pass);
+        RasterScenePasses.Add(pass);
+        if (pass == (int)EDefaultRenderPass.DeferredDecals && Operations.Contains("native-authored-decals"))
+            Diagnostics.Add("The selected graph applies DeferredDecals through both a native authored-decal operation and a raster pass.");
     }
 
     /// <summary>Declares a package program, optionally pinned to an authored descriptor identity.</summary>

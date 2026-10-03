@@ -28,7 +28,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     public EAdvancedRenderStage Stage
     {
         get => _stage;
-        set => SetField(ref _stage, value);
+        set
+        {
+            if (SetField(ref _stage, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     [YamlIgnore]
@@ -38,6 +41,17 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     public override string GpuProfilingName => Descriptor.GpuLabel;
 
     public override string CpuProfilingName => Descriptor.PassName;
+
+    private bool _enableAuthoredDecals;
+    /// <summary>Consumes the selected view's DeferredDecals membership as native XZ albedo projection.</summary>
+    public bool EnableAuthoredDecals
+    {
+        get => _enableAuthoredDecals;
+        set
+        {
+            if (SetField(ref _enableAuthoredDecals, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
+    }
 
     public VPRC_AdvancedRenderStage SetStage(EAdvancedRenderStage stage)
     {
@@ -50,6 +64,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         base.DescribeRequirements(requirements);
         if (requirements.Backend == RendererBackendId.WebGPU && IsNativeSceneConsumer(Stage))
             requirements.RequiresNativeScenePasses = true;
+        DescribeAuthoredDecalRequirements(requirements);
+    }
+
+    internal void DescribeAuthoredDecalRequirements(RenderPipelineRequirements requirements)
+    {
+        if (requirements.Backend == RendererBackendId.WebGPU && Stage == EAdvancedRenderStage.NativeOpaqueShading && EnableAuthoredDecals)
+            requirements.RequireOperation("native-authored-decals");
     }
 
     private static bool IsNativeSceneConsumer(EAdvancedRenderStage stage)
@@ -109,6 +130,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             Stage == EAdvancedRenderStage.AmbientOcclusion;
         bool requiresNativeOpaqueShading =
             Stage == EAdvancedRenderStage.NativeOpaqueShading;
+        bool frozenAuthoredDecals = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage.NativeAuthoredDecalsEnabled;
+        if (renderer.BackendId == RendererBackendId.WebGPU && requiresNativeOpaqueShading && EnableAuthoredDecals != frozenAuthoredDecals)
+        {
+            ReportExecutionPrerequisiteRejection("The authored decal operation changed after frame collection; recollect the selected command graph.");
+            return;
+        }
         bool isMinimalVisibilityOutput =
             pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
@@ -230,6 +257,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             MsaaSampleCount = samples,
             SampleEncoding = sampleEncoding,
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
+            EnableAuthoredDecals = frozenAuthoredDecals,
         };
 
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)

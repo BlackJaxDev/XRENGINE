@@ -19,13 +19,23 @@ struct CullParameters {
     useRefitBounds: u32,
     sphereExpansion: f32,
     drawEnabled: u32,
+    candidateMeshId: u32,
+    candidateLod: u32,
+    instanceCount: u32,
+    instanceSourceEnabled: u32,
+    instanceStrideWords: u32,
+    instanceTransformOffsetWords: u32,
+    instanceBoundsOffsetWords: u32,
+    instanceWordCount: u32,
 };
 @group(0) @binding(0) var<storage, read> source: array<u32>;
 @group(0) @binding(1) var<storage, read> bounds: array<u32>;
 @group(0) @binding(2) var<storage, read_write> indices: array<u32>;
 // Five drawIndexedIndirect words, fault, completed meshlets, visible triangles.
 @group(0) @binding(3) var<storage, read_write> state: array<atomic<u32>>;
-@group(0) @binding(4) var<uniform> parameters: CullParameters;
+@group(0) @binding(4) var<storage, read> selectedLod: array<u32>;
+@group(0) @binding(5) var<storage, read> instances: array<u32>;
+@group(0) @binding(6) var<uniform> parameters: CullParameters;
 var<workgroup> selected: array<u32, 8>;
 
 fn finite(value: f32) -> bool {
@@ -56,20 +66,48 @@ fn outsidePlane(sphere: vec4<f32>, plane: vec4<f32>) -> bool {
     return finite(normalLength) && normalLength > 0.0 && finite(distance) && finite(radius) &&
         finite(tolerance) && distance < -radius - tolerance;
 }
-fn visibleSphere(sphere: vec4<f32>) -> bool {
+fn visibleTransformedSphere(sphere: vec4<f32>, model: mat4x4<f32>) -> bool {
     if (parameters.cullEnabled == 0u || !finite4(sphere) || sphere.w < 0.0 ||
         !finite(parameters.sphereExpansion) || parameters.sphereExpansion < 0.0) { return true; }
     let expanded = vec4<f32>(sphere.xyz, sphere.w + parameters.sphereExpansion);
     if (!finite4(expanded)) { return true; }
     // Object-space planes make this conservative for arbitrary affine model
     // transforms, including shear, reflection, and non-uniform scale.
-    let clip = parameters.viewProjection * parameters.modelMatrix;
+    let clip = parameters.viewProjection * model;
     if (!finite4(clip[0]) || !finite4(clip[1]) || !finite4(clip[2]) || !finite4(clip[3])) { return true; }
     let rows = transpose(clip);
     return !outsidePlane(expanded, rows[3] + rows[0]) && !outsidePlane(expanded, rows[3] - rows[0]) &&
         !outsidePlane(expanded, rows[3] + rows[1]) && !outsidePlane(expanded, rows[3] - rows[1]) &&
         !outsidePlane(expanded, rows[2]) && !outsidePlane(expanded, rows[3] - rows[2]);
 }
+
+fn instanceWord(offset: u32) -> f32 { return bitcast<f32>(instances[offset]); }
+fn instanceVector(offset: u32) -> vec4<f32> {
+    return vec4<f32>(instanceWord(offset), instanceWord(offset + 1u), instanceWord(offset + 2u), instanceWord(offset + 3u));
+}
+fn visibleSphere(sphere: vec4<f32>) -> bool {
+    if (parameters.cullEnabled == 0u) { return true; }
+    if (parameters.instanceSourceEnabled == 0u) { return visibleTransformedSphere(sphere, parameters.modelMatrix); }
+    // Each row is the same authored native instance_index row used by raster.
+    // Retain the entire draw when any instance is visible, preserving order and
+    // firstInstance=0 without optional indirect-first-instance or compaction.
+    if (parameters.instanceStrideWords < 36u || parameters.instanceWordCount > arrayLength(&instances) ||
+        parameters.instanceCount > parameters.instanceWordCount / parameters.instanceStrideWords ||
+        parameters.instanceTransformOffsetWords > parameters.instanceStrideWords - 16u ||
+        parameters.instanceBoundsOffsetWords > parameters.instanceStrideWords - 4u) { return true; }
+    for (var instance = 0u; instance < parameters.instanceCount; instance++) {
+        let row = instance * parameters.instanceStrideWords;
+        let offset = row + parameters.instanceTransformOffsetWords;
+        let transform = mat4x4<f32>(instanceVector(offset), instanceVector(offset + 4u),
+                                   instanceVector(offset + 8u), instanceVector(offset + 12u));
+        // This declared full-instance envelope remains valid for unknown vertex
+        // behavior. It never invents a finer bound from undeformed mesh data.
+        let bound = instanceVector(row + parameters.instanceBoundsOffsetWords);
+        if (visibleTransformedSphere(bound, parameters.modelMatrix * transform)) { return true; }
+    }
+    return false;
+}
+
 fn prepareMeshlet(meshlet: u32) {
     selected[0] = 0u;
     if (meshlet >= parameters.meshletCount || arrayLength(&state) < 8u) { return; }
@@ -108,7 +146,9 @@ fn prepareMeshlet(meshlet: u32) {
     }
     // Cone culling remains disabled: raster state and authored deformation do
     // not establish a current conservative cone merely by supplying old data.
-    selected[0] = select(1u, 2u, parameters.drawEnabled != 0u && visibleSphere(sphere));
+    let lodSelected = arrayLength(&selectedLod) >= 4u && parameters.candidateMeshId != 0u &&
+        selectedLod[0u] == parameters.candidateMeshId && selectedLod[1u] == parameters.candidateLod;
+    selected[0] = select(1u, 2u, parameters.drawEnabled != 0u && lodSelected && visibleSphere(sphere));
     selected[1] = parameters.remapWordOffset + vertexOffset;
     selected[2] = vertexCount;
     selected[3] = triangleOffset;

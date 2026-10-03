@@ -11,11 +11,11 @@ namespace XREngine.Editor.Publishing;
 internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactResolver? resolver,
     RenderPipelineResourceProfile? outputProfile = null, IReadOnlySet<int>? inheritedScenePasses = null,
     IReadOnlyList<RenderPipelineRequirements>? inheritedPipelineRequirements = null,
-    BrowserNativeSceneCapabilityAudit? nativeAdmission = null)
+    BrowserNativeSceneCapabilityAudit? nativeAdmission = null, string? worldSourcePath = null)
 {
     private readonly RenderPipelineResourceProfile _outputProfile = outputProfile ?? RenderPipelineResourceProfile.Empty;
     private bool _hasCamera;
-    private readonly List<(int Pass, string ScenePath, string Path, string Material, string? Mesh, string Source)> _sceneMaterialPasses = [];
+    private readonly List<(int Pass, string ScenePath, string Path, string Material, string? Mesh, string Source, string? SourcePath)> _sceneMaterialPasses = [];
     private readonly BrowserNativeSceneCapabilityAudit _nativeAdmission = nativeAdmission ?? new();
     internal List<RenderPipelineRequirements> PipelineRequirements { get; } = [];
 
@@ -98,7 +98,7 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
             if (report is null)
                 throw Unsupported(path, pass, reason);
             report.Inspect(() => throw Unsupported(path, pass, reason), scenePath ?? string.Empty,
-                path, component.GetType().FullName, pass: pass);
+                path, component.GetType().FullName, pass: pass, sourcePath: worldSourcePath);
         }
     }
 
@@ -116,7 +116,7 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
                 if (report is null)
                     throw Unsupported(material.Path, pass, reason);
                 report.Inspect(() => throw Unsupported(material.Path, pass, reason), material.ScenePath,
-                    material.Path, material: material.Material, pass: pass);
+                    material.Path, material: material.Material, pass: pass, sourcePath: material.SourcePath);
             }
     }
 
@@ -164,7 +164,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
                     requirements.ComputePrograms.Contains(pass), path);
             else
                 report.Inspect(() => RequirePipelineArtifact(pass, identity, requirements.RasterPrograms.Contains(pass),
-                    requirements.ComputePrograms.Contains(pass), path), scenePath ?? string.Empty, path, pass: pass);
+                    requirements.ComputePrograms.Contains(pass), path), scenePath ?? string.Empty, path, pass: pass,
+                    sourcePath: worldSourcePath);
         }
         PipelineRequirements.Add(requirements);
 
@@ -172,7 +173,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         {
             if (report is null)
                 throw Unsupported(path, pass, reason);
-            report.Inspect(() => throw Unsupported(path, pass, reason), scenePath ?? string.Empty, path, pass: pass);
+            report.Inspect(() => throw Unsupported(path, pass, reason), scenePath ?? string.Empty, path, pass: pass,
+                sourcePath: worldSourcePath);
         }
     }
 
@@ -188,7 +190,7 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         {
             if (sceneRoute)
                 _sceneMaterialPasses.Add((pass, scenePath ?? string.Empty, path, material.Name ?? string.Empty,
-                    meshName, source));
+                    meshName, source, MaterialSourcePath(material) ?? worldSourcePath));
             if (WebGpuPipelineAdmission.GetRasterStateRejection(options) is { } reason)
             {
                 string passName = pass.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -196,7 +198,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
                 if (report is null)
                     throw Unsupported(path, passName, detail);
                 report.Inspect(() => throw Unsupported(path, passName, detail), scenePath ?? string.Empty,
-                    path, material: material.Name, pass: passName);
+                    path, material: material.Name, pass: passName,
+                    sourcePath: MaterialSourcePath(material) ?? worldSourcePath);
             }
         }
     }
@@ -214,4 +217,15 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
 
     private static NotSupportedException Unsupported(string path, string pass, string reason)
         => new($"BrowserCook.RenderingUnsupported: '{path}', pass '{pass}': {reason}");
+
+    private static string? MaterialSourcePath(XRMaterial material)
+    {
+        foreach (XRShader shader in material.Shaders)
+        {
+            string? path = shader.Source?.FilePath ?? shader.FilePath;
+            if (!string.IsNullOrWhiteSpace(path))
+                return path;
+        }
+        return material.FilePath;
+    }
 }

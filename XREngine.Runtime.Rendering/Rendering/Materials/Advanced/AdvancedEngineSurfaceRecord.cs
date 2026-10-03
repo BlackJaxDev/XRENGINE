@@ -10,7 +10,7 @@ namespace XREngine.Rendering;
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public record struct AdvancedEngineSurfaceRecord
 {
-    public const uint CurrentSchemaVersion = 1;
+    public const uint CurrentSchemaVersion = 2;
     public const int RoleCount = 4;
     public const uint WordCount = 76;
 

@@ -49,7 +49,12 @@ internal static partial class UberShaderVariantBuilder
     ];
 
     private readonly record struct UberVariantCacheKey(ulong VariantHash, long SourceVersion, ulong SourcePathHash, string? SourcePath);
-    private readonly record struct SourceResolveCacheKey(string SourceText, string? SourcePath, bool EmitIncludeDeadCodeMarkers);
+    private readonly record struct SourceResolveCacheKey(
+        string SourceText,
+        string? SourcePath,
+        bool EmitIncludeDeadCodeMarkers,
+        bool HostFileAccess,
+        long RegisteredSnippetVersion);
     private readonly record struct VertexPermutationCacheKey(EShaderType Type, string SourceText, string? SourcePath, long SourceVersion);
 
     private sealed class ResolvedUberShaderSource
@@ -407,7 +412,12 @@ internal static partial class UberShaderVariantBuilder
     {
         string sourceText = shader.Source?.Text ?? string.Empty;
         string? sourcePath = ResolveShaderSourcePathOrName(shader);
-        SourceResolveCacheKey cacheKey = new(sourceText, NormalizeSourcePathKey(sourcePath), emitIncludeDeadCodeMarkers);
+        SourceResolveCacheKey cacheKey = new(
+            sourceText,
+            NormalizeSourcePathKey(sourcePath),
+            emitIncludeDeadCodeMarkers,
+            ShaderSourceResolver.CanAccessHostShaderFiles,
+            ShaderSourceResolver.RegisteredSnippetVersion);
 
         while (true)
         {
@@ -489,12 +499,14 @@ internal static partial class UberShaderVariantBuilder
                 dependencies = result.FileDependencies;
                 return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directPipelineMacros);
             }
-            catch
+            catch when (ShaderSourceResolver.CanAccessHostShaderFiles)
             {
             }
         }
 
         bool resolved = shader.TryGetResolvedSource(out resolvedSource, annotateIncludes: false, logFailures: true);
+        if (!resolved && !ShaderSourceResolver.CanAccessHostShaderFiles)
+            throw new NotSupportedException("ShaderSource.ResolutionUnavailable: an Uber shader variant cannot use unresolved source on this runtime.");
         if (resolved)
         {
             // XRShader owns the detailed dependency cache for this fallback path;

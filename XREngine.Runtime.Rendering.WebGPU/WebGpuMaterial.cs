@@ -50,14 +50,17 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
         if (_program is null)
         {
             ShaderProgramArtifact? artifact = null;
-            if (Data.EngineSemantic == EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1)
+            if (Data.EngineSemantic == EngineMaterialSemanticIdentity.UberOutlineV1)
+                artifact = ResolveUberOutlineArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1)
             {
                 if (Data.Shaders.Count != 0 || Data.Parameters.Length != 0)
                     throw new NotSupportedException("WebGPU.Material.SpotShadowDepthUnsupported: the projected caster must be source-free and have no authored parameters.");
                 EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
                     "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
-                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
+                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true || artifact is null)
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                ValidateOpaqueShadowCompanion(artifact, key);
                 SetField(ref _opaqueSpotShadowDepth, true);
             }
             else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1)
@@ -66,8 +69,9 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                     throw new NotSupportedException("WebGPU.Material.PointShadowDepthUnsupported: the radial caster must be source-free and have no authored parameters.");
                 EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
                     "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
-                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
+                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true || artifact is null)
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                ValidateOpaqueShadowCompanion(artifact, key);
                 SetField(ref _opaquePointShadowDepth, true);
             }
             else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.OpaqueShadowDepthV1)
@@ -76,8 +80,9 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                     throw new NotSupportedException("WebGPU.Material.ShadowDepthUnsupported: the shared opaque caster must be source-free and have no authored parameters.");
                 EngineMaterialVariantKey key = new(Data.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
                     "depth", "static-position-v1", "depth-normal-v1");
-                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true)
+                if (Renderer.MaterialVariants?.TryResolve(key, out artifact) != true || artifact is null)
                     throw new NotSupportedException($"WebGPU.Material.VariantMissing: '{Data.Name}' requires the declared {key} variant.");
+                ValidateOpaqueShadowCompanion(artifact, key);
                 SetField(ref _opaqueShadowDepth, true);
             }
             else if (Data.EngineSemantic.Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle)
@@ -126,14 +131,25 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                 artifact = ResolveSkyboxArtifact();
             else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
                 artifact = ResolveLitTextureArtifact();
-            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+            else if (Data.EngineSemantic.IsAuthoredLit())
                 artifact = ResolveAuthoredLitArtifact();
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
             {
                 XRMaterial source = Data.StandardLitColorSourceMaterial ?? Data;
-                if (source.Shaders.Count != 0 || Data.Shaders.Count != 0)
+                bool authoredCoverage = source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2;
+                if ((!authoredCoverage && source.Shaders.Count != 0) || Data.Shaders.Count != 0)
                     throw new NotSupportedException("WebGPU.Material.SourceUnsupported: semantic variants require source-free engine materials.");
-                if (!StandardLitColorSurfaceBinding.TryCreate(source, out StandardLitColorSurfaceBinding? surface, out string? reason))
+                StandardLitColorSurfaceBinding? surface;
+                string? reason;
+                if (authoredCoverage)
+                {
+                    if (Data.StandardLitColorAuxiliaryPass is not (EStandardLitColorAuxiliaryPass.DepthNormal or
+                        EStandardLitColorAuxiliaryPass.ShadowDepth or EStandardLitColorAuxiliaryPass.PointShadowDepth or
+                        EStandardLitColorAuxiliaryPass.SpotShadowDepth))
+                        throw new NotSupportedException("WebGPU.Material.AuthoredAuxiliaryUnsupported: an exact authored coverage auxiliary replay is required.");
+                    _ = ResolveAuthoredLitSource(source, out surface, out _);
+                }
+                else if (!StandardLitColorSurfaceBinding.TryCreate(source, out surface, out reason))
                     throw new NotSupportedException($"WebGPU.Material.SurfaceUnsupported: '{Data.Name}': {reason}");
                 EStandardLitColorAuxiliaryPass auxiliary = Data.StandardLitColorAuxiliaryPass;
                 if (auxiliary != EStandardLitColorAuxiliaryPass.None)
@@ -207,6 +223,12 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
     /// <summary>Publishes the canonical surface without changing its authored parameters or render pass.</summary>
     internal void PublishSurface()
     {
+        ValidateAuthoredShadowReceiver();
+        if (Data.EngineSemantic == EngineMaterialSemanticIdentity.UberOutlineV1)
+        {
+            PublishUberOutline();
+            return;
+        }
         if (IsCanvasSurface)
         {
             PublishCanvasSurface();
@@ -269,7 +291,7 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
         if (!_litSurface.TryRead(out StandardLitColorSurface surface, out string? reason))
             throw new NotSupportedException($"WebGPU.Material.SurfaceUnsupported: '{Data.Name}': {reason}");
         WebGpuFrameBuffer? target = Renderer.GetBoundEngineFrameBuffer();
-        if (Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+        if (Data.EngineSemantic.IsColorCoverage())
         {
             if (target is null || !target.HasDepth || target.SampleCount != 1)
                 throw new NotSupportedException("WebGPU.Material.CoverageOutputUnsupported: coverage surfaces require a single-sample depth attachment.");
@@ -312,6 +334,7 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
         SetField(ref _litSurface, null);
         SetField(ref _litTextureSurface, null);
         SetField(ref _litTextureVertexProfile, null);
+        SetField(ref _authoredShadowReceiverKey, null);
         SetField(ref _directionalShadowReceiver, false);
         SetField(ref _localShadowReceiver, false);
         SetField(ref _opaqueShadowDepth, false);

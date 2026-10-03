@@ -199,13 +199,18 @@ internal static class Program
                 string semantic = String(variant, "semantic");
                 int semanticVersion = Integer(variant, "semanticVersion");
                 Require(semantic is "StandardLitColor" or "StandardLitTexture" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
-                    "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" or "UICanvasSurface" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
+                    "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" or "UICanvasSurface" or "UberOutline" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
                     "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
                     "SkyboxCubemap" or "SkyboxDynamicProcedural"
                     && (semanticVersion == 1 || semanticVersion == 2 &&
                         semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap"),
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
+                if (semantic == "UberOutline")
+                    Require(String(recipe, "pass") == "outline" && vertexProfile == "position-normal-uv4-color-v1" &&
+                        outputProfile is "linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1" &&
+                        engineLayout.VertexEntryPoint is not null && engineLayout.FragmentEntryPoint is not null,
+                        $"{stageContext}: outlines require the exact inverse-hull vertex and authored coverage profile.");
                 if (semantic is "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
                     "SkyboxCubemap" or "SkyboxDynamicProcedural")
                     Require(String(recipe, "pass") == "background" && vertexProfile == "fullscreen-sky-v1" &&
@@ -348,7 +353,7 @@ internal static class Program
             else
             {
                 EngineLitMaterialShaderPlan plan = PlanEngineLitMaterial(normalized, name, stageContext);
-                Require(String(recipe, "pass") == "opaque-forward" && String(recipe, "semanticSchemaIdentity") == plan.SemanticSchemaIdentity,
+                Require(String(recipe, "pass") == plan.Pass && String(recipe, "semanticSchemaIdentity") == plan.SemanticSchemaIdentity,
                     $"{stageContext}: pass or semantic schema does not match the generated lit surface.");
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
                 Require(entries.Count == 2 && String(entries, "vertex") == "standardLitVertex" &&
@@ -364,8 +369,12 @@ internal static class Program
                     string checkedPath = RelativePath(path, "engine lit dependency");
                     string localHash = Hash(ReadBounded(ResolveInput(sourceRoot, checkedPath), MaxSourceBytes));
                     Require(localHash == hash, $"{stageContext}: generated lit dependency changed: {path}.");
-                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, checkedPath))] = hash;
                 }
+                // The compiler conservatively watches all staged Slang inputs.
+                // Native equivalence uses the generator's closed, pinned frontend
+                // graph, not unrelated shaders found beside those inputs.
+                foreach (EngineLitMaterialShaderSource canonical in EngineLitMaterialShaderGenerator.RequiredCanonicalSources(plan))
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, canonical.Path))] = canonical.Sha256;
                 sourceMap = new() { ["kind"] = "generated", ["path"] = sourceDependency };
             }
         }
@@ -428,6 +437,9 @@ internal static class Program
         if (schema == 3)
         {
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(encoded, source);
+            if (language == "MaterialRecipe")
+                Require(EngineLitMaterialShaderProvenance.TryValidate(artifact, out string provenanceReason),
+                    $"{stageContext}: {provenanceReason}");
             if (pipelineArtifact is not null)
                 WebPipelineArtifactCatalog.ValidateProgram(
                     WebPipelineArtifactCatalog.GetBindingKey(
@@ -449,7 +461,7 @@ internal static class Program
         Require(Integer(material, "schemaVersion") == 1, $"{context}: unsupported material schemaVersion.");
         Require(String(material, "name") == name, $"{context}: material name must equal recipe name.");
         BrowserMaterialShaderDefinition definition = new(name, String(material, "shadingModel"), String(material, "surface"), String(material, "baseColor"));
-        return BrowserMaterialShaderGenerator.Generate(definition, ShaderCompileTarget.WebGPUWgsl).Bytes;
+        return BrowserMaterialShaderGenerator.Generate(definition, ShaderCompileTarget.WebGPUWgsl).Bytes.ToArray();
     }
 
     private static EngineLitMaterialShaderPlan PlanEngineLitMaterial(byte[] source, string name, string context)

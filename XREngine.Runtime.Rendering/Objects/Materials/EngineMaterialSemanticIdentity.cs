@@ -16,6 +16,15 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Authored opaque PBR surface whose stages retain a whole-program WebGPU companion.</summary>
     public static EngineMaterialSemanticIdentity AuthoredLitV1 => new(EngineMaterialSemantic.AuthoredLit, 1);
 
+    /// <summary>Authored lit color with explicit uniform-alpha coverage and exact cooked stages.</summary>
+    public static EngineMaterialSemanticIdentity AuthoredLitV2 => new(EngineMaterialSemantic.AuthoredLit, 2);
+
+    /// <summary>Known authored PBR revisions whose retained stages require exact cooked companions.</summary>
+    public bool IsAuthoredLit() => Semantic == EngineMaterialSemantic.AuthoredLit && Version is 1 or 2;
+
+    /// <summary>Engine color surfaces sharing the uniform-alpha color, normal, and shadow contract.</summary>
+    public bool IsColorCoverage() => this == StandardLitColorV2 || this == AuthoredLitV2;
+
     /// <summary>Lit color with explicit uniform-alpha coverage and sorted blending.</summary>
     public static EngineMaterialSemanticIdentity StandardLitColorV2 => new(EngineMaterialSemantic.StandardLitColor, 2);
 
@@ -51,6 +60,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Premultiplied linear canvas texture composited onto an authored scene surface.</summary>
     public static EngineMaterialSemanticIdentity UICanvasSurfaceV1 => new(EngineMaterialSemantic.UICanvasSurface, 1);
 
+    /// <summary>Canonical inverse-hull expansion, color and authored alpha/dissolve coverage.</summary>
+    public static EngineMaterialSemanticIdentity UberOutlineV1 => new(EngineMaterialSemantic.UberOutline, 1);
+
     public static EngineMaterialSemanticIdentity SkyboxGradientV1 => new(EngineMaterialSemantic.SkyboxGradient, 1);
     public static EngineMaterialSemanticIdentity SkyboxEquirectangularV1 => new(EngineMaterialSemantic.SkyboxEquirectangular, 1);
     public static EngineMaterialSemanticIdentity SkyboxOctahedralV1 => new(EngineMaterialSemantic.SkyboxOctahedral, 1);
@@ -71,7 +83,7 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
             return;
         if (Semantic == EngineMaterialSemantic.StandardLitTexture && Version == 1)
             return;
-        if (Semantic == EngineMaterialSemantic.AuthoredLit && Version == 1)
+        if (IsAuthoredLit())
             return;
         if (Semantic == EngineMaterialSemantic.OpaqueShadowDepth && Version == 1)
             return;
@@ -84,6 +96,8 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
         if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap && Version is 1 or 2)
             return;
         if (Semantic == EngineMaterialSemantic.UICanvasSurface && Version == 1)
+            return;
+        if (Semantic == EngineMaterialSemantic.UberOutline && Version == 1)
             return;
         if (IsSkybox())
             return;

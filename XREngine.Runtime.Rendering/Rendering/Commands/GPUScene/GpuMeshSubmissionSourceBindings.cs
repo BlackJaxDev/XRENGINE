@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Commands;
 /// Immutable source-binding membership retained by resident command publications.
 /// Buffer content and typed publisher generations keep their existing upload owners.
 /// </summary>
-public sealed class GpuMeshSubmissionSourceBindings
+public sealed partial class GpuMeshSubmissionSourceBindings
 {
     private XRMesh? _sourceMesh;
     private XRMeshRenderer? _sourceRenderer;
@@ -116,6 +116,8 @@ public sealed class GpuMeshSubmissionSourceBindings
         destination.RendererBufferRevision = RendererBufferRevision;
         CaptureGenerations(_rendererPublishers, ref destination._rendererPublisherGenerations, ref destination._rendererResourceGenerations);
         CaptureGenerations(_materialPublishers, ref destination._materialPublisherGenerations, ref destination._materialResourceGenerations);
+        destination.CaptureIndexSource();
+        destination.CaptureInstanceSource();
         return destination;
     }
 
@@ -130,6 +132,8 @@ public sealed class GpuMeshSubmissionSourceBindings
         _rendererBuffers = [];
         _rendererPublishers = [];
         _materialPublishers = [];
+        IndexBuffer = null;
+        InstanceSource = null;
     }
 
     private static void CaptureGenerations(IRenderBindingPublisher[] publishers, ref ulong[] generations, ref ulong[] resources)

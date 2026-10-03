@@ -65,14 +65,95 @@ derived-cache format, not a migration of authored assets or user caches.
   a nested runtime identity differed between them. The same-instance proof is
   recorded in `scratch/authored-lit-cook/v1-byte-probe/equal-body.txt`
 
+## Browser capability source locations (2026-10-03)
+
+`BrowserCapabilityReport.json` keeps its schema-1 scene, node, component,
+material, pass, and reason fields. It adds optional `sourcePath`, `sourceLine`,
+and `sourceColumn`. Paths beneath the known game and engine asset roots are
+published as `/game/` or `/engine/` identities; validated relative artifact
+identities remain relative. Unknown absolute machine paths are omitted from
+the report and redacted from reasons. A frontend
+`ShaderCompilationException` supplies its exact original path, line, and
+column when that path can be represented truthfully. File-only findings omit
+line and column. If a compiler file cannot be published as a known source,
+its coordinates are also omitted rather than attributed to the fallback
+world file. The original exception remains available to the local Editor.
+
+Startup and streamed-scene dependency cooks can fail during material
+projection before `BrowserWorldCapabilityAudit` runs. The projection attaches
+material, pass, and shader-file provenance at the failure site; the owning
+Editor cook records the finding and rethrows. Report disposal persists an
+`incomplete` report under the project `Intermediate/Build` directory. A
+completed preflight still saves `blocked` or `no-known-required-findings`.
+
+Validation used the production `BrowserBuildState.Prepare` and
+`ExportAuthoredWorld` methods through a disposable driver:
+
+- The negative RollingBall world produced a `blocked` report with three
+  required and two optional findings. Its shadow finding names
+  `/game/Worlds/RollingBallWorld.asset` without invented coordinates. The
+  canonical source snapshot verified all 187 input files unchanged. Evidence:
+  `Build/_AgentValidation/20261001-225000-lit-surface/logs/diagnostic-negative-cook.log`
+  and `scratch/diagnostic-report-negative/project/Intermediate/Build/BrowserCapabilityReport.json`
+  under that run root.
+- An isolated five-material coverage fixture with a valid engine-only shader
+  manifest failed at `BrowserCook.AuthoredLitCookMissing`, before world audit.
+  Its persisted `incomplete` report names `Coverage-Opaque`, pass
+  `forward-coverage`, the missing recipe reason, and
+  `/engine/Shaders/Common/StandardLitColorCoverageForward.fs`; line and column
+  are absent. The copied source `World.asset` hash was checked unchanged across
+  a repeat export. Evidence: `logs/diagnostic-missing-material-cook-proof.log`
+  and `scratch/diagnostic-missing-cook-fixture/Intermediate/Build/BrowserCapabilityReport.json`
+  under the same run root.
+- A focused report-serialization probe supplied a constructed
+  `ShaderCompilationException`. It retained line 37, column 19, material,
+  pass, and a normalized engine source path. An unknown absolute compiler
+  path was redacted with no fabricated path or coordinates. This exercises
+  report serialization, not a real failing Slang compile. Evidence:
+  `logs/diagnostic-line-probe.log` and
+  `scratch/diagnostic-line-probe/output/Build/BrowserCapabilityReport.json`
+  under the same run root.
+
+The coordinated Editor Release/AnyCPU build passed with zero warnings and
+errors under the existing shared build lock; its log is
+`Build/_AgentValidation/20261001-225000-lit-surface/logs/diagnostic-final-editor-build.log`.
+A focused Editor recompile after the unknown-path refinement also passed.
+These probes do not establish live browser rendering, pixel correctness, or
+complete generator and feature coverage. UR05.05 remains open.
+
+The exact changed-file group for this diagnostic slice is:
+
+- `XREngine.Editor/Publishing/BrowserCapabilityReport.cs` — optional
+  source fields, normalization, compiler positions, and partial reporting
+- `XREngine.Editor/Publishing/BrowserMaterialCookProjection.cs` — failure
+  provenance and the coordinated `AuthoredLitV2` detached projection and
+  canonical seven-snippet verification
+- `XREngine.Editor/Publishing/BrowserWorldCapabilityAudit.cs` — source
+  identities and the coordinated `AuthoredLitV2` depth-normal admission
+- `XREngine.Editor/Publishing/BrowserRenderingCapabilityAudit.cs` — source
+  identities for output and material/pass findings
+- `XREngine.Editor/ProjectBuilder.BrowserEngineAssets.cs` — startup-world
+  cook failure capture and asset-root normalization inputs
+- `XREngine.Editor/ProjectBuilder.BrowserStreamedScenes.cs` — streamed-scene
+  cook failure capture
+- `docs/work/progress/platform/browser-authored-lit-material-cooking-2026-10-02.md`
+  — this durable validation record
+
+The projection and audit files also carry the coordinated authored coverage
+implementation. Publish them with that coherent `AuthoredLitV2` group; the
+diagnostic slice alone does not represent the admitted coverage contract.
+
 ## Boundaries and next work
 
 The project still prepares the per-material MaterialRecipe with the standalone
 ShaderCooker before browser export. Editor publishing does not implicitly run
 the pinned Slang toolchain or mutate the original authored source to produce a
-missing artifact. General authored GLSL and Uber feature lowering, masked or
-blended materials, authored shadow casters, skinning, and material batching
-remain open. The scratch driver validated export and cooked reload; its optional
-full package step was not run because that isolated driver did not generate
+missing artifact. General authored GLSL and Uber feature lowering, arbitrary
+masked or blended material recipes, skinning, and material batching remain
+open. Bounded authored coverage and shadow behavior belong to the coordinated
+[`AuthoredLitV2` coverage contract](browser-authored-color-coverage-2026-10-03.md)
+and require their own qualification. The scratch driver
+validated export and cooked reload; its optional full package step was not run
+because that isolated driver did not generate
 `AotRuntimeMetadata.bin`. Browser pixel qualification and desktop
 OpenGL/Vulkan comparison remain open before closing UR05.03.

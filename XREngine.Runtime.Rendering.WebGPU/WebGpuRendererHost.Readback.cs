@@ -8,6 +8,8 @@ public sealed partial class WebGpuRendererHost
         description.Validate();
         cancellationToken.ThrowIfCancellationRequested();
         RequireReadbackResource(description.BufferHandle);
+        if (HasUnsubmittedEngineBufferUpload(description.BufferHandle))
+            throw new NotSupportedException("WebGPU.Readback.PendingBufferUnsupported: buffer readback cannot overtake unsubmitted mutations; request it after the engine frame is accepted.");
         int session = _session;
         int ticket = WebGpuImports.BeginBufferReadback(session, description.BufferHandle, description.Offset, description.ByteLength);
         return FinishReadbackAsync(session, ticket, description.ByteLength, cancellationToken);

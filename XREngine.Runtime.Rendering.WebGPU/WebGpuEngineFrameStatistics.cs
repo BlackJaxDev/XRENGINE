@@ -38,9 +38,11 @@ public sealed record WebGpuEngineFrameStatistics
     public long CommandRecords { get; internal set; }
     /// <summary>Managed mesh draws recorded by the renderer; this is not the JavaScript executor's total GPU draw count.</summary>
     public long MeshDraws { get; internal set; }
+    /// <summary>Ordered buffer-copy uploads, including authored non-storage buffers and retry preambles.</summary>
     public long StorageUploadRecords { get; internal set; }
     /// <summary>Used uniform arena extents, including dynamic-offset alignment padding.</summary>
     public long RecordedUniformBytes { get; internal set; }
+    /// <summary>Payload bytes in the shared buffer-upload arena; the historical name also includes non-storage buffers.</summary>
     public long RecordedStorageBytes { get; internal set; }
     public long SubmissionPacketBytes { get; internal set; }
     public long SubmissionUniformBytes { get; internal set; }

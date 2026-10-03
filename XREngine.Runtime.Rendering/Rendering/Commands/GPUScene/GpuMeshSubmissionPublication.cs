@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Commands;
 /// Ring-owned immutable submission image. Access is valid only while its lease
 /// remains held, including asynchronous backend work and queue completion.
 /// </summary>
-public sealed class GpuMeshSubmissionPublication
+public sealed partial class GpuMeshSubmissionPublication
 {
     private GpuMeshSubmissionRecord[] _records = [];
     private GpuMeshSubmissionSourceBindings?[] _bindingClosures = [];
@@ -46,7 +46,7 @@ public sealed class GpuMeshSubmissionPublication
         for (int index = 0; index < Count; index++)
         {
             ref readonly GpuMeshSubmissionRecord record = ref _records[index];
-            if (record.InstanceCount == 0 || renderPass >= 0 && record.RenderPass >= 0 && record.RenderPass != renderPass)
+            if (record.InstanceCount == 0 || !IncludesRenderPass(index, renderPass))
                 continue;
             ownership = GetSourceOwnership(record.Source);
             if (ownership is EGpuMeshSubmissionSourceOwnership.Missing or EGpuMeshSubmissionSourceOwnership.IncompleteSource or
@@ -70,6 +70,7 @@ public sealed class GpuMeshSubmissionPublication
         if (records.Length < Count)
             Array.Clear(_records, records.Length, Count - records.Length);
         records.CopyTo(_records);
+        BeginLodCapture(records.Length);
         for (int index = 0; index < records.Length; index++)
         {
             GpuMeshSubmissionSourceBindings closure = records[index].SourceBindings.CapturePublication(_bindingClosures[index]);
@@ -86,6 +87,7 @@ public sealed class GpuMeshSubmissionPublication
         if (PinCount != 0)
             throw new InvalidOperationException("GPUScene.MeshSubmission.PinnedPublication: a leased image cannot be overwritten.");
         _sourceOwnership.Clear();
+        CaptureMaterialAuxiliarySources();
         _sourcePrimitiveKeys.Clear();
         HasMixedSourceOwnership = false;
         HasIncompleteSources = false;
@@ -143,6 +145,7 @@ public sealed class GpuMeshSubmissionPublication
             return;
         for (int index = 0; index < Count; index++)
             _bindingClosures[index]?.ReleaseRetainedSources();
+        ClearLodSources();
         Array.Clear(_records, 0, Count);
         _sourceOwnership.Clear();
         _sourcePrimitiveKeys.Clear();

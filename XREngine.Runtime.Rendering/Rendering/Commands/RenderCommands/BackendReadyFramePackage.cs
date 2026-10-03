@@ -29,15 +29,21 @@ public sealed partial class BackendReadyFramePackage
     /// depth-normal prepass for this immutable frame package.
     /// </summary>
     public bool RequiresForwardContactPrePass { get; private set; }
+    public bool NativeAuthoredDecalsEnabled { get; private set; }
     public IReadOnlyCollection<RenderPassMetadata>? PassMetadata => _passMetadata;
     public ReadOnlySpan<BackendReadyRenderPass> Passes => _passes.AsSpan(0, _passCount);
+
+    /// <summary>Indexes the already-frozen sorted pass without allocating an interface enumerator.</summary>
+    public RenderCommand GetPassCommand(in BackendReadyRenderPass pass, int index)
+        => RenderCommandCollection.GetCommandAt((ICollection<RenderCommand>)pass.Commands, index);
 
     internal void Prepare(
         in BackendReadyFramePackageIdentity identity,
         long packageGeneration,
         long sourceRevision,
         Dictionary<int, ICollection<RenderCommand>> updatingPasses,
-        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        bool nativeAuthoredDecals = false)
     {
         int previousPassCount = _passCount;
         EnsurePassCapacity(updatingPasses.Count);
@@ -79,6 +85,7 @@ public sealed partial class BackendReadyFramePackage
 
         bool requiresForwardContactPrePass = false;
         ulong packageDependencySignature = 14695981039346656037UL;
+        packageDependencySignature = AddHash(packageDependencySignature, nativeAuthoredDecals ? 1u : 0u);
         for (int passIndex = 0; passIndex < passCount; passIndex++)
         {
             BackendReadyRenderPass pass = _passes[passIndex];
@@ -97,6 +104,8 @@ public sealed partial class BackendReadyFramePackage
         _passCount = passCount;
         ShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
         RequiresForwardContactPrePass = requiresForwardContactPrePass;
+        NativeAuthoredDecalsEnabled = nativeAuthoredDecals;
+        PrepareAuthoredDecalSelection();
         _passMetadata = passMetadata;
         State = EBackendReadyFramePackageState.Prepared;
 
@@ -114,6 +123,9 @@ public sealed partial class BackendReadyFramePackage
 
     internal void Reset()
     {
+        NativeAuthoredDecalsEnabled = false;
+        _authoredDecalCommandCount = 0;
+        AuthoredDecalCommandSignature = 0;
         for (int i = 0; i < _passCount; i++)
             _passes[i] = default;
 

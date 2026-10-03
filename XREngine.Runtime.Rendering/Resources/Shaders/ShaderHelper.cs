@@ -23,7 +23,7 @@ public static class ShaderHelper
     private const string DepthPeelingDefine = "XRENGINE_FORWARD_DEPTH_PEEL";
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<DefinedVariantCacheKey, string>> DefinedVariantSourceCache = new();
     private static readonly ConcurrentDictionary<DefinedVariantShaderCacheKey, XRShader> DefinedVariantShaderCache = new();
-    private static readonly ConcurrentDictionary<EngineShaderCacheKey, Task<XRShader>> EngineShaderLoadTasks = new();
+    private static EngineShaderTaskCache? _engineShaderTaskCache;
     private static readonly HashSet<string> DefineBasedTransparencyForwardShaderFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "LitTexturedForward.fs",
@@ -42,16 +42,19 @@ public static class ShaderHelper
         "UberShader.frag",
     };
 
-    private static IRuntimeShaderServices Services
-        => RuntimeShaderServices.Current
-        ?? throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
-
     public static XRShader UberFragForward()
         => LoadEngineShader(Path.Combine("Uber", "UberShader.frag"), EShaderType.Fragment);
 
     private readonly record struct DefinedVariantCacheKey(string DefineName, string SourceText);
     private readonly record struct DefinedVariantShaderCacheKey(string DefineName, EShaderType ShaderType, string SourceText, string? FilePath, string? SourceName);
     private readonly record struct EngineShaderCacheKey(string RelativePath, EShaderType ShaderType);
+
+    private sealed class EngineShaderTaskCache(IRuntimeShaderServices services, int assetCacheVersion)
+    {
+        public IRuntimeShaderServices Services { get; } = services;
+        public int AssetCacheVersion { get; } = assetCacheVersion;
+        public ConcurrentDictionary<EngineShaderCacheKey, Task<XRShader>> Tasks { get; } = new();
+    }
 
     internal static void ClearDefinedVariantSourceCache()
     {
@@ -61,10 +64,33 @@ public static class ShaderHelper
 
     internal static void ClearServiceBoundCaches()
     {
-        EngineShaderLoadTasks.Clear();
+        Volatile.Write(ref _engineShaderTaskCache, null);
         ClearDefinedVariantSourceCache();
     }
 
+    private static EngineShaderTaskCache CurrentEngineShaderTaskCache()
+    {
+        IRuntimeShaderServices? services = RuntimeShaderServices.Current;
+        if (services is null)
+            throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
+
+        EngineShaderTaskCache? cache = Volatile.Read(ref _engineShaderTaskCache);
+        if (cache is not null && ReferenceEquals(cache.Services, services) && cache.AssetCacheVersion == services.ShaderAssetCacheVersion)
+            return cache;
+
+        lock (RuntimeShaderServices.ServiceGate)
+        {
+            services = RuntimeShaderServices.Current
+                ?? throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
+            cache = _engineShaderTaskCache;
+            if (cache is null || !ReferenceEquals(cache.Services, services) || cache.AssetCacheVersion != services.ShaderAssetCacheVersion)
+            {
+                cache = new EngineShaderTaskCache(services, services.ShaderAssetCacheVersion);
+                Volatile.Write(ref _engineShaderTaskCache, cache);
+            }
+            return cache;
+        }
+    }
 
     private static EngineShaderCacheKey CreateEngineShaderCacheKey(string relativePath, EShaderType shaderType)
     {
@@ -72,56 +98,68 @@ public static class ShaderHelper
         return new EngineShaderCacheKey(normalizedPath, shaderType);
     }
 
-    private static Task<XRShader> GetOrCreateEngineShaderTask(string relativePath, EShaderType shaderType)
-    {
-        EngineShaderCacheKey key = CreateEngineShaderCacheKey(relativePath, shaderType);
-        return EngineShaderLoadTasks.GetOrAdd(
+    private static Task<XRShader> GetOrCreateEngineShaderTask(EngineShaderTaskCache cache, EngineShaderCacheKey key)
+        => cache.Tasks.GetOrAdd(
             key,
-            static key => CreateEngineShaderLoadTask(key));
-    }
+            static (key, cache) => CreateEngineShaderLoadTask(cache, key), cache);
 
-    private static Task<XRShader> CreateEngineShaderLoadTask(EngineShaderCacheKey key)
+    private static Task<XRShader> CreateEngineShaderLoadTask(EngineShaderTaskCache cache, EngineShaderCacheKey key)
     {
         // An inline asset job belongs to the shared shader cache, never to a
         // caller's material-construction owner. Do not carry this thread-affine
         // publication scope across the asynchronous load.
         using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
-        Task<XRShader> task = LoadAndWarmEngineShaderAsync(key, bypassJobThread: false);
+        Task<XRShader> task = LoadAndWarmEngineShaderAsync(cache, key, bypassJobThread: false);
         publication.Complete();
         return task;
     }
 
-    private static XRShader LoadAndWarmEngineShader(EngineShaderCacheKey key, bool bypassJobThread)
+    private static XRShader LoadAndWarmEngineShader(EngineShaderTaskCache cache, EngineShaderCacheKey key, bool bypassJobThread)
     {
         using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
-        XRShader source = Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath);
+        XRShader source = cache.Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath);
         publication.Complete();
+        return ConfigureLoadedEngineShader(cache, key, source);
+    }
+
+    private static async Task<XRShader> LoadAndWarmEngineShaderAsync(EngineShaderTaskCache cache, EngineShaderCacheKey key, bool bypassJobThread)
+    {
+        XRShader source = await cache.Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath).ConfigureAwait(false);
+        return ConfigureLoadedEngineShader(cache, key, source);
+    }
+
+    private static XRShader ConfigureLoadedEngineShader(EngineShaderTaskCache cache, EngineShaderCacheKey key, XRShader source)
+    {
+        EnsureLiveEngineShader(cache, key, source);
         source.Type = key.ShaderType;
         SlangShaderPilots.Configure(source, key.RelativePath);
-        source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
+        // GLSL resolution probes host files for includes and snippets. Cooked or
+        // caller-thread hosts must consume the asset without this synchronous warm.
+        if (ReferenceEquals(RuntimeShaderServices.Current, cache.Services)
+            && cache.AssetCacheVersion == cache.Services.ShaderAssetCacheVersion
+            && cache.Services.SupportsSynchronousShaderWork)
+            source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
         return source;
     }
 
-    private static async Task<XRShader> LoadAndWarmEngineShaderAsync(EngineShaderCacheKey key, bool bypassJobThread)
+    private static void EnsureLiveEngineShader(EngineShaderTaskCache cache, EngineShaderCacheKey key, XRShader source)
     {
-        XRShader source = await Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath).ConfigureAwait(false);
-        source.Type = key.ShaderType;
-        SlangShaderPilots.Configure(source, key.RelativePath);
-        source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
-        return source;
+        if (cache.AssetCacheVersion != cache.Services.ShaderAssetCacheVersion || source.IsDestroyed)
+            throw new OperationCanceledException($"ShaderLoad.StaleAssetOwner: shader '{key.RelativePath}' belongs to a retired or destroyed asset owner.");
     }
 
-    private static XRShader LoadAndCacheEngineShaderInline(EngineShaderCacheKey key)
+    private static XRShader LoadAndCacheEngineShaderInline(EngineShaderTaskCache cache, EngineShaderCacheKey key)
     {
-        XRShader source = LoadAndWarmEngineShader(key, bypassJobThread: true);
-        EngineShaderLoadTasks[key] = Task.FromResult(source);
+        XRShader source = LoadAndWarmEngineShader(cache, key, bypassJobThread: true);
+        cache.Tasks[key] = Task.FromResult(source);
         return source;
     }
 
     public static void WarmEngineShader(string relativePath, EShaderType? type = null)
     {
         EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
-        _ = GetOrCreateEngineShaderTask(relativePath, shaderType);
+        EngineShaderTaskCache cache = CurrentEngineShaderTaskCache();
+        _ = GetOrCreateEngineShaderTask(cache, CreateEngineShaderCacheKey(relativePath, shaderType));
     }
 
     /// <summary>
@@ -132,23 +170,44 @@ public static class ShaderHelper
     public static XRShader LoadEngineShader(string relativePath, EShaderType? type = null)
     {
         EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
+        EngineShaderTaskCache cache = CurrentEngineShaderTaskCache();
+        IRuntimeShaderServices services = cache.Services;
         EngineShaderCacheKey key = CreateEngineShaderCacheKey(relativePath, shaderType);
         XRShader source;
-        if (EngineShaderLoadTasks.TryGetValue(key, out Task<XRShader>? existingTask))
+        if (cache.Tasks.TryGetValue(key, out Task<XRShader>? existingTask))
         {
-            source = !existingTask.IsCompleted && RuntimeEngine.IsRenderThread
-                ? LoadAndCacheEngineShaderInline(key)
-                : existingTask.GetAwaiter().GetResult();
+            if (!existingTask.IsCompleted && !services.SupportsSynchronousShaderWork)
+                source = GetCachedShaderOrThrow(cache, key);
+            else
+                source = !existingTask.IsCompleted && RuntimeEngine.IsRenderThread
+                    ? LoadAndCacheEngineShaderInline(cache, key)
+                    : existingTask.GetAwaiter().GetResult();
         }
         else
         {
-            source = RuntimeEngine.IsRenderThread
-                ? LoadAndCacheEngineShaderInline(key)
-                : GetOrCreateEngineShaderTask(relativePath, shaderType).GetAwaiter().GetResult();
+            if (!services.SupportsSynchronousShaderWork)
+            {
+                source = GetCachedShaderOrThrow(cache, key);
+                cache.Tasks.TryAdd(key, Task.FromResult(source));
+            }
+            else
+                source = RuntimeEngine.IsRenderThread
+                    ? LoadAndCacheEngineShaderInline(cache, key)
+                    : GetOrCreateEngineShaderTask(cache, key).GetAwaiter().GetResult();
         }
 
-        source._type = shaderType;
+        EnsureLiveEngineShader(cache, key, source);
+        source.Type = shaderType;
         return source;
+    }
+
+    private static XRShader GetCachedShaderOrThrow(EngineShaderTaskCache cache, EngineShaderCacheKey key)
+    {
+        XRShader? cached = cache.Services.GetCachedEngineShader("Shaders", key.RelativePath);
+        if (cached is not null)
+            return ConfigureLoadedEngineShader(cache, key, cached);
+
+        throw new NotSupportedException($"ShaderLoad.AsyncRequired: shader '{key.RelativePath}' is not ready for a synchronous load on this host; preload it with LoadEngineShaderAsync.");
     }
 
     /// <summary>
@@ -159,8 +218,11 @@ public static class ShaderHelper
     public static async Task<XRShader> LoadEngineShaderAsync(string relativePath, EShaderType? type = null)
     {
         EShaderType shaderType = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
-        XRShader source = await GetOrCreateEngineShaderTask(relativePath, shaderType).ConfigureAwait(false);
-        source._type = shaderType;
+        EngineShaderTaskCache cache = CurrentEngineShaderTaskCache();
+        EngineShaderCacheKey key = CreateEngineShaderCacheKey(relativePath, shaderType);
+        XRShader source = await GetOrCreateEngineShaderTask(cache, key).ConfigureAwait(false);
+        EnsureLiveEngineShader(cache, key, source);
+        source.Type = shaderType;
         return source;
     }
 

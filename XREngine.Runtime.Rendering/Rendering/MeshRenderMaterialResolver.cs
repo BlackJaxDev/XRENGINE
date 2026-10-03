@@ -26,36 +26,7 @@ public static class MeshRenderMaterialResolver
         {
             XRMaterial? shadowSourceMaterial = localMaterialOverride ?? meshRenderer.Material;
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
-            {
-                XRMaterial shadowOverride = globalMaterialOverride
-                    ?? throw new NotSupportedException("WebGPU.ShadowCaster.OverrideUnsupported: a shadow-depth override is required.");
-                bool pointDepth = shadowOverride.EngineSemantic == EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1;
-                bool spotDepth = shadowOverride.EngineSemantic == EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1;
-                if ((!pointDepth && !spotDepth && shadowOverride.EngineSemantic != EngineMaterialSemanticIdentity.OpaqueShadowDepthV1) ||
-                    shadowOverride.Shaders.Count != 0)
-                    throw new NotSupportedException("WebGPU.ShadowCaster.OverrideUnsupported: expected an exact source-free projected or radial shadow-depth override.");
-                if (shadowSourceMaterial?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
-                {
-                    XRMaterial variant = (pointDepth ? shadowSourceMaterial.GetPointShadowCasterVariant(EPointShadowMaterialKind.None)
-                        : spotDepth ? shadowSourceMaterial.GetStandardLitSpotShadowVariant() : shadowSourceMaterial.ShadowCasterVariant)
-                        ?? throw new NotSupportedException("WebGPU.ShadowCaster.MaterialUnsupported: the coverage surface has no exact caster variant.");
-                    variant.ShadowUniformSourceMaterial = shadowOverride;
-                    return new(variant, shadowOverride, true, false, "CookedLitColorCoverageShadowDepth");
-                }
-                if (shadowSourceMaterial?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
-                {
-                    if (shadowSourceMaterial.Shaders.Count != 0 ||
-                        !StandardLitTextureSurfaceBinding.TryRead(shadowSourceMaterial, out _, out _))
-                        throw new NotSupportedException("WebGPU.ShadowCaster.TexturedSurfaceUnsupported: an exact source-free opaque textured surface is required.");
-                    return new(shadowOverride, null, true, false, "CookedOpaqueTexturedShadowDepth");
-                }
-                if (shadowSourceMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 ||
-                    shadowSourceMaterial.Shaders.Count != 0 ||
-                    !shadowSourceMaterial.CanUseSharedOpaqueShadowMaterial())
-                    throw new NotSupportedException("WebGPU.ShadowCaster.MaterialUnsupported: expected a source-free opaque StandardLitColorV1 caster without material-specific shader stages.");
-
-                return new(shadowOverride, null, true, false, "CookedOpaqueShadowDepth");
-            }
+                return CookedShadowMaterialResolver.Resolve(shadowSourceMaterial, globalMaterialOverride);
 
             bool pointLightShadowOverride = globalMaterialOverride is not null &&
                 UsesPointLightShadowDepthOutput(globalMaterialOverride);
@@ -113,7 +84,7 @@ public static class MeshRenderMaterialResolver
         if (renderState?.UseDepthNormalMaterialVariants ?? false)
         {
             XRMaterial? depthNormalSource = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
-                localMaterialOverride?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2
+                localMaterialOverride?.EngineSemantic.IsColorCoverage() == true
                 ? localMaterialOverride ?? meshRenderer.Material
                 : meshRenderer.Material;
             XRMaterial? depthNormalVariant = depthNormalSource?.DepthNormalPrePassVariant;

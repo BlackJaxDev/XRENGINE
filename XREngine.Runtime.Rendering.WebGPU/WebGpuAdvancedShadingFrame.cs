@@ -28,6 +28,10 @@ internal sealed class WebGpuAdvancedShadingFrame : IDisposable
     internal AdvancedGlobalResourceDatabaseGenerations ResourceGenerations;
     internal uint ViewIndex;
     internal bool IblEnabled;
+    internal bool AuthoredDecalsEnabled;
+    internal ulong AuthoredDecalCommandSignature;
+    internal uint[] AuthoredDecalIndices = [];
+    internal int AuthoredDecalCount;
     internal bool DepthComparisonBank;
     internal uint Width;
     internal uint Height;

@@ -31,8 +31,14 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             requirements.RequireComputeProgram("meshlets::cull-expand");
             requirements.RequireComputeProgram("meshlets::finalize-indexed");
             requirements.RequireComputeProgram("meshlets::refit-bounds");
+            requirements.RequireComputeProgram("meshlets::select-lod");
         }
-        requirements.ScenePasses.Add(RenderPass);
+        else if (requirements.Backend == RendererBackendId.WebGPU && MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
+        {
+            requirements.RequireComputeProgram("indirect::cull-primitive");
+            requirements.RequireComputeProgram("meshlets::select-lod");
+        }
+        requirements.RequireRasterScenePass(RenderPass);
         if (_readWriteTextureNames.Count > 0) requirements.RequireOperation("storage-images");
     }
 
@@ -56,7 +62,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public EMeshSubmissionStrategy MeshSubmissionStrategy
     {
         get => _meshSubmissionStrategy;
-        set => SetField(ref _meshSubmissionStrategy, value);
+        set
+        {
+            if (SetField(ref _meshSubmissionStrategy, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     public bool GPUDispatch
@@ -71,7 +80,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public int RenderPass
     {
         get => _renderPass;
-        set => SetField(ref _renderPass, value);
+        set
+        {
+            if (SetField(ref _renderPass, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     private string? _renderGraphPassName;
@@ -130,7 +142,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public EMeshRenderingPathIntent PathIntent
     {
         get => _pathIntent;
-        set => SetField(ref _pathIntent, value);
+        set
+        {
+            if (SetField(ref _pathIntent, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     private bool _enforceAdvancedLatePassEligibility;
@@ -211,7 +226,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 "Advanced late-pass eligibility requires CPU-direct filtered submission; GPU indirect replay has no per-draw late-lane receipt.");
             return false;
         }
-        if (IsMeshletRequested(meshSubmissionStrategy) && AbstractRenderer.Current is IMeshletIndexedBackendCapability)
+        if (meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect && AbstractRenderer.Current is IAuthoredIndexedBackendCapability)
             return true;
         if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy() &&
             activeInstance.Pipeline is ShadowRenderPipeline)
@@ -239,7 +254,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         if (IsMeshletRequested(meshSubmissionStrategy))
         {
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer is IMeshletIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
+            if (renderer is IAuthoredIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
             {
                 VPRC_RenderMeshesPassMeshlet.Execute(this, meshSubmissionStrategy);
                 return;
@@ -337,7 +352,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         AbstractRenderer? renderer,
         EMeshSubmissionStrategy requestedStrategy)
     {
-        if (renderer is IMeshletIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
+        if (renderer is IAuthoredIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
         {
             return requestedStrategy.IsAnyMeshletStrategy()
                 ? requestedStrategy

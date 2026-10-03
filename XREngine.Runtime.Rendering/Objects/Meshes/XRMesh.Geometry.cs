@@ -429,6 +429,23 @@ public partial class XRMesh
         return false;
     }
 
+    /// <summary>Observes prepared index ownership without starting, waiting for, or rebuilding derived geometry.</summary>
+    internal bool TryGetPreparedIndexBuffer(EPrimitiveType type, out XRDataBuffer? buffer, out IndexSize size)
+    {
+        lock (_indexBufferLock)
+        {
+            if (!IsDestroyed && _indexBufferCache.TryGetValue(type, out var current) && !current.buffer.IsDestroyed)
+            {
+                buffer = current.buffer;
+                size = current.elementSize;
+                return true;
+            }
+        }
+        buffer = null;
+        size = default;
+        return false;
+    }
+
     private IndexBufferBuildTicket GetOrStartIndexBufferBuildNoLock(EPrimitiveType type)
     {
         if (_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? ticket))

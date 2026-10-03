@@ -49,12 +49,20 @@ internal static partial class ProjectBuilder
                 throw new NotSupportedException($"BrowserCook.StreamedSceneHidden: '{identity}' must be authored visible for browser volume attachment.");
             requiresDefaultFont |= PrepareBrowserUiFonts([scene], assetRoot, out IReadOnlyList<BrowserUiFontCookRequest> sceneFonts);
             string sourceName;
-            if (dependencyCooker.Entries.ContainsKey(identity))
-                sourceName = dependencyCooker.RecookDeclaredScene(scene, identity);
-            else
+            try
             {
-                sourceName = $"streamed-scene-{roots.Count:D4}.bin";
-                dependencyCooker.Cook(scene, identity, sourceName);
+                if (dependencyCooker.Entries.ContainsKey(identity))
+                    sourceName = dependencyCooker.RecookDeclaredScene(scene, identity);
+                else
+                {
+                    sourceName = $"streamed-scene-{roots.Count:D4}.bin";
+                    dependencyCooker.Cook(scene, identity, sourceName);
+                }
+            }
+            catch (Exception error) when (error is NotSupportedException or InvalidDataException or ShaderCompilationException)
+            {
+                capabilityReport.Record(error, identity, "streamed-scene", sourcePath: identity);
+                throw;
             }
             foreach (BrowserUiFontCookRequest font in sceneFonts)
             {

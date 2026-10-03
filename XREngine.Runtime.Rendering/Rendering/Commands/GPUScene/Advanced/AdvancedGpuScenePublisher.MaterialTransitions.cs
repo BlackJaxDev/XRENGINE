@@ -198,6 +198,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 out XRMeshRenderer? renderer,
                 out XRMesh? mesh,
                 out XRMaterial? material,
+                out RenderingParameters? renderOptions,
                 out int sourcePrimitiveCount);
             plan.Source = source;
             plan.PrimitiveIndex = primitiveIndex;
@@ -208,7 +209,7 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.Renderer = renderer;
             plan.Mesh = mesh;
             plan.Geometry = CreateGeometry(scene, mesh, in bounds, in command);
-            plan.RenderState = CreateRenderState(mesh, in command);
+            plan.RenderState = CreateRenderState(mesh, renderOptions, in command);
             plan.MeshVertexCount = Math.Max(0, mesh?.VertexCount ?? 0);
             plan.MeshIndexCount = Math.Max(0, mesh?.IndexCount ?? 0);
             plan.MeshGeometryRevision = mesh?.GeometryRevision ?? 0L;
@@ -216,7 +217,8 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.MeshIsSkinned =
                 (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u;
             plan.StructuralSignature =
-                ComputeStructuralSignature(in command, mesh, material, primitiveIndex);
+                Mix(Mix(ComputeStructuralSignature(in command, mesh, material, primitiveIndex),
+                    plan.RenderState.Flags), plan.RenderState.CullMode);
             plan.ContentSignature =
                 ComputeContentSignature(in command, in bounds, in world, in previousWorld, material);
             if (!TryAppendPlannedIdentitySource(source, sourcePrimitiveCount))

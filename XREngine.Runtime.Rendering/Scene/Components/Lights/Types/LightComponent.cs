@@ -987,6 +987,18 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowMap = null;
         }
 
+        protected override void OnDestroying()
+        {
+            try
+            {
+                base.OnDestroying();
+            }
+            finally
+            {
+                RenderInfo.Dispose();
+            }
+        }
+
         /// <summary>
         /// Gets or sets the number of samples used for the light's shadow filtering.
         /// </summary>

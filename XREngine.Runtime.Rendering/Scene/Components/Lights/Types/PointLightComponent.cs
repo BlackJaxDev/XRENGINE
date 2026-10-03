@@ -154,6 +154,7 @@ namespace XREngine.Components.Capture.Lights.Types
         [Category("Shadows")]
         [DisplayName("Point Shadow Render Mode")]
         [Description("Controls whether cubemap faces render as sequential passes, an instanced/layered path, or a geometry-shader layered pass.")]
+        [DefaultValue(EPointShadowRenderMode.InstancedLayered)]
         public EPointShadowRenderMode ShadowRenderMode
         {
             get => _shadowRenderMode;

@@ -83,6 +83,22 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             ref readonly AdvancedVisibilityPayload payload = ref payloads[index];
             if (payload.Coverage is EAdvancedMaterialCoverageMode.Transparent or EAdvancedMaterialCoverageMode.Refractive)
                 continue;
+            if (!scene.Snapshot.Draws.TryGet(payload.Draw, out AdvancedDrawRecord retainedDraw) ||
+                !scene.Snapshot.RenderStates.TryGet(retainedDraw.RenderState, out AdvancedRenderStateRecord retainedState))
+            {
+                reason = "WebGPU.Advanced.RasterStateMissing: the native draw has no exact retained raster-state record.";
+                return false;
+            }
+            if (WebGpuAdvancedRasterStateContract.GetRejection((EAdvancedNativeRasterStateFlags)retainedState.Flags) is { } rasterReason)
+            {
+                reason = $"WebGPU.Advanced.RasterStateUnsupported: {rasterReason}";
+                return false;
+            }
+            if (retainedState.CullMode != payload.CullMode)
+            {
+                reason = "WebGPU.Advanced.RasterCullMismatch: the retained command cull override differs from the prepared native payload; an exact matching visibility producer is required.";
+                return false;
+            }
             if (submission.Resolved.IsAnyMeshletStrategy() && producer is not (EAdvancedGeometryProducer.StaticMeshlet or EAdvancedGeometryProducer.SkinnedMeshlet))
             {
                 reason = "WebGPU.Advanced.MeshletProducerMissing: the selected meshlet strategy requires exact resident meshlets for every native draw; indexed substitution is not allowed.";

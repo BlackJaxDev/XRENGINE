@@ -106,16 +106,14 @@ public sealed partial class WebGpuRendererHost
                     try
                     {
                         try { EndAdvancedSceneRecording(submitted); }
-                        finally { EndMeshletRecording(submitted); }
+                        finally { EndAuthoredIndexedRecording(submitted); }
                     }
                     finally
                     {
                         try { ArmPendingEngineFences(submitted); }
                         finally
                         {
-                            for (int i = 0; i < _engineDeferredReleases.Count; i++)
-                                RetireEngineResource(_engineDeferredReleases[i]);
-                            _engineDeferredReleases.Clear();
+                            RetireEngineDeferredResources();
                         }
                     }
                 }
@@ -363,9 +361,22 @@ public sealed partial class WebGpuRendererHost
     {
         if (!_resources.Contains(handle))
             return;
+        if (State == BrowserRendererState.Ready && _engineRecording && HasPendingEngineBufferUpload(handle))
+        {
+            if (!_engineDeferredReleases.Contains(handle)) _engineDeferredReleases.Add(handle);
+            return;
+        }
+        if (!_engineRecording) DiscardRetiredBufferUploads(handle);
         if (State == BrowserRendererState.Ready)
             WebGpuImports.RetireResource(_session, handle);
         _resources.Remove(handle);
+    }
+
+    private void RetireEngineDeferredResources()
+    {
+        for (int index = 0; index < _engineDeferredReleases.Count; index++)
+            RetireEngineResource(_engineDeferredReleases[index]);
+        _engineDeferredReleases.Clear();
     }
 
     /// <summary>Keeps handles referenced by an already recorded frame alive through submission.</summary>
@@ -379,8 +390,8 @@ public sealed partial class WebGpuRendererHost
     internal void ReleaseEngineDrawDependencies(AbstractRenderAPIObject resource)
     {
         ReleaseVertexlessIndirectDrawsUsing(resource);
-        if (_meshletSlots is not null)
-            foreach (WebGpuMeshletFrameSlot slot in _meshletSlots) slot.ReleaseDrawUsing(resource);
+        if (_authoredIndexedSlots is not null)
+            foreach (WebGpuAuthoredIndexedFrameSlot slot in _authoredIndexedSlots) slot.ReleaseDrawUsing(resource);
         // Authored aliases must not retain a retired physical generation merely
         // because that alias is no longer sampled. Nested views are not admitted.
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
@@ -404,8 +415,8 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Invalidates physical storage descriptor users without discarding immutable pipelines.</summary>
     internal void ReleaseEngineStorageGeneration(AbstractRenderAPIObject resource, int handle)
     {
-        if (_meshletSlots is not null)
-            foreach (WebGpuMeshletFrameSlot slot in _meshletSlots) slot.ReleaseCommandsUsingHandle(resource, handle);
+        if (_authoredIndexedSlots is not null)
+            foreach (WebGpuAuthoredIndexedFrameSlot slot in _authoredIndexedSlots) slot.ReleaseCommandsUsingHandle(resource, handle);
         foreach (WebGpuMeshDraw draw in _vertexlessIndirectDraws.Values)
             draw.ReleaseCommandsUsingHandle(resource, handle);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
@@ -422,8 +433,8 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Retires raster commands for one descriptor generation before its groups retire.</summary>
     internal void ReleaseEngineMeshCommandsUsingBindingSet(WebGpuRenderProgram program, WebGpuBindingSet bindings)
     {
-        if (_meshletSlots is not null)
-            foreach (WebGpuMeshletFrameSlot slot in _meshletSlots) slot.ReleaseCommandUsing(program, bindings);
+        if (_authoredIndexedSlots is not null)
+            foreach (WebGpuAuthoredIndexedFrameSlot slot in _authoredIndexedSlots) slot.ReleaseCommandUsing(program, bindings);
         foreach (WebGpuMeshDraw draw in _vertexlessIndirectDraws.Values)
             draw.ReleaseCommandUsing(program, bindings);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)

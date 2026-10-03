@@ -65,6 +65,12 @@ public interface IRuntimeRenderCommandExecutionState
     /// </summary>
     RenderFrameViewSet? FrameViewSet => null;
 
+    /// <summary>Gets the immutable logical views paired with this invocation's temporal sample.</summary>
+    RenderFrameViewSet? TemporalAuthoringViewSet => null;
+
+    /// <summary>Gets an auxiliary camera view frozen when the current camera scope was entered.</summary>
+    RenderFrameViewDescriptor? ScopedFrameView => null;
+
     /// <summary>
     /// Gets the frame-owned immutable publication of scene buffers and views.
     /// </summary>

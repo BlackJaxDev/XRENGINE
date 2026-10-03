@@ -358,9 +358,12 @@ struct XRAdvancedSurface
     uint primitiveSection;
     uint layerMask;
     uint requiredAttributeMask;
+    uint authoredRenderPass;
     float3 worldPosition;
     // Invocation-local helper reconstruction state, never part of a buffer ABI.
     float3 interpolatedWorldPosition;
+    float3 worldPositionDx;
+    float3 worldPositionDy;
     uint visibilityMetadata;
     float2 samplePixelPosition;
     float3 geometricNormal;

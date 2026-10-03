@@ -45,8 +45,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _body;
             set
             {
-                _body = value;
+                if (!SetField(ref _body, value)) return;
                 AttachPipeline(_body);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 

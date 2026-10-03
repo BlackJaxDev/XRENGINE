@@ -99,16 +99,22 @@ explicit Advanced source or Required factory request is preserved through
 asynchronous device startup; its physical output is admitted only when the
 installed cooked programs and concrete WebGPU resource operations qualify.
 The unconfigured browser factory still selects Default. The implemented
-Advanced browser profile is single-view, single-sample static geometry with
-canonical native visibility and shading. Deformation, per-sample MSAA, and
-other unavailable selected operations fail with their specific capability
-reason. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
-and [the recovered static integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+Advanced browser family is mono and includes canonical native visibility and
+shading, bounded skin/morph deformation and per-sample x4 MSAA. Each selected
+operation must satisfy its concrete program, resource and deformation contract;
+unsupported material displacement and other unavailable profiles retain named
+failures. Physical browser evidence currently covers bounded static materials
+and directional shadows; deformation and MSAA still need their own rendered
+acceptance. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
+and [the recovered integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
 for implementation and runtime evidence boundaries.
 Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
 therefore resolve the same host recipe as an unconfigured camera. Browser hosts
-bind the cooked WebGPU programs to that shared default pipeline and reject
-stereo, XR, offscreen capture, and required Advanced profiles explicitly. Scoped
+bind cooked WebGPU programs through the authored pipeline's shared operation
+contracts. The current default-source factory rejects stereo, XR and offscreen
+capture requests explicitly, while Required Advanced requests preserve the
+Advanced source until its concrete output family is admitted. Shared offscreen
+UI composition does not establish scene-capture support. Scoped
 recipes see every request before desktop offscreen selection. Teardown and
 startup rollback skip disposed installations, including out-of-order scopes,
 and preserve newer factories without restoring an expired callback. With no

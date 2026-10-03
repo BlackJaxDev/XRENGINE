@@ -218,6 +218,13 @@ namespace XREngine.Rendering.UI
             Children.PostAnythingAdded += OnChildAdded;
             Children.PostAnythingRemoved += OnChildRemoved;
         }
+
+        protected override void OnDestroying()
+        {
+            try { base.OnDestroying(); }
+            finally { DebugRenderInfo2D?.Dispose(); }
+        }
+
         ~UITransform()
         {
             Children.PostAnythingAdded -= OnChildAdded;

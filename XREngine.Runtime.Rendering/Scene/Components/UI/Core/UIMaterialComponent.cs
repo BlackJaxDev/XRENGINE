@@ -17,6 +17,9 @@ namespace XREngine.Rendering.UI
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UIMaterialComponentEditor")]
     public class UIMaterialComponent : UIRenderableComponent
     {
+        private readonly List<(XRMaterial Material, ObjectCacheOwnership Ownership)> _ownedDefaultMaterials = [];
+        private bool _renderParametersEscaped;
+
         private static readonly Lazy<string?> CanonicalImageShaderSource = new(static () =>
             XRShader.EngineShader(Path.Combine("Common", "UiTexturedForward.fs"), EShaderType.Fragment).Source.Text);
 
@@ -25,7 +28,54 @@ namespace XREngine.Rendering.UI
             AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
 
         public UIMaterialComponent()
-            : this(CreateDefaultQuadMaterial(), false) { }
+        {
+            try
+            {
+                InitializeQuadMaterial(CreateOwnedDefaultQuadMaterial(), false);
+            }
+            catch (Exception initializationFailure)
+            {
+                List<Exception>? cleanupFailures = null;
+                for (int index = _ownedDefaultMaterials.Count - 1; index >= 0; index--)
+                {
+                    try { _ownedDefaultMaterials[index].Ownership.Dispose(); }
+                    catch (Exception ex) { (cleanupFailures ??= []).Add(ex); }
+                }
+                try
+                {
+                    _renderParameters.Destroy(true);
+                    if (!_renderParameters.IsDestroyed)
+                        throw new InvalidOperationException("UI render options construction cleanup was vetoed.");
+                }
+                catch (Exception ex) { (cleanupFailures ??= []).Add(ex); }
+                try { RenderInfo3D.Dispose(); }
+                catch (Exception ex) { (cleanupFailures ??= []).Add(ex); }
+                try { RenderInfo2D.Dispose(); }
+                catch (Exception ex) { (cleanupFailures ??= []).Add(ex); }
+                if (cleanupFailures is not null)
+                {
+                    cleanupFailures.Insert(0, initializationFailure);
+                    throw new AggregateException("UI quad construction and cleanup failed.", cleanupFailures);
+                }
+                throw;
+            }
+        }
+
+        private XRMaterial CreateOwnedDefaultQuadMaterial()
+        {
+            using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+            XRMaterial material = CreateDefaultQuadMaterial();
+            _ownedDefaultMaterials.Add((material, publication.CompleteWithOwnership()));
+            return material;
+        }
+
+        private bool OwnsDefaultMaterial(XRMaterial material)
+        {
+            for (int index = 0; index < _ownedDefaultMaterials.Count; index++)
+                if (ReferenceEquals(_ownedDefaultMaterials[index].Material, material))
+                    return true;
+            return false;
+        }
 
         private static XRMaterial CreateDefaultQuadMaterial()
         {
@@ -140,6 +190,12 @@ namespace XREngine.Rendering.UI
 
         public UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false)
         {
+            _renderParametersEscaped = true;
+            InitializeQuadMaterial(quadMaterial, flipVerticalUVCoord);
+        }
+
+        private void InitializeQuadMaterial(XRMaterial quadMaterial, bool flipVerticalUVCoord)
+        {
             _flipVerticalUVCoord = flipVerticalUVCoord;
             RenderPass = quadMaterial.RenderPass;
             quadMaterial.RenderOptions = _renderParameters;
@@ -194,13 +250,39 @@ namespace XREngine.Rendering.UI
 
         protected override void OnDestroying()
         {
-            Mesh?.Destroy();
-            Mesh = null;
-            base.OnDestroying();
+            try
+            {
+                Mesh?.Destroy();
+                Mesh = null;
+                base.OnDestroying();
+            }
+            finally
+            {
+                List<Exception>? failures = null;
+                for (int index = _ownedDefaultMaterials.Count - 1; index >= 0; index--)
+                {
+                    try { _ownedDefaultMaterials[index].Ownership.Dispose(); }
+                    catch (Exception ex) { (failures ??= []).Add(ex); }
+                }
+                if (!_renderParametersEscaped)
+                {
+                    try
+                    {
+                        _renderParameters.Destroy(true);
+                        if (!_renderParameters.IsDestroyed)
+                            throw new InvalidOperationException("UI render options destruction was vetoed.");
+                    }
+                    catch (Exception ex) { (failures ??= []).Add(ex); }
+                }
+                if (failures is not null)
+                    throw new AggregateException("UI default material storage could not be released.", failures);
+            }
         }
 
         public void SetQuadMaterial(XRMaterial material)
         {
+            if (!OwnsDefaultMaterial(material))
+                _renderParametersEscaped = true;
             RenderPass = material.RenderPass;
             material.RenderOptions = _renderParameters;
             if (Mesh is null)
@@ -218,7 +300,11 @@ namespace XREngine.Rendering.UI
         {
             _renderParameters.BlendModeAllDrawBuffers = blendMode;
             if (Material is not null)
+            {
+                if (!OwnsDefaultMaterial(Material))
+                    _renderParametersEscaped = true;
                 Material.RenderOptions = _renderParameters;
+            }
 
             RenderCommand2D.MarkDirty();
             RenderCommand3D.MarkDirty();
@@ -235,7 +321,7 @@ namespace XREngine.Rendering.UI
         {
             if (Material is null)
             {
-                var mat = CreateDefaultQuadMaterial();
+                var mat = CreateOwnedDefaultQuadMaterial();
                 mat.RenderOptions = _renderParameters;
                 Material = mat;
             }

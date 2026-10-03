@@ -163,6 +163,12 @@ browser representations under one verified managed-admission identity.
 
 [Browser shader cooking and material generation](work/progress/rendering/browser-shader-cooking.md) records the C# cooker, typed WGSL generation, optional pinned Slang route, coordinate/layout contracts and bounded startup. Compiler/layout qualification and runtime acceptance remain deferred.
 
+[Authored color coverage](work/progress/platform/browser-authored-color-coverage-2026-10-03.md) records explicit generated PBR color coverage, preserved opacity/cutoff/blending, exact normal/shadow companions, unchanged older texture payloads, and the separate device-acceptance boundary.
+
+[Native generated PBR surfaces](work/progress/platform/browser-native-authored-lit-2026-10-03.md) records exact cooked provenance, owner-scoped native admission, frozen factors/maps/coverage and raster-state rejection, with GPU acceptance kept separate.
+
+[Generated opaque PBR shadow companions](work/progress/platform/browser-authored-opaque-shadows-2026-10-03.md) records exact generated V1 receiver/caster lowering, source and physical ABI validation, per-material shadow audits, and shared Default/Advanced export evidence.
+
 [Browser GPU resources and ordered submission](work/progress/rendering/browser-gpu-resources-submission.md) records selected-device capabilities, buffers and texture subresources, framebuffer lowering, bounded pipeline caches, reusable commands and cancellable readback. Runtime acceptance remains deferred.
 
 [Browser engine-frame diagnostics](work/progress/rendering/browser-engine-frame-diagnostics-2026-10-02.md) records bounded per-frame validation receipts, retained labels, explicit WebGPU/Promise object counts and opt-in managed allocation/crossing measurements.

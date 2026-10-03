@@ -12,6 +12,9 @@ public partial class AdvancedRenderPipeline
             base.DescribeRequirements(requirements);
             return;
         }
+        // Program selection below is profile-specific; decal ownership still
+        // comes from every current authored command and declared branch.
+        requirements.IncludeAuthoredDecalConsumers(CommandChain);
         bool multisample = requirements.OutputProfile.AntiAliasingMode == EAntiAliasingMode.Msaa &&
             requirements.OutputProfile.MsaaSampleCount > 1u;
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Msaa);

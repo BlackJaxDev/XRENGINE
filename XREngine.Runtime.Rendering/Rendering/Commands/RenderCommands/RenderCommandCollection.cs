@@ -233,7 +233,7 @@ namespace XREngine.Rendering.Commands
                 XRMaterial? material = mesh.MaterialOverride ?? mesh.Mesh?.Material;
                 // V1 and arbitrary shader materials retain their existing neutral
                 // CPU sort priority, including in mixed V1/V2 transparent lists.
-                return material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2
+                return material?.EngineSemantic.IsColorCoverage() == true
                     ? material.TransparentSortPriority : 0;
             }
         }
@@ -737,16 +737,22 @@ namespace XREngine.Rendering.Commands
             RenderPipeline? pipeline = ownerPipeline?.Pipeline;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata =
                 ownerPipeline?.ActiveGeneration?.PassMetadata ?? pipeline?.PassMetadata;
+            bool nativeAuthoredDecals = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                pipeline?.RequiresCanonicalGpuScenePublication == true &&
+                pipeline.RequiresNativeAuthoredDecals;
             _updatingBackendReadyPackage.Prepare(
                 _updatingBackendReadyIdentity,
                 Interlocked.Increment(ref _backendReadyPackageGeneration),
                 _updatingRevision,
                 _updatingPasses,
-                passMetadata);
+                passMetadata,
+                nativeAuthoredDecals);
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
             if (pipeline?.RequiresGpuMeshSubmissionPublication == true ||
-                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented)
+                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented ||
+                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuIndirectZeroReadback or EMeshSubmissionStrategy.GpuIndirectInstrumented)
                 scene?.RequestMeshSubmissionPublication();
 
             if (pipeline?.RequiresCanonicalGpuScenePublication != true)
@@ -756,6 +762,7 @@ namespace XREngine.Rendering.Commands
             }
 
             scene?.RequestAdvancedResidentPublication();
+            if (nativeAuthoredDecals) scene?.RequestAdvancedAuthoredDecalPublication();
             _updatingBackendReadyPackage.PrepareCanonicalFromScene(
                 scene,
                 camera,
@@ -1927,6 +1934,9 @@ namespace XREngine.Rendering.Commands
             {
                 GpuMeshSubmissionPublication publication = lease.Publication;
                 if (publication.FrameId != world.FrameId) return;
+                if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass != true &&
+                    publication.RequiresLodAuxiliaryPassPublication())
+                    throw new NotSupportedException("WebGPU.Meshlets.LodAuxiliaryPassPublication: authored LOD outline geometry requires a GPU-selected auxiliary pass publication before CPU replay.");
                 if (publication.TryGetInvalidSourceOwnership(renderPass, out EGpuMeshSubmissionSourceOwnership invalidOwnership))
                     throw new NotSupportedException(invalidOwnership == EGpuMeshSubmissionSourceOwnership.MixedExplicitOwnership
                         ? "WebGPU.Meshlets.MixedExplicitOwnership: one selected source mixes CPU-exempt and GPU-owned primitives; exact primitive replay is required."
@@ -1936,6 +1946,7 @@ namespace XREngine.Rendering.Commands
                 {
                     RenderCommand command = GetCommandAt(commands, index);
                     if (command is not IRenderCommandMesh mesh || HasZeroAuthoredMeshInstances(command, mesh)) continue;
+                    if (publication.IsGpuOwnedMaterialAuxiliary(mesh)) continue;
                     if (publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.Missing)
                         throw new NotSupportedException("WebGPU.Meshlets.SourceOwnershipMissing: a visible source has no frozen resident primitive ownership; implicit CPU replay is forbidden.");
                 }
@@ -1947,7 +1958,8 @@ namespace XREngine.Rendering.Commands
                         if (includeNonMesh) RenderWithGpuScope(command, renderPass);
                     }
                     else if (!HasZeroAuthoredMeshInstances(command, mesh) &&
-                        publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu)
+                        publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu &&
+                        !publication.IsGpuOwnedMaterialAuxiliary(mesh))
                         RenderWithGpuScope(command, renderPass);
                 }
             }
@@ -2196,19 +2208,25 @@ namespace XREngine.Rendering.Commands
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
-            if (primitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly &&
-                AbstractRenderer.Current is IMeshletIndexedBackendCapability indexedMeshlets)
+            if (AbstractRenderer.Current is IAuthoredIndexedBackendCapability authoredIndexed)
             {
                 IRuntimeRenderCommandExecutionState? execution = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
                 if (execution?.WorldSnapshot is not { } publishedWorld ||
                     (execution.RenderingCamera ?? execution.SceneCamera) is not XRCamera meshletCamera)
-                    throw new NotSupportedException("RenderMeshes.MeshletPublicationUnavailable: the generic meshlet route requires its frozen world publication and camera.");
-                MeshletIndexedBackendRequest request = new(publishedWorld.GpuScene, publishedWorld.FrameId, renderPass,
-                    renderGraphPassIndex, meshletCamera, meshSubmissionMode);
-                EMeshletSubmissionStatus status = indexedMeshlets.EnqueueMeshletIndexed(in request, out string reason);
-                if (status == EMeshletSubmissionStatus.Rejected)
-                    XREngine.Debug.RenderingWarningEvery("RenderMeshes.MeshletIndexedRejected", TimeSpan.FromSeconds(2),
-                        "[RenderDispatch] Compute meshlet pass {0} rejected: {1}", renderPass, reason);
+                    throw new NotSupportedException("RenderMeshes.IndexedPublicationUnavailable: authored GPU indexed submission requires its frozen world publication and camera.");
+                var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+                RenderFrameViewSelection view = RenderFrameViewSetCapture.SelectForDraw(execution, meshletCamera,
+                    RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection == true,
+                    new Vector2(renderArea.Width, renderArea.Height), RuntimeRenderingHostServices.FrameTiming.ElapsedTime);
+                EMeshSubmissionStrategy authoredStrategy = primitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly
+                    ? meshSubmissionMode : meshSubmissionMode.IsGpuZeroReadbackStrategy()
+                        ? EMeshSubmissionStrategy.GpuMeshletZeroReadback : EMeshSubmissionStrategy.GpuMeshletInstrumented;
+                AuthoredIndexedBackendRequest request = new(publishedWorld.GpuScene, publishedWorld.FrameId, renderPass,
+                    renderGraphPassIndex, meshletCamera, view, authoredStrategy);
+                EAuthoredIndexedSubmissionStatus status = authoredIndexed.EnqueueAuthoredIndexed(in request, out string reason);
+                if (status == EAuthoredIndexedSubmissionStatus.Rejected)
+                    XREngine.Debug.RenderingWarningEvery("RenderMeshes.AuthoredIndexedRejected", TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] Authored indexed pass {0} rejected: {1}", renderPass, reason);
                 return;
             }
 

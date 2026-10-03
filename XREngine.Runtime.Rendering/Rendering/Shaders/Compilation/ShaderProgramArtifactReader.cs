@@ -73,7 +73,7 @@ public static class ShaderProgramArtifactReader
         string hash = Convert.ToHexStringLower(SHA256.HashData(wgslBytes));
         Require(Text(source, "sha256") == hash && Text(source, "url") == hash + ".wgsl", "WGSL content hash does not match the descriptor");
         string identity = Convert.ToHexStringLower(SHA256.HashData(descriptorBytes));
-        return ReadLayout(descriptor, new ShaderArtifact(ShaderCompileTarget.WebGPUWgsl, wgslBytes.ToArray()), identity)
+        return ReadLayout(descriptor, new ShaderArtifact(ShaderCompileTarget.WebGPUWgsl, wgslBytes), identity)
             with { DescriptorBytes = ImmutableArray.CreateRange(descriptorBytes.ToArray()) };
     }
 
@@ -173,7 +173,7 @@ public static class ShaderProgramArtifactReader
                 string format = Text(attribute, "format"), semantic = Text(attribute, "semantic");
                 int bytes = VertexFormatBytes(format);
                 Require(locations.Add(location) && offset % 4 == 0 && offset + bytes <= stride, "overlapping vertex location or attribute outside its stride");
-                Require(semantic is "position" or "normal" or "tangent" or "uv0" or "color0", "unsupported engine vertex semantic '" + semantic + "'");
+                Require(semantic is "position" or "normal" or "tangent" or "uv0" or "uv1" or "uv2" or "uv3" or "color0", "unsupported engine vertex semantic '" + semantic + "'");
                 foreach (ShaderVertexAttribute previous in attributes)
                     Require(offset + bytes <= previous.Offset || offset >= previous.Offset + VertexFormatBytes(previous.Format), "vertex attributes overlap within a buffer");
                 attributes.Add(new ShaderVertexAttribute(location, offset, format, semantic));
@@ -478,7 +478,7 @@ public static class ShaderProgramArtifactReader
             semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
                 EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
                 EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap or
-                EngineMaterialSemantic.UICanvasSurface or
+                EngineMaterialSemantic.UICanvasSurface or EngineMaterialSemantic.UberOutline or
                 EngineMaterialSemantic.SkyboxGradient or EngineMaterialSemantic.SkyboxEquirectangular or
                 EngineMaterialSemantic.SkyboxOctahedral or EngineMaterialSemantic.SkyboxCubemap or
                 EngineMaterialSemantic.SkyboxDynamicProcedural,

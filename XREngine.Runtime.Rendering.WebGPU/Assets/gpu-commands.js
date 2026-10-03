@@ -438,7 +438,7 @@ export class GpuCommands {
                 const operationLabel = `${name} ${operations.length} ${command.type}`.slice(0, 128);
                 if (command.type === 'render' || command.type === 'clear') {
                     const clearOnly = command.type === 'clear';
-                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage', 'viewport', 'scissor']);
+                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage', 'engineInstanceCountLimit', 'viewport', 'scissor']);
                     const pipeline = clearOnly ? undefined : hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
                     const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
                     const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata, operationLabel, r.device);
@@ -494,8 +494,10 @@ export class GpuCommands {
                     }
                     const drawList = array(command.draws, maxCommands, 'draws');
                     let replayDraws = 0;
-                    let engineInstanceCountLimit = 0;
+                    let engineInstanceCountLimit = command.engineInstanceCountLimit === undefined ? 0 :
+                        integer(command.engineInstanceCountLimit, 1, 0xffffffff, 'engine instance count limit');
                     if (command.engineInstanceStorage !== undefined) {
+                        if (engineInstanceCountLimit) throw new Error('WebGPU.Commands.InstanceOverride: declare one instance ceiling owner.');
                         const source = object(command.engineInstanceStorage, ['group', 'binding', 'buffer', 'stride', 'limit']);
                         const groupIndex = integer(source.group, 0, bindings.length - 1, 'instance storage group');
                         const bindingIndex = integer(source.binding, 0, r.device.limits.maxBindingsPerBindGroup - 1, 'instance storage binding');

@@ -27,7 +27,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         WebGpuAdvancedVisibilityFrame visibility, out string reason)
     {
         WebGpuAdvancedShadingFrame frame = _frames[visibility.Scene!.SlotIndex];
-        if (frame.ClassifiedSequence == visibility.FrameSequence && frame.PreparationGeneration == visibility.PreparationGeneration)
+        if (frame.ClassifiedSequence == visibility.FrameSequence && frame.PreparationGeneration == visibility.PreparationGeneration &&
+            frame.AuthoredDecalsEnabled == request.EnableAuthoredDecals &&
+            frame.AuthoredDecalCommandSignature == AuthoredDecalCommandSignature(in request))
         { reason = string.Empty; return true; }
         bool multisample = request.MsaaSampleCount == 4;
         WebGpuRenderProgram classify = Program(instance, multisample ? "shade-classify-msaa" : "shade-classify");
@@ -90,7 +92,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
     {
         WebGpuAdvancedShadingFrame frame = _frames[visibility.Scene!.SlotIndex];
         if (frame.ClassifiedSequence != visibility.FrameSequence || frame.PreparationGeneration != visibility.PreparationGeneration ||
-            frame.Width != request.Target.Width || frame.Height != request.Target.Height)
+            frame.Width != request.Target.Width || frame.Height != request.Target.Height ||
+            frame.AuthoredDecalsEnabled != request.EnableAuthoredDecals ||
+            frame.AuthoredDecalCommandSignature != AuthoredDecalCommandSignature(in request))
         { reason = "WebGPU.Advanced.ClassificationMissing: shade requires the same frozen view, scene slot, and GPU classification generation."; return false; }
         if (request.MsaaSampleCount == 4) return TryShadeMultisample(in request, instance, visibility, frame, out reason);
         WebGpuRenderProgram native = Program(instance, frame.DepthComparisonBank ? "shade-native-depth" : "shade-native");

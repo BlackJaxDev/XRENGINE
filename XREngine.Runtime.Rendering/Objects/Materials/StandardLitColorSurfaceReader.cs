@@ -59,7 +59,8 @@ internal struct StandardLitColorSurfaceReader
     private bool _unversionedLayout;
     private StandardLitColorSurface _surface;
 
-    private bool HasCoverage => _material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
+    private bool HasCoverage => _material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 ||
+        _authoredCooked && _material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2;
 
     public StandardLitColorSurfaceReader(XRMaterial material, bool authoredCooked = false)
     {
@@ -133,12 +134,12 @@ internal struct StandardLitColorSurfaceReader
             reason = "StandardLitColorV2 requires finite opacity/cutoff in [0,1] and a cutoff parameter matching AlphaCutoff.";
             return false;
         }
-        if (_authoredCooked && (_schema != StandardLitColorSurfaceSchema.DeferredEmission || _surface.Opacity != 1 ||
+        if (_authoredCooked && (_schema != StandardLitColorSurfaceSchema.DeferredEmission || !HasCoverage && _surface.Opacity != 1 ||
             !float.IsFinite(_surface.BaseColor.X) || !float.IsFinite(_surface.BaseColor.Y) || !float.IsFinite(_surface.BaseColor.Z) ||
             !float.IsFinite(_surface.Specular) || !float.IsFinite(_surface.Roughness) ||
             !float.IsFinite(_surface.Metallic) || !float.IsFinite(_surface.Emission)))
         {
-            reason = "AuthoredLitV1 requires exactly six finite deferred PBR factors and opaque opacity one.";
+            reason = "Authored lit color requires finite PBR factors, with opacity one for the opaque V1 contract.";
             return false;
         }
         surface = HasCoverage
@@ -150,7 +151,7 @@ internal struct StandardLitColorSurfaceReader
 
     private bool ValidateMaterial(out string? reason)
     {
-        if (_authoredCooked ? _material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitV1 || _material.Shaders.Count == 0 :
+        if (_authoredCooked ? !_material.EngineSemantic.IsAuthoredLit() || _material.Shaders.Count == 0 :
             _material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 && !HasCoverage)
         {
             reason = "Material is not explicitly tagged with a supported StandardLitColor semantic.";
@@ -165,6 +166,13 @@ internal struct StandardLitColorSurfaceReader
             _material.HasSettingShadowUniformHandlers || _material.BindingPublishers.Count != 0)
         {
             reason = "StandardLitColorV1 has unsupported surface resources or binding extensions.";
+            return false;
+        }
+
+        if (_authoredCooked && HasCoverage &&
+            (_material.BillboardMode != EMeshBillboardMode.None || _material.HasSettingVertexUniformHandlers))
+        {
+            reason = "Authored color coverage does not admit billboard or custom vertex-uniform behavior.";
             return false;
         }
 

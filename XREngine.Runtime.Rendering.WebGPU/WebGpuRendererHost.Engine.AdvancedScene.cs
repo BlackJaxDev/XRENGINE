@@ -22,11 +22,6 @@ public sealed partial class WebGpuRendererHost
         => CanStageEngineStorageUploads((long)sceneBytes + geometryBytes,
             (sceneBytes == 0 ? 0 : 1) + (geometryBytes == 0 ? 0 : 1));
 
-    /// <summary>Preflights a complete set of copy records before any member enters the frame packet.</summary>
-    internal bool CanStageEngineStorageUploads(long byteCount, int recordCount)
-        => byteCount >= 0 && recordCount >= 0 && byteCount <= EngineStorageCapacity - _engineStorageBytes &&
-           recordCount <= EngineMaximumUploads - _engineUploadCount;
-
     internal bool TryAcquireAdvancedScene(BackendReadyFramePackage package, uint currentDeformationBytes, uint previousDeformationBytes,
         out WebGpuAdvancedSceneSlot? slot, out string reason)
     {
