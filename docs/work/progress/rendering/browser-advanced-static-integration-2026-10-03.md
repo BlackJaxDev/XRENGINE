@@ -139,3 +139,45 @@ could allocate disabled post effects. This changes only derived resource-profile
 keys, not authored settings or desktop shader behavior. The existing Linux CI
 lane now retains its pinned Jolt archives and license/provenance files so native
 builds can reuse the verified compiler output after an execution workspace reset.
+
+## Cooked geometry and first visible output
+
+The `48fc5778` bundle passes Windows Editor publication and the existing Linux
+browser, RollingBall, and RenderingParity lanes in
+[run 37092716591](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37092716591).
+Its Advanced Linux lane times out with three fullscreen draws and no accepted
+first frame. A separate physical Intel browser run reaches Running and submits
+shading/presentation, but its canvas is black and no native visibility-pull draw
+is recorded. These are failures, not visual acceptance.
+
+The saved-world managed reproduction isolates a missing canonical geometry
+source: its cooked mesh has six buffered vertices and four explicit triangles,
+but no rich authoring `Vertex` objects. The existing canonical publisher rejects
+that representation as `InvalidGeometrySource`, producing an empty native scene.
+Canonical packing now accepts the retained float planar/interleaved CPU buffers
+with explicit byte-range, stride, attribute, and ownership validation. It keeps
+authored vertex objects authoritative when present, rejects compressed or
+GPU-produced packed sources, preserves explicit indices, and allocates no
+duplicate authoring object graph. No cooked format or shader change is required.
+
+The physical resize attempt also alternates between widths 828 and 813 when
+status text changes scrollbar presence. The standalone player reserves the
+scrollbar gutter so status messages cannot repeatedly replace the canvas output.
+A frozen history candidate rejected on resource activation remains correctly
+rejected; its exact generation guards are unchanged.
+
+Cold browser rendering status now includes retained Advanced stage observations,
+their frame/generation/rejection reasons, prepared draw count, and pending-command
+state. Release browser builds compile out ordinary rendering warnings, so this
+preserves the actionable preparation reason at a timeout without adding snapshot
+allocation to successful frames. Corrected live pixels and resize remain pending.
+
+The exact 61,137-byte Editor-cooked world reproduces canonical admission
+`False/InvalidGeometrySource` before this correction and `True/None` after it,
+while retaining six packed vertices, zero authoring vertex objects, four
+triangles, the original camera/pipeline identity, all four mapped samplers, and
+successful game-mode activation. The dependency-enabled Rendering and native
+Browser builds pass with zero warnings/errors; the full Editor build and its
+final assembly refresh also pass. Independent source review covers packed
+stream bounds/types, interleaved metadata, rich-source precedence, and resource
+revision reuse. These managed checks establish geometry admission, not GPU pixels.
