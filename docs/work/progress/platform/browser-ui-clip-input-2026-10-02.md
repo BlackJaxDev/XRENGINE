@@ -21,8 +21,9 @@ unsupported rather than clearing the entire attachment silently.
 
 `ClipToBounds` quads and bitmap text can now remain in the engine UI batch path.
 A crop-keyed run carries a double-buffered value snapshot; the desktop unbatched
-path remains unchanged. This is not a general custom-UI-material implementation,
-and it does not add inherited clipping or change rotated hit-test geometry.
+path remains unchanged. This is not a general custom-UI-material implementation.
+Inherited clipping and rotated hit bounds are addressed by the later shared UI
+change described below.
 
 Independent review closed an upload-ordering issue in the initial empty-crop
 implementation. The final WebGPU graph compiled with zero warnings/errors;
@@ -60,3 +61,38 @@ Screen-reader traversal of the whole canvas, nonfocused controls, inherited UI
 clipping, all widget roles/states and physical IME/assistive-technology behavior
 remain open. No browser/device acceptance or general engine-UI completion is
 implied by the source and boundary checks.
+
+## Shared inherited clipping follow-up (2026-10-03)
+
+The shared UI crop resolver now intersects a component's rectangular crop with
+clipping ancestors. Both the batched quad/text path and the unbatched desktop
+2D command use this resolved crop. Transform bounds use all four corners when
+forming the axis-aligned scissor for rotated elements; rotation does not make
+this a polygon clip. The renderer consumes bottom-left UI world pixels and
+converts their Y coordinate once at its backend boundary. Canvas input uses the
+same crop to reject mouse and contact hits outside visible descendants, after
+testing the target's local bounds through its inverse transform. Input blockers
+therefore only act where their clipped UI is visible. These paths reuse their
+existing input collections and avoid per-hit snapshot arrays.
+
+The canvas-to-local matrix now composes canvas world before the element's
+inverse world matrix, which is the inverse of the existing local-to-canvas
+matrix under `System.Numerics` row-vector multiplication. The corresponding
+parent-to-child conversion uses the same order. A rotated, translated canvas
+with a translated child now round-trips a local point through canvas space;
+the previous order failed when those transforms did not commute. Hit testing
+maps the canvas point through the canvas world matrix when comparing against
+the renderer's world-space scissor.
+
+Live screen-space acceptance should cover nested clipping and moving/rotated
+ancestors on desktop OpenGL/Vulkan and browser WebGPU: a child protruding beyond a clipping
+parent must have neither pixels nor hover/click/touch response in the cropped
+area, while its visible part remains interactive. Toggle the ancestor's clip,
+move it, and confirm the crop updates without recreating the child. The browser
+glyph and image batch paths also need actual pixel review. Full canvas
+accessibility traversal and physical IME behavior remain separate acceptance.
+
+The non-screen offscreen 2D path still forwards world-space crop coordinates to
+a pixel scissor. Its behavior with a transformed canvas needs a separate
+render-coordinate review and live acceptance before claiming clipping parity
+outside screen space.

@@ -63,6 +63,8 @@ export class GpuCommands {
     constructor(renderer) {
         this.renderer = renderer;
         this.pending = new Set();
+        this.preparations = new Set();
+        this.preparationFailures = [];
         this.engineFrame = new GpuEngineFrame(this);
         this.canvasColor = { view: undefined, width: 0, height: 0, format: '', sampleCount: 1, usage: 16 };
         this.canvasDepth = { view: undefined, width: 0, height: 0, format: 'depth24plus', sampleCount: 1, usage: 16 };
@@ -91,11 +93,55 @@ export class GpuCommands {
         catch (error) { value.release(); throw error; }
     }
 
+    preparationSnapshot(preparation, now = performance.now()) {
+        return { stage: preparation.stage, label: preparation.label, owner: preparation.owner,
+            outcome: preparation.outcome, elapsedMs: preparation.elapsedMs ?? now - preparation.startedAt,
+            error: preparation.error,
+            native: { ...preparation.native }, validationScope: { ...preparation.validationScope },
+            memoryScope: { ...preparation.memoryScope } };
+    }
+
+    /** Detached cold snapshots; failed operations retain their state at failure even if GPU promises settle later. */
+    getPreparationDiagnostics() {
+        const now = performance.now();
+        return { pending: Array.from(this.preparations, value => this.preparationSnapshot(value, now)),
+            failed: this.preparationFailures.map(value => ({ ...value, native: { ...value.native },
+                validationScope: { ...value.validationScope }, memoryScope: { ...value.memoryScope } })) };
+    }
+
+    retainPreparationFailure(preparation, error, outcome) {
+        if (preparation.outcome !== 'pending') return;
+        preparation.outcome = outcome;
+        preparation.elapsedMs = performance.now() - preparation.startedAt;
+        preparation.error = String(error?.message ?? error).slice(0, 2048);
+        // Preserve the earliest failures within the same bound as concurrent preparation.
+        if (this.preparationFailures.length < 64)
+            this.preparationFailures.push(this.preparationSnapshot(preparation));
+    }
+
+    observePreparation(promise, preparation, phase, scope) {
+        return Promise.resolve(promise).then(value => {
+            phase.status = 'fulfilled';
+            phase.settledAfterMs = performance.now() - preparation.startedAt;
+            if (scope && value) phase.error = String(value.message ?? value).slice(0, 2048);
+            return value;
+        }, error => {
+            phase.status = 'rejected';
+            phase.settledAfterMs = performance.now() - preparation.startedAt;
+            phase.error = String(error?.message ?? error).slice(0, 2048);
+            throw error;
+        });
+    }
+
     async operation(action, stage, label) {
         const r = this.renderer;
         r._requireOwner();
         if (this.pending.size >= 64) throw new Error('Too many GPU resources are being prepared concurrently.');
         const device = r.device, owner = r._owner;
+        const preparation = { stage, label, owner, startedAt: performance.now(), elapsedMs: null, outcome: 'pending', error: null,
+            native: { status: 'pending', settledAfterMs: null, error: null },
+            validationScope: { status: 'pending', settledAfterMs: null, error: null },
+            memoryScope: { status: 'pending', settledAfterMs: null, error: null } };
         r._setOperation(stage, label);
         device.pushErrorScope('out-of-memory');
         device.pushErrorScope('validation');
@@ -104,12 +150,26 @@ export class GpuCommands {
         catch (error) { pending = Promise.reject(error); }
         const validation = device.popErrorScope(), memory = device.popErrorScope();
         let timer, cancel;
-        const canceled = new Promise((_, reject) => { cancel = () => reject(new Error('GPU resource preparation was canceled by renderer teardown.')); });
+        const canceled = new Promise((_, reject) => { cancel = () => {
+            const error = new Error('GPU resource preparation was canceled by renderer teardown.');
+            // Capture before device destruction can resolve the outstanding scope promises.
+            this.retainPreparationFailure(preparation, error, 'canceled');
+            reject(error);
+        }; });
         this.pending.add(cancel);
-        const all = Promise.allSettled([pending, validation, memory]);
+        this.preparations.add(preparation);
+        const all = Promise.allSettled([
+            this.observePreparation(pending, preparation, preparation.native, false),
+            this.observePreparation(validation, preparation, preparation.validationScope, true),
+            this.observePreparation(memory, preparation, preparation.memoryScope, true),
+        ]);
         try {
             const result = await Promise.race([all, canceled, new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error('GPU resource preparation exceeded 45000 ms.')), 45000);
+                timer = setTimeout(() => {
+                    const error = new Error('GPU resource preparation exceeded 45000 ms.');
+                    this.retainPreparationFailure(preparation, error, 'timed-out');
+                    reject(error);
+                }, 45000);
             })]);
             r._requireOwner();
             if (r.device !== device || r._owner !== owner) throw new Error('GPU resource preparation belongs to an obsolete device.');
@@ -117,12 +177,14 @@ export class GpuCommands {
                 if (result[i].status === 'rejected') throw result[i].reason;
                 if (i && result[i].value) throw new Error(result[i].value.message);
             }
+            preparation.outcome = 'fulfilled';
             return result[0].value;
         } catch (error) {
+            this.retainPreparationFailure(preparation, error, 'failed');
             r._recordError(error, stage, label);
             r.pipelineCache?.clear();
             throw error;
-        } finally { clearTimeout(timer); this.pending.delete(cancel); }
+        } finally { clearTimeout(timer); this.pending.delete(cancel); this.preparations.delete(preparation); }
     }
 
     async createShaderModule(wgsl, debugName = '') {

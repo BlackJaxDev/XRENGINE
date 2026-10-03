@@ -1,5 +1,6 @@
 // Finite texture/sampler bank. Every live logical pair must have an exact cohort mapping.
-// Slots0..9 are2D,slot10 cube,slot11 2Darray. No count readback or descriptor indexing.
+// Slots 0..9 are 2D, slot 10 cube, slot 11 array. The depth companion types
+// slot 9 as depth/comparison and leaves all other slots unchanged (16 textures total).
 #define XR_ADV_RESOURCE_FLAG_RESIDENT 1u
 #define XR_ADV_RESOURCE_FLAG_FALLBACK 2u
 [[vk::binding(4, 1)]] Texture2D<float4> NativeTexture0;
@@ -20,8 +21,13 @@
 [[vk::binding(19, 1)]] SamplerState NativeSampler7;
 [[vk::binding(20, 1)]] Texture2D<float4> NativeTexture8;
 [[vk::binding(21, 1)]] SamplerState NativeSampler8;
+#if defined(XR_ADV_DEPTH_COMPARISON_BANK)
+[[vk::binding(22, 1)]] DepthTexture2D NativeTexture9;
+[[vk::binding(23, 1)]] SamplerComparisonState NativeSampler9;
+#else
 [[vk::binding(22, 1)]] Texture2D<float4> NativeTexture9;
 [[vk::binding(23, 1)]] SamplerState NativeSampler9;
+#endif
 [[vk::binding(24, 1)]] TextureCube<float4> NativeTexture10;
 [[vk::binding(25, 1)]] SamplerState NativeSampler10;
 [[vk::binding(26, 1)]] Texture2DArray<float4> NativeTexture11;
@@ -59,9 +65,16 @@ bool ResolveTexturePair(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler
             TextureBindings[word+2u] != sampler.index || TextureBindings[word+3u] != sampler.generation) continue;
         uint dimension = TextureBindings[word+4u];
         uint slot = TextureBindings[word+5u];
+        bool depth = (record.flags & 8u) != 0u;
+        if ((TextureBindings[word+6u] != 0u) != depth) break;
+#if defined(XR_ADV_DEPTH_COMPARISON_BANK)
+        if (depth != (slot == 9u)) break;
+#else
+        if (depth) break;
+#endif
         if (dimension != record.dimension || !((dimension == 1u && slot < 10u) ||
             (dimension == 3u && slot == 10u) || (dimension == 5u && slot == 11u))) break;
-        encoded = XRAdvancedEncodedTextureReference(slot, 0u, fallback, XR_ADV_RESOURCE_FLAG_RESIDENT);
+        encoded = XRAdvancedEncodedTextureReference(slot, uint(depth), fallback, XR_ADV_RESOURCE_FLAG_RESIDENT);
         return true;
     }
     // A valid published texture with no physical binding is never a neutral sample.
@@ -100,7 +113,9 @@ float4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, f
         case 6u: return NativeTexture6.SampleGrad(NativeSampler6, uv, dx, dy);
         case 7u: return NativeTexture7.SampleGrad(NativeSampler7, uv, dx, dy);
         case 8u: return NativeTexture8.SampleGrad(NativeSampler8, uv, dx, dy);
+#if !defined(XR_ADV_DEPTH_COMPARISON_BANK)
         case 9u: return NativeTexture9.SampleGrad(NativeSampler9, uv, dx, dy);
+#endif
     }
     textureFailure |= 1u << 19u;
     return float4(1.0, 0.0, 1.0, 1.0);
@@ -119,7 +134,9 @@ float4 XR_ADV_SampleTexture2DLod(XRAdvancedEncodedTextureReference reference, fl
         case 6u: return NativeTexture6.SampleLevel(NativeSampler6, uv, lod);
         case 7u: return NativeTexture7.SampleLevel(NativeSampler7, uv, lod);
         case 8u: return NativeTexture8.SampleLevel(NativeSampler8, uv, lod);
+#if !defined(XR_ADV_DEPTH_COMPARISON_BANK)
         case 9u: return NativeTexture9.SampleLevel(NativeSampler9, uv, lod);
+#endif
     }
     textureFailure |= 1u << 19u;
     return float4(1.0, 0.0, 1.0, 1.0);
@@ -136,4 +153,38 @@ float4 XR_ADV_SampleTexture2DArrayLod(XRAdvancedEncodedTextureReference referenc
     if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u) return XR_ADV_TextureFallback(reference.payload2);
     if (reference.payload0 != 11u) { textureFailure |= 1u << 19u; return float4(1.0,0.0,1.0,1.0); }
     return NativeTexture11.SampleLevel(NativeSampler11, uvLayer, lod);
+}
+
+// Blocker search reads the original, unfiltered depth or projected color texel.
+float XR_ADV_LoadShadow2D(XRAdvancedEncodedTextureReference reference, int2 texel)
+{
+    switch (reference.payload0)
+    {
+        case 0u: return NativeTexture0.Load(int3(texel, 0)).r;
+        case 1u: return NativeTexture1.Load(int3(texel, 0)).r;
+        case 2u: return NativeTexture2.Load(int3(texel, 0)).r;
+        case 3u: return NativeTexture3.Load(int3(texel, 0)).r;
+        case 4u: return NativeTexture4.Load(int3(texel, 0)).r;
+        case 5u: return NativeTexture5.Load(int3(texel, 0)).r;
+        case 6u: return NativeTexture6.Load(int3(texel, 0)).r;
+        case 7u: return NativeTexture7.Load(int3(texel, 0)).r;
+        case 8u: return NativeTexture8.Load(int3(texel, 0)).r;
+#if defined(XR_ADV_DEPTH_COMPARISON_BANK)
+        case 9u: return NativeTexture9.Load(int3(texel, 0));
+#else
+        case 9u: return NativeTexture9.Load(int3(texel, 0)).r;
+#endif
+    }
+    textureFailure |= 1u << 19u;
+    return 0.0;
+}
+
+float XR_ADV_CompareShadow2D(XRAdvancedEncodedTextureReference reference, float2 uv, float receiver)
+{
+#if defined(XR_ADV_DEPTH_COMPARISON_BANK)
+    if (reference.payload0 == 9u && reference.payload1 == 1u)
+        return NativeTexture9.SampleCmpLevelZero(NativeSampler9, uv, receiver);
+#endif
+    if (reference.payload1 != 0u) { textureFailure |= 1u << 19u; return 0.0; }
+    return float(receiver <= XR_ADV_SampleTexture2DLod(reference, uv, 0.0).r);
 }

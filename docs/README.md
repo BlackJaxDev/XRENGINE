@@ -182,3 +182,5 @@ browser representations under one verified managed-admission identity.
 [WebGPU indirect submission](architecture/rendering/webgpu-indirect-submission.md) records GPU-written argument/count contracts, completion ownership, and the distinction between native Advanced compute meshlets and hardware task/mesh stages.
 
 [Browser authored meshlet indexed submission](work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md) records material-independent resident publication, conservative GPU cull/refit/expansion, exact authored raster reuse, completion ownership, explicit remaining profiles, and the pending runtime acceptance boundary.
+
+[Native browser standalone shadows](work/progress/rendering/browser-native-standalone-shadow-2026-10-03.md) records typed depth/color banks, immutable producer receipts, exact receiver controls, shared cold admission, and the remaining live shadow acceptance.

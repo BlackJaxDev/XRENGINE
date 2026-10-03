@@ -10,9 +10,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput
     private bool TryShadeMultisample(in AdvancedVisibilityStageBackendRequest request, XRRenderPipelineInstance instance,
         WebGpuAdvancedVisibilityFrame visibility, WebGpuAdvancedShadingFrame frame, out string reason)
     {
-        WebGpuRenderProgram native = Program(instance, "shade-native-msaa");
+        WebGpuRenderProgram native = Program(instance, frame.DepthComparisonBank ? "shade-native-depth-msaa" : "shade-native-msaa");
         WebGpuRenderProgram resolve = Program(instance, "shade-msaa-resolve");
-        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-surface-exports-msaa") : null;
+        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, frame.DepthComparisonBank ? "shade-surface-exports-depth-msaa" : "shade-surface-exports-msaa") : null;
         WebGpuRenderProgram? clearExports = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports-msaa") : null;
         bool ready = Prepare(native) & Prepare(resolve);
         if (exports is not null) ready &= Prepare(exports) & Prepare(clearExports!);

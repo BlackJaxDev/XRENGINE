@@ -448,11 +448,14 @@ float4 XR_ADV_FetchShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord
     return XR_ADV_SampleTexture2DLod(textureReference, uv, 0.0);
 }
 
-float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, float3 position, float3 N, float3 L,
+#include "AdvancedShadeStandaloneShadows.slang"
+
+float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface surface, float3 N, float3 L,
     out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
-    if ((record.flags & 1u) == 0u || (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u)
+    if ((record.flags & 1u) == 0u ||
+        (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u && (record.flags & 1024u) == 0u)
     {
         reason = XR_ADV_SHADOW_NOT_RESIDENT;
         return 1.0;
@@ -478,6 +481,9 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, float3 position, 
         reason = XR_ADV_SHADOW_UNSUPPORTED;
         return 1.0;
     }
+    if ((record.flags & 512u) != 0u)
+        return XR_WEB_SampleStandaloneShadow(record, textureRecord, textureReference, surface, N, reason);
+    float3 position = surface.worldPosition;
     float3 receiverPosition = position + N * max(record.depthBiasAndFilter.z, 0.0);
     float3 coordinate;
     if (!XR_ADV_ProjectShadow(record, receiverPosition, coordinate))
@@ -573,16 +579,17 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     {
         XRAdvancedShadowRecord record = XR_ADV_LoadShadow(root.cascadeOffset + i);
         if (!XR_ADV_ShadowAffectsView(record, view, surface.viewIndex)) continue;
-        if ((record.flags & 1u) == 0u || (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u)
+        if ((record.flags & 1u) == 0u ||
+            (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u && (record.flags & 1024u) == 0u)
         {
             reason = max(reason, XR_ADV_SHADOW_NOT_RESIDENT);
             continue;
         }
-        if (record.type == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
+        if (record.type == 0u && (record.flags & 512u) == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
         float3 unusedCoordinate;
         if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
-        float visibility = XR_ADV_SampleShadowRecord(record, surface.worldPosition, N, L, reason);
-        if (record.type != 0u) return visibility;
+        float visibility = XR_ADV_SampleShadowRecord(record, surface, N, L, reason);
+        if (record.type != 0u || (record.flags & 512u) != 0u) return visibility;
         float blendWidth = max(record.depthRangeAndCascade.w, 0.0);
         if (blendWidth <= 0.0 || linearDepth < record.depthRangeAndCascade.z - blendWidth) return visibility;
         for (uint next = i + 1u; next < root.cascadeCount; ++next)
@@ -591,7 +598,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
             if (adjacent.type != 0u || !XR_ADV_ShadowAffectsView(adjacent, view, surface.viewIndex)) continue;
             if (!XR_ADV_ProjectShadow(adjacent, surface.worldPosition, unusedCoordinate)) continue;
             uint adjacentReason;
-            float adjacentVisibility = XR_ADV_SampleShadowRecord(adjacent, surface.worldPosition, N, L, adjacentReason);
+            float adjacentVisibility = XR_ADV_SampleShadowRecord(adjacent, surface, N, L, adjacentReason);
             reason = max(reason, adjacentReason);
             return lerp(visibility, adjacentVisibility,
                 clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0));
@@ -854,6 +861,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     // A multisample driver calls this function repeatedly in one invocation.
     shadowReason = XR_ADV_SHADOW_OK;
     shadowVisibility = 1.0;
+    standaloneShadowHelpersReady = false;
     directDiffuse = float3(0.0);
     directSpecular = float3(0.0);
 

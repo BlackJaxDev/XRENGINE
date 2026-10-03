@@ -30,9 +30,14 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                     AddGlobal(snapshot, probe.Irradiance);
                     AddGlobal(snapshot, probe.PrefilteredRadiance);
                 }
-            foreach (ref readonly AdvancedShadowRecord shadow in snapshot.GlobalResources.Shadows.PhysicalRecords)
-                if (((uint)shadow.Flags & 1u) != 0 && ViewMatches(shadow.ViewMaskLo, shadow.ViewMaskHi, view))
+            ReadOnlySpan<AdvancedShadowRecord> shadows = snapshot.GlobalResources.Shadows.PhysicalRecords;
+            for (int index = 0; index < shadows.Length; index++)
+            {
+                ref readonly AdvancedShadowRecord shadow = ref shadows[index];
+                if (snapshot.GlobalResources.Shadows.TryGetDenseIndex(new(shadow.StableShadowId, shadow.Generation), out uint dense) &&
+                    dense == (uint)index && ((uint)shadow.Flags & 1u) != 0 && ViewMatches(shadow.ViewMaskLo, shadow.ViewMaskHi, view))
                     AddGlobal(snapshot, shadow.Texture);
+            }
             foreach (ref readonly AdvancedDecalRecord decal in snapshot.GlobalResources.Decals.PhysicalRecords)
             {
                 if ((decal.Flags & AdvancedDecalRecord.EnabledFlag) == 0 || !ViewMatches(decal.ViewMaskLo, decal.ViewMaskHi, view)) continue;
@@ -41,6 +46,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                     throw Invalid("DecalMaterialMissing", "an enabled decal lacks its exact published material");
                 AddMaterial(snapshot, in material, _globals, ref _globalCount);
             }
+            frame.DepthComparisonBank = false;
+            for (int index = 0; index < _globalCount; index++)
+                frame.DepthComparisonBank |= _globals[index].DepthComparison;
             ReadOnlySpan<AdvancedMaterialRecord> materials = snapshot.Materials.PhysicalRecords;
             if (frame.MaterialRows.Length < Math.Max(materials.Length, 1)) Array.Resize(ref frame.MaterialRows, Math.Max(materials.Length, 1));
             frame.MaterialRows.AsSpan().Fill(uint.MaxValue);
@@ -131,7 +139,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
         if (!reference.Handle.IsValid) return;
         if (!snapshot.Textures.TryGet(reference.Handle, out AdvancedTextureRecord record))
             throw Invalid("TextureGenerationMissing", "a valid global texture handle is absent from the retained publication");
-        AddPair(snapshot, reference.Handle, record.DefaultSampler, _globals, ref _globalCount);
+        AddPair(snapshot, reference.Handle, record.DefaultSampler, _globals, ref _globalCount, allowDepthComparison: true);
     }
 
     private static void AddMaterial(AdvancedGpuScenePublicationSnapshot snapshot, in AdvancedMaterialRecord material,
@@ -168,19 +176,31 @@ internal sealed partial class WebGpuAdvancedShadingOutput
     }
 
     private static void AddPair(AdvancedGpuScenePublicationSnapshot snapshot, AdvancedGpuHandle texture, AdvancedGpuHandle sampler,
-        WebGpuAdvancedTexturePair[] pairs, ref int count)
+        WebGpuAdvancedTexturePair[] pairs, ref int count, bool allowDepthComparison = false)
     {
-        for (int index = 0; index < count; index++) if (pairs[index].Texture == texture && pairs[index].Sampler == sampler) return;
         if (!snapshot.Textures.TryGet(texture, out AdvancedTextureRecord record) ||
-            !snapshot.Samplers.TryGet(sampler, out _) ||
+            !snapshot.Samplers.TryGet(sampler, out AdvancedSamplerRecord samplerRecord) ||
             !snapshot.ResourcePayloads.TryGetTextureSource(texture, out XRTexture source, out ulong generation))
             throw Invalid("TexturePairMissing", "a valid texture/sampler pair lacks its exact retained records and source generation");
-        int dimensionCount = 0;
-        for (int index = 0; index < count; index++) if (pairs[index].Dimension == record.Dimension) dimensionCount++;
-        int capacity = WebGpuAdvancedMaterialContract.GetTextureDimensionCapacity(record.Dimension);
-        if (dimensionCount >= capacity || count == pairs.Length)
-            throw Invalid("TextureBankCapacity", "native closure exceeds the explicit bank of ten 2D pairs, one cube pair, and one 2D-array pair");
-        pairs[count++] = new(texture, sampler, record.Dimension, source, generation);
+        if (WebGpuAdvancedMaterialContract.GetTexturePairRejection(in record, in samplerRecord,
+            allowDepthComparison, out bool depth) is { } pairReason)
+            throw Invalid("TextureSampleType", pairReason);
+        for (int index = 0; index < count; index++) if (pairs[index].Texture == texture && pairs[index].Sampler == sampler) return;
+        int color2D = record.Dimension == EAdvancedTextureDimension.Texture2D && !depth ? 1 : 0;
+        int depth2D = depth ? 1 : 0;
+        int cube = record.Dimension == EAdvancedTextureDimension.Cube ? 1 : 0;
+        int array = record.Dimension == EAdvancedTextureDimension.Texture2DArray ? 1 : 0;
+        for (int index = 0; index < count; index++)
+        {
+            WebGpuAdvancedTexturePair pair = pairs[index];
+            if (pair.DepthComparison) depth2D++;
+            else if (pair.Dimension == EAdvancedTextureDimension.Texture2D) color2D++;
+            else if (pair.Dimension == EAdvancedTextureDimension.Cube) cube++;
+            else if (pair.Dimension == EAdvancedTextureDimension.Texture2DArray) array++;
+        }
+        if (WebGpuAdvancedMaterialContract.GetTextureBankRejection(color2D, depth2D, cube, array) is { } bankReason)
+            throw Invalid("TextureBankCapacity", bankReason);
+        pairs[count++] = new(texture, sampler, record.Dimension, source, generation, depth);
     }
 
     private void PrepareCohort(AdvancedGpuScenePublicationSnapshot snapshot, WebGpuAdvancedShadingCohort cohort,
@@ -206,10 +226,10 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                 throw Invalid("TextureGenerationChanged", "the source no longer matches its frozen texture metadata and content generation");
             WebGpuTextureResource resource = WebGpuTextureResource.Resolve(_renderer, pair.Source);
             if (resource.Width != record.Width || resource.Height != record.Height || resource.Layers != record.DepthOrLayers || resource.Mips != record.MipCount || WebGpuAdvancedMaterialContract.GetSamplingRejection(resource.Format, resource.Samples,
-                    _renderer.DeviceCapabilities?.Features.Contains("float32-filterable") == true) is not null)
-                throw Invalid("TextureSampleType", "native bank sampling requires an exact filterable non-depth floating-point texture");
+                    _renderer.DeviceCapabilities?.Features.Contains("float32-filterable") == true, pair.DepthComparison) is not null)
+                throw Invalid("TextureSampleType", "native bank sampling requires exact single-sample color or typed depth-comparison resources");
             var key = (snapshot.DatabaseEpoch, pair.Sampler);
-            int slot = pair.Dimension == EAdvancedTextureDimension.Texture2D ? next2D++ : pair.Dimension == EAdvancedTextureDimension.Cube ? 10 : 11;
+            int slot = pair.DepthComparison ? 9 : pair.Dimension == EAdvancedTextureDimension.Texture2D ? next2D++ : pair.Dimension == EAdvancedTextureDimension.Cube ? 10 : 11;
             if (_samplers.TryGetValue(key, out WebGpuAdvancedSampler? sampler) && !sampler.Matches(in samplerRecord))
             {
                 // Older slots can still own the previous record behind the same
@@ -233,6 +253,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             words[0] = pair.Texture.Index; words[1] = pair.Texture.Generation;
             words[2] = pair.Sampler.Index; words[3] = pair.Sampler.Generation;
             words[4] = (uint)pair.Dimension; words[5] = (uint)slot;
+            words[6] = pair.DepthComparison ? 1u : 0u;
         }
         for (int slot = 0; slot < occupied.Length; slot++) if (!occupied[slot]) cohort.ReleaseView(slot);
         cohort.Bindings.EnsureCapacity(WebGpuAdvancedShadingCohort.SlotCount * 32);

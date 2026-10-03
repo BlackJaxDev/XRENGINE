@@ -1064,7 +1064,7 @@ namespace XREngine.Rendering.UI
                     MsdfFillBias,
                     (int)BatchedDebugMode,
                     _glyphs,
-                    UseWebGpuBatchOnly && ClipToBounds ? tfm.AxisAlignedRegion.AsBoundingRectangle() : null);
+                    UIClipRegion.ResolveCrop(tfm, ClipToBounds));
             }
             return true;
         }

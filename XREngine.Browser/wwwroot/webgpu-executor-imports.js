@@ -61,6 +61,10 @@ export function installWebGpuImports(runtime, renderers) {
         createBindingGroup: (id, json) => renderer(id).commands.createBindingGroup(json),
         createRenderPipeline: (id, json) => renderer(id).commands.createRenderPipeline(json),
         createComputePipeline: (id, json) => renderer(id).commands.createComputePipeline(json),
+        getResourcePreparationStatus: id => {
+            const diagnostics = renderer(id).commands.getPreparationDiagnostics();
+            return diagnostics.pending.length || diagnostics.failed.length ? JSON.stringify(diagnostics) : '';
+        },
         prepareCommands: (id, json) => renderer(id).commands.prepareCommands(json),
         submitPreparedCommands: (id, handle) => renderer(id).commands.submitPreparedCommands(handle),
         submitEngineFrame: (id, commands, uniforms, storage) => renderer(id).commands.submitEngineFrame(commands, uniforms, storage),

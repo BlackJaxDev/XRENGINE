@@ -10,8 +10,9 @@ internal static class WebGpuAdvancedShadingProgramContract
     {
         if (pass == "shade-msaa-resolve") { WebGpuAdvancedMsaaProgramContract.Validate(artifact, pass); return; }
         bool multisample = pass.EndsWith("-msaa", StringComparison.Ordinal);
-        bool native = pass is "shade-native" or "shade-surface-exports" or "shade-native-msaa" or "shade-surface-exports-msaa";
-        bool exports = pass is "shade-surface-exports" or "shade-background-exports" or "shade-surface-exports-msaa" or "shade-background-exports-msaa";
+        bool depthBank = pass is "shade-native-depth" or "shade-surface-exports-depth" or "shade-native-depth-msaa" or "shade-surface-exports-depth-msaa";
+        bool native = depthBank || pass is "shade-native" or "shade-surface-exports" or "shade-native-msaa" or "shade-surface-exports-msaa";
+        bool exports = pass is "shade-surface-exports" or "shade-background-exports" or "shade-surface-exports-msaa" or "shade-background-exports-msaa" or "shade-surface-exports-depth" or "shade-surface-exports-depth-msaa";
         bool classify = pass is "shade-classify" or "shade-classify-msaa", finalize = pass == "shade-finalize";
         bool background = pass is "shade-background" or "shade-background-exports" or "shade-background-exports-msaa";
         if (!native && !classify && !finalize && !background) throw Invalid();
@@ -22,8 +23,8 @@ internal static class WebGpuAdvancedShadingProgramContract
             throw Invalid();
         if (native)
         {
-            if (!HasEngineSurfaceSchema(artifact, exports))
-                throw new NotSupportedException("WebGPU.Advanced.EngineSurfaceSchemaMismatch: recook shade-native, shade-surface-exports, shade-native-msaa, and shade-surface-exports-msaa with XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1; the installed artifact does not prove the engine-surface companion semantics.");
+            if (!HasNativeSchemas(artifact, exports, depthBank))
+                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook the selected native shading and export companions with engine-surface schema 1, standalone-shadow schema 1, and the exact ordinary or depth-comparison bank define.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
             Require(artifact, 0, 7, "uniform", 944, "FrozenView");
             Require(artifact, 0, 8, "uniform", 160, "Parameters");
@@ -33,8 +34,8 @@ internal static class WebGpuAdvancedShadingProgramContract
             Require(artifact, 1, 3, "texture-2d-unfilterable-float", name: "AmbientOcclusion");
             for (uint slot = 0; slot < 12; slot++)
             {
-                Require(artifact, 1, 4 + slot * 2, slot < 10 ? "texture-2d-float" : slot == 10 ? "texture-cube-float" : "texture-2d-array-float");
-                Require(artifact, 1, 5 + slot * 2, "filtering-sampler");
+                Require(artifact, 1, 4 + slot * 2, depthBank && slot == 9 ? "texture-depth-2d" : slot < 10 ? "texture-2d-float" : slot == 10 ? "texture-cube-float" : "texture-2d-array-float");
+                Require(artifact, 1, 5 + slot * 2, depthBank && slot == 9 ? "comparison-sampler" : "filtering-sampler");
             }
             if (multisample && !exports)
             {
@@ -66,7 +67,7 @@ internal static class WebGpuAdvancedShadingProgramContract
         }
     }
 
-    private static bool HasEngineSurfaceSchema(ShaderProgramArtifact artifact, bool exports)
+    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank)
     {
         if (artifact.SourceLanguage != "Slang" || artifact.DescriptorBytes.IsDefaultOrEmpty) return false;
         // Program validation also runs while recording. Inspect the retained,
@@ -82,11 +83,11 @@ internal static class WebGpuAdvancedShadingProgramContract
                 continue;
             }
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
-            bool schemaSeen = false, exportsSeen = false;
+            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndArray)
-                    return schemaSeen && exportsSeen == exports;
+                    return schemaSeen && shadowSeen && exportsSeen == exports && depthSeen == depthBank;
                 if (reader.TokenType != JsonTokenType.String) return false;
                 if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1"u8))
                 {
@@ -97,6 +98,16 @@ internal static class WebGpuAdvancedShadingProgramContract
                 {
                     if (!exports || exportsSeen) return false;
                     exportsSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1"u8))
+                {
+                    if (shadowSeen) return false;
+                    shadowSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_DEPTH_COMPARISON_BANK=1"u8))
+                {
+                    if (!depthBank || depthSeen) return false;
+                    depthSeen = true;
                 }
                 else return false;
             }

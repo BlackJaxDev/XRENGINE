@@ -12,6 +12,9 @@ public sealed class RenderPipelineRequirementsDeclaration
     public List<EAntiAliasingMode> SupportedAntiAliasingModes { get; set; } = [];
     public Dictionary<string, string?> Programs { get; set; } = new(StringComparer.Ordinal);
     public List<int> ScenePasses { get; set; } = [];
+    public Dictionary<int, XREngine.Data.Rendering.EMeshSubmissionStrategy?> NativeScenePasses { get; set; } = [];
+    public bool RequiresNativeScenePasses { get; set; }
+    public bool NativeProbeIbl { get; set; }
     public List<XRMaterial> Materials { get; set; } = [];
     public List<string> ProgramIdentities { get; set; } = [];
 
@@ -23,6 +26,10 @@ public sealed class RenderPipelineRequirementsDeclaration
         foreach (EAntiAliasingMode mode in SupportedAntiAliasingModes) requirements.SupportedAntiAliasingModes.Add(mode);
         foreach ((string pass, string? identity) in Programs) requirements.RequireProgram(pass, identity);
         foreach (int pass in ScenePasses) requirements.ScenePasses.Add(pass);
+        foreach ((int pass, XREngine.Data.Rendering.EMeshSubmissionStrategy? strategy) in NativeScenePasses)
+            requirements.RequireNativeScenePass(pass, strategy);
+        requirements.RequiresNativeScenePasses |= RequiresNativeScenePasses;
+        requirements.NativeProbeIbl |= NativeProbeIbl;
         foreach (XRMaterial material in Materials) requirements.RequireMaterial(material);
         foreach (string identity in ProgramIdentities) requirements.RequireProgramIdentity(identity);
     }

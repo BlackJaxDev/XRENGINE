@@ -21,9 +21,10 @@ public partial class AdvancedRenderPipeline
         requirements.RequireOperation("memory-barriers");
         requirements.RequireOperation("advanced-stage-execution");
         requirements.ScenePasses.Add((int)EDefaultRenderPass.Background);
-        requirements.ScenePasses.Add((int)EDefaultRenderPass.OpaqueDeferred);
-        requirements.ScenePasses.Add((int)EDefaultRenderPass.OpaqueForward);
-        requirements.ScenePasses.Add((int)EDefaultRenderPass.MaskedForward);
+        requirements.RequireNativeScenePass((int)EDefaultRenderPass.OpaqueDeferred);
+        requirements.RequireNativeScenePass((int)EDefaultRenderPass.OpaqueForward);
+        requirements.RequireNativeScenePass((int)EDefaultRenderPass.MaskedForward);
+        requirements.NativeProbeIbl = !IsMinimalVisibilityOutput && GlobalIlluminationPlan.RequiresNativeProbeIblBindings;
         if (IncludesStage(EAdvancedRenderStage.VisibilityPreparation))
         {
             requirements.RequireComputeProgram("advanced::aggregate-deformation");
@@ -49,10 +50,12 @@ public partial class AdvancedRenderPipeline
         {
             requirements.RequireRasterProgram("advanced::scene-copy");
             requirements.RequireComputeProgram(multisample ? "advanced::shade-native-msaa" : "advanced::shade-native");
+            requirements.RequireComputeProgram(multisample ? "advanced::shade-native-depth-msaa" : "advanced::shade-native-depth");
             requirements.RequireComputeProgram(multisample ? "advanced::shade-msaa-resolve" : "advanced::shade-background");
             if (GlobalIlluminationPlan is { RequiresNativeMaterialSurfaceExports: true })
             {
                 requirements.RequireComputeProgram(multisample ? "advanced::shade-surface-exports-msaa" : "advanced::shade-surface-exports");
+                requirements.RequireComputeProgram(multisample ? "advanced::shade-surface-exports-depth-msaa" : "advanced::shade-surface-exports-depth");
                 requirements.RequireComputeProgram(multisample ? "advanced::shade-background-exports-msaa" : "advanced::shade-background-exports");
             }
         }

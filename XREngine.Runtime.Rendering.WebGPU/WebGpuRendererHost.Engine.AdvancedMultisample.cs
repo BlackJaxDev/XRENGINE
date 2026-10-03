@@ -11,6 +11,7 @@ public sealed partial class WebGpuRendererHost
     [
         "advanced::visibility-pull-msaa", "advanced::visibility-msaa-resolve", "advanced::shade-classify-msaa",
         "advanced::shade-native-msaa", "advanced::shade-msaa-resolve", "advanced::shade-surface-exports-msaa",
+        "advanced::shade-native-depth-msaa", "advanced::shade-surface-exports-depth-msaa",
         "advanced::shade-background-exports-msaa",
     ];
     private string? _advancedMultisampleProgramFailure = "WebGPU.Advanced.MultisampleCatalogMissing: the packed visibility family is not installed.";

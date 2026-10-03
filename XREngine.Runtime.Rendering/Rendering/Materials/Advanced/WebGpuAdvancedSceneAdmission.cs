@@ -86,14 +86,8 @@ public static class WebGpuAdvancedSceneAdmission
                 out AdvancedGpuResourceBindingSource source, out _, out reason))
                 return false;
             if (source.Texture is null) continue;
-            string format;
-            try { format = WebGpuTextureFormatContract.Map(GetFormat(source.Texture)); }
-            catch (NotSupportedException error) { reason = error.Message; return false; }
-            if (WebGpuAdvancedMaterialContract.GetSamplingRejection(format, 1, null) is { } sampleReason)
-            {
-                reason = sampleReason;
+            if (!TryInspectTexture(in source, allowDepthComparison: false, out reason))
                 return false;
-            }
             if (translation.RequiredCoverage == EAdvancedMaterialCoverageMode.Masked && index == 0 &&
                 source.TextureRecord.Dimension != EAdvancedTextureDimension.Texture2D)
             {
@@ -116,6 +110,24 @@ public static class WebGpuAdvancedSceneAdmission
         resource = string.Empty;
         reason = string.Empty;
         return true;
+    }
+
+    /// <summary>Checks an exact authored source without creating API resources or claiming producer readiness.</summary>
+    public static bool TryInspectTexture(in AdvancedGpuResourceBindingSource source, bool allowDepthComparison, out string reason)
+    {
+        reason = WebGpuAdvancedMaterialContract.GetTexturePairRejection(source.TextureRecord, source.SamplerRecord,
+            allowDepthComparison, out bool depthComparison) ?? string.Empty;
+        if (reason.Length != 0) return false;
+        if (source.Texture is null)
+        {
+            reason = "A selected native sampled resource has no authored source.";
+            return false;
+        }
+        string format;
+        try { format = WebGpuTextureFormatContract.Map(GetFormat(source.Texture)); }
+        catch (NotSupportedException error) { reason = error.Message; return false; }
+        reason = WebGpuAdvancedMaterialContract.GetSamplingRejection(format, 1, null, depthComparison) ?? string.Empty;
+        return reason.Length == 0;
     }
 
     private static ESizedInternalFormat GetFormat(XRTexture texture) => texture switch

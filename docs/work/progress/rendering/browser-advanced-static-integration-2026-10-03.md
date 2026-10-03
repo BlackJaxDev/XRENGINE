@@ -2,6 +2,25 @@
 
 ## Current integrated source and physical evidence
 
+The published `71684f0066f8b9945b29ede690028e8a84db2ebc` group also passes a
+fresh physical Intel gen-12lp run with a non-fallback adapter. Genuine Editor
+compilation, fresh shader cooking and the real Windows CLI publication pass.
+Two fresh startups and both resizes produce the panel, with stronger material
+variation than the earlier capture. GPU uploads retain four distinct
+BaseColor/Normal/Metallic/Roughness texture handles and both authored lights.
+All four captures show four draws, twelve commands, presentation accepted and
+no pipeline decline, resource failure, device loss or uncaptured GPU error.
+All 175 packaged assets verify with no failed reads. Native shading pipeline
+creation takes approximately 4.65 and 3.35 seconds in the two physical sessions;
+neither initial capture retains a pending promise. These hardware timings do
+not identify the cause of the software adapter's separate 42.9-second pending
+preparation. The test-owned processes were closed and source remained clean.
+
+This is physical material-path evidence, not a known-value or desktop parity
+comparison. The sample selects AA None; its dormant configured count of four
+does not exercise MSAA. It does not exercise native deformation or the meshlet
+strategy. Those acceptance rows remain open.
+
 The later `6c91220f` physical Intel run renders the authored static panel in two
 fresh startups and both resize checks. Native visibility/shading dispatches and
 four draws are observed with no pending draw, pipeline decline or resource
@@ -40,6 +59,17 @@ measured driver compile-time improvement. All four native/MSAA/export recipes
 pass cooking, and classification matches 1,003,072 deterministic float bit
 patterns including infinities, NaNs, subnormals and signed zeros. The startup
 deadline and complete-family guard are unchanged; CI must establish the effect.
+
+The exact `71684f00` [follow-up run 37101064847](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37101064847)
+passes all four existing lanes, but Advanced software preparation still waits
+after 42.9 seconds. The finiteness rewrite did not resolve this deadline. The
+next cold diagnostic separates native, validation-scope and memory-scope
+promise states and settlement times, and freezes failure-time snapshots before
+teardown or late completion. It retains the same 45,000 ms timeout and bounds
+both pending work and earliest failure records at 64. Successful frame recording
+does not take diagnostic snapshots. Seven deterministic deferred-promise checks
+cover phase separation, timeout, teardown, late settlement, errors, bridge
+exposure and storage bounds; actual browser diagnosis remains required.
 
 The dated recovery sections below retain their original evidence and boundaries.
 

@@ -313,8 +313,10 @@ namespace XREngine.Scene
                             !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
                                 browserInterval, browserReuse))
                             continue;
+                        if (browserReuse is not null)
+                            light.BeginBrowserShadowRender(shadowFrame, browserReuse);
                         light.RenderShadowMap(collectVisibleNow, renderCascades);
-                        if (browserInterval > 1 && browserReuse is not null)
+                        if (browserReuse is not null)
                             light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
                     }
                 }
@@ -328,8 +330,10 @@ namespace XREngine.Scene
                             !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
                                 browserInterval, browserReuse))
                             continue;
+                        if (browserReuse is not null)
+                            light.BeginBrowserShadowRender(shadowFrame, browserReuse);
                         light.RenderShadowMap(collectVisibleNow);
-                        if (browserInterval > 1 && browserReuse is not null)
+                        if (browserReuse is not null)
                             light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
                     }
                 }
@@ -342,8 +346,10 @@ namespace XREngine.Scene
                             !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
                                 browserInterval, browserReuse))
                             continue;
+                        if (browserReuse is not null && light.CastsShadows)
+                            light.BeginBrowserShadowRender(shadowFrame, browserReuse);
                         light.RenderShadowMap(collectVisibleNow);
-                        if (browserInterval > 1 && browserReuse is not null && light.CastsShadows)
+                        if (browserReuse is not null && light.CastsShadows)
                             light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
                     }
                 }

@@ -37,6 +37,25 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
             request.Target.Width, request.Target.Height, request.MsaaSampleCount);
         XRTexture2D metadata = Texture(instance, multisample ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : request.MetadataTargetName,
             request.Target.Width, request.Target.Height, request.MsaaSampleCount);
+        ReadOnlySpan<AdvancedShadowRecord> shadows = visibility.Scene.Snapshot.GlobalResources.Shadows.PhysicalRecords;
+        for (int index = 0; index < shadows.Length; index++)
+        {
+            ref readonly AdvancedShadowRecord shadow = ref shadows[index];
+            if (!visibility.Scene.Snapshot.GlobalResources.Shadows.TryGetDenseIndex(new(shadow.StableShadowId, shadow.Generation), out uint dense) ||
+                dense != (uint)index || (shadow.Flags & EAdvancedShadowRecordFlags.BrowserStandalonePcss) == 0 ||
+                !ViewMatches(shadow.ViewMaskLo, shadow.ViewMaskHi, request.NativeViewIndex)) continue;
+            if (!visibility.Scene.Snapshot.ResourcePayloads.TryGetTextureSource(shadow.Texture.Handle, out XRTexture source, out _))
+            {
+                _renderer.MarkEngineDrawPending();
+                reason = "WebGPU.Advanced.ShadowPending: the standalone shadow candidate is awaiting its exact retained texture source.";
+                return false;
+            }
+            if (!_renderer.TryValidateBrowserStandaloneShadow(in shadow, source, out reason))
+            {
+                _renderer.MarkEngineDrawPending();
+                return false;
+            }
+        }
         try
         {
             PrepareCohorts(in request, visibility, frame);
@@ -74,9 +93,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
             frame.Width != request.Target.Width || frame.Height != request.Target.Height)
         { reason = "WebGPU.Advanced.ClassificationMissing: shade requires the same frozen view, scene slot, and GPU classification generation."; return false; }
         if (request.MsaaSampleCount == 4) return TryShadeMultisample(in request, instance, visibility, frame, out reason);
-        WebGpuRenderProgram native = Program(instance, "shade-native");
+        WebGpuRenderProgram native = Program(instance, frame.DepthComparisonBank ? "shade-native-depth" : "shade-native");
         WebGpuRenderProgram background = Program(instance, "shade-background");
-        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-surface-exports") : null;
+        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, frame.DepthComparisonBank ? "shade-surface-exports-depth" : "shade-surface-exports") : null;
         WebGpuRenderProgram? exportBackground = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports") : null;
         bool ready = Prepare(native) & Prepare(background);
         if (exports is not null) ready &= Prepare(exports) & Prepare(exportBackground!);
@@ -159,8 +178,8 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         {
             AbstractRenderAPIObject? texture = cohort.TextureOwners[slot];
             WebGpuAdvancedSampler? sampler = cohort.SamplerOwners[slot];
-            api.BindAdvancedTexture(TextureNames[slot], texture ?? _padding, texture is null ? _padding.View(slot) : cohort.Views[slot],
-                sampler is null ? _padding : sampler, sampler?.ResourceHandle ?? _padding.Sampler);
+            api.BindAdvancedTexture(TextureNames[slot], texture ?? _padding, texture is null ? _padding.View(slot, frame.DepthComparisonBank) : cohort.Views[slot],
+                sampler is null ? _padding : sampler, sampler?.ResourceHandle ?? _padding.Sampler(frame.DepthComparisonBank && slot == 9));
         }
     }
 
@@ -187,9 +206,13 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
             "shade-classify-msaa" => "advanced::shade-classify-msaa",
             "shade-finalize" => "advanced::shade-finalize",
             "shade-native" => "advanced::shade-native",
+            "shade-native-depth" => "advanced::shade-native-depth",
             "shade-native-msaa" => "advanced::shade-native-msaa",
+            "shade-native-depth-msaa" => "advanced::shade-native-depth-msaa",
             "shade-surface-exports" => "advanced::shade-surface-exports",
+            "shade-surface-exports-depth" => "advanced::shade-surface-exports-depth",
             "shade-surface-exports-msaa" => "advanced::shade-surface-exports-msaa",
+            "shade-surface-exports-depth-msaa" => "advanced::shade-surface-exports-depth-msaa",
             "shade-background" => "advanced::shade-background",
             "shade-background-exports" => "advanced::shade-background-exports",
             "shade-background-exports-msaa" => "advanced::shade-background-exports-msaa",

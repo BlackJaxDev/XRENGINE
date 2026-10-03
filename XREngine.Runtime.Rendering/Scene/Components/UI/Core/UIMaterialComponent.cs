@@ -326,7 +326,7 @@ namespace XREngine.Rendering.UI
             Vector4 uv = new(0.0f, FlipVerticalUVCoord ? 1.0f : 0.0f,
                 1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
             collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds,
-                UseWebGpuBatchOnly && ClipToBounds ? tfm.AxisAlignedRegion.AsBoundingRectangle() : null,
+                UIClipRegion.ResolveCrop(tfm, ClipToBounds),
                 texture, uv);
             return true;
         }

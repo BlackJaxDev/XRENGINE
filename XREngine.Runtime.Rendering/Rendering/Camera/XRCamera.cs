@@ -776,11 +776,13 @@ namespace XREngine.Rendering
         }
 
         private void EnsureProjectionMatrices()
+            => EnsureProjectionMatrices(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
+
+        private void EnsureProjectionMatrices(RuntimeGraphicsApiKind projectionBackend)
         {
             XRCameraParameters parameters = Parameters;
             uint projectionVersion = parameters.ProjectionVersion;
             bool parametersChanged = !ReferenceEquals(_cachedProjectionParameters, parameters) || _cachedProjectionVersion != projectionVersion;
-            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
             ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.ResolveEffectiveClipDepthRange(projectionBackend);
             bool clipPolicyChanged = _cachedProjectionBackend != projectionBackend || _cachedProjectionClipDepthRange != clipDepthRange;
             if (!_projectionMatricesDirty && !parametersChanged && !clipPolicyChanged)
@@ -824,8 +826,11 @@ namespace XREngine.Rendering
         }
 
         private void EnsureViewProjectionMatrices()
+            => EnsureViewProjectionMatrices(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
+
+        private void EnsureViewProjectionMatrices(RuntimeGraphicsApiKind projectionBackend)
         {
-            EnsureProjectionMatrices();
+            EnsureProjectionMatrices(projectionBackend);
             if (!_viewProjectionMatricesDirty)
                 return;
 
@@ -983,6 +988,17 @@ namespace XREngine.Rendering
                 EnsureViewProjectionMatrices();
                 return _viewProjectionMatrix;
             }
+        }
+
+        /// <summary>
+        /// Captures the same view, depth policy, oblique plane and jitter used by
+        /// the selected backend before a renderer context is entered. This does
+        /// not change authored clip settings or the ambient renderer policy.
+        /// </summary>
+        public Matrix4x4 GetViewProjectionMatrix(RuntimeGraphicsApiKind backend)
+        {
+            EnsureViewProjectionMatrices(backend);
+            return _viewProjectionMatrix;
         }
 
         public Matrix4x4 ViewProjectionMatrixUnjittered

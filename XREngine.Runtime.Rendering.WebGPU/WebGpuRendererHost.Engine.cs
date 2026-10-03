@@ -325,6 +325,7 @@ public sealed partial class WebGpuRendererHost
         => renderObject switch
         {
             XRDataBuffer buffer => new WebGpuDataBuffer(this, buffer),
+            XRDataBufferView view => new WebGpuDataBufferView(this, view),
             XRTexture2D texture => new WebGpuTexture2D(this, texture),
             XRTextureViewBase view => new WebGpuTextureView(this, view),
             XRTexture2DArray array => new WebGpuTexture2DArray(this, array),

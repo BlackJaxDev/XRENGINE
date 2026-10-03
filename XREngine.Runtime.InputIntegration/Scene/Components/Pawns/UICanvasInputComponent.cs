@@ -369,6 +369,7 @@ namespace XREngine.Components
         {
             using IDisposable? sample = RuntimeRenderingHostServices.Current.StartProfileScope("UICanvasInputComponent.SwapBuffers");
 
+            FilterClippedInput();
             // If any intersected element has BlocksInputBehind, remove items not in its subtree.
             FilterBlockedInput();
 
@@ -701,6 +702,18 @@ namespace XREngine.Components
         private SortedSet<RenderInfo2D> UIElementIntersections = new(new Comparer());
         private readonly List<RenderInfo2D> _intersectionCollectionScratch = [];
         private readonly List<RenderInfo2D> _blockedInputRemovalScratch = [];
+
+        private void FilterClippedInput()
+        {
+            List<RenderInfo2D> toRemove = _blockedInputRemovalScratch;
+            toRemove.Clear();
+            foreach (RenderInfo2D item in UIElementIntersections)
+                if (item.Owner is not UIComponent ui || !UIClipRegion.ContainsHit(ui, CursorPositionWorld2D))
+                    toRemove.Add(item);
+
+            foreach (RenderInfo2D item in toRemove)
+                UIElementIntersections.Remove(item);
+        }
 
         protected static bool UIElementPredicate(RenderInfo2D item)
             => item.Owner is UIComponent ui && ui.UITransform.IsVisibleInHierarchy;

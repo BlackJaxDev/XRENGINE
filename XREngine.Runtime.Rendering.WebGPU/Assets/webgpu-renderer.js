@@ -243,6 +243,7 @@ export class WebGpuCanvasRenderer {
     getFailureDiagnostics() {
         return { firstError: this._firstError, deviceLoss: this._deviceLoss, deviceDestroy: this._deviceDestroy,
             lastOperation: { ...this._operation }, startupStage: this._startup.stage,
+            resourcePreparation: this.commands.getPreparationDiagnostics(),
             owner: this._owner, generation: this._generation, frameSubmits: this._stats.frameSubmitCalls,
             draws: this._stats.draws, disposed: this._disposed, failed: this._failed };
     }

@@ -46,28 +46,19 @@ internal sealed class WebGpuAdvancedSampler : AbstractRenderAPIObject
 
     internal static BrowserSamplerDescription Describe(in AdvancedSamplerRecord record)
     {
-        const EAdvancedSamplerRecordFlags known = EAdvancedSamplerRecordFlags.UsesMipmaps |
-            EAdvancedSamplerRecordFlags.LinearMipmapInterpolation | EAdvancedSamplerRecordFlags.NearestMinification |
-            EAdvancedSamplerRecordFlags.NearestMagnification | EAdvancedSamplerRecordFlags.ComparisonEnabled |
-            EAdvancedSamplerRecordFlags.AnisotropyEnabled;
-        if (record.Filter is not (EAdvancedSamplerFilter.Nearest or EAdvancedSamplerFilter.Linear or EAdvancedSamplerFilter.Anisotropic) ||
-            (record.Flags & ~known) != 0 || (record.Flags & EAdvancedSamplerRecordFlags.ComparisonEnabled) != 0 ||
-            record.LodBiasMinMaxAnisotropy.X != 0 || !float.IsFinite(record.LodBiasMinMaxAnisotropy.Y) ||
-            !float.IsFinite(record.LodBiasMinMaxAnisotropy.Z))
-            throw Unsupported();
+        if (WebGpuAdvancedMaterialContract.GetSamplerRejection(in record) is { } reason)
+            throw new NotSupportedException($"WebGPU.Advanced.SamplerUnsupported: {reason}");
         bool mips = (record.Flags & EAdvancedSamplerRecordFlags.UsesMipmaps) != 0;
         string min = (record.Flags & EAdvancedSamplerRecordFlags.NearestMinification) != 0 ? "nearest" : "linear";
         string mag = (record.Flags & EAdvancedSamplerRecordFlags.NearestMagnification) != 0 ? "nearest" : "linear";
         string mip = (record.Flags & EAdvancedSamplerRecordFlags.LinearMipmapInterpolation) != 0 ? "linear" : "nearest";
         float anisotropy = (record.Flags & EAdvancedSamplerRecordFlags.AnisotropyEnabled) != 0 ? record.LodBiasMinMaxAnisotropy.W : 1;
-        if (!float.IsFinite(anisotropy) || anisotropy != MathF.Truncate(anisotropy) || anisotropy is < 1 or > 16 ||
-            anisotropy > 1 && (min != "linear" || mag != "linear" || mip != "linear")) throw Unsupported();
         float minLod = mips ? Math.Max(0, record.LodBiasMinMaxAnisotropy.Y) : 0;
         float maxLod = mips ? Math.Min(32, record.LodBiasMinMaxAnisotropy.Z) : 0;
-        if (minLod > maxLod || minLod > 32 || maxLod < 0 ||
-            !mips && (record.LodBiasMinMaxAnisotropy.Y > 0 || record.LodBiasMinMaxAnisotropy.Z < 0)) throw Unsupported();
         return new(Address(record.AddressU), Address(record.AddressV), min, mag, mip,
-            "Advanced frozen sampler", maxLod, (int)anisotropy, minLod, AddressW: Address(record.AddressW));
+            "Advanced frozen sampler", maxLod, (int)anisotropy, minLod,
+            Compare: (record.Flags & EAdvancedSamplerRecordFlags.ComparisonEnabled) != 0 ? "less-equal" : null,
+            AddressW: Address(record.AddressW));
     }
 
     public override void Generate()
@@ -94,5 +85,5 @@ internal sealed class WebGpuAdvancedSampler : AbstractRenderAPIObject
         _ => throw Unsupported(),
     };
     private static NotSupportedException Unsupported()
-        => new("WebGPU.Advanced.SamplerUnsupported: the frozen sampler requires comparison, border, LOD bias, or filtering state outside the exact native bank contract.");
+        => new("WebGPU.Advanced.SamplerUnsupported: the frozen sampler requires a comparison other than less-equal, border, LOD bias, or filtering state outside the exact native bank contract.");
 }

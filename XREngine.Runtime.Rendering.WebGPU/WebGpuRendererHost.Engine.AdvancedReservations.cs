@@ -12,7 +12,7 @@ public sealed partial class WebGpuRendererHost
         "advanced::compact-triangles", "advanced::finalize-triangles", "advanced::visibility-pull",
         "advanced::aggregate-deformation", "advanced::deformation-copy",
         "advanced::depth-pyramid", "advanced::gtao", "advanced::shade-classify",
-        "advanced::shade-finalize", "advanced::shade-native", "advanced::shade-background",
+        "advanced::shade-finalize", "advanced::shade-native", "advanced::shade-native-depth", "advanced::shade-background",
     ];
     private readonly WebGpuAdvancedOutputReservation?[] _advancedReservations = new WebGpuAdvancedOutputReservation[MaximumAdvancedOutputFamilies];
     private WebPipelineArtifactCatalog? _advancedPipelineArtifacts;

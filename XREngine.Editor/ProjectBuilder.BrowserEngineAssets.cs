@@ -46,7 +46,7 @@ internal static partial class ProjectBuilder
         Dictionary<string, ShaderProgramArtifact> shaderArtifacts = new(StringComparer.Ordinal);
         HashSet<int> admittedScenePasses = [];
         List<RenderPipelineRequirements> admittedPipelineRequirements = [];
-        BrowserNativeSceneCapabilityAudit nativeAdmission = new();
+        BrowserNativeSceneCapabilityAudit nativeAdmission = new(settings);
         // Inspect what the browser will actually hydrate. A registered game serializer may
         // intentionally project desktop shader data into explicit cooked material semantics.
         // This CPU-only audit may run in a live desktop editor; temporary materials must not

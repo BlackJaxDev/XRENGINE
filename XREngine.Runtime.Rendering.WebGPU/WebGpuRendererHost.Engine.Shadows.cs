@@ -65,8 +65,8 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
             return false;
         return api switch
         {
-            WebGpuTexture2D image => image.HasCommittedProduction,
-            WebGpuTextureCube image => image.HasCommittedProduction,
+            WebGpuTexture2D image => image.IsCurrentGpuAllocationForCopy && image.HasCommittedProduction,
+            WebGpuTextureCube image => image.IsCurrentGpuAllocationForCopy && image.HasCommittedProduction,
             _ => false,
         };
     }
@@ -77,8 +77,8 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
             return false;
         return api switch
         {
-            WebGpuTexture2D image => image.WasProducedInFrame(_engineFrameSequence),
-            WebGpuTextureCube image => image.WasProducedInFrame(_engineFrameSequence),
+            WebGpuTexture2D image => image.IsCurrentGpuAllocationForCopy && image.WasProducedInFrame(_engineFrameSequence),
+            WebGpuTextureCube image => image.IsCurrentGpuAllocationForCopy && image.WasProducedInFrame(_engineFrameSequence),
             _ => false,
         };
     }
@@ -89,8 +89,8 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
             return 0;
         return api switch
         {
-            WebGpuTexture2D image => image.ProductionTicket,
-            WebGpuTextureCube image => image.ProductionTicket,
+            WebGpuTexture2D image when image.IsCurrentGpuAllocationForCopy => image.ProductionTicket,
+            WebGpuTextureCube image when image.IsCurrentGpuAllocationForCopy => image.ProductionTicket,
             _ => 0,
         };
     }
