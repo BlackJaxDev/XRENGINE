@@ -26,7 +26,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     private readonly AdvancedGpuDeformationStaticGeneration[]
         _staticGenerations;
     private readonly int[] _slotStaticGenerationIndices;
-    private readonly Dictionary<XRMeshRenderer, AdvancedGpuDeformationPoseEntry>
+    private readonly Dictionary<(XRMeshRenderer Renderer, XRMesh Mesh), AdvancedGpuDeformationPoseEntry>
         _poseEntries;
     private readonly XRGpuFence?[] _slotProducerFences;
     private readonly bool[] _slotOutputValid;
@@ -143,10 +143,9 @@ public sealed partial class AdvancedGpuDeformationResources :
         _slotOutputValid = new bool[_frameSlotCount];
         _slotReusePoisoned = new bool[_frameSlotCount];
         _poseEntries = new Dictionary<
-            XRMeshRenderer,
+            (XRMeshRenderer Renderer, XRMesh Mesh),
             AdvancedGpuDeformationPoseEntry>(
-                options.MaximumDeformationJobs,
-                ReferenceEqualityComparer.Instance);
+                options.MaximumDeformationJobs);
 
         _jobBuffers =
             new XRDataBuffer<AdvancedDeformationJobRecord>[_frameSlotCount];
@@ -458,7 +457,17 @@ public sealed partial class AdvancedGpuDeformationResources :
         ArgumentNullException.ThrowIfNull(renderer);
         ArgumentNullException.ThrowIfNull(mesh);
 
-        if (_poseEntries.TryGetValue(renderer, out var entry) &&
+        renderer.EnterResourcePublicationLease();
+        try { return TryGetOrAddPoseCore(renderer, mesh, out slice); }
+        finally { renderer.ExitResourcePublicationLease(); }
+    }
+
+    private bool TryGetOrAddPoseCore(XRMeshRenderer renderer, XRMesh mesh,
+        out AdvancedGpuDeformationPoseSlice slice)
+    {
+        var key = (renderer, mesh);
+
+        if (_poseEntries.TryGetValue(key, out var entry) &&
             entry.FrameId == _frameId)
         {
             slice = entry.Slice;
@@ -468,34 +477,17 @@ public sealed partial class AdvancedGpuDeformationResources :
         bool packed = UsesPackedAggregateInputs;
         bool skinning = !packed || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
         bool blendshapes = mesh.HasBlendshapes && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
-        if (skinning && (!packed || !renderer.HasExternalSkinPaletteSource) && !renderer.EnsureSkinningBuffers(logWarnings: false))
+        if (!renderer.TryPrepareDeformationInputs(mesh, skinning, blendshapes, publish: false,
+            out XRMeshDeformationInputSnapshot inputs, requireMorphs: packed))
         {
             slice = default;
             return false;
         }
-        if (blendshapes && !renderer.EnsureBlendshapeBuffers(logWarnings: false) && packed)
-        {
-            slice = default;
-            return false;
-        }
-        if (skinning && !renderer.HasExternalSkinPaletteSource)
-        {
-            if (renderer.SkinPaletteReseedCount < 2)
-                renderer.ReseedSkinPaletteUntilPoseStable();
-            renderer.SyncDirtyBoneMatricesToClientBuffer();
-        }
-
-        XRMeshRenderer.BoneResourceSnapshot boneState = renderer.CaptureBoneResources();
-        XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
-            renderer.CaptureBlendshapeResources();
-        bool hasExternalPalette = renderer.HasExternalSkinPaletteSource;
-        XRDataBuffer? paletteSource = !skinning ? null : hasExternalPalette
-            ? renderer.ActiveSkinPaletteBuffer
-            : boneState.SkinPalette;
-        uint paletteBase = hasExternalPalette ? renderer.ActiveSkinPaletteBase : 0u;
-        uint paletteCount = !skinning ? 0u : hasExternalPalette
-            ? renderer.ActiveSkinPaletteCount
-            : checked((uint)mesh.GetSkinningBufferStateSnapshot().UtilizedBones.Length + 1u);
+        XRDataBuffer? paletteSource = inputs.Palette;
+        uint paletteBase = inputs.PaletteBase;
+        uint paletteCount = inputs.PaletteCount;
+        if (packed && inputs.GpuOwnedPalette)
+            throw new NotSupportedException("AggregateDeformation.GpuPoseCopyUnavailable: a GPU-owned palette requires an ordered GPU copy into the aggregate input arena; its retained CPU mirror is not the current pose.");
         if (skinning && (paletteSource is null ||
             packed && (paletteSource.GpuProduced || paletteSource.ClientSideSource is not { } paletteMemory ||
             paletteMemory.Length < paletteSource.Length || !paletteSource.TryGetAddress(out VoidPtr paletteAddress) || paletteAddress == VoidPtr.Zero ||
@@ -507,9 +499,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             return false;
         }
 
-        uint activeCount = packed && !blendshapes ? 0u : checked((uint)Math.Max(
-            0,
-            blendshapeState.ActiveCount));
+        uint activeCount = inputs.ActiveMorphCount;
         uint requiredPalette = checked(_paletteCount + paletteCount);
         uint requiredActive =
             checked(_activeBlendshapeCount + activeCount);
@@ -518,7 +508,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         if (paletteCount != 0)
             CopyPalette(paletteSource!, paletteBase, _paletteScratch, _paletteCount, paletteCount);
         CopyActiveBlendshapes(
-            blendshapeState.ActiveWeights,
+            inputs.ActiveMorphs,
             _activeBlendshapeScratch,
             _activeBlendshapeCount,
             activeCount,
@@ -530,11 +520,11 @@ public sealed partial class AdvancedGpuDeformationResources :
             paletteCount,
             _activeBlendshapeCount,
             activeCount,
-            renderer.SkinnedOutputVersion,
-            blendshapeState.WeightsVersion);
+            inputs.PoseVersion,
+            inputs.MorphVersion);
         _paletteCount = requiredPalette;
         _activeBlendshapeCount = requiredActive;
-        _poseEntries[renderer] =
+        _poseEntries[key] =
             new AdvancedGpuDeformationPoseEntry(_frameId, slice);
         return true;
     }

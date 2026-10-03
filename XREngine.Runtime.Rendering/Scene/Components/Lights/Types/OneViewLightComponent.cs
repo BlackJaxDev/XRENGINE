@@ -59,9 +59,9 @@ namespace XREngine.Components.Capture.Lights.Types
             };
         }
 
-        public override void SetShadowMapResolution(uint width, uint height)
+        protected override void ResizeShadowMapResources(uint width, uint height)
         {
-            base.SetShadowMapResolution(width, height);
+            base.ResizeShadowMapResources(width, height);
             (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
             _primaryShadowViewport?.Resize(resourceWidth, resourceHeight);
         }

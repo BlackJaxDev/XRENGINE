@@ -9,7 +9,7 @@ namespace XREngine.Rendering;
 /// <summary>Describes the authored standalone receiver schema without creating a texture or asserting producer readiness.</summary>
 public static class WebGpuStandaloneShadowResourceContract
 {
-    /// <summary>Returns authored dimensions; the selected runtime quality policy independently resolves physical dimensions.</summary>
+    /// <summary>Returns the authored storage shape; runtime quality independently limits its physical dimensions.</summary>
     public static bool TryDescribe(LightComponent light, out AdvancedTextureRecord texture,
         out AdvancedSamplerRecord sampler, out string format, out string reason)
     {
@@ -62,12 +62,13 @@ public static class WebGpuStandaloneShadowResourceContract
             reason = error.Message;
             return false;
         }
+        (uint width, uint height) = light.GetShadowMapStorageResolution(light.ShadowMapResolutionWidth, light.ShadowMapResolutionHeight);
         texture = new()
         {
             Dimension = dimension,
             Flags = depth ? EAdvancedTextureRecordFlags.Depth : EAdvancedTextureRecordFlags.None,
-            Width = light.ShadowMapResolutionWidth,
-            Height = light.ShadowMapResolutionHeight,
+            Width = width,
+            Height = height,
             DepthOrLayers = dimension == EAdvancedTextureDimension.Cube ? 6u : 1u,
             MipCount = 1,
             FormatClass = (uint)formatClass,

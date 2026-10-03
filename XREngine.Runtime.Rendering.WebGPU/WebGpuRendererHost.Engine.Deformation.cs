@@ -4,7 +4,7 @@ namespace XREngine.Rendering.WebGPU;
 
 public sealed partial class WebGpuRendererHost : IMeshDeformationBackendCapability
 {
-    private readonly Dictionary<XRMeshRenderer, WebGpuMeshDeformation> _meshDeformations = [];
+    private readonly Dictionary<(XRMeshRenderer Renderer, XRMesh Mesh), WebGpuMeshDeformation> _meshDeformations = [];
     private ShaderProgramArtifact? _meshDeformationArtifact;
     private XRRenderProgram? _meshDeformationProgram;
     private int _engineDeformationDispatchCount;
@@ -38,20 +38,36 @@ public sealed partial class WebGpuRendererHost : IMeshDeformationBackendCapabili
 
     /// <inheritdoc />
     public bool TryPrepareMeshDeformation(XRMeshRenderer renderer)
-        => TryPrepareMeshDeformation(renderer, out _, record: false);
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        if (renderer.Submeshes.Count == 0) return TryPrepareMeshDeformation(renderer, out _, record: false);
+        bool ready = true;
+        for (int index = 0; index < renderer.Submeshes.Count; index++)
+            if (renderer.TryGetMesh(index, out XRMesh? mesh, out _) && mesh is not null)
+                ready &= TryPrepareMeshDeformation(renderer, mesh, out _, record: false);
+        return ready;
+    }
 
     internal bool TryPrepareMeshDeformation(XRMeshRenderer renderer, out WebGpuMeshDeformation? deformation, bool record = true)
     {
-        ArgumentNullException.ThrowIfNull(renderer);
         deformation = null;
-        XRMesh? mesh = renderer.Mesh;
-        if (renderer.IsDestroyed || renderer.IsDestroyQueued || mesh is null)
+        return renderer.Mesh is { } mesh && TryPrepareMeshDeformation(renderer, mesh, out deformation, record);
+    }
+
+    internal bool TryPrepareMeshDeformation(XRMeshRenderer renderer, XRMesh mesh,
+        out WebGpuMeshDeformation? deformation, bool record = true)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        ArgumentNullException.ThrowIfNull(mesh);
+        deformation = null;
+        if (renderer.IsDestroyed || renderer.IsDestroyQueued || mesh.IsDestroyed || mesh.IsDestroyQueued)
             return false;
+        var key = (renderer, mesh);
         bool skinning = mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
         bool blendshapes = mesh.HasBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
         if (!skinning && !blendshapes)
         {
-            if (_meshDeformations.Remove(renderer, out WebGpuMeshDeformation? obsolete)) obsolete.Dispose();
+            if (_meshDeformations.Remove(key, out WebGpuMeshDeformation? obsolete)) obsolete.Dispose();
             return true;
         }
         if (!_engineRecording)
@@ -62,24 +78,19 @@ public sealed partial class WebGpuRendererHost : IMeshDeformationBackendCapabili
         renderer.EnterResourcePublicationLease();
         try
         {
-            if (skinning)
-            {
-                mesh.EnsureComputeSkinningBuffers();
-                if (!renderer.HasExternalSkinPaletteSource && !renderer.EnsureSkinningBuffers(logWarnings: false))
-                    return DeformationPending();
-            }
-            if (blendshapes && !renderer.EnsureBlendshapeBuffers(logWarnings: false))
+            if (!renderer.TryPrepareDeformationInputs(mesh, skinning, blendshapes, record,
+                out XRMeshDeformationInputSnapshot inputs, observePose: record))
                 return DeformationPending();
 
-            if (!_meshDeformations.TryGetValue(renderer, out deformation) ||
-                !deformation.Matches(mesh, skinning, blendshapes))
+            if (!_meshDeformations.TryGetValue(key, out deformation) ||
+                !deformation.Matches(mesh, skinning, blendshapes, inputs.PaletteCount))
             {
                 if (deformation is null && _meshDeformations.Count >= 1024)
-                    throw new NotSupportedException("WebGPU.Deformation.OwnerCapacity: at most 1024 resident renderer deformation generations are admitted.");
+                    throw new NotSupportedException("WebGPU.Deformation.OwnerCapacity: at most 1024 resident renderer/mesh deformation generations are admitted.");
                 // Construct the complete replacement before retiring a prior generation.
-                WebGpuMeshDeformation replacement = new(this, renderer, mesh, skinning, blendshapes);
+                WebGpuMeshDeformation replacement = new(this, renderer, mesh, skinning, blendshapes, inputs.PaletteCount);
                 if (deformation is not null) deformation.Dispose();
-                _meshDeformations[renderer] = replacement;
+                _meshDeformations[key] = replacement;
                 deformation = replacement;
             }
             XRRenderProgram? program = _meshDeformationProgram;
@@ -93,7 +104,7 @@ public sealed partial class WebGpuRendererHost : IMeshDeformationBackendCapabili
                 };
                 SetField(ref _meshDeformationProgram, program);
             }
-            if (!(record ? deformation.TryRecord(program) : deformation.TryPrepare(program)))
+            if (!(record ? deformation.TryRecord(program, in inputs) : deformation.TryPrepare(program)))
                 return DeformationPending();
             return true;
         }
@@ -112,11 +123,13 @@ public sealed partial class WebGpuRendererHost : IMeshDeformationBackendCapabili
         SetField(ref _engineDeformationVertexCount, 0L, publishNotifications: false);
         // Dictionary removal is supported while enumerating on the render owner thread.
         // Destruction notifications only mark entries, so another thread never retires GPU handles.
-        foreach ((XRMeshRenderer owner, WebGpuMeshDeformation deformation) in _meshDeformations)
-            if (owner.IsDestroyed || deformation.OwnerDestroyed)
+        foreach (var (key, deformation) in _meshDeformations)
+            if (key.Renderer.IsDestroyed || key.Mesh.IsDestroyed || deformation.OwnerDestroyed ||
+                !key.Renderer.OwnsDeformationMesh(key.Mesh))
             {
-                _meshDeformations.Remove(owner);
+                _meshDeformations.Remove(key);
                 deformation.Dispose();
+                key.Renderer.ReleaseUnusedDeformationInputs(key.Mesh);
             }
     }
 

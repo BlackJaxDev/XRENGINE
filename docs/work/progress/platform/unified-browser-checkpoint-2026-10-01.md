@@ -1057,3 +1057,31 @@ whose four jobs passed in
 No Advanced browser image has passed yet. The checklist now separates concrete
 implementation leaves from live validation instead of counting broad parent
 summaries a second time.
+
+### Physical Advanced rendering and shared quality/accessibility (2026-10-03)
+
+The preceding recovery paragraph records its original checkpoint. Subsequent
+physical Intel runs of `6c91220f` and `71684f00` render the saved Advanced world
+through two fresh startups and both resize checks. The latter confirms four
+distinct material-map handles and both authored lights, with presented output,
+four draws, twelve commands, no pipeline/resource decline and no uncaptured GPU
+error. This is a bounded static material result, not numeric PBR, deformation,
+active MSAA or meshlet-strategy acceptance.
+
+The native shadow extension at `37e197f0` passes Windows Editor publication and
+the baseline, RollingBall and RenderingParity browser jobs in
+[run 37105295910](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37105295910).
+Its Advanced job and the physical shadow fixture both reject generated WGSL
+that passes invocation-private cache vectors to function-local out parameters.
+No shadow render result is claimed for that revision.
+
+Published `feca3bcc` fixes those helper arguments without changing the derivative
+algorithm, completes shared quality-effect resource gating and projects shared
+interactive UI into a bounded DOM accessibility tree. The [source record](browser-quality-accessibility-2026-10-03.md)
+documents reviewed lifetime behavior, zero-warning WebGPU/Editor/native-WASM
+builds, all 91 production shader cooks and the separate live acceptance limits.
+The native reservation probe covers both enabled-AO and disabled-AO stage counts
+with 27 checks. [Run 37107427563](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37107427563)
+and the physical shadow ON/OFF comparison were pending at publication. The
+checklist is **87/138**: 75 implementation, six verification and six owner items
+checked, with one new explicit live accessibility verification leaf.

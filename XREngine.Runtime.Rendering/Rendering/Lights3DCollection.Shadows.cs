@@ -91,10 +91,13 @@ namespace XREngine.Scene
         }
 
         private static bool ShouldCollectShadowItems(LightComponent? light)
-            => light is not null &&
-               light.IsActiveInHierarchy &&
-               light.CastsShadows &&
-               (light.ShadowMap is not null || UsesShadowAtlasCollectionPath(light));
+        {
+            if (light is null || !light.IsActiveInHierarchy || !light.CastsShadows)
+                return false;
+            if (light is PointLightComponent point)
+                point.PrepareStandaloneShadowCollection();
+            return light.ShadowMap is not null || UsesShadowAtlasCollectionPath(light);
+        }
 
         private static bool UsesShadowAtlasCollectionPath(LightComponent light)
             => light switch
@@ -148,7 +151,7 @@ namespace XREngine.Scene
         {
             DirectionalLightComponent dir => AnyCameraIntersectsDirectional(dir, cameras),
             SpotLightComponent spot => AnyCameraIntersectsSpot(spot, cameras),
-            PointLightComponent point => AnyCameraIntersectsPoint(point, cameras),
+            PointLightComponent point => point.RequiresCompleteStandaloneShadowCube || AnyCameraIntersectsPoint(point, cameras),
             _ => true,
         };
 
@@ -607,7 +610,9 @@ namespace XREngine.Scene
 
         private int CalculatePointShadowFaceMask(PointLightComponent light, ShadowScratch scratch)
         {
-            if (scratch.LocalShadowRelevanceFrusta.Count <= 0)
+            // A standalone cube that filters across seams refreshes all faces;
+            // its collection and swap must admit the same complete producer set.
+            if (light.RequiresCompleteStandaloneShadowCube || scratch.LocalShadowRelevanceFrusta.Count <= 0)
                 return LocalShadowFrustumRelevance.AllPointFacesMask;
 
             ShadowRelevanceCameraSet cameras = CurrentLocalShadowRelevanceCameras(scratch);

@@ -68,7 +68,7 @@ The shared UI crop resolver now intersects a component's rectangular crop with
 clipping ancestors. Both the batched quad/text path and the unbatched desktop
 2D command use this resolved crop. Transform bounds use all four corners when
 forming the axis-aligned scissor for rotated elements; rotation does not make
-this a polygon clip. The renderer consumes bottom-left UI world pixels and
+this a polygon clip. The renderer consumes bottom-left canvas-local pixels and
 converts their Y coordinate once at its backend boundary. Canvas input uses the
 same crop to reject mouse and contact hits outside visible descendants, after
 testing the target's local bounds through its inverse transform. Input blockers
@@ -81,8 +81,7 @@ matrix under `System.Numerics` row-vector multiplication. The corresponding
 parent-to-child conversion uses the same order. A rotated, translated canvas
 with a translated child now round-trips a local point through canvas space;
 the previous order failed when those transforms did not commute. Hit testing
-maps the canvas point through the canvas world matrix when comparing against
-the renderer's world-space scissor.
+compares the canvas point directly with the renderer's canvas-local scissor.
 
 Live screen-space acceptance should cover nested clipping and moving/rotated
 ancestors on desktop OpenGL/Vulkan and browser WebGPU: a child protruding beyond a clipping
@@ -92,7 +91,39 @@ move it, and confirm the crop updates without recreating the child. The browser
 glyph and image batch paths also need actual pixel review. Full canvas
 accessibility traversal and physical IME behavior remain separate acceptance.
 
-The non-screen offscreen 2D path still forwards world-space crop coordinates to
-a pixel scissor. Its behavior with a transformed canvas needs a separate
-render-coordinate review and live acceptance before claiming clipping parity
-outside screen space.
+## Shared offscreen coordinate correction (2026-10-03)
+
+Camera/world canvases previously submitted their 3D world matrices and world
+crop rectangles to a local 2D camera and pixel target. Their 2D input-tree bounds
+were also left unset, and the world-pointer boundary compared an already-local
+point with a translated rectangle. A translated or tilted canvas could therefore
+render outside its texture or reject a hit that lay inside its local content.
+
+The shared 2D path now removes the owning canvas's world placement from material
+quad and text matrices, in both batched and individual commands. Direct 3D
+commands retain their world matrices. Clip and input-tree bounds transform all
+four element corners into the same canvas before forming the AABB; transforming
+a previously flattened world AABB would lose the orientation of a tilted canvas.
+The input tree and world-pointer boundary use a zero-origin local canvas extent.
+Screen canvases retain their identity world placement and existing crop values.
+No shader, desktop material, or binding contract changes are involved.
+
+The ordinary UI hierarchy composes local matrices up to the owning canvas when
+forming these bounds. This avoids a floating-point world/inverse round trip
+shifting an exact integer clip edge by one pixel as the canvas tilts or moves.
+The targeted Runtime.Rendering/InputIntegration build passes with zero warnings
+or errors. An ignored runtime probe passes 77 checks through the actual shared
+crop resolver, input broad phase, local hit tests, individual model commands,
+and material/text batch snapshots. Screen, translated and tilted world, and
+camera-space fixtures all retain the exact `(40, 30, 100, 80)` parent scissor;
+the previous world rectangle instead starts at `(815, -205)` in the translated
+fixture. Nested clipping, clip toggles, empty intersections and rotated children
+are covered. This is a managed execution witness, not GPU pixel acceptance.
+
+The browser non-screen rejection remains intentional. Browser UI variants still
+admit only the display target, and the existing world-canvas composition material
+uses desktop GLSL. Completing this path requires admitting the actual offscreen
+attachment, a cooked world-composition material, and a defined alpha/color-space
+contract across the offscreen and scene passes. The generic WebGPU framebuffer
+resource and binding implementation already exists. Coordinate validation does
+not establish browser offscreen execution or physical-device clipping parity.

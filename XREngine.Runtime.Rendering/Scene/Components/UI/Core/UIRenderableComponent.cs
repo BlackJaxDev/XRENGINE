@@ -182,11 +182,17 @@ namespace XREngine.Rendering.UI
             tfm.UpdateRenderInfoBounds(RenderInfo2D, RenderInfo3D);
             var mtx = GetRenderWorldMatrix(tfm);
             RenderCommand3D.WorldMatrix = mtx;
-            RenderCommand2D.WorldMatrix = mtx;
+            RenderCommand2D.WorldMatrix = GetRenderCanvasMatrix(tfm);
         }
 
         protected virtual Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm)
             => tfm.RenderMatrix;
+
+        /// <summary>
+        /// Maps the same authored mesh into the local 2D target before the canvas is placed in the scene.
+        /// </summary>
+        protected Matrix4x4 GetRenderCanvasMatrix(UIBoundableTransform tfm)
+            => GetRenderWorldMatrix(tfm) * (tfm.ParentCanvas?.InverseRenderMatrix ?? Matrix4x4.Identity);
 
         /// <summary>
         /// The material used to render this UI component.

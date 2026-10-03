@@ -1630,6 +1630,7 @@ namespace XREngine.Rendering
         {
             try
             {
+                DestroyDeformationInputs();
                 ResetDrivableBuffers();
                 IndirectDrawBuffer?.Dispose();
                 IndirectDrawBuffer = null;
@@ -3128,7 +3129,7 @@ namespace XREngine.Rendering
                 BoneMatricesBuffer.Set(boneIndex, currentMatrix);
                 Matrix4x4 adjustedInvBind = rootBindMtx * invBindWorldMtx;
                 BoneInvBindMatricesBuffer.Set(boneIndex, adjustedInvBind);
-                SkinPaletteBuffer.Set(boneIndex, SkinPaletteMatrix.FromRowVectorMatrix(adjustedInvBind * currentMatrix));
+                SkinPaletteBuffer.Set(boneIndex, ComposeSkinPalette(mesh, invBindWorldMtx, currentMatrix));
                 MarkBoneMatrixDirty(boneIndex, currentMatrix);
             }
 
@@ -3281,7 +3282,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)
+        internal static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)
         {
             // Imported skeletons can be skinned before the first render snapshot is published.
             Matrix4x4 renderMatrix = transform.RenderMatrix;
@@ -3472,6 +3473,8 @@ namespace XREngine.Rendering
         /// </summary>
         internal void ResetSkinPaletteSeedState()
         {
+            SetField(ref _deformationPoseSettled, false, publishNotifications: false);
+            SetField(ref _hasDeformationSeedFrame, false, publishNotifications: false);
             _skinPaletteSeededOnce = false;
             _lastSkinPaletteSeedPoseHash = 0;
             SkinPaletteReseedCount = 0;
@@ -3878,6 +3881,9 @@ namespace XREngine.Rendering
             => MathF.Abs(weight) > _blendshapeActiveWeightThreshold;
 
         private bool IsBlendshapeAllowedByLod(int blendshapeIndex)
+            => Mesh is { } mesh && IsBlendshapeAllowedByLod(mesh, blendshapeIndex);
+
+        internal bool IsBlendshapeAllowedByLod(XRMesh mesh, int blendshapeIndex)
         {
             if (_blendshapeLodProfile is null || !_blendshapeLodProfile.TryGetTier(_activeBlendshapeLodTier, out BlendshapeLodTier tier))
                 return true;
@@ -3895,7 +3901,7 @@ namespace XREngine.Rendering
                         return true;
             }
 
-            string[]? names = Mesh?.BlendshapeNames;
+            string[]? names = mesh.BlendshapeNames;
             if (names is null || (uint)blendshapeIndex >= (uint)names.Length)
                 return false;
 

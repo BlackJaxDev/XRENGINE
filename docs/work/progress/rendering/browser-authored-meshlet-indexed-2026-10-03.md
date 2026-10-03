@@ -24,12 +24,24 @@ Renderer-owned position overrides and unproven vertex callbacks, scoped bindings
 
 Submission diagnostics report CPU recording state and the number of unbounded-policy draws. They never map GPU arguments, counts, visibility or statistics. Zero visible GPU draws are valid output, never evidence for fallback. Indirect draws do not attest temporal history writes merely because their CPU draw list is nonempty.
 
+## Exact deformation sources
+
+Canonical deformation inputs and WebGPU output generations are owned by the renderer/mesh pair. Distinct authored submeshes retain their own bone order, inverse bind/root transform, normalized morph controls and active shape indices. `XRMeshRenderer.SetBlendshapeWeightNormalized(mesh, indexOrName, weight)` selects that mesh's control table. Shared palette composition and morph LOD policy remain in the canonical rendering layer; no auxiliary renderer or duplicate draw implementation is created.
+
+CPU-direct rendering enumerates the same authored submeshes in list order through common material resolution, callbacks and draw preparation. Its retained draw cache distinguishes source geometry and renderer buffer generations. Generic GPU-driven/meshlet raster uses the exact source's current compute output for both raster attributes and conservative bounds refit. Advanced aggregate preparation likewise keys pose packing by renderer/mesh and retains its existing completion-owned current/previous output arena slots.
+
+An external GPU palette can be shared only after finalized bone ordering, inverse binds and bind root prove identical. A different ordering requires an explicit mesh-specific palette publication. Such a publication stamps the source skinning generation and bind root; replacement requires republishing. Explicit GPU ownership remains authoritative even when the buffer has a CPU seed mirror. Generic deformation binds that GPU buffer directly. Packed Advanced aggregate inputs require an ordered GPU pose-copy producer before accepting GPU-owned palettes; copying the retained CPU seed is rejected explicitly.
+
+Frozen mesh publications reject removed sources and changes between primary and distinct deformation ownership. Renderer/mesh controls and output caches retire removed live mesh assets through the existing deferred GPU destruction path. Primary pose settling observes distinct shared render-frame identities, and a GPU-to-CPU pose ownership transition restarts settling. A later authored callback changing the current input image records fresh deformation before its draw.
+
 ## Explicit remaining profiles
 
-Dynamic LOD needs the shared GPU-selected mesh/LOD publication; the current path rejects a multi-LOD source precisely. View-dependent transparent ordering likewise requires a shared GPU sort publication. Multiple logical instances require published per-instance transforms and bounds; a distinct submesh with renderer-owned deformation requires its exact deformation publication. These requirements remain open and are not silently approximated.
+Dynamic LOD needs the shared GPU-selected mesh/LOD publication; the current path rejects a multi-LOD source precisely. View-dependent transparent ordering likewise requires a shared GPU sort publication. Multiple logical instances require published per-instance transforms and bounds. A submesh-local instance count other than one requires a defined composition with the command count and is rejected by CPU-direct and generic meshlet submission; neither silently ignores that authored count. These requirements remain open and are not silently approximated.
 
 The initial bounded implementation retains three scene-publication slots and at most 256 generated draws per scene slot in one atomic frame. Selected device storage limits remain authoritative. Queue-owned slots are not reused or overwritten to meet capacity.
 
 ## Validation boundary
 
 The integrated WebGPU, Editor and native Browser builds pass with zero warnings or errors. All three exact companions pass the shared production cooker within its 87-artifact inventory. Independent source review covered routing, conservative bounds, frozen ownership, primitive/corner preservation, fault-zeroed arguments and completion retention. These compile/cook and source checks do not establish browser output: live strategy, ordering, deformation and recovery acceptance remains open.
+
+The exact submesh ownership extension passes the WebGPU build with zero warnings/errors and a disposable managed probe with 337 checks. The probe covers independent bone and morph ordering, bind-root and shape-generation replacement, aggregate pose offsets, frozen-source invalidation, removed live-asset retirement, explicit GPU authority with a retained CPU seed mirror, stale external-generation rejection/republication, identical-order palette reuse, primary pose-settle timing and disabled desktop morph parity. Two hundred warmed source preparations allocate zero managed bytes. This is source/managed producer evidence; live browser raster, multi-frame queue completion and temporal-output acceptance remain separate validation requirements.

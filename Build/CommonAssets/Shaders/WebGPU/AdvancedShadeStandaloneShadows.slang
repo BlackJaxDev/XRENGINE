@@ -92,11 +92,21 @@ float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface su
         // Slang out parameters lower to WGSL function-address-space pointers.
         // Publish into the private invocation cache only after both calls finish.
         float3 positionX, normalX, positionY, normalY;
-        bool validX = XR_WEB_ReconstructShadowHelper(surface, surface.samplePixelPosition + float2(sign.x, 0.0),
-            positionX, normalX);
-        bool validY = XR_WEB_ReconstructShadowHelper(surface, surface.samplePixelPosition + float2(0.0, sign.y),
-            positionY, normalY);
-        if (!validX || !validY) { textureFailure |= 1u << 16u; return 0.0; }
+        bool valid = true;
+        // Keep one call site for the complete surface reconstruction instead
+        // of duplicating it. Both helper lanes still execute in X-then-Y order.
+        [loop]
+        for (uint axis = 0u; axis < 2u; axis++)
+        {
+            float2 offset = axis == 0u ? float2(sign.x, 0.0) : float2(0.0, sign.y);
+            float3 position, normal;
+            bool helperValid = XR_WEB_ReconstructShadowHelper(surface,
+                surface.samplePixelPosition + offset, position, normal);
+            valid = valid && helperValid;
+            if (axis == 0u) { positionX = position; normalX = normal; }
+            else { positionY = position; normalY = normal; }
+        }
+        if (!valid) { textureFailure |= 1u << 16u; return 0.0; }
         standaloneShadowPositionX = positionX;
         standaloneShadowNormalX = normalX;
         standaloneShadowPositionY = positionY;
