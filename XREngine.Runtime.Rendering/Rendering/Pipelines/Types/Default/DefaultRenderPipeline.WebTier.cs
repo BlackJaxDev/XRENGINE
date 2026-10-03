@@ -80,7 +80,7 @@ public partial class DefaultRenderPipeline
             return;
         if (AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
             throw new NotSupportedException("WebGPU.DefaultPipeline.OutputUnavailable: bind the output's WebGPU renderer before building resources.");
-        if (WebTonemapArtifact is null)
+        if (WebTonemapArtifact is null && !TryGetWebPipelineArtifact("tonemap-auto-exposure", out _))
             throw new NotSupportedException("WebGPU.DefaultPipeline.TonemapArtifactMissing: the package must supply its exact cooked tonemap artifact.");
     }
 
@@ -116,7 +116,17 @@ public partial class DefaultRenderPipeline
         var tonemap = builder.QuadMaterial(WebTonemapFBOName).DependsOn(HDRSceneTextureName);
         if (WebBloomEnabled(profile))
             tonemap.DependsOn(WebBloomCombinedTextureName);
-        tonemap.Factory(CreateWebTonemapMaterial).Add();
+        bool autoExposure = WebAutoExposureEnabled(profile);
+        if (autoExposure)
+        {
+            builder.Texture(AutoExposureTextureName).Size(RenderResourceSizePolicy.Absolute(1, 1))
+                .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage)
+                .Format(EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float).SizedFormat(ESizedInternalFormat.R32f)
+                .RequiresStorageUsage(true).History(RenderResourceHistoryPolicy.PreserveWhenCompatible)
+                .Factory(CreateWebAutoExposureTexture).Add();
+            tonemap.DependsOn(AutoExposureTextureName);
+        }
+        tonemap.Factory(() => CreateWebTonemapMaterial(autoExposure)).Add();
         builder.External("$ExternalOutput")
             .Contract(ExternalRenderResourceKind.FrameBuffer,
                 profile.ExternalTargetKind == RenderPipelineExternalTargetKind.Window
@@ -174,10 +184,22 @@ public partial class DefaultRenderPipeline
         }
     }
 
-    private XRFrameBuffer CreateWebTonemapMaterial()
+    private XRTexture CreateWebAutoExposureTexture()
+        => new XRTexture2D(1, 1, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, 1)
+        {
+            Name = AutoExposureTextureName, SamplerName = AutoExposureTextureName,
+            SizedInternalFormat = ESizedInternalFormat.R32f, Resizable = false,
+            RequiresStorageUsage = true, AutoGenerateMipmaps = false,
+            MinFilter = ETexMinFilter.Nearest, MagFilter = ETexMagFilter.Nearest,
+            UWrap = ETexWrapMode.ClampToEdge, VWrap = ETexWrapMode.ClampToEdge,
+        };
+
+    private XRFrameBuffer CreateWebTonemapMaterial(bool autoExposure)
     {
-        ShaderProgramArtifact artifact = WebTonemapArtifact
+        ShaderProgramArtifact artifact = autoExposure ? GetRequiredWebPipelineArtifact("tonemap-auto-exposure") : WebTonemapArtifact
             ?? throw new InvalidOperationException("WebGPU.DefaultPipeline.TonemapArtifactMissing: no cooked output program is installed.");
+        if (!WebPipelineArtifactCatalog.IsCompleteRasterProgram(artifact))
+            throw new NotSupportedException("WebGPU.DefaultPipeline.TonemapProgramShape: the selected tonemap requires a complete raster program.");
         XRShader vertex = new(EShaderType.Vertex) { CookedArtifact = artifact };
         XRShader fragment = new(EShaderType.Fragment) { CookedArtifact = artifact };
         XRMaterial material = new(Array.Empty<XRTexture?>(), vertex, fragment)
@@ -278,6 +300,15 @@ public partial class DefaultRenderPipeline
             ViewportRenderCommandContainer bloomCommands = new(this);
             AppendWebBloomCommands(bloomCommands);
             bloomChoice.TrueCommands = bloomCommands;
+
+            VPRC_IfElse exposureChoice = commands.Add<VPRC_IfElse>();
+            exposureChoice.Label = "WebAutoExposure";
+            exposureChoice.ConditionEvaluator = ShouldUseWebAutoExposure;
+            ViewportRenderCommandContainer exposureCommands = new(this);
+            VPRC_ExposureUpdate exposure = exposureCommands.Add<VPRC_ExposureUpdate>();
+            exposure.SetOptions(HDRSceneTextureName, false);
+            exposure.GpuProgramBinding = "auto-exposure";
+            exposureChoice.TrueCommands = exposureCommands;
         }
         using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
         using (commands.AddUsing<VPRC_BindOutputFBO>(command => command.SetOptions(clearColor: false, clearDepth: false, clearStencil: false)))
@@ -302,6 +333,7 @@ public partial class DefaultRenderPipeline
                 {
                     resources.SampleTexture(HDRSceneTextureName);
                     resources.SampleTextureWhenDeclared(WebBloomCombinedTextureName);
+                    resources.SampleTextureWhenDeclared(AutoExposureTextureName);
                 });
             debugBloomChoice.FalseCommands = tonemapCommands;
             commands.Add<VPRC_Manual>().ManualAction = RenderWebDebugDrawCallbacks;
@@ -339,6 +371,7 @@ public partial class DefaultRenderPipeline
         for (int level = 3; level >= 1; level--)
             beforeOutput = LinkWebQuadPass(metadata, WebBloomUpQuadNames[level], WebBloomMipFboNames[level], beforeOutput);
         beforeOutput = LinkWebQuadPass(metadata, WebBloomCombineQuadName, WebBloomCombinedFboName, beforeOutput);
+        beforeOutput = LinkWebPass(metadata, nameof(VPRC_ExposureUpdate), beforeOutput, ERenderGraphPassStage.Compute);
         int tonemap = LinkWebQuadPass(metadata, WebTonemapFBOName, RenderGraphResourceNames.OutputRenderTarget, beforeOutput);
         int debugBloom = LinkWebQuadPass(metadata, WebBloomDebugOutputQuadName, RenderGraphResourceNames.OutputRenderTarget, beforeOutput);
         var overlay = metadata.ForPass((int)EDefaultRenderPass.OnTopForward, nameof(EDefaultRenderPass.OnTopForward), ERenderGraphPassStage.Graphics)
@@ -354,11 +387,12 @@ public partial class DefaultRenderPipeline
         string destination, int dependency)
         => LinkWebPass(metadata, VPRC_RenderQuadToFBO.BuildQuadBlitPassName(sourceQuad, destination), dependency);
 
-    private static int LinkWebPass(RenderPassMetadataCollection metadata, string name, int dependency)
+    private static int LinkWebPass(RenderPassMetadataCollection metadata, string name, int dependency,
+        ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
     {
         if (!metadata.TryGetPassIndex(name, out int index))
             return dependency;
-        metadata.ForPass(index, name, ERenderGraphPassStage.Graphics).DependsOn(dependency);
+        metadata.ForPass(index, name, stage).DependsOn(dependency);
         return index;
     }
 
@@ -402,8 +436,11 @@ public partial class DefaultRenderPipeline
         ColorGradingSettings? color = GetSettings<ColorGradingSettings>(state);
         TonemappingSettings? tonemap = GetSettings<TonemappingSettings>(state);
         program.Uniform("TonemapParameters", new Vector4(color?.Exposure ?? 1.0f, color?.Gamma ?? 2.2f,
-            tonemap?.MobiusTransition ?? TonemappingSettings.DefaultMobiusTransition, 0.0f));
+            tonemap?.MobiusTransition ?? TonemappingSettings.DefaultMobiusTransition,
+            color?.UseGpuAutoExposureThisFrame == true ? 1.0f : 0.0f));
         program.Sampler("SourceTexture", RequireWebEffectTexture(
             ShouldUseWebBloom() ? WebBloomCombinedTextureName : HDRSceneTextureName), 0);
+        if (color is { RequiresAutoExposure: true })
+            program.Sampler(AutoExposureTextureName, RequireWebEffectTexture(AutoExposureTextureName), 1);
     }
 }

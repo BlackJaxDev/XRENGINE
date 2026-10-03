@@ -12,7 +12,7 @@ public sealed partial class WebGpuRenderProgram
         {
             if (textures is not null)
                 foreach (var binding in textures)
-                    throw UnsupportedBinding(Data.Name ?? "program", "compute image bindings require an implemented storage-image resource path");
+                    SetImage(binding.unit, binding.texture, binding.level, binding.layer.HasValue, binding.layer ?? 0, binding.access, binding.format);
             ERendererComputeEnqueueStatus status = Renderer.TryDispatchCompute(Data, x, y, z);
             if (status is not (ERendererComputeEnqueueStatus.Enqueued or ERendererComputeEnqueueStatus.ProgramPending))
                 throw new InvalidOperationException($"WebGPU.Compute.DispatchRejected: {status}.");

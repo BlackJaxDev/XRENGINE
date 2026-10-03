@@ -31,6 +31,7 @@ internal sealed partial class BrowserEngineSession
                 out ShaderProgramArtifact? luminanceMipmapArtifact) == true)
             renderer.BindLuminanceMipmapArtifact(luminanceMipmapArtifact);
         renderer.BindShaderArtifacts(_rendererShaderArtifacts, _rendererMaterialVariants);
+        renderer.BindAdvancedPipelineArtifacts(_pipelineArtifacts);
     }
 
     /// <summary>Retires only GPU ownership, retaining the authored world, player, viewport and gameplay state.</summary>
@@ -60,6 +61,7 @@ internal sealed partial class BrowserEngineSession
         _canvas = new BrowserCanvasRenderTarget(_canvas!.CanvasId);
         _renderer = OwnConstruction(() => BrowserRendererComposition.CreateRequired(_canvas)) as WebGpuRendererHost
             ?? throw new InvalidOperationException("WebGPU.Recovery.RendererRequired: the browser backend did not supply its required renderer.");
+        _admittedPipeline = null;
         InitializeRendererArtifacts(_renderer);
         _renderer.BindEngineViewport(_renderViewport);
         _rendererSession = Interlocked.Increment(ref _nextRendererSession);

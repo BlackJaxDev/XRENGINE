@@ -26,6 +26,11 @@ public sealed record WebGpuEngineFrameStatistics
     public long CompletedFrames { get; internal set; }
     /// <summary>Managed import call attempts, including calls that throw during marshalling or JavaScript execution.</summary>
     public long SubmitEngineFrameInteropCalls { get; internal set; }
+    /// <summary>CPU-only queue receipt polling, independent of buffer/count readback.</summary>
+    public long CompletionPollInteropCalls { get; internal set; }
+    /// <summary>Cold or oversized complete-slot queue-write attempts, outside the bounded frame copy arena.</summary>
+    public long AdvancedPreparationUploadInteropCalls { get; internal set; }
+    public long AdvancedPreparationUploadBytes { get; internal set; }
     public long ReturnedSubmissions { get; internal set; }
     public long PresentedSubmissions { get; internal set; }
     public long UnpresentedSubmissions { get; internal set; }
@@ -53,6 +58,9 @@ public sealed record WebGpuEngineFrameStatistics
     public int LastFrameRecordedUniformBytes { get; internal set; }
     public int LastFrameRecordedStorageBytes { get; internal set; }
     public int LastFrameSubmitEngineFrameInteropCalls { get; internal set; }
+    public int LastFrameCompletionPollInteropCalls { get; internal set; }
+    public int LastFrameAdvancedPreparationUploadInteropCalls { get; internal set; }
+    public long LastFrameAdvancedPreparationUploadBytes { get; internal set; }
     public bool LastFrameSubmissionReturned { get; internal set; }
     public bool LastFrameSubmissionPresented { get; internal set; }
     public int LastFrameSubmissionPacketBytes { get; internal set; }

@@ -84,6 +84,8 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
     AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition
         => GetAdvancedStageFamily();
 
+    bool IAdvancedRenderStageFamilyHost.UsesAdvancedStageFamily => UsesAdvancedTwoPassEyeFamily();
+
     /// <summary>
     /// Selects the complete Advanced command/resource family for an already
     /// admitted mono OpenXR eye output. Selection is structural: changing it

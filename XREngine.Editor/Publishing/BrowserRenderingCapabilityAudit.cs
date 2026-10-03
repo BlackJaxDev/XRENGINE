@@ -2,13 +2,16 @@ using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Editor.Publishing;
 
 /// <summary>Admits authored output, camera, and pass selections before browser content is activated.</summary>
-internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactResolver? resolver)
+internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactResolver? resolver,
+    RenderPipelineResourceProfile? outputProfile = null, IReadOnlySet<int>? inheritedScenePasses = null)
 {
+    private readonly RenderPipelineResourceProfile _outputProfile = outputProfile ?? RenderPipelineResourceProfile.Empty;
     private bool _hasCamera;
     private readonly List<(int Pass, string Path, string Material, string? Mesh, string Source)> _sceneMaterialPasses = [];
     internal List<RenderPipelineRequirements> PipelineRequirements { get; } = [];
@@ -34,13 +37,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         // Resolve only packaged project/user selections. Desktop editor preferences and
         // desktop engine defaults are not authored requirements of a canvas output.
         UserSettings user = settings.DefaultUserSettings;
-        EAntiAliasingMode? aa = user.AntiAliasingModeOverride.HasOverride
-            ? user.AntiAliasingModeOverride.Value
-            : settings.AntiAliasingModeOverride.HasOverride ? settings.AntiAliasingModeOverride.Value : null;
-        if (aa is not null and not EAntiAliasingMode.None)
-            throw Unsupported(user.AntiAliasingModeOverride.HasOverride
-                ? "startup.asset/DefaultUserSettings/AntiAliasingModeOverride" : "startup.asset/AntiAliasingModeOverride",
-                "anti-aliasing", $"Explicit '{aa}' is unsupported; the canvas output requires AA None and one sample.");
+        if (BrowserRenderPipelineOutputProfile.GetVendorOperationRejection(settings) is { } vendorReason)
+            throw Unsupported("startup.asset/vendor-reconstruction", "vendor-reconstruction", vendorReason);
         if (settings.DepthModeOverride is { HasOverride: true, Value: not XRCamera.EDepthMode.Normal })
             throw Unsupported("startup.asset/DepthModeOverride", "camera-depth", "The cooked coordinate contract has not admitted reversed-Z cameras.");
         EGlobalIlluminationMode gi = user.GlobalIlluminationModeOverride.HasOverride
@@ -61,45 +59,61 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
             throw Unsupported(path, "screen-ui", "The camera output admits screen-space UI only.");
         if (camera?.PostProcessMaterial is { } postprocess)
             throw Unsupported(path, "postprocess-material", $"Authored postprocess material '{postprocess.Name}' has no installed browser output route.");
-        if (camera?.AntiAliasingModeOverride is { } cameraAa && cameraAa != EAntiAliasingMode.None)
-            throw Unsupported(path, "anti-aliasing", $"Camera selects '{cameraAa}'; the canvas output requires AA None.");
-        if (camera?.OutputHDROverride == true)
+        if (component.OutputHDROverride == true)
             throw Unsupported(path, "canvas-output", "Camera HDR presentation has no installed browser output route.");
         if (camera is { DepthMode: not XRCamera.EDepthMode.Normal })
             throw Unsupported(path, "camera-depth", "The cooked coordinate contract has not admitted reversed-Z cameras.");
         if ((camera?.Parameters ?? component.CameraParameters) is XROVRCameraParameters or XROpenXRFovCameraParameters)
             throw Unsupported(path, "camera-output", "XR eye projections require a browser XR service that is not enabled.");
 
-        RenderPipeline? assigned = null;
-        camera?.TryGetAssignedRenderPipeline(out assigned);
+        RenderPipeline? assigned = component.RenderPipelineSource;
         PipelinePostProcessState? authored = null;
         if (assigned is not null)
-            camera!.PostProcessStates.TryGetState(assigned.ID, out authored);
-        InspectPipeline(assigned, authored, path);
+            component.PostProcessStates.TryGetState(assigned.ID, out authored);
+        else
+            authored = component.PostProcessStates.DefaultState;
+        RenderPipelineResourceProfile profile = _outputProfile with
+        {
+            AntiAliasingMode = component.AntiAliasingModeOverride ?? _outputProfile.AntiAliasingMode,
+            MsaaSampleCount = component.MsaaSampleCountOverride ?? _outputProfile.MsaaSampleCount,
+            OutputHDR = component.OutputHDROverride ?? _outputProfile.OutputHDR,
+        };
+        InspectPipeline(assigned, authored, profile, path);
     }
 
     internal void Complete(string worldPath)
     {
         // Only a genuinely unassigned output uses the host's default recipe.
-        if (!_hasCamera)
-            InspectPipeline(null, null, worldPath);
+        if (!_hasCamera && inheritedScenePasses is null)
+            InspectPipeline(null, null, _outputProfile, worldPath);
         foreach (var material in _sceneMaterialPasses)
-            if (!PipelineRequirements.Any(requirements => requirements.ScenePasses.Contains(material.Pass)))
+            if (inheritedScenePasses?.Contains(material.Pass) != true &&
+                !PipelineRequirements.Any(requirements => requirements.ScenePasses.Contains(material.Pass)))
                 throw Unsupported(material.Path, material.Pass.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     $"Mesh '{material.Mesh}' material '{material.Material}', source pass '{material.Source}' has no scene-mesh route declared by any published camera pipeline.");
     }
 
-    private void InspectPipeline(RenderPipeline? pipeline, PipelinePostProcessState? authored, string path)
+    internal void CopyScenePassesTo(ISet<int> destination)
     {
-        RenderPipelineRequirements requirements = pipeline?.CreateRequirements(RendererBackendId.WebGPU, authored)
-            ?? DefaultRenderPipeline.CreateWebDefaultRequirements(authored);
+        foreach (RenderPipelineRequirements requirements in PipelineRequirements)
+            destination.UnionWith(requirements.ScenePasses);
+    }
+
+    private void InspectPipeline(RenderPipeline? pipeline, PipelinePostProcessState? authored,
+        in RenderPipelineResourceProfile outputProfile, string path)
+    {
+        RenderPipelineRequirements requirements = pipeline?.CreateRequirements(RendererBackendId.WebGPU, outputProfile, authored)
+            ?? DefaultRenderPipeline.CreateWebDefaultRequirements(outputProfile, authored);
         foreach (string diagnostic in requirements.Diagnostics)
             throw Unsupported(path, "pipeline-requirement", diagnostic);
+        if (WebGpuPipelineAdmission.GetOutputProfileRejection(requirements) is { } outputReason)
+            throw Unsupported(path, "output-profile", outputReason);
         foreach (string operation in requirements.Operations)
             if (WebGpuPipelineAdmission.GetOperationRejection(operation) is { } reason)
                 throw Unsupported(path, operation, reason);
         foreach ((string pass, string? identity) in requirements.Programs)
-            RequirePipelineArtifact(pass, identity, path);
+            RequirePipelineArtifact(pass, identity, requirements.RasterPrograms.Contains(pass),
+                requirements.ComputePrograms.Contains(pass), path);
         PipelineRequirements.Add(requirements);
     }
 
@@ -120,11 +134,15 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         }
     }
 
-    private void RequirePipelineArtifact(string pass, string? identity, string path)
+    private void RequirePipelineArtifact(string pass, string? identity, bool requiresRaster, bool requiresCompute, string path)
     {
         if (resolver is not BrowserShaderArtifactSource source || !source.PipelineCatalog.TryResolve(pass, out var artifact) ||
             identity is not null && artifact.Identity != identity)
             throw Unsupported(path, pass, "The selected camera pass requires its exact cooked artifact in BrowserShaderArtifactManifestPath.");
+        if (requiresRaster && !WebPipelineArtifactCatalog.IsCompleteRasterProgram(artifact))
+            throw Unsupported(path, pass, "The selected camera pass requires a complete cooked WebGPU raster program.");
+        if (requiresCompute && !WebPipelineArtifactCatalog.IsCompleteComputeProgram(artifact))
+            throw Unsupported(path, pass, "The selected camera pass requires a complete cooked WebGPU compute program.");
     }
 
     private static NotSupportedException Unsupported(string path, string pass, string reason)

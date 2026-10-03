@@ -758,6 +758,9 @@ public static partial class RuntimeEngine
             bool supportsDirectMeshTaskDispatch = renderer.SupportsDirectMeshTaskDispatch();
             bool supportsIndirectCountMeshTaskDispatch = renderer.SupportsIndirectCountMeshTaskDispatch();
             bool supportsMeshletDispatch = renderer.SupportsMeshletDispatch();
+            if (!supportsMeshletDispatch && State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } &&
+                renderer is IAdvancedVisibilityStageBackendCapability nativeVisibility)
+                supportsMeshletDispatch = nativeVisibility.SupportsAdvancedComputeMeshletVisibility;
 
             // Snapshot inputs the UI uses to explain meshlet availability without re-deriving them.
             LastResolvedRendererBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
@@ -767,17 +770,13 @@ public static partial class RuntimeEngine
             EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
             if (renderer.BackendId == RendererBackendId.WebGPU)
             {
-                if (forced is not null and not EMeshSubmissionStrategy.CpuDirect ||
-                    requestedGpuDispatch == true && forced != EMeshSubmissionStrategy.CpuDirect)
-                {
-                    throw new NotSupportedException(
-                        "WebGPU.MeshSubmission.Unsupported: the engine WebGPU profile supports CpuDirect; explicitly requested GPU submission is not available.");
-                }
-
+                // Browser pipeline assets preserve the authored algorithm. Operation,
+                // device-feature and cooked-program checks reject unavailable work;
+                // selecting a different CPU or GPU algorithm would hide that failure.
                 LastMeshletDowngradeRequested = null;
                 LastMeshletDowngradeResolved = null;
                 LastMeshletDowngradeReason = null;
-                return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.CpuDirect);
+                return PublishResolvedMeshSubmissionStrategy(ResolveRequestedMeshSubmissionStrategy(requestedGpuDispatch));
             }
 
             if (forced.HasValue)

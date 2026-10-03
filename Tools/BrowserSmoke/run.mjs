@@ -10,6 +10,7 @@ import { captureGpuProcessState, initializeGpuCanary } from './gpu-diagnostics.m
 import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 import { rollingBallGameCheck } from './rollingball-game.mjs';
 import { renderingParityGameCheck } from './rendering-parity-game.mjs';
+import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -1141,11 +1142,18 @@ async function publishedGameCheck(browser, origin, report, config) {
     const descriptor = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'browser-publish.json'), 'utf8'));
     const manifest = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'content', 'manifest.json'), 'utf8'));
     const parity = config.gameKind === 'rendering-parity';
-    const worldPath = parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
+    const advanced = config.gameKind === 'advanced-rendering-parity';
+    const worldPath = advanced ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
+        : parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
     assert(descriptor.schema === 2 && descriptor.format === 'xrengine-engine-launch' &&
         descriptor.manifest === './content/manifest.json' && manifest.startupWorld === worldPath,
         'BrowserSmoke.GameBundle: expected the Editor-activated canonical game publish.');
-    if (parity) {
+    if (advanced) {
+        for (const pass of ['visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present'])
+            assert(manifest.pipelineArtifacts?.some(entry => entry.scope === 'advanced' && entry.pass === pass),
+                `BrowserSmoke.AdvancedArtifactMissing: advanced::${pass}.`);
+        await advancedRenderingGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+    } else if (parity) {
         assert(manifest.computeArtifacts?.some(entry => entry.kernel === 'packed-skinning') &&
             manifest.materialVariants?.some(entry => entry.semantic === 'StandardLitTexture' &&
                 entry.pass === 'opaque-forward' && entry.vertexProfile === 'position-normal-tangent-uv-v1'),
@@ -1168,8 +1176,8 @@ async function main() {
         scope: config.gameOnly
             ? `Editor-published ${config.gameKind} in Chromium; not desktop, complete browser or performance acceptance.`
             : 'Renderer diagnostic correctness and selected runtime smoke checks; not full browser, desktop, physical-device or performance acceptance.' };
-    const gameCheckName = config.gameKind === 'rendering-parity'
-        ? 'rendering-parity-editor-published-world' : 'rollingball-editor-published-game';
+    const gameCheckName = config.gameKind === 'rollingball'
+        ? 'rollingball-editor-published-game' : `${config.gameKind}-editor-published-world`;
     let browser, server;
     const check = async (name, action) => {
         const start = performance.now();

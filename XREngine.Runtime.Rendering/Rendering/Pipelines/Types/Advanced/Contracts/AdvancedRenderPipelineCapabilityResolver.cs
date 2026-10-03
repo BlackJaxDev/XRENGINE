@@ -29,7 +29,7 @@ public static class AdvancedRenderPipelineCapabilityResolver
     {
         if (!capabilities.RendererAvailable)
             return EAdvancedRenderPipelineRejectionReason.RendererUnavailable;
-        if (capabilities.Backend is RuntimeGraphicsApiKind.Unknown or RuntimeGraphicsApiKind.WebGPU)
+        if (capabilities.Backend == RuntimeGraphicsApiKind.Unknown)
             return EAdvancedRenderPipelineRejectionReason.UnsupportedBackend;
         if (!capabilities.SupportsIntegerRenderTargets ||
             capabilities.VisibilityTargetEncoding == EAdvancedVisibilityTargetEncoding.None)

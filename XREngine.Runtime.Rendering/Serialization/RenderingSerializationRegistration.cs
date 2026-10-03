@@ -47,6 +47,7 @@ public static class RenderingSerializationRegistration
                 new XRMaterialYamlTypeConverter(),
                 new SubMeshYamlTypeConverter(),
                 new ShaderVarYamlTypeConverter(),
+                new ViewportRenderCommandContainerYamlTypeConverter(),
             ];
 
         public void ConfigureDeserializer(DeserializerBuilder builder)

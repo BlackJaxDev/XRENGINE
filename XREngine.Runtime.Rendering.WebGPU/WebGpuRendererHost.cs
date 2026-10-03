@@ -178,13 +178,17 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             try
             {
                 PrepareForApiObjectTeardown();
+                _indirectCountKernel?.Dispose();
+                SetField(ref _indirectCountKernel, null, publishNotifications: false);
                 DestroyMeshDeformationResources();
+                DestroyAutoExposureHistories();
                 DestroyCachedAPIRenderObjects();
             }
             finally
             {
                 DestroyDirectionalShadowDefaults();
                 DestroyAmbientOcclusionDefaults();
+                DestroyAdvancedStagePrograms();
             }
         }
         finally
@@ -200,6 +204,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             }
             finally
             {
+                DisposeAdvancedSceneResidency();
                 _resources.Clear();
                 SetField(ref _engineClearCommands, 0);
                 SetField(ref _engineUniformBuffer, 0);

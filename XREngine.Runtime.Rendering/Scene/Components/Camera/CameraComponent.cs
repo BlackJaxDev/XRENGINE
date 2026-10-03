@@ -51,10 +51,11 @@ namespace XREngine.Components
     [DisplayName("Camera")]
     [Description("Renders the world from this scene node and can optionally composite UI canvases.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.CameraComponentEditor")]
-    public class CameraComponent : XRComponent
+    public partial class CameraComponent : XRComponent
     {
         private readonly Lazy<XRCamera> _camera;
         private XRCameraParameters? _cameraParameters;
+        [YamlIgnore]
         public XRCamera Camera => _camera.Value;
 
         /// <summary>Reads existing authored camera state without applying host-dependent construction defaults.</summary>
@@ -360,23 +361,6 @@ namespace XREngine.Components
         // is what the renderer reads each frame. Exposing them here keeps camera-level
         // runtime controls available to the inspector and MCP component tools.
 
-        [Category("Rendering")]
-        [DisplayName("Anti-Aliasing Override")]
-        [Description("Optional per-camera anti-aliasing override. Null uses the global settings cascade.")]
-        [YamlIgnore]
-        public EAntiAliasingMode? AntiAliasingModeOverride
-        {
-            get => Camera.AntiAliasingModeOverride;
-            set
-            {
-                EAntiAliasingMode? previous = Camera.AntiAliasingModeOverride;
-                if (previous == value)
-                    return;
-                Camera.AntiAliasingModeOverride = value;
-                OnPropertyChanged(nameof(AntiAliasingModeOverride), previous, value);
-            }
-        }
-
         // ==================== Forward+ Debug Visualization ====================
 
         [Category("Debug (Forward+)")]
@@ -479,6 +463,7 @@ namespace XREngine.Components
                 ? new XRCamera { Parameters = parameters }
                 : new XRCamera(Transform, parameters);
             cam.DepthMode = RuntimeRenderingHostServices.Factories.ResolveSceneCameraDepthModePreference();
+            ApplyAuthoredCameraState(cam);
             cam.PropertyChanged += CameraPropertyChanged;
             cam.ViewportAdded += ViewportAdded;
             cam.ViewportRemoved += ViewportRemoved;
@@ -490,6 +475,7 @@ namespace XREngine.Components
                 ViewportResized(cam.Viewports[0]); //TODO: support rendering in screenspace to more than one viewport?
             }
             ResizeCameraSpaceUserInterface(cam, parameters);
+            ReleaseCachedAuthoredCameraState();
             return cam;
         }
 
@@ -680,6 +666,7 @@ namespace XREngine.Components
 
         private void CameraPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            NotifyAuthoredCameraStateChanged(e);
             if (e.PropertyName != nameof(Camera.Transform) || SceneNode is null)
                 return;
 

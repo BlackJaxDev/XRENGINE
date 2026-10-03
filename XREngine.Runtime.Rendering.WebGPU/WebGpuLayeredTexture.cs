@@ -23,6 +23,7 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
     private int _samples;
     private ESizedInternalFormat _format;
     private bool _invalidated = true;
+    private bool _storage;
     private uint _lastRecordedFrame;
 
     protected WebGpuLayeredTexture(WebGpuRendererHost renderer, T data) : base(renderer, data)
@@ -56,17 +57,19 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
     public uint Width => AuthoredWidth;
     public uint Height => AuthoredHeight;
     public uint SampleCount => (uint)AuthoredSamples;
+    public int MipLevelCount => AuthoredMips;
+    public int ArrayLayerCount => AuthoredLayers;
     public override nint GetHandle() => _handle;
 
     internal bool IsCurrentGpuAllocationForCopy => _handle != 0 && !_invalidated && !IsRetired && !Data.IsDestroyed &&
         _width == AuthoredWidth && _height == AuthoredHeight && _layers == AuthoredLayers &&
-        _mips == AuthoredMips && _samples == AuthoredSamples && _format == AuthoredFormat;
+        _mips == AuthoredMips && _samples == AuthoredSamples && _format == AuthoredFormat && _storage == Data.RequiresStorageUsage;
 
     protected void Invalidate() => _invalidated = true;
     private void OnDataChanged(object? sender, IXRPropertyChangedEventArgs change)
     {
         if (change.PropertyName is "Mipmaps" or "Textures" or "SizedInternalFormat" or
-            "MultiSample" or "CopyGpuLayerSources")
+            "MultiSample" or "CopyGpuLayerSources" or nameof(XRTexture.RequiresStorageUsage))
             Invalidate();
     }
 
@@ -88,19 +91,14 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
         if (mips > 1 + System.Numerics.BitOperations.Log2(Math.Max(width, height)))
             throw Unsupported("Create", "the authored mip chain exceeds the natural texture extent");
         if (_handle != 0 && !_invalidated && _width == width && _height == height && _layers == layers &&
-            _mips == mips && _samples == samples && _format == format)
+            _mips == mips && _samples == samples && _format == format && _storage == Data.RequiresStorageUsage)
             return;
         if (_handle != 0 && Renderer.IsRecordingEngineFrame && _lastRecordedFrame == Renderer.EngineFrameSequence)
             throw Unsupported("InFrameMutation", "texture storage cannot change after a dependent pass was recorded");
 
         ValidateContent(width, height, layers, mips, samples, encoding);
         ValidateSources();
-        bool red = encoding == "r8unorm";
-        bool color = red || encoding is "rgba8unorm" or "rgba8unorm-srgb" or "rgba16float" or "r16float";
-        BrowserTextureUsage usage = BrowserTextureUsage.TextureBinding;
-        if (!red) usage |= BrowserTextureUsage.RenderAttachment;
-        if (color && samples == 1) usage |= BrowserTextureUsage.CopySource | BrowserTextureUsage.CopyDestination;
-        else if (encoding == "depth32float" && samples == 1) usage |= BrowserTextureUsage.CopySource;
+        BrowserTextureUsage usage = WebGpuTextureFormat.Usage(Renderer, encoding, (uint)samples, Data.RequiresStorageUsage);
         // Keep the active generation and every dependent view valid until all candidate transfers succeed.
         int candidate = Renderer.CreateTexture(new BrowserTextureDescription(checked((int)width), checked((int)height),
             encoding, usage, mips, samples, Data.Name ?? "Engine layered texture", layers));
@@ -118,6 +116,7 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
         SetField(ref _mips, mips);
         SetField(ref _samples, samples);
         SetField(ref _format, format);
+        SetField(ref _storage, Data.RequiresStorageUsage);
         _invalidated = false;
     }
 
@@ -125,11 +124,6 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
 
     private void ValidateContent(uint width, uint height, int layers, int mips, int samples, string encoding)
     {
-        bool red = encoding == "r8unorm";
-        bool byteColor = encoding is "rgba8unorm" or "rgba8unorm-srgb";
-        bool halfColor = encoding == "rgba16float";
-        if (red && samples != 1)
-            throw Unsupported("Create", "R8 coverage textures require one sample");
         for (int layer = 0; layer < layers; layer++)
             for (int mip = 0; mip < mips; mip++)
             {
@@ -139,12 +133,9 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
                     throw Unsupported("Create", "every face or layer must have the same complete authored mip extents");
                 DataSource? source = level.Data;
                 if (source is null || UsesGpuSources) continue;
-                if (samples != 1 ||
-                    !(byteColor && level.PixelFormat == EPixelFormat.Rgba && level.PixelType == EPixelType.UnsignedByte ||
-                      red && level.PixelFormat == EPixelFormat.Red && level.PixelType == EPixelType.UnsignedByte ||
-                      halfColor && level.PixelFormat == EPixelFormat.Rgba && level.PixelType == EPixelType.HalfFloat))
-                    throw Unsupported("Upload", "only single-sample, tightly packed RGBA8, RGBA16F or R8 layer mip bytes can be uploaded");
-                int length = checked((int)((long)mipWidth * mipHeight * (red ? 1 : halfColor ? 8 : 4)));
+                if (samples != 1) throw Unsupported("Upload", "multisampled textures cannot receive CPU mip bytes");
+                int bytesPerPixel = WebGpuTextureFormat.UploadPixelBytes(encoding, level.PixelFormat, level.PixelType);
+                int length = checked((int)((long)mipWidth * mipHeight * bytesPerPixel));
                 if (source.Address == VoidPtr.Zero || source.Length != length)
                     throw Unsupported("Upload", "layer mip data has a missing or mismatched source length");
             }
@@ -152,15 +143,14 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
 
     protected virtual void UploadContent(int handle, int layers, int mips, ESizedInternalFormat format)
     {
-        bool red = format == ESizedInternalFormat.R8;
-        bool halfColor = format == ESizedInternalFormat.Rgba16f;
+        string encoding = WebGpuTextureFormat.Map(format);
         for (int layer = 0; layer < layers; layer++)
             for (int mip = 0; mip < mips; mip++)
             {
                 Mipmap2D level = GetAuthoredMip(mip, layer);
                 DataSource? source = level.Data;
                 if (source is null) continue;
-                int length = checked((int)((long)level.Width * level.Height * (red ? 1 : halfColor ? 8 : 4)));
+                int length = checked((int)((long)level.Width * level.Height * WebGpuTextureFormat.UploadPixelBytes(encoding, level.PixelFormat, level.PixelType)));
                 Renderer.UploadTextureLayerMip(handle, mip, layer, checked((int)level.Width),
                     checked((int)level.Height), new Span<byte>((void*)source.Address, length));
             }
@@ -169,7 +159,6 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
     public int GetRenderView(int mip, int layer)
     {
         Generate();
-        if (Format == "r8unorm") throw Unsupported("View", "R8 coverage textures are sampled, not render attachments");
         if (mip < 0 || mip >= _mips || layer < 0 || layer >= _layers)
             throw Unsupported("View", "a render attachment must select one authored mip and one layer or cube face");
         if (_renderViews.TryGetValue((mip, layer), out int view)) return view;
@@ -183,9 +172,8 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
     public int GetSampledView(bool depth)
     {
         Generate();
-        bool depthFormat = Format is "depth16unorm" or "depth24plus" or "depth32float" or "depth24plus-stencil8";
-        if (_samples != 1 || depth != depthFormat || depth && SampledDimension == "cube" ||
-            !depth && Format is not ("r8unorm" or "rgba8unorm" or "rgba8unorm-srgb" or "rgba16float" or "r16float"))
+        bool depthFormat = WebGpuTextureFormat.IsDepth(Format);
+        if (_samples != 1 || depth != depthFormat || depth && SampledDimension == "cube")
             throw Unsupported("Sample", "the shader binding requires a matching single-sample array or cube encoding");
         int baseMip = Data.LargestMipmapLevel;
         int lastMip = Math.Min(_mips - 1, Data.SmallestAllowedMipmapLevel);
@@ -316,19 +304,7 @@ public abstract unsafe class WebGpuLayeredTexture<T> : WebGpuObject<T>, IWebGpuP
         base.OnRetiring();
     }
 
-    protected static string MapFormat(ESizedInternalFormat format) => format switch
-    {
-        ESizedInternalFormat.R8 => "r8unorm",
-        ESizedInternalFormat.R16f => "r16float",
-        ESizedInternalFormat.Rgba8 => "rgba8unorm",
-        ESizedInternalFormat.Srgb8Alpha8 => "rgba8unorm-srgb",
-        ESizedInternalFormat.Rgba16f => "rgba16float",
-        ESizedInternalFormat.DepthComponent16 => "depth16unorm",
-        ESizedInternalFormat.DepthComponent24 => "depth24plus",
-        ESizedInternalFormat.DepthComponent32f => "depth32float",
-        ESizedInternalFormat.Depth24Stencil8 => "depth24plus-stencil8",
-        _ => throw Unsupported("Create", $"texture format '{format}' has no exact admitted WebGPU encoding"),
-    };
+    protected static string MapFormat(ESizedInternalFormat format) => WebGpuTextureFormat.Map(format);
 
     protected static NotSupportedException Unsupported(string operation, string reason)
         => new($"WebGPU.Texture.OperationUnsupported: {operation}: {reason}.");

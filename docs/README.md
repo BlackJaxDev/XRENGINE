@@ -170,3 +170,9 @@ browser representations under one verified managed-admission identity.
 [Modular browser pipeline requirements](work/design/platform/modular-browser-render-pipelines-2026-10-02.md) records the shared Default, Advanced and authored-pipeline scope, including GPU-driven zero-readback submission. The [implementation record](work/progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md) distinguishes generic asset/catalog contracts from pending Advanced stage execution.
 
 [Engine color MSAA resolve](work/progress/rendering/browser-color-msaa-resolve-2026-10-02.md) records shared renderbuffer ownership, retained four-to-one color resolves, precise unsupported combinations and remaining GPU acceptance.
+
+[Advanced browser depth primitives](work/progress/rendering/browser-advanced-depth-stages-2026-10-02.md) records exact GTAO and conservative depth reduction and explicit storage encodings. [Native-family admission](work/progress/rendering/browser-advanced-admission-2026-10-02.md) records selected-device and program validation, output reservations, completion ownership, and remaining browser evidence.
+
+[Recovered Advanced browser static integration](work/progress/rendering/browser-advanced-static-integration-2026-10-03.md) records the reconstructed native/output/effects family, authored-state preservation, fresh build/cook/probe and saved-world hydration results, unsupported profiles, and pending full browser acceptance.
+
+[WebGPU indirect submission](architecture/rendering/webgpu-indirect-submission.md) records GPU-written argument/count contracts, completion ownership, and the distinction between native Advanced compute meshlets and hardware task/mesh stages.

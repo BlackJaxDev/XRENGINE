@@ -804,7 +804,7 @@ namespace XREngine.Rendering
         }
 
         private void SynchronizeRenderPipelineFromActiveCamera()
-            => RenderPipeline = ActiveCamera?.GetOrCreateRenderPipeline();
+            => _renderPipeline.RequestPipelineChange(ActiveCamera?.GetOrCreateRenderPipeline(), this);
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.

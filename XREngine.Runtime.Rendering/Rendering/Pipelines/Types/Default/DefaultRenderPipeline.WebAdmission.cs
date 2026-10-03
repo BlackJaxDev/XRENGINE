@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
 
@@ -32,8 +33,11 @@ public partial class DefaultRenderPipeline
 
     /// <summary>Describes the unassigned browser output without creating a live desktop pipeline.</summary>
     public static RenderPipelineRequirements CreateWebDefaultRequirements(PipelinePostProcessState? authored = null)
+        => CreateWebDefaultRequirements(RenderPipelineResourceProfile.Empty, authored);
+
+    public static RenderPipelineRequirements CreateWebDefaultRequirements(in RenderPipelineResourceProfile outputProfile, PipelinePostProcessState? authored = null)
     {
-        RenderPipelineRequirements requirements = new(RendererBackendId.WebGPU, CreateWebPostProcessAdmissionState(authored));
+        RenderPipelineRequirements requirements = new(RendererBackendId.WebGPU, CreateWebPostProcessAdmissionState(authored), outputProfile);
         DescribeWebEffectRequirements(requirements);
         return requirements;
     }
@@ -48,23 +52,29 @@ public partial class DefaultRenderPipeline
             requirements.Diagnostics.Add(aoReason);
         requirements.RequireOperation("cpu-direct-meshes");
         requirements.RequireOperation("fullscreen-quad");
-        requirements.RequireProgram("tonemap");
+        if (GetSettings<ColorGradingSettings>(state) is { AutoExposure: true })
+        {
+            requirements.RequireComputeProgram("auto-exposure");
+            requirements.RequireRasterProgram("tonemap-auto-exposure");
+        }
+        else
+            requirements.RequireRasterProgram("tonemap");
         foreach (EDefaultRenderPass scenePass in Enum.GetValues<EDefaultRenderPass>())
             if (IsWebSceneMeshPassSupported((int)scenePass))
                 requirements.ScenePasses.Add((int)scenePass);
         if (ao is { Enabled: true })
         {
-            requirements.RequireProgram("depth-normal");
-            requirements.RequireProgram("gtao-generate");
-            requirements.RequireProgram("gtao-blur-horizontal");
-            requirements.RequireProgram("gtao-blur-vertical");
+            requirements.RequireRasterProgram("depth-normal");
+            requirements.RequireRasterProgram("gtao-generate");
+            requirements.RequireRasterProgram("gtao-blur-horizontal");
+            requirements.RequireRasterProgram("gtao-blur-vertical");
         }
         if (GetSettings<BloomSettings>(state) is { Enabled: true })
         {
-            requirements.RequireProgram("bloom-copy");
-            requirements.RequireProgram("bloom-downsample");
-            requirements.RequireProgram("bloom-upsample");
-            requirements.RequireProgram("bloom-combine");
+            requirements.RequireRasterProgram("bloom-copy");
+            requirements.RequireRasterProgram("bloom-downsample");
+            requirements.RequireRasterProgram("bloom-upsample");
+            requirements.RequireRasterProgram("bloom-combine");
         }
     }
 
@@ -88,7 +98,7 @@ public partial class DefaultRenderPipeline
     {
         if (GlobalIlluminationMode is not (EGlobalIlluminationMode.None or EGlobalIlluminationMode.LightProbesAndIbl))
             return "The selected global illumination mode has no cooked WebGPU route.";
-        if (HasFullPipelineDebugVisualization())
+        if (DeferredDebugView != DeferredDebugViewMode.Disabled)
             return "The selected full-pipeline debug visualization has no cooked WebGPU pass.";
         return null;
     }
@@ -131,11 +141,11 @@ public partial class DefaultRenderPipeline
             return "The selected GPU debug visualization has no cooked WebGPU pass.";
         pass = CommonPostProcessStages.ColorGradingStageKey;
         ColorGradingSettings? color = GetSettings<ColorGradingSettings>(state);
-        if (color is not null && (color.AutoExposure || color.ExposureMode != ColorGradingSettings.ExposureControlMode.Artist ||
+        if (color is not null && (color.ExposureMode != ColorGradingSettings.ExposureControlMode.Artist ||
             !float.IsFinite(color.Exposure) || !float.IsFinite(color.Gamma) || color.Exposure < 0 || color.Gamma <= 0 ||
             color.Contrast != 1 || color.Saturation != 1 || color.Brightness != 1 || color.Hue != 1 ||
             (Vector3)color.Tint != Vector3.One))
-            return "Use finite manual artist exposure and positive gamma with neutral color grading.";
+            return "Use finite artist exposure and positive gamma with neutral color grading.";
         pass = CommonPostProcessStages.TonemappingStageKey;
         if (GetSettings<TonemappingSettings>(state) is { Tonemapping: not ETonemappingType.Mobius })
             return "The cooked output route supports Mobius tonemapping.";

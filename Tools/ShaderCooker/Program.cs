@@ -14,7 +14,7 @@ internal static class Program
 {
     private const int MaxSourceBytes = 1024 * 1024;
     private const int MaxJsonBytes = 64 * 1024;
-    private const int MaxArtifacts = 64;
+    private const int MaxArtifacts = 256;
     private const string Coordinates = BrowserShaderAbi.CoordinateConvention;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions JsonOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, WriteIndented = false };
@@ -60,7 +60,7 @@ internal static class Program
             if (recipes.Count == 0)
                 recipes.Add(Path.Combine(repository, "XREngine.Runtime.Rendering.WebGPU", "Shaders", "browser-unlit.recipe.json"));
             if (recipes.Count > MaxArtifacts)
-                throw new InvalidDataException("A package supports 1–64 recipes.");
+                throw new InvalidDataException($"A package supports 1–{MaxArtifacts} recipes.");
             sourceRoot = Path.GetFullPath(sourceRoot);
             if (!Directory.Exists(sourceRoot)) throw new DirectoryNotFoundException($"Source root does not exist: {sourceRoot}");
             RejectLinks(sourceRoot, sourceRoot);
@@ -261,10 +261,15 @@ internal static class Program
                 string? scope = hasScope ? String(pipeline, "scope") : null;
                 _ = WebPipelineArtifactCatalog.GetBindingKey(scope, pass);
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
+                bool raster = entries.Count == 2 && entries.ContainsKey("vertex") && entries.ContainsKey("fragment") &&
+                    engineLayout.VertexEntryPoint is not null && engineLayout.FragmentEntryPoint is not null &&
+                    engineLayout.ComputeEntryPoint is null;
+                bool compute = entries.Count == 1 && entries.ContainsKey("compute") &&
+                    engineLayout.ComputeEntryPoint is not null && engineLayout.VertexEntryPoint is null &&
+                    engineLayout.FragmentEntryPoint is null && engineLayout.ComputeWorkgroupSize is not null;
                 Require(pipeline.Count == (hasScope ? 2 : 1) &&
-                    pass == String(recipe, "pass") && entries.Count == 2 &&
-                    entries.ContainsKey("vertex") && entries.ContainsKey("fragment") && materialVariant is null,
-                    $"{stageContext}: the pipeline artifact must explicitly select a complete authored raster program without a material variant.");
+                    pass == String(recipe, "pass") && (raster ^ compute) && materialVariant is null,
+                    $"{stageContext}: the pipeline artifact must explicitly select a complete authored raster or compute program without a material variant.");
                 pipelineArtifact = new JsonObject { ["pass"] = pass };
                 if (scope is not null)
                     pipelineArtifact["scope"] = scope;
@@ -417,6 +422,11 @@ internal static class Program
         if (schema == 3)
         {
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(encoded, source);
+            if (pipelineArtifact is not null)
+                WebPipelineArtifactCatalog.ValidateProgram(
+                    WebPipelineArtifactCatalog.GetBindingKey(
+                        pipelineArtifact.ContainsKey("scope") ? String(pipelineArtifact, "scope") : null,
+                        String(pipelineArtifact, "pass")), artifact);
             if (computeArtifact is not null)
                 WebComputeArtifactCatalog.ValidateKernel(String(computeArtifact, "kernel"), artifact);
         }

@@ -47,6 +47,35 @@ membership. Pipeline-owned fullscreen/compute materials are audited separately.
 
 ## Hydration and output attachment
 
+`CameraComponent.RenderPipelineSource` persists a nullable concrete authored
+pipeline. Its getter, saved `PostProcessStates`, and AA/MSAA/HDR overrides are
+available before the lazy runtime camera exists. Realization transfers that
+state to `XRCamera`; later direct-camera assignments remain visible through the
+component and synchronize every bound viewport. Clearing the source restores
+one cached factory pipeline while the saved source remains null.
+
+An unassigned camera stores its authored effect values in the optional
+`CameraPostProcessStateCollection.DefaultState`, independently of a transient
+factory pipeline ID. Binding a fresh default uses its schema without discarding
+the stored values. Explicitly assigning that exact cached factory object moves
+the same state into the per-pipeline collection. Existing explicit-ID entries
+remain readable. YAML symbolic enum and invariant vector/color values normalize
+to their declared backing types when a stage binds.
+
+Generated `RenderPipeline.CommandChain` and runtime plans are excluded from
+serialization. Custom pipelines serialize `Commands` and `RenderPasses`, then
+refresh the executable chain and schema as those properties hydrate. Cooked
+command containers persist the command list and restore nested ownership. Old
+YAML sequences remain valid; nondefault branch resource lifetime uses an
+optional mapping containing `BranchResources` and `Commands`.
+
+The publisher delays temporary source and audit-world cache publication until
+serialization and settings inspection finish, preserving authored pipeline IDs
+during per-pipeline state lookup. Synchronous export suppresses global deferred
+debug preference writes only on its cooking thread. Authored values still
+hydrate, concurrent desktop changes remain effective, and scope disposal never
+restores over a newer preference.
+
 Browser preparation reconstructs the execution command chain and pass/sorter map
 after authoring properties hydrate. Cold publication reads the authored custom
 command graph without rebuilding it. Runtime admission reads stored camera
@@ -83,6 +112,16 @@ live WebGPU output still requires the GPU qualification workflow.
 
 ## Validation boundary
 
+- On 2026-10-03, the canonical dependency-enabled Rendering, WebGPU and saved
+  camera fixture build passed with zero warnings/errors. Its 35 fresh runtime
+  assertions cover YAML and cooked concrete source identity, nested executable
+  commands and branch lifetime, enum/vector backing settings, camera output
+  overrides and custom 4x-MSAA declarations, cold authoring, two-view source
+  synchronization, unassigned default settings across fresh factory IDs,
+  explicit default promotion, and cook-scoped debug preference isolation.
+  Native scene YAML preserves a shared source alias; AA None ignores an unused
+  sample count, unsupported 2x MSAA rejects, and conflicting raster/compute
+  declarations reject
 - Targeted Release WebGPU builds passed with zero warnings/errors, including
   the final program-reference serialization correction. The subsequent minimal
   compute-event-route build also passed with zero warnings/errors
@@ -118,3 +157,16 @@ Disposable native evidence is under
 the real custom companion was produced by the existing scoped shader-cooker
 fixture. No tracked tests, dependencies, desktop scheduling changes, or default
 pipeline substitution were introduced.
+
+The refreshed saved-camera evidence is under the same run's
+`scratch/recovered-camera/`, with `logs/recovered-camera-build.log` and
+`logs/recovered-camera-run.log`. It establishes the reconstructed shared source
+behavior; it is not a renewed full Editor/Browser qualification.
+
+Generic cooked binary hydration still duplicates shared inline object
+references: IDs and settings can survive while two camera sources lose reference
+equality. Native scene/world YAML preserves shared source aliases. Directly
+serializing a standalone camera array invokes the existing XRAsset converter
+separately for each inline pipeline and does not emit a shared alias. These
+broader reference-identity limitations remain open; there is no ID-only
+deduplication or serialization-format migration in this change.

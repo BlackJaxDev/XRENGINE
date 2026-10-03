@@ -5,6 +5,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Editor.Publishing;
 using XREngine.Rendering;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Editor;
@@ -17,7 +18,9 @@ internal static partial class ProjectBuilder
         out IReadOnlyList<BrowserUiFontCookRequest> authoredFonts)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        BrowserRenderingCapabilityAudit.InspectStartup(Engine.PersistentGameSettings);
+        GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
+        BrowserRenderingCapabilityAudit.InspectStartup(settings);
+        RenderPipelineResourceProfile outputProfile = BrowserRenderPipelineOutputProfile.FromStartup(settings);
         Directory.CreateDirectory(sourceDirectory);
         // The existing serializer owns component graphs and game-specific formats. No
         // browser scene projection is allowed to remove authored gameplay behavior.
@@ -39,6 +42,7 @@ internal static partial class ProjectBuilder
             dependencyCooker.AddCookedLeaf(worldPath, font.CatalogPath, typeof(FontGlyphSet), font.SourceName);
         }
         Dictionary<string, ShaderProgramArtifact> shaderArtifacts = new(StringComparer.Ordinal);
+        HashSet<int> admittedScenePasses = [];
         // Inspect what the browser will actually hydrate. A registered game serializer may
         // intentionally project desktop shader data into explicit cooked material semantics.
         // This CPU-only audit may run in a live desktop editor; temporary materials must not
@@ -50,25 +54,27 @@ internal static partial class ProjectBuilder
             XRWorld runtimeWorld = CookedAssetReader.LoadAsset(
                 File.ReadAllBytes(Path.Combine(sourceDirectory, "startup-world.bin")), typeof(XRWorld)) as XRWorld
                 ?? throw new InvalidDataException("The browser startup payload did not hydrate an XRWorld.");
-            using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
             VerifyPublishedUiFontReferences(world.Scenes, runtimeWorld.Scenes);
             if (!BrowserStreamedSceneBindings(world.Scenes).SequenceEqual(
                 BrowserStreamedSceneBindings(runtimeWorld.Scenes), StringComparer.Ordinal))
                 throw new InvalidDataException("BrowserCook.StreamedSceneReferenceLost: the cooked startup world changed its authored scene targets.");
-            foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver, cancellationToken))
+            foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver,
+                cancellationToken, outputProfile, admittedScenePasses: admittedScenePasses))
                 shaderArtifacts.TryAdd(artifact.Identity, artifact);
+            // Keep authored IDs intact during inspection; publishing beside the
+            // source world would rekey collisions before per-pipeline state lookup.
+            using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
         }
         (string[] streamedRoots, bool streamedUsesDefaultFont, IReadOnlyList<BrowserUiFontCookRequest> streamedFonts,
             IReadOnlyList<ShaderProgramArtifact> streamedShaders) =
             CookBrowserStreamedScenes(project, world, assetRoot, sourceDirectory, dependencyCooker, resolver,
-                cookedFonts, cancellationToken);
+                cookedFonts, cancellationToken, outputProfile, admittedScenePasses);
         includesDefaultUiFont |= streamedUsesDefaultFont;
         authoredFonts = [.. authoredFonts.Concat(streamedFonts).DistinctBy(static font => font.CatalogPath)
             .OrderBy(static font => font.CatalogPath, StringComparer.Ordinal)];
         foreach (ShaderProgramArtifact artifact in streamedShaders)
             shaderArtifacts.TryAdd(artifact.Identity, artifact);
         cancellationToken.ThrowIfCancellationRequested();
-        GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
         // Keep authored output requirements while the manifest owns the selected world.
         // Copy window objects so removing external world references cannot mutate editor settings.
         settings.StartupWindows = settings.StartupWindows.Select(window => new GameWindowStartupSettings

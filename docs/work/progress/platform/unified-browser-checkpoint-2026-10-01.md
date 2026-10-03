@@ -1036,3 +1036,24 @@ budgets. The missing shared compute-program event connection is also repaired,
 so declared buffer-only command dispatch reaches the existing ordered recorder
 rather than silently doing no work. Storage-image operations remain explicit
 until their subsequent resource implementation is installed.
+
+### Recovered static Advanced integration (2026-10-03)
+
+The [static integration record](../rendering/browser-advanced-static-integration-2026-10-03.md)
+separates recovered source, reconstructed source, fresh managed/cook/export
+checks, and the pending complete browser milestone. The current source adds
+exact integer/storage texture operations, canonical scene retention and GPU
+visibility, bounded native material cohorts, and the selected Advanced output
+chain. The saved sample now passes genuine Editor export and a separate-process
+cooked BeginPlay with its exact authored pipeline and settings.
+
+The workspace reset lost local build outputs and an unpublished portion of
+the shared source. Uploaded Git objects recovered the first portion exactly;
+the remaining source was reconstructed and freshly compiled/reviewed. Earlier
+pre-reset logs are historical evidence, not proof of the reconstructed bytes.
+The last published baseline remains `e8e381a26d80d146a38eab972cdbda4c6c851614`,
+whose four jobs passed in
+[run 37070456974](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37070456974).
+No Advanced browser image has passed yet. The checklist now separates concrete
+implementation leaves from live validation instead of counting broad parent
+summaries a second time.

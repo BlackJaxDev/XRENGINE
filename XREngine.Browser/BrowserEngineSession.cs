@@ -13,6 +13,7 @@ using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Data.Rendering;
 using XREngine.Data.Core;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Browser;
 
@@ -64,6 +65,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     private PipelinePostProcessState? _admittedPostProcessState;
     private ulong _admittedPostProcessVersion;
     private ulong _admittedCommandGeneration;
+    private RenderPipelineResourceProfile _admittedOutputProfile;
     private IDisposable? _defaultUiFontScope;
     private readonly List<ObjectCacheOwnership> _sessionObjects = [];
     private GameStartupSettings? _previousGameSettings;
@@ -167,10 +169,6 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
                     ?? throw new InvalidOperationException("WebGPU.EngineRenderer.Required: the browser canvas requires the shared engine WebGPU renderer.");
                 InitializeRendererArtifacts(_renderer);
                 _rendererSession = Interlocked.Increment(ref _nextRendererSession);
-                if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
-                    throw new AdvancedRenderPipelineNotSupportedException(
-                        AdvancedRenderPipelineSelectionResolver.Resolve(EAdvancedRenderPipelineMode.Required,
-                            _renderer.GetAdvancedRenderPipelineCapabilities(), stereo: false));
                 if (Engine.EditorPreferences?.Debug is { } debugOptions)
                 {
                     _previousDebugOpaquePipeline = debugOptions.UseDebugOpaquePipeline;
@@ -268,11 +266,14 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             request.OffscreenIntent is not null)
             throw new NotSupportedException("WebGPU.DefaultPipeline.ProfileUnsupported: the forward-lit output requires a mono scene presentation; stereo, XR, and offscreen capture are not supported.");
         if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
-            throw new AdvancedRenderPipelineNotSupportedException(
-                AdvancedRenderPipelineSelectionResolver.Resolve(EAdvancedRenderPipelineMode.Required,
-                    _renderer?.GetAdvancedRenderPipelineCapabilities()
-                        ?? AdvancedRenderPipelineCapabilities.NoRenderer,
-                    stereo: false));
+        {
+            // Device startup is asynchronous. Preserve the explicitly selected
+            // source; the physical viewport reserves and admits it when ready.
+            AdvancedRenderPipeline advanced = new();
+            if (_pipelineArtifacts is { } advancedArtifacts)
+                advanced.BindWebPipelineArtifacts(advancedArtifacts);
+            return advanced;
+        }
         DefaultRenderPipeline pipeline = new();
         if (_pipelineArtifacts is { } artifacts)
             pipeline.BindWebPipelineArtifacts(artifacts);
@@ -318,19 +319,25 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             if (pipeline is DefaultRenderPipeline defaultPipeline && _tonemapArtifact is { } artifact)
                 defaultPipeline.BindWebTonemapArtifact(artifact);
             camera.Camera.PostProcessStates.TryGetState(pipeline.ID, out var authored);
+            if (!camera.Camera.TryGetAssignedRenderPipeline(out _))
+                authored = camera.Camera.PostProcessStates.DefaultState ?? authored;
+            RenderPipelineResourceProfile outputProfile = GetCanvasOutputProfile(camera.Camera);
+            if (GetCanvasVendorOperationRejection() is { } vendorReason)
+                throw new NotSupportedException($"WebGPU.Pipeline.OperationUnsupported: {vendorReason}");
             if (!pipeline.IsWebOutputPrepared)
-                pipeline.PrepareForWebOutput(authored, _rendererShaderArtifacts);
+                pipeline.PrepareForWebOutput(outputProfile, authored, _rendererShaderArtifacts);
             ulong version = authored?.ChangeVersion ?? 0;
             if (!ReferenceEquals(_admittedCamera, camera.Camera) || !ReferenceEquals(_admittedPipeline, pipeline) ||
                 !ReferenceEquals(_admittedPostProcessState, authored) || _admittedPostProcessVersion != version ||
-                _admittedCommandGeneration != pipeline.CommandGeneration)
+                _admittedCommandGeneration != pipeline.CommandGeneration || _admittedOutputProfile != outputProfile)
             {
-                WebGpuPipelineAdmission.Validate(pipeline.CreateRequirements(RendererBackendId.WebGPU, authored), pipeline, _rendererShaderArtifacts);
+                WebGpuPipelineAdmission.Validate(pipeline.CreateRequirements(RendererBackendId.WebGPU, outputProfile, authored), pipeline, _rendererShaderArtifacts, _renderer);
                 _admittedCamera = camera.Camera;
                 _admittedPipeline = pipeline;
                 _admittedPostProcessState = authored;
                 _admittedPostProcessVersion = version;
                 _admittedCommandGeneration = pipeline.CommandGeneration;
+                _admittedOutputProfile = outputProfile;
             }
         }
         if (camera is not null && !ReferenceEquals(_renderViewport.CameraComponent, camera))
@@ -524,6 +531,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         _admittedPostProcessState = null;
         _admittedPostProcessVersion = 0;
         _admittedCommandGeneration = 0;
+        _admittedOutputProfile = default;
         _rendererShaderArtifacts = null;
         _rendererMaterialVariants = null;
         _rendererComputeArtifacts = null;
@@ -638,6 +646,8 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             throw new NotSupportedException("WebAudio.EffectsUnsupported: authored SteamAudio or OpenAL EFX cannot run in the browser.");
         if (authored.AudioTransportOverride is { HasOverride: true, Value: not EAudioTransport.WebAudio })
             throw new NotSupportedException("WebAudio.TransportUnsupported: authored native audio cannot run in the browser.");
+        if (BrowserRenderPipelineOutputProfile.GetVendorOperationRejection(authored) is { } vendorReason)
+            throw new NotSupportedException($"WebGPU.Pipeline.OperationUnsupported: {vendorReason}");
 
         canvasWidth = 1280;
         canvasHeight = 720;

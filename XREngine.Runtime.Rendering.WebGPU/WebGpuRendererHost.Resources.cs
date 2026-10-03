@@ -22,6 +22,16 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
         WebGpuImports.WriteBuffer(_session, handle, offset, bytes);
     }
 
+    /// <summary>Synchronously copies borrowed immutable publication bytes without retaining or modifying their source.</summary>
+    public void WriteBuffer(int handle, int offset, ReadOnlySpan<byte> bytes)
+    {
+        // The JavaScript MemoryView marshaller accepts Span rather than ReadOnlySpan.
+        // The executor only copies this borrow into its staging bytes during the import;
+        // neither managed nor JavaScript code writes through or retains the source view.
+        WriteBuffer(handle, offset, System.Runtime.InteropServices.MemoryMarshal.CreateSpan(
+            ref System.Runtime.InteropServices.MemoryMarshal.GetReference(bytes), bytes.Length));
+    }
+
     public void CopyBuffer(int source, int sourceOffset, int destination, int destinationOffset, int size)
     {
         RequireOwnedResource(source);

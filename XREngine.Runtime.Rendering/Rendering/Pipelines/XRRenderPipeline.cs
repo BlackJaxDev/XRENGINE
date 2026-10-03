@@ -282,7 +282,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// <summary>
     /// Gets the command chain for this pipeline.
     /// The command chain represents the sequence of render commands that will be executed by this pipeline.
+    /// Generated execution state is rebuilt from authored configuration; custom pipelines serialize their Commands property.
     /// </summary>
+    [YamlIgnore]
     public ViewportRenderCommandContainer CommandChain
     {
         get => _commandChain;
@@ -366,7 +368,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             // A pipeline can still be constructed from an activation callback inside that
             // scope, so complete the ownership and derived metadata initialization that the
             // CommandChain setter normally performs.
-            if (!ReferenceEquals(CommandChain.ParentPipeline, this))
+            if (!ReferenceEquals(CommandChain.ParentPipeline, this) || XRBase.ArePropertyNotificationsSuppressed || ReferenceEquals(previous, CommandChain))
             {
                 previous.ParentPipeline = null;
                 CommandChain.ParentPipeline = this;

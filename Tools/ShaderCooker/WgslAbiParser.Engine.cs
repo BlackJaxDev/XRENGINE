@@ -96,6 +96,7 @@ internal sealed partial class WgslAbiParser
     private void ValidateEngineLayout()
     {
         ShaderProgramArtifact expected = _expected!;
+        ValidateWorkgroupStorage();
         if ((expected.Pass == WebComputeArtifactCatalog.LuminanceReductionKernel ||
              expected.Pass == WebComputeArtifactCatalog.LuminanceReduction2DKernel) && _luminanceScratchDeclarations != 1)
             Fail(0, "luminance reduction requires its bounded workgroup scratch array");
@@ -132,20 +133,19 @@ internal sealed partial class WgslAbiParser
             string kind = resource.BindingType switch
             {
                 "uniform" => "uniform", "read-only-storage" => "storage,read", "storage" => "storage,read_write",
-                "filtering-sampler" or "comparison-sampler" => "sampler", _ => "texture",
+                "filtering-sampler" or "non-filtering-sampler" or "comparison-sampler" => "sampler", _ => "texture",
             };
             if (found.Kind != kind) Fail(found.Offset, "resource address space does not match its declared binding kind");
             if (contract.Kind is ShaderAbiResourceKind.UniformBuffer or ShaderAbiResourceKind.StorageBuffer)
                 CheckEngineBuffer(found.Type, found.Offset, contract, resource.RuntimeArray);
             else
             {
-                string type = resource.BindingType switch
-                {
-                    "texture-2d-float" => "texture_2d<f32>", "texture-2d-array-float" => "texture_2d_array<f32>",
-                    "texture-cube-float" => "texture_cube<f32>", "texture-depth-2d" => "texture_depth_2d",
-                    "texture-depth-2d-array" => "texture_depth_2d_array", "filtering-sampler" => "sampler", "comparison-sampler" => "sampler_comparison",
-                    _ => "unsupported",
-                };
+                string type = ShaderTextureBindingType.TryParse(resource.BindingType, out ShaderTextureBindingType texture)
+                    ? texture.WgslType : resource.BindingType switch
+                    {
+                        "filtering-sampler" or "non-filtering-sampler" => "sampler",
+                        "comparison-sampler" => "sampler_comparison", _ => "unsupported",
+                    };
                 if (ResolveAlias(found.Type, new HashSet<string>(StringComparer.Ordinal), found.Offset) != type)
                     Fail(found.Offset, "resource type does not match its declared binding kind");
             }
@@ -183,6 +183,9 @@ internal sealed partial class WgslAbiParser
             resolved = ResolveAlias(element, new HashSet<string>(StringComparer.Ordinal), offset);
             if (expected.Members.IsEmpty)
             {
+                if (expected.Kind == ShaderAbiResourceKind.StorageBuffer && expected.ByteSize == 4 &&
+                    resolved is "atomic<u32>" or "atomic<i32>")
+                    return;
                 if (_structs.ContainsKey(resolved))
                     Fail(offset, "structured compute array elements require explicit members");
                 WgslAbiShape shape = Resolve(resolved, new HashSet<string>(StringComparer.Ordinal), offset);

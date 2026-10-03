@@ -28,6 +28,7 @@
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderVertexAttribute.cs" Link="Shared/ShaderVertexAttribute.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderVertexBufferLayout.cs" Link="Shared/ShaderVertexBufferLayout.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderStageResourceLayout.cs" Link="Shared/ShaderStageResourceLayout.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderTextureBindingType.cs" Link="Shared/ShaderTextureBindingType.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiResourceContract.cs" Link="Shared/ShaderAbiResourceContract.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiResourceKind.cs" Link="Shared/ShaderAbiResourceKind.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderAbiResourceOwner.cs" Link="Shared/ShaderAbiResourceOwner.cs" />

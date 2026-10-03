@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-shade-classify",
+  "pass": "shade-classify",
+  "source": "AdvancedShadeClassify.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "advancedShadeClassify"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "shade-classify"
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 7,
+    "maxUniformBufferBindingSize": 32,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 4,
+    "maxStorageBufferBindingSize": 4,
+    "maxSampledTexturesPerShaderStage": 2,
+    "maxComputeWorkgroupSizeX": 16,
+    "maxComputeWorkgroupSizeY": 16,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256,
+    "maxComputeWorkgroupStorageSize": 1040
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "SceneArena",
+        "physicalName": "scene",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "MaterialGroups",
+        "physicalName": "materialGroups",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "ShadeTiles",
+        "physicalName": "tiles",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "ShadeCounts",
+        "physicalName": "counts",
+        "group": 0,
+        "binding": 3,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 4,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 32,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "screenExtent",
+            "provider": "screenExtent",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "tilesCount",
+            "provider": "tilesCount",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "viewIndex",
+            "provider": "viewIndex",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "cohortCount",
+            "provider": "cohortCount",
+            "offset": 20,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "tileCapacity",
+            "provider": "tileCapacity",
+            "offset": 24,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "provider": "reserved",
+            "offset": 28,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      },
+      {
+        "name": "VisibilityIdentity",
+        "physicalName": "identityTexture",
+        "group": 0,
+        "binding": 5,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "VisibilityMetadata",
+        "physicalName": "metadataTexture",
+        "group": 0,
+        "binding": 6,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {}
+}

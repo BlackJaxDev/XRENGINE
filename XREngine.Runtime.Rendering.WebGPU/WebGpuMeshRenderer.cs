@@ -7,7 +7,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Submits canonical engine mesh draws using cooked programs and per-draw uniform snapshots.</summary>
-public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRenderer.BaseVersion data)
+public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRenderer.BaseVersion data)
     : WebGpuObject<XRMeshRenderer.BaseVersion>(renderer, data), IApiMeshRenderer, IRenderPreparationState
 {
     private readonly record struct DrawKey(WebGpuMaterial Material, WebGpuRasterState State,
@@ -282,6 +282,7 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
 
     internal void DestroyDraws()
     {
+        DestroyIndirectDraws();
         foreach (WebGpuMeshDraw draw in _draws.Values)
             draw.Dispose();
         _draws.Clear();
@@ -290,6 +291,12 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
 
     internal void ReleaseDrawsUsing(AbstractRenderAPIObject resource)
     {
+        foreach (WebGpuMeshDraw draw in _indirectDraws.Values)
+        {
+            if (!draw.DependsOn(resource)) continue;
+            DestroyDraws();
+            return;
+        }
         foreach (WebGpuMeshDraw draw in _draws.Values)
         {
             if (!draw.DependsOn(resource)) continue;
@@ -300,12 +307,16 @@ public sealed class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRender
 
     internal void ReleaseStorageCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
     {
+        foreach (WebGpuMeshDraw draw in _indirectDraws.Values)
+            draw.ReleaseCommandsUsingHandle(resource, handle);
         foreach (WebGpuMeshDraw draw in _draws.Values)
             draw.ReleaseCommandsUsingHandle(resource, handle);
     }
 
     internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
     {
+        foreach (WebGpuMeshDraw draw in _indirectDraws.Values)
+            draw.ReleaseCommandUsing(program, bindings);
         foreach (WebGpuMeshDraw draw in _draws.Values)
             draw.ReleaseCommandUsing(program, bindings);
     }

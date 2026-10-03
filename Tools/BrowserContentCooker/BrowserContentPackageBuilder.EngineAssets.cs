@@ -265,19 +265,32 @@ public static partial class BrowserContentPackageBuilder
                     "Pipeline artifact identity must be a lowercase SHA-256 descriptor hash.");
                 if (!shaderDescriptors.TryGetValue(descriptorIdentity, out JsonElement descriptor))
                     throw new InvalidDataException("Pipeline artifact references an absent shader descriptor.");
-                Require(descriptor.ValueKind == JsonValueKind.Object
-                    && descriptor.TryGetProperty("pass", out JsonElement descriptorPass) && descriptorPass.ValueKind == JsonValueKind.String
-                    && descriptorPass.GetString() == pass
-                    && descriptor.TryGetProperty("target", out JsonElement descriptorTarget) && descriptorTarget.ValueKind == JsonValueKind.String
-                    && descriptorTarget.GetString() == "WebGPUWgsl"
-                    && descriptor.TryGetProperty("entryPoints", out JsonElement entries) && entries.ValueKind == JsonValueKind.Object
-                    && entries.EnumerateObject().Count() == 2
+                bool descriptorObject = descriptor.ValueKind == JsonValueKind.Object;
+                JsonElement entries = default;
+                bool hasEntries = descriptorObject && descriptor.TryGetProperty("entryPoints", out entries) &&
+                    entries.ValueKind == JsonValueKind.Object;
+                bool raster = hasEntries && entries.EnumerateObject().Count() == 2
                     && entries.TryGetProperty("vertex", out JsonElement vertex) && vertex.ValueKind == JsonValueKind.String
                     && !string.IsNullOrWhiteSpace(vertex.GetString())
                     && entries.TryGetProperty("fragment", out JsonElement fragment) && fragment.ValueKind == JsonValueKind.String
                     && !string.IsNullOrWhiteSpace(fragment.GetString())
+                    && !descriptor.TryGetProperty("workgroupSize", out _);
+                bool compute = hasEntries && entries.EnumerateObject().Count() == 1
+                    && entries.TryGetProperty("compute", out JsonElement computeEntry) && computeEntry.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(computeEntry.GetString())
+                    && descriptor.TryGetProperty("workgroupSize", out JsonElement workgroupSize)
+                    && ValidPipelineWorkgroupSize(workgroupSize)
+                    && descriptor.TryGetProperty("layout", out JsonElement layout) && layout.ValueKind == JsonValueKind.Object
+                    && layout.TryGetProperty("vertexBuffers", out JsonElement vertexBuffers) && vertexBuffers.ValueKind == JsonValueKind.Array
+                    && vertexBuffers.GetArrayLength() == 0;
+                Require(descriptorObject
+                    && descriptor.TryGetProperty("pass", out JsonElement descriptorPass) && descriptorPass.ValueKind == JsonValueKind.String
+                    && descriptorPass.GetString() == pass
+                    && descriptor.TryGetProperty("target", out JsonElement descriptorTarget) && descriptorTarget.ValueKind == JsonValueKind.String
+                    && descriptorTarget.GetString() == "WebGPUWgsl"
+                    && (raster ^ compute)
                     && !descriptor.TryGetProperty("materialVariant", out _),
-                    "Pipeline artifact descriptor must be a complete matching WebGPU raster program.");
+                    "Pipeline artifact descriptor must be a complete matching WebGPU raster or compute program.");
                 if (scope is null)
                     pipelineArtifacts.Add(new { pass, descriptorIdentity });
                 else
@@ -403,5 +416,19 @@ public static partial class BrowserContentPackageBuilder
         Require(Regex.IsMatch(selector, "^[a-z][a-z0-9.-]{0,63}\\z", RegexOptions.CultureInvariant),
             "Material variant selector must be a lowercase bounded identifier.");
         return selector;
+    }
+
+    private static bool ValidPipelineWorkgroupSize(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 3)
+            return false;
+        long invocations = 1;
+        foreach (JsonElement dimension in value.EnumerateArray())
+        {
+            if (!dimension.TryGetInt32(out int size) || size is < 1 or > 1024)
+                return false;
+            invocations *= size;
+        }
+        return invocations <= 1024;
     }
 }

@@ -37,6 +37,12 @@ internal sealed partial class WgslAbiParser
                     _index + 1 < _tokens.Count && _tokens[_index].Text == "<" &&
                     _tokens[_index + 1].Text == "workgroup")
                     LuminanceScratchDeclaration(attributes);
+                else if (_expected is not null && _index + 1 < _tokens.Count &&
+                    _tokens[_index].Text == "<" && _tokens[_index + 1].Text == "workgroup")
+                    WorkgroupDeclaration(attributes);
+                else if (_expected is not null && _index + 1 < _tokens.Count &&
+                    _tokens[_index].Text == "<" && _tokens[_index + 1].Text == "private")
+                    PrivateDeclaration(attributes);
                 else ResourceDeclaration(attributes);
                 continue;
             }

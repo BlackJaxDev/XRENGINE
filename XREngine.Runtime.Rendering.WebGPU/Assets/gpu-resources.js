@@ -1,9 +1,12 @@
+import { textureFormatInfo, assertStorageTextureFormat } from './gpu-texture-formats.js';
+
 const maximumBufferBytes = 256 * 1024 * 1024;
 const maximumTextureBytes = 256 * 1024 * 1024;
 const maximumWriteBytes = 64 * 1024 * 1024;
-const uploadBytesPerPixel = new Map([['r8unorm', 1], ['rgba8unorm', 4], ['rgba8unorm-srgb', 4], ['rgba16float', 8]]);
-const renderColorFormats = new Set(['rgba8unorm', 'rgba8unorm-srgb', 'rgba16float', 'r16float']);
-const depthFormats = new Set(['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float']);
+function uploadPixelBytes(format, device) {
+    const info = textureFormatInfo(format, device);
+    return info.color ? info.bytes : 0;
+}
 
 function integer(value, minimum, maximum, name) {
     if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
@@ -115,21 +118,21 @@ export class GpuResources {
         integer(arrayLayerCount, 1, r.device.limits.maxTextureArrayLayers, 'texture array layers');
         integer(mipLevelCount, 1, 1 + Math.floor(Math.log2(Math.max(width, height))), 'mip count');
         if (sampleCount !== 1 && sampleCount !== 4) throw new RangeError('Texture sample count must be one or four.');
-        const color = renderColorFormats.has(format);
-        const redCoverage = format === 'r8unorm';
-        if (!color && !redCoverage && !depthFormats.has(format)) throw new RangeError('Texture format is outside the baseline profile.');
-        const supported = GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT;
+        const info = textureFormatInfo(format, r.device);
+        const color = info.color;
+        const supported = GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT;
         integer(usage, 1, supported, 'texture usage');
-        if (usage & ~supported) throw new RangeError('Texture usage is outside the baseline profile.');
-        if (redCoverage && (sampleCount !== 1 || (usage & GPUTextureUsage.RENDER_ATTACHMENT)))
-            throw new RangeError('R8 coverage textures require one sample and cannot be render attachments.');
-        if (!color && !redCoverage && ((usage & GPUTextureUsage.COPY_DST) ||
+        if (usage & ~supported) throw new RangeError('Texture usage is outside the admitted profile.');
+        if (usage & GPUTextureUsage.STORAGE_BINDING) assertStorageTextureFormat(format, 'write-only', r.device);
+        if (sampleCount > 1 && !info.multisample) throw new RangeError(`Texture format '${format}' does not support multisampling.`);
+        if (!color && ((usage & GPUTextureUsage.COPY_DST) ||
             ((usage & GPUTextureUsage.COPY_SRC) && (format !== 'depth32float' || sampleCount !== 1))))
             throw new RangeError('Depth transfers require a single-sample depth32float copy source; depth/stencil copy destinations are unsupported.');
         if (sampleCount > 1 && (arrayLayerCount !== 1 || mipLevelCount !== 1 || !(usage & GPUTextureUsage.RENDER_ATTACHMENT) ||
-            (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST))))
+            (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING))))
             throw new RangeError('Multisampled textures require one layer, attachment usage, one mip and no transfer usage.');
-        const bytesPerPixel = uploadBytesPerPixel.get(format) ?? (format === 'r16float' ? 2 : 8);
+        const bytesPerPixel = info.bytes;
         let estimatedBytes = 0;
         for (let mip = 0; mip < mipLevelCount; mip++)
             estimatedBytes += Math.max(1, Math.floor(width / 2 ** mip)) * Math.max(1, Math.floor(height / 2 ** mip)) * bytesPerPixel * sampleCount * arrayLayerCount;
@@ -153,10 +156,10 @@ export class GpuResources {
         const mipHeight = Math.max(1, Math.floor(entry.height / 2 ** mip));
         integer(width, 1, mipWidth, 'upload width'); integer(height, 1, mipHeight, 'upload height');
         integer(x, 0, mipWidth - width, 'upload x'); integer(y, 0, mipHeight - height, 'upload y');
-        const bytesPerPixel = uploadBytesPerPixel.get(entry.format);
+        const bytesPerPixel = uploadPixelBytes(entry.format, r.device);
         const length = width * height * bytesPerPixel;
         if (!bytesPerPixel || entry.sampleCount !== 1 || !(entry.usage & GPUTextureUsage.COPY_DST) || memory?.byteLength !== length)
-            throw new RangeError('Mip uploads require single-sample R8, RGBA8 or RGBA16F, COPY_DST and tightly packed bytes.');
+            throw new RangeError('Mip uploads require an admitted single-sample color format, COPY_DST and exact tightly packed bytes.');
         this._bytes(memory);
         this.textureDestination.texture = entry.texture;
         this.textureDestination.mipLevel = mip;
@@ -185,7 +188,7 @@ export class GpuResources {
         integer(width, 1, Math.min(sourceWidth, destinationWidth), 'copy width');
         integer(height, 1, Math.min(sourceHeight, destinationHeight), 'copy height');
         if ((source.arrayLayerCount ?? 1) !== 1 || source.sampleCount !== 1 || destination.sampleCount !== 1 ||
-            source.format !== destination.format || !renderColorFormats.has(source.format) && source.format !== 'r8unorm' ||
+            source.format !== destination.format || !textureFormatInfo(source.format, r.device).color ||
             !(source.usage & GPUTextureUsage.COPY_SRC) || !(destination.usage & GPUTextureUsage.COPY_DST) ||
             width !== sourceWidth || height !== sourceHeight || width !== destinationWidth || height !== destinationHeight)
             throw new RangeError('Texture subresource copies require complete matching single-sample color mips and copy usages.');
@@ -196,7 +199,7 @@ export class GpuResources {
             [width, height, 1]);
         this.submission[0] = encoder.finish();
         try { r.device.queue.submit(this.submission); r._stats.gpuCopiedBytes += width * height *
-            (uploadBytesPerPixel.get(source.format) ?? (source.format === 'r16float' ? 2 : 4)); }
+            textureFormatInfo(source.format, r.device).bytes; }
         finally { this.submission[0] = null; }
     }
 
@@ -213,8 +216,8 @@ export class GpuResources {
             texture.sampleCount > 1 && dimension !== '2d')
             throw new RangeError('Texture view dimension and layer range are incompatible.');
         if (aspect !== 'all' && aspect !== 'depth-only' && aspect !== 'stencil-only') throw new RangeError('Unsupported texture view aspect.');
-        if ((aspect === 'depth-only' && !depthFormats.has(texture.format)) ||
-            (aspect === 'stencil-only' && texture.format !== 'depth24plus-stencil8'))
+        if ((aspect === 'depth-only' && textureFormatInfo(texture.format, r.device).sampleType !== 'depth') ||
+            (aspect === 'stencil-only' && !['depth24plus-stencil8', 'depth32float-stencil8'].includes(texture.format)))
             throw new RangeError('Texture view aspect is incompatible with its format.');
         debugLabel(label);
         r._setOperation('create-texture-view', label);

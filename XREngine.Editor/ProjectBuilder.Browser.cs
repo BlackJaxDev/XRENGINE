@@ -41,6 +41,7 @@ internal static partial class ProjectBuilder
 
         internal void ExportAuthoredWorld()
         {
+            using IDisposable diagnosticPreferences = XREngine.Rendering.RenderDiagnosticsFlags.SuppressDeferredDebugViewWritesForCurrentThread();
             try
             {
                 Cancellation.ThrowIfCancellationRequested();
@@ -60,9 +61,11 @@ internal static partial class ProjectBuilder
                 });
                 if (string.IsNullOrWhiteSpace(context.Project.BrowserSharedWorldPackageManifestPath))
                 {
+                    using XREngine.Data.Core.ObjectCachePublicationScope publication = XREngine.Data.Core.XRObjectBase.BeginIndependentObjectCachePublication();
                     XRWorld world = LoadStartupWorld(context);
                     _recipePath = CookBrowserEngineWorld(world, context.Project, context.AssetsDirectory, SourceRoot,
                         Cancellation, out _includesDefaultUiFont, out _authoredFonts);
+                    using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
                 }
                 else
                 {
@@ -76,10 +79,10 @@ internal static partial class ProjectBuilder
                     if (world.GetType() != typeof(XRWorld))
                         throw new NotSupportedException("BrowserCook.SharedPackageProfileUnsupported: requires the exact base XRWorld type.");
                     world.FilePath = worldPath;
-                    using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
                     _recipePath = CookBrowserEngineWorld(world, context.Project, context.AssetsDirectory, SourceRoot,
                         Cancellation, out _includesDefaultUiFont, out _authoredFonts);
                     RequireSharedBrowserCook(_sharedWorldPackage, _recipePath);
+                    using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
                 }
             }
             catch

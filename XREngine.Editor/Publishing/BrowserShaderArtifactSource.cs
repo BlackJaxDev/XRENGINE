@@ -94,10 +94,9 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
                 string identity = ShaderProgramArtifactCatalog.ValidateIdentity(
                     identityValue.GetString())
                     ?? throw new InvalidDataException($"Browser pipeline artifact '{bindingKey}' has no descriptor identity.");
-                if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) ||
-                    artifact.Pass != pass || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null ||
-                    artifact.ComputeEntryPoint is not null)
-                    throw new InvalidDataException($"Browser pipeline artifact '{bindingKey}' is not a complete matching WebGPU raster program.");
+                if (!TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
+                    throw new InvalidDataException($"Browser pipeline artifact '{bindingKey}' has no verified WebGPU program.");
+                WebPipelineArtifactCatalog.ValidateProgram(bindingKey, artifact);
                 if (!_pipelineArtifacts.TryAdd(bindingKey, identity))
                     throw new InvalidDataException($"Browser pipeline artifact binding '{bindingKey}' is duplicated.");
             }

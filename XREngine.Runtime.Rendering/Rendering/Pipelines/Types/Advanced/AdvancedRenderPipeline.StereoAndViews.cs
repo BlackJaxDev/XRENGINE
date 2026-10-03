@@ -1,3 +1,5 @@
+using YamlDotNet.Serialization;
+
 namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
@@ -9,6 +11,7 @@ public partial class AdvancedRenderPipeline
     /// Stereo execution topology derived from the configured stage family and
     /// renderer. It cannot disagree with the immutable layered resource profile.
     /// </summary>
+    [YamlIgnore]
     public EAdvancedStereoMode StereoMode
         => _stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye
             ? EAdvancedStereoMode.RvcTwoPass

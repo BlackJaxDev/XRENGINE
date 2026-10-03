@@ -63,6 +63,8 @@ public sealed partial class WebGpuRenderProgram
             writer.WriteNumberValue(workgroup.Y);
             writer.WriteNumberValue(workgroup.Z);
             writer.WriteEndArray();
+            if (artifact.RequiredLimits.TryGetValue("maxComputeWorkgroupStorageSize", out int workgroupStorage))
+                writer.WriteNumber("workgroupStorageSize", workgroupStorage);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -96,6 +98,9 @@ public sealed partial class WebGpuRenderProgram
         Array.Clear(_resourceHandles);
         Array.Clear(_resourceSizes);
         Array.Clear(_resourceOwners);
+        SetField(ref _bindingCacheOwner, null, publishNotifications: false);
+        SetField(ref _bindingCacheIndex, 0u, publishNotifications: false);
+        SetField(ref _bindingCacheRevision, 0ul, publishNotifications: false);
     }
 
     private string DescribeComputeCommand(WebGpuBindingSet bindings, uint groupsX, uint groupsY, uint groupsZ)
@@ -136,6 +141,7 @@ public sealed partial class WebGpuRenderProgram
 
     internal void ReleaseComputeCommandsUsing(WebGpuBindingSet bindings)
     {
+        ReleaseIndirectComputeCommandsUsing(bindings: bindings);
         List<ComputeCommandKey> obsolete = [];
         foreach ((ComputeCommandKey key, int command) in _computeCommands)
             if (ReferenceEquals(key.Bindings, bindings))
@@ -149,6 +155,7 @@ public sealed partial class WebGpuRenderProgram
 
     private void DestroyCompute()
     {
+        ReleaseIndirectComputeCommandsUsing();
         foreach (int command in _computeCommands.Values)
             Renderer.RetireEngineResourceAfterFrame(command);
         _computeCommands.Clear();

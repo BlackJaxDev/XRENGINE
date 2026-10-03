@@ -32,8 +32,8 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         ValidateOwnerGeneration();
         if (IsGenerated && _allocatedBytes >= Data.Length)
             return;
-        if (IsGenerated && (Data.Target != EBufferTarget.ShaderStorageBuffer || Data.GpuProduced))
-            throw Unsupported("Resize", "only CPU-backed storage buffers may grow while dependent bindings exist");
+        if (IsGenerated && ((ResolveUsage(Data.Target) & BrowserBufferUsage.Storage) == 0 || Data.GpuProduced))
+            throw Unsupported("Resize", "only CPU-backed storage-capable buffers may grow while dependent bindings exist");
         if (IsGenerated && Renderer.IsRecordingEngineFrame && _supersededHandles.Count >= 32)
             throw Unsupported("Resize", "too many uncommitted storage generations are awaiting an accepted frame");
 
@@ -51,7 +51,14 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         try
         {
             if (!Data.GpuProduced && length != 0)
-                Upload(0, length);
+            {
+                // This fresh physical candidate cannot occur in an earlier retained
+                // command. Prepare its complete image in bounded queue-write chunks;
+                // ordinary mutations still use copies at their ordered frame boundary.
+                Upload(0, length, candidateAllocation: true);
+                SetField(ref _pendingStart, int.MaxValue, publishNotifications: false);
+                SetField(ref _pendingEnd, 0, publishNotifications: false);
+            }
             ReportState();
         }
         catch
@@ -66,11 +73,13 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         }
         if (oldHandle != 0)
         {
+            // Later commands must bind the newly published physical storage. Earlier
+            // packet records retain the old handle until their frame is submitted.
+            Renderer.ReleaseEngineStorageGeneration(this, oldHandle);
             if (Renderer.IsRecordingEngineFrame)
                 _supersededHandles.Add(oldHandle);
             else
             {
-                Renderer.ReleaseEngineStorageGeneration(this, oldHandle);
                 Renderer.RetireEngineResourceAfterFrame(oldHandle);
             }
         }
@@ -136,7 +145,7 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         ReportState();
     }
 
-    private void Upload(int offset, int length)
+    private void Upload(int offset, int length, bool candidateAllocation = false)
     {
         if (length == 0)
             return;
@@ -149,7 +158,7 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         int start = offset & ~3;
         int end = checked(offset + length);
         int alignedEnd = end & ~3;
-        if (Data.Target == EBufferTarget.ShaderStorageBuffer && Renderer.IsRecordingEngineFrame)
+        if (!candidateAllocation && (ResolveUsage(Data.Target) & BrowserBufferUsage.Storage) != 0 && Renderer.IsRecordingEngineFrame)
         {
             int uploadEnd = checked((end + 3) & ~3);
             SetField(ref _pendingStart, Math.Min(_pendingStart, start), publishNotifications: false);
@@ -229,7 +238,6 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         SetField(ref _pendingEnd, 0, publishNotifications: false);
         foreach (int handle in _supersededHandles)
         {
-            Renderer.ReleaseEngineStorageGeneration(this, handle);
             Renderer.RetireEngineResourceAfterFrame(handle);
         }
         _supersededHandles.Clear();
@@ -290,7 +298,7 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             EBufferTarget.ArrayBuffer => BrowserBufferUsage.Vertex | BrowserBufferUsage.Storage,
             EBufferTarget.ElementArrayBuffer => BrowserBufferUsage.Index | BrowserBufferUsage.Storage,
             EBufferTarget.UniformBuffer => BrowserBufferUsage.Uniform,
-            EBufferTarget.ShaderStorageBuffer => BrowserBufferUsage.Storage,
+            EBufferTarget.ShaderStorageBuffer or EBufferTarget.ParameterBuffer => BrowserBufferUsage.Storage,
             EBufferTarget.DrawIndirectBuffer or EBufferTarget.DispatchIndirectBuffer =>
                 BrowserBufferUsage.Indirect | BrowserBufferUsage.Storage,
             EBufferTarget.CopyReadBuffer or EBufferTarget.CopyWriteBuffer => 0,

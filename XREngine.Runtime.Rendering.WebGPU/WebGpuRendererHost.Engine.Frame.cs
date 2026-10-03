@@ -132,6 +132,7 @@ public sealed partial class WebGpuRendererHost
             throw new InvalidOperationException("WebGPU.Frame.Reentrant: an engine frame is already recording.");
         if (_engineFrameSequence == uint.MaxValue)
             throw new InvalidOperationException("WebGPU.Frame.SequenceExhausted: restart the canvas renderer.");
+        ReclaimAdvancedSceneSlots();
         SetField(ref _engineFrameSequence, _engineFrameSequence + 1, publishNotifications: false);
         SetField(ref _engineCommandCount, 0, publishNotifications: false);
         SetField(ref _engineUniformBytes, 0, publishNotifications: false);
@@ -300,6 +301,9 @@ public sealed partial class WebGpuRendererHost
         CountEngineFrameSubmission(length, uniforms.Length, _engineStorageBytes);
         bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms,
             _engineStorageArena.AsSpan(0, _engineStorageBytes));
+        // The executor returning confirms queue submission even when no canvas pass
+        // was present. Seal GPU ownership before any later managed bookkeeping can fail.
+        EndAdvancedSceneRecording(submitted: true);
         CountEngineFrameSubmissionResult(presented);
         for (int index = _enginePendingStorage.Count - 1; index >= 0; index--)
         {
