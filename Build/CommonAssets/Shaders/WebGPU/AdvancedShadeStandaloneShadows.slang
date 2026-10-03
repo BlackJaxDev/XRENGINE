@@ -89,11 +89,18 @@ float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface su
         (uint(surface.samplePixelPosition.y) & 1u) == 0u ? 1.0 : -1.0);
     if (!standaloneShadowHelpersReady)
     {
+        // Slang out parameters lower to WGSL function-address-space pointers.
+        // Publish into the private invocation cache only after both calls finish.
+        float3 positionX, normalX, positionY, normalY;
         bool validX = XR_WEB_ReconstructShadowHelper(surface, surface.samplePixelPosition + float2(sign.x, 0.0),
-            standaloneShadowPositionX, standaloneShadowNormalX);
+            positionX, normalX);
         bool validY = XR_WEB_ReconstructShadowHelper(surface, surface.samplePixelPosition + float2(0.0, sign.y),
-            standaloneShadowPositionY, standaloneShadowNormalY);
+            positionY, normalY);
         if (!validX || !validY) { textureFailure |= 1u << 16u; return 0.0; }
+        standaloneShadowPositionX = positionX;
+        standaloneShadowNormalX = normalX;
+        standaloneShadowPositionY = positionY;
+        standaloneShadowNormalY = normalY;
         standaloneShadowHelpersReady = true;
     }
     float3 coordinateDx = (XR_WEB_ShadowCoordinate(record, standaloneShadowPositionX, standaloneShadowNormalX, mapWidth) - coordinate) * sign.x;

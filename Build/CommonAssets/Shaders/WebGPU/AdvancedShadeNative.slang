@@ -71,10 +71,13 @@ void advancedShadeNative(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     if (!resolved && !diagnostic) return;
     if (!diagnostic && resolved && (kernelDense != Parameters.kernelIndex || ShadeTiles[tileWord + 2u] != kernelDense)) return;
     textureFailure = 0u;
+    float ambientOcclusion = 1.0;
+    if ((Parameters.flags & 4u) != 0u)
+        ambientOcclusion = AmbientOcclusion.Load(int3(pixel, 0));
     XRAdvancedOpaqueSampleResult result;
     XR_ADV_EvaluateNativeOpaqueSample(pixel, viewIndex, identity, metadata,
         VisibilityDepth.Load(int3(pixel, 0)), float2(pixel) + 0.5,
-        AmbientOcclusion.Load(int3(pixel, 0)), false, ShadeTiles[tileWord + 3u], !diagnostic, result);
+        ambientOcclusion, false, ShadeTiles[tileWord + 3u], !diagnostic, result);
     if (diagnostic && resolved) textureFailure |= 1u << 17u;
     if (textureFailure != 0u)
     {

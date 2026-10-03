@@ -6,16 +6,12 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
-    private const string WebPostProcessNeutralTextureName = "AdvancedWebPostProcessNeutral";
+    internal const string WebPostProcessNeutralTextureName = "AdvancedWebPostProcessNeutral";
 
-    /// <summary>Realizes the selected mono output graph against the canonical native scene targets.</summary>
-    private void DeclareAdvancedWebPostResources(RenderPipelineResourceLayoutBuilder builder)
+    private static void DeclareAdvancedWebNeutralResource(RenderPipelineResourceLayoutBuilder builder)
     {
-        RenderPipelineResourceProfile profile = builder.Profile;
-        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
-        RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
-        // One ABI-neutral color input serves inactive samplers in the complete
-        // post program; disabled effects own no execution targets or histories.
+        // Native AO and post programs share an ABI-neutral input. Native shading
+        // bypasses its AO fetch; post effects retain their transparent default.
         builder.Texture(WebPostProcessNeutralTextureName)
             .Size(RenderResourceSizePolicy.Absolute(1u, 1u))
             .Usage(RenderPipelineResourceUsage.SampledTexture)
@@ -28,7 +24,14 @@ public partial class AdvancedRenderPipeline
                 MagFilter = ETexMagFilter.Nearest, UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
             }).Add();
+    }
 
+    /// <summary>Realizes the selected mono output graph against the canonical native scene targets.</summary>
+    private void DeclareAdvancedWebPostResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderPipelineResourceProfile profile = builder.Profile;
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil).Size(internalSize)
             .Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
             .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0, 1).Target(array: false, multisample: false)

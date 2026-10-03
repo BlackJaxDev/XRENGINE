@@ -444,7 +444,11 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     public void ResetInput() => _inputViewport?.Reset();
 
-    public int RefreshTextInput() => _textInput.Refresh(_localPlayer?.FocusedInteractable, _renderViewport);
+    private bool FocusedTextHasActiveOwner =>
+        _localPlayer?.FocusedInteractable is XREngine.Rendering.UI.UITextInputComponent target &&
+        _accessibleControl.CanEdit(target);
+    public int RefreshTextInput() => _textInput.Refresh(_localPlayer?.FocusedInteractable, _renderViewport,
+        FocusedTextHasActiveOwner);
     public string TextInputValue => _textInput.Value;
     public int TextInputContentVersion => _textInput.ContentVersion;
     public string TextInputLabel => _textInput.Label;
@@ -457,12 +461,14 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public float TextInputWidth => _textInput.Width;
     public float TextInputHeight => _textInput.Height;
     public bool EditTextInput(int generation, int expectedVersion, string value, int selectionStart, int selectionEnd)
-        => _textInput.Edit(generation, expectedVersion, _localPlayer?.FocusedInteractable,
+        => _textInput.Edit(generation, expectedVersion, _localPlayer?.FocusedInteractable, FocusedTextHasActiveOwner,
             value, selectionStart, selectionEnd);
     public bool SelectTextInput(int generation, int expectedVersion, int cursor)
-        => _textInput.Select(generation, expectedVersion, _localPlayer?.FocusedInteractable, cursor);
+        => _textInput.Select(generation, expectedVersion, _localPlayer?.FocusedInteractable,
+            FocusedTextHasActiveOwner, cursor);
     public bool ActOnTextInput(int generation, int expectedVersion, bool submit)
-        => _textInput.Action(generation, expectedVersion, _localPlayer?.FocusedInteractable, submit);
+        => _textInput.Action(generation, expectedVersion, _localPlayer?.FocusedInteractable,
+            FocusedTextHasActiveOwner, submit);
 
     /// <summary>Discards elapsed time and temporal history after suspension, output replacement, or an invalid frame clock.</summary>
     public void ResetFrameTiming()

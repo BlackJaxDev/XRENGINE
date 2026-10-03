@@ -7,6 +7,39 @@ namespace XREngine.Browser;
 /// <summary>Projects an engine interactable into the canvas' top-left normalized DOM convention.</summary>
 internal static class BrowserUiBoundsProjection
 {
+    /// <summary>Projects the visible rectangular part of a control after ancestor scissoring.</summary>
+    public static bool TryProjectVisible(UIInteractableComponent target, XRViewport? viewport,
+        out float x, out float y, out float width, out float height)
+    {
+        if (!TryProject(target, viewport, out x, out y, out width, out height))
+            return false;
+        if (target.UserInterfaceCanvas is not { } canvas ||
+            UIClipRegion.ResolveCrop(target.BoundableTransform, false) is not { } crop)
+            return true;
+        if (canvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+            return true;
+
+        Vector2 canvasSize = canvas.CanvasTransform.ActualSize;
+        if (canvasSize.X <= 0 || canvasSize.Y <= 0)
+            return false;
+        Matrix4x4 inverse = canvas.CanvasTransform.InverseWorldMatrix;
+        Vector2 a = Vector2.Transform(new Vector2(crop.MinX, crop.MinY), inverse) / canvasSize;
+        Vector2 b = Vector2.Transform(new Vector2(crop.MinX, crop.MaxY), inverse) / canvasSize;
+        Vector2 c = Vector2.Transform(new Vector2(crop.MaxX, crop.MinY), inverse) / canvasSize;
+        Vector2 d = Vector2.Transform(new Vector2(crop.MaxX, crop.MaxY), inverse) / canvasSize;
+        float clipLeft = MathF.Min(MathF.Min(a.X, b.X), MathF.Min(c.X, d.X));
+        float clipRight = MathF.Max(MathF.Max(a.X, b.X), MathF.Max(c.X, d.X));
+        float clipTop = 1 - MathF.Max(MathF.Max(a.Y, b.Y), MathF.Max(c.Y, d.Y));
+        float clipBottom = 1 - MathF.Min(MathF.Min(a.Y, b.Y), MathF.Min(c.Y, d.Y));
+        float right = MathF.Min(x + width, clipRight);
+        float bottom = MathF.Min(y + height, clipBottom);
+        x = MathF.Max(x, clipLeft);
+        y = MathF.Max(y, clipTop);
+        width = right - x;
+        height = bottom - y;
+        return float.IsFinite(x) && float.IsFinite(y) && width > 0 && height > 0;
+    }
+
     public static bool TryProject(UIInteractableComponent target, XRViewport? viewport,
         out float x, out float y, out float width, out float height)
     {

@@ -86,13 +86,15 @@ public partial class AdvancedRenderPipeline
               EAdvancedPreparationConsumer.Capture;
 
     private bool IncludesStage(EAdvancedRenderStage stage)
-        => !UsesMinimalVisibilityOutput || stage is
+        => !(stage == EAdvancedRenderStage.AmbientOcclusion &&
+             Shaders.Compilation.WebPipelineRasterProgram.IsActive && !UsesWebAmbientOcclusion) &&
+           (!UsesMinimalVisibilityOutput || stage is
             EAdvancedRenderStage.FrameBegin or
             EAdvancedRenderStage.Deformation or
             EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
             EAdvancedRenderStage.DepthPyramidAndLateVisibility or
-            EAdvancedRenderStage.Output;
+            EAdvancedRenderStage.Output);
 
     // The two-pass family is rebound to the physical RVC eye instance before
     // execution. Its persistent resources and frame-view-history identity are

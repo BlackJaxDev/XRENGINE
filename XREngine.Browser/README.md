@@ -131,6 +131,12 @@ Hosts embedding `EngineCanvasHost` can pass the same named value to `start`.
 The host asks the engine for the resolved canvas sizing policy rather than
 maintaining a separate set of quality numbers. Choose a profile before world
 startup; change it by restarting the browser world.
+The selected light limits apply to both Default forward lighting and Advanced
+native scene publication. Selected GTAO and bloom gates remove their Default
+and Advanced WebGPU effect targets, execution, and cooked-program requirements,
+while retaining the authored camera settings for a later quality selection.
+Advanced native shading uses a shared neutral binding with AO fixed to one when
+the profile disables GTAO; its cooked program must declare that contract.
 
 Browser shadow targets scale to the selected directional, point, and spot
 dimension caps while keeping the light's authored resolution. The shadow

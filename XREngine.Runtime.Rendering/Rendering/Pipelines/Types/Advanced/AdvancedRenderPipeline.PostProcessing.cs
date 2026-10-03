@@ -116,6 +116,8 @@ public partial class AdvancedRenderPipeline
     private static bool ShouldUseBloom()
         => !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
+        && (!Shaders.Compilation.WebPipelineRasterProgram.IsActive ||
+            RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom)
         && GetBloomSettings() is not { Enabled: false };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class

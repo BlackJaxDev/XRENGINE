@@ -96,6 +96,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
         AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
+        bool useNeutralWebAmbientOcclusion = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+            !ActivePipelineInstance.Resources.TryGetTexture(AdvancedAmbientOcclusionContract.ResourceName, out _);
+        if (Stage == EAdvancedRenderStage.AmbientOcclusion && useNeutralWebAmbientOcclusion)
+            return;
         AdvancedPreparationPublication publication =
             AdvancedSharedPreparationService.Instance.Acquire(
                 world,
@@ -110,6 +114,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
         bool enableBuiltInAmbientOcclusion =
             !isMinimalVisibilityOutput &&
+            !useNeutralWebAmbientOcclusion &&
             pipeline.EnableBuiltInAmbientOcclusion &&
             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
         if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
@@ -203,7 +208,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             multisampleRaster ? rawMetadata : AdvancedVisibilityResourceNames.Metadata,
             multisampleRaster ? rawSelection : AdvancedVisibilityResourceNames.Selection,
             multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
-            AdvancedAmbientOcclusionContract.ResourceName,
+            useNeutralWebAmbientOcclusion ? AdvancedRenderPipeline.WebPostProcessNeutralTextureName : AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
             pipeline.ShadingDebugView,
             RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
@@ -389,6 +394,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         AdvancedRenderStageDescriptor descriptor = Descriptor;
+        bool hasAmbientOcclusion = context.ResourceLayout is null
+            ? !Shaders.Compilation.WebPipelineRasterProgram.IsActive ||
+                ParentPipeline is not IAdvancedRenderStageFamilyHost familyHost ||
+                familyHost.AdvancedStageFamilyDefinition.UsesWebAmbientOcclusion
+            : context.HasResource(AdvancedAmbientOcclusionContract.ResourceName);
+        if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion && !hasAmbientOcclusion)
+            return;
         bool usesMultisampleVisibility = UsesMultisampleVisibility(context);
         bool packedSamples = context.HasResource(AdvancedVisibilityResourceNames.MetadataSelectionMultisample);
         // Stage ordinals describe the Advanced command chain, while the mesh
@@ -404,7 +416,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder,
             descriptor.Stage,
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
-            usesMultisampleVisibility, packedSamples);
+            usesMultisampleVisibility, packedSamples,
+            hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName);
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
@@ -501,7 +514,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         RenderPassBuilder builder,
         EAdvancedRenderStage stage,
         bool requiresMaterialSurfaceExports,
-        bool usesMultisampleVisibility, bool packedSamples)
+        bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName)
     {
         switch (stage)
         {
@@ -615,7 +628,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 if (packedSamples) builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.SampleRadianceReactive));
                 // ShadeNativeOpaque reconstructs the local surface on demand;
                 // there is no intermediate AttributeReconstruction pass.
-                builder.SampleTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName))
+                builder.SampleTexture(Tex(ambientOcclusionTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))

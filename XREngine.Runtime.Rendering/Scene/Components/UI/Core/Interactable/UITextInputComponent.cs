@@ -15,6 +15,7 @@ namespace XREngine.Rendering.UI
     [RequireComponents(typeof(UITextComponent))]
     public class UITextInputComponent : UIInspectorEditorComponent
     {
+        public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.TextBox;
         private const int DefaultKeyRepeatDelayMs = 500;
         private const int DefaultKeyRepeatIntervalMs = 50;
 

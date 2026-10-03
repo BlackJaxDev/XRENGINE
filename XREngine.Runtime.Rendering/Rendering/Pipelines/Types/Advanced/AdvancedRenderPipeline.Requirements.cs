@@ -34,7 +34,7 @@ public partial class AdvancedRenderPipeline
         }
         if (IncludesStage(EAdvancedRenderStage.VisibilityRaster))
             requirements.RequireRasterProgram(multisample ? "advanced::visibility-pull-msaa" : "advanced::visibility-pull");
-        if (IncludesStage(EAdvancedRenderStage.AmbientOcclusion))
+        if (IncludesStage(EAdvancedRenderStage.AmbientOcclusion) && UsesWebAmbientOcclusion)
             requirements.RequireComputeProgram("advanced::gtao");
         if (IncludesStage(EAdvancedRenderStage.DepthPyramidAndLateVisibility))
         {

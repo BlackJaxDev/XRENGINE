@@ -47,9 +47,12 @@ public sealed partial class WebGpuRendererHost : IAdvancedVisibilityStageBackend
 
     /// <summary>Reports only complete native stages, independently of whole-family admission.</summary>
     public bool SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
-        => GetAdvancedVisibilityFamilyAdmission().IsAdmitted && stage is (EAdvancedRenderStage.AmbientOcclusion or EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster or EAdvancedRenderStage.DepthPyramidAndLateVisibility or
-            EAdvancedRenderStage.WorkClassification or EAdvancedRenderStage.NativeOpaqueShading);
+        => GetAdvancedVisibilityFamilyAdmission().IsAdmitted &&
+           (stage == EAdvancedRenderStage.AmbientOcclusion
+               ? GetAdvancedAmbientOcclusionRejection() is null
+               : stage is EAdvancedRenderStage.VisibilityPreparation or EAdvancedRenderStage.VisibilityRaster or
+                   EAdvancedRenderStage.DepthPyramidAndLateVisibility or EAdvancedRenderStage.WorkClassification or
+                   EAdvancedRenderStage.NativeOpaqueShading);
 
     /// <summary>Records one shared native stage; a rejected producer prevents presentation of the entire frame.</summary>
     public bool TryEnqueueAdvancedVisibilityStage(in AdvancedVisibilityStageBackendRequest request, out string failureReason)

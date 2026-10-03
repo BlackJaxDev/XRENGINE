@@ -19,7 +19,10 @@ public partial class AdvancedRenderPipeline
         XRCamera? camera = viewport?.ActiveCamera ?? instance.RenderState.SceneCamera ?? instance.LastSceneCamera;
         PipelinePostProcessState? state = camera?.GetPostProcessState(this);
         ulong features = AdvancedVisibilitySampleContract.PackedUInt16FeatureBit;
-        if (GetSettings<BloomSettings>(state) is not { Enabled: false })
+        if (!UsesWebAmbientOcclusion)
+            features |= WebAmbientOcclusionDisabledFeatureBit;
+        if (RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom &&
+            GetSettings<BloomSettings>(state) is not { Enabled: false })
             features |= WebBloomFeatureBit;
         if (GetSettings<MotionBlurSettings>(state) is { Enabled: true })
             features |= WebMotionBlurFeatureBit;
@@ -50,7 +53,8 @@ public partial class AdvancedRenderPipeline
         PipelinePostProcessState state = requirements.PostProcessState;
         if (GetAdvancedWebPostProcessRejection(state) is { } rejection)
             requirements.Diagnostics.Add(rejection);
-        if (GetSettings<BloomSettings>(state) is { Enabled: true })
+        if (RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom &&
+            GetSettings<BloomSettings>(state) is { Enabled: true })
         {
             requirements.RequireRasterProgram("bloom-copy");
             requirements.RequireRasterProgram("bloom-downsample");

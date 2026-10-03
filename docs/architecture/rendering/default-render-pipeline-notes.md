@@ -127,6 +127,19 @@ passes, temporal/post-processing, and final output. Vulkan dispatches
 evaluate material lighting, and write HDR scene color; the Advanced command
 chain consumes that output through post-processing and presentation.
 
+Advanced WebGPU honors the explicit browser GTAO quality gate. Disabling GTAO,
+the built-in AO setting, or the AO provider removes its native stage, full-size
+AO target, and required GTAO program. Native shading reuses the declared 1×1
+post-process neutral binding and supplies AO = 1 without fetching that texture.
+The resource-generation key and frozen native stage order preserve the selected
+AO family; desktop backends retain their existing neutral-output behavior.
+All native, surface-export, depth-comparison, and MSAA shading recipes declare
+`XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
+recipes before binding the neutral texture, despite the unchanged 160-byte
+uniform layout and sampler ABI. The existing flags word uses bit 4 to enable
+the full-size AO fetch. This source contract still requires browser cook and
+live-output validation for the selected device.
+
 The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#static-surfaces-ao-and-gi)
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
 stereo cohorts. These establish implemented and exercised paths, not universal

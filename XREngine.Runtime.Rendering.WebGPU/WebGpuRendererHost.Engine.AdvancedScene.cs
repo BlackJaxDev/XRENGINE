@@ -33,6 +33,16 @@ public sealed partial class WebGpuRendererHost
         RequireReady();
         if (!_engineRecording)
             throw new InvalidOperationException("WebGPU.Advanced.FrameRequired: canonical publication acquisition requires an active engine frame.");
+        if (RuntimeEngine.Rendering.State.RenderingWorld is { } world)
+        {
+            BrowserWebGpuQualitySettings quality = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality;
+            int directionalCount = world.Lights.DynamicDirectionalLights.Count;
+            int pointCount = world.Lights.DynamicPointLights.Count;
+            int spotCount = world.Lights.DynamicSpotLights.Count;
+            if (directionalCount > quality.MaxDirectionalLights || pointCount > quality.MaxPointLights ||
+                spotCount > quality.MaxSpotLights)
+                throw new NotSupportedException($"WebGPU.Quality.LightCountExceeded: authored lights {directionalCount}/{pointCount}/{spotCount} exceed selected browser limits {quality.MaxDirectionalLights}/{quality.MaxPointLights}/{quality.MaxSpotLights} (directional/point/spot).");
+        }
         if (_advancedSceneResidency is not { } residency)
         {
             residency = new WebGpuAdvancedSceneResidency(this);

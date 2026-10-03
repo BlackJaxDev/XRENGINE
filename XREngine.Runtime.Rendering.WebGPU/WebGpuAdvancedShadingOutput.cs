@@ -104,7 +104,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         XRTexture2D identity = Texture(instance, request.IdentityTargetName, frame.Width, frame.Height);
         XRTexture2D metadata = Texture(instance, request.MetadataTargetName, frame.Width, frame.Height);
         XRTexture2D depth = Texture(instance, request.DepthTargetName, frame.Width, frame.Height);
-        XRTexture2D ao = Texture(instance, request.AmbientOcclusionTargetName, frame.Width, frame.Height);
+        XRTexture2D ao = AmbientOcclusionTexture(instance, in request, frame);
         // Resolve the complete writable family before recording its first initialization command.
         XRTexture2D hdr = Texture(instance, AdvancedRenderPipeline.HDRSceneTextureName, frame.Width, frame.Height);
         XRTexture2D velocity = Texture(instance, AdvancedRenderPipeline.VelocityTextureName, frame.Width, frame.Height);
@@ -223,6 +223,16 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         return api;
     }
     private static bool Prepare(WebGpuRenderProgram api) => api.TryPrepareForCompute();
+    private static XRTexture2D AmbientOcclusionTexture(XRRenderPipelineInstance instance,
+        in AdvancedVisibilityStageBackendRequest request, WebGpuAdvancedShadingFrame frame)
+    {
+        bool fullSize = request.AmbientOcclusionTargetName == AdvancedAmbientOcclusionContract.ResourceName;
+        if (request.EnableBuiltInAmbientOcclusion && !fullSize)
+            throw Invalid("AmbientOcclusionResourceMismatch", "enabled AO requires its full-size output before native shading may sample it");
+        return Texture(instance, request.AmbientOcclusionTargetName,
+            fullSize ? frame.Width : 1u, fullSize ? frame.Height : 1u);
+    }
+
     private bool Pending(out string reason)
     {
         _renderer.MarkEngineDrawPending();

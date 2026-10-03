@@ -21,7 +21,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
         XRTexture2D identity = Texture(instance, AdvancedVisibilityResourceNames.IdentityMultisample, frame.Width, frame.Height, 4);
         XRTexture2D metadata = Texture(instance, AdvancedVisibilityResourceNames.MetadataSelectionMultisample, frame.Width, frame.Height, 4);
         XRTexture2D depth = Texture(instance, AdvancedVisibilityResourceNames.DepthStencilMultisample, frame.Width, frame.Height, 4);
-        XRTexture2D ao = Texture(instance, request.AmbientOcclusionTargetName, frame.Width, frame.Height);
+        XRTexture2D ao = AmbientOcclusionTexture(instance, in request, frame);
         XRTexture2D hdr = Texture(instance, AdvancedRenderPipeline.HDRSceneTextureName, frame.Width, frame.Height);
         XRTexture2D velocity = Texture(instance, AdvancedRenderPipeline.VelocityTextureName, frame.Width, frame.Height);
         XRTexture2D reactive = Texture(instance, AdvancedShadingResourceNames.ReactiveMask, frame.Width, frame.Height);
