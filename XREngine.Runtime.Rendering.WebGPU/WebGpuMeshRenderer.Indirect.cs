@@ -58,9 +58,16 @@ public sealed partial class WebGpuMeshRenderer
             SetField(ref _indirectGeometryRevision, mesh?.GeometryRevision ?? 0, publishNotifications: false);
             SetField(ref _indirectSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
         }
+        if (Data.Parent.HasRenderDataPreparation) Data.Parent.OnPreparingRenderData();
+        WebGpuMeshDeformation? deformation = null;
+        if (mesh is not null && !TryPrepareGeometry(mesh, out deformation))
+        {
+            Renderer.MarkEngineDrawPending();
+            return;
+        }
         WebGpuFrameBuffer? framebuffer = Renderer.GetBoundEngineFrameBuffer();
         IndirectDrawKey key = new(program, Renderer.RasterState, framebuffer, framebuffer?.Revision ?? 0);
-        if (_indirectDraws.TryGetValue(key, out WebGpuMeshDraw? draw) && !draw.MatchesIndirectStreams(mesh, Data.Parent))
+        if (_indirectDraws.TryGetValue(key, out WebGpuMeshDraw? draw) && !draw.MatchesIndirectStreams(mesh, Data.Parent, deformation))
         {
             draw.Dispose();
             _indirectDraws.Remove(key);
@@ -71,7 +78,7 @@ public sealed partial class WebGpuMeshRenderer
             if (_indirectDraws.Count >= 32)
                 throw Unsupported("indirect geometry exceeds 32 retained pipeline variants");
             draw = new WebGpuMeshDraw(Renderer, program, mesh, indices, size, key.State,
-                output, framebuffer, null, null, 0, streamOwner: Data.Parent);
+                output, framebuffer, null, null, 0, deformation, streamOwner: Data.Parent);
             _indirectDraws.Add(key, draw);
         }
         if (!draw.IsReady || !program.TrySnapshotBindings(false, out WebGpuBindingSet? bindings))

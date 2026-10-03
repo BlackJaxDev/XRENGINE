@@ -79,8 +79,7 @@ public sealed partial class WebGpuRendererHost
                 recordingMeasured = true;
                 try
                 {
-                    SubmitEngineFrame(output);
-                    submitted = true;
+                    SubmitEngineFrame(output, ref submitted);
                     outcome = _submittedFrame ? "Presented" : "Unpresented";
                 }
                 finally
@@ -91,18 +90,35 @@ public sealed partial class WebGpuRendererHost
             }
             finally
             {
-                if (statistics is not null && !recordingMeasured)
+                try
                 {
-                    recordingBytes = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
-                    recordingMeasured = true;
+                    DiscardEngineViewHistory();
                 }
-                SetField(ref _engineRecording, false, publishNotifications: false);
-                _engineProducedTextures.Clear();
-                EndAdvancedSceneRecording(submitted);
-                ArmPendingEngineFences(submitted);
-                for (int i = 0; i < _engineDeferredReleases.Count; i++)
-                    RetireEngineResource(_engineDeferredReleases[i]);
-                _engineDeferredReleases.Clear();
+                finally
+                {
+                    if (statistics is not null && !recordingMeasured)
+                    {
+                        recordingBytes = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+                        recordingMeasured = true;
+                    }
+                    SetField(ref _engineRecording, false, publishNotifications: false);
+                    _engineProducedTextures.Clear();
+                    try
+                    {
+                        try { EndAdvancedSceneRecording(submitted); }
+                        finally { EndMeshletRecording(submitted); }
+                    }
+                    finally
+                    {
+                        try { ArmPendingEngineFences(submitted); }
+                        finally
+                        {
+                            for (int i = 0; i < _engineDeferredReleases.Count; i++)
+                                RetireEngineResource(_engineDeferredReleases[i]);
+                            _engineDeferredReleases.Clear();
+                        }
+                    }
+                }
             }
         }
         catch
@@ -205,6 +221,8 @@ public sealed partial class WebGpuRendererHost
         {
             PrepareEngineClear(output, color, depth);
             RecordEngineCommands(_engineClearCommands, []);
+            if (color)
+                MarkEngineViewHistoryCanvasWrite(in output);
         }
     }
 
@@ -360,6 +378,8 @@ public sealed partial class WebGpuRendererHost
     internal void ReleaseEngineDrawDependencies(AbstractRenderAPIObject resource)
     {
         ReleaseVertexlessIndirectDrawsUsing(resource);
+        if (_meshletSlots is not null)
+            foreach (WebGpuMeshletFrameSlot slot in _meshletSlots) slot.ReleaseDrawUsing(resource);
         // Authored aliases must not retain a retired physical generation merely
         // because that alias is no longer sampled. Nested views are not admitted.
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
@@ -383,6 +403,8 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Invalidates physical storage descriptor users without discarding immutable pipelines.</summary>
     internal void ReleaseEngineStorageGeneration(AbstractRenderAPIObject resource, int handle)
     {
+        if (_meshletSlots is not null)
+            foreach (WebGpuMeshletFrameSlot slot in _meshletSlots) slot.ReleaseCommandsUsingHandle(resource, handle);
         foreach (WebGpuMeshDraw draw in _vertexlessIndirectDraws.Values)
             draw.ReleaseCommandsUsingHandle(resource, handle);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
@@ -399,6 +421,8 @@ public sealed partial class WebGpuRendererHost
     /// <summary>Retires raster commands for one descriptor generation before its groups retire.</summary>
     internal void ReleaseEngineMeshCommandsUsingBindingSet(WebGpuRenderProgram program, WebGpuBindingSet bindings)
     {
+        if (_meshletSlots is not null)
+            foreach (WebGpuMeshletFrameSlot slot in _meshletSlots) slot.ReleaseCommandUsing(program, bindings);
         foreach (WebGpuMeshDraw draw in _vertexlessIndirectDraws.Values)
             draw.ReleaseCommandUsing(program, bindings);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)

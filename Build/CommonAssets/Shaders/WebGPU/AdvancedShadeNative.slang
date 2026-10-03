@@ -1,6 +1,7 @@
 // Advanced native opaque compute shading over GPU-classified texture cohorts.
 #include "AdvancedShadeContracts.slang"
 #include "AdvancedShadeTextures.slang"
+#include "AdvancedShadeEngineSurface.slang"
 #include "AdvancedShadeReconstruction.slang"
 #include "AdvancedShadeLighting.slang"
 
@@ -31,12 +32,12 @@ float2 EncodeNormal(float3 normal)
 void StoreResult(uint2 pixel, XRAdvancedOpaqueSampleResult result)
 {
 #if defined(XR_ADV_SURFACE_EXPORTS)
-    EmissionColor.Store(pixel, float4(max(result.emittedRadiance, float3(0.0)), float(result.hasMaterialSurface)));
+    EmissionColor.Store(pixel, float4(result.emittedRadiance, float(result.hasMaterialSurface)));
     AlbedoOpacity.Store(pixel, result.albedoOpacity);
     Normal.Store(pixel, float4(EncodeNormal(normalize(result.normal)), 0.0, 1.0));
     RMSE.Store(pixel, float4(result.roughness, result.metallic, result.rmse.zw));
 #else
-    HDRSceneColor.Store(pixel, float4(max(result.radiance, float3(0.0)), result.opacity));
+    HDRSceneColor.Store(pixel, float4(result.radiance, result.opacity));
     Velocity.Store(pixel, float4(result.velocity, 0.0, 0.0));
     ReactiveMask.Store(pixel, round(saturate(result.reactive) * 255.0) / 255.0);
     ShadingDiagnostics.Store(pixel, result.diagnostics);

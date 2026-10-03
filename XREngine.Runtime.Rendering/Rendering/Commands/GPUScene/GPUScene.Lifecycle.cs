@@ -35,6 +35,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Initialize()
         {
+            ResetMeshSubmissionPublications();
             if (_advancedScenePublisherDisposed)
             {
                 _advancedScenePublisher = new AdvancedGpuScenePublisher();
@@ -129,6 +130,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Destroy()
         {
+            ResetMeshSubmissionPublications();
             if (!_advancedScenePublisherDisposed)
             {
                 _advancedScenePublisher.Dispose();

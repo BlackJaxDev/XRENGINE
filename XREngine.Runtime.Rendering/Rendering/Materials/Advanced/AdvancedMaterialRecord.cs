@@ -26,5 +26,5 @@ public struct AdvancedMaterialRecord
     public uint ConstantWordCount;
     public EAdvancedMaterialFeatureFlags FeatureFlags;
     public EAdvancedMaterialEligibilityFlags EligibilityFlags;
-    public uint Reserved;
+    public EAdvancedMaterialSourceContract SourceContract;
 }

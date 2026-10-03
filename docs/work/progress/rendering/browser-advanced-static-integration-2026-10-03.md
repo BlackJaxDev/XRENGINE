@@ -1,5 +1,48 @@
 # Browser Advanced static integration recovery
 
+## Current integrated source and physical evidence
+
+The later `6c91220f` physical Intel run renders the authored static panel in two
+fresh startups and both resize checks. Native visibility/shading dispatches and
+four draws are observed with no pending draw, pipeline decline or resource
+failure. This establishes the bounded first frame, not exact material parity,
+native deformation/MSAA, every submission mode or recovery.
+
+The next integrated source group adds shared binary/YAML graph identity,
+persisted capability reports, cold native admission, skin/morph producers,
+mono per-sample x4 MSAA, submission-owned history and the bounded authored
+Default/custom meshlet route. The native engine-surface companion preserves
+independent scalar maps and frontend factor/normal semantics. Missing depth
+shadow integration, authored decals and additional meshlet producers remain
+explicit implementation work.
+
+Fresh WebGPU, Editor, Server, VRClient and native Browser builds have zero
+warnings/errors. All portable-project rows compile for browser-wasm, native
+Browser publication succeeds, and all 87 production shader artifacts cook.
+The 25 native admission/reservation checks pass against the refreshed catalog.
+Genuine Editor Prepare/Export and separate-process cooked BeginPlay preserve
+the authored pipeline/settings, four map/sampler identities and pawn-camera
+alias. Generic graph identity reduces this sample's derived world payload to
+44,862 bytes while its authored YAML remains unchanged. This Linux invocation
+executes the real Editor publishing methods; it is not a Windows CLI run.
+
+At `eca89ed7`, [run 37098116257](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37098116257)
+passes Windows publication, baseline browser/physics, RollingBall and
+RenderingParity. Its Advanced software-adapter run still reaches the first-frame
+deadline: the native WGSL module is complete while compute preparation is
+pending after 42.8 seconds. That preparation includes the native pipeline and
+its validation/memory error-scope promises, so this does not isolate one promise.
+
+A semantics-preserving IEEE exponent-mask finiteness check removes Slang's
+loop-based vector classification from the native shaders. On the current native
+source, syntactic loop sites fall from 23 to 15; this is shader structure, not a
+measured driver compile-time improvement. All four native/MSAA/export recipes
+pass cooking, and classification matches 1,003,072 deterministic float bit
+patterns including infinities, NaNs, subnormals and signed zeros. The startup
+deadline and complete-family guard are unchanged; CI must establish the effect.
+
+The dated recovery sections below retain their original evidence and boundaries.
+
 The shared Default, Advanced, and authored modular pipeline sources were
 reconstructed after the October 3 workspace loss. Fresh compilation, shader
 cooking, and managed contract probes now pass. The recovered static Advanced

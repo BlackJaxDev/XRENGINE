@@ -50,9 +50,11 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                 if (snapshot.Materials.PhysicalOccupancy[dense] == 0) continue;
                 ref readonly AdvancedMaterialRecord material = ref materials[dense];
                 if (material.CoverageMode is not (EAdvancedMaterialCoverageMode.Opaque or EAdvancedMaterialCoverageMode.Masked)) continue;
+                if (WebGpuAdvancedMaterialContract.GetSourceRejection(material.SourceContract) is { } sourceReason)
+                    throw Invalid("MaterialSourceUnsupported", sourceReason);
                 AdvancedGpuHandle handle = new(material.ShadingKernelId, material.ShadingKernelGeneration);
                 if (!snapshot.Kernels.TryGetDenseIndex(handle, out uint kernelDense) ||
-                    !snapshot.Kernels.TryGet(handle, out AdvancedShadingKernelRecord kernel) || !IsCanonicalKernel(in material, in kernel))
+                    !snapshot.Kernels.TryGet(handle, out AdvancedShadingKernelRecord kernel) || !WebGpuAdvancedMaterialContract.IsCanonicalKernel(in material, in kernel))
                     throw Invalid("KernelUnsupported", "the material requires a kernel other than its exact canonical native companion");
                 _globals.AsSpan(0, _globalCount).CopyTo(_working);
                 int count = _globalCount;
@@ -135,6 +137,10 @@ internal sealed partial class WebGpuAdvancedShadingOutput
     private static void AddMaterial(AdvancedGpuScenePublicationSnapshot snapshot, in AdvancedMaterialRecord material,
         WebGpuAdvancedTexturePair[] pairs, ref int count)
     {
+        if (WebGpuAdvancedMaterialContract.GetSourceRejection(material.SourceContract) is { } sourceReason)
+            throw Invalid("MaterialSourceUnsupported", sourceReason);
+        if (WebGpuAdvancedEngineSurfaceContract.GetRejection(in material, snapshot.MaterialPayloads) is { } companionReason)
+            throw Invalid("EngineSurfaceUnsupported", companionReason);
         bool mirror = material.MaterialLayoutHash == WebGpuAdvancedShadingParameters.MirrorHash;
         uint words = mirror ? MaterialBindingLayouts.ProjectiveMirror.RowWordCount : MaterialBindingLayouts.OpaqueDeferred.RowWordCount;
         if ((!mirror && !WebGpuAdvancedStandardMaterialContract.IsStandard(in material)) ||
@@ -150,6 +156,15 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             AdvancedMaterialTextureBinding binding = bindings[(int)(material.TextureReferenceOffset + index)];
             if (binding.Texture.Handle.IsValid) AddPair(snapshot, binding.Texture.Handle, binding.Sampler.Handle, pairs, ref count);
         }
+        if (snapshot.MaterialPayloads.TryGetEngineSurface(in material, out AdvancedEngineSurfaceRecord engineSurface) &&
+            engineSurface.SchemaVersion != 0)
+        {
+            for (int index = 0; index < AdvancedEngineSurfaceRecord.RoleCount; ++index)
+            {
+                AdvancedMaterialTextureBinding binding = engineSurface.GetRole(index).Binding;
+                if (binding.Texture.Handle.IsValid) AddPair(snapshot, binding.Texture.Handle, binding.Sampler.Handle, pairs, ref count);
+            }
+        }
     }
 
     private static void AddPair(AdvancedGpuScenePublicationSnapshot snapshot, AdvancedGpuHandle texture, AdvancedGpuHandle sampler,
@@ -162,8 +177,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             throw Invalid("TexturePairMissing", "a valid texture/sampler pair lacks its exact retained records and source generation");
         int dimensionCount = 0;
         for (int index = 0; index < count; index++) if (pairs[index].Dimension == record.Dimension) dimensionCount++;
-        int capacity = record.Dimension == EAdvancedTextureDimension.Texture2D ? 10 :
-            record.Dimension is EAdvancedTextureDimension.Cube or EAdvancedTextureDimension.Texture2DArray ? 1 : 0;
+        int capacity = WebGpuAdvancedMaterialContract.GetTextureDimensionCapacity(record.Dimension);
         if (dimensionCount >= capacity || count == pairs.Length)
             throw Invalid("TextureBankCapacity", "native closure exceeds the explicit bank of ten 2D pairs, one cube pair, and one 2D-array pair");
         pairs[count++] = new(texture, sampler, record.Dimension, source, generation);
@@ -191,9 +205,8 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                 current.TextureRecord.Flags != record.Flags)
                 throw Invalid("TextureGenerationChanged", "the source no longer matches its frozen texture metadata and content generation");
             WebGpuTextureResource resource = WebGpuTextureResource.Resolve(_renderer, pair.Source);
-            if (resource.Width != record.Width || resource.Height != record.Height || resource.Layers != record.DepthOrLayers || resource.Mips != record.MipCount || resource.Samples != 1 || WebGpuTextureFormat.IsDepth(resource.Format) || WebGpuTextureFormat.IsInteger(resource.Format) ||
-                resource.Format is "r32float" or "rg32float" or "rgba32float" &&
-                    _renderer.DeviceCapabilities?.Features.Contains("float32-filterable") != true)
+            if (resource.Width != record.Width || resource.Height != record.Height || resource.Layers != record.DepthOrLayers || resource.Mips != record.MipCount || WebGpuAdvancedMaterialContract.GetSamplingRejection(resource.Format, resource.Samples,
+                    _renderer.DeviceCapabilities?.Features.Contains("float32-filterable") == true) is not null)
                 throw Invalid("TextureSampleType", "native bank sampling requires an exact filterable non-depth floating-point texture");
             var key = (snapshot.DatabaseEpoch, pair.Sampler);
             int slot = pair.Dimension == EAdvancedTextureDimension.Texture2D ? next2D++ : pair.Dimension == EAdvancedTextureDimension.Cube ? 10 : 11;
@@ -232,32 +245,6 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             _samplers.Remove(sampler.Key);
     }
 
-    private static bool IsCanonicalKernel(in AdvancedMaterialRecord material, in AdvancedShadingKernelRecord kernel)
-    {
-        bool mirror = material.MaterialLayoutHash == WebGpuAdvancedShadingParameters.MirrorHash;
-        if (!mirror && !WebGpuAdvancedStandardMaterialContract.IsStandard(in material)) return false;
-        uint coverage = (uint)material.CoverageMode, state = (uint)material.RenderStateClass;
-        ulong identity = unchecked((material.MaterialLayoutHash ^ (((ulong)coverage << 32) | state)) * 1099511628211ul);
-        EAdvancedMaterialRequiredAttributeMask attributes = mirror ? EAdvancedMaterialRequiredAttributeMask.Position :
-            EAdvancedMaterialRequiredAttributeMask.Position | EAdvancedMaterialRequiredAttributeMask.Normal |
-            EAdvancedMaterialRequiredAttributeMask.Tangent | EAdvancedMaterialRequiredAttributeMask.TexCoord0 |
-            EAdvancedMaterialRequiredAttributeMask.TexCoord1 | EAdvancedMaterialRequiredAttributeMask.Color0 |
-            EAdvancedMaterialRequiredAttributeMask.AnalyticalDerivatives;
-        EAdvancedMaterialEligibilityFlags eligibility = EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.Unlit;
-        if (!mirror) eligibility |= EAdvancedMaterialEligibilityFlags.NativeMasked | EAdvancedMaterialEligibilityFlags.LateTransparent | EAdvancedMaterialEligibilityFlags.LateRefractive;
-        EAdvancedMaterialFeatureFlags features = EAdvancedMaterialFeatureFlags.DoubleSided;
-        if (!mirror) features |= EAdvancedMaterialFeatureFlags.BaseColorTexture | EAdvancedMaterialFeatureFlags.NormalTexture |
-            EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture | EAdvancedMaterialFeatureFlags.Emissive |
-            EAdvancedMaterialFeatureFlags.ReceivesShadows | EAdvancedMaterialFeatureFlags.CastsShadows |
-            EAdvancedMaterialFeatureFlags.VertexDeformation | EAdvancedMaterialFeatureFlags.Animated;
-        return kernel.RequiredAttributeMask == attributes && kernel.SupportedEligibility == eligibility &&
-            kernel.SupportedFeatures == features && kernel.Flags == 0 &&
-            coverage < 32 && state < 32 && kernel.MaterialLayoutHash == material.MaterialLayoutHash &&
-            kernel.ShaderIdentityHash == identity && kernel.SupportedCoverageMask == 1u << (int)coverage &&
-            kernel.RenderStateClassMask == 1u << (int)state &&
-            (material.FeatureFlags & ~kernel.SupportedFeatures) == 0 &&
-            (material.EligibilityFlags & ~kernel.SupportedEligibility) == 0;
-    }
     private static bool ViewMatches(uint low, uint high, uint view)
         => (low | high) == 0 || (view < 32 ? (low & (1u << (int)view)) != 0 : view < 64 && (high & (1u << (int)(view - 32))) != 0);
     private static NotSupportedException Invalid(string code, string reason) => new($"WebGPU.Advanced.{code}: {reason}.");

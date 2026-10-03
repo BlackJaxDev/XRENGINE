@@ -10,12 +10,12 @@ internal sealed partial class WebGpuMeshDraw
     private readonly Dictionary<IndirectCommandKey, WebGpuIndirectDrawCommand> _indirectCommands = [];
 
     /// <summary>Dictionary republishing does not invalidate unchanged canonical atlas stream identities.</summary>
-    internal bool MatchesIndirectStreams(XRMesh? mesh, XRMeshRenderer owner)
+    internal bool MatchesIndirectStreams(XRMesh? mesh, XRMeshRenderer owner, WebGpuMeshDeformation? deformation = null)
     {
         foreach (ShaderVertexBufferLayout layout in _program.Artifact.VertexBuffers)
             foreach (ShaderVertexAttribute attribute in layout.Attributes)
             {
-                var (buffer, offset, format) = ResolveAttribute(mesh, attribute.Semantic, null, owner);
+                var (buffer, offset, format) = ResolveAttribute(mesh, attribute.Semantic, deformation, owner);
                 bool found = false;
                 foreach (WebGpuVertexStream stream in _streams)
                 {
@@ -38,6 +38,9 @@ internal sealed partial class WebGpuMeshDraw
         WebGpuDataBuffer? countBuffer, uint drawCount, uint stride, uint offset, uint countOffset)
         => RecordIndirectCore(bindings, arguments, arguments.ResourceHandle, countBuffer, drawCount, stride, offset, countOffset);
 
+    internal void RecordMeshletIndirect(WebGpuBindingSet bindings, WebGpuOwnedStorageBuffer arguments)
+        => RecordIndirectCore(bindings, arguments, arguments.ResourceHandle, null, 1, 20, 0, 0);
+
     internal void RecordVertexlessIndirect(WebGpuBindingSet bindings, AbstractRenderAPIObject arguments,
         int argumentHandle, uint byteOffset)
         => RecordIndirectCore(bindings, arguments, argumentHandle, null, 1, 16, byteOffset, 0);
@@ -53,7 +56,7 @@ internal sealed partial class WebGpuMeshDraw
             _renderer.MarkEngineDrawPending();
             return;
         }
-        if (_indices is null && countBuffer is not null)
+        if (!HasIndexBuffer && countBuffer is not null)
             throw Unsupported("vertexless draws consume one native GPU-written draw record; indexed count lowering is not applicable");
         IndirectCommandKey key = new(bindings, arguments, countBuffer, argumentHandle,
             countBuffer?.ResourceHandle ?? 0, drawCount, stride, offset, countOffset);
@@ -83,6 +86,7 @@ internal sealed partial class WebGpuMeshDraw
         command.MaskedArguments?.Record();
         _renderer.RecordEngineCommands(command.CommandHandle, offsets[..uniformCount], viewport: viewport, scissor: scissor);
         if (arguments is WebGpuOwnedStorageBuffer nativeArguments) nativeArguments.MarkRecorded();
+        _generatedIndices?.MarkRecorded();
         bindings.MarkRecorded();
         if (scissor is not ({ Width: 0 } or { Height: 0 }))
         {

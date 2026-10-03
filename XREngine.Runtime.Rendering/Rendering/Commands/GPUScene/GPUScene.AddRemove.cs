@@ -181,6 +181,8 @@ namespace XREngine.Rendering.Commands
                         commandValue.DrawID = index;
                         WriteDrawMetadata(index, commandValue);
                         WriteBounds(boundsId, stageNativeRecords.Value.Bounds);
+                        CaptureUpdatingMeshSubmission(index, snapshot, mesh, m, subMeshIndex, lodCount,
+                            commandValue, stageNativeRecords.Value.Bounds);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
                         _transparencyDirtyRange.Mark(index);
                         if (_useInternalBvh)
@@ -990,6 +992,7 @@ namespace XREngine.Rendering.Commands
                 _commandIndexLookup.Remove(lastIndex);
             }
 
+            RemoveUpdatingMeshSubmission(targetIndex, lastIndex);
             LodTransitionBuffer.SetDataRawAtIndex(lastIndex, default(GPULodTransitionState));
             QueueCpuLodTransitionWrite(lastIndex);
             ClearDrawIndexedSoA(lastIndex);

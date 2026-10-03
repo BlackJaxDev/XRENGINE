@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-shade-msaa-resolve",
+  "source": "AdvancedShadeMsaaResolve.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "advancedShadeMsaaResolve"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "shade-msaa-resolve"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 8,
+    "maxUniformBufferBindingSize": 32,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 3,
+    "maxStorageTexturesPerShaderStage": 4,
+    "maxComputeWorkgroupSizeX": 16,
+    "maxComputeWorkgroupSizeY": 16,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "RawVisibilityIdentity",
+        "physicalName": "rawVisibilityIdentity",
+        "group": 0,
+        "binding": 0,
+        "kind": "texture-multisampled-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "RawVisibilityMetadataSelection",
+        "physicalName": "rawVisibilityMetadataSelection",
+        "group": 0,
+        "binding": 1,
+        "kind": "texture-multisampled-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "SampleRadianceReactive",
+        "physicalName": "sampleRadianceReactive",
+        "group": 0,
+        "binding": 2,
+        "kind": "texture-2d-array-unfilterable-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "HDRSceneColor",
+        "physicalName": "hdrSceneColor",
+        "group": 0,
+        "binding": 3,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "ReactiveMask",
+        "physicalName": "reactiveMask",
+        "group": 0,
+        "binding": 4,
+        "kind": "storage-texture-2d-write-r32float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Velocity",
+        "physicalName": "velocity",
+        "group": 0,
+        "binding": 5,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "ShadingDiagnostics",
+        "physicalName": "shadingDiagnostics",
+        "group": 0,
+        "binding": 6,
+        "kind": "storage-texture-2d-write-r32uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 7,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 32,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "screenExtent",
+            "provider": "screenExtent",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "reserved0",
+            "provider": "reserved0",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "reserved1",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "backgroundColor",
+            "provider": "backgroundColor",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {},
+  "pass": "shade-msaa-resolve",
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ]
+}

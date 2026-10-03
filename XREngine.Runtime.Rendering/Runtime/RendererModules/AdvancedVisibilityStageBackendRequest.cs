@@ -35,7 +35,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     Commands.BackendReadyFramePackage? BackendReadyPackage = null,
     uint FroxelDepthSlices = 24u,
     uint MsaaSampleCount = 1u,
-    bool HasAuthoredBackground = false)
+    bool HasAuthoredBackground = false,
+    EAdvancedVisibilitySampleEncoding SampleEncoding = EAdvancedVisibilitySampleEncoding.None)
 {
     public bool IsValid => GetInvalidReason() is null;
 

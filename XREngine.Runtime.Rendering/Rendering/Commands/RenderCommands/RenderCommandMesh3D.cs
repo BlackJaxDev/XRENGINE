@@ -723,7 +723,7 @@ namespace XREngine.Rendering.Commands
             => new(_renderMesh, _renderWorldMatrix, _renderWorldMatrixIsModelMatrix,
                 _renderMaterialOverride, _renderInstances, _renderPass,
                 _renderForceCpuRendering, _renderEditorHighlightBits, StableQueryKey,
-                _renderGpuSceneOwner);
+                _renderGpuSceneOwner, _renderRenderOptionsOverride, _renderWorldCullingVolumeOverride.HasValue);
 
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
         {

@@ -175,4 +175,10 @@ browser representations under one verified managed-admission identity.
 
 [Recovered Advanced browser static integration](work/progress/rendering/browser-advanced-static-integration-2026-10-03.md) records the reconstructed native/output/effects family, authored-state preservation, fresh build/cook/probe and saved-world hydration results, unsupported profiles, and pending full browser acceptance.
 
+[Advanced browser per-sample MSAA](work/progress/rendering/browser-advanced-msaa-2026-10-03.md) records exact packed16 visibility, canonical nearest-sample resolve, cohort union, f32 sample shading, resource costs, and the pending browser acceptance boundary.
+
+[Browser view-history submission](work/progress/rendering/browser-view-history-submission-2026-10-03.md) records bounded metadata receipts, exact terminal-write proof, accepted-submission commits, and the separate motion/recovery acceptance boundary.
+
 [WebGPU indirect submission](architecture/rendering/webgpu-indirect-submission.md) records GPU-written argument/count contracts, completion ownership, and the distinction between native Advanced compute meshlets and hardware task/mesh stages.
+
+[Browser authored meshlet indexed submission](work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md) records material-independent resident publication, conservative GPU cull/refit/expansion, exact authored raster reuse, completion ownership, explicit remaining profiles, and the pending runtime acceptance boundary.

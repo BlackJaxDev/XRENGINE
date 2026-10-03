@@ -6,15 +6,16 @@ namespace XREngine.Rendering.WebGPU;
 
 /// <summary>
 /// Packs the sealed shared scene records without lowering their precision or logical handles.
-/// Each of the 32 directory rows contains eight words: record offset/count/stride,
+/// Each of the 33 directory rows contains eight words: record offset/count/stride,
 /// lookup offset/count, and three reserved words. Offsets are absolute word offsets.
 /// </summary>
 internal sealed class WebGpuAdvancedSceneArena
 {
-    internal const int TableCount = 32;
+    internal const int TableCount = 33;
     internal const int DirectoryWords = 8;
     internal const uint MaterialLayoutHandles = 30;
     internal const uint MaterialLayoutMembers = 31;
+    internal const uint EngineSurfaces = 32;
     private const int HeaderBytes = TableCount * DirectoryWords * sizeof(uint);
     private byte[] _bytes = new byte[HeaderBytes];
     private int _usedBytes;
@@ -49,6 +50,7 @@ internal sealed class WebGpuAdvancedSceneArena
         Write(AdvancedGlobalResourceBindings.EditorIdentities, snapshot.EditorIdentities);
         Write(MaterialLayoutHandles, snapshot.MaterialPayloads.MaterialLayoutHandles);
         Write(MaterialLayoutMembers, snapshot.MaterialPayloads.LayoutMembers);
+        Write(EngineSurfaces, snapshot.MaterialPayloads.EngineSurfaces);
         // Views and physical texture descriptors are output/backend bindings, not
         // scene rows. Their directory entries remain empty rather than fabricated.
     }

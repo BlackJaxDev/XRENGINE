@@ -27,9 +27,8 @@ public sealed class VPRC_SMAA : ViewportRenderCommand
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-blend" : "smaa-blend");
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-neighborhood" : "smaa-neighborhood");
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Smaa);
-        if (Stereo || requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1 ||
-            requirements.OutputProfile.MsaaSampleCount != 1)
-            requirements.Diagnostics.Add("The cooked SMAA chain requires a mono, single-sample output.");
+        if (Stereo || requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("The cooked SMAA chain requires a mono output.");
         if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))
             requirements.Diagnostics.Add("The cooked SMAA chain requires an explicit source texture or framebuffer.");
         if (string.IsNullOrWhiteSpace(OutputTextureName))

@@ -61,6 +61,7 @@ public sealed partial class WebGpuRenderProgram
         XRRenderProgram.EImageFormat.RGBA32F => "rgba32float", XRRenderProgram.EImageFormat.RGBA16F => "rgba16float",
         XRRenderProgram.EImageFormat.RGBA8 => "rgba8unorm", XRRenderProgram.EImageFormat.R32UI => "r32uint",
         XRRenderProgram.EImageFormat.RG32UI => "rg32uint", XRRenderProgram.EImageFormat.RGBA32UI => "rgba32uint",
+        XRRenderProgram.EImageFormat.RGBA16UI => "rgba16uint",
         XRRenderProgram.EImageFormat.R32I => "r32sint", XRRenderProgram.EImageFormat.RG32I => "rg32sint",
         XRRenderProgram.EImageFormat.RGBA32I => "rgba32sint",
         _ => throw UnsupportedBinding(format.ToString(), "the image format has no exact admitted storage encoding"),

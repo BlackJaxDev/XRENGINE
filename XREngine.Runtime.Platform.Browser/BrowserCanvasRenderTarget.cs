@@ -64,7 +64,7 @@ public sealed class BrowserCanvasRenderTarget : IBrowserCanvasPresentationTarget
             properties,
             (ulong)Surface.Generation,
             FrameSlotIndex: 0,
-            Capabilities: RenderFrameOutputCapabilities.Presentation);
+            Capabilities: RenderFrameOutputCapabilities.Presentation | RenderFrameOutputCapabilities.IndependentSceneSamples);
         return true;
     }
 

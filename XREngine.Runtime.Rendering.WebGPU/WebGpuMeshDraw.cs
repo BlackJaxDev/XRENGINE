@@ -5,6 +5,7 @@ using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.WebGPU;
@@ -16,6 +17,8 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     private readonly WebGpuRenderProgram _program;
     private readonly WebGpuVertexStream[] _streams;
     private readonly WebGpuDataBuffer? _indices;
+    private readonly WebGpuOwnedStorageBuffer? _generatedIndices;
+    private bool HasIndexBuffer => _indices is not null || _generatedIndices is not null;
     private readonly IndexSize _indexSize;
     private readonly uint _indexCount;
     private readonly WebGpuRasterState _state;
@@ -50,6 +53,25 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         _indices = (WebGpuDataBuffer)renderer.GetOrCreateAPIRenderObject(indices, generateNow: true)!;
         _indexCount = indices.ElementCount;
         _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation, streamOwner);
+        _preparation = PrepareAsync();
+    }
+
+    /// <summary>Rasterizes only the GPU-expanded uint32 meshlet stream with the original authored vertex and fragment program.</summary>
+    internal WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
+        WebGpuOwnedStorageBuffer indices, WebGpuRasterState state, in RenderFrameOutputDescription output,
+        WebGpuFrameBuffer? frameBuffer, WebGpuMeshDeformation? deformation, GpuMeshSubmissionSourceBindings sources)
+    {
+        if (indices.Owner != renderer || !indices.IsGenerated || indices.IsRetired)
+            throw Unsupported("generated indices require live storage owned by the current renderer");
+        _renderer = renderer;
+        _program = program;
+        _state = state;
+        _output = output;
+        _frameBuffer = frameBuffer;
+        _generatedIndices = indices;
+        _indexSize = IndexSize.FourBytes;
+        _indirectFirstInstanceFeature = false;
+        _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation, null, sources);
         _preparation = PrepareAsync();
     }
 
@@ -109,6 +131,9 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         int count = _program.SnapshotUniforms(offsets);
         _renderer.RecordEngineCommands(commands, offsets[..count], _instanceLimit == 0 ? null : instances,
             viewport, scissor);
+        _renderer.MarkEngineViewHistoryDrawWrite(_frameBuffer, in _output,
+            _program.Artifact.FragmentEntryPoint is not null, _state.ColorWriteMask,
+            _indices is null ? 0 : _indexCount, _instanceLimit == 0 ? 1U : instances, scissor);
         bindings.MarkRecorded();
         if (!croppedOut)
         {
@@ -168,7 +193,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     internal bool DependsOn(AbstractRenderAPIObject resource)
     {
         if (IndirectDependsOn(resource) || DirectDependsOn(resource)) return true;
-        if (ReferenceEquals(_program, resource) || ReferenceEquals(_indices, resource))
+        if (ReferenceEquals(_program, resource) || ReferenceEquals(_indices, resource) || ReferenceEquals(_generatedIndices, resource))
             return true;
         if (_frameBuffer?.DependsOn(resource) == true)
             return true;
@@ -190,7 +215,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
 
     internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
     {
-        if (ReferenceEquals(_indices, resource))
+        if (ReferenceEquals(_indices, resource) || ReferenceEquals(_generatedIndices, resource))
         {
             ClearCommands();
             return;
@@ -244,14 +269,14 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     }
 
     private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh? mesh,
-        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner)
+        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner, GpuMeshSubmissionSourceBindings? sources = null)
     {
         List<WebGpuVertexStream> streams = [];
         foreach (ShaderVertexBufferLayout authored in artifact.VertexBuffers)
         {
             foreach (ShaderVertexAttribute attribute in authored.Attributes)
             {
-                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation, streamOwner);
+                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation, streamOwner, sources);
                 if (attribute.Format != format || buffer.InstanceDivisor > 1)
                     throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible format or instance divisor");
                 string stepMode = buffer.InstanceDivisor == 0 ? "vertex" : "instance";
@@ -275,7 +300,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     }
 
     private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh? mesh, string semantic,
-        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner = null)
+        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner = null, GpuMeshSubmissionSourceBindings? sources = null)
     {
         string format = semantic switch
         {
@@ -296,7 +321,10 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
             "color0" => "Color0", "uv0" => "TexCoord0",
             _ => throw Unsupported($"vertex semantic '{semantic}' has no canonical stream mapping"),
         };
-        if (streamOwner is not null && streamOwner.Buffers.TryGetValue(streamName, out XRDataBuffer? published))
+        XRDataBuffer? published = null;
+        bool hasPublished = sources is not null ? sources.TryGetRendererBuffer(streamName, out published)
+            : streamOwner is not null && streamOwner.Buffers.TryGetValue(streamName, out published);
+        if (hasPublished && published is not null)
         {
             if (published.ComponentType != EComponentType.Float || published.IsDestroyed)
                 throw Unsupported($"published vertex semantic '{semantic}' requires a live float stream");
@@ -315,11 +343,16 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
                 "uv0" => mesh.TexCoordCount > 0 ? mesh.TexCoordOffset : null,
                 _ => null,
             };
-            if (offset is null || mesh.InterleavedVertexBuffer is not { } interleaved)
+            XRDataBuffer? interleaved = sources is not null
+                ? sources.TryGetMeshBuffer("InterleavedVertex", out XRDataBuffer? frozenInterleaved) ? frozenInterleaved : null
+                : mesh.InterleavedVertexBuffer;
+            if (offset is null || interleaved is null)
                 throw Unsupported($"required interleaved vertex semantic '{semantic}' is missing");
             return (interleaved, checked((int)offset.Value), format);
         }
-        XRDataBuffer? buffer = semantic switch
+        XRDataBuffer? buffer = sources is not null
+            ? sources.TryGetMeshBuffer(streamName, out XRDataBuffer? frozenBuffer) ? frozenBuffer : null
+            : semantic switch
         {
             "position" => mesh.PositionsBuffer,
             "normal" => mesh.NormalsBuffer,
@@ -450,10 +483,10 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
-            if (_indices is { } indices)
+            if (HasIndexBuffer)
             {
                 writer.WriteStartObject("indexBuffer");
-                writer.WriteNumber("buffer", indices.ResourceHandle);
+                writer.WriteNumber("buffer", _generatedIndices?.ResourceHandle ?? _indices!.ResourceHandle);
                 writer.WriteString("format", _indexSize == IndexSize.TwoBytes ? "uint16" : "uint32");
                 writer.WriteEndObject();
             }
@@ -480,14 +513,14 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
             writer.WriteStartObject();
             if (indirectBuffer != 0)
             {
-                writer.WriteString("type", _indices is null ? "drawIndirect" : "drawIndexedIndirect");
+                writer.WriteString("type", HasIndexBuffer ? "drawIndexedIndirect" : "drawIndirect");
                 writer.WriteNumber("buffer", indirectBuffer);
                 writer.WriteNumber("offset", byteOffset);
                 writer.WriteNumber("drawCount", indirectCount);
                 writer.WriteNumber("stride", stride);
                 writer.WriteString("firstInstancePolicy", _indirectFirstInstanceFeature ? "feature" : "zero");
             }
-            else if (_indices is null)
+            else if (!HasIndexBuffer)
             {
                 writer.WriteString("type", "draw");
                 writer.WriteNumber("vertexCount", directVertices);

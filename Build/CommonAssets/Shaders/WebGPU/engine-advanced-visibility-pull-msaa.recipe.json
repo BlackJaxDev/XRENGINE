@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-advanced-visibility-pull-msaa",
+  "pass": "visibility-pull-msaa",
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "visibility-pull-msaa"
+  },
+  "source": "AdvancedVisibilityPullMsaa.wgsl",
+  "entryPoints": {
+    "vertex": "advancedVisibilityVertex",
+    "fragment": "advancedVisibilityMsaaFragment"
+  },
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 7,
+    "maxUniformBufferBindingSize": 240,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 4,
+    "maxStorageBufferBindingSize": 4,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "SceneArena",
+        "physicalName": "scene",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "GeometryArena",
+        "physicalName": "geometry",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Payloads",
+        "physicalName": "payloads",
+        "group": 0,
+        "binding": 2,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Triangles",
+        "physicalName": "triangles",
+        "group": 0,
+        "binding": 3,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 4,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 240,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "viewProjectionUnjittered",
+            "provider": "ViewProjectionUnjittered",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousViewProjectionUnjittered",
+            "provider": "PreviousViewProjectionUnjittered",
+            "offset": 128,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "triangleBase",
+            "provider": "TriangleBase",
+            "offset": 192,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewIndex",
+            "provider": "ViewIndex",
+            "offset": 196,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewFlags",
+            "provider": "ViewFlags",
+            "offset": 200,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "origin",
+            "provider": "Origin",
+            "offset": 204,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "baseColorWord",
+            "provider": "BaseColorWord",
+            "offset": 208,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "alphaCutoffWord",
+            "provider": "AlphaCutoffWord",
+            "offset": 212,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "materialFlagsWord",
+            "provider": "MaterialFlagsWord",
+            "offset": 216,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "masked",
+            "provider": "Masked",
+            "offset": 220,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "directPayloadIndex",
+            "provider": "DirectPayloadIndex",
+            "offset": 224,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "direct",
+            "provider": "Direct",
+            "offset": 228,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved0",
+            "provider": "Reserved0",
+            "offset": 232,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "Reserved1",
+            "offset": 236,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      },
+      {
+        "name": "CoverageTexture",
+        "physicalName": "coverageTexture",
+        "group": 0,
+        "binding": 5,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Pass",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "CoverageTexture",
+        "physicalName": "coverageSampler",
+        "group": 0,
+        "binding": 6,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Pass",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  }
+}

@@ -20,6 +20,9 @@ public sealed partial class AdvancedGpuDeformationResources :
     private const float DeltaEpsilonSquared = 1.0e-20f;
 
     private readonly int _frameSlotCount;
+    private readonly int _maximumDeformationJobs;
+    private readonly EAdvancedDeformationMeshPreparationPolicy[] _slotPreparationPolicies;
+    private EAdvancedDeformationMeshPreparationPolicy _meshPreparationPolicy;
     private readonly AdvancedGpuDeformationStaticGeneration[]
         _staticGenerations;
     private readonly int[] _slotStaticGenerationIndices;
@@ -100,6 +103,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         in AdvancedPreparationOptions options)
     {
         _frameSlotCount = options.DeformedArena.FrameSlotCount;
+        _maximumDeformationJobs = options.MaximumDeformationJobs;
+        _slotPreparationPolicies = new EAdvancedDeformationMeshPreparationPolicy[_frameSlotCount];
         uint initialVertices = options.DeformedArena.InitialVertexCapacity;
         uint initialAuxiliary = Math.Max(1_024u, initialVertices / 4u);
         uint initialRanges = Math.Max(
@@ -174,10 +179,17 @@ public sealed partial class AdvancedGpuDeformationResources :
     }
 
     public RuntimeGraphicsApiKind Backend => _backend;
+    internal bool UsesPackedAggregateInputs
+        => _meshPreparationPolicy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs;
+    private static EAdvancedDeformationMeshPreparationPolicy ResolveMeshPreparationPolicy()
+        => AbstractRenderer.Current is IAdvancedAggregateDeformationBackendCapability
+            ? EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs
+            : EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices;
     public bool SupportsAggregateCompute
         => AbstractRenderer.Current is not null &&
-           AdvancedDeformationBackendContract
-               .SupportsProductionAggregateCompute(_backend);
+           (AbstractRenderer.Current is IAdvancedAggregateDeformationBackendCapability capability
+               ? capability.SupportsAggregateDeformation
+               : AdvancedDeformationBackendContract.SupportsProductionAggregateCompute(_backend));
     public double LastGpuMilliseconds => 0.0;
     public uint StaticCapacityGrowthCount => _staticCapacityGrowthCount;
     public uint OutputCapacityGrowthCount => _outputCapacityGrowthCount;
@@ -210,12 +222,13 @@ public sealed partial class AdvancedGpuDeformationResources :
             throw new InvalidOperationException(
                 "Static deformation selection must occur before frame authoring.");
 
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy = ResolveMeshPreparationPolicy();
         AdvancedGpuDeformationStaticGeneration? matched = null;
         for (int index = 0; index < _staticGenerations.Length; index++)
         {
             AdvancedGpuDeformationStaticGeneration candidate =
                 _staticGenerations[index];
-            if (!candidate.Matches(scene, databaseEpoch, topologyGeneration))
+            if (!candidate.Matches(scene, databaseEpoch, topologyGeneration, preparationPolicy))
                 continue;
 
             if (matched is null || candidate.LastUse > matched.LastUse)
@@ -248,7 +261,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         if (replacement is null)
             return false;
 
-        replacement.Assign(scene, databaseEpoch, topologyGeneration);
+        replacement.Assign(scene, databaseEpoch, topologyGeneration, preparationPolicy);
         replacement.LastUse = ++_staticGenerationUse;
         _staticGeneration = replacement;
         _staticGenerationReplaced = true;
@@ -275,7 +288,9 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         _staticGeneration.EnsureInitialized();
         _meshSlices.Clear();
+        _staticGeneration.InputWitnesses.Clear();
         _poseEntries.Clear();
+        _controlsByPose.Clear();
         _sourceVertexCount = 0u;
         _skinInfluenceCount = 0u;
         _spillInfluenceCount = 0u;
@@ -395,9 +410,15 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _frameId = frameId;
+        _meshPreparationPolicy = ResolveMeshPreparationPolicy();
+        if (UsesPackedAggregateInputs && _controlBuffers.Length == 0)
+            InitializeJobControls(_maximumDeformationJobs);
+        // The completion-acquired slot changes its physical upload policy only for the selected backend.
+        _outputBuffers.Buffers[currentFrameSlot].GpuProduced = UsesPackedAggregateInputs;
         // Pose entries only deduplicate one frame. Keeping prior entries pins
         // renderers from unloaded worlds in the process-wide preparation owner.
         _poseEntries.Clear();
+        _controlsByPose.Clear();
         _currentFrameSlot = currentFrameSlot;
         _previousFrameSlot = previousFrameSlot;
         _paletteCount = 0u;
@@ -406,13 +427,16 @@ public sealed partial class AdvancedGpuDeformationResources :
             frameId != 0UL &&
             !outputReplaced &&
             !_staticGenerationReplaced &&
+            _slotPreparationPolicies[previousFrameSlot] == _meshPreparationPolicy &&
             _slotOutputValid[previousFrameSlot] &&
+            _slotProducerFences[previousFrameSlot]?.SubmissionStatus == EGpuFenceSubmissionStatus.Submitted &&
             _slotStaticGenerationIndices[previousFrameSlot] >= 0 &&
             ReferenceEquals(
                 _staticGenerations[
                     _slotStaticGenerationIndices[previousFrameSlot]],
                 _staticGeneration);
         _slotOutputValid[currentFrameSlot] = false;
+        _slotPreparationPolicies[currentFrameSlot] = _meshPreparationPolicy;
         _staticGenerationReplaced = false;
         _frameOpen = true;
         return true;
@@ -441,14 +465,20 @@ public sealed partial class AdvancedGpuDeformationResources :
             return true;
         }
 
-        if (!renderer.EnsureSkinningBuffers(logWarnings: false))
+        bool packed = UsesPackedAggregateInputs;
+        bool skinning = !packed || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
+        bool blendshapes = mesh.HasBlendshapes && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
+        if (skinning && (!packed || !renderer.HasExternalSkinPaletteSource) && !renderer.EnsureSkinningBuffers(logWarnings: false))
         {
             slice = default;
             return false;
         }
-        if (mesh.HasBlendshapes)
-            renderer.EnsureBlendshapeBuffers(logWarnings: false);
-        if (!renderer.HasExternalSkinPaletteSource)
+        if (blendshapes && !renderer.EnsureBlendshapeBuffers(logWarnings: false) && packed)
+        {
+            slice = default;
+            return false;
+        }
+        if (skinning && !renderer.HasExternalSkinPaletteSource)
         {
             if (renderer.SkinPaletteReseedCount < 2)
                 renderer.ReseedSkinPaletteUntilPoseStable();
@@ -459,23 +489,25 @@ public sealed partial class AdvancedGpuDeformationResources :
         XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
             renderer.CaptureBlendshapeResources();
         bool hasExternalPalette = renderer.HasExternalSkinPaletteSource;
-        XRDataBuffer? paletteSource = hasExternalPalette
+        XRDataBuffer? paletteSource = !skinning ? null : hasExternalPalette
             ? renderer.ActiveSkinPaletteBuffer
             : boneState.SkinPalette;
         uint paletteBase = hasExternalPalette ? renderer.ActiveSkinPaletteBase : 0u;
-        uint paletteCount = hasExternalPalette
+        uint paletteCount = !skinning ? 0u : hasExternalPalette
             ? renderer.ActiveSkinPaletteCount
             : checked((uint)mesh.GetSkinningBufferStateSnapshot().UtilizedBones.Length + 1u);
-        if (paletteSource is null ||
+        if (skinning && (paletteSource is null ||
+            packed && (paletteSource.GpuProduced || paletteSource.ClientSideSource is not { } paletteMemory ||
+            paletteMemory.Length < paletteSource.Length || !paletteSource.TryGetAddress(out VoidPtr paletteAddress) || paletteAddress == VoidPtr.Zero ||
+            paletteSource.ComponentType != EComponentType.Float || paletteSource.ElementSize != 48) ||
             paletteCount == 0u ||
-            paletteBase + paletteCount >
-                paletteSource.ElementCount)
+            paletteBase > paletteSource.ElementCount || paletteCount > paletteSource.ElementCount - paletteBase))
         {
             slice = default;
             return false;
         }
 
-        uint activeCount = checked((uint)Math.Max(
+        uint activeCount = packed && !blendshapes ? 0u : checked((uint)Math.Max(
             0,
             blendshapeState.ActiveCount));
         uint requiredPalette = checked(_paletteCount + paletteCount);
@@ -483,17 +515,15 @@ public sealed partial class AdvancedGpuDeformationResources :
             checked(_activeBlendshapeCount + activeCount);
         EnsureDynamicPoseCapacity(requiredPalette, requiredActive);
 
-        CopyPalette(
-            paletteSource,
-            paletteBase,
-            _paletteScratch,
-            _paletteCount,
-            paletteCount);
+        if (paletteCount != 0)
+            CopyPalette(paletteSource!, paletteBase, _paletteScratch, _paletteCount, paletteCount);
         CopyActiveBlendshapes(
             blendshapeState.ActiveWeights,
             _activeBlendshapeScratch,
             _activeBlendshapeCount,
-            activeCount);
+            activeCount,
+            checked((uint)mesh.BlendshapeCount),
+            packed);
 
         slice = new AdvancedGpuDeformationPoseSlice(
             _paletteCount,
@@ -526,6 +556,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         UploadStaticAppends();
+        if (UsesPackedAggregateInputs)
+            PublishJobControls(jobs);
         if (!jobs.IsEmpty)
             _jobBuffers[_currentFrameSlot].Write(0u, jobs);
         for (int i = 0; i < groupedJobIndices.Length; i++)
@@ -681,7 +713,14 @@ public sealed partial class AdvancedGpuDeformationResources :
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null)
             return ERendererComputeEnqueueStatus.NoPassContext;
+        if (ResolveMeshPreparationPolicy() != _meshPreparationPolicy)
+            return ERendererComputeEnqueueStatus.InvalidResource;
 
+        if (renderer is IAdvancedAggregateDeformationBackendCapability capability)
+            return capability.TryDispatchAggregateDeformation(this, in batch);
+
+        // Desktop retains its existing 13-binding shader contract. Authored influence caps,
+        // exact morph thresholds, and morph-only admission belong to the optional packed capability.
         XRRenderProgram program = GetAggregateProgram();
         _jobBuffers[_currentFrameSlot].BindTo(program, 0u);
         _jobIndexBuffers[_currentFrameSlot].BindTo(program, 1u);
@@ -791,6 +830,8 @@ public sealed partial class AdvancedGpuDeformationResources :
             _paletteBuffers[slot].Destroy();
             _activeBlendshapeBuffers[slot].Destroy();
         }
+        for (int slot = 0; slot < _controlBuffers.Length; slot++)
+            _controlBuffers[slot].Destroy();
         for (int slot = 0; slot < _slotProducerFences.Length; slot++)
         {
             _slotProducerFences[slot]?.Dispose();
@@ -1012,34 +1053,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         XRMesh mesh,
         uint vertexIndex,
         uint sourceIndex)
-    {
-        Vertex[] vertices = mesh.Vertices;
-        if (vertices.Length == mesh.VertexCount)
-            return AdvancedPackedVertexCodec.Pack(vertices[vertexIndex], sourceIndex);
-
-        Vector3 position = mesh.PositionsBuffer!.GetVector3(vertexIndex);
-        Vector3 normal = mesh.NormalsBuffer?.GetVector3(vertexIndex) ?? Vector3.UnitY;
-        Vector4 tangent4 = mesh.TangentsBuffer?.GetVector4(vertexIndex)
-            ?? new Vector4(Vector3.UnitX, 1.0f);
-        Vector2 uv0 = mesh.TexCoordBuffers is { Length: > 0 } &&
-            mesh.TexCoordBuffers[0] is XRDataBuffer uv0Buffer
-                ? uv0Buffer.GetVector2(vertexIndex) : Vector2.Zero;
-        Vector2 uv1 = mesh.TexCoordBuffers is { Length: > 1 } &&
-            mesh.TexCoordBuffers[1] is XRDataBuffer uv1Buffer
-                ? uv1Buffer.GetVector2(vertexIndex) : Vector2.Zero;
-        Vector4 color0 = mesh.ColorBuffers is { Length: > 0 } &&
-            mesh.ColorBuffers[0] is XRDataBuffer color0Buffer
-                ? color0Buffer.GetVector4(vertexIndex) : Vector4.One;
-        Vector4 color1 = mesh.ColorBuffers is { Length: > 1 } &&
-            mesh.ColorBuffers[1] is XRDataBuffer color1Buffer
-                ? color1Buffer.GetVector4(vertexIndex) : Vector4.One;
-        return AdvancedPackedVertexCodec.Pack(
-            position, normal,
-            new Vector3(tangent4.X, tangent4.Y, tangent4.Z), tangent4.W,
-            uv0, uv1, color0, color1, sourceIndex,
-            mesh.TexCoordBuffers is { Length: > 1 } &&
-            mesh.TexCoordBuffers[1] is XRDataBuffer);
-    }
+        => AdvancedPackedVertexCodec.Pack(mesh, vertexIndex, sourceIndex);
 
     private unsafe void PackSkinInfluences(
         XRMesh mesh,
@@ -1269,7 +1283,8 @@ AdvancedGpuDeformationStaticBuffers replacement =
         successor.Assign(
             source.Scene,
             source.DatabaseEpoch,
-            source.TopologyGeneration);
+            source.TopologyGeneration,
+            source.PreparationPolicy);
         _staticGeneration = successor;
         EnsureCpuCapacity(ref _sourceVertices, source.SourceVertexCount);
         EnsureCpuCapacity(ref _skinInfluences, source.SkinInfluenceCount);
@@ -1287,6 +1302,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
                  source.MeshSlices)
         {
             _meshSlices.Add(mesh, slice);
+            _staticGeneration.InputWitnesses.Add(mesh, source.InputWitnesses[mesh]);
         }
         _sourceVertexCount = source.SourceVertexCount;
         _skinInfluenceCount = source.SkinInfluenceCount;
@@ -1460,11 +1476,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
     }
 
     private static bool CanReadCanonicalVertices(XRMesh mesh)
-        => mesh.Vertices.Length == mesh.VertexCount ||
-           mesh.PositionsBuffer is
-           {
-               ClientSideSource: not null,
-           };
+        => AdvancedPackedVertexCodec.CanReadMesh(mesh);
 
     private static bool TryGetIndexedBlendshapeData(
         Vertex vertex,
@@ -1524,21 +1536,31 @@ AdvancedGpuDeformationStaticBuffers replacement =
         XRDataBuffer? source,
         AdvancedActiveBlendshape[] destination,
         uint destinationOffset,
-        uint count)
+        uint count,
+        uint shapeCount,
+        bool requireExactAuthoredInputs)
     {
         if (count == 0u)
             return;
-        if (source is null || count > source.ElementCount)
+        if (source is null || count > source.ElementCount ||
+            requireExactAuthoredInputs && (source.GpuProduced || source.ClientSideSource is not { } memory || memory.Length < source.Length ||
+            !source.TryGetAddress(out VoidPtr address) || address == VoidPtr.Zero ||
+            source.ComponentType != EComponentType.Float || source.ElementSize != 8))
             throw new InvalidOperationException(
                 "Active blendshape weights are unavailable.");
 
+        float previousShape = -1;
         for (uint i = 0u; i < count; i++)
         {
             Vector2 pair = source.GetVector2(i);
+            if (requireExactAuthoredInputs && (!float.IsFinite(pair.X) || !float.IsFinite(pair.Y) || pair.X < 0 ||
+                pair.X >= shapeCount || pair.X <= previousShape || pair.X != MathF.Truncate(pair.X)))
+                throw new InvalidOperationException("Active blendshape weights must contain exact in-range shape indices and finite weights.");
             destination[destinationOffset + i] =
                 new AdvancedActiveBlendshape(
                     checked((uint)Math.Max(0.0f, pair.X)),
                     pair.Y);
+            previousShape = pair.X;
         }
     }
 

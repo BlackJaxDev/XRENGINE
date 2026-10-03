@@ -34,15 +34,19 @@ internal sealed class WebGpuAdvancedSceneSlot : IDisposable
     internal uint RecordingSequence { get; private set; }
     internal uint SubmittedSequence { get; private set; }
     internal bool IsAvailable => !_lease.IsValid && SubmittedSequence == 0 && RecordingSequence == 0;
+    internal uint CurrentDeformationBytes { get; private set; }
+    internal uint PreviousDeformationBytes { get; private set; }
+    internal AdvancedGpuDeformationPublication CopiedDeformation { get; set; }
 
     internal void Prepare(AdvancedGpuScenePublicationLease lease,
-        AdvancedGpuScenePublicationSnapshot snapshot, uint frameSequence)
+        AdvancedGpuScenePublicationSnapshot snapshot, uint frameSequence, uint currentDeformationBytes, uint previousDeformationBytes)
     {
         if (!IsAvailable || !lease.IsValid || frameSequence == 0)
             throw new InvalidOperationException("WebGPU.Advanced.SlotOwned: a recorded or GPU-owned slot cannot be overwritten.");
         AdvancedGpuScenePublication publication = lease.Reference.Publication;
         bool sceneChanged = _residentScene != publication;
-        bool geometryChanged = !_residentGeometry || !_geometryImage.Matches(snapshot.GeometryPayloads, publication.DatabaseEpoch);
+        bool geometryChanged = !_residentGeometry || !_geometryImage.Matches(snapshot.GeometryPayloads, publication.DatabaseEpoch,
+            currentDeformationBytes, previousDeformationBytes);
         int priorScene = SceneBuffer, priorGeometry = GeometryBuffer;
         if (sceneChanged)
         {
@@ -52,7 +56,8 @@ internal sealed class WebGpuAdvancedSceneSlot : IDisposable
         if (geometryChanged)
         {
             _residentGeometry = false;
-            _geometryImage.Pack(snapshot.GeometryPayloads, publication.DatabaseEpoch, _renderer.MaximumAdvancedStorageBytes);
+            _geometryImage.Pack(snapshot.GeometryPayloads, publication.DatabaseEpoch, _renderer.MaximumAdvancedStorageBytes,
+                currentDeformationBytes, previousDeformationBytes);
         }
         SceneArena.EnsureCapacity(_sceneImage.Bytes.Length);
         GeometryArena.EnsureCapacity(_geometryImage.Bytes.Length);
@@ -88,6 +93,9 @@ internal sealed class WebGpuAdvancedSceneSlot : IDisposable
         _lease = lease;
         _snapshot = snapshot;
         RecordingSequence = frameSequence;
+        CurrentDeformationBytes = currentDeformationBytes;
+        PreviousDeformationBytes = previousDeformationBytes;
+        CopiedDeformation = default;
     }
 
     internal void EndRecording(uint frameSequence, bool submitted)

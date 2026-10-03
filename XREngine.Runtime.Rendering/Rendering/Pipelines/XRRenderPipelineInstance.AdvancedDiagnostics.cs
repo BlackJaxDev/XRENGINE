@@ -4,7 +4,8 @@ using XREngine.Rendering.Commands;
 
 public partial class XRRenderPipelineInstance
 {
-    private const int AdvancedDiagnosticPhaseCount = 3;
+    private static readonly int AdvancedDiagnosticPhaseCount =
+        Enum.GetValues<EAdvancedVisibilityStageBackendPhase>().Length;
     private readonly object _advancedProfileDiagnosticLock = new();
     private readonly AdvancedProfileStageDiagnostic[] _advancedProfileStageDiagnostics =
         new AdvancedProfileStageDiagnostic[

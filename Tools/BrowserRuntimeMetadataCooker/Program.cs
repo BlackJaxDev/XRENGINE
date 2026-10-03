@@ -59,7 +59,7 @@ XRWorld world = AssetManager.Deserializer.Deserialize<XRWorld>(reader)
     ?? throw new InvalidDataException("Browser fixture world did not deserialize to XRWorld.");
 byte[] worldPayload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
     () => CookedBinarySerializer.Serialize(world));
-CookedAssetBlob worldBlob = new(typeof(XRWorld).AssemblyQualifiedName!, CookedAssetFormat.BinaryV1, worldPayload);
+CookedAssetBlob worldBlob = new(typeof(XRWorld).AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, worldPayload);
 File.WriteAllBytes(Path.Combine(outputDirectory, "EngineSmokeWorld.bin"), MemoryPackSerializer.Serialize(worldBlob));
 
 AotRuntimeMetadata metadata = AotRuntimeMetadataBuilder.Build(

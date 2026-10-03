@@ -120,8 +120,12 @@ public static partial class CookedBinarySerializer
             if (!allowCustom || !codec.CanHandle(runtimeType))
                 return false;
 
+            using var loopScope = EnterReflectionScope(value, out bool isCycle);
+            if (isCycle)
+                throw new NotSupportedException($"CookedBinary.CustomReferenceCycleUnsupported: '{runtimeType}' has a cycle through its feature payload.");
             writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
             WriteTypeName(writer, runtimeType);
+            using var referenceScope = writer.EnterIndependentReferenceScope();
             codec.Write(writer, value);
             return true;
         }
@@ -149,6 +153,7 @@ public static partial class CookedBinarySerializer
                 return false;
             }
 
+            using var referenceScope = reader.EnterIndependentReferenceScope();
             value = codec.Read(targetType, reader);
             return true;
         }
@@ -162,6 +167,9 @@ public static partial class CookedBinarySerializer
             if (!allowCustom || !codec.CanHandle(runtimeType))
                 return false;
 
+            using var loopScope = EnterReflectionScope(value, out bool isCycle);
+            if (isCycle)
+                throw new NotSupportedException($"CookedBinary.CustomReferenceCycleUnsupported: '{runtimeType}' has a cycle through its feature payload.");
             calculator.AddBytes(SizeOfTypeName(runtimeType) + codec.CalculateSize(value));
             return true;
         }

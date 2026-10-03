@@ -3,11 +3,25 @@ namespace XREngine.Rendering.Shaders.Compilation;
 /// <summary>Exact WebGPU texture shape shared by artifact validation and backend binding.</summary>
 public readonly record struct ShaderTextureBindingType(
     bool IsStorage, string ViewDimension, string SampleType, string? StorageFormat,
-    string? StorageAccess, string WgslType)
+    string? StorageAccess, string WgslType, bool IsMultisampled = false)
 {
     public static bool TryParse(string bindingType, out ShaderTextureBindingType shape)
     {
         shape = default;
+        if (bindingType == "texture-depth-multisampled-2d")
+        {
+            shape = new(false, "2d", "depth", null, null, "texture_depth_multisampled_2d", true);
+            return true;
+        }
+        const string multisampledPrefix = "texture-multisampled-2d-";
+        if (bindingType.StartsWith(multisampledPrefix, StringComparison.Ordinal))
+        {
+            string sample = bindingType[multisampledPrefix.Length..];
+            string? scalar = sample switch { "unfilterable-float" => "f32", "uint" => "u32", "sint" => "i32", _ => null };
+            if (scalar is null) return false;
+            shape = new(false, "2d", sample, null, null, $"texture_multisampled_2d<{scalar}>", true);
+            return true;
+        }
         foreach (string dimension in new[] { "2d-array", "2d", "cube" })
         {
             string token = dimension.Replace('-', '_');
@@ -45,6 +59,6 @@ public readonly record struct ShaderTextureBindingType(
     }
 
     private static bool StorageFormatSupported(string format) => format is
-        "rgba8unorm" or "rgba16float" or "r32float" or "rg32float" or "rgba32float" or
+        "rgba8unorm" or "rgba16float" or "rgba16uint" or "r32float" or "rg32float" or "rgba32float" or
         "r32uint" or "rg32uint" or "rgba32uint" or "r32sint" or "rg32sint" or "rgba32sint";
 }

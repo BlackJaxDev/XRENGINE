@@ -35,7 +35,8 @@ public sealed partial class AdvancedGpuDeformationResources
             return;
 
         cancellationToken.ThrowIfCancellationRequested();
-        PendingGpuDeformationMeshPreparation pending = CreatePendingMesh(mesh, 0u, 0UL);
+        PendingGpuDeformationMeshPreparation pending = CreatePendingMesh(
+            mesh, 0u, 0UL, EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices);
         uint steps = 0u;
         while (pending.Stage < PendingGpuDeformationMeshPreparation.Spill)
         {
@@ -44,7 +45,7 @@ public sealed partial class AdvancedGpuDeformationResources
             AdvanceManagedMeshPreparation(pending);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        if (!MatchesPendingSource(pending) ||
+        if (!MatchesPendingSource(pending, EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices) ||
             pending.RecordCount != pending.PackedRecordCount ||
             pending.DeltaCount != pending.PackedDeltaCount)
             throw new InvalidOperationException(
@@ -53,6 +54,7 @@ public sealed partial class AdvancedGpuDeformationResources
         ImportedGpuDeformationMeshPayload payload = new()
         {
             GeometryRevision = pending.GeometryRevision,
+            InputWitness = pending.InputWitness,
             VertexCount = pending.VertexCount,
             SourceVertices = pending.SourceVertices,
             Names = pending.Names,
@@ -78,11 +80,15 @@ public sealed partial class AdvancedGpuDeformationResources
         ThrowIfFrameClosed();
         ArgumentNullException.ThrowIfNull(mesh);
         if (_meshSlices.TryGetValue(mesh, out slice) &&
-            slice.TopologyGeneration == topologyGeneration)
+            slice.TopologyGeneration == topologyGeneration &&
+            _staticGeneration.InputWitnesses.TryGetValue(mesh, out var witness) &&
+            witness.Policy == _meshPreparationPolicy &&
+            (!UsesPackedAggregateInputs || witness.Matches(mesh, _meshPreparationPolicy)))
             return AdvancedGpuDeformationMeshPreparationStatus.Ready;
         if (_unsupportedMeshPreparationSources.TryGetValue(mesh, out var unsupported) &&
             unsupported.GeometryRevision == mesh.GeometryRevision &&
-            unsupported.TopologyGeneration == topologyGeneration)
+            unsupported.TopologyGeneration == topologyGeneration &&
+            unsupported.Policy == _meshPreparationPolicy)
         {
             slice = default;
             return AdvancedGpuDeformationMeshPreparationStatus.Unsupported;
@@ -97,7 +103,7 @@ public sealed partial class AdvancedGpuDeformationResources
 
         PendingGpuDeformationMeshPreparation? pending = _pendingMeshPreparation;
         if (pending is not null &&
-            (pending.Unsupported || !MatchesPendingSource(pending) ||
+            (pending.Unsupported || !MatchesPendingSource(pending, _meshPreparationPolicy) ||
              (ReferenceEquals(pending.Mesh, mesh) &&
               pending.TopologyGeneration != topologyGeneration) ||
              (renderFrame >= pending.LastOwnerVisitFrame &&
@@ -131,8 +137,8 @@ public sealed partial class AdvancedGpuDeformationResources
             }
 
             if (!TryCreatePendingFromImportedPayload(mesh, topologyGeneration,
-                    renderFrame, out pending))
-                pending = CreatePendingMesh(mesh, topologyGeneration, renderFrame);
+                    renderFrame, _meshPreparationPolicy, out pending))
+                pending = CreatePendingMesh(mesh, topologyGeneration, renderFrame, _meshPreparationPolicy);
             _pendingMeshPreparation = pending;
         }
         pending.LastOwnerVisitFrame = renderFrame;
@@ -152,7 +158,7 @@ public sealed partial class AdvancedGpuDeformationResources
             return AdvancedGpuDeformationMeshPreparationStatus.Pending;
         }
 
-        if (!MatchesPendingSource(pending))
+        if (!MatchesPendingSource(pending, _meshPreparationPolicy))
         {
             _pendingMeshPreparation = null;
             slice = default;
@@ -168,46 +174,64 @@ public sealed partial class AdvancedGpuDeformationResources
         return AdvancedGpuDeformationMeshPreparationStatus.Ready;
     }
 
-    private static bool MatchesPendingSource(PendingGpuDeformationMeshPreparation pending)
+    private static bool MatchesPendingSource(
+        PendingGpuDeformationMeshPreparation pending,
+        EAdvancedDeformationMeshPreparationPolicy policy)
     {
         XRMesh mesh = pending.Mesh;
         return pending.GeometryRevision == mesh.GeometryRevision &&
+            pending.InputWitness.Matches(mesh, policy) &&
             pending.VertexCount == mesh.VertexCount &&
             CanReadCanonicalVertices(mesh) &&
             ReferenceEquals(pending.SourceVertices, mesh.Vertices) &&
             ReferenceEquals(pending.Names, mesh.BlendshapeNames) &&
-            pending.ActiveBlendshapeCount == (mesh.Vertices.Length == mesh.VertexCount
-                ? mesh.BlendshapeNames.Length : 0);
+            pending.ActiveBlendshapeCount == GetPreparedBlendshapeCount(mesh, policy) &&
+            MatchesCanonicalMorphWitness(pending);
     }
 
     private static PendingGpuDeformationMeshPreparation CreatePendingMesh(
         XRMesh mesh,
         uint topologyGeneration,
-        ulong renderFrame)
+        ulong renderFrame,
+        EAdvancedDeformationMeshPreparationPolicy policy)
     {
         int vertexCount = mesh.VertexCount;
-        int blendshapeCount = mesh.Vertices.Length == vertexCount
-            ? mesh.BlendshapeNames.Length : 0;
-        return new PendingGpuDeformationMeshPreparation
+        int blendshapeCount = GetPreparedBlendshapeCount(mesh, policy);
+        PendingGpuDeformationMeshPreparation pending = new()
         {
             Mesh = mesh,
             TopologyGeneration = topologyGeneration,
             GeometryRevision = mesh.GeometryRevision,
+            InputWitness = AdvancedGpuDeformationInputWitness.Capture(mesh, policy),
             VertexCount = vertexCount,
             SourceVertices = mesh.Vertices,
             Names = mesh.BlendshapeNames,
             ActiveBlendshapeCount = blendshapeCount,
             LastOwnerVisitFrame = renderFrame,
-            SourceIndices = new int[checked(vertexCount * blendshapeCount)],
             VerticesScratch = new AdvancedDeformedVertex[vertexCount],
             RangesScratch = new AdvancedBlendshapeRange[blendshapeCount],
         };
+        if (policy != EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs ||
+            !TryInitializeCanonicalMorphs(pending))
+        {
+            if (blendshapeCount != 0 && mesh.Vertices.Length != vertexCount)
+                throw new NotSupportedException("Aggregate deformation requires canonical sparse morph records or authored per-vertex morph data.");
+            pending.SourceIndices = new int[checked(vertexCount * blendshapeCount)];
+        }
+        return pending;
     }
+
+    private static int GetPreparedBlendshapeCount(
+        XRMesh mesh,
+        EAdvancedDeformationMeshPreparationPolicy policy)
+        => (policy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs ||
+            mesh.Vertices.Length == mesh.VertexCount) ? mesh.BlendshapeNames.Length : 0;
 
     private static bool TryCreatePendingFromImportedPayload(
         XRMesh mesh,
         uint topologyGeneration,
         ulong renderFrame,
+        EAdvancedDeformationMeshPreparationPolicy policy,
         out PendingGpuDeformationMeshPreparation pending)
     {
         if (!ImportedMeshPayloads.TryGetValue(mesh, out var payload))
@@ -215,17 +239,25 @@ public sealed partial class AdvancedGpuDeformationResources
             pending = null!;
             return false;
         }
-        if (payload.GeometryRevision == mesh.GeometryRevision &&
+        // Import workers retain authored rich morphs. A native renderer must decode its own
+        // canonical representation rather than consume that cache or evict it for desktop reuse.
+        if (payload.InputWitness.Policy != policy)
+        {
+            pending = null!;
+            return false;
+        }
+        if (payload.GeometryRevision == mesh.GeometryRevision && payload.InputWitness.Matches(mesh, policy) &&
             payload.VertexCount == mesh.VertexCount &&
             ReferenceEquals(payload.SourceVertices, mesh.Vertices) &&
             ReferenceEquals(payload.Names, mesh.BlendshapeNames) &&
-            payload.ActiveBlendshapeCount == mesh.BlendshapeNames.Length)
+            payload.ActiveBlendshapeCount == GetPreparedBlendshapeCount(mesh, policy))
         {
             pending = new PendingGpuDeformationMeshPreparation
             {
                 Mesh = mesh,
                 TopologyGeneration = topologyGeneration,
                 GeometryRevision = payload.GeometryRevision,
+                InputWitness = payload.InputWitness,
                 VertexCount = payload.VertexCount,
                 SourceVertices = payload.SourceVertices,
                 Names = payload.Names,
@@ -265,6 +297,7 @@ public sealed partial class AdvancedGpuDeformationResources
             {
                 GeometryRevision = pending.GeometryRevision,
                 TopologyGeneration = pending.TopologyGeneration,
+                Policy = pending.InputWitness.Policy,
             });
     }
 
@@ -302,6 +335,14 @@ public sealed partial class AdvancedGpuDeformationResources
             switch (pending.Stage)
             {
                 case PendingGpuDeformationMeshPreparation.Spill:
+                    if (pending.InputWitness.Policy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs &&
+                        !pending.Mesh.HasSkinning)
+                    {
+                        pending.InfluencesScratch = new AdvancedSkinInfluence[vertexCount];
+                        pending.SpillScratch = [];
+                        pending.Stage = PendingGpuDeformationMeshPreparation.Commit;
+                        continue;
+                    }
                     if (pending.SkinningState is null)
                     {
                         try
@@ -375,6 +416,10 @@ public sealed partial class AdvancedGpuDeformationResources
         int blendshapeCount = pending.ActiveBlendshapeCount;
         switch (pending.Stage)
         {
+            case PendingGpuDeformationMeshPreparation.CanonicalMorphCount:
+            case PendingGpuDeformationMeshPreparation.CanonicalMorphPack:
+                AdvanceCanonicalMorphPreparation(pending);
+                return;
             case PendingGpuDeformationMeshPreparation.Index:
                 if (blendshapeCount == 0 || pending.VertexIndex >= vertexCount)
                 {
@@ -634,7 +679,8 @@ public sealed partial class AdvancedGpuDeformationResources
         out AdvancedGpuDeformationMeshSlice slice)
     {
         slice = default;
-        if (!MatchesSkinningWitness(pending) ||
+        if (((pending.InputWitness.Policy == EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices ||
+              pending.Mesh.HasSkinning) && !MatchesSkinningWitness(pending)) ||
             pending.RecordCount != pending.PackedRecordCount ||
             pending.DeltaCount != pending.PackedDeltaCount)
         {
@@ -712,6 +758,7 @@ public sealed partial class AdvancedGpuDeformationResources
             sourceBase, influenceBase, rangeBase, vertexCount, rangeCount,
             pending.TopologyGeneration);
         _meshSlices[pending.Mesh] = slice;
+        _staticGeneration.InputWitnesses[pending.Mesh] = pending.InputWitness;
         return true;
     }
 

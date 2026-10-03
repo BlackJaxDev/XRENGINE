@@ -14,9 +14,8 @@ public partial class VPRC_VendorUpscale
             return;
         requirements.RequireRasterProgram(ParentPipeline is AdvancedRenderPipeline
             ? "advanced::vendor-fallback" : "vendor-fallback");
-        if (requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1 ||
-            requirements.OutputProfile.MsaaSampleCount != 1)
-            requirements.Diagnostics.Add("The cooked no-vendor presentation operation requires mono, single-sample output.");
+        if (requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("The cooked no-vendor presentation operation requires mono output.");
         if (requirements.OutputProfile.AntiAliasingMode == EAntiAliasingMode.Dlaa)
             requirements.Diagnostics.Add("NVIDIA DLAA requires a native vendor service; the WebGPU presentation operation cannot replace it.");
         if (string.IsNullOrWhiteSpace(FrameBufferName))

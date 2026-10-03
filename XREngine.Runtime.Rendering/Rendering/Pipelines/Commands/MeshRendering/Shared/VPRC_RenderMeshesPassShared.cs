@@ -26,6 +26,12 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             MeshSubmissionStrategy is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented
             ? "gpu-meshlet-meshes" : MeshSubmissionStrategy == EMeshSubmissionStrategy.CpuDirect
                 ? "cpu-direct-meshes" : "gpu-driven-meshes");
+        if (requirements.Backend == RendererBackendId.WebGPU && IsMeshletRequested(MeshSubmissionStrategy))
+        {
+            requirements.RequireComputeProgram("meshlets::cull-expand");
+            requirements.RequireComputeProgram("meshlets::finalize-indexed");
+            requirements.RequireComputeProgram("meshlets::refit-bounds");
+        }
         requirements.ScenePasses.Add(RenderPass);
         if (_readWriteTextureNames.Count > 0) requirements.RequireOperation("storage-images");
     }
@@ -205,6 +211,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 "Advanced late-pass eligibility requires CPU-direct filtered submission; GPU indirect replay has no per-draw late-lane receipt.");
             return false;
         }
+        if (IsMeshletRequested(meshSubmissionStrategy) && AbstractRenderer.Current is IMeshletIndexedBackendCapability)
+            return true;
         if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy() &&
             activeInstance.Pipeline is ShadowRenderPipeline)
         {
@@ -231,7 +239,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         if (IsMeshletRequested(meshSubmissionStrategy))
         {
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer?.SupportsMeshletDispatch() == true)
+            if (renderer is IMeshletIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
             {
                 VPRC_RenderMeshesPassMeshlet.Execute(this, meshSubmissionStrategy);
                 return;
@@ -329,7 +337,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         AbstractRenderer? renderer,
         EMeshSubmissionStrategy requestedStrategy)
     {
-        if (renderer?.SupportsMeshletDispatch() == true)
+        if (renderer is IMeshletIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
         {
             return requestedStrategy.IsAnyMeshletStrategy()
                 ? requestedStrategy

@@ -16,12 +16,12 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     private bool _litV1, _litV2, _authoredLit;
     private bool _litTexture, _litNormalTexture;
     private readonly List<string> _lightPaths = [];
-    private readonly Dictionary<EngineMaterialSemanticIdentity, (string Path, string? Material, string? Mesh)> _materialPaths = [];
+    private readonly Dictionary<EngineMaterialSemanticIdentity, (string ScenePath, string Path, string? Material, string? Mesh)> _materialPaths = [];
 
-    internal void InspectMaterial(XRMaterial? material, string path, string? mesh)
+    internal void InspectMaterial(XRMaterial? material, string path, string? mesh, string? scenePath = null)
     {
         if (material is not null)
-            _materialPaths.TryAdd(material.EngineSemantic, (path, material.Name, mesh));
+            _materialPaths.TryAdd(material.EngineSemantic, (scenePath ?? string.Empty, path, material.Name, mesh));
         _litV1 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1;
         _litV2 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
         _authoredLit |= material?.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1;
@@ -75,37 +75,54 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
         }
     }
 
-    internal void Complete()
+    internal void Complete(BrowserCapabilityReport? report = null, string? worldPath = null)
     {
         if (_directionalLights > 4 || _pointLights > 8 || _spotLights > 8 ||
             _directionalShadows > 1 || _pointShadows > 1 || _spotShadows > 1)
-            throw new NotSupportedException($"BrowserCook.LightCapacityExceeded: pass 'forward-lighting' supports 4 directional, 8 point, 8 spot lights and at most one standalone shadow map for each type. Authored lights: {string.Join(", ", _lightPaths)}.");
+            Collect(() => throw new NotSupportedException($"BrowserCook.LightCapacityExceeded: pass 'forward-lighting' supports 4 directional, 8 point, 8 spot lights and at most one standalone shadow map for each type. Authored lights: {string.Join(", ", _lightPaths)}."),
+                null, "forward-lighting");
         bool local = _pointShadows != 0 || _spotShadows != 0;
         if (_directionalShadows == 0 && !local) return;
         if (_authoredLit)
         {
             var authored = _materialPaths[EngineMaterialSemanticIdentity.AuthoredLitV1];
-            throw new NotSupportedException($"BrowserCook.AuthoredLitShadowUnsupported: '{authored.Path}' mesh '{authored.Mesh}', material '{authored.Material}' needs an authored cooked shadow-caster companion before using casting lights.");
+            Collect(() => throw new NotSupportedException($"BrowserCook.AuthoredLitShadowUnsupported: '{authored.Path}' mesh '{authored.Mesh}', material '{authored.Material}' needs an authored cooked shadow-caster companion before using casting lights."),
+                EngineMaterialSemanticIdentity.AuthoredLitV1, "shadow-caster");
         }
         string output = local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1";
-        if (_litV1) Require(EngineMaterialSemanticIdentity.StandardLitColorV1, "opaque-forward", "static-position-normal-v1", output);
-        if (_litV2) Require(EngineMaterialSemanticIdentity.StandardLitColorV2, "forward-coverage", "static-position-normal-v1", output);
-        if (_litTexture) Require(EngineMaterialSemanticIdentity.StandardLitTextureV1, "opaque-forward", "position-normal-uv-v1", output);
-        if (_litNormalTexture) Require(EngineMaterialSemanticIdentity.StandardLitTextureV1, "opaque-forward", "position-normal-tangent-uv-v1", output);
+        if (_litV1) Check(EngineMaterialSemanticIdentity.StandardLitColorV1, "opaque-forward", "static-position-normal-v1", output);
+        if (_litV2) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "forward-coverage", "static-position-normal-v1", output);
+        if (_litTexture) Check(EngineMaterialSemanticIdentity.StandardLitTextureV1, "opaque-forward", "position-normal-uv-v1", output);
+        if (_litNormalTexture) Check(EngineMaterialSemanticIdentity.StandardLitTextureV1, "opaque-forward", "position-normal-tangent-uv-v1", output);
         if (_directionalShadows != 0)
         {
-            Require(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1, "depth", "static-position-v1", "depth-normal-v1");
-            if (_litV2) Require(EngineMaterialSemanticIdentity.StandardLitColorV2, "depth", "static-position-v1", "depth-normal-v1");
+            Check(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1, "depth", "static-position-v1", "depth-normal-v1");
+            if (_litV2) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "depth", "static-position-v1", "depth-normal-v1");
         }
         if (_pointShadows != 0)
         {
-            Require(EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1, "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
-            if (_litV2) Require(EngineMaterialSemanticIdentity.StandardLitColorV2, "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
+            Check(EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1, "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
+            if (_litV2) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
         }
         if (_spotShadows != 0)
         {
-            Require(EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1, "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
-            if (_litV2) Require(EngineMaterialSemanticIdentity.StandardLitColorV2, "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
+            Check(EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1, "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
+            if (_litV2) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
+        }
+
+        void Check(EngineMaterialSemanticIdentity semantic, string pass, string vertex, string target)
+            => Collect(() => Require(semantic, pass, vertex, target), semantic, pass);
+
+        void Collect(Action action, EngineMaterialSemanticIdentity? semantic, string pass)
+        {
+            if (report is null)
+            {
+                action();
+                return;
+            }
+            var location = semantic is not null && _materialPaths.TryGetValue(semantic.Value, out var material)
+                ? material : (ScenePath: worldPath ?? string.Empty, Path: "lighting", Material: (string?)null, Mesh: (string?)null);
+            report.Inspect(action, location.ScenePath, location.Path, material: location.Material, pass: pass);
         }
     }
 

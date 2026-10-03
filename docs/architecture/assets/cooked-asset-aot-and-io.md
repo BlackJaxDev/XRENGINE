@@ -44,7 +44,7 @@ for the current design.
 │    ← reads CookedAssetBlob from archive                  │
 │    ← CookedAssetTypeReference.Resolve() resolves type    │
 │    ← runtime format dispatch chooses registry-backed     │
-│       RuntimeBinaryV1 or generic BinaryV1 hydrate path   │
+│       RuntimeBinaryV1; non-AOT generic BinaryV1/V2       │
 │                                                          │
 │  CookedBinarySerializer (MemoryPack path)                │
 │    └─ XRAssetMemoryPackAdapter.Deserialize()             │
@@ -111,6 +111,23 @@ The build pipeline selects that format only for types registered in `PublishedCo
 `AnimationClip`, `BlendTree1D`, `BlendTree2D`, `BlendTreeDirect`, and `AnimStateMachine`).
 Published AOT runtime validates those types against `AotRuntimeMetadata.PublishedRuntimeAssetTypeNames`
 before dispatching to the registered runtime serializer.
+
+Generic editor/dev cooks now use `BinaryV2`. Reference definitions and uses in
+the payload retain one object for repeated references in an authored graph,
+including inline pipeline assets shared by cameras. The reader still accepts
+legacy `BinaryV1` for ordinary desktop compatibility, but those older bytes
+cannot recover aliases already duplicated during cooking. Browser world/scene
+cook audits and runtime catalog reads require the new generic format and report
+that such an older derived cache must be recooked. Explicit registered
+`RuntimeBinaryV1` serializers retain their own formats and reference contracts;
+this version change does not rewrite source YAML or existing user cache files.
+
+Within a generic payload, a reference definition writes a marker and 32-bit
+index before the original value marker; a later use writes a reference marker
+and that index. Indices follow object identity in traversal order, never asset
+IDs. Reflected objects and collections register before reading their children,
+so supported cycles resolve. Opaque custom serializers and MemoryPack envelopes
+remain independent payload scopes and own any identity inside them.
 
 Browser content cooking uses the same registered serializer for payload bytes. A serializer owner can also
 register a dependency declaration that lists the separate `.asset` files referenced by those bytes.

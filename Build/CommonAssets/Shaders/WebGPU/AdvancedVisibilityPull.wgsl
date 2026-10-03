@@ -88,6 +88,9 @@ fn advancedVisibilityVertex(@builtin(vertex_index) vertexIndex: u32) -> Visibili
     if (payloadIndex >= arrayLength(&payloads) / 24u) { return rejectedVertex(); }
     let payload = payloadIndex * 24u;
     if (parameters.direct != 0u) {
+        let deformed = (payloads[payload + 22u] & 1u) != 0u;
+        producer = select(3u, 4u, deformed);
+        stream = select(0u, 2u, deformed);
         let firstIndex = payloads[payload + 15u];
         let index = firstIndex + vertexIndex;
         if (vertexIndex >= payloads[payload + 16u] || index < firstIndex || index >= geometry[5u] / 4u || firstIndex % 3u != 0u) { return rejectedVertex(); }

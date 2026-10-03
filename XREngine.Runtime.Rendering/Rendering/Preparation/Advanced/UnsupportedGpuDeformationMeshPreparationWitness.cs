@@ -5,4 +5,5 @@ internal sealed class UnsupportedGpuDeformationMeshPreparationWitness
 {
     internal long GeometryRevision;
     internal uint TopologyGeneration;
+    internal EAdvancedDeformationMeshPreparationPolicy Policy;
 }

@@ -10,6 +10,7 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
     private readonly WebGpuRendererHost _renderer;
     private readonly XRRenderPipelineInstance _owner;
     private readonly WebGpuAdvancedVisibilityFrame[] _frames;
+    private readonly WebGpuAdvancedVisibilityInputStorage _inputs = new();
     private WebGpuAdvancedVisibilityFrame? _current;
     private bool _disposed;
 
@@ -37,12 +38,9 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
     internal bool TryPrepare(in AdvancedVisibilityStageBackendRequest request, out string reason)
     {
         AdvancedPreparationPublication publication = request.Publication;
-        if (!request.Extractor.MatchesPublication(in publication))
-        {
-            reason = "WebGPU.Advanced.PreparationStale: prepared payloads no longer match the sealed publication.";
-            return false;
-        }
-        if (!_renderer.TryAcquireAdvancedScene(request.BackendReadyPackage!, out WebGpuAdvancedSceneSlot? scene, out reason) || scene is null)
+        if (!_inputs.TryCapture(in request, out reason)) return false;
+        if (!_renderer.TryAcquireAdvancedScene(request.BackendReadyPackage!, _inputs.CurrentByteCount, _inputs.PreviousByteCount,
+                out WebGpuAdvancedSceneSlot? scene, out reason) || scene is null)
             return false;
         WebGpuAdvancedVisibilityFrame frame = _frames[scene.SlotIndex];
         if (frame.FrameSequence == _renderer.EngineFrameSequence &&
@@ -51,9 +49,12 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             _current = frame;
             return true;
         }
-        ReadOnlySpan<AdvancedVisibilityPayload> payloads = request.Extractor.VisibilityPayloads;
-        ReadOnlySpan<AdvancedVisibilityCandidate> candidates = request.Extractor.VisibilityCandidates;
-        ReadOnlySpan<EAdvancedGeometryProducer> producers = request.Extractor.VisibilityProducers;
+        ReadOnlySpan<AdvancedVisibilityPayload> payloads = _inputs.Payloads;
+        ReadOnlySpan<AdvancedVisibilityCandidate> candidates = _inputs.Candidates;
+        ReadOnlySpan<EAdvancedGeometryProducer> producers = _inputs.Producers;
+        frame.Deformation = _inputs.Deformation;
+        frame.CurrentDeformationBytes = _inputs.CurrentByteCount;
+        frame.PreviousDeformationBytes = _inputs.PreviousByteCount;
         if (payloads.Length != candidates.Length || payloads.Length != producers.Length ||
             payloads.Length != request.Publication.DrawCount)
         {
@@ -74,28 +75,39 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             Array.Resize(ref frame.ProducerRows, producerWordCount);
         for (int index = 0; index < payloads.Length; index++)
         {
-            EAdvancedGeometryProducer producer = directOutput && !payloads[index].Skinned
-                ? EAdvancedGeometryProducer.CpuDirectStaticIndexed : producers[index];
+            EAdvancedGeometryProducer producer = directOutput
+                ? payloads[index].Skinned ? EAdvancedGeometryProducer.CpuDirectPreSkinned : EAdvancedGeometryProducer.CpuDirectStaticIndexed
+                : producers[index];
             frame.ProducerRows[index * 2] = (uint)producer;
             frame.ProducerRows[index * 2 + 1] = uint.MaxValue;
             ref readonly AdvancedVisibilityPayload payload = ref payloads[index];
             if (payload.Coverage is EAdvancedMaterialCoverageMode.Transparent or EAdvancedMaterialCoverageMode.Refractive)
                 continue;
-            if (submission.Resolved.IsAnyMeshletStrategy() && producer != EAdvancedGeometryProducer.StaticMeshlet)
+            if (submission.Resolved.IsAnyMeshletStrategy() && producer is not (EAdvancedGeometryProducer.StaticMeshlet or EAdvancedGeometryProducer.SkinnedMeshlet))
             {
-                reason = "WebGPU.Advanced.MeshletProducerMissing: the selected meshlet strategy requires resident static meshlets for every native draw; indexed substitution is not allowed.";
+                reason = "WebGPU.Advanced.MeshletProducerMissing: the selected meshlet strategy requires exact resident meshlets for every native draw; indexed substitution is not allowed.";
                 return false;
             }
             if (payload.PrimitiveTopology != (uint)EPrimitiveType.Triangles || payload.InstanceCount != 1 ||
-                payload.CullMode > 1 || payload.Skinned || producer is EAdvancedGeometryProducer.SkinnedMeshlet or EAdvancedGeometryProducer.CpuDirectPreSkinned)
+                !WebGpuAdvancedMaterialContract.SupportsCullMode(payload.CullMode) || payload.Skinned && payload.ForceCpuDiagnostic)
             {
-                reason = "WebGPU.Advanced.GeometryCohortUnsupported: native visibility requires single-instance static triangle geometry; deformation requires its explicit current/previous producer.";
+                reason = "WebGPU.Advanced.GeometryCohortUnsupported: native visibility requires single-instance triangles and an exact canonical geometry producer.";
                 return false;
             }
             if (!scene.Snapshot.Materials.TryGet(payload.Material, out AdvancedMaterialRecord material) ||
-                (material.FeatureFlags & EAdvancedMaterialFeatureFlags.VertexDeformation) != 0)
+                WebGpuAdvancedMaterialContract.GetVertexFeatureRejection(material.FeatureFlags) is not null)
             {
                 reason = "WebGPU.Advanced.VertexCohortUnsupported: material displacement requires its exact native vertex companion.";
+                return false;
+            }
+            if (WebGpuAdvancedMaterialContract.GetSourceRejection(material.SourceContract) is { } sourceReason)
+            {
+                reason = $"WebGPU.Advanced.MaterialSourceUnsupported: {sourceReason}";
+                return false;
+            }
+            if (WebGpuAdvancedEngineSurfaceContract.GetRejection(in material, scene.Snapshot.MaterialPayloads) is { } companionReason)
+            {
+                reason = $"WebGPU.Advanced.EngineSurfaceUnsupported: {companionReason}";
                 return false;
             }
             if (!TryResolveCoverage(scene.Snapshot, in payload, in material,
@@ -122,7 +134,7 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
                 reason = "WebGPU.Advanced.GeometryLayoutInvalid: the retained indexed or meshlet range cannot be expanded without changing primitive identity.";
                 return false;
             }
-            if (producer == EAdvancedGeometryProducer.CpuDirectStaticIndexed)
+            if (producer is EAdvancedGeometryProducer.CpuDirectStaticIndexed or EAdvancedGeometryProducer.CpuDirectPreSkinned)
             {
                 if (frame.CpuDrawCount == WebGpuAdvancedVisibilityFrame.MaximumCpuDraws)
                 {
@@ -145,7 +157,7 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             reason = "WebGPU.Advanced.TriangleCapacity: the complete candidate triangle stream exceeds the selected device storage range; no CPU count fallback is allowed.";
             return false;
         }
-        if (!TryBuildTemporalOverlay(frame, scene.Snapshot, payloads, out reason))
+        if (!TryBuildTemporalOverlay(frame, scene.Snapshot, payloads, _inputs.DeformationSlices, out reason))
             return false;
         frame.Payloads.EnsureCapacity(Math.Max(16, checked(payloads.Length * 96)));
         frame.Candidates.EnsureCapacity(Math.Max(16, checked(candidates.Length * 80)));
@@ -232,7 +244,8 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
     }
 
     private static bool TryBuildTemporalOverlay(WebGpuAdvancedVisibilityFrame frame,
-        AdvancedGpuScenePublicationSnapshot snapshot, ReadOnlySpan<AdvancedVisibilityPayload> payloads, out string reason)
+        AdvancedGpuScenePublicationSnapshot snapshot, ReadOnlySpan<AdvancedVisibilityPayload> payloads,
+        ReadOnlySpan<AdvancedDeformedArenaSlice> slices, out string reason)
     {
         int count = snapshot.Draws.PhysicalRecords.Length;
         if (frame.PreparedRows.Length < count)
@@ -242,8 +255,9 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
         }
         frame.PreparedRows.AsSpan(0, count).Clear();
         frame.PreparedWrites.AsSpan(0, count).Clear();
-        foreach (ref readonly AdvancedVisibilityPayload payload in payloads)
+        for (int payloadIndex = 0; payloadIndex < payloads.Length; payloadIndex++)
         {
+            ref readonly AdvancedVisibilityPayload payload = ref payloads[payloadIndex];
             if (payload.Coverage is EAdvancedMaterialCoverageMode.Transparent or EAdvancedMaterialCoverageMode.Refractive)
                 continue;
             if (!snapshot.Draws.TryGetDenseIndex(payload.Draw, out uint dense) || dense >= count ||
@@ -253,7 +267,7 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
                 !geometry.CurrentVertexData.IsValid || !geometry.IndexData.IsValid ||
                 geometry.CurrentVertexData.ElementStride != 64 || geometry.IndexData.ElementStride != 4 ||
                 payload.FirstIndex != geometry.IndexBase || payload.IndexCount != geometry.IndexCount ||
-                payload.VertexCount != geometry.VertexCount || payload.GeometryOffsets.VertexOffset != geometry.VertexBase)
+                payload.VertexCount != geometry.VertexCount || (!payload.Skinned && payload.GeometryOffsets.VertexOffset != geometry.VertexBase))
             {
                 reason = "WebGPU.Advanced.TemporalRelationInvalid: prepared visibility does not match the retained draw and immutable geometry relation.";
                 return false;
@@ -263,6 +277,28 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
                     (uint)EAdvancedPreparedDrawDeformationFlags.TemporalStatePresent, payload.TemporalReason);
             AdvancedPreparedDrawDeformationRecord row = new(payload.Geometry, draw.Deformation,
                 geometry.VertexBase, geometry.VertexBase, payload.VertexCount, flags);
+            if (payload.Skinned)
+            {
+                AdvancedDeformedArenaSlice slice = slices[payloadIndex];
+                AdvancedGpuDeformationPublication deformation = frame.Deformation;
+                ulong bytes = (ulong)slice.VertexCount * slice.VertexStride;
+                if (!slice.Owner.IsValid || slice.Owner != draw.Deformation || slice.VertexStride != 64 ||
+                    slice.VertexCount != payload.VertexCount || slice.CurrentFrameSlot != deformation.CurrentFrameSlot ||
+                    slice.PreviousFrameSlot != deformation.PreviousFrameSlot ||
+                    slice.CurrentVertexOffset != payload.GeometryOffsets.VertexOffset ||
+                    slice.PreviousVertexOffset != payload.GeometryOffsets.PreviousVertexOffset ||
+                    deformation.ResourceGeneration == 0 || deformation.JobCount == 0 ||
+                    deformation.CurrentVertices is not { } current || slice.CurrentByteOffset > current.Length || bytes > current.Length - slice.CurrentByteOffset ||
+                    deformation.PreviousVertices is not { } previous || slice.PreviousByteOffset > previous.Length || bytes > previous.Length - slice.PreviousByteOffset)
+                {
+                    reason = "WebGPU.Advanced.DeformationRelationInvalid: the captured draw has no exact current/previous aggregate output slice.";
+                    return false;
+                }
+                flags |= EAdvancedPreparedDrawDeformationFlags.Active;
+                if (deformation.PreviousOutputValid && slice.HasValidVelocity && payload.TemporalReason == EAdvancedVelocityValidityReason.Valid)
+                    flags |= EAdvancedPreparedDrawDeformationFlags.PreviousValid;
+                row = new(payload.Geometry, slice.Owner, slice.CurrentVertexOffset, slice.PreviousVertexOffset, slice.VertexCount, flags);
+            }
             int index = checked((int)dense);
             if (frame.PreparedWrites[index] != 0 && frame.PreparedRows[index] != row)
             {
@@ -280,13 +316,13 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
         in AdvancedVisibilityPayload payload, EAdvancedGeometryProducer producer, out uint triangles)
     {
         triangles = 0;
-        if (producer is EAdvancedGeometryProducer.IndirectIndexed or EAdvancedGeometryProducer.CpuDirectStaticIndexed)
+        if (producer is EAdvancedGeometryProducer.IndirectIndexed or EAdvancedGeometryProducer.CpuDirectStaticIndexed or EAdvancedGeometryProducer.CpuDirectPreSkinned)
         {
             if (payload.FirstIndex % 3 != 0 || payload.IndexCount % 3 != 0) return false;
             triangles = payload.IndexCount / 3;
             return true;
         }
-        if (producer != EAdvancedGeometryProducer.StaticMeshlet || payload.GeometryOffsets.MeshletCount == 0) return false;
+        if (producer is not (EAdvancedGeometryProducer.StaticMeshlet or EAdvancedGeometryProducer.SkinnedMeshlet) || payload.GeometryOffsets.MeshletCount == 0) return false;
         if (snapshot.GeometryPayloads.MeshletDescriptors.Data.Length % 80 != 0) return false;
         ReadOnlySpan<AdvancedMeshletDescriptor> meshlets = MemoryMarshal.Cast<byte, AdvancedMeshletDescriptor>(snapshot.GeometryPayloads.MeshletDescriptors.Data);
         uint first = payload.GeometryOffsets.MeshletOffset, count = payload.GeometryOffsets.MeshletCount;

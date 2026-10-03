@@ -1187,7 +1187,7 @@ internal static partial class ProjectBuilder
         // serializers above remain authoritative and retain their original format.
         byte[] payload = callbacks is null ? CookedBinarySerializer.Serialize(instance)
             : CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(instance, callbacks));
-        return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV1, payload);
+        return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV2, payload);
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]

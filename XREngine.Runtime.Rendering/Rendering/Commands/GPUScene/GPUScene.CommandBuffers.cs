@@ -105,6 +105,7 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
+                PublishMeshSubmissionIfRequested();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
                     PublishAdvancedResidentSceneIfRequested();
 

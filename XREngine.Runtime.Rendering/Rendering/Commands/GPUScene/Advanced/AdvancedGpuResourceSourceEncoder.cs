@@ -412,7 +412,7 @@ public static class AdvancedGpuResourceSourceEncoder
             ESizedInternalFormat.Depth24Stencil8 or
             ESizedInternalFormat.Depth32fStencil8;
         reason = translated == EAdvancedTextureFormatClass.Unknown
-            ? $"Texture format '{format}' has no stable advanced-resource translation."
+            ? "The texture format has no stable advanced-resource translation."
             : string.Empty;
         return translated != EAdvancedTextureFormatClass.Unknown;
     }

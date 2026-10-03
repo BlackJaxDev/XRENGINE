@@ -2,6 +2,7 @@ using System.Text;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Serialization;
+using XREngine.Scene;
 
 namespace XREngine;
 
@@ -142,7 +143,9 @@ public partial class AssetManager
             {
                 case RuntimeAssetEncoding.CookedBinary:
                     using (CookedBinaryReadBudget.BeginRuntimeCatalogRead())
-                        asset = CookedAssetReader.LoadAsset(payload, type) as XRAsset;
+                        asset = CookedAssetReader.LoadAsset(payload, type,
+                            requireReferenceGraph: typeof(XRWorld).IsAssignableFrom(type)
+                                || typeof(XRScene).IsAssignableFrom(type)) as XRAsset;
                     break;
                 case RuntimeAssetEncoding.Yaml:
                     EnsureYamlAssetRuntimeSupported(path);

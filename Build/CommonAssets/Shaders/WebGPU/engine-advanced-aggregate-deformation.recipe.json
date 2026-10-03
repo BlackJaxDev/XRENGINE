@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-advanced-aggregate-deformation",
+  "pass": "aggregate-deformation",
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "aggregate-deformation"
+  },
+  "source": "AdvancedAggregateDeformation.wgsl",
+  "entryPoints": {
+    "compute": "advancedAggregateDeformation"
+  },
+  "workgroupSize": [
+    256,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 2,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 256,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "PackedDeformationData",
+        "physicalName": "data",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "CurrentOutput",
+        "physicalName": "current",
+        "group": 0,
+        "binding": 1,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 2,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "firstGroupedJob",
+            "provider": "FirstGroupedJob",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "groupedJobCount",
+            "provider": "GroupedJobCount",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "batchVertexCount",
+            "provider": "BatchVertexCount",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved0",
+            "provider": "Reserved0",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

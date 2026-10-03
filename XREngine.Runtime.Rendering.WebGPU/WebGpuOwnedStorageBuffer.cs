@@ -64,18 +64,18 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
     }
 
     /// <summary>Prepares a complete unexposed slot even when its image exceeds a frame's upload arena.</summary>
-    internal void UploadPreparation(ReadOnlySpan<byte> bytes)
+    internal void UploadPreparation(ReadOnlySpan<byte> bytes, int destinationOffset = 0)
     {
         RequireLiveOwner();
         RequireUnrecordedPreparation();
-        if (_handle == 0 || bytes.Length > _byteLength)
+        if (_handle == 0 || destinationOffset < 0 || bytes.Length > _byteLength - destinationOffset)
             throw new InvalidOperationException("WebGPU.Advanced.PreparationRange: the candidate arena exceeds its storage generation.");
         const int chunkBytes = 64 * 1024 * 1024;
         for (int offset = 0; offset < bytes.Length; offset += chunkBytes)
         {
             ReadOnlySpan<byte> chunk = bytes.Slice(offset, Math.Min(chunkBytes, bytes.Length - offset));
             _renderer.CountAdvancedPreparationUpload(chunk.Length);
-            _renderer.WriteBuffer(_handle, offset, chunk);
+            _renderer.WriteBuffer(_handle, checked(destinationOffset + offset), chunk);
         }
     }
 

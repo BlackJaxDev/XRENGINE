@@ -14,8 +14,7 @@ public static class WebGpuPipelineAdmission
         "cpu-direct-meshes" or "fullscreen-quad" or "screen-ui" or "debug-shapes" or
         "compute" or "color-resolve" or "program-bindings" or "material-override" or
         "memory-barriers" or "gpu-driven-meshes" or "integer-color-targets" or "storage-images" or
-        "advanced-stage-execution" => null,
-        "gpu-meshlet-meshes" => "The engine meshlet route requires its compute-to-indirect lowering and cooked shader family; WebGPU hardware task/mesh shader stages are unavailable.",
+        "advanced-stage-execution" or "gpu-meshlet-meshes" => null,
         "stencil" => "Stencil operations have no installed WebGPU route.",
         "depth-resolve" => "Depth/stencil multisample resolve has no installed WebGPU route.",
         _ => $"Operation '{operation}' has no declared WebGPU capability. Declare the command's actual operations and dependencies.",
@@ -36,6 +35,13 @@ public static class WebGpuPipelineAdmission
             AdvancedVisibilityFamilyAdmission admission = renderer.GetAdvancedVisibilityFamilyAdmission();
             if (!admission.IsAdmitted)
                 throw new NotSupportedException($"WebGPU.Pipeline.NativeFamilyUnavailable: {admission.Reason}");
+        }
+        if (renderer is not null && requirements.Operations.Contains("gpu-meshlet-meshes"))
+        {
+            if (renderer is not IMeshletIndexedBackendCapability meshlets)
+                throw new NotSupportedException("WebGPU.Pipeline.MeshletFamilyUnavailable: the selected renderer requires its complete scoped compute meshlet family.");
+            if (meshlets.GetMeshletIndexedAdmission(out string meshletReason) == EMeshletSubmissionStatus.Rejected)
+                throw new NotSupportedException($"WebGPU.Pipeline.MeshletFamilyUnavailable: {meshletReason}");
         }
         foreach ((string pass, string? identity) in requirements.Programs)
         {

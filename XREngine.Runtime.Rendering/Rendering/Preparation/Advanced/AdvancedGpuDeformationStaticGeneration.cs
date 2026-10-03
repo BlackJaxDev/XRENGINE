@@ -30,10 +30,12 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     public GPUScene? Scene { get; private set; }
     public ulong DatabaseEpoch { get; private set; }
     public ulong TopologyGeneration { get; private set; }
+    public EAdvancedDeformationMeshPreparationPolicy PreparationPolicy { get; private set; }
     public ulong LastUse { get; set; }
     public uint PinCount { get; set; }
     public AdvancedGpuDeformationStaticBuffers Buffers = null!;
     public Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice> MeshSlices = null!;
+    public Dictionary<XRMesh, AdvancedGpuDeformationInputWitness> InputWitnesses = null!;
     public AdvancedDeformedVertex[] SourceVertices = null!;
     public AdvancedSkinInfluence[] SkinInfluences = null!;
     public AdvancedSpillInfluence[] SpillInfluences = null!;
@@ -53,18 +55,22 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     public uint UploadedBlendshapeRecordCount;
     public uint UploadedBlendshapeDeltaCount;
 
-    public bool Matches(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration)
+    public bool Matches(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration,
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy)
         => ReferenceEquals(Scene, scene) &&
            DatabaseEpoch == databaseEpoch &&
-           TopologyGeneration == topologyGeneration;
+           TopologyGeneration == topologyGeneration && PreparationPolicy == preparationPolicy;
 
-    public void Assign(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration)
+    public void Assign(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration,
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy)
     {
         EnsureInitialized();
         Scene = scene;
         DatabaseEpoch = databaseEpoch;
         TopologyGeneration = topologyGeneration;
+        PreparationPolicy = preparationPolicy;
         MeshSlices.Clear();
+        InputWitnesses.Clear();
         SourceVertexCount = 0u;
         SkinInfluenceCount = 0u;
         SpillInfluenceCount = 0u;
@@ -102,6 +108,7 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         MeshSlices = new Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice>(
             _maximumJobs,
             ReferenceEqualityComparer.Instance);
+        InputWitnesses = new(_maximumJobs, ReferenceEqualityComparer.Instance);
         BlendshapeDeltaCount = 1u;
     }
 
@@ -109,6 +116,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     {
         if (MeshSlices is not null)
             MeshSlices.Clear();
+        if (InputWitnesses is not null)
+            InputWitnesses.Clear();
     }
 
     public void Destroy()

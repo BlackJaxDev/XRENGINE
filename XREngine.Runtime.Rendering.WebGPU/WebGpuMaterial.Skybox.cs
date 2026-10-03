@@ -34,9 +34,18 @@ public sealed partial class WebGpuMaterial
             target.ColorFormats.Length != 1 || target.ColorFormats[0] != "rgba16float")
             throw new NotSupportedException("WebGPU.Skybox.OutputUnsupported: sky backgrounds require one linear RGBA16F attachment with single-sample depth before bloom and tonemapping.");
         WebGpuRasterState state = Renderer.RasterState;
-        if (!state.DepthEnabled || state.DepthWrite || state.DepthComparison != EComparison.Lequal ||
-            state.CullMode != ECullMode.None || state.BlendEnabled || state.ColorWriteMask != 15)
-            throw new NotSupportedException("WebGPU.Skybox.RasterUnsupported: normal-Z sky requires less-equal depth, no depth writes, no culling, no blending, and opaque RGBA output.");
+        bool multisampleBackground = RuntimeEngine.Rendering.State.RenderingPipelineState?.AdvancedMultisampleBackground == true;
+        bool validState = multisampleBackground
+            ? !state.DepthEnabled && !state.DepthWrite && state.CullMode == ECullMode.None && state.ColorWriteMask == 15 &&
+                state.BlendEnabled && state.SourceRgb == EBlendingFactor.OneMinusDstAlpha && state.DestinationRgb == EBlendingFactor.One &&
+                state.SourceAlpha == EBlendingFactor.OneMinusDstAlpha && state.DestinationAlpha == EBlendingFactor.One &&
+                state.RgbEquation == EBlendEquationMode.FuncAdd && state.AlphaEquation == EBlendEquationMode.FuncAdd
+            : state.DepthEnabled && !state.DepthWrite && state.DepthComparison == EComparison.Lequal &&
+                state.CullMode == ECullMode.None && !state.BlendEnabled && state.ColorWriteMask == 15;
+        if (!validState)
+            throw new NotSupportedException(multisampleBackground
+                ? "WebGPU.Skybox.RasterUnsupported: Advanced sample coverage requires disabled depth, no culling, RGBA writes, and the exact uncovered-alpha additive blend."
+                : "WebGPU.Skybox.RasterUnsupported: normal-Z sky requires less-equal depth, no depth writes, no culling, no blending, and opaque RGBA output.");
         if (RuntimeEngine.Rendering.State.IsSceneCapturePass || RuntimeEngine.Rendering.State.IsLightProbePass)
             throw new NotSupportedException("WebGPU.Skybox.CaptureUnsupported: environment capture and probe convolution require their own cooked capture outputs.");
         return true;

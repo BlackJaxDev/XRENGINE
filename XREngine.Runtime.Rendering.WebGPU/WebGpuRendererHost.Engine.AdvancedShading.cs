@@ -24,6 +24,15 @@ public sealed partial class WebGpuRendererHost
     {
         if (!TryGetAdvancedVisibilityFrame(instance, in request, out WebGpuAdvancedVisibilityFrame? frame, out reason) || frame is null)
             return false;
+        if (request.MsaaSampleCount == 4)
+        {
+            if (request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve)
+                return TryResolveAdvancedMultisample(in request, instance, frame, out reason);
+            // Canonical MSAA disables HZB occlusion. All WebGPU candidates already
+            // belong to the early stream, so neither late phase has deferred work.
+            reason = string.Empty;
+            return request.Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or EAdvancedVisibilityStageBackendPhase.LateRaster;
+        }
         // This conservative producer places every frustum candidate in the
         // early stream. There is no deferred list for the late raster phase.
         if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)

@@ -78,9 +78,15 @@ public sealed partial class WebGpuRendererHost : IAdvancedVisibilityStageBackend
             failureReason = "WebGPU.Advanced.ViewUnsupported: this depth-derived stage requires an explicit single-view 2D resource family.";
             return false;
         }
-        if (request.MsaaSampleCount != 1)
+        if (request.MsaaSampleCount is not (1 or 4) || request.MsaaSampleCount == 4 &&
+            request.SampleEncoding != EAdvancedVisibilitySampleEncoding.PackedUInt16)
         {
-            failureReason = "WebGPU.Advanced.SampleProfileUnsupported: integer visibility requires an exact single-sample output until a per-sample lowering is selected.";
+            failureReason = "WebGPU.Advanced.SampleProfileUnsupported: native visibility requires one sample or the explicit packed16 four-sample encoding.";
+            return false;
+        }
+        if (request.MsaaSampleCount == 4 && GetAdvancedMultisampleRejection() is { } sampleRejection)
+        {
+            failureReason = sampleRejection;
             return false;
         }
         XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
@@ -217,6 +223,7 @@ public sealed partial class WebGpuRendererHost : IAdvancedVisibilityStageBackend
 
     private void DestroyAdvancedStagePrograms()
     {
+        DestroyAdvancedDeformationInputs();
         ClearAdvancedReservations();
         DestroyAdvancedVisibilityOutputs();
         foreach (AdvancedStageProgram entry in _advancedStagePrograms.Values)

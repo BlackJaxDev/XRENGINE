@@ -324,7 +324,8 @@ public sealed class AdvancedGpuMaterialPublisher
                     request.State,
                     constantWords,
                     textureBindings,
-                    out string updateReason))
+                    out string updateReason,
+                    request.EngineSurface))
             {
                 throw new InvalidOperationException(
                     $"Preflighted material payload replacement failed: {updateReason}");
@@ -342,7 +343,8 @@ public sealed class AdvancedGpuMaterialPublisher
                 constantWords,
                 textureBindings,
                 out AdvancedGpuHandle materialHandle,
-                out string acquireReason))
+                out string acquireReason,
+                request.EngineSurface))
         {
             throw new InvalidOperationException(
                 $"Preflighted material variant creation failed: {acquireReason}");
@@ -415,7 +417,8 @@ public sealed class AdvancedGpuMaterialPublisher
             current.CoverageMode == expected.CoverageMode &&
             current.RequiredAttributeMask == expected.RequiredAttributeMask &&
             current.FeatureFlags == expected.FeatureFlags &&
-            current.EligibilityFlags == expected.EligibilityFlags;
+            current.EligibilityFlags == expected.EligibilityFlags &&
+            current.SourceContract == expected.SourceContract;
     }
 
     /// <summary>Acquires a shared material variant, creating its layout, kernel, and material rows on first use.</summary>
@@ -427,7 +430,8 @@ public sealed class AdvancedGpuMaterialPublisher
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
         out AdvancedGpuHandle materialHandle,
-        out string reason)
+        out string reason,
+        AdvancedEngineSurfaceRecord engineSurface = default)
     {
         materialHandle = AdvancedGpuHandle.Invalid;
         if (!TryPreflight(material, layout, coverage, state, constantWords, textureBindings, out reason))
@@ -456,7 +460,8 @@ public sealed class AdvancedGpuMaterialPublisher
                 constantWords,
                 textureBindings,
                 out AdvancedMaterialVariantHandles handles,
-                out EAdvancedMaterialVariantCreationFailure failure))
+                out EAdvancedMaterialVariantCreationFailure failure,
+                engineSurface))
         {
             reason = $"Canonical material variant creation failed ({(uint)failure}: {failure}).";
             return false;
@@ -479,7 +484,8 @@ public sealed class AdvancedGpuMaterialPublisher
         EAdvancedMaterialRenderStateClass state,
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
-        out string reason)
+        out string reason,
+        AdvancedEngineSurfaceRecord engineSurface = default)
     {
         reason = string.Empty;
         int index = FindVariantByMaterial(materialHandle);
@@ -516,7 +522,7 @@ public sealed class AdvancedGpuMaterialPublisher
         }
         AdvancedMaterialRecord record =
             CreateMaterialRecord(entry.MaterialReference, layout, coverage, state, textureBindings);
-        if (!_database.TryReplaceMaterial(materialHandle, layoutHandle, kernelHandle, record, ReadOnlySpan<AdvancedMaterialValueDescriptor>.Empty, constantWords, textureBindings))
+        if (!_database.TryReplaceMaterial(materialHandle, layoutHandle, kernelHandle, record, ReadOnlySpan<AdvancedMaterialValueDescriptor>.Empty, constantWords, textureBindings, engineSurface))
         {
             reason = "Canonical material replacement failed validation.";
             return false;
@@ -695,6 +701,7 @@ public sealed class AdvancedGpuMaterialPublisher
             RequiredAttributeMask = requiredAttributes,
             FeatureFlags = features,
             EligibilityFlags = eligibility,
+            SourceContract = AdvancedMaterialSourceContract.Classify(material),
         };
     }
 

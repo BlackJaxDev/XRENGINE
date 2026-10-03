@@ -99,7 +99,8 @@ fn selectDraw(payloadIndex: u32) {
         payloads[payload + 19u] != parameters.coverage || payloads[payload + 20u] != parameters.cullMode) { return; }
     if (!includesView(candidate)) { return; }
     let sphere = bitcast<vec4<f32>>(vec4<u32>(candidates[candidate + 4u], candidates[candidate + 5u], candidates[candidate + 6u], candidates[candidate + 7u]));
-    if (!insideFrustum(sphere)) { return; }
+    // Authored deformation without a proven envelope remains conservatively visible.
+    if ((candidates[candidate + 19u] & 24u) == 0u && !insideFrustum(sphere)) { return; }
     let draw = resolveHandle(0u, vec2<u32>(payloads[payload], payloads[payload + 1u]));
     let mesh = resolveHandle(2u, vec2<u32>(payloads[payload + 2u], payloads[payload + 3u]));
     let material = resolveHandle(3u, vec2<u32>(payloads[payload + 4u], payloads[payload + 5u]));
@@ -134,7 +135,7 @@ fn selectDraw(payloadIndex: u32) {
     selected[0] = firstTriangle;
     selected[1] = count;
     selected[2] = producer;
-    selected[3] = select(0u, 2u, producer == 1u || producer == 4u);
+    selected[3] = select(0u, 2u, (payloads[payload + 22u] & 1u) != 0u);
     selected[4] = payload;
     selected[5] = (material - scene[24u]) / scene[26u];
     selected[6] = payloadIndex;

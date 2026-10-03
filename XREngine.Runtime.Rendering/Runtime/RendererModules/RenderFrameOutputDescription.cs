@@ -15,6 +15,13 @@ public readonly record struct RenderFrameOutputDescription(
     RenderFrameOutputCapabilities Capabilities = RenderFrameOutputCapabilities.None,
     RenderOutputRequest SchedulingRequest = default)
 {
+    /// <summary>
+    /// Physical output sample constraint on scene rendering. Presentation-only
+    /// outputs leave internal scene AA to the camera and host settings.
+    /// </summary>
+    public uint? SceneSampleCountOverride
+        => (Capabilities & RenderFrameOutputCapabilities.IndependentSceneSamples) != 0 ? null : Properties.SampleCount;
+
     /// <summary>Gets whether this description identifies a usable acquired output.</summary>
     public bool IsValid =>
         TargetGeneration != 0 &&

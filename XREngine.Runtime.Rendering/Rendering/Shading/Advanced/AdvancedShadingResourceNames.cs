@@ -11,5 +11,6 @@ public static class AdvancedShadingResourceNames
     public const string DenseVelocity = ScopePrefix + ".DenseVelocity";
     public const string ReactiveMask = ScopePrefix + ".ReactiveMask";
     public const string ShadingDiagnostics = ScopePrefix + ".ShadingDiagnostics";
+    public const string SampleRadianceReactive = ScopePrefix + ".SampleRadianceReactive";
     public const string ShadingDebugOutput = ScopePrefix + ".DebugOutput";
 }

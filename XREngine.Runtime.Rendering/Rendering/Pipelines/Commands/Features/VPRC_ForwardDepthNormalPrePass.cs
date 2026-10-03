@@ -80,7 +80,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     // Auxiliary geometry passes must not execute callback commands: debug callbacks
                     // populate the late overlay and otherwise run once per auxiliary replay.
-                    if (!prepassStrategy.IsGpuZeroReadbackStrategy())
+                    if (prepassStrategy.IsAnyMeshletStrategy() && AbstractRenderer.Current is IMeshletIndexedBackendCapability)
+                    {
+                        commands.RenderCPUExplicitlyExcludedMeshes(pass);
+                    }
+                    else if (!prepassStrategy.IsGpuZeroReadbackStrategy())
                     {
                         commands.RenderCPUFiltered(
                             pass,
@@ -105,7 +109,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static EMeshSubmissionStrategy ResolveDepthNormalSubmissionStrategy(EMeshSubmissionStrategy strategy)
         {
-            if (!strategy.IsAnyMeshletStrategy())
+            if (!strategy.IsAnyMeshletStrategy() || AbstractRenderer.Current is IMeshletIndexedBackendCapability)
                 return strategy;
 
             return strategy == EMeshSubmissionStrategy.GpuMeshletInstrumented

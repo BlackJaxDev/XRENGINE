@@ -1,3 +1,4 @@
+using XREngine.Rendering.Commands;
 using System.Text.Json;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
@@ -68,7 +69,7 @@ public sealed partial class WebGpuRenderProgram
             ShaderAbiResourceContract sampler = artifact.Resources[slots.Sampler].Contract;
             string sampleType = _textureShapes[slots.Texture].SampleType;
             string samplerType = artifact.Resources[slots.Sampler].BindingType;
-            if (sampleType is "uint" or "sint" || (sampleType == "depth") != (samplerType == "comparison-sampler") ||
+            if (_textureShapes[slots.Texture].IsMultisampled || sampleType is "uint" or "sint" || (sampleType == "depth") != (samplerType == "comparison-sampler") ||
                 sampleType == "unfilterable-float" && samplerType != "non-filtering-sampler")
                 throw UnsupportedBinding(name, "the declared sampler type is incompatible with the exact texture sample type");
             if (texture.Owner != sampler.Owner || texture.Frequency != sampler.Frequency)
@@ -103,7 +104,7 @@ public sealed partial class WebGpuRenderProgram
             else
             {
                 writer.WriteString("sampleType", texture.SampleType);
-                writer.WriteBoolean("multisampled", false);
+                writer.WriteBoolean("multisampled", texture.IsMultisampled);
             }
         }
         else
@@ -204,8 +205,8 @@ public sealed partial class WebGpuRenderProgram
         bool depth = shape.SampleType == "depth";
         (AbstractRenderAPIObject api, int view, int sampler) = (shape.ViewDimension, resource) switch
         {
-            (_, XRTextureViewBase texture) => Bind((WebGpuTextureView)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0),
-            ("2d", XRTexture2D texture) => Bind((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0),
+            (_, XRTextureViewBase texture) => Bind((WebGpuTextureView)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0, shape.IsMultisampled),
+            ("2d", XRTexture2D texture) => Bind((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0, shape.IsMultisampled),
             ("2d-array", XRTexture2DArray texture) => Bind((WebGpuTexture2DArray)Renderer.GetOrCreateAPIRenderObject(texture)!, depth, slots.Sampler >= 0),
             ("cube", XRTextureCube texture) => Bind((WebGpuTextureCube)Renderer.GetOrCreateAPIRenderObject(texture)!, false, slots.Sampler >= 0),
             _ => throw UnsupportedBinding(name, $"the authored texture type does not match binding '{Artifact.Resources[slots.Texture].BindingType}'"),
@@ -219,11 +220,16 @@ public sealed partial class WebGpuRenderProgram
         }
     }
 
-    private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind(WebGpuTextureView texture, bool depth, bool sampled)
-        => (texture, texture.GetSampledView(), sampled ? texture.GetSampler(depth) : 0);
+    private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind(WebGpuTextureView texture, bool depth, bool sampled, bool multisampled)
+    {
+        int view = texture.GetSampledView();
+        if ((texture.SampleCount > 1) != multisampled)
+            throw UnsupportedBinding(texture.Data.Name ?? "texture-view", "the authored view sample count does not match its exact shader binding");
+        return (texture, view, sampled ? texture.GetSampler(depth) : 0);
+    }
 
-    private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind(WebGpuTexture2D texture, bool depth, bool sampled)
-        => (texture, texture.GetSampledView(depth), sampled ? texture.GetSampler(depth) : 0);
+    private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind(WebGpuTexture2D texture, bool depth, bool sampled, bool multisampled)
+        => (texture, texture.GetSampledView(depth, multisampled), sampled ? texture.GetSampler(depth) : 0);
 
     private static (AbstractRenderAPIObject Owner, int View, int Sampler) Bind<T>(WebGpuLayeredTexture<T> texture,
         bool depth, bool sampled) where T : XRTexture
@@ -234,6 +240,12 @@ public sealed partial class WebGpuRenderProgram
 
     /// <summary>Resolves only declared storage names against this mesh renderer's exact buffer keys.</summary>
     internal void PublishStorageBindings(XRMeshRenderer owner)
+        => PublishStorageBindingsCore(owner, null);
+
+    internal void PublishStorageBindings(GpuMeshSubmissionSourceBindings sources)
+        => PublishStorageBindingsCore(null, sources);
+
+    private void PublishStorageBindingsCore(XRMeshRenderer? owner, GpuMeshSubmissionSourceBindings? sources)
     {
         for (int index = 0; index < Artifact.Resources.Length; index++)
         {
@@ -241,7 +253,10 @@ public sealed partial class WebGpuRenderProgram
             if (resource.Contract.Kind != ShaderAbiResourceKind.StorageBuffer)
                 continue;
             string name = resource.Contract.Name;
-            if (!owner.Buffers.TryGetValue(name, out XRDataBuffer? buffer) ||
+            XRDataBuffer? buffer = null;
+            bool found = sources is not null ? sources.TryGetRendererBuffer(name, out buffer)
+                : owner is not null && owner.Buffers.TryGetValue(name, out buffer);
+            if (!found || buffer is null ||
                 !string.Equals(buffer.AttributeName, name, StringComparison.Ordinal))
                 throw UnsupportedBinding(name, "the renderer did not publish an exact logical-name XRDataBuffer");
             if (buffer.Target != EBufferTarget.ShaderStorageBuffer || buffer.Length < resource.Contract.ByteSize ||
