@@ -1993,8 +1993,10 @@ namespace XREngine.Rendering
             return t;
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
         [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
         void ICookedBinarySerializable.WriteCookedBinary(CookedBinaryWriter writer)
         {
             WriteTextureAssetBase(writer);
@@ -2025,8 +2027,10 @@ namespace XREngine.Rendering
             WriteMipmaps(writer, Mipmaps);
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
         [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
         long ICookedBinarySerializable.CalculateCookedBinarySize()
         {
             long size = CalculateTextureAssetBaseSize();
@@ -2059,8 +2063,10 @@ namespace XREngine.Rendering
             return size;
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
         [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
         void ICookedBinarySerializable.ReadCookedBinary(CookedBinaryReader reader)
         {
             ReadTextureAssetBase(reader);
@@ -2091,18 +2097,24 @@ namespace XREngine.Rendering
             Mipmaps = ReadMipmaps(reader);
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
+#endif
         private static void WriteMipmaps(CookedBinaryWriter writer, Mipmap2D[] mipmaps)
             => WriteStreamableMipmaps(writer, mipmaps);
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
+#endif
         private static Mipmap2D[] ReadMipmaps(CookedBinaryReader reader)
             => ReadMipmaps(reader, TextureMipmapReadRequest.Full, out _, out _);
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
+#endif
         private static void WriteGrabPass(CookedBinaryWriter writer, GrabPassInfo? grabPass)
         {
             writer.WriteValue(grabPass is not null);
@@ -2118,8 +2130,10 @@ namespace XREngine.Rendering
             writer.WriteValue(grabPass.ResizeScale);
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Rendering.XRTexture2D.ReadStructOrDefault<T>(CookedBinaryReader, T)")]
         [RequiresDynamicCode("Calls XREngine.Rendering.XRTexture2D.ReadStructOrDefault<T>(CookedBinaryReader, T)")]
+#endif
         private static GrabPassInfo? ReadGrabPass(CookedBinaryReader reader, XRTexture2D owner)
         {
             bool hasGrabPass = ReadStructOrDefault(reader, false);
@@ -2137,16 +2151,20 @@ namespace XREngine.Rendering
             return new GrabPassInfo(owner, readBuffer, colorBit, depthBit, stencilBit, linearFilter, resizeToFit, resizeScale);
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
+#endif
         private static T ReadStructOrDefault<T>(CookedBinaryReader reader, T fallback) where T : struct
         {
             T? value = reader.ReadValue<T?>();
             return value ?? fallback;
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
+#endif
         private static long CalculateGrabPassSize(GrabPassInfo? grabPass)
         {
             long size = CookedBinarySerializer.CalculateSize(grabPass is not null);
@@ -2163,8 +2181,10 @@ namespace XREngine.Rendering
             return size;
         }
 
+#if !XRE_PUBLISHED
         [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
         [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
+#endif
         private static long CalculateMipmapSize(Mipmap2D[] mipmaps)
             => CalculateStreamableMipmapSize(mipmaps);
     }

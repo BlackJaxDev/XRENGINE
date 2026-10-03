@@ -1,5 +1,6 @@
 using System;
 using XREngine.Core.Files;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Diagnostics;
 using XREngine.Serialization;
 
@@ -35,7 +36,15 @@ internal sealed class SnapshotAssetReference
     {
         SnapshotDiagnostics.LogAssetResolveStart(this);
 
-        if (AssetId != Guid.Empty && Engine.Assets.GetAssetByID(AssetId) is XRAsset byId)
+        Type? targetType = ResolveAssetType();
+        if (targetType is null)
+        {
+            SnapshotDiagnostics.LogAssetResolveFailure(this, "asset type could not be resolved");
+            return null;
+        }
+
+        if (AssetId != Guid.Empty && Engine.Assets.GetAssetByID(AssetId) is XRAsset byId
+            && targetType.IsInstanceOfType(byId))
         {
             SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", byId);
             return byId;
@@ -46,7 +55,7 @@ internal sealed class SnapshotAssetReference
 
         if (!string.IsNullOrWhiteSpace(AssetPath)
             && Engine.Assets.TryGetAssetByPath(AssetPath, out XRAsset? byPath)
-            && byPath is not null)
+            && byPath is not null && targetType.IsInstanceOfType(byPath))
         {
             SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-path", byPath);
             return byPath;
@@ -58,13 +67,6 @@ internal sealed class SnapshotAssetReference
         if (string.IsNullOrWhiteSpace(AssetPath))
         {
             SnapshotDiagnostics.LogAssetResolveFailure(this, "reference has no asset path");
-            return null;
-        }
-
-        var targetType = ResolveAssetType();
-        if (targetType is null)
-        {
-            SnapshotDiagnostics.LogAssetResolveFailure(this, "asset type could not be resolved");
             return null;
         }
 
@@ -80,7 +82,7 @@ internal sealed class SnapshotAssetReference
         {
             return AotRuntimeMetadataStore.ResolveType(AssetType);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AotParityViolationException)
         {
             Debug.LogWarning($"Snapshot asset reference failed to resolve type '{AssetType}': {ex.Message}");
             SnapshotDiagnostics.LogAssetResolveFailure(this, $"type resolution threw {ex.GetType().Name}: {ex.Message}");
@@ -94,7 +96,20 @@ internal sealed class SnapshotAssetReference
         {
             try
             {
-                if (Engine.Assets.Load(candidatePath, targetType) is XRAsset asset)
+                // One source path can represent distinct assets, such as shader source text
+                // and the shader that owns it. A path-cache hit must retain the saved type.
+                XRAsset? asset = null;
+                try
+                {
+                    asset = Engine.Assets.Load(candidatePath, targetType) as XRAsset;
+                }
+                catch (Exception ex) when (ex is not AotParityViolationException)
+                {
+                    SnapshotDiagnostics.LogAssetResolveFailure(this,
+                        $"typed loader for '{candidatePath}' threw {ex.GetType().Name}: {ex.Message}");
+                }
+
+                if (asset is not null && targetType.IsInstanceOfType(asset))
                 {
                     SnapshotDiagnostics.LogAssetResolveAttempt(
                         this,
@@ -107,6 +122,7 @@ internal sealed class SnapshotAssetReference
                 if (Activator.CreateInstance(targetType) is XRAsset directAsset
                     && directAsset.Load3rdParty(candidatePath))
                 {
+                    directAsset.FilePath = candidatePath;
                     directAsset.OriginalPath = candidatePath;
                     SnapshotDiagnostics.LogAssetResolveAttempt(
                         this,
@@ -122,7 +138,7 @@ internal sealed class SnapshotAssetReference
                     null,
                     $"loader returned non-asset for {targetType.FullName ?? targetType.Name} at '{candidatePath}'");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
                 string displayName = string.IsNullOrEmpty(AssetName) ? AssetPath ?? AssetType ?? "unknown" : AssetName!;
                 Debug.LogWarning($"Snapshot asset reference failed to load '{displayName}' from '{candidatePath}': {ex.Message}");

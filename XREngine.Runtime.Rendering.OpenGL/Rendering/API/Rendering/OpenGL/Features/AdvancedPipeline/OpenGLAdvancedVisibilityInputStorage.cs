@@ -242,9 +242,15 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
         }
 
         ReadOnlySpan<AdvancedDrawRecord> canonicalDraws = snapshot.Draws.PhysicalRecords;
-        if (canonicalDraws.IsEmpty || canonicalDraws.Length > _preparedDeformations.Length)
+        if (canonicalDraws.Length > _preparedDeformations.Length)
         {
             reason = "The canonical draw image exceeds the GL deformation-sidecar capacity.";
+            return false;
+        }
+
+        if (canonicalDraws.IsEmpty && _payloadCount != 0)
+        {
+            reason = "The GL visibility payloads have no canonical draw image.";
             return false;
         }
 

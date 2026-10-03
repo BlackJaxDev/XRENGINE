@@ -34,6 +34,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             Type? underlyingType = Nullable.GetUnderlyingType(runtimeType);
@@ -63,5 +64,6 @@ public static partial class CookedBinarySerializer
             node.MutableChildren.Add(builder.BuildTypeNode("value", underlyingType, allowCustom));
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

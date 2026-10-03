@@ -32,7 +32,7 @@ public static class RuntimeTypeContractRegistry
         return new Lease(entry);
     }
 
-    public static bool TryResolve(string idOrTypeName, out Type? type)
+    public static bool TryResolve(string idOrTypeName, out Type? type, bool ignoreCase = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(idOrTypeName);
         lock (Sync)
@@ -42,6 +42,17 @@ public static class RuntimeTypeContractRegistry
             {
                 type = entry.Type;
                 return true;
+            }
+            if (ignoreCase)
+            {
+                foreach (Entry candidate in ByFullName.Values)
+                {
+                    if (string.Equals(candidate.Type.FullName, idOrTypeName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        type = candidate.Type;
+                        return true;
+                    }
+                }
             }
         }
         type = null;

@@ -8,6 +8,11 @@ namespace XREngine.Animation
         private DelGetValue<object?> _getValue;
 
         private BakedValueStore<object?>? _baked = null;
+
+        internal object?[] CapturePublishedBakedValues() => _baked?.CaptureValues() ?? [];
+
+        internal void RestorePublishedBakedValues(object?[] values, EAnimationValueCompressionAlgorithm encodedCompression)
+            => _baked = BakedValueStore<object?>.Encode(values, encodedCompression);
         /// <summary>
         /// The default value to return when no keyframes are set.
         /// </summary>

@@ -7,7 +7,7 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
-- [Advanced pipeline (Vulkan) directional shadows missing](advanced-vulkan-dirlight-shadows-2026-10-02.md)
+- [Advanced pipeline (Vulkan) directional shadows — Resolved](advanced-vulkan-dirlight-shadows-2026-10-02.md)
   records the cascade slope-bias unit mismatch that made every receiver lit, the
   back-facing and footprint bias corrections, and the still-intermittent
   CastsShadows re-enable failure.

@@ -31,7 +31,7 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor SchemaSnapshotMismatch = new(
         "XREG009", "Runtime schema snapshot mismatch", "Runtime contract '{0}' schema version {1} has fingerprint {2}; update its version and reviewed schema snapshot together", "RuntimeContracts", DiagnosticSeverity.Error, true);
     private static readonly DiagnosticDescriptor UnsupportedFormatter = new(
-        "XREG010", "Unsupported closed formatter", "'{0}' must be a closed List, Dictionary, HashSet, Nullable, or ValueTuple type", "RuntimeContracts", DiagnosticSeverity.Error, true);
+        "XREG010", "Unsupported closed formatter", "'{0}' must be a closed List, Dictionary, HashSet, Nullable, ValueTuple, vector array, or value type", "RuntimeContracts", DiagnosticSeverity.Error, true);
     private static readonly DiagnosticDescriptor DuplicateFormatter = new(
         "XREG011", "Duplicate closed formatter", "Closed formatter '{0}' is declared more than once", "RuntimeContracts", DiagnosticSeverity.Error, true);
     private static readonly DiagnosticDescriptor UnsupportedAccessor = new(
@@ -110,7 +110,7 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
             if (attribute.AttributeClass?.ToDisplayString() == "XREngine.RuntimeClosedFormatterAttribute")
             {
                 var formatterLocation = attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation();
-                if (attribute.ConstructorArguments.Length != 1 || attribute.ConstructorArguments[0].Value is not INamedTypeSymbol closedType ||
+                if (attribute.ConstructorArguments.Length != 1 || attribute.ConstructorArguments[0].Value is not ITypeSymbol closedType ||
                     !TryFormatterKind(closedType, out string formatterKind))
                 {
                     context.ReportDiagnostic(Diagnostic.Create(UnsupportedFormatter, formatterLocation,
@@ -123,8 +123,10 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
                     context.ReportDiagnostic(Diagnostic.Create(DuplicateFormatter, formatterLocation, name));
                     continue;
                 }
-                formatters.Add(new ClosedFormatter(name, formatterKind,
-                    closedType.TypeArguments.Select(static argument => argument.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).ToArray()));
+                string[] arguments = closedType is IArrayTypeSymbol arrayType
+                    ? new[] { arrayType.ElementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) }
+                    : ((INamedTypeSymbol)closedType).TypeArguments.Select(static argument => argument.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).ToArray();
+                formatters.Add(new ClosedFormatter(name, formatterKind, arguments));
                 continue;
             }
             if (attribute.AttributeClass?.ToDisplayString() == "XREngine.RuntimeCookedAssetAttribute")
@@ -281,6 +283,8 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
                 "Dictionary" => "RegisterDictionary<" + formatter.Arguments[0] + ", " + formatter.Arguments[1] + ">()",
                 "HashSet" => "RegisterHashSet<" + formatter.Arguments[0] + ">()",
                 "Nullable" => "RegisterNullable<" + formatter.Arguments[0] + ">()",
+                "Array" => "RegisterArray<" + formatter.Arguments[0] + ">()",
+                "ValueDefault" => "RegisterValueDefault<" + formatter.Type + ">()",
                 _ => "",
             };
             if (formatter.Kind == "ValueTuple")
@@ -291,6 +295,8 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
                     .Append(string.Join(", ", formatter.Arguments)).Append(">(");
                 source.Append(string.Join(", ", formatter.Arguments.Select(static (argument, index) => "(" + argument + ")values[" + index + "]!")));
                 source.Append(")));\n");
+                source.Append("            leases.Add(global::XREngine.Core.Files.CookedBinaryFormatterRegistry.RegisterValueDefault<")
+                    .Append(formatter.Type).Append(">());\n");
             }
             else
                 source.Append("            leases.Add(global::XREngine.Core.Files.CookedBinaryFormatterRegistry.")
@@ -394,33 +400,61 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
         string root = "global::XREngine.";
         source.Append("static (asset, writer) => global::MemoryPack.MemoryPackSerializer.Serialize(writer, (")
             .Append(root).Append(model).Append(")").Append(root).Append(serializer)
-            .Append(".CreateModel((").Append(codec.Type).Append(")asset)), ");
+            .Append(".CreatePublishedModel((").Append(codec.Type).Append(")asset)), ");
         source.Append("static (payload, _) => { var model = global::MemoryPack.MemoryPackSerializer.Deserialize<")
             .Append(root).Append(model).Append(">(payload); ");
         if (codec.Kind is 3 or 4 or 5)
             source.Append("return model is null ? null : ").Append(root)
-                .Append("BlendTreeSerialization.CreateRuntimeBlendTree(typeof(").Append(codec.Type)
+                .Append("BlendTreeSerialization.CreatePublishedRuntimeBlendTree(typeof(").Append(codec.Type)
                 .Append("), model); }");
         else
             source.Append("var result = new ").Append(codec.Type).Append("(); ")
-                .Append(root).Append(serializer).Append(".ApplyModel(result, model); return result; }");
+                .Append(root).Append(serializer).Append(".ApplyPublishedModel(result, model); return result; }");
     }
 
-    private static bool TryFormatterKind(INamedTypeSymbol type, out string kind)
+    private static bool TryFormatterKind(ITypeSymbol type, out string kind)
     {
         kind = string.Empty;
-        if (!type.IsGenericType || type.IsUnboundGenericType || type.TypeArguments.Any(static argument => argument.TypeKind == TypeKind.TypeParameter) ||
-            type.ContainingNamespace.ToDisplayString() is not ("System" or "System.Collections.Generic"))
-            return false;
-        kind = type.Name;
-        return kind switch
+        if (type is IArrayTypeSymbol array)
         {
-            "List" or "HashSet" or "Nullable" => type.TypeArguments.Length == 1,
-            "Dictionary" => type.TypeArguments.Length == 2,
-            "ValueTuple" => type.TypeArguments.Length is >= 1 and <= 8,
-            _ => false,
-        };
+            if (array.Rank != 1 || !IsClosedFormatterElement(array.ElementType))
+                return false;
+            kind = "Array";
+            return true;
+        }
+        if (type is not INamedTypeSymbol namedType)
+            return false;
+        if (!IsClosedFormatterElement(namedType))
+            return false;
+        if (namedType.IsGenericType &&
+            namedType.ContainingNamespace.ToDisplayString() is ("System" or "System.Collections.Generic"))
+        {
+            kind = namedType.Name;
+            bool supported = kind switch
+            {
+                "List" or "HashSet" or "Nullable" => namedType.TypeArguments.Length == 1,
+                "Dictionary" => namedType.TypeArguments.Length == 2,
+                "ValueTuple" => namedType.TypeArguments.Length is >= 1 and <= 8,
+                _ => false,
+            };
+            if (supported)
+                return true;
+        }
+        if (namedType.TypeKind == TypeKind.Struct)
+        {
+            kind = "ValueDefault";
+            return true;
+        }
+        return false;
     }
+
+    private static bool IsClosedFormatterElement(ITypeSymbol type)
+        => type switch
+        {
+            IArrayTypeSymbol array => array.Rank == 1 && IsClosedFormatterElement(array.ElementType),
+            INamedTypeSymbol named => !named.IsUnboundGenericType && named.TypeArguments.All(static argument => IsClosedFormatterElement(argument)),
+            _ => type.TypeKind != TypeKind.TypeParameter && type.TypeKind != TypeKind.Error,
+        };
 
     private static Dictionary<string, (int Version, string Fingerprint)> ParseSnapshots(string content)
     {

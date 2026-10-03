@@ -42,8 +42,10 @@ public partial class XRMesh : ICookedBinarySerializable
     public void ClearBufferEncodings()
         => _bufferEncodingOverrides.Clear();
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     void ICookedBinarySerializable.WriteCookedBinary(CookedBinaryWriter writer)
     {
         writer.WriteBaseObject<XRAsset>(this);
@@ -52,8 +54,10 @@ public partial class XRMesh : ICookedBinarySerializable
         _meshPayloadPlan = null;
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     void ICookedBinarySerializable.ReadCookedBinary(CookedBinaryReader reader)
     {
         using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
@@ -64,8 +68,10 @@ public partial class XRMesh : ICookedBinarySerializable
         publication.Complete();
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     long ICookedBinarySerializable.CalculateCookedBinarySize()
     {
         MeshPayloadWritePlan plan = BuildMeshPayloadPlan();
@@ -1257,6 +1263,9 @@ public partial class XRMesh : ICookedBinarySerializable
             throw new InvalidOperationException("Cooked Core4Spill skinning payload is missing spill influence buffers.");
         }
 
+        // The cooked reader fills metadata and buffers separately while object
+        // publication is deferred. Publish their coherent generation before validation.
+        ApplySkinningBufferState(CaptureSkinningBufferState());
         EnsureComputeSkinningBuffers();
     }
 
@@ -1951,8 +1960,10 @@ public partial class XRMesh : ICookedBinarySerializable
         Buffers.Add(key, buffer);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     private static void WritePayload(CookedBinaryWriter writer, MeshCookedPayload payload)
     {
         writer.WriteValue(payload.Positions);
@@ -1968,8 +1979,10 @@ public partial class XRMesh : ICookedBinarySerializable
         writer.WriteValue(payload.PrimitiveType);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     private static MeshCookedPayload ReadPayload(CookedBinaryReader reader)
     {
         Vector3[]? positions = reader.ReadValue<Vector3[]>();

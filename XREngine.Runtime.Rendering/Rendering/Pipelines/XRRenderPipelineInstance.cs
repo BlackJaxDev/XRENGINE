@@ -2326,7 +2326,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     /// <summary>
-    /// Retires a previously active resource generation, marking it as retired and enqueueing it for disposal. This method is called when a new resource generation is committed, and the old generation is no longer needed. It logs detailed information about the retired generation, including its key, resource counts, and the current size of the retired generations queue. If the queue exceeds the maximum allowed size, it will dispose of the oldest retired generation to free up resources.
+    /// Retires a previously active resource generation after a replacement commits.
+    /// Resources remain queued until their completion fence signals, even when the
+    /// queue exceeds its target size.
     /// </summary>
     /// <param name="generation">The resource generation to retire.</param>
     /// <param name="reason">The reason for retiring the generation.</param>

@@ -19,6 +19,58 @@ internal static class MotionSerialization
         };
     }
 
+    public static SerializedMotionModel? CreatePublishedModel(MotionBase? motion)
+    {
+        if (motion is null)
+            return null;
+
+        return new SerializedMotionModel
+        {
+            TypeName = motion.GetType().FullName,
+            Payload = motion switch
+            {
+                AnimationClip clip when clip.GetType() == typeof(AnimationClip)
+                    => MemoryPackSerializer.Serialize(AnimationClipSerialization.CreatePublishedModel(clip)),
+                BlendTree1D tree when tree.GetType() == typeof(BlendTree1D)
+                    => MemoryPackSerializer.Serialize(BlendTreeSerialization.CreatePublishedModel(tree)),
+                BlendTree2D tree when tree.GetType() == typeof(BlendTree2D)
+                    => MemoryPackSerializer.Serialize(BlendTreeSerialization.CreatePublishedModel(tree)),
+                BlendTreeDirect tree when tree.GetType() == typeof(BlendTreeDirect)
+                    => MemoryPackSerializer.Serialize(BlendTreeSerialization.CreatePublishedModel(tree)),
+                _ => throw new NotSupportedException($"Published motion type '{motion.GetType().FullName}' is not registered.")
+            }
+        };
+    }
+
+    public static MotionBase? CreatePublishedRuntimeMotion(SerializedMotionModel? model)
+    {
+        if (model is null)
+            return null;
+        if (model.Payload is null || model.Payload.Length == 0)
+            throw new InvalidDataException($"Published motion '{model.TypeName}' has no payload.");
+
+        if (model.TypeName == typeof(AnimationClip).FullName)
+        {
+            AnimationClipSerializedModel state = MemoryPackSerializer.Deserialize<AnimationClipSerializedModel>(model.Payload)
+                ?? throw new InvalidDataException("Published animation clip motion has an empty payload.");
+            AnimationClip clip = new();
+            AnimationClipSerialization.ApplyPublishedModel(clip, state);
+            return clip;
+        }
+
+        if (model.TypeName == typeof(BlendTree1D).FullName)
+            return BlendTreeSerialization.CreatePublishedRuntimeBlendTree(
+                typeof(BlendTree1D), MemoryPackSerializer.Deserialize<BlendTree1DSerializedModel>(model.Payload));
+        if (model.TypeName == typeof(BlendTree2D).FullName)
+            return BlendTreeSerialization.CreatePublishedRuntimeBlendTree(
+                typeof(BlendTree2D), MemoryPackSerializer.Deserialize<BlendTree2DSerializedModel>(model.Payload));
+        if (model.TypeName == typeof(BlendTreeDirect).FullName)
+            return BlendTreeSerialization.CreatePublishedRuntimeBlendTree(
+                typeof(BlendTreeDirect), MemoryPackSerializer.Deserialize<BlendTreeDirectSerializedModel>(model.Payload));
+
+        throw new InvalidDataException($"Published motion type '{model.TypeName}' is not registered.");
+    }
+
     public static MotionBase? CreateRuntimeMotion(SerializedMotionModel? model)
     {
         if (model?.Payload is null || model.Payload.Length == 0 || string.IsNullOrWhiteSpace(model.TypeName))

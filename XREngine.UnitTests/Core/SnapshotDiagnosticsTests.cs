@@ -19,6 +19,100 @@ namespace XREngine.UnitTests.Core;
 [TestFixture]
 public sealed class SnapshotDiagnosticsTests
 {
+    [TestCase(true)]
+    [TestCase(false)]
+    public void SnapshotAssetReference_LoadsSavedTypeAfterDifferentTypeCacheHit(bool cacheShaderFirst)
+    {
+        string directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "SnapshotAssetReferences", Guid.NewGuid().ToString("N"));
+        string shaderPath = Path.GetFullPath(Path.Combine(directory, "collision.fs"));
+        XRAsset? first = null;
+        XRAsset? resolved = null;
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(shaderPath, "#version 450\nvoid main() { }\n");
+
+            first = cacheShaderFirst
+                ? Engine.Assets.LoadImmediate<XRShader>(shaderPath)
+                : Engine.Assets.LoadImmediate<TextFile>(shaderPath);
+            Assert.That(first, Is.TypeOf(cacheShaderFirst ? typeof(XRShader) : typeof(TextFile)));
+
+            SnapshotAssetReference reference = new()
+            {
+                AssetPath = shaderPath,
+                AssetType = (cacheShaderFirst ? typeof(TextFile) : typeof(XRShader)).AssemblyQualifiedName,
+            };
+
+            resolved = reference.Resolve();
+
+            if (cacheShaderFirst)
+            {
+                Assert.That(resolved, Is.TypeOf<TextFile>());
+                Assert.That(((TextFile)resolved!).Text, Does.Contain("void main"));
+                Assert.That(((TextFile)resolved).FilePath, Is.EqualTo(shaderPath));
+            }
+            else
+            {
+                Assert.That(resolved, Is.TypeOf<XRShader>());
+                Assert.That(((XRShader)resolved!).Source?.Text, Does.Contain("void main"));
+            }
+        }
+        finally
+        {
+            Engine.Assets.LoadedAssetsByPathInternal.TryRemove(shaderPath, out _);
+            if (first is not null)
+            {
+                Engine.Assets.LoadedAssetsByIDInternal.TryRemove(first.ID, out _);
+                if (!string.IsNullOrWhiteSpace(first.OriginalPath))
+                    Engine.Assets.LoadedAssetsByOriginalPathInternal.TryRemove(first.OriginalPath, out _);
+            }
+            if (resolved is not null)
+            {
+                Engine.Assets.LoadedAssetsByIDInternal.TryRemove(resolved.ID, out _);
+                if (!string.IsNullOrWhiteSpace(resolved.OriginalPath))
+                    Engine.Assets.LoadedAssetsByOriginalPathInternal.TryRemove(resolved.OriginalPath, out _);
+            }
+            if (first is IDisposable firstDisposable)
+                firstDisposable.Dispose();
+            if (resolved is IDisposable resolvedDisposable && !ReferenceEquals(first, resolved))
+                resolvedDisposable.Dispose();
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void CookedTransform_RebuildsLocalMatrixFromAuthoredPose()
+    {
+        Transform original = new()
+        {
+            Translation = new Vector3(3.0f, -4.0f, 5.0f),
+            Rotation = Quaternion.CreateFromYawPitchRoll(0.3f, -0.4f, 0.5f),
+            Scale = new Vector3(1.5f, 2.0f, 0.75f),
+        };
+        original.RecalculateMatrices();
+        Matrix4x4 expected = original.LocalMatrix;
+
+        Transform? restored = null;
+        try
+        {
+            byte[] payload = CookedBinarySerializer.Serialize(original);
+            restored = (Transform)CookedBinarySerializer.Deserialize(typeof(Transform), payload)!;
+
+            Assert.That(restored.Translation, Is.EqualTo(original.Translation));
+            Assert.That(restored.Rotation, Is.EqualTo(original.Rotation));
+            Assert.That(restored.Scale, Is.EqualTo(original.Scale));
+            Assert.That(restored.IsLocalMatrixDirty, Is.True);
+            restored.RecalculateMatrices();
+            Assert.That(restored.LocalMatrix, Is.EqualTo(expected));
+        }
+        finally
+        {
+            restored?.Destroy(now: true);
+            original.Destroy(now: true);
+        }
+    }
+
     [Test]
     public void MeshAssetDiagnostics_EnumeratesStronglyTypedBuffers()
     {

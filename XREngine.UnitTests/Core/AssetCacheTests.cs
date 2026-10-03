@@ -9,6 +9,7 @@ using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Core.Files.Caching;
 using XREngine.Data;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;
@@ -19,6 +20,30 @@ namespace XREngine.UnitTests.Core;
 [TestFixture]
 public sealed class AssetCacheTests
 {
+    [Test]
+    [NonParallelizable]
+    public void RegisteredShaderFactory_LoadsSourceUnderStrictParity()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        string path = Path.Combine(sandbox.AssetsPath, "shadow.fs");
+        const string source = "#version 460\nvoid main() {}\n";
+        File.WriteAllText(path, source);
+        EAotParityMode previousMode = AotParityDiagnostics.Mode;
+        try
+        {
+            AotParityDiagnostics.ConfigureMode(EAotParityMode.Error);
+            using var scope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PlayMode);
+            XRShader shader = RuntimeThirdPartyAssetLoadingServices.Current.Load(
+                path, "fs", typeof(XRShader)).ShouldBeOfType<XRShader>();
+            shader.Source.Text.ShouldBe(source);
+            shader.OriginalPath.ShouldBe(path);
+        }
+        finally
+        {
+            AotParityDiagnostics.ConfigureMode(previousMode);
+        }
+    }
+
     [Test]
     [NonParallelizable]
     public void ResolveTextureStreamingAuthorityPath_WhenWarmupDisabled_DoesNotWriteCache()
@@ -55,13 +80,19 @@ public sealed class AssetCacheTests
     }
 
     [Test]
+    [NonParallelizable]
     public void Load3rdPartyAsset_UsesCacheUntilSourceChanges()
     {
         using var sandbox = new AssetCacheSandbox();
+        using var factory = RuntimeCookedBinarySerializer.RegisterRuntimeFactory<StubThirdPartyAsset>(
+            static () => new StubThirdPartyAsset());
+        EAotParityMode previousMode = AotParityDiagnostics.Mode;
         var manager = new AssetManager();
         manager.MonitorGameAssetsForChanges = false; // prevent FileSystemWatcher auto-imports from corrupting LoadCount
         try
         {
+            AotParityDiagnostics.ConfigureMode(EAotParityMode.Error);
+            using var scope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PlayMode);
             manager.GameAssetsPath = sandbox.AssetsPath;
             manager.GameCachePath = sandbox.CachePath;
 
@@ -94,6 +125,7 @@ public sealed class AssetCacheTests
         }
         finally
         {
+            AotParityDiagnostics.ConfigureMode(previousMode);
             manager.Dispose();
         }
     }

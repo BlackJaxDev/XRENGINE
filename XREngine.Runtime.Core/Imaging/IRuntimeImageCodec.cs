@@ -11,6 +11,7 @@ public interface IRuntimeImageCodec
 
     byte[] Encode(RuntimeImage image, RuntimeImageFileFormat format, int quality, bool srgb);
 
+    /// <summary>Resamples to the exact positive dimensions supplied by the caller.</summary>
     RuntimeImage Resize(RuntimeImage image, uint width, uint height, RuntimeImageResizeMode mode);
 
     RuntimeImage ReprojectEquirectangularToCubeCross(RuntimeImage image);

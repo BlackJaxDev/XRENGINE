@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using SerializedAssets;
@@ -424,10 +425,39 @@ AnimationClip:
               inSlope: -1.2
               outSlope: 1.6
               tangentMode: 1
+        y:
+          m_Curve:
+            - time: 0
+              value: 0
+              inSlope: 0
+              outSlope: 0
+              tangentMode: 1
+            - time: 0.5
+              value: 0
+              inSlope: 0
+              outSlope: 0
+              tangentMode: 1
+        z:
+          m_Curve:
+            - time: 0
+              value: 0
+              inSlope: 0
+              outSlope: 0
+              tangentMode: 1
+            - time: 0.5
+              value: 0
+              inSlope: 0
+              outSlope: 0
+              tangentMode: 1
         w:
           m_Curve:
             - time: 0
-              value: 1
+              value: 0.9797959
+              inSlope: 0
+              outSlope: 0
+              tangentMode: 1
+            - time: 0.5
+              value: 0.8
               inSlope: 0
               outSlope: 0
               tangentMode: 1
@@ -449,15 +479,15 @@ AnimationClip:
         var quaternionX = GetChild(hipsTransform, "QuaternionX", EAnimationMemberType.Property);
         var quaternionAnim = quaternionX.Animation.ShouldBeOfType<PropAnimFloat>();
         quaternionAnim.Keyframes.Count.ShouldBe(2);
-        quaternionAnim.Keyframes[0].InValue.ShouldBe(0.2f);
-        quaternionAnim.Keyframes[0].InTangent.ShouldBe(-0.4f);
-        quaternionAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f);
-        quaternionAnim.Keyframes[1].InValue.ShouldBe(0.6f);
-        quaternionAnim.Keyframes[1].InTangent.ShouldBe(1.2f);
-        quaternionAnim.Keyframes[1].OutTangent.ShouldBe(1.6f);
+        quaternionAnim.Keyframes[0].InValue.ShouldBe(0.2f, 0.0001f);
+        quaternionAnim.Keyframes[0].InTangent.ShouldBe(-0.4f, 0.0001f);
+        quaternionAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f, 0.0001f);
+        quaternionAnim.Keyframes[1].InValue.ShouldBe(0.6f, 0.0001f);
+        quaternionAnim.Keyframes[1].InTangent.ShouldBe(1.2f, 0.0001f);
+        quaternionAnim.Keyframes[1].OutTangent.ShouldBe(1.6f, 0.0001f);
 
         var quaternionW = GetChild(hipsTransform, "QuaternionW", EAnimationMemberType.Property);
-        quaternionW.Animation.ShouldBeOfType<PropAnimFloat>().Keyframes.Count.ShouldBe(1);
+        quaternionW.Animation.ShouldBeOfType<PropAnimFloat>().Keyframes.Count.ShouldBe(2);
 
         hipsTransform.Children.Any(x => x.MemberName == "Translation").ShouldBeFalse();
         hipsTransform.Children.Any(x => x.MemberName == "Rotation").ShouldBeFalse();
@@ -504,7 +534,7 @@ AnimationClip:
         first.SyncInOutTangentMagnitudes.ShouldBeFalse();
         first.InTangent.ShouldBe(2.0f);
         first.OutTangent.ShouldBe(3.0f);
-        first.InterpolationTypeIn.ShouldBe(EVectorInterpType.Linear);
+        first.InterpolationTypeIn.ShouldBe(EVectorInterpType.Hermite);
         first.InterpolationTypeOut.ShouldBe(EVectorInterpType.Step);
 
         var roundTripped = new FloatKeyframe();
@@ -605,8 +635,9 @@ AnimationClip:
         scaleAnim.HasAuthoredCadence.ShouldBeTrue();
         scaleAnim.AuthoredFrameCount.ShouldBe(60);
         scaleAnim.AuthoredFramesPerSecond.ShouldBe(60);
-        scaleAnim.Keyframes.PreInfinityMode.ShouldBe(EKeyframeInfinityMode.Clamp);
+        scaleAnim.Keyframes.PreInfinityMode.ShouldBe(EKeyframeInfinityMode.Once);
         scaleAnim.Keyframes.PostInfinityMode.ShouldBe(EKeyframeInfinityMode.Loop);
+        scaleAnim.GetValue(-0.25f).ShouldBe(1.0f, 0.0001f);
         scaleAnim.Keyframes[0].Second.ShouldBe(0.0f);
         scaleAnim.Keyframes[1].Second.ShouldBe(1.0f);
         scaleAnim.Keyframes[0].AuthoredFrameIndex.ShouldBe(0);
@@ -629,38 +660,18 @@ AnimationClip:
         anim.Keyframes.Add(second);
 
         float segmentValue = first.InterpolatePositionNextNormalized(0.5f);
-        segmentValue.ShouldBe(0.25f, 0.0001f);
+        segmentValue.ShouldBe(0.0f, 0.0001f);
         anim.GetValue(0.5f).ShouldBe(segmentValue, 0.0001f);
     }
 
     [Test]
     public void HumanoidRootMotion_UsesSameAnimatedMotionScaleAsIKGoals()
     {
-        var root = new SceneNode("Root", new Transform());
-        var hips = new SceneNode(root, "Hips", new Transform(new Vector3(0.0f, 1.0f, 0.0f)));
-        var leftFoot = new SceneNode(hips, "LeftFoot", new Transform(new Vector3(0.0f, -2.0f, 0.0f)));
-        var rightFoot = new SceneNode(hips, "RightFoot", new Transform(new Vector3(0.0f, -2.0f, 0.0f)));
-
-        root.Transform.SaveBindState();
-        hips.Transform.SaveBindState();
-        leftFoot.Transform.SaveBindState();
-        rightFoot.Transform.SaveBindState();
-
-        var humanoid = root.AddComponent<HumanoidComponent>()!;
-        humanoid.Hips.Node = hips;
-        humanoid.Left.Foot.Node = leftFoot;
-        humanoid.Right.Foot.Node = rightFoot;
-        var hipsTransform = hips.GetTransformAs<Transform>(true)!;
-
-        humanoid.EstimateAnimatedMotionScale().ShouldBe(2.0f, 0.0001f);
-
-        var solver = root.AddComponent<HumanoidIKSolverComponent>()!;
-        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.AlwaysApply;
-
-        solver.SetAnimatedIKPosition(ELimbEndEffector.LeftFoot, new Vector3(0.0f, 0.5f, 1.0f));
-        var ikTarget = solver.GetGoalIK(ELimbEndEffector.LeftFoot)?.TargetIKTransform;
-        ikTarget.ShouldNotBeNull();
-        ShouldBeApproximately(ikTarget!.WorldTranslation, new Vector3(0.0f, 2.0f, 2.0f));
+        using SyntheticVrCalibrationRig rig = CreateNativeRootMotionRig();
+        HumanoidComponent humanoid = rig.Humanoid;
+        Transform hipsTransform = rig.Humanoid.Hips.Node!.GetTransformAs<Transform>(true)!;
+        float motionScale = humanoid.EstimateAnimatedMotionScale();
+        motionScale.ShouldBeGreaterThan(0.0f);
 
         object bodyOwner = new();
         var canonical = new HumanoidImportedBodySample
@@ -672,34 +683,36 @@ AnimationClip:
         humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
         humanoid.SetRootPosition(canonical.Position);
         humanoid.SetRootRotation(canonical.Rotation);
-        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
+        ApplyAcceptedNativeBodyFrame(humanoid);
+        Vector3 canonicalHips = hipsTransform.Translation;
+
+        var solver = rig.AvatarRoot.AddComponent<HumanoidIKSolverComponent>()!;
+        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.AlwaysApply;
+        solver.SetAnimatedIKPosition(ELimbEndEffector.LeftFoot, Vector3.Zero);
+        Vector3 goalOrigin = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftFoot).BodyFrameWorldPosition;
+        solver.SetAnimatedIKPosition(ELimbEndEffector.LeftFoot, new Vector3(0.0f, 0.5f, 1.0f));
+        var ikTarget = solver.GetGoalIK(ELimbEndEffector.LeftFoot)?.TargetIKTransform;
+        ikTarget.ShouldNotBeNull();
+        HumanoidIKGoalDiagnosticState goal = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftFoot);
+        Vector3.Distance(goal.BodyFrameWorldPosition, goalOrigin)
+            .ShouldBe(new Vector3(0.0f, 0.5f, 1.0f).Length() * motionScale, 0.0001f);
+        ShouldBeApproximately(ikTarget!.WorldTranslation, goal.FinalWorldPosition);
 
         humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
         humanoid.SetRootPosition(new Vector3(0.0f, 1.5f, 1.0f));
         humanoid.SetRootRotation(Quaternion.Identity);
-        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
+        ApplyAcceptedNativeBodyFrame(humanoid);
+        ShouldBeApproximately(hipsTransform.Translation - canonicalHips, new Vector3(0.0f, motionScale, 0.5f * motionScale));
     }
 
     [Test]
     public void HumanoidRootMotion_ResetBaseline_ClearsPositionAndRotationState()
     {
-        var root = new SceneNode("Root", new Transform());
-        var hips = new SceneNode(root, "Hips", new Transform(new Vector3(0.0f, 1.0f, 0.0f)));
-        var leftFoot = new SceneNode(hips, "LeftFoot", new Transform(new Vector3(0.0f, -2.0f, 0.0f)));
-        var rightFoot = new SceneNode(hips, "RightFoot", new Transform(new Vector3(0.0f, -2.0f, 0.0f)));
-
-        root.Transform.SaveBindState();
-        hips.Transform.SaveBindState();
-        leftFoot.Transform.SaveBindState();
-        rightFoot.Transform.SaveBindState();
-
-        var humanoid = root.AddComponent<HumanoidComponent>()!;
-        humanoid.Hips.Node = hips;
-        humanoid.Left.Foot.Node = leftFoot;
-        humanoid.Right.Foot.Node = rightFoot;
-        var hipsTransform = hips.GetTransformAs<Transform>(true)!;
+        using SyntheticVrCalibrationRig rig = CreateNativeRootMotionRig();
+        HumanoidComponent humanoid = rig.Humanoid;
+        Transform hipsTransform = humanoid.Hips.Node!.GetTransformAs<Transform>(true)!;
+        float motionScale = humanoid.EstimateAnimatedMotionScale();
+        motionScale.ShouldBeGreaterThan(0.0f);
 
         Quaternion ninety = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f);
         Quaternion oneEighty = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI);
@@ -713,16 +726,22 @@ AnimationClip:
         humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
         humanoid.SetRootPosition(canonical.Position);
         humanoid.SetRootRotation(canonical.Rotation);
-        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
-        ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Identity);
+        ApplyAcceptedNativeBodyFrame(humanoid);
+        Vector3 canonicalHips = hipsTransform.Translation;
+        Quaternion canonicalHipsRotation = hipsTransform.Rotation;
+
+        humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
+        humanoid.SetRootPosition(new Vector3(1.0f, 2.5f, 4.0f));
+        humanoid.SetRootRotation(ninety);
+        ApplyAcceptedNativeBodyFrame(humanoid);
+        ShouldBeApproximately(hipsTransform.Translation - canonicalHips, new Vector3(0.0f, motionScale, 0.5f * motionScale));
 
         humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
         humanoid.SetRootPosition(new Vector3(1.0f, 2.5f, 4.0f));
         humanoid.SetRootRotation(oneEighty);
-        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
-        ShouldBeApproximately(hipsTransform.Rotation, ninety);
+        ApplyAcceptedNativeBodyFrame(humanoid);
+        ShouldBeApproximately(humanoid.CurrentConvertedBodyTranslationDelta, new Vector3(0.0f, motionScale, 0.5f * motionScale));
+        ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Normalize(canonicalHipsRotation * ninety));
 
         humanoid.ResetRootMotionBaseline();
 
@@ -733,9 +752,59 @@ AnimationClip:
             hasCanonicalSample: false).ShouldBeTrue();
         humanoid.SetRootPosition(new Vector3(10.0f, 20.0f, 30.0f));
         humanoid.SetRootRotation(oneEighty);
-        humanoid.CommitImportedBodySampleTransaction(resetOwner).ShouldBeTrue();
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
-        ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Identity);
+        ApplyAcceptedNativeBodyFrame(humanoid);
+
+        using SyntheticVrCalibrationRig freshRig = CreateNativeRootMotionRig();
+        HumanoidComponent freshHumanoid = freshRig.Humanoid;
+        object freshOwner = new();
+        freshHumanoid.BeginImportedBodySampleTransaction(
+            freshOwner,
+            HumanoidImportedBodySample.Neutral,
+            hasCanonicalSample: false).ShouldBeTrue();
+        freshHumanoid.SetRootPosition(new Vector3(10.0f, 20.0f, 30.0f));
+        freshHumanoid.SetRootRotation(oneEighty);
+        ApplyAcceptedNativeBodyFrame(freshHumanoid);
+
+        Transform freshHips = freshHumanoid.Hips.Node!.GetTransformAs<Transform>(true)!;
+        ShouldBeApproximately(hipsTransform.Translation, freshHips.Translation);
+        ShouldBeApproximately(hipsTransform.Rotation, freshHips.Rotation);
+    }
+
+    private static SyntheticVrCalibrationRig CreateNativeRootMotionRig()
+    {
+        SyntheticVrCalibrationRig rig = new();
+        rig.Solver.Destroy();
+        rig.Humanoid.ClearIKTargets();
+        rig.AvatarRoot.Transform.RecalculateMatrixHierarchyImmediate();
+        SaveBindPose(rig.AvatarRoot.Transform);
+
+        Vector3 hips = rig.Humanoid.Hips.Node!.Transform.WorldTranslation;
+        Vector3 leftFoot = rig.Humanoid.Left.Foot.Node!.Transform.WorldTranslation;
+        Vector3 rightFoot = rig.Humanoid.Right.Foot.Node!.Transform.WorldTranslation;
+        float authoredLegLength = MathF.Sqrt(0.15f * 0.15f + 0.93f * 0.93f + 0.08f * 0.08f);
+        Vector3.Distance(hips, leftFoot).ShouldBe(authoredLegLength, 0.0001f);
+        Vector3.Distance(hips, rightFoot).ShouldBe(authoredLegLength, 0.0001f);
+
+        rig.Humanoid.SetFromNode();
+        return rig;
+    }
+
+    private static void SaveBindPose(TransformBase transform)
+    {
+        transform.SaveBindState();
+        foreach (TransformBase child in transform.Children)
+            SaveBindPose(child);
+    }
+
+    private static void ApplyAcceptedNativeBodyFrame(HumanoidComponent humanoid)
+    {
+        MethodInfo? apply = typeof(HumanoidComponent).GetMethod("ApplyMusclePose", BindingFlags.Instance | BindingFlags.NonPublic);
+        apply.ShouldNotBeNull();
+        apply.Invoke(humanoid, null);
+
+        PropertyInfo? accepted = typeof(HumanoidComponent).GetProperty("WasLastNativeFrameAccepted", BindingFlags.Instance | BindingFlags.NonPublic);
+        accepted.ShouldNotBeNull();
+        accepted.GetValue(humanoid).ShouldBe(true);
     }
 
     private static AnimationClip ImportClip(string yaml)

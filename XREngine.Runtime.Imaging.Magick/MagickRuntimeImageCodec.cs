@@ -217,20 +217,23 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
             new PixelReadSettings(image.Width, image.Height, storage, mapping));
         if (image.Type == XREngine.Data.Rendering.EPixelType.Float)
             resized.Format = MagickFormat.Exr;
+        // The runtime codec promises exact dimensions. Aspect-preserving containment
+        // belongs to the caller and otherwise leaves the pixel readback out of bounds.
+        MagickGeometry geometry = new(width, height) { IgnoreAspectRatio = true };
         switch (mode)
         {
             case RuntimeImageResizeMode.Standard:
-                resized.Resize(width, height);
+                resized.Resize(geometry);
                 break;
             case RuntimeImageResizeMode.Bilinear:
-                resized.InterpolativeResize(width, height, PixelInterpolateMethod.Bilinear);
+                resized.InterpolativeResize(geometry, PixelInterpolateMethod.Bilinear);
                 break;
             case RuntimeImageResizeMode.Lanczos:
                 resized.FilterType = FilterType.Lanczos;
-                resized.Resize(width, height);
+                resized.Resize(geometry);
                 break;
             case RuntimeImageResizeMode.Adaptive:
-                resized.AdaptiveResize(width, height);
+                resized.AdaptiveResize(geometry);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));

@@ -20,6 +20,9 @@ namespace XREngine.Components.Mesh.Shapes
             set => SetField(ref _meshPrecision, value);
         }
 
+        protected override IShape CreateShapeFromProperties()
+            => new Sphere(Vector3.Zero, Radius);
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -27,7 +30,7 @@ namespace XREngine.Components.Mesh.Shapes
             {
                 case nameof(Radius):
                 case nameof(MeshPrecision):
-                    Shape = new Sphere(Vector3.Zero, Radius);
+                    Shape = CreateShapeFromProperties();
         //            new Sphere(Vector3.Zero, radius),
         //[
         //    new(material, XRMesh.Shapes.SolidSphere(Vector3.Zero, radius, meshPrecision), radius * 8),

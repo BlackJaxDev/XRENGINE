@@ -497,6 +497,10 @@ before any successful response.
 
 ### Viewport Sequence Capture Sessions
 
+Image analysis resamples each captured frame to exact analysis dimensions. The
+image codec does not preserve aspect ratio implicitly; contact-sheet layout
+calculates its contained thumbnail dimensions before requesting the resize.
+
 Temporal captures use an asynchronous session so an MCP request does not remain open for the duration of capture and exceed the server's request timeout. Start a session, poll it by `capture_id`, and optionally cancel it. Only one sequence capture may be active for a given viewport at a time.
 
 `start_viewport_sequence_capture` requires exactly one stop condition:
@@ -555,6 +559,22 @@ Generated from `McpToolRegistry.Tools` via:
 ```powershell
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
+
+### Targeting Live Owned Objects
+
+Generic inspection resolves scene nodes, transforms and components in the active
+world before consulting global caches. Assets can share persistent IDs with
+dormant edit/play snapshots. To select an exact owned instance, pass `object_id`
+for its live component and `object_path` to `get_object_properties`,
+`set_object_property` or `invoke_method`, for example `Material` or
+`Material.Shaders[0].Source`.
+
+A supplied path requires an active-world root and never falls back to a cached
+root. Paths support instance properties, fields and nonnegative array/list
+indices, with at most 16 member steps and 1,024 characters. Null, destroyed,
+out-of-range and non-engine terminal values fail explicitly. Static method calls
+cannot use `object_path`. Responses retain the root ID and path separately from
+the target's type and optional persistent ID.
 
 <!-- MCP_TOOL_TABLE:START -->
 
@@ -637,7 +657,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
-| `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
+| `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. Scene node, transform, and component IDs resolve against the active world before global object and asset caches, so duplicate snapshot IDs select the live object. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
 | `get_parent_types` | Walk the inheritance chain upward from a type, including interfaces. |
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |

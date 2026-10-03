@@ -11,6 +11,7 @@ using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Imaging;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Imaging.Magick;
 
@@ -285,7 +286,8 @@ public sealed class ImportedTextureStreamingPhaseTests
                 PreviewMaxDimension: 64u,
                 PageSelection: SparseTextureStreamingPageSelection.Full),
             desiredResidentSize: 1024u,
-            availableManagedBytes: justUnder512Budget);
+            availableManagedBytes: justUnder512Budget,
+            backend: OpenGlTextureStreamingBackendProvider.Instance.DefaultBackend);
 
         fitted.ShouldBe(256u);
     }
@@ -301,7 +303,8 @@ public sealed class ImportedTextureStreamingPhaseTests
                 PreviewMaxDimension: 64u,
                 PageSelection: SparseTextureStreamingPageSelection.Full),
             desiredResidentSize: 1024u,
-            availableManagedBytes: 0L);
+            availableManagedBytes: 0L,
+            backend: OpenGlTextureStreamingBackendProvider.Instance.DefaultBackend);
 
         fitted.ShouldBe(1u);
     }

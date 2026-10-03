@@ -183,7 +183,6 @@ namespace XREngine
         /// </summary>
         public bool Restore()
         {
-            using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.CookedSnapshotLoad);
             if (SourceWorld is null)
                 return false;
 

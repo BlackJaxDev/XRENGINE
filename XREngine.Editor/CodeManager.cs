@@ -244,7 +244,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string? languageVersion = "14.0",
         (string name, string version)[]? packageReferences = null,
         string[]? includedProjectPaths = null,
-        string[]? assemblyReferencePaths = null)
+        string[]? assemblyReferencePaths = null,
+        string? assemblyName = null,
+        string? rendererBackendSelection = null)
     {
         List<object> content =
         [
@@ -253,7 +255,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("OutputType", executable ? "Exe" : "Library"),
                 new XElement("TargetFramework", TargetFramework),
                 new XElement("RootNamespace", rootNamespace),
-                new XElement("AssemblyName", Path.GetFileNameWithoutExtension(projectFilePath)),
+                new XElement("AssemblyName", assemblyName ?? Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
                 new XElement("EnableDefaultCompileItems", "false"),
                 new XElement("CopyLocalLockFileAssemblies", "true"),
@@ -268,7 +270,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("BaseOutputPath", "Build"),
                 new XElement("ServerGarbageCollection", "false"),
                 new XElement("ConcurrentGarbageCollection", "true"),
-                new XElement("GarbageCollectionAdaptationMode", "1")
+                new XElement("GarbageCollectionAdaptationMode", "1"),
+                rendererBackendSelection is null ? null : new XElement("XREngineRendererBackends", rendererBackendSelection)
             ),
         ];
 
@@ -300,7 +303,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         if (includedProjectPaths is not null)
             content.Add(new XElement("ItemGroup",
                 includedProjectPaths.Select(x => new XElement("ProjectReference",
-                    new XAttribute("Include", x)
+                    new XAttribute("Include", x),
+                    rendererBackendSelection is null ? null : new XAttribute(
+                        "AdditionalProperties", "XREngineRendererBackends=$(XREngineRendererBackends)")
                 ))
             ));
 
@@ -529,12 +534,34 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string launcherProjectPath = Path.Combine(launcherRoot, $"{projectName}.Launcher.csproj");
         string rendererBackendSelection = settings.RendererBackendPackage.ToString();
         string? bootstrapProjectPath = TryResolveBootstrapProjectPath();
-        if (settings.RendererBackendPackage != ERendererBackendPackageMode.All &&
+        if ((settings.PublishLauncherAsNativeAot || settings.RendererBackendPackage != ERendererBackendPackageMode.All) &&
             bootstrapProjectPath is null)
         {
             throw new InvalidOperationException(
-                $"Packaging only the {rendererBackendSelection} renderer requires the " +
+                $"Publishing the {rendererBackendSelection} renderer requires the " +
                 "XREngine.Runtime.Bootstrap source project so its NativeAOT registration can be compiled for that backend.");
+        }
+
+        if (settings.PublishLauncherAsNativeAot)
+        {
+            string publishGameRoot = Path.Combine(launcherRoot, "Game");
+            gameProjectPath = Path.Combine(publishGameRoot, $"{projectName}.Published.csproj");
+            CreateCSProj(
+                Engine.Assets.GameAssetsPath,
+                gameProjectPath,
+                projectName,
+                executable: false,
+                allowUnsafeBlocks: true,
+                nullableEnable: true,
+                implicitUsings: true,
+                aot: false,
+                publishSingleFile: false,
+                selfContained: false,
+                builds: [configuration],
+                platforms: [platform],
+                includedProjectPaths: [bootstrapProjectPath!],
+                assemblyName: projectName,
+                rendererBackendSelection: rendererBackendSelection);
         }
         string defineConstants = ComposeLauncherDefineConstants(settings);
 
@@ -551,8 +578,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             programPath,
             generatedLauncherAssemblyName,
             platform,
-            GetEngineAssemblyPaths(),
-            GetEngineRuntimePackageReferences(),
+            settings.PublishLauncherAsNativeAot ? [] : GetEngineAssemblyPaths(),
+            settings.PublishLauncherAsNativeAot ? [] : GetEngineRuntimePackageReferences(),
             rendererBackendSelection,
             bootstrapProjectPath,
             includeGameProject: gameProjectPath);
@@ -753,6 +780,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             "XREngine.Input.dll",
             "XREngine.Modeling.dll",
             "XREngine.Runtime.Core.dll",
+            "XREngine.Runtime.Host.dll",
             "XREngine.Runtime.Bootstrap.dll",
             "XREngine.Runtime.AudioIntegration.dll",
             "XREngine.Runtime.Rendering.dll",

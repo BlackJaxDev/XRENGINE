@@ -13,7 +13,7 @@ namespace XREngine.Rendering
         "glsl", "shader", "slang",
         "frag", "vert", "geom", "tesc", "tese", "comp", "task", "mesh",
         "fs", "vs", "gs", "tcs", "tes", "cs", "ts", "ms")]
-    public partial class XRShader : GenericRenderObject
+    public partial class XRShader : GenericRenderObject, IPostCookedBinaryDeserialize
     {
         private readonly object _resolvedSourceCacheLock = new();
         private string? _resolvedSourceCache;
@@ -44,6 +44,7 @@ namespace XREngine.Rendering
         }
 
         private TextFile _source = string.Empty;
+        private TextFile? _subscribedSource;
         public TextFile Source
         {
             get => _source;
@@ -178,8 +179,7 @@ namespace XREngine.Rendering
                 switch (propName)
                 {
                     case nameof(Source):
-                        if (field is TextFile previousSource)
-                            previousSource.TextChanged -= OnSourceTextChanged;
+                        SetSourceSubscription(null);
                         break;
                 }
             }
@@ -201,11 +201,35 @@ namespace XREngine.Rendering
                     break;
                 case nameof(Source):
                     InvalidateResolvedSourceCache();
-                    if (field is TextFile newSource)
-                        newSource.TextChanged += OnSourceTextChanged;
+                    SetSourceSubscription(field as TextFile);
                     OnSourceTextChanged();
                     break;
             }
+        }
+
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+        {
+            // Snapshot restoration suppresses the property callbacks that normally bind
+            // source edits to shader invalidation. Restore this ownership explicitly.
+            SetSourceSubscription(Source);
+            OnSourceTextChanged();
+        }
+
+        private void SetSourceSubscription(TextFile? source)
+        {
+            if (ReferenceEquals(_subscribedSource, source))
+                return;
+            if (_subscribedSource is not null)
+                _subscribedSource.TextChanged -= OnSourceTextChanged;
+            SetField(ref _subscribedSource, source, publishNotifications: false, nameof(Source));
+            if (_subscribedSource is not null)
+                _subscribedSource.TextChanged += OnSourceTextChanged;
+        }
+
+        protected override void OnDestroying()
+        {
+            SetSourceSubscription(null);
+            base.OnDestroying();
         }
 
         private void OnSourceTextChanged()

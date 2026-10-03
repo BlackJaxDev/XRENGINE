@@ -8,3 +8,5 @@
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.Collections.Generic.HashSet<string>))]
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.DateTime?))]
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.ValueTuple<int, int>))]
+[assembly: XREngine.RuntimeClosedFormatter(typeof(int[]))]
+[assembly: XREngine.RuntimeClosedFormatter(typeof(long[]))]

@@ -36,7 +36,7 @@ namespace XREngine.Rendering
     }
 
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
-    public partial class XRMaterial : XRMaterialBase
+    public partial class XRMaterial : XRMaterialBase, IPostCookedBinaryDeserialize
     {
         [YamlIgnore]
         private XRMaterial? _depthNormalPrePassVariant;
@@ -140,6 +140,7 @@ namespace XREngine.Rendering
         private readonly List<XRShader> _taskShaders = [];
         private readonly List<XRShader> _computeShaders = [];
         private EventList<XRShader> _shaders;
+        private EventList<XRShader>? _subscribedShaders;
 
         public XRMaterial()
         {
@@ -798,9 +799,14 @@ namespace XREngine.Rendering
 
         private void PreShadersSet()
         {
-            _shaders.PostModified -= ShadersChanged;
-            _shaders.PostAnythingAdded -= ShaderAdded;
-            _shaders.PostAnythingRemoved -= ShaderRemoved;
+            if (_subscribedShaders is null)
+                return;
+            _subscribedShaders.PostModified -= ShadersChanged;
+            _subscribedShaders.PostAnythingAdded -= ShaderAdded;
+            _subscribedShaders.PostAnythingRemoved -= ShaderRemoved;
+            foreach (XRShader shader in _subscribedShaders)
+                ShaderRemoved(shader);
+            SetField(ref _subscribedShaders, null, publishNotifications: false, nameof(Shaders));
         }
 
         private IReadOnlyList<XRShader> GetShaderList(EShaderType shaderType)
@@ -819,6 +825,8 @@ namespace XREngine.Rendering
 
         private void PostShadersSet()
         {
+            PreShadersSet();
+            SetField(ref _subscribedShaders, _shaders, publishNotifications: false, nameof(Shaders));
             _shaders.PostModified += ShadersChanged;
             _shaders.PostAnythingAdded += ShaderAdded;
             _shaders.PostAnythingRemoved += ShaderRemoved;
@@ -826,6 +834,15 @@ namespace XREngine.Rendering
             foreach (var shader in _shaders)
                 ShaderAdded(shader);
             ShadersChanged();
+        }
+
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+            => PostShadersSet();
+
+        protected override void OnDestroying()
+        {
+            PreShadersSet();
+            base.OnDestroying();
         }
 
         private void ShaderRemoved(XRShader item)
@@ -839,6 +856,7 @@ namespace XREngine.Rendering
         {
             if (item is null)
                 return;
+            item.Reloaded -= ShaderReloaded;
             item.Reloaded += ShaderReloaded;
         }
 

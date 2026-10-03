@@ -464,7 +464,7 @@ namespace XREngine.Components.Animation
             // Unity's cyclic source owns the exact duration boundary as the wrapped
             // start sample. Values beyond that boundary remain clamped editor seeks;
             // signed/multi-cycle addressing belongs to EvaluateAtUnwrappedTime.
-            if (Animation.UsesCyclicSourcePlayback
+            if (Animation.ImportedMetadata is not null && Animation.UsesCyclicSourcePlayback
                 && requestedTicks == GetClipLengthTicks(Animation))
                 evaluationTicks = 0L;
             SetAllPropertyAnimationTimesForPlayback(Animation, evaluationTicks);

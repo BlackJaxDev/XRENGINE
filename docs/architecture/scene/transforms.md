@@ -60,6 +60,11 @@ suppresses external matrix notifications and publication.
 
 ## Snapshot and render publication contract
 
+Cooked restoration marks the local and world matrices dirty after rebuilding parent
+and child links. Authored setters run with notifications suppressed, so their usual
+matrix invalidation cannot be assumed. Recalculation stays deferred until the graph
+is complete; world startup evaluates the hierarchy before gameplay activation.
+
 Matrix accessors return the latest complete matrix; reading does not recalculate
 or wait for the next simulation tick. Store writers serialize array edits and
 publish an even sequence after the transaction. Readers retry if a concurrent

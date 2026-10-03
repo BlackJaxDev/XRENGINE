@@ -1878,6 +1878,66 @@ public static partial class CookedBinarySerializer
         Reflection = 1
     }
 
+    /// <summary>Writes a generated MemoryPack model using the ordinary cooked object envelope.</summary>
+    public static void WriteTypedMemoryPackModel<TModel>(CookedBinaryWriter writer, TModel model)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(model);
+
+        byte[] payload = MemoryPackSerializer.Serialize(model);
+        writer.Write((byte)CookedBinaryTypeMarker.Object);
+        WriteTypeName(writer, typeof(TModel));
+        writer.Write((byte)CookedBinaryObjectEncoding.MemoryPack);
+        writer.Write(payload.Length);
+        writer.Write(payload);
+    }
+
+    /// <summary>Reads a generated MemoryPack model while accepting older reflection-encoded authoring data.</summary>
+    public static TModel? ReadTypedMemoryPackModel<TModel>(CookedBinaryReader reader)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+
+        long start = reader.Position;
+        CookedBinaryTypeMarker marker = (CookedBinaryTypeMarker)reader.ReadByte();
+        if (marker == CookedBinaryTypeMarker.Null)
+            return null;
+        if (marker != CookedBinaryTypeMarker.Object)
+            throw new InvalidDataException($"Expected a cooked object model, got '{marker}'.");
+
+        string typeName = reader.ReadString();
+        string expectedTypeName = typeof(TModel).AssemblyQualifiedName ?? typeof(TModel).FullName ?? typeof(TModel).Name;
+        if (!string.Equals(typeName, expectedTypeName, StringComparison.Ordinal))
+            throw new InvalidDataException($"Expected cooked model '{expectedTypeName}', got '{typeName}'.");
+
+        CookedBinaryObjectEncoding encoding = (CookedBinaryObjectEncoding)reader.ReadByte();
+        if (encoding == CookedBinaryObjectEncoding.MemoryPack)
+        {
+            int length = reader.ReadInt32();
+            byte[] payload = reader.ReadBytes(length);
+            return MemoryPackSerializer.Deserialize<TModel>(payload);
+        }
+
+#if !XRE_PUBLISHED
+        if (encoding == CookedBinaryObjectEncoding.Reflection)
+        {
+            reader.Position = start;
+            return reader.ReadValue<TModel>();
+        }
+#endif
+        throw new InvalidDataException($"Unsupported cooked model encoding '{encoding}'.");
+    }
+
+    /// <summary>Returns the exact cooked object envelope and generated MemoryPack payload size.</summary>
+    public static long CalculateTypedMemoryPackModelSize<TModel>(TModel model)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
+        return checked(1 + SizeOfTypeName(typeof(TModel)) + 1 + sizeof(int) + payload.Length);
+    }
+
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private sealed class CookedBinarySizeCalculator

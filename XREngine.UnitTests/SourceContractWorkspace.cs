@@ -19,14 +19,14 @@ internal static class SourceContractWorkspace
     internal readonly record struct SourceFile(string RelativePath, string Source);
 
     /// <summary>
-    /// Reads one workspace file. A unique filename match is accepted so file
-    /// moves, including moves across rendering projects, do not break a contract.
+    /// Reads a canonical workspace file. Legacy Vulkan contracts retain their
+    /// separate partial-type lookup until that renderer's contract migration.
     /// </summary>
     public static string ReadFile(string relativePath)
     {
         string exactPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
         if (File.Exists(exactPath))
-            return NormalizeLineEndings(File.ReadAllText(exactPath));
+            return NormalizeLineEndings(File.ReadAllText(ResolveCanonicalFile(relativePath)));
 
         if (IsVulkanCSharpSourcePath(relativePath))
         {
@@ -63,7 +63,7 @@ internal static class SourceContractWorkspace
             return ReadPartialType(relativePath);
         }
 
-        string fullPath = ResolveFile(relativePath);
+        string fullPath = ResolveCanonicalFile(relativePath);
         return NormalizeLineEndings(File.ReadAllText(fullPath));
     }
 
@@ -74,12 +74,23 @@ internal static class SourceContractWorkspace
     /// </summary>
     public static string ReadExactFile(string relativePath)
     {
-        string exactPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
-        if (File.Exists(exactPath))
-            return NormalizeLineEndings(File.ReadAllText(exactPath));
-
-        string fullPath = ResolveFile(relativePath);
+        string fullPath = ResolveCanonicalFile(relativePath);
         return NormalizeLineEndings(File.ReadAllText(fullPath));
+    }
+
+    /// <summary>Resolves one required repository-relative file without relocation guesses.</summary>
+    public static string ResolveCanonicalFile(string relativePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        if (Path.IsPathRooted(relativePath))
+            throw new ArgumentException("Source contracts require a repository-relative path.", nameof(relativePath));
+
+        string fullPath = Path.GetFullPath(Path.Combine(RepositoryRoot, relativePath));
+        if (!fullPath.StartsWith(RepositoryRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Source contract path must remain inside the repository.", nameof(relativePath));
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException($"Required canonical repository file '{relativePath}' is missing.", relativePath);
+        return fullPath;
     }
 
     /// <summary>
@@ -106,7 +117,7 @@ internal static class SourceContractWorkspace
             });
         }
 
-        string fullPath = ResolveFile(relativePath);
+        string fullPath = ResolveCanonicalFile(relativePath);
         if (!string.Equals(Path.GetExtension(fullPath), ".cs", StringComparison.OrdinalIgnoreCase))
             return NormalizeLineEndings(File.ReadAllText(fullPath));
 

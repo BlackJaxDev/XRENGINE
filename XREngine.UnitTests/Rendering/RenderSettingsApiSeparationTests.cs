@@ -175,8 +175,8 @@ public sealed class RenderSettingsApiSeparationTests
     [Test]
     public void RenderBackendSelectionAndVulkanTargetModeUseSeparatedPolicySources()
     {
-        string effective = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.EffectiveSettings.cs");
-        string windows = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.Windows.cs");
+        string effective = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Subclasses/Engine.EffectiveSettings.cs");
+        string windows = ReadWorkspaceFile("XREngine.Runtime.Host/RenderingHost/Engine.Windows.cs");
         string mode = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanOutputRuntime.RenderTargetModePolicy.cs");
         string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
         string runtimeServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
