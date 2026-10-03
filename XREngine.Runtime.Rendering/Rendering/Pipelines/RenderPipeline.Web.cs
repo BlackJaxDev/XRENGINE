@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 using YamlDotNet.Serialization;
 
@@ -63,18 +64,24 @@ public abstract partial class RenderPipeline
     public bool IsWebOutputPrepared => _webOutputPrepared;
 
     public void PrepareForWebOutput(PipelinePostProcessState? authored = null, IShaderProgramArtifactResolver? resolver = null)
+        => PrepareForWebOutput(RenderPipelineResourceProfile.Empty, authored, resolver);
+
+    public void PrepareForWebOutput(in RenderPipelineResourceProfile outputProfile, PipelinePostProcessState? authored = null, IShaderProgramArtifactResolver? resolver = null)
     {
         if (_webOutputPrepared)
             return;
         PassIndicesAndSorters = GetPassIndicesAndSorters();
         InitializeCommandChain();
-        WebGpuPipelineAdmission.Validate(CreateRequirements(RendererBackendId.WebGPU, authored), this, resolver);
+        WebGpuPipelineAdmission.Validate(CreateRequirements(RendererBackendId.WebGPU, outputProfile, authored), this, resolver);
         SetField(ref _webOutputPrepared, true, publishNotifications: false);
     }
 
     public RenderPipelineRequirements CreateRequirements(RendererBackendId backend, PipelinePostProcessState? authored = null)
+        => CreateRequirements(backend, RenderPipelineResourceProfile.Empty, authored);
+
+    public RenderPipelineRequirements CreateRequirements(RendererBackendId backend, in RenderPipelineResourceProfile outputProfile, PipelinePostProcessState? authored = null)
     {
-        RenderPipelineRequirements requirements = new(backend, CreatePostProcessAdmissionState(backend, authored));
+        RenderPipelineRequirements requirements = new(backend, CreatePostProcessAdmissionState(backend, authored), outputProfile);
         DescribeRequirements(requirements);
         DeclaredRequirements?.ApplyTo(requirements);
         return requirements;

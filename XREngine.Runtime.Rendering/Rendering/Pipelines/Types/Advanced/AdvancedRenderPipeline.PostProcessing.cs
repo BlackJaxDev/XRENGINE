@@ -231,6 +231,11 @@ public partial class AdvancedRenderPipeline
 
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false);
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive && GetTexture<XRTexture>(BloomBlurTextureName) is null)
+        {
+            materialProgram.Uniform("BloomStrength", 0.0f);
+            materialProgram.Uniform("DebugBloomOnly", false);
+        }
         if (CurrentRenderingPipeline is { } pipeline && GlobalIlluminationDiagnosticPresentation.IsCurrentFrame(pipeline))
         {
             materialProgram.Uniform($"{ColorGradingSettings.ColorGradeUniformName}.{nameof(ColorGradingSettings.Exposure)}", 1.0f);
@@ -278,7 +283,10 @@ public partial class AdvancedRenderPipeline
         int slot,
         string? samplerName = null)
     {
-        XRTexture texture = RequirePostProcessTexture(resourceName);
+        XRTexture texture = Shaders.Compilation.WebPipelineRasterProgram.IsActive &&
+            resourceName is BloomBlurTextureName or AutoExposureTextureName or AtmosphereColorTextureName or VolumetricFogColorTextureName
+            ? RequireAdvancedWebPostInput(resourceName)
+            : RequirePostProcessTexture(resourceName);
         if (!ReferenceEquals(material.Textures[slot], texture))
             material.Textures[slot] = texture;
         materialProgram.Sampler(samplerName ?? resourceName, texture, slot);

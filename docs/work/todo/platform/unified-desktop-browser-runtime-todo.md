@@ -2,9 +2,9 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: implementation resumed at the owner's request on 2026-10-01 from commit `11ef1f64663e631f969b36921eb5a02affabf9e5`, after the reference-harness and portable-host checks. The current source passes Editor, Server, VRClient, desktop WebGPU, all 19 portable-project compile rows and fresh browser interpreter/Jolt publication with zero compiler warnings/errors, including the browser platform leaf and corrected startup profile defaults. Chromium/SwiftShader qualifies bounded shared rendering profiles, and the complete compiled Editor publisher has activated the canonical RollingBall browser bundle. **65 of 114 items are checked; 49 remain open.** New evidence closes only the rows whose complete wording is satisfied. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) records the evidence and limits. At the owner's request, implementation proceeds in coherent engine/app pieces with narrow compile checks; broad browser and regression qualification occurs at end-to-end milestones rather than gating each small feature.
+Status: local implementation resumed after the 2026-10-03 workspace reconstruction. The published `e8e381a2` milestone remains **65/114**; the current local checklist separates implemented source from remaining implementation and live acceptance. **77 of 130 named items are checked; 53 remain open.** Fresh Rendering, WebGPU and Editor builds and all 75 shader recipe cooks pass, with fresh 35-assertion saved-camera and 25-assertion native-admission probes. Genuine Editor Prepare/Export and separate-process cooked hydration/BeginPlay preserve the single-camera static Advanced source/settings, four texture identities and pawn-camera alias; no reconstructed native Browser build or new browser pixels have passed yet. Historical publication and device results below apply to their recorded snapshots. At the owner's request, coherent source groups use narrow compile/cook checks; full browser and regression qualification occurs at end-to-end milestones.
 
-Created: 2026-09-29. Updated: 2026-10-02.
+Created: 2026-09-29. Updated: 2026-10-03.
 
 Owner: Runtime architecture / rendering / platform.
 
@@ -19,17 +19,32 @@ Run the same engine, worlds, and C# game code in the browser (WebGPU, .NET 10 We
 
 The editor stays a desktop application and gains an honest browser publish target on this path. The separate browser runtime on the `codex/webgpu-readiness-audit` branch is stabilized as a reference harness and retired once this path reaches parity.
 
-## Current State (2026-10-02)
+## Current State (2026-10-03)
 
-The current coherent source passes Editor, Server, VRClient, desktop WebGPU,
-RenderingParity, all nineteen portable compile rows and fresh interpreter/native-
-Jolt browser publication with zero compiler warnings or errors. The count is
-**65 of 114 named items complete, 49 open**. Published metadata is now installed
-before engine/game startup, and the actual metadata-bearing RollingBall bundle
-passes three headless WebAssembly start/step/stop cycles. The authored textured,
-skeletal/morph world passes its real generic hydration and Editor cook/package
-path and the physical Edge/Intel Arc authored-browser run. Broader mapped-lighting
-semantics and isolated CPU/GPU deformation parity still need qualification.
+The local source now contains a bounded static, mono, single-sample Advanced
+family: canonical scene residency, CPU-direct and GPU indirect/compute-meshlet
+visibility, classification/reconstruction, native PBR shading, exact texture
+cohorts, depth/AO stages and selected output/post/exposure paths. Native
+deformation, per-sample MSAA and the generic Default/custom meshlet family remain
+explicit implementation gaps. The split below counts source implementation and
+live acceptance independently, with each requirement owned by one named row.
+
+Fresh post-reconstruction evidence is limited to Rendering/WebGPU/Editor builds,
+all 75 shader cooks, 35 saved-camera assertions, 25 admission/reservation
+assertions and a clear source-boundary review. Genuine Editor Prepare/Export and
+separate-process cooked hydration/BeginPlay also pass for the single-camera static
+Advanced sample, preserving its pipeline/settings, four texture identities and
+pawn-camera alias. The [fresh integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+records that evidence. The native Browser build/publication and live Advanced
+pixels have not been refreshed; none of the historical browser or physical-device
+results below is a fresh result for this local source. **77 of 130 named items are checked; 53 remain open.**
+
+The published `e8e381a2` checkpoint retains its historical **65/114** count and
+the preceding Default/RenderingParity evidence: metadata-bearing RollingBall
+headless lifecycle, genuine Editor cooking, and the physical Edge/Intel Arc
+textured skeletal/morph run. Broader lighting semantics, numeric CPU/GPU
+deformation parity and the newly implemented Advanced family still need their
+own qualification.
 
 The preceding published commit `0078867c7327e2a50605a655207854319045e2bb` passes
 all three existing jobs in
@@ -42,7 +57,10 @@ results do not establish full gameplay, audible-device, performance or desktop
 parity. The [current checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md)
 records exact captures, corrections, source groups and their separate limits.
 
-| Area | Current evidence and remaining boundary |
+The following area inventory retains the published checkpoint evidence and its
+remaining boundaries; it is not a refreshed qualification of reconstructed source.
+
+| Area | Published evidence and remaining boundary |
 | --- | --- |
 | Shared host/platform | Real `Engine`, `RuntimeWorld`, game assemblies, caller-thread jobs/frame callbacks and the browser platform leaf compose successfully. Surface generations, timing resets and scoped pipeline selection are implemented; desktop pacing and the full blocking-site closure remain open. |
 | Game and publishing | The unchanged authored RollingBall and RenderingParity projects pass genuine Windows Editor CLI publication and render through the shipping browser player. Physical browser input, pause/reset, resize and two-start checks pass; broader gameplay/physics, desktop comparison and device acceptance remain open. |
@@ -52,8 +70,9 @@ records exact captures, corrections, source groups and their separate limits.
 | Toolchain/cleanup | The approved SDK/workload and Slang pins are retained, path casing is corrected, and clean Linux/Windows publication works. The separate browser reference runtime stays frozen until genuine parity permits retirement. |
 
 Software WebGPU proves API/shader behavior for the recorded cases, not hardware
-performance. Local Chromium is blocked by this host's Unix-socket policy; the
-authorized Actions lanes provide live browser evidence. Historical build and
+performance. The earlier host's local Chromium attempt was blocked by its
+Unix-socket policy; that is historical environment evidence, not a current
+browser-access determination. Historical build and
 unit-test results below apply only to their recorded snapshots and do not imply
 that the remaining verification rows have passed.
 
@@ -67,6 +86,7 @@ that the remaining verification rows have passed.
   - `owner`: needs an owner decision or approval before work proceeds.
 
   An implementation-only pass completes `impl` items, leaves `verify` items unchecked with a note of what is ready to validate, and stops at `owner` items. It never resolves an [owner decision](#owner-decisions) by guessing.
+- **Counting.** Count only named checkbox rows with an `impl`, `verify`, or `owner` tag. Non-counted parent summaries preserve earlier IDs and map their requirements to concrete leaves or existing owners; unnumbered explanatory sublists are not extra items. A completed implementation leaf does not close its live acceptance or the full source-group build gate.
 - **Named failures.** A required service, pass, or physics feature that a platform lacks fails with a named diagnostic. No silent CPU fallback for a requested GPU path, no WebGPU-to-WebGL2 switch, no dropped components.
 - **Hot paths.** One managed-to-JavaScript crossing per frame for rendering; no per-draw interop; no per-frame heap allocations in recording, visibility, simulation, or submission.
 - **No blocking on the browser path.** Asynchronous I/O and readback only; the browser runs frame-stepped on one thread.
@@ -112,7 +132,7 @@ rendered game: five-cycle callbacks, teardown and late BeginPlay failure/retry
 pass, but the diagnostic package does not exercise Editor BrowserWebGPU
 publishing and initializes no GPU.
 
-The current remaining 53 rows require further implementation or their stated
+The remaining rows at that historical checkpoint required further implementation or their stated
 acceptance evidence. Full production shader coverage, authored textured/deformed
 world parity, memory/performance bounds, physical-device checks, recovery and
 broader desktop/browser/device verification remain open.
@@ -293,13 +313,13 @@ accessibility remain explicit gaps.
 
 Decision D15 adds four explicitly open named items, UR06.08–UR06.11, for generic
 asset contracts, real Advanced backend operations/shaders and live acceptance.
-The total is now **114**, with **64 completed and 50 open**. The preceding
+The total at that scope checkpoint became **114**, with **64 completed and 50 open**. The preceding
 64/110 milestone remains its historical published result. Completed initial
 safety and CPU-direct gates do not count the newly required Advanced support as
 finished; there is no new completion from this scope update.
 
 The subsequent generic-contract implementation and full build gate close
-UR06.08, bringing the current source to **65/114 complete, 49 open**. This closes
+UR06.08, bringing the subsequently published `e8e381a2` milestone to **65/114 complete, 49 open**. This closes
 the shared authoring/cooking contract, not Advanced stages or browser pixels.
 
 The owner's accompanying submission clarification permits CPU-direct,
@@ -308,9 +328,29 @@ mode and implement supported compute/indirect algorithms without steady-state
 CPU count/visibility readback or silent CPU fallback. Hardware task/mesh shader
 extensions remain a separate concrete capability limit.
 
+### Concrete source and acceptance leaves (2026-10-03)
+
+The former mixed UR06.01, UR06.02, UR06.05, UR06.09, UR06.10 and UR06.11
+checkboxes are now non-counted summaries. Their implementation and acceptance
+requirements map to the named leaves below; reused UR04, UR05, UR06.08, UR09 and
+UR14 requirements are not counted again. UR05.04 is now complete for bounded
+logical references, qualifying arrays and native material cohorts. The fresh
+compile/cook, focused-probe and genuine Editor export/hydration evidence above
+supports the checked local source leaves, not native Browser publication,
+rendered output or device recovery. The change
+in denominator is decomposition, not a claim that the published milestone ran
+additional tests. **77 of 130 named items are checked; 53 remain open.**
+
+| Kind | Checked | Open | Total |
+| --- | ---: | ---: | ---: |
+| `impl` | 65 | 30 | 95 |
+| `verify` | 6 | 22 | 28 |
+| `owner` | 6 | 1 | 7 |
+| **Total** | **77** | **53** | **130** |
+
 ## Build Gate
 
-Run narrow compile/cook checks during coherent implementation groups, and the full gate at end-to-end milestones and before checking an `impl` item. Fix failures caused by the change; list unrelated failures separately instead of working around them.
+Run narrow compile/cook checks before checking a coherent `impl` leaf, and the full gate at end-to-end milestones and before publication. Record which checks are fresh for the source being discussed; a narrow source completion does not imply the full gate passed. Fix failures caused by the change; list unrelated failures separately instead of working around them.
 
 | Check | Command (repository root) |
 | --- | --- |
@@ -349,7 +389,7 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-As of the 2026-10-02 modular-contract implementation gate, 65 of 114 items here are checked, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and current bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+The historical 2026-10-02 modular-contract gate checked 65 of 114 items. The current restructured source checklist checks 77 of 130, with 53 open; its kind totals are recorded above. The [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -544,7 +584,7 @@ Depends on UR17.
 - [x] **UR05.01** `impl` Inventory the shaders the web tier of `DefaultRenderPipeline` needs. Classify each as portable through Slang, needing a WGSL rewrite, or desktop-only. Record the list, grouped by pass, in a progress doc; it is the work list for UR05.07.
 - [x] **UR05.02** `impl` Cook engine shaders to WGSL with the pinned Slang route and the shader artifact format (reusing `Tools/ShaderCooker`, the `ShaderCompileTarget.WebGPUWgsl` target, and artifact schema checks). Follow the [Slang cross-compile plan](../../design/scripting/slang-shader-cross-compile-plan.md). Depends on decision D7.
 - [ ] **UR05.03** `impl` Extend the engine's material shader generation with a WGSL target, replacing the separate browser material generator. Support the engine's lit material model, not only unlit and Lambert.
-- [ ] **UR05.04** `impl` Implement the WebGPU encoding of logical material and texture references with bounded bind groups, texture arrays for qualifying content, and material batching. No desktop bindless handle reaches WGSL.
+- [x] **UR05.04** `impl` Implement the WebGPU encoding of logical material and texture references with bounded bind groups, texture arrays for qualifying content, and material batching. No desktop bindless handle reaches WGSL. Done in the reconstructed source: exact logical texture/sampler generation pairs lower to finite native cohorts, qualifying authored 2D arrays retain their layer/mip identity, and material rows select cohorts. `WebGpuAdvancedShadingOutput.Cohorts`, `WebGpuTexture2DArray` and `AdvancedShadeTextures.slang` implement this encoding; generic material-generator coverage remains UR05.03 and live native material interpretation remains UR06.11c. See the [native admission record](../../progress/rendering/browser-advanced-admission-2026-10-02.md).
 - [ ] **UR05.05** `impl` Report web-unsupported shaders and material features at cook time with material, pass, source location, and reason.
 - [ ] **UR05.06** `verify` Verify coordinate conventions (clip depth range, texture Y, winding, matrix layout, reversed-Z where the engine uses it) with known-value renders.
 - [ ] **UR05.07** `impl` Port the hand-written web-tier shaders from the UR05.01 list by the route chosen in D7: depth and shadow casters, forward lit surfaces, sky and environment, tonemapping and the bounded post-process set, then UI and text. Implement coherent groups with narrow cook/compile checks and run known-value rendering at end-to-end milestones; each group's known-value result must be recorded before this coverage is closed, not before work on another group begins. Desktop GLSL behavior is unchanged.
@@ -559,17 +599,78 @@ Advanced nor arbitrary authored-pipeline support is implied by it. Do not close
 this work by allowing only a concrete pipeline class or substituting another
 pipeline when a required operation is missing.
 
-- [ ] **UR06.01** `impl` Define shared WebGPU operation/resource/program requirements for modular `RenderPipeline` assets, including Default, Advanced and authored command graphs. Implement the actual admitted stage families without pipeline substitution. Default's profile includes depth, forward lighting with the engine material model, directional/spot/point shadows within limits, sky and environment, alpha-masked and sorted transparency, HDR with tonemapping, bounded post-processing and engine UI. Advanced requires its real visibility/classification/native-shading and selected per-sample contracts; backend limits receive precise operation diagnostics.
-- [ ] **UR06.02** `impl` Select and validate each authored pipeline's declared commands, resources and cooked program dependencies against capabilities, and report excluded or required unsupported operations explicitly. Publication and runtime use the same shared declarations; no concrete pipeline-type whitelist, Default-only artifact-name gate or implicit Default postprocess schema applies to other pipelines. Preserve authored asset identity and settings; never discover unsupported passes only by failing during rendering.
+**UR06.01 — Modular pipeline coverage (non-counted summary).** The shared
+operation/resource/program declarations are owned by UR06.08; concrete authored
+persistence/admission work is below under UR06.02. Default's depth, lit surfaces,
+directional/spot/point shadows, sky/environment, coverage/transparency, HDR,
+tonemapping and bounded effects remain in the shader/material coverage owners
+UR05.03, UR05.05 and UR05.07. Engine UI/text completion remains UR09.02–UR09.04.
+Advanced backend contracts and actual native/output programs are owned by the
+UR06.09 and UR06.10 leaves. These requirements apply to authored assets without
+pipeline substitution; this summary adds no duplicate checkbox.
+
+**UR06.02 — Authored selection, persistence and admission (non-counted summary).**
+UR06.08 owns the common publication/runtime declaration and scoped-program
+infrastructure. The following leaves own its camera-persistence integration and
+remaining cold-admission/reference-identity gaps.
+
+- [x] **UR06.02a** `impl` Persist and restore authored camera pipeline sources, nested executable commands, branch lifetime, custom postprocess settings and camera AA/MSAA/HDR overrides; preserve unassigned-camera defaults across fresh factory IDs and synchronize already bound viewports. Fresh 35-assertion camera checks and genuine single-camera Advanced Editor export/separate-process cooked hydration preserve the source/settings, four texture identities and pawn-camera alias. This does not establish shared multi-camera reference equality. See the [camera contract record](../../progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md) and [fresh static integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md).
+- [ ] **UR06.02b** `impl` Preserve one shared authored pipeline object's reference identity across multiple cameras through generic cooked binary hydration and standalone camera-array serialization. Existing world/scene YAML alias behavior and equal IDs/settings do not close this requirement; do not deduplicate distinct authored assets merely by ID.
+- [ ] **UR06.02c** `impl` Complete cold publication admission for the selected native scene's geometry, deformation, vertex-displacement and material-cohort eligibility, using the same contracts as runtime and naming the asset/pass/resource and reason. Existing command/program/output-profile checks are UR06.08; remaining failures discovered only during native preparation must move before rendering. Implemented new families must update both admission paths.
 - [x] **UR06.03** `impl` Historical safety gate: make unavailable `AdvancedRenderPipeline` requests report a reason through `Available` and fail under `Required`, rather than silently substituting a pipeline. The initial WebGPU rejection was implemented. D15 supersedes keeping Advanced permanently unsupported; this completed guard is not Advanced rendering support. Its replacement with concrete capability checks and real execution is explicitly open in UR06.08–UR06.11.
 - [x] **UR06.04** `impl` Baseline mesh submission: resolve `CpuDirect` for WebGPU. This implemented baseline remains valid and does not establish Advanced GPU-scene submission. D15 requires the selected pipeline's real GPU-driven paths, tracked in UR06.09; measurement still governs performance claims and default promotion, rather than blocking required source implementation.
-- [ ] **UR06.05** `impl` Run engine skinning and blendshapes through WebGPU compute (reusing the branch's WGSL skinning kernel as a canonical port) or CPU, with CPU/GPU parity checks.
+
+**UR06.05 — Mesh deformation (non-counted summary).** The ordinary engine mesh
+deformation implementation and numeric acceptance are distinct. Advanced's
+current/previous native producer integration is owned only by UR06.10e.
+
+- [x] **UR06.05a** `impl` Run the admitted ordinary engine mesh skinning/blendshape profile through its selected CPU or canonical packed WebGPU compute route, publishing position/normal/tangent streams with exact palette and morph ownership and no silent GPU-to-CPU substitution. `WebGpuMeshDeformation` and the cooked packed-skinning family are included in the fresh renderer/Editor builds and 75-recipe cook.
+- [ ] **UR06.05b** `verify` Compare CPU and GPU positions, normals and tangents for matched skeletal, morph-only and combined deformation inputs, including palette bases, spill influences and sparse morphs. Record numeric tolerances and known-value rendered results; historical visible animation alone is insufficient.
 - [ ] **UR06.06** `impl` Add mobile quality tiers to engine settings: backing resolution and DPR caps, shadow sizes and cadence, light counts, texture tiers, and post effects. Disabled effects must not allocate resources.
 - [ ] **UR06.07** `verify` Render the same test worlds on OpenGL, Vulkan, and WebGPU using Default, Advanced and an unrelated authored modular pipeline; compare tolerant captures and document deliberate differences and concrete capability limits.
-- [x] **UR06.08** `impl` Replace browser-specific concrete-pipeline and global pass-name gates with shared pipeline/command requirement and cooked-program dependency contracts. Preserve authored asset identity and settings, generic metadata, scoped program references and backward-readable existing manifests. A shader-free custom clear pipeline and an unrelated quad pipeline must require only their own operations/programs, not Default artifacts or pass enums. Done 2026-10-02: shared declarations, exact/scoped catalogs and production publisher audit pass saved clear/quad/program probes and the full compile/native-WASM gate. See the [implementation record](../../progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md). Actual GPU output remains the distinct UR06.11 acceptance.
-- [ ] **UR06.09** `impl` Implement the shared WebGPU resource/dispatch/synchronization operations required by Advanced: admitted integer visibility targets and MRTs, storage-image and texture-view bindings, canonical GPU-scene/indirect submission, non-blocking frame-slot completion and pass-boundary visibility. Preserve authored CPU-direct, GPU-driven indirect and GPU meshlet zero-readback modes using supported compute/indirect mechanisms; zero-readback modes must not read counts/visibility back to the CPU or silently fall back. Distinguish hardware task/mesh shader extensions from GPU meshlet algorithms. Use faithful backend lowering where available and precise operation-level diagnostics for actual WebGPU limits; no alternate pipeline substitution.
-- [ ] **UR06.10** `impl` Port Advanced's actual visibility, classification/reconstruction, native shading and selected per-sample MSAA stage/program family through the shared cook/render path. Preserve the canonical frame contract and supported material behavior, use bounded logical texture/material references rather than desktop bindless handles, and declare all required resources and cooked programs.
-- [ ] **UR06.11** `verify` Publish and run Default, Advanced and unrelated authored modular pipeline assets in the browser. Verify selected asset/settings/submission-mode identity, produced outputs, scoped-program alias isolation, capability rejection, resource lifetime/recovery and each implemented Advanced stage/MSAA path. Exercise CPU-direct, GPU-driven indirect and compute/indirect meshlet paths; prove zero-readback modes keep counts/visibility on the GPU. A class being admitted or compiling does not pass this acceptance; desktop image comparison remains UR06.07.
+- [x] **UR06.08** `impl` Replace browser-specific concrete-pipeline and global pass-name gates with shared pipeline/command requirement and cooked-program dependency contracts, generic metadata, scoped program references and backward-readable existing manifests. Publication and runtime consume the same declarations without a concrete-type whitelist, Default artifact requirement or implicit Default postprocess schema. A shader-free custom clear pipeline and an unrelated quad pipeline require only their own operations/programs. The historical 2026-10-02 full compile/native-WASM gate established this foundation; fresh camera/admission probes recheck its reconstructed integration. Camera persistence is counted only in UR06.02a–b and remaining native cold eligibility in UR06.02c. See the [implementation record](../../progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md); actual GPU output remains UR06.11.
+
+**UR06.09 — Advanced backend operations and submission (non-counted summary).**
+These leaves cover the Advanced-specific contracts layered on the general
+renderer wrappers in UR04.01, cached state in UR04.02 and asynchronous API in
+UR04.04. They do not count those general requirements again. Fresh source and
+probe evidence is in the [static integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+and [native admission record](../../progress/rendering/browser-advanced-admission-2026-10-02.md).
+
+- [x] **UR06.09a** `impl` Materialize the native physical visibility layout with three integer MRTs, exact integer/float/depth formats, storage-image outputs and exact mip/layer/aspect texture views. Check attachment extents, sample counts, numeric types and negotiated device limits; reject unsupported physical forms without format substitution.
+- [x] **UR06.09b** `impl` Retain the canonical GPU-scene publication and geometry/material/global arenas in bounded frame slots. Pin the exact publication until non-blocking queue completion, preserve resource generations, and retry GPU-owned slots without overwriting them or mapping counts/visibility.
+- [x] **UR06.09c** `impl` Lower indexed-indirect/count and indirect-compute dispatch through ordered WebGPU passes and copies. GPU-count lowering zeros inactive bounded slots on the GPU; pass-boundary visibility and completion receipts replace blocking waits. Require optional indexed first-instance support only for the routes that consume it.
+- [x] **UR06.09d** `impl` Preserve Advanced's authored CPU-direct, GPU-driven indirect and GPU meshlet zero-readback submission. Emit direct draws for the direct producer and vertex-pulled indirect draws for GPU-produced indexed/meshlet streams; reject missing resident meshlets and strategy downgrades. Hardware task/mesh extensions remain a distinct unavailable capability.
+- [x] **UR06.09e** `impl` Reserve bounded native output families against exact device/program contracts, owner identity, publication, resource generation and stage order. Retain retiring reservations until queue completion and prevent partial/post-only native frames from submitting. The fresh 25-assertion admission probe covers these source boundaries; live lifetime behavior remains UR14.01 with the native cases listed under UR06.11.
+- [ ] **UR06.09f** `impl` Implement the generic Default/custom `VPRC_RenderMeshesPassShared` compute/indirect meshlet lowering and its cooked companions. Its `gpu-meshlet-meshes` operation currently rejects even though the separate Advanced native algorithm exists. Preserve the selected zero-readback contract and do not substitute indexed or CPU submission.
+
+**UR06.10 — Advanced cooked stages and output (non-counted summary).**
+The checked family is static, mono and single-sample. All 75 canonical recipes
+cook after reconstruction; the [fresh integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+also records genuine Editor export and cooked source reload, not browser GPU
+execution. Generic logical texture encoding is counted only in UR05.04.
+
+- [x] **UR06.10a** `impl` Cook and connect static visibility compaction/finalization/raster, integer reconstruction, work classification, depth-pyramid and GTAO stages to the canonical frame contract. Preserve static current/previous transforms and primitive/material identities; no synthetic scene or alternate pipeline stands in for these producers.
+- [x] **UR06.10b** `impl` Cook and bind native standard-material PBR/background shading, supported coverage, retained light/shadow/probe resources and declared surface exports. Consume canonical material constants and the exact cohort encoding from UR05.04; classify work and dispatch native shading from GPU-written arguments.
+- [x] **UR06.10c** `impl` Connect Advanced scene-copy/presentation and selected bounded postprocess programs, including bloom, motion blur, depth of field, FXAA/SMAA and GPU auto-exposure history. Resource declarations and cooked dependencies follow authored settings; disabled effects do not own execution targets/history. Unsupported temporal reconstruction, atmosphere/fog and other unavailable profiles retain explicit diagnostics.
+- [x] **UR06.10d** `impl` Install and validate exact scoped Advanced program ABIs/dependencies at initial output creation and device replacement, and re-evaluate the native capability/reservation contract for the replacement device. This is native-family integration with the recovery owner UR04.06, not a second implementation of general device recovery.
+- [ ] **UR06.10e** `impl` Implement canonical current/previous native deformation producers and matching visibility/reconstruction/shading companions for skinned/morph geometry and selected vertex displacement. Retain deformation generations and temporal relations; ordinary mesh compute from UR06.05a does not satisfy this native family.
+- [ ] **UR06.10f** `impl` Implement faithful per-sample Advanced MSAA visibility, reconstruction, shading and resolve with declared storage/format/sample contracts and exact cooked companions. Ordinary color resolve does not supply per-sample integer visibility; the current single-sample rejection is not completion.
+
+**UR06.11 — Browser execution acceptance (non-counted summary).**
+A source build, recipe cook, admission probe or Editor export does not pass these
+leaves. Desktop image comparison remains solely UR06.07. General loss/restart,
+hide/show and lifecycle acceptance remains solely UR14.01: include Advanced and
+custom pipelines, scoped-catalog reinstallation, resize, pending/retiring native
+outputs, stale generations and preserved world/asset/settings identity in that
+existing matrix. UR04.06 and UR14.02 own the underlying recovery/stale-completion
+implementation. This cross-reference adds no recovery checkbox.
+
+- [ ] **UR06.11a** `verify` Publish and run saved Default, Advanced, clear-only and unrelated quad pipeline assets in the browser. Verify output, authored asset/settings identity, custom schema/AA settings, scoped-program alias isolation and precise capability rejection. Exercise multiple cameras sharing one source after UR06.02b; the fresh single-camera export is preparatory evidence only.
+- [ ] **UR06.11b** `verify` Run the static native Advanced world in CPU-direct, GPU-driven indirect and compute/indirect meshlet modes. Verify selected mode and visibility output, and demonstrate that zero-readback modes keep count/visibility data on the GPU with no CPU fallback.
+- [ ] **UR06.11c** `verify` Capture known-value native PBR/background, masked coverage, texture/sampler/array cohorts, lighting/shadow/probe, depth/AO and selected output/post/exposure results. Exercise disabled effects and resource replacement; shader cooking alone does not establish material interpretation or produced pixels.
+- [ ] **UR06.11d** `verify` After UR06.10e, exercise native deformed visibility/reconstruction and current/previous motion output in the selected submission modes. Reuse numeric deformation results from UR06.05b rather than counting the same parity comparison twice.
+- [ ] **UR06.11e** `verify` After UR06.10f, render each implemented Advanced MSAA sample profile and verify per-sample visibility/coverage/shading and final resolve, including selected-profile identity and explicit rejection of unsupported forms.
 
 **Acceptance (U2):** a representative engine world renders in the browser through engine objects and the web tier, with documented differences from desktop.
 

@@ -29,6 +29,8 @@ public sealed partial class WebGpuFrameBuffer
     {
         var source = GetColorAttachment(sourceSlot);
         var target = destination.GetColorAttachment(destinationSlot);
+        if (WebGpuTextureFormat.IsInteger(source.Format) || source.Format is "r32float" or "rg32float" or "rgba32float")
+            throw Unsupported("Resolve", "the exact source format does not support WebGPU color resolve");
         if (SampleCount != 4 || destination.SampleCount != 1 || Width != destination.Width ||
             Height != destination.Height || source.Format != target.Format || ReferenceEquals(source.Owner, target.Owner))
             throw Unsupported("Resolve", "distinct same-format, same-extent color attachments with four source samples and one destination sample are required");
@@ -65,7 +67,9 @@ public sealed partial class WebGpuFrameBuffer
         {
             WebGpuColorResolve resolve = _colorResolves[i];
             if (!ReferenceEquals(this, resource) && !ReferenceEquals(resolve.Destination, resource) &&
-                !ReferenceEquals(resolve.SourceOwner, resource) && !ReferenceEquals(resolve.DestinationOwner, resource))
+                !ReferenceEquals(resolve.SourceOwner, resource) && !ReferenceEquals(resolve.DestinationOwner, resource) &&
+                !(resolve.SourceOwner is WebGpuTextureView sourceView && sourceView.DependsOn(resource)) &&
+                !(resolve.DestinationOwner is WebGpuTextureView targetView && targetView.DependsOn(resource)))
                 continue;
             Renderer.RetireEngineResourceAfterFrame(resolve.Command);
             _colorResolves.RemoveAt(i);
@@ -76,6 +80,7 @@ public sealed partial class WebGpuFrameBuffer
     {
         switch (attachment)
         {
+            case WebGpuTextureView view: view.MarkRecorded(); break;
             case WebGpuRenderBuffer renderbuffer: renderbuffer.MarkRecorded(); break;
             case WebGpuTexture2D texture: texture.MarkRecorded(); break;
             case WebGpuTexture2DArray array: array.MarkRecorded(); break;

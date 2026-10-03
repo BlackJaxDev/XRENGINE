@@ -2,6 +2,13 @@ namespace XREngine.Rendering.WebGPU;
 
 public sealed partial class WebGpuRendererHost
 {
+    public override void ResetComputeProgramBindings(XRRenderProgram program)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        if (TryGetAPIRenderObject(program, out AbstractRenderAPIObject? value) && value is WebGpuRenderProgram api)
+            api.ClearTransientComputeBindings();
+    }
+
     /// <summary>Records one cooked compute dispatch in the same ordered, atomic frame as raster work.</summary>
     public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
     {

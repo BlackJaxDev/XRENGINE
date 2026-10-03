@@ -120,9 +120,11 @@ export class GpuEngineFrame {
             }
             if (dynamicIndex !== offsetCount)
                 throw new Error('WebGPU.EngineFrame.DynamicOffsets: extra dynamic binding offsets.');
-            if (!suppressDraw) drawCount += prepared.draws;
-            if (drawCount > 4096)
-                throw new RangeError('WebGPU.EngineFrame.DrawCapacity: too many draws.');
+            if (!suppressDraw) {
+                if (!Number.isSafeInteger(prepared.draws) || prepared.draws < 0 || drawCount > 262144 - prepared.draws)
+                    throw new RangeError('WebGPU.EngineFrame.DrawCapacity: the frame exceeds 262144 replay draws.');
+                drawCount += prepared.draws;
+            }
             presentsCanvas ||= prepared.presentsCanvas;
         }
 
@@ -211,7 +213,7 @@ export class GpuEngineFrame {
             stats.commandBytes += length;
             stats.uniformBytes += uniformLength;
             stats.storageBytes += storageLength;
-            const producerGate = receipt.close();
+            const producerGate = receipt.close(true);
             // The accepted frame's commands precede these readback copies in queue order.
             // The acquired canvas texture is still current until this browser task returns.
             r.readback.captureCanvas(canvasTexture, r._generation, presentsCanvas, producerGate);

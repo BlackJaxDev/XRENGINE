@@ -134,6 +134,8 @@ public static class AdvancedSynchronizationContract
                 => true,
             (RuntimeGraphicsApiKind.Vulkan, EAdvancedSynchronizationMode.VulkanSynchronization2)
                 => true,
+            (RuntimeGraphicsApiKind.WebGPU, EAdvancedSynchronizationMode.WebGpuPassBoundaries)
+                => true,
             _ => false,
         };
 }

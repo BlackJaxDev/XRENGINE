@@ -10,18 +10,19 @@ using XREngine.Rendering.Shaders.Compilation;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Retains one fully keyed engine mesh pipeline and draw command until its resource generation changes.</summary>
-internal sealed class WebGpuMeshDraw : IDisposable
+internal sealed partial class WebGpuMeshDraw : IDisposable
 {
     private readonly WebGpuRendererHost _renderer;
     private readonly WebGpuRenderProgram _program;
     private readonly WebGpuVertexStream[] _streams;
-    private readonly WebGpuDataBuffer _indices;
+    private readonly WebGpuDataBuffer? _indices;
     private readonly IndexSize _indexSize;
     private readonly uint _indexCount;
     private readonly WebGpuRasterState _state;
     private readonly RenderFrameOutputDescription _output;
     private readonly WebGpuFrameBuffer? _frameBuffer;
     private readonly Task _preparation;
+    private readonly bool _indirectFirstInstanceFeature = true;
     private WebGpuInstanceStorageContract? _instanceStorage;
     private WebGpuDataBuffer? _instanceBuffer;
     private uint _instanceLimit;
@@ -29,10 +30,11 @@ internal sealed class WebGpuMeshDraw : IDisposable
     private readonly Dictionary<WebGpuBindingSet, int> _commands = [];
     private bool _disposed;
 
-    public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh mesh,
+    public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program, XRMesh? mesh,
         XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output,
         WebGpuFrameBuffer? frameBuffer, WebGpuInstanceStorageContract? instanceStorage,
-        WebGpuDataBuffer? instanceBuffer, uint instanceLimit, WebGpuMeshDeformation? deformation = null)
+        WebGpuDataBuffer? instanceBuffer, uint instanceLimit, WebGpuMeshDeformation? deformation = null,
+        XRMeshRenderer? streamOwner = null)
     {
         _renderer = renderer;
         _program = program;
@@ -47,7 +49,23 @@ internal sealed class WebGpuMeshDraw : IDisposable
             throw Unsupported("only unsigned 16-bit and 32-bit indices are admitted");
         _indices = (WebGpuDataBuffer)renderer.GetOrCreateAPIRenderObject(indices, generateNow: true)!;
         _indexCount = indices.ElementCount;
-        _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation);
+        _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation, streamOwner);
+        _preparation = PrepareAsync();
+    }
+
+    /// <summary>Uses canonical storage-pulled geometry without inventing CPU mesh or index bindings.</summary>
+    public WebGpuMeshDraw(WebGpuRendererHost renderer, WebGpuRenderProgram program,
+        WebGpuRasterState state, in RenderFrameOutputDescription output, WebGpuFrameBuffer? frameBuffer)
+    {
+        if (!program.Artifact.VertexBuffers.IsDefaultOrEmpty)
+            throw Unsupported("vertexless indirect raster requires an empty cooked vertex-buffer layout");
+        _renderer = renderer;
+        _program = program;
+        _state = state;
+        _output = output;
+        _frameBuffer = frameBuffer;
+        _streams = [];
+        _indirectFirstInstanceFeature = false;
         _preparation = PrepareAsync();
     }
 
@@ -65,8 +83,12 @@ internal sealed class WebGpuMeshDraw : IDisposable
     {
         if (!IsReady)
             throw new InvalidOperationException("WebGPU.Mesh.PipelinePending: defer the draw until asynchronous pipeline creation completes.");
+        StageGeometryUploads();
         if (bindings.IsDisposed)
-            throw new InvalidOperationException("WebGPU.Mesh.BindingsRetired: a draw cannot use a retired resource binding set.");
+        {
+            _renderer.MarkEngineDrawPending();
+            return;
+        }
         if ((_instanceLimit == 0 && instances != 1) || (_instanceLimit != 0 && instances > _instanceLimit))
             throw Unsupported("the requested instance count exceeds the cooked storage binding range");
         if (_instanceStorage is { } storage && _instanceBuffer is not null &&
@@ -119,6 +141,21 @@ internal sealed class WebGpuMeshDraw : IDisposable
                 throw Unsupported("bitmap text glyph index exceeds the published text metadata range");
     }
 
+    /// <summary>Replays uploads abandoned while this retained pipeline was preparing asynchronously.</summary>
+    private void StageGeometryUploads()
+    {
+        if (_indices is { } indices)
+        {
+            indices.Generate();
+            indices.StagePendingUpload();
+        }
+        foreach (WebGpuVertexStream stream in _streams)
+        {
+            stream.Buffer.Generate();
+            stream.Buffer.StagePendingUpload();
+        }
+    }
+
     private WebGpuDataBuffer RequireStorageExtent(string name, uint instances, uint stride)
     {
         if (!_program.TryGetStorageBinding(name, out WebGpuDataBuffer? buffer) || buffer is null ||
@@ -130,6 +167,7 @@ internal sealed class WebGpuMeshDraw : IDisposable
 
     internal bool DependsOn(AbstractRenderAPIObject resource)
     {
+        if (IndirectDependsOn(resource) || DirectDependsOn(resource)) return true;
         if (ReferenceEquals(_program, resource) || ReferenceEquals(_indices, resource))
             return true;
         if (_frameBuffer?.DependsOn(resource) == true)
@@ -152,6 +190,19 @@ internal sealed class WebGpuMeshDraw : IDisposable
 
     internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
     {
+        if (ReferenceEquals(_indices, resource))
+        {
+            ClearCommands();
+            return;
+        }
+        foreach (WebGpuVertexStream stream in _streams)
+            if (ReferenceEquals(stream.Buffer, resource))
+            {
+                ClearCommands();
+                return;
+            }
+        ReleaseIndirectCommandsUsing(resource, handle);
+        ReleaseDirectCommandsUsing(resource, handle);
         List<WebGpuBindingSet>? removed = null;
         foreach (KeyValuePair<WebGpuBindingSet, int> item in _commands)
             if (item.Key.UsesHandle(resource, handle))
@@ -166,13 +217,17 @@ internal sealed class WebGpuMeshDraw : IDisposable
     /// <summary>Releases one retired descriptor variant without rebuilding its mesh pipeline.</summary>
     internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
     {
-        if (!ReferenceEquals(_program, program) || !_commands.Remove(bindings, out int command))
-            return;
-        _renderer.RetireEngineResourceAfterFrame(command);
+        if (!ReferenceEquals(_program, program)) return;
+        ReleaseIndirectCommandsUsing(bindings: bindings);
+        ReleaseDirectCommandsUsing(bindings: bindings);
+        if (_commands.Remove(bindings, out int command))
+            _renderer.RetireEngineResourceAfterFrame(command);
     }
 
     private void ClearCommands()
     {
+        ReleaseIndirectCommandsUsing();
+        ReleaseDirectCommandsUsing();
         foreach (int commands in _commands.Values) _renderer.RetireEngineResourceAfterFrame(commands);
         _commands.Clear();
     }
@@ -188,15 +243,15 @@ internal sealed class WebGpuMeshDraw : IDisposable
         _pipeline = pipeline;
     }
 
-    private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh mesh,
-        WebGpuMeshDeformation? deformation)
+    private static WebGpuVertexStream[] ResolveStreams(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, XRMesh? mesh,
+        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner)
     {
         List<WebGpuVertexStream> streams = [];
         foreach (ShaderVertexBufferLayout authored in artifact.VertexBuffers)
         {
             foreach (ShaderVertexAttribute attribute in authored.Attributes)
             {
-                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation);
+                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation, streamOwner);
                 if (attribute.Format != format || buffer.InstanceDivisor > 1)
                     throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible format or instance divisor");
                 string stepMode = buffer.InstanceDivisor == 0 ? "vertex" : "instance";
@@ -219,8 +274,8 @@ internal sealed class WebGpuMeshDraw : IDisposable
         return streams.ToArray();
     }
 
-    private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh mesh, string semantic,
-        WebGpuMeshDeformation? deformation)
+    private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh? mesh, string semantic,
+        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner = null)
     {
         string format = semantic switch
         {
@@ -235,6 +290,20 @@ internal sealed class WebGpuMeshDraw : IDisposable
             if (semantic == "normal" && deformation.HasNormals) return (deformation.Attributes, 0, format);
             if (semantic == "tangent" && deformation.HasTangents) return (deformation.Attributes, 16, format);
         }
+        string streamName = semantic switch
+        {
+            "position" => "Position", "normal" => "Normal", "tangent" => "Tangent",
+            "color0" => "Color0", "uv0" => "TexCoord0",
+            _ => throw Unsupported($"vertex semantic '{semantic}' has no canonical stream mapping"),
+        };
+        if (streamOwner is not null && streamOwner.Buffers.TryGetValue(streamName, out XRDataBuffer? published))
+        {
+            if (published.ComponentType != EComponentType.Float || published.IsDestroyed)
+                throw Unsupported($"published vertex semantic '{semantic}' requires a live float stream");
+            return (published, 0, format);
+        }
+        if (mesh is null)
+            throw Unsupported($"required canonical vertex stream '{streamName}' is missing");
         if (mesh.Interleaved)
         {
             uint? offset = semantic switch
@@ -338,7 +407,9 @@ internal sealed class WebGpuMeshDraw : IDisposable
         return Encoding.UTF8.GetString(bytes.WrittenSpan);
     }
 
-    private string DescribeDraw(WebGpuBindingSet bindings)
+    private string DescribeDraw(WebGpuBindingSet bindings, int indirectBuffer = 0,
+        uint indirectCount = 0, uint stride = 20, uint byteOffset = 0,
+        uint directVertices = 0, uint directFirstVertex = 0, uint directInstances = 1)
     {
         ArrayBufferWriter<byte> bytes = new();
         using (Utf8JsonWriter writer = new(bytes))
@@ -379,11 +450,14 @@ internal sealed class WebGpuMeshDraw : IDisposable
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
-            writer.WriteStartObject("indexBuffer");
-            writer.WriteNumber("buffer", _indices.ResourceHandle);
-            writer.WriteString("format", _indexSize == IndexSize.TwoBytes ? "uint16" : "uint32");
-            writer.WriteEndObject();
-            if (_instanceStorage is { } storage && _instanceBuffer is not null)
+            if (_indices is { } indices)
+            {
+                writer.WriteStartObject("indexBuffer");
+                writer.WriteNumber("buffer", indices.ResourceHandle);
+                writer.WriteString("format", _indexSize == IndexSize.TwoBytes ? "uint16" : "uint32");
+                writer.WriteEndObject();
+            }
+            if (indirectBuffer == 0 && _instanceStorage is { } storage && _instanceBuffer is not null)
             {
                 bool found = false;
                 foreach (ShaderStageResourceLayout resource in _program.Artifact.Resources)
@@ -404,8 +478,28 @@ internal sealed class WebGpuMeshDraw : IDisposable
             }
             writer.WriteStartArray("draws");
             writer.WriteStartObject();
-            writer.WriteNumber("indexCount", _indexCount);
-            writer.WriteNumber("instanceCount", 1);
+            if (indirectBuffer != 0)
+            {
+                writer.WriteString("type", _indices is null ? "drawIndirect" : "drawIndexedIndirect");
+                writer.WriteNumber("buffer", indirectBuffer);
+                writer.WriteNumber("offset", byteOffset);
+                writer.WriteNumber("drawCount", indirectCount);
+                writer.WriteNumber("stride", stride);
+                writer.WriteString("firstInstancePolicy", _indirectFirstInstanceFeature ? "feature" : "zero");
+            }
+            else if (_indices is null)
+            {
+                writer.WriteString("type", "draw");
+                writer.WriteNumber("vertexCount", directVertices);
+                writer.WriteNumber("firstVertex", directFirstVertex);
+                writer.WriteNumber("instanceCount", directInstances);
+                writer.WriteNumber("firstInstance", 0);
+            }
+            else
+            {
+                writer.WriteNumber("indexCount", _indexCount);
+                writer.WriteNumber("instanceCount", 1);
+            }
             writer.WriteEndObject();
             writer.WriteEndArray();
             writer.WriteEndObject();

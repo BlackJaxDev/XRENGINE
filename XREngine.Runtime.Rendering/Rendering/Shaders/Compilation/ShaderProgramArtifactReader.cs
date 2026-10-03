@@ -21,6 +21,7 @@ public static class ShaderProgramArtifactReader
         "maxStorageBufferBindingSize", "maxDynamicStorageBuffersPerPipelineLayout",
         "maxComputeWorkgroupSizeX", "maxComputeWorkgroupSizeY", "maxComputeWorkgroupSizeZ",
         "maxComputeInvocationsPerWorkgroup", "maxComputeWorkgroupsPerDimension",
+        "maxComputeWorkgroupStorageSize", "maxStorageTexturesPerShaderStage",
     };
 
     /// <summary>Checks source length/hash before exposing the explicit layout to an engine renderer.</summary>
@@ -214,12 +215,14 @@ public static class ShaderProgramArtifactReader
                 visibility |= flag;
             }
             Require(visibility != ShaderStageVisibility.None && (visibility & ~stages) == 0, "resource visibility references a missing stage");
-            ShaderAbiResourceKind resourceKind = kind switch
+            bool isTexture = ShaderTextureBindingType.TryParse(kind, out ShaderTextureBindingType textureShape);
+            ShaderAbiResourceKind resourceKind = isTexture
+                ? textureShape.IsStorage ? ShaderAbiResourceKind.StorageImage : ShaderAbiResourceKind.SampledImage
+                : kind switch
             {
                 "uniform" => ShaderAbiResourceKind.UniformBuffer,
                 "read-only-storage" or "storage" => ShaderAbiResourceKind.StorageBuffer,
-                "texture-2d-float" or "texture-2d-array-float" or "texture-cube-float" or "texture-depth-2d" or "texture-depth-2d-array" => ShaderAbiResourceKind.SampledImage,
-                "filtering-sampler" or "comparison-sampler" => ShaderAbiResourceKind.Sampler,
+                "filtering-sampler" or "non-filtering-sampler" or "comparison-sampler" => ShaderAbiResourceKind.Sampler,
                 _ => throw Invalid("unsupported resource binding kind '" + kind + "'"),
             };
             ShaderAbiResourceOwner owner = EnumValue<ShaderAbiResourceOwner>(resource, "owner");
@@ -228,9 +231,12 @@ public static class ShaderProgramArtifactReader
             int size = Bounded(resource, "bytes", 0, 65536);
             bool dynamic = Property(resource, "dynamic").GetBoolean();
             if (runtimeArray)
-                Require(runtimeArrayValue.ValueKind == JsonValueKind.True && compute is not null &&
+                Require(runtimeArrayValue.ValueKind == JsonValueKind.True &&
                     resourceKind == ShaderAbiResourceKind.StorageBuffer && !dynamic && size > 0 && size % 4 == 0,
-                    "runtimeArray requires a non-dynamic compute storage element with a positive four-byte stride");
+                    "runtimeArray requires a non-dynamic storage element with a positive four-byte stride");
+            Require((visibility & ShaderStageVisibility.Vertex) == 0 ||
+                kind != "storage" && !(isTexture && textureShape.IsStorage && textureShape.StorageAccess != "read-only"),
+                "vertex stages cannot write storage resources");
             bool isBuffer = resourceKind is ShaderAbiResourceKind.UniformBuffer or ShaderAbiResourceKind.StorageBuffer;
             bool rawDebugStorage = materialVariant is { } selected &&
                 selected.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle) &&
@@ -267,7 +273,7 @@ public static class ShaderProgramArtifactReader
                 ExactKeys(member, "name", "provider", "offset", "bytes", "type");
                 string memberName = Text(member, "name"), provider = Text(member, "provider"), type = Text(member, "type");
                 int offset = Bounded(member, "offset", 0, 65535), memberSize = Bounded(member, "bytes", 4, 65536);
-                Require(Identifier(memberName) && Identifier(provider) && names.Add(memberName), "invalid or duplicate uniform member name");
+                Require(Identifier(memberName) && ProviderIdentifier(provider) && names.Add(memberName), "invalid or duplicate uniform member name");
                 (int alignment, int expectedSize) = MemberShape(type);
                 Require(offset % alignment == 0 && memberSize == expectedSize && offset >= end && offset + memberSize <= size, "member alignment, size, overlap, or buffer range mismatch");
                 end = checked((uint)(offset + memberSize));
@@ -281,6 +287,8 @@ public static class ShaderProgramArtifactReader
             resources.Add(new ShaderStageResourceLayout(contract, visibility, kind, dynamic) { RuntimeArray = runtimeArray });
         }
         Require(resources.Count <= 64, "resource count exceeds the bounded profile");
+        Require(resources.GroupBy(resource => resource.Contract.Set).All(group => group.Count() <= 32),
+            "one WebGPU bind group cannot exceed 32 installed resource entries");
         ImmutableDictionary<string, int>.Builder limits = ImmutableDictionary.CreateBuilder<string, int>(StringComparer.Ordinal);
         foreach (JsonProperty limit in Property(descriptor, "requiredLimits", JsonValueKind.Object).EnumerateObject())
         {
@@ -307,6 +315,7 @@ public static class ShaderProgramArtifactReader
             CheckLimit(limits, "maxSampledTexturesPerShaderStage", resources.Count(resource => (resource.Visibility & stage) != 0 && resource.Contract.Kind == ShaderAbiResourceKind.SampledImage));
             CheckLimit(limits, "maxSamplersPerShaderStage", resources.Count(resource => (resource.Visibility & stage) != 0 && resource.Contract.Kind == ShaderAbiResourceKind.Sampler));
             CheckLimit(limits, "maxStorageBuffersPerShaderStage", resources.Count(resource => (resource.Visibility & stage) != 0 && resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer));
+            CheckLimit(limits, "maxStorageTexturesPerShaderStage", resources.Count(resource => (resource.Visibility & stage) != 0 && resource.Contract.Kind == ShaderAbiResourceKind.StorageImage));
         }
         CheckLimit(limits, "maxStorageBufferBindingSize", resources.Where(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer).Select(resource => (int)resource.Contract.ByteSize).DefaultIfEmpty().Max());
         if (materialVariant is { } debugVariant &&
@@ -375,6 +384,8 @@ public static class ShaderProgramArtifactReader
         => Require(minimum == 0 || limits.TryGetValue(key, out int value) && value >= minimum, "requiredLimits." + key + " must be at least " + minimum);
     private static bool RelativePath(string value) => value.Length is > 0 and <= 240 && !value.Contains('\\') && !value.StartsWith('/') && !value.Contains(':') && !value.Split('/').Any(part => part is "" or "." or "..");
     private static bool Identifier(string value, bool allowDash = false) => value.Length is > 0 and <= 64 && Regex.IsMatch(value, allowDash ? "^[a-zA-Z_][a-zA-Z0-9_-]*$" : "^[a-zA-Z_][a-zA-Z0-9_]*$", RegexOptions.CultureInvariant);
+    private static bool ProviderIdentifier(string value)
+        => value.Length is > 0 and <= 256 && value.Split('.').All(segment => Identifier(segment));
     private static T EnumValue<T>(JsonElement value, string key) where T : struct, Enum
         => Enum.TryParse(Text(value, key), ignoreCase: false, out T result) && Enum.IsDefined(result) ? result : throw Invalid("unsupported " + key);
     private static int Int(JsonElement value, string key) => Property(value, key).TryGetInt32(out int result) ? result : throw Invalid(key + " must be an integer");

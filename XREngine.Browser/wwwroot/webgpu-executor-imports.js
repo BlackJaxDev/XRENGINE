@@ -52,6 +52,7 @@ export function installWebGpuImports(runtime, renderers) {
         beginCanvasLuminance: (id, generation, x, y, width, height, red, green, blue) =>
             renderer(id).luminance.beginCanvas(generation, x, y, width, height, red, green, blue),
         beginCompletion: id => renderer(id).readback.beginCompletion(),
+        pollEngineFrameCompletion: id => renderer(id).commands.engineFrame.scopes.pollCompletedSequence(),
         waitReadback: (id, ticket) => renderer(id).readback.wait(ticket),
         copyReadback: (id, ticket, destination) => renderer(id).readback.copy(ticket, destination),
         releaseReadback: (id, ticket) => renderers.get(id)?.readback.release(ticket),

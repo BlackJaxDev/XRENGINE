@@ -30,7 +30,7 @@ export class GpuCommandUsageScope {
         for (const binding of bindings) {
             for (const resource of binding.resources) {
                 if (resource.kind === 'buffer') this.buffer(resource.value, resource.writable, resource.role);
-                else this.texture(resource.value, false, 'sampled texture');
+                else this.texture(resource.value, resource.writable, resource.role ?? 'sampled texture');
             }
         }
     }

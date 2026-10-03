@@ -6,7 +6,7 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuRendererHost
 {
     private const string MeshletUnsupportedReason =
-        "WebGPU has no task or mesh shader stages.";
+        "The engine WebGPU meshlet route requires an installed compute-to-indexed-indirect lowering and cooked meshlet shader family. Hardware task/mesh shader stages are unavailable.";
 
     private BrowserDeviceCapabilities? _deviceCapabilities;
     public BrowserDeviceCapabilities? DeviceCapabilities
@@ -15,9 +15,15 @@ public sealed partial class WebGpuRendererHost
         private set => SetField(ref _deviceCapabilities, value);
     }
 
-    // WebGPU exposes neither a GPU-written draw count nor task/mesh shader stages, so every
-    // count-driven and meshlet submission path reports unavailable instead of being emulated.
-    public override bool SupportsIndirectCountDraw() => false;
+    /// <summary>Count lowering is GPU-only; canonical draw identity requires enabled indirect first-instance.</summary>
+    public override bool SupportsIndirectCountDraw()
+    {
+        if (State != BrowserRendererState.Ready || DeviceCapabilities is not { } capabilities)
+            return false;
+        for (int index = 0; index < capabilities.Features.Count; index++)
+            if (capabilities.Features[index] == "indirect-first-instance") return true;
+        return false;
+    }
 
     public override EMeshShaderDialect MeshShaderDialect => EMeshShaderDialect.None;
 

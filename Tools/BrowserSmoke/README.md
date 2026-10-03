@@ -279,6 +279,16 @@ directory. No completed run is claimed by adding this harness.
 
 ## Scope and references
 
+The `advanced-rendering-parity` game kind consumes the ordinary Editor-published
+`Samples/AdvancedRenderingParity` player. It requires the saved static textured
+surface to reach the canvas across two startups and resize. Read-only wrappers
+record the actual WebGPU pipeline labels used by compute dispatches and raster
+draws, requiring native visibility, depth, AO, classification, shading and final
+presentation. GPU read mappings are counted separately and must remain zero.
+This initial sample selects CPU-direct submission; it does not qualify meshlet,
+deformation, MSAA, desktop comparison or performance by association. The wrappers
+add diagnostic allocations, so this run is not steady-state allocation evidence.
+
 The diagnostic's static Core scene host creates no production `RuntimeWorld`,
 never begins play, and requests no physics backend. It validates engine rendering
 and shader interpretation only. Full `DefaultRenderPipeline`, textures, shadows,

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-scene-copy",
+  "pass": "scene-copy",
+  "source": "AdvancedSceneCopy.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "outputVertex",
+    "fragment": "outputFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "OutputUniforms",
+        "physicalName": "outputUniforms_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "ScreenWidth_0",
+            "provider": "ScreenWidth",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenHeight_0",
+            "provider": "ScreenHeight",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenOrigin_0",
+            "provider": "ScreenOrigin",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          }
+        ]
+      },
+      {
+        "name": "HDRSceneTex",
+        "physicalName": "HDRSceneTex_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "HDRSceneTex",
+        "physicalName": "HDRSceneTexSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "scene-copy"
+  }
+}

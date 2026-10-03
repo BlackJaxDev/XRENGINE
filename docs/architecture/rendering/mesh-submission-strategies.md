@@ -54,7 +54,17 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 `SupportsMeshletDispatch()` means the backend can run the production zero-readback meshlet path: matching shader dialect, production task/mesh shaders, and indirect-count mesh-task dispatch from GPU-written counts.
 
-The lower-level probes describe partial backend support:
+The browser's native Advanced stage family has a separate compute/indirect
+meshlet capability. It consumes canonical resident meshlet records, compacts
+triangle identities on the GPU, and issues vertex-pulled indirect raster work
+without reading visibility or counts back to the CPU. This does not advertise
+hardware task/mesh shader extensions, and it does not admit the still-missing
+generic Default/custom meshlet command path. WebGPU preserves an explicitly
+requested submission strategy and reports unsupported operations instead of
+applying the desktop fallback policy described below. See
+[WebGPU indirect submission](webgpu-indirect-submission.md).
+
+The lower-level hardware probes describe partial backend support:
 
 - `MeshShaderDialect` reports `None`, `OpenGLNV`, `OpenGLEXT`, or `VulkanEXT`.
 - `SupportsDirectMeshTaskDispatch()` covers CPU-specified task counts and is diagnostic-only.

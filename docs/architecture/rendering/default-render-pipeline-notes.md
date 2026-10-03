@@ -93,6 +93,18 @@ pipeline factory. Every request carries an explicit output purpose:
 
 Caller-thread hosts install their purpose-aware recipe in both the central
 runtime factory and the lazy camera factory for the same scoped lifetime.
+
+Browser output uses the same authored pipeline asset and command graph. An
+explicit Advanced source or Required factory request is preserved through
+asynchronous device startup; its physical output is admitted only when the
+installed cooked programs and concrete WebGPU resource operations qualify.
+The unconfigured browser factory still selects Default. The implemented
+Advanced browser profile is single-view, single-sample static geometry with
+canonical native visibility and shading. Deformation, per-sample MSAA, and
+other unavailable selected operations fail with their specific capability
+reason. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
+and [the recovered static integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+for implementation and runtime evidence boundaries.
 Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
 therefore resolve the same host recipe as an unconfigured camera. Browser hosts
 bind the cooked WebGPU programs to that shared default pipeline and reject

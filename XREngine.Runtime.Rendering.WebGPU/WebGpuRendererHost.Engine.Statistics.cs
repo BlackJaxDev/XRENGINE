@@ -41,6 +41,9 @@ public sealed partial class WebGpuRendererHost
         }
         SetField(ref _engineFrameStatisticsActive, true, publishNotifications: false);
         statistics.LastFrameSubmitEngineFrameInteropCalls = 0;
+        statistics.LastFrameCompletionPollInteropCalls = 0;
+        statistics.LastFrameAdvancedPreparationUploadInteropCalls = 0;
+        statistics.LastFrameAdvancedPreparationUploadBytes = 0;
         statistics.LastFrameSubmissionReturned = false;
         statistics.LastFrameSubmissionPresented = false;
         statistics.LastFrameSubmissionPacketBytes = 0;

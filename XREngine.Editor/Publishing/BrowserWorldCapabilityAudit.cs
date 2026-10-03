@@ -7,6 +7,7 @@ using XREngine.Components.Mesh.Shapes;
 using XREngine.Components.VR;
 using XREngine.Data.Components.Scene;
 using XREngine.Rendering;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Shaders.Generation;
@@ -18,22 +19,26 @@ namespace XREngine.Editor.Publishing;
 /// <summary>Rejects unsupported authored behavior before browser content is activated.</summary>
 internal static class BrowserWorldCapabilityAudit
 {
-    internal static IReadOnlyList<ShaderProgramArtifact> Inspect(XRWorld world, IShaderProgramArtifactResolver? resolver, CancellationToken cancellationToken)
+    internal static IReadOnlyList<ShaderProgramArtifact> Inspect(XRWorld world, IShaderProgramArtifactResolver? resolver,
+        CancellationToken cancellationToken, RenderPipelineResourceProfile? outputProfile = null,
+        IReadOnlySet<int>? inheritedScenePasses = null, ISet<int>? admittedScenePasses = null)
     {
         Dictionary<string, ShaderProgramArtifact> artifacts = new(StringComparer.Ordinal);
         BrowserShadowCapabilityAudit shadows = new(resolver);
-        BrowserRenderingCapabilityAudit rendering = new(resolver);
+        BrowserRenderingCapabilityAudit rendering = new(resolver, outputProfile, inheritedScenePasses);
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         foreach (XRScene scene in world.Scenes)
             foreach (SceneNode root in scene.RootNodes)
                 Visit(root, 0);
         rendering.Complete(world.Name ?? "startup-world");
+        if (admittedScenePasses is not null)
+            rendering.CopyScenePassesTo(admittedScenePasses);
         foreach (RenderPipelineRequirements requirements in rendering.PipelineRequirements)
         {
             foreach (XRMaterial material in requirements.Materials)
                 InspectMaterial(material, "pipeline-material", material.Name, sceneRoute: false);
             foreach (XRRenderProgram program in requirements.RenderPrograms)
-                InspectPipelineProgram(program);
+                InspectPipelineProgram(program, requirements.ComputeRenderPrograms.Contains(program));
             foreach (string identity in requirements.ProgramIdentities)
             {
                 if (resolver is null || !resolver.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) || artifact is null ||
@@ -42,6 +47,7 @@ internal static class BrowserWorldCapabilityAudit
                 ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
                 if (verified.Identity != identity)
                     throw new InvalidDataException($"BrowserCook.PipelineProgramIdentityMismatch: '{identity}'.");
+                WebPipelineArtifactCatalog.ValidateEngineBindings(verified);
                 artifacts.TryAdd(verified.Identity, verified);
             }
         }
@@ -69,7 +75,7 @@ internal static class BrowserWorldCapabilityAudit
         }
         return artifacts.Values.OrderBy(artifact => artifact.Identity, StringComparer.Ordinal).ToArray();
 
-        void InspectPipelineProgram(XRRenderProgram program)
+        void InspectPipelineProgram(XRRenderProgram program, bool requiresCompute)
         {
             if (!program.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver, out ShaderProgramArtifact? selected) ||
                 selected.DescriptorBytes.IsDefaultOrEmpty)
@@ -77,6 +83,9 @@ internal static class BrowserWorldCapabilityAudit
             ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(selected.DescriptorBytes.AsSpan(), selected.Artifact.Bytes);
             if (verified.Identity != selected.Identity)
                 throw new InvalidDataException($"BrowserCook.PipelineProgramIdentityMismatch: '{program.Name}'.");
+            if (requiresCompute && !WebPipelineArtifactCatalog.IsCompleteComputeProgram(verified))
+                throw new NotSupportedException($"BrowserCook.PipelineProgramShapeMismatch: '{program.Name}' requires a complete WebGPU compute program.");
+            WebPipelineArtifactCatalog.ValidateEngineBindings(verified);
             artifacts.TryAdd(verified.Identity, verified);
         }
 
@@ -240,6 +249,7 @@ internal static class BrowserWorldCapabilityAudit
                 ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
                 if (verified.Identity != artifact.Identity || shader.CookedArtifactIdentity != artifact.Identity)
                     throw new InvalidDataException($"BrowserCook.ShaderIdentityMismatch: '{path}' material '{material.Name}', source '{artifact.SourcePath}'.");
+                WebPipelineArtifactCatalog.ValidateEngineBindings(verified);
                 if (authored is not null && authored.Identity != verified.Identity)
                     throw new NotSupportedException($"BrowserCook.ShaderProgramMismatch: '{path}' material '{material.Name}' retains stages with different whole-program companions.");
                 authored = verified;

@@ -3,6 +3,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Editor.Publishing;
 using XREngine.Rendering;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Scene;
 
@@ -15,7 +16,8 @@ internal static partial class ProjectBuilder
         IReadOnlyList<ShaderProgramArtifact> ShaderArtifacts)
         CookBrowserStreamedScenes(XRProject project, XRWorld startupWorld, string assetRoot, string sourceDirectory,
             BrowserAssetDependencyCooker dependencyCooker, IShaderProgramArtifactResolver? resolver,
-            HashSet<string> cookedFonts, CancellationToken cancellationToken)
+            HashSet<string> cookedFonts, CancellationToken cancellationToken, RenderPipelineResourceProfile outputProfile,
+            HashSet<int> admittedScenePasses)
     {
         SortedSet<string> pending = new(StringComparer.Ordinal);
         foreach (string path in project.BrowserStreamedScenePaths ?? [])
@@ -74,7 +76,8 @@ internal static partial class ProjectBuilder
             if (!authoredBindings.SequenceEqual(cookedBindings, StringComparer.Ordinal))
                 throw new InvalidDataException($"BrowserCook.StreamedSceneReferenceLost: '{identity}' changed its authored scene targets.");
             XRWorld auditWorld = new(identity, runtimeScene);
-            foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(auditWorld, resolver, cancellationToken))
+            foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(auditWorld, resolver,
+                cancellationToken, outputProfile, admittedScenePasses, admittedScenePasses))
                 shaderArtifacts.TryAdd(artifact.Identity, artifact);
             using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
             using ObjectCacheOwnership authoredOwnership = authoredPublication.CompleteWithOwnership();

@@ -1,0 +1,266 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-advanced-compact-triangles",
+  "pass": "compact-triangles",
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "compact-triangles"
+  },
+  "source": "AdvancedCompactTriangles.wgsl",
+  "entryPoints": {
+    "compute": "advancedCompactTriangles"
+  },
+  "workgroupSize": [
+    64,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 8,
+    "maxUniformBufferBindingSize": 112,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 7,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 64,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 64,
+    "maxComputeWorkgroupStorageSize": 32
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "Scene",
+        "physicalName": "scene",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Geometry",
+        "physicalName": "geometry",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Payloads",
+        "physicalName": "payloads",
+        "group": 0,
+        "binding": 2,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Candidates",
+        "physicalName": "candidates",
+        "group": 0,
+        "binding": 3,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Producers",
+        "physicalName": "producers",
+        "group": 0,
+        "binding": 4,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Triangles",
+        "physicalName": "triangles",
+        "group": 0,
+        "binding": 5,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Arguments",
+        "physicalName": "arguments",
+        "group": 0,
+        "binding": 6,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 7,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 112,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjectionUnjittered",
+            "provider": "ViewProjectionUnjittered",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "payloadCount",
+            "provider": "PayloadCount",
+            "offset": 64,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "triangleCapacity",
+            "provider": "TriangleCapacity",
+            "offset": 68,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "cullMode",
+            "provider": "CullMode",
+            "offset": 72,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "coverage",
+            "provider": "Coverage",
+            "offset": 76,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "rasterStateClass",
+            "provider": "RasterStateClass",
+            "offset": 80,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "producer",
+            "provider": "Producer",
+            "offset": 84,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewId",
+            "provider": "ViewId",
+            "offset": 88,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "triangleBase",
+            "provider": "TriangleBase",
+            "offset": 92,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "argumentBase",
+            "provider": "ArgumentBase",
+            "offset": 96,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "bucketIndex",
+            "provider": "BucketIndex",
+            "offset": 100,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "Reserved1",
+            "offset": 104,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved2",
+            "provider": "Reserved2",
+            "offset": 108,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

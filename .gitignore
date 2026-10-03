@@ -494,3 +494,15 @@ Samples/RenderingParity/Assets/*
 !Samples/RenderingParity/Assets/Worlds/
 !Samples/RenderingParity/Assets/Worlds/**
 !Samples/RenderingParity/Assets/startup.asset
+
+# The Advanced rendering sample keeps authored source while excluding cooked shaders.
+Samples/AdvancedRenderingParity/Build/
+!Samples/AdvancedRenderingParity/Assets/
+Samples/AdvancedRenderingParity/Assets/*
+!Samples/AdvancedRenderingParity/Assets/Scripts/
+!Samples/AdvancedRenderingParity/Assets/Scripts/**
+!Samples/AdvancedRenderingParity/Assets/Worlds/
+!Samples/AdvancedRenderingParity/Assets/Worlds/**
+!Samples/AdvancedRenderingParity/Assets/Textures/
+!Samples/AdvancedRenderingParity/Assets/Textures/**
+!Samples/AdvancedRenderingParity/Assets/startup.asset

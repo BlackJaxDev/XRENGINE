@@ -10,11 +10,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
         {
             requirements.RequireOperation("compute");
-            requirements.RequireProgram(_computeProgram);
+            requirements.RequireComputeProgram(_computeProgram);
             if (Textures is { Count: > 0 }) requirements.RequireOperation("storage-images");
         }
 
         private XRRenderProgram _computeProgram = new(false, false);
+        private readonly ComputeTextureBindingEnumeration _textureBindings = new();
 
         /// <summary>
         /// Authoritative runtime program used by both dependency discovery and execution.
@@ -100,18 +101,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             AbstractRenderer renderer = AbstractRenderer.Current
                 ?? throw new InvalidOperationException("Compute dispatch requires an active renderer.");
-            _ = renderer.GetOrCreateAPIRenderObject(_computeProgram, generateNow: true)
-                ?? throw new InvalidOperationException("Compute dispatch requires a backend program wrapper.");
-            ActivePipelineInstance.RenderState.ApplyScopedProgramBindings(_computeProgram);
-
-            var textures = Textures?.Select(binding => (
-                binding.Unit,
-                (IRenderTextureResource)binding.TextureFactory(),
-                binding.Level,
-                binding.Layer,
-                binding.Access,
-                binding.Format));
-            _computeProgram.DispatchCompute(X(), Y(), Z(), textures);
+            renderer.ResetComputeProgramBindings(_computeProgram);
+            try
+            {
+                _ = renderer.GetOrCreateAPIRenderObject(_computeProgram, generateNow: true)
+                    ?? throw new InvalidOperationException("Compute dispatch requires a backend program wrapper.");
+                ActivePipelineInstance.RenderState.ApplyScopedProgramBindings(_computeProgram);
+                _textureBindings.Configure(Textures);
+                _computeProgram.DispatchCompute(X(), Y(), Z(), Textures is null ? null : _textureBindings);
+            }
+            finally { renderer.ResetComputeProgramBindings(_computeProgram); }
         }
 
         public void SetOptions(string computeCode, Func<uint>? x = null, Func<uint>? y = null, Func<uint>? z = null, List<ComputeTextureBinding>? textures = null)

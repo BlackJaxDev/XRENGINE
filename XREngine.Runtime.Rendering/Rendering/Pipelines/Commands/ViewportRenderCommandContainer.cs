@@ -137,7 +137,27 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// This list is read-only and reflects the current state of the container.
         /// Commands can be added or removed using the Add, Remove, and Insert methods.
         /// </summary>
+        [YamlIgnore]
         public IReadOnlyList<ViewportRenderCommand> Commands => _commands;
+
+        /// <summary>Persists the authored command list for serializers that require writable properties.</summary>
+        [YamlMember(Alias = "Commands")]
+        public List<ViewportRenderCommand> SerializedCommands
+        {
+            get => [.. _commands];
+            set
+            {
+                using (SuppressStructureChangeNotifications())
+                {
+                    while (_commands.Count != 0)
+                        RemoveAt(_commands.Count - 1);
+                    if (value is not null)
+                        foreach (ViewportRenderCommand command in value)
+                            AttachCommand(command, _commands.Count, notifyStructureChanged: false);
+                }
+                NotifyStructureChanged();
+            }
+        }
 
         private readonly List<ViewportRenderCommand> _collectVisibleCommands = [];
         /// <summary>

@@ -3,18 +3,19 @@ export function assertPipelineBindingLimits(layouts, limits) {
     let dynamicUniforms = 0, dynamicStorage = 0;
     const stages = [1, 2, 4];
     for (const stage of stages) {
-        let uniforms = 0, storage = 0, textures = 0, samplers = 0;
+        let uniforms = 0, storage = 0, textures = 0, samplers = 0, storageTextures = 0;
         for (const layout of layouts) {
             for (const entry of layout.descriptor.entries) {
                 if (!(entry.visibility & stage)) continue;
                 if (entry.buffer?.type === 'uniform') uniforms++;
                 else if (entry.buffer) storage++;
                 else if (entry.texture) textures++;
+                else if (entry.storageTexture) storageTextures++;
                 else if (entry.sampler) samplers++;
             }
         }
         if (uniforms > limits.maxUniformBuffersPerShaderStage || storage > limits.maxStorageBuffersPerShaderStage
-            || textures > limits.maxSampledTexturesPerShaderStage || samplers > limits.maxSamplersPerShaderStage)
+            || storageTextures > limits.maxStorageTexturesPerShaderStage || textures > limits.maxSampledTexturesPerShaderStage || samplers > limits.maxSamplersPerShaderStage)
             throw new RangeError('Pipeline bindings exceed a selected-device per-stage resource limit.');
     }
     for (const layout of layouts) {

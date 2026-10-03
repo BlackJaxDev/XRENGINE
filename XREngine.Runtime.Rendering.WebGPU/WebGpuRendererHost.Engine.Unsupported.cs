@@ -65,43 +65,4 @@ public sealed partial class WebGpuRendererHost
         out string failure)
         => throw UnsupportedEngineOperation(nameof(TryReadTexturePixelRgbaFloat));
 
-    public override void MemoryBarrier(EMemoryBarrierMask mask)
-        => throw UnsupportedEngineOperation(nameof(MemoryBarrier));
-
-    public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version)
-        => throw UnsupportedEngineOperation(nameof(BindVAOForRenderer));
-
-    public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version)
-        => throw UnsupportedEngineOperation(nameof(ValidateIndexedVAO));
-
-    public override bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount)
-        => throw UnsupportedEngineOperation(nameof(TryGetIndexBufferInfo));
-
-    public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
-        => throw UnsupportedEngineOperation(nameof(TrySyncMeshRendererIndexBuffer));
-
-    public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)
-        => throw UnsupportedEngineOperation(nameof(ConfigureVAOAttributesForProgram));
-
-    public override void BindDrawIndirectBuffer(XRDataBuffer buffer)
-        => throw UnsupportedEngineOperation(nameof(BindDrawIndirectBuffer));
-
-    public override void UnbindDrawIndirectBuffer()
-        => throw UnsupportedEngineOperation(nameof(UnbindDrawIndirectBuffer));
-
-    public override void BindParameterBuffer(XRDataBuffer buffer)
-        => throw UnsupportedEngineOperation(nameof(BindParameterBuffer));
-
-    public override void UnbindParameterBuffer()
-        => throw UnsupportedEngineOperation(nameof(UnbindParameterBuffer));
-
-    public override void MultiDrawElementsIndirect(uint drawCount, uint stride)
-        => throw UnsupportedEngineOperation(nameof(MultiDrawElementsIndirect));
-
-    public override void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
-        => throw UnsupportedEngineOperation(nameof(MultiDrawElementsIndirectWithOffset));
-
-    public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset = 0, nuint countByteOffset = 0)
-        => throw UnsupportedEngineOperation(nameof(MultiDrawElementsIndirectCount));
-
 }

@@ -24,12 +24,7 @@ public sealed class WebPipelineArtifactCatalog
                 ?? throw new InvalidDataException($"PipelineArtifact.IdentityMissing: '{key}'.");
             if (!artifacts.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact))
                 throw new InvalidDataException($"PipelineArtifact.Missing: '{key}' refers to unverified descriptor '{identity}'.");
-            if (artifact.Pass != pass || artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null ||
-                artifact.ComputeEntryPoint is not null)
-                throw new InvalidDataException($"PipelineArtifact.DescriptorMismatch: '{key}' refers to an incompatible WebGPU program.");
-            using JsonDocument descriptor = JsonDocument.Parse(artifact.DescriptorBytes.ToArray());
-            if (descriptor.RootElement.TryGetProperty("materialVariant", out _))
-                throw new InvalidDataException($"PipelineArtifact.DescriptorMismatch: '{key}' declares a material variant.");
+            ValidateProgram(key, artifact);
             if (!builder.TryAdd(key, artifact))
                 throw new InvalidDataException($"PipelineArtifact.DuplicateBinding: '{key}'.");
             if (builder.Count > MaximumEntries)
@@ -53,6 +48,57 @@ public sealed class WebPipelineArtifactCatalog
                 return false;
         return true;
     }
+
+    /// <summary>Accepts a complete authored raster program or one exact compute program, never a material variant.</summary>
+    public static void ValidateProgram(string bindingKey, ShaderProgramArtifact artifact)
+    {
+        string pass = SplitBindingKey(bindingKey).Pass;
+        if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Pass != pass ||
+            !(IsCompleteRasterProgram(artifact) ^ IsCompleteComputeProgram(artifact)))
+            throw new InvalidDataException($"PipelineArtifact.DescriptorMismatch: '{bindingKey}' refers to an incompatible WebGPU program.");
+        using JsonDocument descriptor = JsonDocument.Parse(artifact.DescriptorBytes.ToArray());
+        if (descriptor.RootElement.TryGetProperty("materialVariant", out _))
+            throw new InvalidDataException($"PipelineArtifact.DescriptorMismatch: '{bindingKey}' declares a material variant.");
+        ValidateEngineBindings(artifact);
+    }
+
+    /// <summary>Checks the installed shared engine recorder, separately from specialized compute consumers.</summary>
+    public static void ValidateEngineBindings(ShaderProgramArtifact artifact)
+    {
+        int uniforms = 0;
+        foreach (ShaderStageResourceLayout resource in artifact.Resources)
+        {
+            if (resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer && (!resource.DynamicOffset || ++uniforms > 16) ||
+                resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer && resource.DynamicOffset)
+                throw new InvalidDataException($"PipelineArtifact.BindingUnsupported: '{artifact.Name}' requires dynamic uniforms (at most 16) and non-dynamic storage buffers.");
+        }
+        foreach (var group in artifact.Resources.Where(resource => resource.Contract.Kind is ShaderAbiResourceKind.SampledImage or ShaderAbiResourceKind.Sampler)
+            .GroupBy(resource => resource.Contract.Name, StringComparer.Ordinal))
+        {
+            ShaderStageResourceLayout[] textures = [.. group.Where(resource => resource.Contract.Kind == ShaderAbiResourceKind.SampledImage)];
+            ShaderStageResourceLayout[] samplers = [.. group.Where(resource => resource.Contract.Kind == ShaderAbiResourceKind.Sampler)];
+            if (textures.Length != 1 || samplers.Length > 1)
+                throw new InvalidDataException($"PipelineArtifact.BindingUnsupported: '{group.Key}' requires one texture and at most one logical sampler.");
+            if (samplers.Length == 0) continue;
+            ShaderStageResourceLayout texture = textures[0], sampler = samplers[0];
+            if (!ShaderTextureBindingType.TryParse(texture.BindingType, out ShaderTextureBindingType shape) ||
+                shape.SampleType is "uint" or "sint" || (shape.SampleType == "depth") != (sampler.BindingType == "comparison-sampler") ||
+                shape.SampleType == "unfilterable-float" && sampler.BindingType != "non-filtering-sampler" ||
+                texture.Contract.Owner != sampler.Contract.Owner || texture.Contract.Frequency != sampler.Contract.Frequency)
+                throw new InvalidDataException($"PipelineArtifact.BindingUnsupported: '{group.Key}' texture and sampler contracts are incompatible.");
+        }
+    }
+
+    /// <summary>Checks the stage shape required by a raster-consuming pipeline pass.</summary>
+    public static bool IsCompleteRasterProgram(ShaderProgramArtifact artifact)
+        => artifact.VertexEntryPoint is not null && artifact.FragmentEntryPoint is not null &&
+            artifact.ComputeEntryPoint is null && artifact.ComputeWorkgroupSize is null;
+
+    /// <summary>Checks the stage shape required by a compute-consuming pipeline pass.</summary>
+    public static bool IsCompleteComputeProgram(ShaderProgramArtifact artifact)
+        => artifact.ComputeEntryPoint is not null && artifact.VertexEntryPoint is null &&
+            artifact.FragmentEntryPoint is null && artifact.ComputeWorkgroupSize is not null &&
+            artifact.VertexBuffers.IsEmpty;
 
     /// <summary>Builds an unambiguous package key while keeping the descriptor's authored pass unchanged.</summary>
     public static string GetBindingKey(string? scope, string pass)

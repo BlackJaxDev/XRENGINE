@@ -291,6 +291,7 @@ namespace XREngine.Rendering
         /// Contains the sequence of render passes (G-buffer, lighting, post-process, etc.).
         /// </summary>
         private RenderPipeline? _renderPipeline = null;
+        private RenderPipeline? _defaultRenderPipeline;
 
         // This is deliberately independent of XRBase property notifications. Render consumers use
         // it to distinguish two different asset instances even when they expose the same metadata.
@@ -554,7 +555,11 @@ namespace XREngine.Rendering
         {
             pipeline ??= ResolveRenderContextPostProcessPipeline();
             pipeline ??= _renderPipeline ?? RenderPipeline;
-            return pipeline is null ? null : _postProcessStates.GetOrCreateState(pipeline);
+            if (pipeline is null)
+                return null;
+            return _renderPipeline is null && ReferenceEquals(pipeline, _defaultRenderPipeline)
+                ? _postProcessStates.GetOrCreateDefaultState(pipeline)
+                : _postProcessStates.GetOrCreateState(pipeline);
         }
 
         /// <summary>
@@ -1719,8 +1724,9 @@ namespace XREngine.Rendering
             // render entry points use GetOrCreateRenderPipeline so required factory
             // installation still fails fast when rendering actually starts.
             get => _renderPipeline
+                ?? _defaultRenderPipeline
                 ?? (RuntimeRenderingHostServices.HasConcreteHost
-                    ? CreateAndAssignDefaultRenderPipeline()
+                    ? GetOrCreateDefaultRenderPipeline()
                     : null!);
             set => ReplaceRenderPipelineAsset(value ?? throw new ArgumentNullException(nameof(value)));
         }
@@ -1739,9 +1745,18 @@ namespace XREngine.Rendering
         public void ReplaceRenderPipelineAsset(RenderPipeline pipeline)
         {
             ArgumentNullException.ThrowIfNull(pipeline);
+            SetRenderPipelineSource(pipeline);
+        }
+
+        /// <summary>Assigns an authored source, or clears it to restore the host's default-source policy.</summary>
+        public void SetRenderPipelineSource(RenderPipeline? pipeline)
+        {
             if (ReferenceEquals(_renderPipeline, pipeline))
                 return;
 
+            if (pipeline is not null && ReferenceEquals(pipeline, _defaultRenderPipeline))
+                _postProcessStates.PromoteDefaultState(pipeline);
+            _defaultRenderPipeline = null;
             bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
             if (!SetField(ref _renderPipeline, pipeline, nameof(RenderPipeline)))
                 return;
@@ -1770,12 +1785,15 @@ namespace XREngine.Rendering
         }
 
         public RenderPipeline GetOrCreateRenderPipeline()
-            => _renderPipeline ?? CreateAndAssignDefaultRenderPipeline();
+            => _renderPipeline ?? GetOrCreateDefaultRenderPipeline();
 
-        private RenderPipeline CreateAndAssignDefaultRenderPipeline()
+        private RenderPipeline GetOrCreateDefaultRenderPipeline()
         {
+            if (_defaultRenderPipeline is not null)
+                return _defaultRenderPipeline;
             RenderPipeline pipeline = CreateDefaultRenderPipeline();
-            RenderPipeline = pipeline;
+            _defaultRenderPipeline = pipeline;
+            _pipelineAssignmentRevision++;
             return pipeline;
         }
 

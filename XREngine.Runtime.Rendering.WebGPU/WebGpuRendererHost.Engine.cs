@@ -54,6 +54,7 @@ public sealed partial class WebGpuRendererHost
             try
             {
                 RetireDestroyedMeshDeformations();
+                RetireObsoleteAutoExposureHistories();
                 bool ready;
                 if (world is not null)
                 {
@@ -68,7 +69,7 @@ public sealed partial class WebGpuRendererHost
                 else ready = RecordEngineViewport(output);
                 // A consumer must never see a partially prepared producer (for example,
                 // a clear without its mesh draws, or HDR without a ready output pass).
-                if (!ready || _engineCommandCount == 0 || _engineDrawPending)
+                if (!ready || _engineCommandCount == 0 || _engineDrawPending || !AreAdvancedFamiliesComplete())
                 {
                     outcome = "Incomplete";
                     return;
@@ -97,6 +98,7 @@ public sealed partial class WebGpuRendererHost
                 }
                 SetField(ref _engineRecording, false, publishNotifications: false);
                 _engineProducedTextures.Clear();
+                EndAdvancedSceneRecording(submitted);
                 ArmPendingEngineFences(submitted);
                 for (int i = 0; i < _engineDeferredReleases.Count; i++)
                     RetireEngineResource(_engineDeferredReleases[i]);
@@ -306,6 +308,7 @@ public sealed partial class WebGpuRendererHost
         {
             XRDataBuffer buffer => new WebGpuDataBuffer(this, buffer),
             XRTexture2D texture => new WebGpuTexture2D(this, texture),
+            XRTextureViewBase view => new WebGpuTextureView(this, view),
             XRTexture2DArray array => new WebGpuTexture2DArray(this, array),
             XRTextureCube cube => new WebGpuTextureCube(this, cube),
             XRRenderBuffer renderbuffer => new WebGpuRenderBuffer(this, renderbuffer),
@@ -317,19 +320,13 @@ public sealed partial class WebGpuRendererHost
                 $"engine resource type '{renderObject.GetType().FullName}' has no WebGPU wrapper"),
         };
 
-    public override AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
-        => AdvancedRenderPipelineCapabilities.UnsupportedBackend with
-        {
-            Backend = RuntimeGraphicsApiKind.WebGPU,
-            RendererAvailable = State == BrowserRendererState.Ready,
-        };
-
     public override ScreenshotReadbackStatus GetScreenshotReadbackStatus()
         => new() { Backend = "WebGPU", Supported = TryDescribeFrameOutput(out _),
             NonBlockingGpuWait = true, QueueCapacity = 16 };
 
     public override void PrepareForApiObjectTeardown()
     {
+        DestroyVertexlessIndirectDraws();
         // Commands retain buffers, programs and layouts. Release those dependency
         // edges before the unordered shared wrapper cache retires its objects.
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
@@ -362,6 +359,12 @@ public sealed partial class WebGpuRendererHost
 
     internal void ReleaseEngineDrawDependencies(AbstractRenderAPIObject resource)
     {
+        ReleaseVertexlessIndirectDrawsUsing(resource);
+        // Authored aliases must not retain a retired physical generation merely
+        // because that alias is no longer sampled. Nested views are not admitted.
+        foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
+            if (api is WebGpuTextureView view && view.DependsOn(resource))
+                view.Destroy();
         // Release recorded commands before retiring the groups they retain. Both
         // remain alive through submission if the current frame already used them.
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
@@ -371,23 +374,33 @@ public sealed partial class WebGpuRendererHost
                 framebuffer.ReleaseColorResolvesUsing(resource);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuRenderProgram program)
+            {
+                program.ReleaseIndirectComputeCommandsUsing(resource);
                 program.ReleaseBindingSetsUsing(resource);
+            }
     }
 
     /// <summary>Invalidates physical storage descriptor users without discarding immutable pipelines.</summary>
     internal void ReleaseEngineStorageGeneration(AbstractRenderAPIObject resource, int handle)
     {
+        foreach (WebGpuMeshDraw draw in _vertexlessIndirectDraws.Values)
+            draw.ReleaseCommandsUsingHandle(resource, handle);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuMeshRenderer mesh)
                 mesh.ReleaseStorageCommandsUsingHandle(resource, handle);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuRenderProgram program)
+            {
+                program.ReleaseIndirectComputeCommandsUsing(resource, handle);
                 program.ReleaseBindingSetsUsingHandle(resource, handle);
+            }
     }
 
     /// <summary>Retires raster commands for one descriptor generation before its groups retire.</summary>
     internal void ReleaseEngineMeshCommandsUsingBindingSet(WebGpuRenderProgram program, WebGpuBindingSet bindings)
     {
+        foreach (WebGpuMeshDraw draw in _vertexlessIndirectDraws.Values)
+            draw.ReleaseCommandUsing(program, bindings);
         foreach (AbstractRenderAPIObject api in RenderObjectCache.Values)
             if (api is WebGpuMeshRenderer mesh)
                 mesh.ReleaseCommandUsing(program, bindings);

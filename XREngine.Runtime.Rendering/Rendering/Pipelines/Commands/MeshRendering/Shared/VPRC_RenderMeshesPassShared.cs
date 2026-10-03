@@ -22,8 +22,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
     {
-        requirements.RequireOperation(MeshSubmissionStrategy == EMeshSubmissionStrategy.CpuDirect && PathIntent == EMeshRenderingPathIntent.Traditional
-            ? "cpu-direct-meshes" : "gpu-driven-meshes");
+        requirements.RequireOperation(PathIntent == EMeshRenderingPathIntent.Meshlet ||
+            MeshSubmissionStrategy is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented
+            ? "gpu-meshlet-meshes" : MeshSubmissionStrategy == EMeshSubmissionStrategy.CpuDirect
+                ? "cpu-direct-meshes" : "gpu-driven-meshes");
         requirements.ScenePasses.Add(RenderPass);
         if (_readWriteTextureNames.Count > 0) requirements.RequireOperation("storage-images");
     }

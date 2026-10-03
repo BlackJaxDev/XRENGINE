@@ -20,6 +20,14 @@ const maximumTextureBytes = 64 * 1024 * 1024;
 const whitePixel = new Uint8Array([255, 255, 255, 255]);
 const shaderCompilationBudgetMs = 45_000;
 const pipelineCreationBudgetMs = 45_000;
+const optionalDeviceFeatures = Object.freeze(['texture-compression-astc', 'texture-compression-etc2',
+    'indirect-first-instance', 'depth32float-stencil8']);
+
+function includeSupportedOptionalFeatures(adapter, requirements) {
+    for (const feature of optionalDeviceFeatures)
+        if (adapter.features.has(feature) && !requirements.requiredFeatures.includes(feature))
+            requirements.requiredFeatures.push(feature);
+}
 
 function asError(value) {
     return value instanceof Error ? value : new Error(value?.message ?? String(value));
@@ -308,9 +316,7 @@ export class WebGpuCanvasRenderer {
             const deviceRequirements = browserPipelineRequirements(adapter,
                 shaderDeviceRequirements(adapter, artifact.descriptor, artifact.artifactIdentity), this.submissionStrategy, this.skinningMode);
             // Payload selection happens against enabled device features, never a user-agent guess.
-            for (const feature of ['texture-compression-astc', 'texture-compression-etc2'])
-                if (adapter.features.has(feature) && !deviceRequirements.requiredFeatures.includes(feature))
-                    deviceRequirements.requiredFeatures.push(feature);
+            includeSupportedOptionalFeatures(adapter, deviceRequirements);
             this._shaderArtifact = {
                 identity: artifact.artifactIdentity,
                 requiredFeatures: [...deviceRequirements.requiredFeatures],
@@ -434,6 +440,7 @@ export class WebGpuCanvasRenderer {
             this._assertActive(signal);
             if (!adapter) throw new Error('No WebGPU adapter is available.');
             const requirements = { requiredFeatures: [], requiredLimits: {} };
+            includeSupportedOptionalFeatures(adapter, requirements);
             this.onState('requesting-device');
             this._startup.stage = 'requesting-device';
             const device = await adapter.requestDevice(requirements);

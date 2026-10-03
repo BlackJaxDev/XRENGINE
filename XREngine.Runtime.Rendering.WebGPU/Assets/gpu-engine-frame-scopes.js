@@ -5,10 +5,13 @@ export class GpuEngineFrameScopes {
     constructor(renderer) {
         this.renderer = renderer;
         this.disposed = false;
+        this.completedSequence = 0;
+        this.trackCompletion = false;
         this.receipts = new Array(receiptCapacity);
         this.stats = { capacity: receiptCapacity, pending: 0, peakPending: 0, started: 0, completed: 0,
             validationErrors: 0, outOfMemoryErrors: 0, rejectedScopes: 0, obsoleteErrors: 0,
-            capacityFailures: 0, webGpuPromises: 0, observerPromises: 0, captureGatePromises: 0 };
+            capacityFailures: 0, webGpuPromises: 0, observerPromises: 0, captureGatePromises: 0,
+            queueCompletionPromises: 0, completionPolls: 0 };
         for (let index = 0; index < receiptCapacity; index++)
             this.receipts[index] = new FrameScopeReceipt(this);
     }
@@ -23,6 +26,13 @@ export class GpuEngineFrameScopes {
         }
         this.stats.capacityFailures++;
         throw new Error('WebGPU.EngineFrame.ScopeCapacity: 64 frame validation receipts remain pending.');
+    }
+
+    pollCompletedSequence() {
+        this.renderer._requireOwner();
+        this.trackCompletion = true;
+        this.stats.completionPolls++;
+        return this.completedSequence;
     }
 
     dispose() { this.disposed = true; }
@@ -46,6 +56,13 @@ class FrameScopeReceipt {
         this.validationRejected = error => this.settle(error, true, 'engine-frame-validation');
         this.memoryResult = error => this.settle(error, false, 'engine-frame-out-of-memory');
         this.memoryRejected = error => this.settle(error, true, 'engine-frame-out-of-memory');
+        this.queueResult = () => {
+            const pool = this.pool, r = pool.renderer;
+            if (!pool.disposed && !r._disposed && r.device === this.device && r._owner === this.context.owner)
+                pool.completedSequence = Math.max(pool.completedSequence, this.context.sequence);
+            this.settle(null, false, 'engine-frame-completion');
+        };
+        this.queueRejected = error => this.settle(error, true, 'engine-frame-completion');
         this.captureExecutor = resolve => { this.resolveGate = resolve; };
     }
 
@@ -78,17 +95,27 @@ class FrameScopeReceipt {
         }
     }
 
-    close() {
+    close(submitted = false) {
         const gate = this.gate;
         if (this.closed) return gate;
+        submitted = submitted && this.pool.trackCompletion;
         this.closed = true;
-        this.remaining = this.scopeCount;
+        const scopes = this.scopeCount;
+        this.remaining = scopes + (submitted ? 1 : 0);
         this.scopeCount = 0;
         // Pop both scopes in this synchronous stack, before any preparation/capture can
         // resume. Resource preparation follows the same pop-before-await contract.
-        if (this.remaining === 2) this.pop(true);
-        if (this.remaining > 0) this.pop(false);
-        else if (this.active) this.finish();
+        if (scopes === 2) this.pop(true);
+        if (scopes > 0) this.pop(false);
+        if (submitted) {
+            try {
+                const promise = this.device.queue.onSubmittedWorkDone();
+                this.pool.stats.queueCompletionPromises++;
+                this.pool.stats.webGpuPromises++;
+                promise.then(this.queueResult, this.queueRejected);
+                this.pool.stats.observerPromises++;
+            } catch (error) { this.queueRejected(error); }
+        } else if (scopes === 0 && this.active) this.finish();
         return gate;
     }
 

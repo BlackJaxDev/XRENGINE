@@ -1119,6 +1119,14 @@ namespace XREngine.Rendering
         public virtual bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
             => throw new NotSupportedException();
 
+        /// <summary>
+        /// Updates exposure with an explicitly selected cooked pipeline program.
+        /// Backends with built-in exposure programs preserve their existing implementation.
+        /// </summary>
+        public virtual bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings,
+            float deltaTime, bool generateMipmapsNow, string? gpuProgramBinding)
+            => UpdateAutoExposureGpu(sourceTex, exposureTex, settings, deltaTime, generateMipmapsNow);
+
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
             => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
@@ -1184,6 +1192,9 @@ namespace XREngine.Rendering
         public abstract void DisableSampleShading();
 
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
+
+        /// <summary>Clears recorder-owned transient bindings around a complete compute publication attempt.</summary>
+        public virtual void ResetComputeProgramBindings(XRRenderProgram program) { }
 
         /// <summary>
         /// Attempts to accept a compute dispatch into the renderer's ordered command stream.

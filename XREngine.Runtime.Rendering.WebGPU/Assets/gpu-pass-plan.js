@@ -1,3 +1,5 @@
+import { textureFormatInfo, assertColorTargets, assertColorClear } from './gpu-texture-formats.js';
+
 const depthFormats = new Set(['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float', 'depth32float-stencil8']);
 const stencilFormats = new Set(['stencil8', 'depth24plus-stencil8', 'depth32float-stencil8']);
 
@@ -12,15 +14,16 @@ function operation(value, allowed, name) {
     return value;
 }
 
-function clearColor(value) {
+function clearColor(value, format) {
     if (!Array.isArray(value) || value.length !== 4 || value.some(item => typeof item !== 'number' || !Number.isFinite(item)))
         throw new TypeError('Color clear must contain four finite numbers.');
+    assertColorClear(format, value);
     return { r: value[0], g: value[1], b: value[2], a: value[3] };
 }
 
 /** Lowers immutable attachment plans; only acquired canvas views change between executions. */
 export class GpuPassPlan {
-    constructor(resources, owner, plan, canvas = {}, debugName = 'WebGPU render pass') {
+    constructor(resources, owner, plan, canvas = {}, debugName = 'WebGPU render pass', device = null) {
         fields(plan, ['colors', 'depthStencil']);
         if (!plan || !Array.isArray(plan.colors) || plan.colors.length > 8)
             throw new TypeError('A render pass requires at most eight color attachment slots.');
@@ -43,10 +46,12 @@ export class GpuPassPlan {
                 view: source.view,
                 loadOp: operation(color.loadOp, ['load', 'clear'], 'load operation'),
                 storeOp: operation(color.storeOp, ['store', 'discard'], 'store operation'),
-                clearValue: clearColor(color.clearValue ?? [0, 0, 0, 0]),
+                clearValue: clearColor(color.clearValue ?? [0, 0, 0, 0], source.format),
             };
             this.bindings.push({ handle: color.viewHandle, source, attachment, key: 'view' });
             if (color.resolveTargetHandle !== undefined && color.resolveTargetHandle !== null) {
+                if (!textureFormatInfo(source.format, device).resolve)
+                    throw new Error('The exact color format does not support WebGPU resolve.');
                 const target = this._resolve(color.resolveTargetHandle, canvas);
                 this._validateView(target, false, true);
                 if (source.sampleCount <= 1 || target.sampleCount !== 1 || target.format !== source.format
@@ -106,6 +111,7 @@ export class GpuPassPlan {
             this.descriptor.depthStencilAttachment = attachment;
             this.bindings.push({ handle: depth.viewHandle, source, attachment, key: 'view' });
         }
+        if (device) assertColorTargets(this.signature.colorFormats.map(format => format ? { format } : null), device, this.signature.sampleCount);
         if (!this.signature.sampleCount) throw new Error('Render pass requires at least one attachment.');
         Object.freeze(this.signature.colorFormats);
         Object.freeze(this.signature);

@@ -1,5 +1,6 @@
 using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.RenderGraph;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -10,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
     /// <summary>Frozen registry-resolved GI selection for this native stage family.</summary>
+    [YamlIgnore]
     public GlobalIlluminationPlan? GlobalIlluminationPlan
     {
         get => _globalIlluminationPlan;
@@ -29,6 +31,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         set => SetField(ref _stage, value);
     }
 
+    [YamlIgnore]
     public AdvancedRenderStageDescriptor Descriptor
         => AdvancedRenderPipelineFrameContract.GetDescriptor(Stage);
 

@@ -8,6 +8,9 @@ const sources = new Map();
 let nextSource = 0;
 const validSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}(?![\s\S])/.test(value);
 const pipelineComponent = value => typeof value === 'string' && /^[a-z][a-z0-9.-]{0,63}(?![\s\S])/.test(value);
+const validPipelineWorkgroup = value => Array.isArray(value) && value.length === 3
+    && value.every(size => Number.isSafeInteger(size) && size >= 1 && size <= 1024)
+    && value[0] * value[1] * value[2] <= 1024;
 
 function requireSource(id) {
     const source = sources.get(id);
@@ -222,11 +225,16 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
         const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, pipeline.descriptorIdentity, entry.path);
         try {
             const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+            const entries = descriptor?.entryPoints;
+            const entryNames = entries && typeof entries === 'object' && !Array.isArray(entries) ? Object.keys(entries) : [];
+            const raster = entryNames.length === 2 && typeof entries.vertex === 'string' && entries.vertex.trim()
+                && typeof entries.fragment === 'string' && entries.fragment.trim()
+                && !Object.hasOwn(descriptor, 'workgroupSize');
+            const compute = entryNames.length === 1 && typeof entries.compute === 'string' && entries.compute.trim()
+                && validPipelineWorkgroup(descriptor.workgroupSize)
+                && Array.isArray(descriptor.layout?.vertexBuffers) && descriptor.layout.vertexBuffers.length === 0;
             if (!descriptor || descriptor.pass !== pipeline.pass || descriptor.target !== 'WebGPUWgsl'
-                || !descriptor.entryPoints || typeof descriptor.entryPoints !== 'object'
-                || Object.keys(descriptor.entryPoints).length !== 2
-                || typeof descriptor.entryPoints.vertex !== 'string' || !descriptor.entryPoints.vertex
-                || typeof descriptor.entryPoints.fragment !== 'string' || !descriptor.entryPoints.fragment
+                || !(raster || compute)
                 || Object.hasOwn(descriptor, 'materialVariant'))
                 throw new Error('AssetSource.PipelineArtifactDescriptorMismatch.');
         } finally {

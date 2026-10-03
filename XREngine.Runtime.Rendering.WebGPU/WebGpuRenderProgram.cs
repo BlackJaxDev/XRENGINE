@@ -33,6 +33,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         data.SamplerRequested += SetSampler;
         data.SamplerRequestedByLocation += SetSamplerByLocation;
         data.BindBufferRequested += SetBuffer;
+        data.BindImageTextureRequested += SetImage;
         data.DispatchComputeRequested += DispatchCompute;
     }
 
@@ -171,7 +172,12 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         return _blocks.Length;
     }
 
-    private void Link(XRRenderProgram _) => Generate();
+    private void Link(XRRenderProgram _)
+    {
+        Generate();
+        if (!IsGenerated && Renderer.IsRecordingEngineFrame)
+            Renderer.MarkEngineDrawPending();
+    }
 
     public void SetMatrix(string name, Matrix4x4 value)
     {
@@ -213,6 +219,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         Data.SamplerRequested -= SetSampler;
         Data.SamplerRequestedByLocation -= SetSamplerByLocation;
         Data.BindBufferRequested -= SetBuffer;
+        Data.BindImageTextureRequested -= SetImage;
         Data.DispatchComputeRequested -= DispatchCompute;
         base.OnRetiring();
     }
@@ -223,6 +230,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         Renderer.ReleaseEngineDrawDependencies(this);
         DestroyCompute();
         ClearBindingSets();
+        ClearImageViews();
         if (Renderer.State != BrowserRendererState.Disposed)
         {
             foreach (int layout in _layouts) if (layout != 0) Renderer.RetireEngineResourceAfterFrame(layout);

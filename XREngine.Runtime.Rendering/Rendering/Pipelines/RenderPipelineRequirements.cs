@@ -1,5 +1,6 @@
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering;
@@ -8,17 +9,32 @@ namespace XREngine.Rendering;
 /// Cold, output-specific declarations used by publication and runtime admission. Describing
 /// requirements must not execute commands, invoke resource factories, or allocate API objects.
 /// </summary>
-public sealed class RenderPipelineRequirements(RendererBackendId backend, PipelinePostProcessState postProcessState)
+public sealed class RenderPipelineRequirements
 {
     private readonly HashSet<ViewportRenderCommandContainer> _containers = new(ReferenceEqualityComparer.Instance);
 
-    public RendererBackendId Backend { get; } = backend;
-    public PipelinePostProcessState PostProcessState { get; } = postProcessState;
+    public RenderPipelineRequirements(RendererBackendId backend, PipelinePostProcessState postProcessState)
+        : this(backend, postProcessState, RenderPipelineResourceProfile.Empty) { }
+
+    public RenderPipelineRequirements(RendererBackendId backend, PipelinePostProcessState postProcessState, in RenderPipelineResourceProfile outputProfile)
+    {
+        Backend = backend;
+        PostProcessState = postProcessState;
+        OutputProfile = outputProfile;
+    }
+
+    public RendererBackendId Backend { get; }
+    public PipelinePostProcessState PostProcessState { get; }
+    public RenderPipelineResourceProfile OutputProfile { get; }
+    public HashSet<EAntiAliasingMode> SupportedAntiAliasingModes { get; } = [EAntiAliasingMode.None];
     public HashSet<string> Operations { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string?> Programs { get; } = new(StringComparer.Ordinal);
+    public HashSet<string> RasterPrograms { get; } = new(StringComparer.Ordinal);
+    public HashSet<string> ComputePrograms { get; } = new(StringComparer.Ordinal);
     public HashSet<int> ScenePasses { get; } = [];
     public HashSet<XRMaterial> Materials { get; } = new(ReferenceEqualityComparer.Instance);
     public HashSet<XRRenderProgram> RenderPrograms { get; } = new(ReferenceEqualityComparer.Instance);
+    public HashSet<XRRenderProgram> ComputeRenderPrograms { get; } = new(ReferenceEqualityComparer.Instance);
     public HashSet<string> ProgramIdentities { get; } = new(StringComparer.Ordinal);
     public List<string> Diagnostics { get; } = [];
 
@@ -44,6 +60,28 @@ public sealed class RenderPipelineRequirements(RendererBackendId backend, Pipeli
     {
         ArgumentNullException.ThrowIfNull(material);
         Materials.Add(material);
+    }
+
+    public void RequireRasterProgram(string pass, string? descriptorIdentity = null)
+    {
+        if (ComputePrograms.Contains(pass))
+            throw new InvalidOperationException($"RenderPipeline.ProgramShapeConflict: '{pass}'.");
+        RequireProgram(pass, descriptorIdentity);
+        RasterPrograms.Add(pass);
+    }
+
+    public void RequireComputeProgram(string pass, string? descriptorIdentity = null)
+    {
+        if (RasterPrograms.Contains(pass))
+            throw new InvalidOperationException($"RenderPipeline.ProgramShapeConflict: '{pass}'.");
+        RequireProgram(pass, descriptorIdentity);
+        ComputePrograms.Add(pass);
+    }
+
+    public void RequireComputeProgram(XRRenderProgram program)
+    {
+        RequireProgram(program);
+        ComputeRenderPrograms.Add(program);
     }
 
     public void RequireProgram(XRRenderProgram program)

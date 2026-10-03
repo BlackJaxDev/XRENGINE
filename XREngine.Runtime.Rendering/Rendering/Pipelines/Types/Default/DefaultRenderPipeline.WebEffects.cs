@@ -63,6 +63,8 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
         }
         if (RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableBloom && bloom is { Enabled: true })
             mask |= DefaultPipelineResourceFeature.WebBloomEnabled;
+        if (GetSettings<ColorGradingSettings>(state) is { RequiresAutoExposure: true })
+            mask |= DefaultPipelineResourceFeature.WebAutoExposureEnabled;
         return (ulong)mask;
     }
 
@@ -71,6 +73,12 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
 
     private static bool WebBloomEnabled(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.WebBloomEnabled) != 0;
+
+    private static bool WebAutoExposureEnabled(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.WebAutoExposureEnabled) != 0;
+
+    private bool ShouldUseWebAutoExposure()
+        => GetSettings<ColorGradingSettings>(ResolveCurrentSettingsCamera()?.GetPostProcessState(this)) is { RequiresAutoExposure: true };
 
     private static uint WebGtaoDivisor(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.GtaoQuarterResolution) != 0 ? 4u :

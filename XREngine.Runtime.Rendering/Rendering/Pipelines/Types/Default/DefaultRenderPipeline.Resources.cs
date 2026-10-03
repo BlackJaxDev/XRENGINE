@@ -44,6 +44,7 @@ public partial class DefaultRenderPipeline
         WebForwardLit = 1UL << 31,
         WebGtaoEnabled = 1UL << 32,
         WebBloomEnabled = 1UL << 33,
+        WebAutoExposureEnabled = 1UL << 34,
     }
 
     private const ulong AoModeFieldMask = 0xFUL << 26;

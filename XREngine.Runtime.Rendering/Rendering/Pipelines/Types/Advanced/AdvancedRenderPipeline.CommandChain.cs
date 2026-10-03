@@ -48,7 +48,7 @@ public partial class AdvancedRenderPipeline
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer commands = new(this);
-        if (!UsesMinimalVisibilityOutput)
+        if (!UsesMinimalVisibilityOutput && !Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             commands.Add<VPRC_PrecomputeBRDF>();
         IReadOnlyList<AdvancedRenderStageDescriptor> stages =
             AdvancedRenderPipelineFrameContract.OrderedStages;

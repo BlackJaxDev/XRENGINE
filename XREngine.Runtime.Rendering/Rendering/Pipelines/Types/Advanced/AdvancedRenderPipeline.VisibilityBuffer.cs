@@ -452,7 +452,10 @@ public partial class AdvancedRenderPipeline
             ESizedInternalFormat sizedInternalFormat,
             EFrameBufferAttachment? attachment,
             bool storage)
-        => builder.Texture(name)
+    {
+        if (storage)
+            LowerWebStorageFormat(ref internalFormat, ref pixelFormat, ref pixelType, ref sizedInternalFormat);
+        return builder.Texture(name)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Size(size)
             .Usage(usage)
@@ -467,6 +470,7 @@ public partial class AdvancedRenderPipeline
                 sizedInternalFormat,
                 attachment,
                 storage));
+    }
 
     private static RenderPipelineResourceLayoutBuilder.BufferSpecBuilder
         VisibilityBuffer<T>(

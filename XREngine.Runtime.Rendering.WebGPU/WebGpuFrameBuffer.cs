@@ -117,8 +117,8 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
                 int slot = ColorSlot(target.Attachment);
                 if (slot >= 0)
                 {
-                    if (format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float" or "r16float") || formats[slot] is not null)
-                        throw Unsupported("Create", "color slots require distinct exact RGBA8, RGBA16F or R16F texture views");
+                    if (WebGpuTextureFormat.IsDepth(format) || formats[slot] is not null)
+                        throw Unsupported("Create", "color slots require distinct exact color texture views");
                     formats[slot] = format;
                     colorCount = Math.Max(colorCount, slot + 1);
                 }
@@ -126,7 +126,7 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
                 {
                     if (depthFormat is not null || target.Attachment is not (EFrameBufferAttachment.DepthAttachment or EFrameBufferAttachment.DepthStencilAttachment))
                         throw Unsupported("Create", "one depth or combined depth/stencil attachment is admitted");
-                    if (target.Attachment == EFrameBufferAttachment.DepthStencilAttachment && format != "depth24plus-stencil8" ||
+                    if (target.Attachment == EFrameBufferAttachment.DepthStencilAttachment && !WebGpuTextureFormat.HasStencil(format) ||
                         target.Attachment == EFrameBufferAttachment.DepthAttachment && format is not ("depth16unorm" or "depth24plus" or "depth32float"))
                         throw Unsupported("Create", "the depth attachment kind does not match its exact texture format");
                     depthFormat = format;
@@ -174,6 +174,7 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         DescribeAttachment(IFrameBufferAttachement attachment, int mip, int layer)
         => attachment switch
         {
+            XRTextureViewBase view => Describe((WebGpuTextureView)Renderer.GetOrCreateAPIRenderObject(view, generateNow: true)!, mip, layer),
             XRRenderBuffer renderbuffer => Describe((WebGpuRenderBuffer)Renderer.GetOrCreateAPIRenderObject(renderbuffer, generateNow: true)!, mip, layer),
             XRTexture2D texture => Describe((WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!, mip, layer),
             XRTexture2DArray array => Describe((WebGpuTexture2DArray)Renderer.GetOrCreateAPIRenderObject(array, generateNow: true)!, mip, layer),
@@ -185,6 +186,10 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         Describe(WebGpuRenderBuffer renderbuffer, int mip, int layer)
         => (renderbuffer, renderbuffer.GetRenderView(mip, layer), renderbuffer.Width, renderbuffer.Height,
             renderbuffer.SampleCount, renderbuffer.Format);
+
+    private static (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
+        Describe(WebGpuTextureView texture, int mip, int layer)
+        => (texture, texture.GetRenderView(mip, layer), texture.Width, texture.Height, texture.SampleCount, texture.Format);
 
     private static (AbstractRenderAPIObject Owner, int View, uint Width, uint Height, uint Samples, string Format)
         Describe(WebGpuTexture2D texture, int mip, int layer)
@@ -208,7 +213,7 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
     {
         if (ReferenceEquals(this, resource)) return true;
         foreach (AbstractRenderAPIObject texture in _textures)
-            if (ReferenceEquals(texture, resource)) return true;
+            if (ReferenceEquals(texture, resource) || texture is WebGpuTextureView view && view.DependsOn(resource)) return true;
         return false;
     }
 

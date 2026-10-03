@@ -9,6 +9,21 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_ExposureUpdate : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            if (requirements.Backend != RendererBackendId.WebGPU)
+            {
+                base.DescribeRequirements(requirements);
+                return;
+            }
+            if (requirements.PostProcessState.GetStage<ColorGradingSettings>()?.TryGetBacking(out ColorGradingSettings? settings) == true &&
+                settings is { RequiresAutoExposure: true })
+            {
+                requirements.RequireOperation("storage-images");
+                requirements.RequireComputeProgram(GpuProgramBinding ?? "auto-exposure");
+            }
+        }
+
         /// <summary>
         /// This is the texture that exposure will be calculated from.
         /// </summary>
@@ -24,6 +39,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// Set to false if you've already generated mipmaps before this command.
         /// </summary>
         public bool GenerateMipmapsHere { get; set; } = true;
+
+        /// <summary>The exact package compute binding selected by the owning output pipeline.</summary>
+        public string? GpuProgramBinding { get; set; }
 
         private static bool IsAutoExposureRestrictedPass()
             => RuntimeEngine.Rendering.State.IsLightProbePass
@@ -103,6 +121,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            var camera = ActivePipelineInstance.RenderState.SceneCamera ?? ActivePipelineInstance.LastSceneCamera;
+            var stage = camera?.GetPostProcessStageState<ColorGradingSettings>();
+            if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
+                return;
+            if (!grading.RequiresAutoExposure)
+            {
+                grading.MarkGpuAutoExposureReady(false);
+                return;
+            }
+
             int passIndex = ResolvePassIndex(nameof(VPRC_ExposureUpdate));
             if (passIndex == int.MinValue)
             {
@@ -115,13 +143,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex);
-
-            var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
-            if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
-            {
-                Debug.Rendering("[ExposureUpdate] No ColorGradingSettings stage found on camera");
-                return;
-            }
 
             if (RuntimeEngine.StartupPresentationEnabled)
                 return;
@@ -185,6 +206,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             ReportVrAutoExposurePolicy(exposurePolicy, sourceTexture, exposurePolicyReason);
 
             var renderer = AbstractRenderer.Current;
+            if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            {
+                XRTexture2D exposure = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName)
+                    ?? throw new InvalidOperationException("WebGPU.AutoExposure.OutputMissing: automatic exposure requires its declared GPU history target.");
+                if (renderer?.SupportsGpuAutoExposure != true)
+                    throw new NotSupportedException("WebGPU.AutoExposure.Unavailable: the selected renderer has no GPU exposure producer.");
+                grading.UpdateExposureGpu(sourceTexture, exposure, false, GpuProgramBinding ?? "auto-exposure");
+                // A warming producer marks the entire renderer frame pending.
+                // Let that frame retry through its normal GPU lifecycle.
+                return;
+            }
             if (renderer?.SupportsGpuAutoExposure == true)
             {
                 var exposureTexture = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName);
@@ -229,6 +261,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {
             base.DescribeRenderPass(context);
+
+            if (Shaders.Compilation.WebPipelineRasterProgram.IsActive && context.ResourceLayout is not null &&
+                !context.HasResource(AutoExposureTextureName))
+            {
+                context.ReserveSyntheticPassIndex(nameof(VPRC_ExposureUpdate));
+                return;
+            }
 
             var pass = context.GetOrCreateSyntheticPass(nameof(VPRC_ExposureUpdate), ERenderGraphPassStage.Compute);
             pass.SampleTexture(MakeTextureResource(HDRSceneTextureName));

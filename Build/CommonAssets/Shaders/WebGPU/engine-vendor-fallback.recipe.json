@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-vendor-fallback",
+  "pass": "vendor-fallback",
+  "source": "VendorFallback.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "outputVertex",
+    "fragment": "outputFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "VendorFallbackUniforms",
+        "physicalName": "fallback_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "ApplySharpen_0",
+            "provider": "ApplySharpen",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "FlipSourceYOnVulkanFallback_0",
+            "provider": "FlipSourceYOnVulkanFallback",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "EncodeOutputSrgb_0",
+            "provider": "EncodeOutputSrgb",
+            "offset": 8,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "SharpenStrength_0",
+            "provider": "SharpenStrength",
+            "offset": 12,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ]
+      },
+      {
+        "name": "SourceTexture",
+        "physicalName": "SourceTexture_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "SourceTexture",
+        "physicalName": "SourceTextureSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": {
+    "pass": "vendor-fallback"
+  }
+}

@@ -1,3 +1,4 @@
+import { textureFormatInfo, assertSampledTexture, assertStorageTextureFormat, assertColorTargets } from './gpu-texture-formats.js';
 import { GpuEngineFrame } from './gpu-engine-frame.js';
 import { GpuPassPlan } from './gpu-pass-plan.js';
 import { GpuCommandUsageScope } from './gpu-command-usage-scope.js';
@@ -5,6 +6,8 @@ import { assertPipelineBindingLimits, computeWorkgroupMetadata } from './gpu-com
 
 const maxDescription = 262144;
 const maxCommands = 4096;
+const maxIndirectDraws = 65536;
+const maxReplayDraws = 262144;
 function integer(value, minimum, maximum, name) {
     if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new RangeError(`Invalid ${name}.`);
     return value;
@@ -143,12 +146,12 @@ export class GpuCommands {
         const entries = array(d.entries, Math.min(32, r.device.limits.maxBindingsPerBindGroup), 'binding layout');
         const seen = new Set();
         for (const e of entries) {
-            object(e, ['binding', 'visibility', 'buffer', 'sampler', 'texture']);
+            object(e, ['binding', 'visibility', 'buffer', 'sampler', 'texture', 'storageTexture']);
             integer(e.binding, 0, r.device.limits.maxBindingsPerBindGroup - 1, 'binding');
             if (seen.has(e.binding)) throw new Error('Duplicate binding.');
             seen.add(e.binding);
             integer(e.visibility, 1, 7, 'shader visibility');
-            if ([e.buffer, e.sampler, e.texture].filter(Boolean).length !== 1) throw new Error('Exactly one resource binding kind is required.');
+            if ([e.buffer, e.sampler, e.texture, e.storageTexture].filter(Boolean).length !== 1) throw new Error('Exactly one resource binding kind is required.');
             if (e.buffer) {
                 object(e.buffer, ['type', 'hasDynamicOffset', 'minBindingSize']);
                 oneOf(e.buffer.type, ['uniform', 'storage', 'read-only-storage'], 'buffer binding type');
@@ -158,9 +161,15 @@ export class GpuCommands {
             } else if (e.sampler) {
                 object(e.sampler, ['type']);
                 oneOf(e.sampler.type, ['filtering', 'non-filtering', 'comparison'], 'sampler binding type');
+            } else if (e.storageTexture) {
+                object(e.storageTexture, ['access', 'format', 'viewDimension']);
+                assertStorageTextureFormat(e.storageTexture.format, e.storageTexture.access, r.device);
+                oneOf(e.storageTexture.viewDimension, ['2d', '2d-array'], 'storage texture dimension');
+                if ((e.visibility & 1) && e.storageTexture.access !== 'read-only')
+                    throw new Error('Writable storage textures cannot be visible to the vertex stage.');
             } else {
                 object(e.texture, ['sampleType', 'viewDimension', 'multisampled']);
-                oneOf(e.texture.sampleType, ['float', 'unfilterable-float', 'depth'], 'texture sample type');
+                oneOf(e.texture.sampleType, ['float', 'unfilterable-float', 'uint', 'sint', 'depth'], 'texture sample type');
                 if (!['2d', '2d-array', 'cube'].includes(e.texture.viewDimension) ||
                     (e.texture.multisampled !== undefined && typeof e.texture.multisampled !== 'boolean') ||
                     e.texture.multisampled === true && e.texture.viewDimension !== '2d')
@@ -201,22 +210,24 @@ export class GpuCommands {
                     if (expected.buffer.hasDynamicOffset) dynamic.push({ binding: e.binding, buffer: b, offset, size, alignment: expected.buffer.type === 'uniform' ? r.device.limits.minUniformBufferOffsetAlignment : r.device.limits.minStorageBufferOffsetAlignment });
                 } else {
                     if (e.offset !== undefined || e.size !== undefined) throw new Error('Only buffers accept binding ranges.');
-                    const value = hold(dependencies, this.get(e.resource, expected.texture ? 'texture-view' : 'sampler'));
+                    const value = hold(dependencies, this.get(e.resource, expected.texture || expected.storageTexture ? 'texture-view' : 'sampler'));
                     if (expected.texture && !(value.texture.usage & 4)) throw new Error('Texture view lacks texture-binding usage.');
                     if (expected.texture) {
-                        resources.push({ kind: 'texture', value, writable: false });
-                        if ((expected.texture.multisampled ?? false) !== (value.sampleCount > 1)) throw new Error('Texture sample count does not match the binding layout.');
-                        if (expected.texture.viewDimension !== (value.dimension ?? '2d')) throw new Error('Texture view dimension does not match the binding layout.');
-                        if ((expected.texture.sampleType === 'depth') !== value.format.startsWith('depth')) throw new Error('Texture format does not match the binding sample type.');
-                        if (value.aspect === 'stencil-only' || value.format === 'depth24plus-stencil8' && value.aspect !== 'depth-only')
-                            throw new Error('Depth/stencil texture sampling requires an explicit depth-only view.');
+                        resources.push({ kind: 'texture', value, writable: false, role: 'sampled texture' });
+                        assertSampledTexture(value, expected.texture, r.device);
+                    } else if (expected.storageTexture) {
+                        const storage = expected.storageTexture;
+                        if (!(value.usage & GPUTextureUsage.STORAGE_BINDING) || value.sampleCount !== 1 || value.mipCount !== 1 ||
+                            value.aspect !== 'all' || value.format !== storage.format || value.dimension !== storage.viewDimension)
+                            throw new Error('Storage image view usage, sample count, mip range, aspect, format or dimension does not match its exact layout.');
+                        resources.push({ kind: 'texture', value, writable: storage.access !== 'read-only', role: 'storage texture' });
                     } else if (expected.sampler.type === 'comparison' && value.compare !== 'less-equal')
                         throw new Error('Comparison sampler binding requires a less-equal comparison sampler.');
                     else if (expected.sampler.type !== 'comparison' && value.compare)
                         throw new Error('Comparison sampler cannot fill an ordinary sampler binding.');
                     else if (expected.sampler.type === 'non-filtering' && value.filtering)
                         throw new Error('Filtering sampler cannot fill a non-filtering binding.');
-                    resource = expected.texture ? value.view : value.sampler;
+                    resource = expected.texture || expected.storageTexture ? value.view : value.sampler;
                 }
                 entries.push({ binding: e.binding, resource });
             }
@@ -281,7 +292,7 @@ export class GpuCommands {
                     for (const target of descriptor.fragment.targets) {
                         if (!target) continue;
                         object(target, ['format', 'blend', 'writeMask']);
-                        oneOf(target.format, ['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb', 'rgba16float', 'r16float'], 'color target format');
+                        if (!textureFormatInfo(target.format, r.device).color) throw new Error('Color targets require color formats.');
                         integer(target.writeMask ?? 15, 0, 15, 'color write mask');
                         if (target.blend) {
                             object(target.blend, ['color', 'alpha']);
@@ -300,7 +311,8 @@ export class GpuCommands {
                 oneOf(d.primitive.cullMode, ['none', 'front', 'back'], 'cull mode');
                 if (d.depthStencil) {
                     descriptor.depthStencil = object(d.depthStencil, ['format', 'depthWriteEnabled', 'depthCompare', 'depthBias', 'depthBiasSlopeScale', 'depthBiasClamp', 'stencilFront', 'stencilBack', 'stencilReadMask', 'stencilWriteMask']);
-                    oneOf(d.depthStencil.format, ['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float'], 'depth format');
+                    oneOf(d.depthStencil.format, ['depth16unorm', 'depth24plus', 'depth24plus-stencil8', 'depth32float', 'depth32float-stencil8'], 'depth format');
+                    textureFormatInfo(d.depthStencil.format, r.device);
                     if (typeof d.depthStencil.depthWriteEnabled !== 'boolean') throw new TypeError('Depth write flag must be boolean.');
                     oneOf(d.depthStencil.depthCompare, ['never', 'less', 'equal', 'less-equal', 'greater', 'not-equal', 'greater-equal', 'always'], 'depth compare');
                     for (const key of ['depthBias', 'depthBiasSlopeScale', 'depthBiasClamp']) if (d.depthStencil[key] !== undefined && !Number.isFinite(d.depthStencil[key])) throw new RangeError('Depth bias must be finite.');
@@ -308,7 +320,7 @@ export class GpuCommands {
                     for (const key of ['stencilReadMask', 'stencilWriteMask']) if (d.depthStencil[key] !== undefined) integer(d.depthStencil[key], 0, 0xffffffff, 'stencil mask');
                     for (const face of [d.depthStencil.stencilFront, d.depthStencil.stencilBack]) {
                         if (!face) continue;
-                        if (d.depthStencil.format !== 'depth24plus-stencil8') throw new Error('Stencil state requires a stencil-capable format.');
+                        if (!['depth24plus-stencil8', 'depth32float-stencil8'].includes(d.depthStencil.format)) throw new Error('Stencil state requires a stencil-capable format.');
                         object(face, ['compare', 'failOp', 'depthFailOp', 'passOp']);
                         oneOf(face.compare, ['never', 'less', 'equal', 'less-equal', 'greater', 'not-equal', 'greater-equal', 'always'], 'stencil compare');
                         for (const key of ['failOp', 'depthFailOp', 'passOp']) oneOf(face[key], ['keep', 'zero', 'replace', 'invert', 'increment-clamp', 'decrement-clamp', 'increment-wrap', 'decrement-wrap'], 'stencil operation');
@@ -316,6 +328,7 @@ export class GpuCommands {
                 }
                 descriptor.multisample = object(d.multisample, ['count', 'mask', 'alphaToCoverageEnabled']);
                 oneOf(d.multisample.count, [1, 4], 'sample count');
+                assertColorTargets(descriptor.fragment?.targets ?? [], r.device, d.multisample.count);
                 integer(d.multisample.mask ?? 0xffffffff, 0, 0xffffffff, 'sample mask');
                 if (d.multisample.alphaToCoverageEnabled !== undefined && typeof d.multisample.alphaToCoverageEnabled !== 'boolean') throw new TypeError('Alpha-to-coverage must be boolean.');
             }
@@ -366,7 +379,7 @@ export class GpuCommands {
                     object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage', 'viewport', 'scissor']);
                     const pipeline = clearOnly ? undefined : hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
                     const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
-                    const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata, operationLabel);
+                    const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata, operationLabel, r.device);
                     if (pipeline) plan.assertPipeline(pipeline.descriptor);
                     const viewport = clearOnly || command.viewport === undefined ? undefined :
                         drawRectangle(command.viewport, plan.signature.width, plan.signature.height, false, 'viewport');
@@ -417,7 +430,8 @@ export class GpuCommands {
                         if (!(indexBuffer.usage & 16) || indexOffset % indexBytes || indexSize % indexBytes) throw new Error('Index buffer usage or alignment is invalid.');
                         scope.buffer(indexBuffer, false, 'index');
                     }
-                    const drawList = array(command.draws, maxCommands - draws, 'draws');
+                    const drawList = array(command.draws, maxCommands, 'draws');
+                    let replayDraws = 0;
                     let engineInstanceCountLimit = 0;
                     if (command.engineInstanceStorage !== undefined) {
                         const source = object(command.engineInstanceStorage, ['group', 'binding', 'buffer', 'stride', 'limit']);
@@ -440,10 +454,15 @@ export class GpuCommands {
                         const indexed = type === 'drawIndexed' || type === 'drawIndexedIndirect';
                         if (indexed && !indexBuffer) throw new Error('Indexed draws require an index buffer.');
                         if (type === 'drawIndirect' || type === 'drawIndexedIndirect') {
-                            object(draw, ['type', 'buffer', 'offset', 'firstInstancePolicy']);
+                            object(draw, ['type', 'buffer', 'offset', 'firstInstancePolicy', 'drawCount', 'stride']);
                             const buffer = hold(dependencies, this.get(draw.buffer, 'buffer'));
-                            const offset = integer(draw.offset ?? 0, 0, buffer.size - (indexed ? 20 : 16), 'indirect argument offset');
+                            const argumentBytes = indexed ? 20 : 16;
+                            const offset = integer(draw.offset ?? 0, 0, buffer.size - argumentBytes, 'indirect argument offset');
+                            const drawCount = integer(draw.drawCount ?? 1, 1, maxIndirectDraws, 'indirect draw count');
+                            const stride = integer(draw.stride ?? argumentBytes, argumentBytes, 0xffffffff, 'indirect stride');
                             if (!(buffer.usage & 256) || offset % 4) throw new Error('Indirect arguments require INDIRECT usage and four-byte alignment.');
+                            if (stride % 4 || offset + (drawCount - 1) * stride + argumentBytes > buffer.size)
+                                throw new RangeError('Indirect argument stride/alignment or batch range exceeds the source buffer.');
                             oneOf(draw.firstInstancePolicy, ['zero', 'feature'], 'indirect first-instance policy');
                             if (draw.firstInstancePolicy === 'feature' && !r.device.features.has('indirect-first-instance'))
                                 throw new Error('Nonzero indirect firstInstance requires the enabled indirect-first-instance feature.');
@@ -452,11 +471,15 @@ export class GpuCommands {
                             scope.buffer(buffer, false, 'indirect');
                             draw.native = buffer.buffer;
                             draw.offset = offset;
+                            draw.drawCount = drawCount;
+                            draw.stride = stride;
+                            replayDraws += drawCount;
                             continue;
                         }
                         object(draw, indexed ? ['type', 'indexCount', 'instanceCount', 'firstIndex', 'baseVertex', 'firstInstance']
                             : ['type', 'vertexCount', 'instanceCount', 'firstVertex', 'firstInstance']);
                         draw.type = type;
+                        replayDraws++;
                         draw.instanceCount = integer(draw.instanceCount ?? 1, 0, 0xffffffff, 'instance count');
                         draw.firstInstance = integer(draw.firstInstance ?? 0, 0, 0xffffffff, 'first instance');
                         if (engineInstanceCountLimit && (draw.firstInstance !== 0 || draw.instanceCount > engineInstanceCountLimit))
@@ -476,21 +499,36 @@ export class GpuCommands {
                             if (!indexed && layout.stepMode === 'vertex' && (draw.firstVertex + draw.vertexCount) * layout.arrayStride > vertexBuffers[slot].size) throw new RangeError('Draw exceeds the bound vertex range.');
                         }
                     }
-                    draws += drawList.length;
+                    if (!Number.isSafeInteger(replayDraws) || draws > maxReplayDraws - replayDraws)
+                        throw new RangeError('WebGPU.Commands.ReplayCapacity: retained commands exceed 262144 replay draws.');
+                    draws += replayDraws;
                     if (!scissor || (scissor.width !== 0 && scissor.height !== 0))
-                        encodedDraws += drawList.length;
+                        encodedDraws += replayDraws;
                     const stencilReference = integer(command.stencilReference ?? 0, 0, 0xffffffff, 'stencil reference');
                     operations.push({ type: 'render', label: operationLabel, pipeline: pipeline.native, plan, bindings, vertexBuffers, indexBuffer: indexBuffer?.buffer, indexFormat, indexOffset, indexSize, draws: drawList, engineInstanceCountLimit, stencilReference, viewport, scissor });
                 } else if (command.type === 'compute') {
-                    object(command, ['type', 'pipeline', 'bindings', 'workgroups']);
+                    object(command, ['type', 'pipeline', 'bindings', 'workgroups', 'indirect']);
                     const pipeline = hold(dependencies, this.get(command.pipeline, 'compute-pipeline'));
-                    const workgroups = array(command.workgroups, 3, 'workgroup dimensions');
-                    if (workgroups.length !== 3) throw new Error('Compute workgroups require three dimensions.');
-                    for (const count of workgroups) integer(count, 0, r.device.limits.maxComputeWorkgroupsPerDimension, 'workgroup count');
                     const bindings = this.bindings(command.bindings, pipeline, dependencies);
                     const scope = new GpuCommandUsageScope();
                     scope.bindings(bindings);
-                    operations.push({ type: 'compute', label: operationLabel, descriptor: { label: operationLabel }, pipeline: pipeline.native, bindings, workgroups });
+                    if ((command.workgroups === undefined) === (command.indirect === undefined))
+                        throw new Error('Compute requires exactly one direct workgroup list or indirect argument range.');
+                    let workgroups, indirect;
+                    if (command.indirect !== undefined) {
+                        object(command.indirect, ['buffer', 'offset']);
+                        const buffer = hold(dependencies, this.get(command.indirect.buffer, 'buffer'));
+                        const offset = integer(command.indirect.offset ?? 0, 0, buffer.size - 12, 'compute indirect offset');
+                        if (!(buffer.usage & 256) || offset % 4)
+                            throw new Error('Compute indirect arguments require INDIRECT usage and four-byte alignment.');
+                        scope.buffer(buffer, false, 'indirect');
+                        indirect = { native: buffer.buffer, offset };
+                    } else {
+                        workgroups = array(command.workgroups, 3, 'workgroup dimensions');
+                        if (workgroups.length !== 3) throw new Error('Compute workgroups require three dimensions.');
+                        for (const count of workgroups) integer(count, 0, r.device.limits.maxComputeWorkgroupsPerDimension, 'workgroup count');
+                    }
+                    operations.push({ type: 'compute', label: operationLabel, descriptor: { label: operationLabel }, pipeline: pipeline.native, bindings, workgroups, indirect });
                 } else if (command.type === 'copyBuffer') {
                     object(command, ['type', 'source', 'destination', 'sourceOffset', 'destinationOffset', 'size']);
                     const source = hold(dependencies, this.get(command.source, 'buffer'));
@@ -603,7 +641,8 @@ export class GpuCommands {
         }
         if (operation.type === 'compute') {
             r._setOperation('dispatch-workgroups', operationLabel, commandIndex);
-            pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
+            if (operation.indirect) pass.dispatchWorkgroupsIndirect(operation.indirect.native, operation.indirect.offset);
+            else pass.dispatchWorkgroups(operation.workgroups[0], operation.workgroups[1], operation.workgroups[2]);
         }
         else {
             const flags = packet ? packet.getUint32(recordBase + 68, true) : 0;
@@ -639,8 +678,13 @@ export class GpuCommands {
             for (let draw = 0; !suppressDraw && draw < operation.draws.length; draw++) {
                 const value = operation.draws[draw];
                 r._setOperation('draw', operationLabel, commandIndex, draw);
-                if (value.type === 'drawIndirect') pass.drawIndirect(value.native, value.offset);
-                else if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, value.offset);
+                if (value.type === 'drawIndirect' || value.type === 'drawIndexedIndirect') {
+                    for (let slot = 0; slot < value.drawCount; slot++) {
+                        const offset = value.offset + slot * value.stride;
+                        if (value.type === 'drawIndexedIndirect') pass.drawIndexedIndirect(value.native, offset);
+                        else pass.drawIndirect(value.native, offset);
+                    }
+                }
                 else if (value.type === 'draw') pass.draw(value.vertexCount, engineInstanceCount ?? value.instanceCount, value.firstVertex, value.firstInstance);
                 else pass.drawIndexed(value.indexCount, engineInstanceCount ?? value.instanceCount, value.firstIndex, value.baseVertex, value.firstInstance);
             }

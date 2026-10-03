@@ -1,5 +1,6 @@
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering;
@@ -11,28 +12,42 @@ public static class WebGpuPipelineAdmission
     {
         "raster-state" or "attachment-clear" or "framebuffer" or "render-area" or
         "cpu-direct-meshes" or "fullscreen-quad" or "screen-ui" or "debug-shapes" or
-        "compute" or "color-resolve" or "program-bindings" or "material-override" => null,
-        "integer-color-targets" => "Integer color attachments required for visibility records have no installed WebGPU framebuffer format route.",
-        "memory-barriers" => "Explicit engine memory-barrier synchronization has no installed WebGPU operation.",
-        "advanced-stage-execution" => "VPRC_AdvancedRenderStage requires its native visibility/shading stage executor and cooked shader family; that WebGPU executor is not installed.",
-        "gpu-driven-meshes" => "GPU-driven engine mesh submission has no installed WebGPU operation.",
-        "storage-images" => "Storage-image binding has no installed WebGPU operation.",
+        "compute" or "color-resolve" or "program-bindings" or "material-override" or
+        "memory-barriers" or "gpu-driven-meshes" or "integer-color-targets" or "storage-images" or
+        "advanced-stage-execution" => null,
+        "gpu-meshlet-meshes" => "The engine meshlet route requires its compute-to-indirect lowering and cooked shader family; WebGPU hardware task/mesh shader stages are unavailable.",
         "stencil" => "Stencil operations have no installed WebGPU route.",
         "depth-resolve" => "Depth/stencil multisample resolve has no installed WebGPU route.",
         _ => $"Operation '{operation}' has no declared WebGPU capability. Declare the command's actual operations and dependencies.",
     };
 
     public static void Validate(RenderPipelineRequirements requirements, RenderPipeline pipeline,
-        IShaderProgramArtifactResolver? resolver = null)
+        IShaderProgramArtifactResolver? resolver = null, IRuntimeRendererHost? renderer = null)
     {
         if (requirements.Diagnostics.Count != 0)
             throw new NotSupportedException($"WebGPU.Pipeline.RequirementUnsupported: {requirements.Diagnostics[0]}");
+        if (GetOutputProfileRejection(requirements) is { } outputReason)
+            throw new NotSupportedException($"WebGPU.Pipeline.OutputProfileUnsupported: {outputReason}");
         foreach (string operation in requirements.Operations)
             if (GetOperationRejection(operation) is { } reason)
                 throw new NotSupportedException($"WebGPU.Pipeline.OperationUnsupported: {reason}");
+        if (renderer is not null && requirements.Operations.Contains("advanced-stage-execution"))
+        {
+            AdvancedVisibilityFamilyAdmission admission = renderer.GetAdvancedVisibilityFamilyAdmission();
+            if (!admission.IsAdmitted)
+                throw new NotSupportedException($"WebGPU.Pipeline.NativeFamilyUnavailable: {admission.Reason}");
+        }
         foreach ((string pass, string? identity) in requirements.Programs)
+        {
             if (!pipeline.TryGetWebPipelineArtifact(pass, out var artifact) || identity is not null && artifact.Identity != identity)
                 throw new NotSupportedException($"WebGPU.Pipeline.ArtifactMissing: pass '{pass}' requires its exact declared cooked program.");
+            bool wrongRaster = requirements.RasterPrograms.Contains(pass) &&
+                !WebPipelineArtifactCatalog.IsCompleteRasterProgram(artifact);
+            bool wrongCompute = requirements.ComputePrograms.Contains(pass) &&
+                !WebPipelineArtifactCatalog.IsCompleteComputeProgram(artifact);
+            if (wrongRaster || wrongCompute)
+                throw new NotSupportedException($"WebGPU.Pipeline.ProgramShapeMismatch: pass '{pass}' does not match its declared raster or compute stage.");
+        }
         foreach (string identity in requirements.ProgramIdentities)
         {
             if (resolver is null || !resolver.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) || artifact is null || artifact.Identity != identity)
@@ -44,7 +59,26 @@ public static class WebGpuPipelineAdmission
             if (!program.TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver, out ShaderProgramArtifact? artifact))
                 throw new NotSupportedException($"WebGPU.Pipeline.ProgramMissing: program '{program.Name}' requires its exact cooked companion.");
             VerifyProgram(artifact);
+            if (requirements.ComputeRenderPrograms.Contains(program) && !WebPipelineArtifactCatalog.IsCompleteComputeProgram(artifact))
+                throw new NotSupportedException($"WebGPU.Pipeline.ProgramShapeMismatch: program '{program.Name}' requires a complete compute stage.");
         }
+    }
+
+    /// <summary>Admits a selected output against its graph's declaration rather than its implementation type.</summary>
+    public static string? GetOutputProfileRejection(RenderPipelineRequirements requirements)
+    {
+        RenderPipelineResourceProfile profile = requirements.OutputProfile;
+        if (profile.Stereo || profile.ViewCount != 1)
+            return "Stereo or multiview output requires a browser XR service that is not installed.";
+        if (profile.OutputHDR || profile.OutputColorFormat != EPixelInternalFormat.Rgba8)
+            return "Canvas presentation requires an SDR RGBA8 output; internal HDR targets remain available.";
+        if (!requirements.SupportedAntiAliasingModes.Contains(profile.AntiAliasingMode))
+            return $"Selected anti-aliasing operation '{profile.AntiAliasingMode}' is not declared by this pipeline's output graph.";
+        if (profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount is not (1 or 4))
+            return $"Selected MSAA sample count '{profile.MsaaSampleCount}' has no WebGPU attachment profile; supported sample counts are 1 and 4.";
+        if (profile.AntiAliasingMode == EAntiAliasingMode.Dlaa)
+            return "Selected DLAA operation requires a native NVIDIA vendor reconstruction service that is unavailable in WebGPU.";
+        return null;
     }
 
     private static void VerifyProgram(ShaderProgramArtifact artifact)
@@ -52,6 +86,7 @@ public static class WebGpuPipelineAdmission
         if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.DescriptorBytes.IsDefaultOrEmpty ||
             ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes).Identity != artifact.Identity)
             throw new InvalidDataException($"WebGPU.Pipeline.ProgramInvalid: descriptor '{artifact.Identity}' is not a verified WebGPU program.");
+        WebPipelineArtifactCatalog.ValidateEngineBindings(artifact);
     }
 
     /// <summary>Checks material raster state without mutating the authored selection.</summary>

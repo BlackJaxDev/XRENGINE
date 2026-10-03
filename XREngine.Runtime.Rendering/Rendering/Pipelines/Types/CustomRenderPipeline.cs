@@ -21,14 +21,31 @@ public class CustomRenderPipeline : RenderPipeline
     public ViewportRenderCommandContainer? Commands
     {
         get => _commands;
-        set => SetField(ref _commands, value);
+        set
+        {
+            if (SetField(ref _commands, value))
+                RefreshAuthoredCommands();
+        }
     }
 
     private Dictionary<int, IComparer<RenderCommand>?>? _renderPasses = [];
     public Dictionary<int, IComparer<RenderCommand>?>? RenderPasses
     {
         get => _renderPasses;
-        set => SetField(ref _renderPasses, value);
+        set
+        {
+            if (SetField(ref _renderPasses, value))
+                RefreshAuthoredCommands();
+        }
+    }
+
+    private void RefreshAuthoredCommands()
+    {
+        PassIndicesAndSorters = GetPassIndicesAndSorters();
+        if (Instances.Count == 0)
+            InitializeCommandChain();
+        else
+            RebuildCommandChain();
     }
 
     /// <summary>
