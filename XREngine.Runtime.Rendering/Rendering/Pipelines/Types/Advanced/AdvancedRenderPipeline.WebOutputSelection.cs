@@ -39,7 +39,8 @@ public partial class AdvancedRenderPipeline
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Fxaa);
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Smaa);
         RenderPipelineResourceProfile profile = requirements.OutputProfile;
-        if (Stereo || profile.Stereo || profile.ViewCount != 1 || profile.MsaaSampleCount != 1)
+        if (Stereo || profile.Stereo || profile.ViewCount != 1 ||
+            profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount != 1)
             requirements.Diagnostics.Add("Advanced WebGPU visibility requires a single mono view with one integer color sample.");
         if (OffscreenProfile is not null)
             requirements.Diagnostics.Add("The selected Advanced offscreen export profile has no installed WebGPU export route.");
