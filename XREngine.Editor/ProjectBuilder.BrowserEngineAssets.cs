@@ -20,7 +20,8 @@ internal static partial class ProjectBuilder
         cancellationToken.ThrowIfCancellationRequested();
         string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
         string worldPath = "/game/" + relativeWorld;
-        using BrowserCapabilityReport capabilityReport = new(worldPath, project.IntermediateDirectory!, cancellationToken);
+        using BrowserCapabilityReport capabilityReport = new(worldPath, project.IntermediateDirectory!, cancellationToken,
+            assetRoot, Engine.Assets?.EngineAssetsPath);
         capabilityReport.Save(complete: false);
         GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
         BrowserRenderingCapabilityAudit.InspectStartup(settings, capabilityReport);
@@ -35,7 +36,15 @@ internal static partial class ProjectBuilder
             throw new InvalidDataException("Browser startup world conflicts with the cooked startup-settings identity.");
         using BrowserAssetDependencyCooker dependencyCooker = new(
             assetRoot, Engine.Assets?.EngineAssetsPath, sourceDirectory, resolver, cancellationToken);
-        dependencyCooker.Cook(world, worldPath, "startup-world.bin");
+        try
+        {
+            dependencyCooker.Cook(world, worldPath, "startup-world.bin");
+        }
+        catch (Exception error) when (error is NotSupportedException or InvalidDataException or ShaderCompilationException)
+        {
+            capabilityReport.Record(error, worldPath, "startup-world", sourcePath: worldPath);
+            throw;
+        }
         HashSet<string> cookedFonts = new(StringComparer.Ordinal);
         foreach (BrowserUiFontCookRequest font in authoredFonts)
         {

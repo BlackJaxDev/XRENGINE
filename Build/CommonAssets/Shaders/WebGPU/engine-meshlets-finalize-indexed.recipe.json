@@ -93,8 +93,8 @@
             "type": "u32"
           },
           {
-            "name": "reserved0",
-            "provider": "Reserved0",
+            "name": "instanceCount",
+            "provider": "InstanceCount",
             "offset": 12,
             "bytes": 4,
             "type": "u32"

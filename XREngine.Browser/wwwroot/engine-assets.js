@@ -103,9 +103,10 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
                 || !['StandardLitColor', 'StandardLitTexture', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
-                    'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap', 'SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral',
+                    'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap', 'UICanvasSurface', 'UberOutline', 'SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral',
                     'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
-                || !(variant.semanticVersion === 1 || variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2)
+                || !(variant.semanticVersion === 1 || variant.semanticVersion === 2
+                    && ['StandardLitColor', 'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap'].includes(variant.semantic))
                 || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
                 || !shaderIdentities.has(variant.descriptorIdentity))
@@ -138,6 +139,11 @@ export function validateEngineAssetManifest(value, manifestUrl) {
             if (variant.semantic === 'OpaqueSpotShadowDepth' && (variant.pass !== 'spot-shadow-depth'
                 || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'projected-r16f-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'UberOutline' && (variant.pass !== 'outline'
+                || variant.vertexProfile !== 'position-normal-uv4-color-v1'
+                || !['linear-hdr-v1', 'linear-hdr-alpha-mask-v1', 'linear-hdr-dissolve-v1',
+                    'linear-hdr-alpha-mask-dissolve-v1'].includes(variant.outputProfile)))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
             if (['SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral', 'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
                 && (variant.pass !== 'background' || variant.vertexProfile !== 'fullscreen-sky-v1'
                     || variant.outputProfile !== 'linear-hdr-v1'))
@@ -148,7 +154,12 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             const uiProfiles = { UIQuadBatched: 'instanced-ui-quad-v1', UIQuadBatchedTexture: 'instanced-ui-quad-texture-v1', UITextBatchedBitmap: 'instanced-ui-bitmap-text-v1' };
             if (uiProfiles[variant.semantic] && (variant.pass !== 'screen-ui'
-                || variant.vertexProfile !== uiProfiles[variant.semantic] || variant.outputProfile !== 'display-rgba-v1'))
+                || variant.vertexProfile !== uiProfiles[variant.semantic]
+                || variant.outputProfile !== (variant.semanticVersion === 2 ? 'canvas-rgba-v2' : 'display-rgba-v1')))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'UICanvasSurface' && (variant.pass !== 'canvas-composite'
+                || variant.vertexProfile !== 'position-uv-v1'
+                || variant.outputProfile !== 'linear-hdr-premultiplied-rgba-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             const key = [variant.semantic, variant.semanticVersion, variant.target, variant.pass,
                 variant.vertexProfile, variant.outputProfile].join('\u001f');

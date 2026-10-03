@@ -27,11 +27,11 @@
   "semanticSchemaIdentity": "xrengine.engine.compute.v1",
   "requiredLimits": {
     "maxBindGroups": 1,
-    "maxBindingsPerBindGroup": 5,
-    "maxUniformBufferBindingSize": 192,
+    "maxBindingsPerBindGroup": 7,
+    "maxUniformBufferBindingSize": 224,
     "maxDynamicUniformBuffersPerPipelineLayout": 1,
     "maxUniformBuffersPerShaderStage": 1,
-    "maxStorageBuffersPerShaderStage": 4,
+    "maxStorageBuffersPerShaderStage": 6,
     "maxStorageBufferBindingSize": 4,
     "maxComputeWorkgroupSizeX": 64,
     "maxComputeWorkgroupSizeY": 1,
@@ -107,17 +107,49 @@
         "members": []
       },
       {
+        "name": "SelectedLod",
+        "physicalName": "selectedLod",
+        "group": 0,
+        "binding": 4,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Instances",
+        "physicalName": "instances",
+        "group": 0,
+        "binding": 5,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
         "name": "Parameters",
         "physicalName": "parameters",
         "group": 0,
-        "binding": 4,
+        "binding": 6,
         "kind": "uniform",
         "visibility": [
           "compute"
         ],
         "owner": "Engine",
         "frequency": "View",
-        "bytes": 192,
+        "bytes": 224,
         "dynamic": true,
         "members": [
           {
@@ -243,6 +275,62 @@
             "name": "drawEnabled",
             "provider": "DrawEnabled",
             "offset": 188,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "candidateMeshId",
+            "provider": "CandidateMeshId",
+            "offset": 192,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "candidateLod",
+            "provider": "CandidateLod",
+            "offset": 196,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "instanceCount",
+            "provider": "InstanceCount",
+            "offset": 200,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "instanceSourceEnabled",
+            "provider": "InstanceSourceEnabled",
+            "offset": 204,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "instanceStrideWords",
+            "provider": "InstanceStrideWords",
+            "offset": 208,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "instanceTransformOffsetWords",
+            "provider": "InstanceTransformOffsetWords",
+            "offset": 212,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "instanceBoundsOffsetWords",
+            "provider": "InstanceBoundsOffsetWords",
+            "offset": 216,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "instanceWordCount",
+            "provider": "InstanceWordCount",
+            "offset": 220,
             "bytes": 4,
             "type": "u32"
           }

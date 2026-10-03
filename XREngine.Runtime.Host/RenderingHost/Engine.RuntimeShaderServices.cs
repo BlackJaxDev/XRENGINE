@@ -47,14 +47,21 @@ internal sealed class EngineRuntimeShaderServices : IRuntimeShaderServices, IRun
 
     public event Action<ShaderSourceFileChange>? ShaderSourceFileChanged;
 
+    public bool SupportsSynchronousShaderWork => _assets.SupportsSynchronousAssetWork;
+
+    public int ShaderAssetCacheVersion => _assets.RuntimeSourceEpoch;
+
+    public XRShader? GetCachedEngineShader(string assetRoot, string relativePath)
+        => _assets.TryGetCachedEngineAsset(assetRoot, relativePath, out XRShader? shader) ? shader : null;
+
     public T? LoadAsset<T>(string filePath) where T : XRAsset, new()
-        => Engine.Assets.Load<T>(filePath);
+        => _assets.Load<T>(filePath);
 
     public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
-        => Engine.Assets.LoadEngineAsset<T>(priority, bypassJobThread, assetRoot, relativePath);
+        => _assets.LoadEngineAsset<T>(priority, bypassJobThread, assetRoot, relativePath);
 
     public Task<T> LoadEngineAssetAsync<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
-        => Engine.Assets.LoadEngineAssetAsync<T>(priority, bypassJobThread, assetRoot, relativePath);
+        => _assets.LoadEngineAssetAsync<T>(priority, bypassJobThread, assetRoot, relativePath);
 
     public void LogWarning(string message)
         => Debug.LogWarning(message);

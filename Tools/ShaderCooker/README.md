@@ -31,6 +31,13 @@ files use SHA-256 names and cannot be replaced with different bytes; the
 manifest is written last. It records the authored recipe and source/include
 dependencies, compiler identity, and a generated/identity/unmapped source map.
 Browser WGSL compilation remains authoritative for WGSL semantics.
+Generated engine-PBR descriptors retain the generator's complete pinned active
+Slang source graph, together with the material JSON and recipe. Unrelated files
+watched by the compiler are still checked for changes during cooking but do not
+enter that native surface provenance closure. Older generated descriptors remain
+readable by raster consumers; native generated-surface admission requires a
+recook with the exact closure. This is a trusted offline-cooker contract, not
+runtime proof of arbitrary WGSL semantics.
 Emitted WGSL normalizes line endings to LF; schema 2 records the original input
 digest separately from the emitted digest while preserving line/column locations.
 Slang reflection is checked as bounded JSON. A separate selected-profile WGSL
@@ -51,7 +58,7 @@ checks; successful cooking alone does not qualify browser rendering.
 Schema 3 adds an explicit engine whole-program ABI. Existing schema 1/2 recipes
 remain compatibility fixtures and retain their descriptor shape. Cook each schema
 in a separate invocation. An engine recipe uses authored `Slang`, explicit
-`WGSL`, or the bounded opaque-PBR `MaterialRecipe` frontend described below.
+`WGSL`, or the bounded engine-PBR `MaterialRecipe` frontend described below.
 
 Engine recipes may declare an exact cooked material selector with an optional
 `materialVariant` object containing `semantic`, `semanticVersion`,
@@ -138,9 +145,35 @@ and Emission; opaque opacity is one. A texture surface additionally uses the
 existing base-color, optional normal, metallic, and roughness surface bindings.
 These same modeled inputs are used by the desktop GLSL material. The publisher
 requires the canonical desktop fragment source; arbitrary custom GLSL is
-rejected by name rather than inferred as PBR. Other Uber features, masked or blended
-passes, material shadow casting, and skinning remain unsupported by this
-authored profile and fail explicitly during publication.
+rejected by name rather than inferred as PBR. Other Uber features, nonopaque
+textured surfaces, and material shadow casting remain unsupported by this V1
+profile and fail explicitly during publication.
+
+`CreateAuthoredLitPbrColorCoverageMaterial` adds the explicit `AuthoredLitV2`
+uniform-alpha color contract without changing V1. Its seven typed parameters
+retain the same six PBR factors plus `AlphaCutoff`, which must match the material
+property. The material source selects `surface` as `opaque-coverage`, `masked`,
+`alpha-blend`, `premultiplied-alpha`, or `additive`; `baseColor` must be `tint`
+and `normal` must be `vertex`. Its schema-3 recipe uses `forward-coverage`,
+`xrengine.engine.authored-lit-color-coverage.v2`, and the complete physical
+layout of `engine-standard-lit-color-coverage-local-shadows.recipe.json`, with
+`materialVariant` omitted and `sourceLanguage` set to `MaterialRecipe`.
+The generated program uses the pinned canonical coverage/local-shadow Slang
+frontend and all fourteen resource bindings, including the directional, point,
+and spot receivers. Existing light capacities, storage, PCSS, and output-profile
+limits remain authoritative.
+
+The detached color carrier retains transparency, cutoff, render pass, blend/depth
+state and sort priority through the existing generic binary contract; no new
+texture payload is introduced. Opaque and masked V2 surfaces require the
+canonical `StandardLitColorV2` depth-normal program. Casting lights additionally
+require the corresponding coverage depth, radial point, or projected spot
+programs. These auxiliary programs revalidate the source's exact generated
+companion and read the same live opacity/cutoff. Sorted surfaces do not enter
+normal or shadow replay. Desktop authoring retains the existing coverage GLSL
+and its closed canonical snippet graph. Texture-alpha, opacity-map, arbitrary
+GLSL/Uber lowering and native Advanced surface reconstruction are not inferred
+from this raster companion.
 
 `ShaderProgramArtifactReader.Read` loads the descriptor and WGSL bytes, checks the
 source SHA-256 and length, and returns a target-tagged `ShaderProgramArtifact`.

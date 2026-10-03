@@ -22,6 +22,7 @@ public struct AdvancedInstanceRecord
     public uint RenderPassMask;
     public uint CurrentFrameSlot;
     public uint PreviousFrameSlot;
+    /// <summary>Browser publications retain the authored source pass for exact deferred decal receiver eligibility.</summary>
     public uint Reserved0;
     public uint Reserved1;
 }

@@ -146,7 +146,7 @@ public static partial class BrowserContentPackageBuilder
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
                 string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "OpaqueShadowDepth",
-                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "UICanvasSurface", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
+                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "UICanvasSurface", "UberOutline", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
                     "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
                 int maximumSemanticVersion = semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" ? 2 : 1;
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, maximumSemanticVersion);
@@ -154,6 +154,10 @@ public static partial class BrowserContentPackageBuilder
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
+                if (semantic == "UberOutline")
+                    Require(pass == "outline" && vertexProfile == "position-normal-uv4-color-v1" &&
+                        outputProfile is "linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1",
+                        "Outline variants require their exact inverse-hull vertex and authored coverage profile.");
                 if (semantic == "StandardLitTexture")
                     Require(vertexProfile is "position-normal-uv-v1" or "position-normal-tangent-uv-v1" &&
                         (pass == "opaque-forward" && outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||

@@ -112,6 +112,8 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             return;
         }
         RequireReady();
+        if (HasUnsubmittedEngineBufferUpload(handle))
+            throw new InvalidOperationException("WebGPU.Resource.PendingUpload: a buffer with unsubmitted mutations must remain alive until submission or renderer teardown.");
         WebGpuImports.DestroyResource(_session, handle);
         _resources.Remove(handle);
     }
@@ -120,6 +122,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
     {
         RequireReady();
         ArgumentNullException.ThrowIfNull(packet);
+        RequireStandaloneSubmissionBoundary();
         Span<byte> bytes = packet.BeginConsume();
         try
         {
@@ -142,6 +145,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
     {
         RequireReady();
         ArgumentNullException.ThrowIfNull(batch);
+        RequireStandaloneSubmissionBoundary();
         batch.BeginConsume(out Span<byte> commands, out Span<byte> payload);
         try
         {
@@ -182,7 +186,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
                 PrepareForApiObjectTeardown();
                 _indirectCountKernel?.Dispose();
                 SetField(ref _indirectCountKernel, null, publishNotifications: false);
-                DestroyMeshletPrograms();
+                DestroyAuthoredIndexedPrograms();
                 DestroyMeshDeformationResources();
                 DestroyAutoExposureHistories();
                 DestroyCachedAPIRenderObjects();
@@ -208,8 +212,16 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             finally
             {
                 DisposeAdvancedSceneResidency();
-                DisposeMeshletResources();
+                DisposeAuthoredIndexedResources();
                 _resources.Clear();
+                _enginePendingStorage.Clear();
+                _engineDeferredReleases.Clear();
+                SetField(ref _engineUploadCount, 0, publishNotifications: false);
+                SetField(ref _engineStorageBytes, 0, publishNotifications: false);
+                SetField(ref _engineRetryUploadCount, 0, publishNotifications: false);
+                SetField(ref _engineRetryUploadBytes, 0, publishNotifications: false);
+                SetField(ref _engineUploadsSubmitted, false, publishNotifications: false);
+                SetField(ref _engineUploadsNeedCompaction, false, publishNotifications: false);
                 SetField(ref _engineClearCommands, 0);
                 SetField(ref _engineUniformBuffer, 0);
                 SetField(ref _engineUniformArena, null);

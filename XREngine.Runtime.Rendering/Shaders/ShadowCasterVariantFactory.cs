@@ -10,7 +10,7 @@ public static class ShadowCasterVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
-        if (sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+        if (sourceMaterial.EngineSemantic.IsColorCoverage())
             return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
 
         XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
@@ -55,7 +55,7 @@ public static class ShadowCasterVariantFactory
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
         if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
-            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 && kind == EPointShadowMaterialKind.None)
+            sourceMaterial.EngineSemantic.IsColorCoverage() && kind == EPointShadowMaterialKind.None)
             return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.PointShadowDepth);
 
         List<XRShader> shaders = [];

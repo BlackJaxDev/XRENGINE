@@ -36,7 +36,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     uint FroxelDepthSlices = 24u,
     uint MsaaSampleCount = 1u,
     bool HasAuthoredBackground = false,
-    EAdvancedVisibilitySampleEncoding SampleEncoding = EAdvancedVisibilitySampleEncoding.None)
+    EAdvancedVisibilitySampleEncoding SampleEncoding = EAdvancedVisibilitySampleEncoding.None,
+    bool EnableAuthoredDecals = false)
 {
     public bool IsValid => GetInvalidReason() is null;
 
@@ -65,6 +66,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
         if (BackendReadyPackage?.State != Commands.EBackendReadyFramePackageState.Published ||
             BackendReadyPackage.CanonicalViews.IsEmpty)
             return "The advanced native stage has no published canonical backend view package.";
+        if (EnableAuthoredDecals != BackendReadyPackage.NativeAuthoredDecalsEnabled)
+            return "The native authored decal selection differs from its frozen frame package.";
         if (Target is null || Target.Width == 0u || Target.Height == 0u)
             return "The advanced visibility target has no renderable extent.";
         if (string.IsNullOrWhiteSpace(IdentityTargetName) ||

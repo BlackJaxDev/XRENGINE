@@ -24,7 +24,7 @@ internal static class WebGpuAdvancedShadingProgramContract
         if (native)
         {
             if (!HasNativeSchemas(artifact, exports, depthBank))
-                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook the selected native shading and export companions with engine-surface schema 1, standalone-shadow schema 1, ambient-occlusion schema 1, and the exact ordinary or depth-comparison bank define.");
+                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook the selected native shading and export companions with engine-surface schema 2, authored-decal schema 1, standalone-shadow schema 1, ambient-occlusion schema 1, and the exact ordinary or depth-comparison bank define.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
             Require(artifact, 0, 7, "uniform", 944, "FrozenView");
             Require(artifact, 0, 8, "uniform", 160, "Parameters");
@@ -83,13 +83,13 @@ internal static class WebGpuAdvancedShadingProgramContract
                 continue;
             }
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
-            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false;
+            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndArray)
-                    return schemaSeen && shadowSeen && ambientOcclusionSeen && exportsSeen == exports && depthSeen == depthBank;
+                    return schemaSeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
                 if (reader.TokenType != JsonTokenType.String) return false;
-                if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1"u8))
+                if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=2"u8))
                 {
                     if (schemaSeen) return false;
                     schemaSeen = true;
@@ -113,6 +113,11 @@ internal static class WebGpuAdvancedShadingProgramContract
                 {
                     if (ambientOcclusionSeen) return false;
                     ambientOcclusionSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_AUTHORED_DECAL_SCHEMA_VERSION=1"u8))
+                {
+                    if (decalsSeen) return false;
+                    decalsSeen = true;
                 }
                 else return false;
             }

@@ -59,7 +59,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         public RenderPipelineRequirementsDeclaration? DeclaredRequirements
         {
             get => _declaredRequirements;
-            set => SetField(ref _declaredRequirements, value);
+            set
+            {
+                if (SetField(ref _declaredRequirements, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+            }
         }
         private RenderPipelineRequirementsDeclaration? _declaredRequirements;
 

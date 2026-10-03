@@ -72,6 +72,9 @@ public static class ShaderSnippets
 
     private static RuntimeResolverOptions CreateResolverOptions()
     {
+        if (!global::XREngine.Rendering.ShaderSourceResolver.CanAccessHostShaderFiles)
+            return new RuntimeResolverOptions();
+
         List<string> additionalRoots = [];
         if (!string.IsNullOrWhiteSpace(RuntimeEngine.Assets?.EngineAssetsPath))
             additionalRoots.Add(Path.Combine(RuntimeEngine.Assets.EngineAssetsPath, "Shaders"));

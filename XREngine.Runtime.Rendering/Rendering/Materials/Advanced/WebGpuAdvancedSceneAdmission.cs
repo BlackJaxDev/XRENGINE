@@ -23,6 +23,11 @@ public static class WebGpuAdvancedSceneAdmission
             reason = sourceReason;
             return false;
         }
+        if (material.IsTransparentLike())
+        {
+            reason = "The selected native opaque pass cannot consume a transparent or refractive material; retain its late raster pass.";
+            return false;
+        }
         resource = "material-layout";
         if (!MaterialBindingLayouts.TryGetDefaultForRenderPass(pass, out MaterialBindingLayout layout))
         {
@@ -34,14 +39,10 @@ public static class WebGpuAdvancedSceneAdmission
             layout = MaterialBindingLayouts.MaskedForward;
         if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(layout, out AdvancedMaterialLayoutTranslation translation, out reason))
             return false;
-        if (material.IsTransparentLike())
+        if (WebGpuAdvancedRasterStateContract.GetRejection(WebGpuAdvancedRasterStateContract.Capture(options)) is { } rasterReason)
         {
-            reason = "The selected native opaque pass cannot consume a transparent or refractive material.";
-            return false;
-        }
-        if (!WebGpuAdvancedMaterialContract.SupportsCullMode((uint)options.CullMode))
-        {
-            reason = "Native visibility admits disabled or back-face culling only.";
+            resource = "native-raster-state";
+            reason = rasterReason;
             return false;
         }
         bool doubleSided = options.CullMode == ECullMode.None;
@@ -66,7 +67,7 @@ public static class WebGpuAdvancedSceneAdmission
             resource = "engine-surface-companion";
             return false;
         }
-        if (sourceContract == EAdvancedMaterialSourceContract.StandardSurface && engineSurface.SchemaVersion == 0)
+        if (sourceContract is EAdvancedMaterialSourceContract.StandardSurface or EAdvancedMaterialSourceContract.EngineGeneratedSurface && engineSurface.SchemaVersion == 0)
         {
             resource = "engine-surface-companion";
             reason = "The engine material has no exact typed native surface companion.";

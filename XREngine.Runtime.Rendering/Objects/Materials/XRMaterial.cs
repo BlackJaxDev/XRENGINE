@@ -140,67 +140,91 @@ namespace XREngine.Rendering
         private readonly List<XRShader> _taskShaders = [];
         private readonly List<XRShader> _computeShaders = [];
         private EventList<XRShader> _shaders;
+        private readonly EventList<XRShader> _ownedShaders;
+        private EventList<XRShader>? _subscribedShaders;
+        private int _shaderSetterDepth;
 
         public XRMaterial()
         {
             _shaders = [];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(params XRShader[] shaders)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(IEnumerable<XRShader> shaders)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, params XRShader[] shaders) : base(parameters)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, IEnumerable<XRShader> shaders) : base(parameters)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, params XRShader[] shaders) : base(textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, IEnumerable<XRShader> shaders) : base(textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, XRTexture?[] textures, params XRShader[] shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, XRTexture?[] textures, IEnumerable<XRShader> shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, ShaderVar[] parameters, params XRShader[] shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, ShaderVar[] parameters, IEnumerable<XRShader> shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
 
         public EventList<XRShader> Shaders
         {
             get => _shaders;
-            set => SetField(ref _shaders, value);
+            set
+            {
+                ObjectDisposedException.ThrowIf(IsMaterialTeardownRequested, this);
+                _shaderSetterDepth++;
+                try { SetField(ref _shaders, value); }
+                finally
+                {
+                    if (--_shaderSetterDepth == 0)
+                        ReconcileShaderListHandlers();
+                }
+            }
         }
 
         public UberMaterialAuthoredState UberAuthoredState
@@ -524,24 +548,12 @@ namespace XREngine.Rendering
         /// </summary>
         public static XRMaterial? InvalidMaterial => RuntimeRenderingHostServices.Assets.InvalidMaterial;
 
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-                switch (propName)
-                {
-                    case nameof(Shaders):
-                        PreShadersSet();
-                        break;
-                }
-            return change;
-        }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             // V2 auxiliary programs read the live source's parameters/coverage.
             // Numeric and mode edits must not destroy stable replay pipelines.
             // Replacing the parameter layout, shaders, or options still invalidates.
-            bool preserveCoverageVariants = (EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 ||
+            bool preserveCoverageVariants = (EngineSemantic.IsColorCoverage() ||
                 EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1) &&
                 propName is nameof(BindingValueVersion) or nameof(AlphaCutoff) or nameof(TransparencyMode)
                     or nameof(TransparentTechniqueOverride) or nameof(RenderPass) or nameof(TransparentSortPriority)
@@ -551,13 +563,17 @@ namespace XREngine.Rendering
                 InvalidateDepthNormalPrePassVariant();
                 InvalidateShadowCasterVariant();
             }
-            InvalidateOutlinePassVariant();
+            // A cooked outline reads the same live ShaderVar instances as its
+            // source. Value animation must not retire its stable program.
+            if (propName != nameof(BindingValueVersion) ||
+                _outlinePassVariant?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1)
+                InvalidateOutlinePassVariant();
 
             switch (propName)
             {
                 case nameof(Shaders):
                     InvalidateEngineSemantic();
-                    PostShadersSet();
+                    ShadersChanged();
                     break;
                 case nameof(Name):
                     ApplyShaderProgramMetadata(ShaderPipelineProgram);
@@ -817,24 +833,66 @@ namespace XREngine.Rendering
 
         private void PreShadersSet()
         {
-            _shaders.PostModified -= ShadersModified;
-            _shaders.PostAnythingAdded -= ShaderAdded;
-            _shaders.PostAnythingRemoved -= ShaderRemoved;
-            foreach (XRShader shader in _shaders)
+            if (_subscribedShaders is not { } subscribed)
+                return;
+            subscribed.PostModified -= ShadersModified;
+            subscribed.PostAnythingAdded -= ShaderAdded;
+            subscribed.PostAnythingRemoved -= ShaderRemoved;
+            foreach (XRShader shader in subscribed)
                 ShaderRemoved(shader);
+            _subscribedShaders = null;
+        }
+
+        /// <summary>Restores the owned shader container and its current borrowed shader subscriptions.</summary>
+        public override void Generate()
+        {
+            bool reviving = IsDestroyed;
+            base.Generate();
+            if (!reviving || IsDestroyed)
+                return;
+
+            if (_ownedShaders.IsDestroyed)
+                _ownedShaders.Generate();
+            ReviveOwnedCookedOutlineShader();
+            ReconcileShaderListHandlers();
         }
 
         protected override void OnDestroying()
         {
+            BeginMaterialTeardown();
             // These caches own their companions; the companions borrow this source's
             // parameters and textures. Never destroy those borrowed resources here.
-            InvalidateDepthNormalPrePassVariant(now: true);
-            InvalidateShadowCasterVariant(now: true);
-            InvalidateOutlinePassVariant(now: true);
-            ShaderPipelineProgram?.Destroy(now: true);
-            DestroyShaderPipelineProgram();
-            PreShadersSet();
-            base.OnDestroying();
+            List<Exception>? failures = null;
+            void Release(Action action)
+            {
+                try { action(); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+            }
+            Release(() => InvalidateDepthNormalPrePassVariant(now: true));
+            Release(() => InvalidateShadowCasterVariant(now: true));
+            Release(() => InvalidateOutlinePassVariant(now: true));
+            Release(() => ShaderPipelineProgram?.Destroy(now: true));
+            Release(DestroyShaderPipelineProgram);
+            Release(PreShadersSet);
+            Release(DestroyOwnedCookedOutlineShader);
+            Release(() =>
+            {
+                if (_ownedShaders.IsDestroyed)
+                    return;
+                _ownedShaders.Destroy(true);
+                if (!_ownedShaders.IsDestroyed)
+                    throw new InvalidOperationException("Material shader-list destruction was vetoed.");
+            });
+            try
+            {
+                base.OnDestroying();
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
+            if (failures is not null)
+                throw new AggregateException("Material-owned storage could not be released.", failures);
         }
 
         private IReadOnlyList<XRShader> GetShaderList(EShaderType shaderType)
@@ -853,13 +911,27 @@ namespace XREngine.Rendering
 
         private void PostShadersSet()
         {
-            _shaders.PostModified += ShadersModified;
-            _shaders.PostAnythingAdded += ShaderAdded;
-            _shaders.PostAnythingRemoved += ShaderRemoved;
-
-            foreach (var shader in _shaders)
-                ShaderAdded(shader);
+            ReconcileShaderListHandlers();
             ShadersChanged();
+        }
+
+        private void ReconcileShaderListHandlers()
+        {
+            if (IsMaterialTeardownRequested)
+            {
+                PreShadersSet();
+                return;
+            }
+            if (ReferenceEquals(_subscribedShaders, _shaders))
+                return;
+            PreShadersSet();
+            _subscribedShaders = _shaders;
+            _subscribedShaders.PostModified += ShadersModified;
+            _subscribedShaders.PostAnythingAdded += ShaderAdded;
+            _subscribedShaders.PostAnythingRemoved += ShaderRemoved;
+
+            foreach (var shader in _subscribedShaders)
+                ShaderAdded(shader);
         }
 
         private void ShadersModified()

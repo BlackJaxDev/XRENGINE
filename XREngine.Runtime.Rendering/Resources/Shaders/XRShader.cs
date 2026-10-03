@@ -24,9 +24,15 @@ namespace XREngine.Rendering
         private string? _optimizedSourceCachePath;
         private string? _optimizedSourceCacheText;
         private ShaderSourceFileDependency[]? _resolvedSourceDependencies;
+        private long _resolvedSourceSnippetVersion;
+        private bool _resolvedSourceHostFileAccess;
         private ShaderUiManifest? _uiManifestCache;
         private string? _uiManifestCachePath;
         private string? _uiManifestCacheText;
+        private long _uiManifestSnippetVersion;
+        private bool _uiManifestHostFileAccess;
+        private long _optimizedSourceSnippetVersion;
+        private bool _optimizedSourceHostFileAccess;
         private long _sourceRevision;
 
         public event Action<XRShader>? SourceChanged;
@@ -121,6 +127,7 @@ namespace XREngine.Rendering
 
         public override void Reload(string filePath)
         {
+            RequireHostSourceImport();
             XRShader? loaded = RuntimeShaderServices.Current?.LoadAsset<XRShader>(filePath);
             if (loaded is null)
             {
@@ -139,6 +146,7 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
+            RequireHostSourceImport();
             ResolveFrontendFromPath(filePath);
             TextFile file = new(filePath);
             file.LoadText(filePath);
@@ -161,6 +169,7 @@ namespace XREngine.Rendering
         }
         public override async Task<bool> Load3rdPartyAsync(string filePath)
         {
+            RequireHostSourceImport();
             ResolveFrontendFromPath(filePath);
             TextFile file = new(filePath);
             await file.LoadTextAsync(filePath);
@@ -168,6 +177,12 @@ namespace XREngine.Rendering
             IsGeneratedUberVariant = false;
             GeneratedUberVariantHash = 0;
             return true;
+        }
+
+        private static void RequireHostSourceImport()
+        {
+            if (!ShaderSourceResolver.CanAccessHostShaderFiles)
+                throw new NotSupportedException("ShaderSource.HostFileImportUnavailable: importing or reloading shader source requires host files; preload a cooked shader artifact through the owning asset catalog on this runtime.");
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -224,11 +239,14 @@ namespace XREngine.Rendering
         }
 
         internal void NotifySourceDependencyChanged(string reason)
+            => NotifySourceDependencyChanged(reason, RuntimeShaderServices.Current);
+
+        internal void NotifySourceDependencyChanged(string reason, IRuntimeShaderServices? sourceOwner)
         {
             CookedArtifact = null;
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
-            RuntimeShaderServices.Current?.LogWarning(
+            sourceOwner?.LogWarning(
                 $"Shader dependency changed for '{Name ?? FilePath ?? "UnnamedShader"}': {reason}");
             SourceChanged?.Invoke(this);
         }
@@ -255,7 +273,12 @@ namespace XREngine.Rendering
 
         public ShaderUiManifest GetUiManifest(bool logFailures = true)
         {
-            TryGetUiManifest(out ShaderUiManifest manifest, logFailures);
+            if (!TryGetUiManifest(out ShaderUiManifest manifest, logFailures) &&
+                !ShaderSourceResolver.CanAccessHostShaderFiles)
+            {
+                _ = GetResolvedShaderSource();
+                throw new NotSupportedException("ShaderSource.UiManifestUnavailable: this runtime cannot resolve the shader source from host files.");
+            }
             return manifest;
         }
 
@@ -263,12 +286,16 @@ namespace XREngine.Rendering
         {
             string sourceText = Source?.Text ?? string.Empty;
             string? sourcePath = Source?.FilePath;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            bool hostFileAccess = ShaderSourceResolver.CanAccessHostShaderFiles;
 
             lock (_resolvedSourceCacheLock)
             {
                 if (_uiManifestCache is not null &&
                     string.Equals(_uiManifestCacheText, sourceText, StringComparison.Ordinal) &&
                     string.Equals(_uiManifestCachePath, sourcePath, StringComparison.Ordinal) &&
+                    _uiManifestSnippetVersion == snippetVersion &&
+                    _uiManifestHostFileAccess == hostFileAccess &&
                     ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
                 {
                     manifest = _uiManifestCache;
@@ -279,13 +306,16 @@ namespace XREngine.Rendering
             bool resolved = TryGetResolvedSource(out string resolvedSource, annotateIncludes: false, logFailures: logFailures);
             manifest = ShaderUiManifestParser.Parse(resolvedSource, sourcePath);
 
-            if (resolved)
+            if (resolved && snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                hostFileAccess == ShaderSourceResolver.CanAccessHostShaderFiles)
             {
                 lock (_resolvedSourceCacheLock)
                 {
                     _uiManifestCache = manifest;
                     _uiManifestCacheText = sourceText;
                     _uiManifestCachePath = sourcePath;
+                    _uiManifestSnippetVersion = snippetVersion;
+                    _uiManifestHostFileAccess = hostFileAccess;
                 }
             }
 
@@ -293,10 +323,7 @@ namespace XREngine.Rendering
         }
 
         public string GetResolvedSource(bool annotateIncludes = false)
-        {
-            TryGetResolvedSource(out string resolvedSource, annotateIncludes, logFailures: true);
-            return resolvedSource;
-        }
+            => GetResolvedShaderSource(annotateIncludes).ResolvedSource;
 
         public bool TryGetResolvedSource(out string resolvedSource, bool annotateIncludes = false, bool logFailures = true)
         {
@@ -307,14 +334,22 @@ namespace XREngine.Rendering
 
         public ResolvedShaderSource GetResolvedShaderSource(bool annotateIncludes = false)
         {
-            TryGetResolvedShaderSource(out ResolvedShaderSource resolvedSource, annotateIncludes, logFailures: true);
+            if (!TryGetResolvedShaderSourceCore(out ResolvedShaderSource resolvedSource, annotateIncludes, logFailures: true, out Exception? failure) &&
+                !ShaderSourceResolver.CanAccessHostShaderFiles)
+                throw failure ?? new NotSupportedException("ShaderSource.ResolutionUnavailable: this runtime cannot resolve the shader source from host files.");
             return resolvedSource;
         }
 
         public bool TryGetResolvedShaderSource(out ResolvedShaderSource resolvedSource, bool annotateIncludes = false, bool logFailures = true)
+            => TryGetResolvedShaderSourceCore(out resolvedSource, annotateIncludes, logFailures, out _);
+
+        private bool TryGetResolvedShaderSourceCore(out ResolvedShaderSource resolvedSource, bool annotateIncludes, bool logFailures, out Exception? failure)
         {
+            failure = null;
             string sourceText = Source?.Text ?? string.Empty;
             string? sourcePath = Source?.FilePath;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            bool hostFileAccess = ShaderSourceResolver.CanAccessHostShaderFiles;
 
             // Native frontends own their include/import graph. Editor source views must
             // neither rewrite it as GLSL nor replace compiler-discovered dependencies.
@@ -331,6 +366,8 @@ namespace XREngine.Rendering
                     if (_resolvedSourcePayloadCache is not null &&
                         string.Equals(_resolvedSourceCacheText, sourceText, StringComparison.Ordinal) &&
                         string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
+                        _resolvedSourceSnippetVersion == snippetVersion &&
+                        _resolvedSourceHostFileAccess == hostFileAccess &&
                         ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
                     {
                         resolvedSource = _resolvedSourcePayloadCache;
@@ -347,7 +384,8 @@ namespace XREngine.Rendering
                     annotateIncludes: annotateIncludes);
                 resolvedSource = resolvedPayload;
 
-                if (!annotateIncludes)
+                if (!annotateIncludes && snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                    hostFileAccess == ShaderSourceResolver.CanAccessHostShaderFiles)
                 {
                     lock (_resolvedSourceCacheLock)
                     {
@@ -356,6 +394,8 @@ namespace XREngine.Rendering
                         _resolvedSourceCacheText = sourceText;
                         _resolvedSourceCachePath = sourcePath;
                         _resolvedSourceDependencies = resolvedPayload.FileDependencies;
+                        _resolvedSourceSnippetVersion = snippetVersion;
+                        _resolvedSourceHostFileAccess = hostFileAccess;
                     }
 
                     ShaderSourceDependencyIndex.Update(this, sourcePath, resolvedPayload.FileDependencies);
@@ -365,6 +405,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
+                failure = ex;
                 if (logFailures)
                     RuntimeShaderServices.Current?.LogWarning($"Failed to resolve shader source for '{Name ?? FilePath ?? "UnnamedShader"}': {ex.Message}");
 
@@ -381,7 +422,12 @@ namespace XREngine.Rendering
 
         public string GetOptimizedSource(bool annotateIncludes = false)
         {
-            TryGetOptimizedSource(out string optimizedSource, annotateIncludes, logFailures: true);
+            if (!TryGetOptimizedSource(out string optimizedSource, annotateIncludes, logFailures: true) &&
+                !ShaderSourceResolver.CanAccessHostShaderFiles)
+            {
+                _ = GetResolvedShaderSource(annotateIncludes);
+                throw new NotSupportedException("ShaderSource.OptimizationUnavailable: this runtime cannot optimize the shader source.");
+            }
             return optimizedSource;
         }
 
@@ -398,6 +444,8 @@ namespace XREngine.Rendering
                 return true;
             }
             string? sourcePath = Source?.FilePath;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            bool hostFileAccess = ShaderSourceResolver.CanAccessHostShaderFiles;
             bool useDefaultCache = !annotateIncludes && options is null;
 
             if (useDefaultCache)
@@ -407,6 +455,8 @@ namespace XREngine.Rendering
                     if (_optimizedSourceCache is not null &&
                         string.Equals(_optimizedSourceCacheText, sourceText, StringComparison.Ordinal) &&
                         string.Equals(_optimizedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
+                        _optimizedSourceSnippetVersion == snippetVersion &&
+                        _optimizedSourceHostFileAccess == hostFileAccess &&
                         ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
                     {
                         optimizedSource = _optimizedSourceCache;
@@ -421,13 +471,16 @@ namespace XREngine.Rendering
                 ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(resolvedSource, options);
                 optimizedSource = result.Source;
 
-                if (useDefaultCache && resolved)
+                if (useDefaultCache && resolved && snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                    hostFileAccess == ShaderSourceResolver.CanAccessHostShaderFiles)
                 {
                     lock (_resolvedSourceCacheLock)
                     {
                         _optimizedSourceCache = optimizedSource;
                         _optimizedSourceCacheText = sourceText;
                         _optimizedSourceCachePath = sourcePath;
+                        _optimizedSourceSnippetVersion = snippetVersion;
+                        _optimizedSourceHostFileAccess = hostFileAccess;
                     }
                 }
 

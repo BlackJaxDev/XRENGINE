@@ -999,9 +999,12 @@ bool XR_ADV_TryReconstructSurface(
     surface.shadingKernelDenseIndex = kernelDense;
     surface.primitiveSection = draw.primitiveSection;
     surface.layerMask = instance.layerMask;
+    surface.authoredRenderPass = instance.reserved0;
     surface.requiredAttributeMask = requiredMask;
     surface.worldPosition = worldPosition;
     surface.interpolatedWorldPosition = interpolatedCurrentWorld;
+    surface.worldPositionDx = currentWorld0 * weightDx.x + currentWorld1 * weightDx.y + currentWorld2 * weightDx.z;
+    surface.worldPositionDy = currentWorld0 * weightDy.x + currentWorld1 * weightDy.y + currentWorld2 * weightDy.z;
     surface.visibilityMetadata = metadata;
     surface.samplePixelPosition = pixelCenter;
     surface.geometricNormal = geometricNormal;

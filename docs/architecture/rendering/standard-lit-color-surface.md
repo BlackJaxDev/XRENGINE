@@ -78,6 +78,15 @@ claim textured foliage or spatial opacity coverage. OIT, stochastic coverage,
 triangle sorting, alpha-to-coverage, transmission, surface textures and custom
 binding/pass extensions require separate contracts and remain rejected.
 
+`CreateAuthoredLitPbrColorCoverageMaterial` exposes the same color behavior as
+`AuthoredLitV2` with a per-material generated WGSL companion. It preserves the
+canonical desktop coverage GLSL, exact factor/coverage binding, render state,
+sort priority and source-owned auxiliary passes. Its generated forward program
+uses the complete bounded local-shadow receiver ABI; normal and shadow replay
+require the matching canonical coverage programs and revalidate the generated
+source companion. The [authored coverage record](../../work/progress/platform/browser-authored-color-coverage-2026-10-03.md)
+details source verification, binary compatibility and pending device acceptance.
+
 The factory uses the existing material-construction target to choose an additive
 desktop GLSL shader or source-free cooked material. Both outputs use the same
 numeric surface and mode-derived `StandardLitCoverage` control. Auxiliary

@@ -197,16 +197,7 @@ namespace XREngine.Rendering
             XRRenderPipelineInstance.RenderingState? renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (renderState?.ShadowPass == true &&
                 RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
-            {
-                XRMaterial? cookedOverride = renderState.GlobalMaterialOverride;
-                if (cookedOverride?.EngineSemantic != EngineMaterialSemanticIdentity.OpaqueShadowDepthV1 ||
-                    cookedOverride.Shaders.Count != 0)
-                    throw new NotSupportedException("WebGPU.ShadowCaster.OverrideUnsupported: expected a source-free OpaqueShadowDepthV1 override.");
-                if (sourceMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 ||
-                    sourceMaterial.Shaders.Count != 0 || !sourceMaterial.CanUseSharedOpaqueShadowMaterial())
-                    throw new NotSupportedException("WebGPU.ShadowCaster.MaterialUnsupported: expected a source-free opaque StandardLitColorV1 caster without material-specific shader stages.");
-                return cookedOverride;
-            }
+                return CookedShadowMaterialResolver.Resolve(sourceMaterial, renderState.GlobalMaterialOverride).Material;
 
             if (renderState?.ShadowPass == true && renderState.GlobalMaterialOverride is { } shadowMaterial)
             {

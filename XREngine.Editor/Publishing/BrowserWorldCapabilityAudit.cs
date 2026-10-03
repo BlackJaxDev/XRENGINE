@@ -26,9 +26,12 @@ internal static class BrowserWorldCapabilityAudit
         ICollection<RenderPipelineRequirements>? admittedPipelineRequirements = null,
         BrowserNativeSceneCapabilityAudit? nativeAdmission = null)
     {
+        using IDisposable materialArtifacts = RuntimeEngineMaterialArtifactServices.InstallForCurrentThread(resolver);
         Dictionary<string, ShaderProgramArtifact> artifacts = new(StringComparer.Ordinal);
+        string? worldSourcePath = world.Name is { } name && name.StartsWith("/game/", StringComparison.Ordinal)
+            ? name : report?.WorldAssetPath ?? world.FilePath;
         BrowserShadowCapabilityAudit shadows = new(resolver);
-        BrowserRenderingCapabilityAudit rendering = new(resolver, outputProfile, inheritedScenePasses, inheritedPipelineRequirements, nativeAdmission);
+        BrowserRenderingCapabilityAudit rendering = new(resolver, outputProfile, inheritedScenePasses, inheritedPipelineRequirements, nativeAdmission, worldSourcePath);
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         int sceneIndex = 0;
         foreach (XRScene scene in world.Scenes)
@@ -52,7 +55,8 @@ internal static class BrowserWorldCapabilityAudit
             foreach (XRMaterial material in requirements.Materials)
                 Collect(() => InspectMaterial(material, "pipeline-material", material.Name,
                     world.Name ?? "startup-world", sceneRoute: false), world.Name ?? "startup-world",
-                    "pipeline-material", material: material.Name, pass: material.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    "pipeline-material", material: material.Name, pass: material.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    sourcePath: MaterialSourcePath(material));
             foreach (XRRenderProgram program in requirements.RenderPrograms)
                 Collect(() => InspectPipelineProgram(program, requirements.ComputeRenderPrograms.Contains(program)),
                     world.Name ?? "startup-world", "pipeline-program", pass: program.Name);
@@ -97,12 +101,12 @@ internal static class BrowserWorldCapabilityAudit
         return artifacts.Values.OrderBy(artifact => artifact.Identity, StringComparer.Ordinal).ToArray();
 
         void Collect(Action action, string scenePath, string nodePath, string? component = null,
-            string? material = null, string? pass = null)
+            string? material = null, string? pass = null, string? sourcePath = null)
         {
             if (report is null)
                 action();
             else
-                report.Inspect(action, scenePath, nodePath, component, material, pass);
+                report.Inspect(action, scenePath, nodePath, component, material, pass, sourcePath ?? worldSourcePath);
         }
 
         void InspectPipelineProgram(XRRenderProgram program, bool requiresCompute)
@@ -173,7 +177,8 @@ internal static class BrowserWorldCapabilityAudit
                                     scenePath, path, componentName, lod.Material?.Name, "packed-skinning");
                             Collect(() => InspectMaterial(lod.Material, path, mesh.Name, scenePath, lod.Mesh),
                                 scenePath, path, componentName, lod.Material?.Name,
-                                lod.Material?.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                                lod.Material?.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                MaterialSourcePath(lod.Material));
                         }
                 else if (component is SkyboxComponent sky)
                 {
@@ -199,7 +204,8 @@ internal static class BrowserWorldCapabilityAudit
                                 rendering.InspectGeometry(lod.Renderer.Mesh, nativeMaterial, scenePath, path, shape.GetType().Name, cancellationToken);
                     Collect(() => InspectMaterial(shape.Material, path, shape.GetType().Name, scenePath),
                         scenePath, path, componentName, shape.Material?.Name,
-                        shape.Material?.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                        shape.Material?.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        MaterialSourcePath(shape.Material));
                 }
                 else if (component is UICanvasComponent canvas)
                 {
@@ -267,7 +273,8 @@ internal static class BrowserWorldCapabilityAudit
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
             Collect(() => rendering.InspectMaterial(material, path, meshName, sceneRoute, report, scenePath), scenePath, path,
-                material: material.Name, pass: material.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                material: material.Name, pass: material.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                sourcePath: MaterialSourcePath(material));
             if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
             {
                 if (material.Shaders.Count != 0)
@@ -343,11 +350,32 @@ internal static class BrowserWorldCapabilityAudit
             if (authored is null || !EngineAuthoredLitMaterialAdmission.TryAdmit(material, authored,
                 out _, out StandardLitTextureSurfaceBinding? texture, out authoredReason))
                 throw new NotSupportedException($"BrowserCook.AuthoredLitUnsupported: '{path}' material '{material.Name}': {authoredReason ?? "no complete cooked opaque PBR program"}.");
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2 && !material.IsTransparentLike())
+            {
+                EngineMaterialVariantKey normal = new(EngineMaterialSemanticIdentity.StandardLitColorV2,
+                    ShaderCompileTarget.WebGPUWgsl, "depth-normal", "static-position-normal-v1", "normal-rgba16f-v1");
+                if (resolver is not BrowserShaderArtifactSource coverageSource ||
+                    !coverageSource.MaterialVariants.Any(variant => variant.Key == normal))
+                    throw new NotSupportedException($"BrowserCook.AuthoredLitCoverageNormalVariantMissing: '{path}' material '{material.Name}' requires the source-validated shared coverage depth-normal variant.");
+            }
             if (geometry is not null && (!geometry.HasNormals ||
                 texture is not null && (!texture.TryRead(out StandardLitTextureSurface authoredSurface, out _) ||
                     geometry.TexCoordCount == 0 || authoredSurface.Normal is not null && !geometry.HasTangents)))
                 throw new NotSupportedException($"BrowserCook.AuthoredLitVertexUnsupported: '{path}' mesh '{meshName}' requires normals, plus UV0 and tangents when selected by the authored PBR recipe.");
         }
+    }
+
+    private static string? MaterialSourcePath(XRMaterial? material)
+    {
+        if (material is null)
+            return null;
+        foreach (XRShader shader in material.Shaders)
+        {
+            string? path = shader.Source?.FilePath ?? shader.FilePath;
+            if (!string.IsNullOrWhiteSpace(path))
+                return path;
+        }
+        return material.FilePath;
     }
 
     private static bool RequiresVrTransform(Type type)

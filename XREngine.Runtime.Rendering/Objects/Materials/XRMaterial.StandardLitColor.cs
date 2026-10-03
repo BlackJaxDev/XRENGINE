@@ -95,7 +95,7 @@ public partial class XRMaterial
     internal void PublishStandardLitColorCoverage(XRRenderProgram program)
     {
         XRMaterial source = StandardLitColorSourceMaterial ?? ShadowBindingSourceMaterial ?? this;
-        if (source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV2)
+        if (!source.EngineSemantic.IsColorCoverage())
             return;
         ETransparencyMode mode = source.GetEffectiveTransparencyMode();
         if (!IsStandardLitColorCoverageMode(mode))

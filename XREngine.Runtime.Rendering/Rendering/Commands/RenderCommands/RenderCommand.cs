@@ -147,6 +147,9 @@ namespace XREngine.Rendering.Commands
         public event Action? PreRender;
         public event Action? PostRender;
 
+        internal bool HasOnlyOwnerLifecycleCallbacks(DelPreRender collected, DelSwapBuffers swapped)
+            => OnCollectedForRender == collected && OnSwapBuffers == swapped && PreRender is null && PostRender is null;
+
         private IDisposable? _renderState;
 
         protected void OnPreRender()

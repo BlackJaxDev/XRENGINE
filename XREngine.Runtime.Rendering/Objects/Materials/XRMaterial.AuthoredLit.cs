@@ -7,11 +7,12 @@ namespace XREngine.Rendering;
 
 public partial class XRMaterial : IPostCookedBinaryDeserialize
 {
-    /// <summary>Rebuilds the source and factor subscriptions of the reflection-cooked authored color carrier.</summary>
+    /// <summary>Restores subscriptions and admitted texture metadata after reflection-cooked material hydration.</summary>
     public void OnPostCookedBinaryDeserialize()
     {
-        if (GetType() != typeof(XRMaterial) || EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitV1)
+        if (GetType() != typeof(XRMaterial) || !EngineSemantic.IsAuthoredLit() && CookedOutlineProfile is null)
             return;
+        CookedOutlineProfile?.RestoreDecodedTextures(this);
         RestoreCookedParameterSubscriptions();
         PreShadersSet();
         PostShadersSet();
@@ -51,9 +52,27 @@ public partial class XRMaterial : IPostCookedBinaryDeserialize
         return material;
     }
 
+    /// <summary>Authors the existing uniform-alpha PBR color contract for a per-material target cook.</summary>
+    public static XRMaterial CreateAuthoredLitPbrColorCoverageMaterial(ColorF4 color,
+        ETransparencyMode transparencyMode = ETransparencyMode.AlphaBlend, float alphaCutoff = 0.5f,
+        float specular = 1, float roughness = 0.5f, float metallic = 0, float emission = 0)
+    {
+        RequireAuthoredLitDesktopConstruction();
+        if (!float.IsFinite(color.R) || !float.IsFinite(color.G) || !float.IsFinite(color.B) ||
+            !float.IsFinite(specular) || !float.IsFinite(roughness) || !float.IsFinite(metallic) || !float.IsFinite(emission))
+            throw new ArgumentException("Authored PBR color and lighting factors must be finite.");
+        XRMaterial material = CreateLitColorCoverageMaterial(color, transparencyMode, alphaCutoff);
+        material.Parameter<ShaderFloat>("Specular")!.Value = specular;
+        material.Parameter<ShaderFloat>("Roughness")!.Value = roughness;
+        material.Parameter<ShaderFloat>("Metallic")!.Value = metallic;
+        material.Parameter<ShaderFloat>("Emission")!.Value = emission;
+        material.EngineSemantic = EngineMaterialSemanticIdentity.AuthoredLitV2;
+        return material;
+    }
+
     private static void RequireAuthoredLitDesktopConstruction()
     {
         if (RuntimeEngineMaterialConstructionServices.Target != EngineMaterialConstructionTarget.DesktopGlsl)
-            throw new NotSupportedException("AuthoredLitV1 must be created with its desktop GLSL source before a target-specific browser cook.");
+            throw new NotSupportedException("Authored lit materials must be created with their desktop GLSL source before a target-specific browser cook.");
     }
 }

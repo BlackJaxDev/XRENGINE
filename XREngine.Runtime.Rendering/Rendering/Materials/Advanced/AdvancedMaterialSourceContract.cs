@@ -22,8 +22,10 @@ public static class AdvancedMaterialSourceContract
              semantic == EngineMaterialSemanticIdentity.StandardLitColorV2 ||
              semantic == EngineMaterialSemanticIdentity.StandardLitTextureV1))
             return EAdvancedMaterialSourceContract.StandardSurface;
-        if (semantic == EngineMaterialSemanticIdentity.AuthoredLitV1 && material.Shaders.Count is 1 or 2)
+        if (semantic.IsAuthoredLit() && material.Shaders.Count is 1 or 2)
         {
+            if (EngineAuthoredLitNativeAdmission.TryRead(material, out _, out _, out _, out _))
+                return EAdvancedMaterialSourceContract.EngineGeneratedSurface;
             string? identity = null;
             int fragments = 0;
             bool exact = true;

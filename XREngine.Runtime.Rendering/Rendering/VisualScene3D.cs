@@ -24,6 +24,9 @@ namespace XREngine.Scene
     public partial class VisualScene3D : VisualScene
     {
         internal static Action<VisualScene3D>? SwapBuffersHook { get; set; }
+        private RenderInfo.DelSwapBuffersCallback? _renderableSwapHandler;
+        internal RenderInfo.DelSwapBuffersCallback RenderableSwapHandler
+            => _renderableSwapHandler ??= OnRenderableSwapBuffers;
 
         [YamlIgnore]
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());

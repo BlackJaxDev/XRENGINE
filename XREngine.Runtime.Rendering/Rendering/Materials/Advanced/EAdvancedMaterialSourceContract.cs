@@ -10,4 +10,5 @@ public enum EAdvancedMaterialSourceContract : uint
     CustomVertexProgram,
     CustomSurfaceProgram,
     UnsupportedTextureSemantics,
+    EngineGeneratedSurface,
 }

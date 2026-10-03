@@ -37,6 +37,7 @@ namespace XREngine.Core.Files
         #region Fields
 
         private EventList<XRAsset> _embeddedAssets = [];
+        private readonly EventList<XRAsset> _ownedEmbeddedAssets;
         private string? _serializedAssetType;
         private string? _originalPath;
         private DateTime? _originalLastWriteTimeUtc;
@@ -52,13 +53,13 @@ namespace XREngine.Core.Files
         /// Initializes a new instance of the <see cref="XRAsset"/> class.
         /// </summary>
         [MemoryPackConstructor]
-        public XRAsset() { }
+        public XRAsset() => _ownedEmbeddedAssets = _embeddedAssets;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="XRAsset"/> class with the specified name.
         /// </summary>
         /// <param name="name">The display name for this asset.</param>
-        public XRAsset(string name) => Name = name;
+        public XRAsset(string name) : this() => Name = name;
 
         #endregion
 

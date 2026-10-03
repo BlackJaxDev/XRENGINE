@@ -79,8 +79,21 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
                 texture, sampler, false, valid ? null : reason, type));
         }
         if (component is DeferredDecalComponent decal)
-            _globals.Add(new(scenePath, path, $"decal/{decal.Material?.Name ?? "<unbound>"}", decal, default, default, false,
-                "The authored decal has no canonical native decal publication owner; a raster decal material cannot establish an enabled native decal and its exact mask/material resource closure."));
+        {
+            if (decal.Material is { } material)
+            {
+                bool valid = DeferredDecalMaterialContract.TryReadShape(material, out XRTexture2D? image, out string reason);
+                AdvancedGpuResourceBindingSource source = default;
+                if (valid) valid = AdvancedGpuResourceSourceEncoder.TryEncode(image, EAdvancedResourceFallback.Zero, out source, out _, out reason);
+                if (decal.UseForwardOit) { valid = false; reason = "Forward weighted OIT authored decals require an exact late-pass lowering; native albedo projection cannot substitute for their accumulation/compositing contract."; }
+                if (decal.GetType() != typeof(DeferredDecalComponent)) { valid = false; reason = "Custom authored decal component callbacks require an exact native lowering."; }
+                if (!decal.HasDefaultDecalDrawContract(allowUnboundRenderer: true))
+                { valid = false; reason = "AuthoredDecalDrawCommandUnsupported: material/raster overrides, replacement or mutated box geometry, transform, instancing, binding publishers, and callbacks require an exact native lowering."; }
+                _globals.Add(new(scenePath, path, $"decal/{material.Name ?? "<unnamed>"}", image ?? (object)decal,
+                    source.TextureRecord, source.SamplerRecord, false, valid ? null : reason,
+                    AuthoredDecalPass: decal.UseForwardOit ? (int)EDefaultRenderPass.WeightedBlendedOitForward : (int)EDefaultRenderPass.DeferredDecals));
+            }
+        }
         if (component is not LightProbeComponent probe) return;
         if (!probe.TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation))
         {
@@ -105,12 +118,21 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
     {
         foreach (RenderPipelineRequirements requirements in _requirements)
         {
+            foreach (BrowserNativeResourceAdmission global in _globals)
+                if (global.AuthoredDecalPass is int pass && requirements.RasterScenePasses.Contains(pass))
+                    RejectGlobal(global, pass == (int)EDefaultRenderPass.WeightedBlendedOitForward
+                        ? "Forward weighted OIT authored decals require an exact late-pass lowering."
+                        : "The selected graph requests raster deferred decals, which require an exact GBuffer raster lowering; the native authored-decal operation cannot replace that pass.");
             if (!requirements.RequiresNativeScenePasses && requirements.NativeScenePasses.Count == 0) continue;
             List<BrowserNativeResourceAdmission> globals = [];
             Dictionary<EAdvancedShadowType, int> shadows = [];
             foreach (BrowserNativeResourceAdmission global in _globals)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (global.AuthoredDecalPass is int decalPass &&
+                    (decalPass == (int)EDefaultRenderPass.DeferredDecals
+                        ? !requirements.Operations.Contains("native-authored-decals")
+                        : !requirements.ScenePasses.Contains(decalPass))) continue;
                 if (global.Probe && !requirements.NativeProbeIbl) continue;
                 if (global.Reason is { } globalReason)
                 {

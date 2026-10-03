@@ -10,11 +10,13 @@ namespace XREngine.Rendering.Shaders.Compilation;
 public sealed class ShaderProgramArtifactCatalog : IShaderProgramArtifactResolver
 {
     private readonly ImmutableDictionary<string, ShaderProgramArtifact> _artifacts;
+    private readonly ImmutableHashSet<(ShaderCompileTarget Target, string Language, string Schema, string Pass)> _profiles;
 
     public ShaderProgramArtifactCatalog(IEnumerable<ShaderProgramArtifact> artifacts)
     {
         ArgumentNullException.ThrowIfNull(artifacts);
         ImmutableDictionary<string, ShaderProgramArtifact>.Builder builder = ImmutableDictionary.CreateBuilder<string, ShaderProgramArtifact>(StringComparer.Ordinal);
+        var profiles = ImmutableHashSet.CreateBuilder<(ShaderCompileTarget, string, string, string)>();
         foreach (ShaderProgramArtifact artifact in artifacts)
         {
             ArgumentNullException.ThrowIfNull(artifact);
@@ -26,11 +28,17 @@ public sealed class ShaderProgramArtifactCatalog : IShaderProgramArtifactResolve
                 throw new InvalidDataException($"ShaderArtifact.IdentityMismatch: '{artifact.Name}' differs from its descriptor bytes.");
             if (!builder.TryAdd(verified.Identity, verified))
                 throw new InvalidDataException($"ShaderArtifact.DuplicateIdentity: '{artifact.Identity}'.");
+            profiles.Add((verified.Target, verified.SourceLanguage, verified.SemanticSchemaIdentity, verified.Pass));
         }
         _artifacts = builder.ToImmutable();
+        _profiles = profiles.ToImmutable();
     }
 
     public int Count => _artifacts.Count;
+
+    /// <summary>Checks a verified program profile without enumerating or allocating during frame admission.</summary>
+    public bool ContainsProgram(ShaderCompileTarget target, string language, string schema, string pass)
+        => _profiles.Contains((target, language, schema, pass));
 
     public bool TryResolve(string identity, ShaderCompileTarget target, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
     {

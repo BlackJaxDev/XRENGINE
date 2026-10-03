@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Shaders;
 /// Authored parameters and textures are shared with the source material while
 /// the shader set and fixed-function state remain pass-specific.
 /// </summary>
-public static class OutlinePassVariantFactory
+public static partial class OutlinePassVariantFactory
 {
     private const string OutlinePassDefine = "XRENGINE_OUTLINE_PASS";
 
@@ -22,6 +22,9 @@ public static class OutlinePassVariantFactory
         {
             return null;
         }
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            return CreateCookedMaterialVariant(sourceMaterial, pass);
 
         XRShader? fragment;
         if (sourceMaterial.TryGetUberMaterialState(out XRShader? canonicalFragment, out ShaderUiManifest manifest) &&

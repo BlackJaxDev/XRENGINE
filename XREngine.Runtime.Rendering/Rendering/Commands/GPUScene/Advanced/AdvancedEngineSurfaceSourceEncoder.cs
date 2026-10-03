@@ -45,9 +45,9 @@ public static class AdvancedEngineSurfaceSourceEncoder
                     reason = colorReason ?? "The engine lit-color surface failed typed schema validation.";
                     return false;
                 }
-                if (values.TransparencyMode != ETransparencyMode.Opaque)
+                if (values.TransparencyMode is not (ETransparencyMode.Opaque or ETransparencyMode.Masked))
                 {
-                    reason = "The native engine surface companion does not support masked or blended lit-color coverage.";
+                    reason = "Sorted lit-color transparency requires its late raster pass and cannot enter native opaque shading.";
                     return false;
                 }
                 surfaceKind = 1;
@@ -68,8 +68,23 @@ public static class AdvancedEngineSurfaceSourceEncoder
                 break;
 
             case EngineMaterialSemantic.AuthoredLit:
-                reason = "Authored lit materials require proven engine-generated native surface provenance; a cooked raster shader identity does not establish native shading equivalence.";
-                return false;
+                if (!EngineAuthoredLitNativeAdmission.TryRead(material, out values,
+                    out StandardLitTextureSurface authoredTexture, out bool textured, out reason))
+                    return false;
+                if (values.TransparencyMode is not (ETransparencyMode.Opaque or ETransparencyMode.Masked))
+                {
+                    reason = "Sorted authored transparency requires its late raster pass and cannot enter native opaque shading.";
+                    return false;
+                }
+                if (textured)
+                {
+                    baseColor = authoredTexture.BaseColor;
+                    normal = authoredTexture.Normal;
+                    metallic = authoredTexture.Metallic;
+                    roughness = authoredTexture.Roughness;
+                }
+                surfaceKind = textured ? normal is null ? 2u : 3u : 1u;
+                break;
 
             default:
                 return true;

@@ -18,13 +18,19 @@ public readonly record struct EngineMaterialVariantKey(
         Semantic.Validate();
         if (Semantic.Semantic == EngineMaterialSemantic.None)
             throw new ArgumentException("A cooked material variant requires a non-empty engine semantic.");
-        if (Semantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
+        if (Semantic.IsAuthoredLit())
             throw new ArgumentException("Authored lit materials require exact per-stage cooked companions, not a built-in variant selector.");
         if (!Enum.IsDefined(Target))
             throw new ArgumentOutOfRangeException(nameof(Target), Target, "Unsupported shader target.");
         ValidateProfile(Pass, nameof(Pass));
         ValidateProfile(VertexProfile, nameof(VertexProfile));
         ValidateProfile(OutputProfile, nameof(OutputProfile));
+        if (Semantic == EngineMaterialSemanticIdentity.UberOutlineV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "outline" ||
+             VertexProfile != "position-normal-uv4-color-v1" ||
+             OutputProfile is not ("linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or
+                 "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1")))
+            throw new ArgumentException("UberOutlineV1 requires its exact outline pass, vertex layout, and authored coverage profile.");
         if (Semantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
             (Target != ShaderCompileTarget.WebGPUWgsl ||
              VertexProfile is not ("position-normal-uv-v1" or "position-normal-tangent-uv-v1") ||

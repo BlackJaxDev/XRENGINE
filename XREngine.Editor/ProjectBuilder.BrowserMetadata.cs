@@ -14,17 +14,17 @@ namespace XREngine.Editor;
 internal static partial class ProjectBuilder
 {
     /// <summary>Publishes type metadata for the compiled browser assembly closure and linked game.</summary>
-    private static void WriteBrowserRuntimeMetadata(string configuration, string sourceDirectory, string siteDirectory)
+    private static void WriteBrowserRuntimeMetadata(string configuration, string intermediateDirectory,
+        string sourceDirectory, string siteDirectory)
     {
         string browserProject = global::CodeManager.ResolveBrowserProject();
         string browserDirectory = Path.GetDirectoryName(browserProject)!;
-        string repositoryDirectory = Path.GetDirectoryName(browserDirectory)!;
-        string closurePath = Path.Combine(repositoryDirectory, "Build", "Portable", "PortableProjects.tsv");
+        string publisherRoot = Path.GetDirectoryName(browserDirectory)!;
+        string closurePath = Path.Combine(publisherRoot, "Build", "Portable", "PortableProjects.tsv");
         if (!File.Exists(closurePath))
             throw new FileNotFoundException("BrowserPublish.PortableClosureMissing: the reviewed portable project inventory is required.", closurePath);
 
-        string binaryDirectory = Path.Combine(browserDirectory, "bin", global::CodeManager.Platform_AnyCPU,
-            configuration, "net10.0");
+        string binaryDirectory = global::CodeManager.ResolveBrowserAssemblyDirectory(configuration, intermediateDirectory);
         if (!File.Exists(Path.Combine(binaryDirectory, "XREngine.Browser.dll")))
             throw new FileNotFoundException("BrowserPublish.AssemblyClosureMissing: the published browser managed output is required.",
                 Path.Combine(binaryDirectory, "XREngine.Browser.dll"));

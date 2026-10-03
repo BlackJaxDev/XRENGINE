@@ -38,8 +38,11 @@ internal sealed partial class WebGpuMeshDraw
         WebGpuDataBuffer? countBuffer, uint drawCount, uint stride, uint offset, uint countOffset)
         => RecordIndirectCore(bindings, arguments, arguments.ResourceHandle, countBuffer, drawCount, stride, offset, countOffset);
 
-    internal void RecordMeshletIndirect(WebGpuBindingSet bindings, WebGpuOwnedStorageBuffer arguments)
-        => RecordIndirectCore(bindings, arguments, arguments.ResourceHandle, null, 1, 20, 0, 0);
+    internal void RecordOwnedIndexedIndirect(WebGpuBindingSet bindings, WebGpuOwnedStorageBuffer arguments, uint instances = 1)
+    {
+        ValidateInstanceRange(instances);
+        RecordIndirectCore(bindings, arguments, arguments.ResourceHandle, null, 1, 20, 0, 0);
+    }
 
     internal void RecordVertexlessIndirect(WebGpuBindingSet bindings, AbstractRenderAPIObject arguments,
         int argumentHandle, uint byteOffset)

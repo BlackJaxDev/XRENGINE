@@ -48,6 +48,7 @@ public sealed partial class WebGpuRendererHost
         RequireReady();
         if (!_resources.Contains(commandsHandle))
             throw new InvalidOperationException("Commands must belong to this WebGPU renderer.");
+        RequireStandaloneSubmissionBoundary();
         bool presentsCanvas = WebGpuImports.SubmitPreparedCommands(_session, commandsHandle);
         if (presentsCanvas)
             SetField(ref _submittedFrame, true);

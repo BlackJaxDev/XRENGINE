@@ -36,6 +36,12 @@ public readonly record struct RenderFrameViewDescriptor(
     /// </summary>
     public ulong SourceCameraIdentity { get; init; }
 
+    /// <summary>Camera layer admission captured with the view, before draw callbacks execute.</summary>
+    public uint CameraCullingMask { get; init; } = uint.MaxValue;
+
+    /// <summary>Authored orthographic screen dimensions, or null for a pixel-sized perspective view.</summary>
+    public Vector2? CameraOrthographicSize { get; init; }
+
     public bool HasParent => ParentViewId != InvalidViewId;
     public bool IsStereoEye => Kind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
     public bool IsWideView => Kind is EVrOutputViewKind.LeftWide or EVrOutputViewKind.RightWide;

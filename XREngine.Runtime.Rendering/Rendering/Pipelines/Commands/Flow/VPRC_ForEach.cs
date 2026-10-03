@@ -13,6 +13,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_ForEach<T> : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            base.DescribeRequirements(requirements);
+            requirements.Include(Body);
+        }
+
         /// <summary>
         /// Supplies the collection to iterate over each frame.
         /// Called once per <see cref="Execute"/> invocation.
@@ -35,8 +41,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _body;
             set
             {
-                _body = value;
+                if (!SetField(ref _body, value)) return;
                 AttachPipeline(_body);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 

@@ -1,0 +1,116 @@
+using XREngine.Rendering.Commands;
+
+namespace XREngine.Rendering.WebGPU;
+
+/// <summary>Completion-retained publication and bounded indirect or generated-index work for one atomic frame.</summary>
+internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer) : IDisposable
+{
+    private const int MaximumSources = 256;
+    private const int MaximumDraws = 256;
+    private readonly List<WebGpuMeshletWork> _work = new(32);
+    private readonly List<WebGpuIndirectWork> _indirectWork = new(32);
+    private readonly List<WebGpuAuthoredIndexedLodSelection> _lodSelections = new(32);
+    private GpuMeshSubmissionPublicationLease _lease;
+    private int _drawCount;
+    private int _meshletDrawCount;
+    private int _indirectDrawCount;
+    private int _sourceCount;
+    internal uint RecordingSequence { get; private set; }
+    internal uint SubmittedSequence { get; private set; }
+    internal bool IsAvailable => RecordingSequence == 0 && SubmittedSequence == 0 && !_lease.IsValid;
+    internal GPUScene? Scene { get; private set; }
+    internal GpuMeshSubmissionPublication Publication => _lease.Publication;
+
+    internal void Begin(GPUScene scene, GpuMeshSubmissionPublicationLease lease, uint sequence)
+    {
+        if (!IsAvailable || !lease.IsValid || sequence == 0)
+            throw new InvalidOperationException("WebGPU.AuthoredIndexed.SlotOwned: recorded or GPU-owned authored indexed work cannot be overwritten.");
+        Scene = scene;
+        _lease = lease;
+        RecordingSequence = sequence;
+        _drawCount = 0;
+        _meshletDrawCount = 0;
+        _indirectDrawCount = 0;
+        _sourceCount = 0;
+    }
+
+    internal WebGpuAuthoredIndexedLodSelection NextLodSelection()
+    {
+        if (_sourceCount == MaximumSources)
+            throw new NotSupportedException("WebGPU.AuthoredIndexed.SourceCapacity: one atomic scene submission exceeds 256 retained source/view selections.");
+        if (_sourceCount == _lodSelections.Count) _lodSelections.Add(new(renderer));
+        return _lodSelections[_sourceCount++];
+    }
+
+    internal WebGpuMeshletWork NextMeshletWork()
+    {
+        RequireCandidateCapacity(1);
+        _drawCount++;
+        if (_meshletDrawCount == _work.Count) _work.Add(new(renderer));
+        return _work[_meshletDrawCount++];
+    }
+
+    internal WebGpuIndirectWork NextIndirectWork()
+    {
+        RequireCandidateCapacity(1);
+        _drawCount++;
+        if (_indirectDrawCount == _indirectWork.Count) _indirectWork.Add(new(renderer));
+        return _indirectWork[_indirectDrawCount++];
+    }
+
+    internal void RequireCandidateCapacity(int count)
+    {
+        if (count < 0 || count > MaximumDraws - _drawCount)
+            throw new NotSupportedException("WebGPU.AuthoredIndexed.DrawCapacity: resident LOD candidates exceed the remaining completion-owned draw capacity.");
+    }
+
+    internal void EndRecording(uint sequence, bool submitted)
+    {
+        if (RecordingSequence != sequence) return;
+        if (submitted) { SubmittedSequence = sequence; RecordingSequence = 0; }
+        else Release();
+    }
+
+    internal void Reclaim(uint completed)
+    {
+        if (SubmittedSequence != 0 && SubmittedSequence <= completed) Release();
+    }
+
+    private void Release()
+    {
+        _lease.Dispose();
+        _lease = default;
+        Scene = null;
+        RecordingSequence = 0;
+        SubmittedSequence = 0;
+    }
+
+    internal void ReleaseDrawUsing(AbstractRenderAPIObject resource)
+    {
+        foreach (WebGpuMeshletWork work in _work) work.ReleaseDrawUsing(resource);
+        foreach (WebGpuIndirectWork work in _indirectWork) work.ReleaseDrawUsing(resource);
+    }
+
+    internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
+    {
+        foreach (WebGpuMeshletWork work in _work) work.ReleaseCommandsUsingHandle(resource, handle);
+        foreach (WebGpuIndirectWork work in _indirectWork) work.ReleaseCommandsUsingHandle(resource, handle);
+    }
+
+    internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
+    {
+        foreach (WebGpuMeshletWork work in _work) work.ReleaseCommandUsing(program, bindings);
+        foreach (WebGpuIndirectWork work in _indirectWork) work.ReleaseCommandUsing(program, bindings);
+    }
+
+    public void Dispose()
+    {
+        foreach (WebGpuMeshletWork work in _work) work.Dispose();
+        foreach (WebGpuIndirectWork work in _indirectWork) work.Dispose();
+        foreach (WebGpuAuthoredIndexedLodSelection selection in _lodSelections) selection.Dispose();
+        _work.Clear();
+        _indirectWork.Clear();
+        _lodSelections.Clear();
+        Release();
+    }
+}

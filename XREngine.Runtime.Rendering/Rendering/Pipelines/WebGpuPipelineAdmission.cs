@@ -14,7 +14,7 @@ public static class WebGpuPipelineAdmission
         "cpu-direct-meshes" or "fullscreen-quad" or "screen-ui" or "debug-shapes" or
         "compute" or "color-resolve" or "program-bindings" or "material-override" or
         "memory-barriers" or "gpu-driven-meshes" or "integer-color-targets" or "storage-images" or
-        "advanced-stage-execution" or "gpu-meshlet-meshes" => null,
+        "advanced-stage-execution" or "gpu-meshlet-meshes" or "native-authored-decals" => null,
         "stencil" => "Stencil operations have no installed WebGPU route.",
         "depth-resolve" => "Depth/stencil multisample resolve has no installed WebGPU route.",
         _ => $"Operation '{operation}' has no declared WebGPU capability. Declare the command's actual operations and dependencies.",
@@ -38,10 +38,17 @@ public static class WebGpuPipelineAdmission
         }
         if (renderer is not null && requirements.Operations.Contains("gpu-meshlet-meshes"))
         {
-            if (renderer is not IMeshletIndexedBackendCapability meshlets)
+            if (renderer is not IAuthoredIndexedBackendCapability meshlets)
                 throw new NotSupportedException("WebGPU.Pipeline.MeshletFamilyUnavailable: the selected renderer requires its complete scoped compute meshlet family.");
-            if (meshlets.GetMeshletIndexedAdmission(out string meshletReason) == EMeshletSubmissionStatus.Rejected)
+            if (meshlets.GetMeshletIndexedAdmission(out string meshletReason) == EAuthoredIndexedSubmissionStatus.Rejected)
                 throw new NotSupportedException($"WebGPU.Pipeline.MeshletFamilyUnavailable: {meshletReason}");
+        }
+        if (renderer is not null && requirements.Programs.ContainsKey("indirect::cull-primitive"))
+        {
+            if (renderer is not IAuthoredIndexedBackendCapability indexed)
+                throw new NotSupportedException("WebGPU.Pipeline.IndirectFamilyUnavailable: the selected renderer requires the authored indexed-indirect family.");
+            if (indexed.GetIndirectIndexedAdmission(out string indirectReason) == EAuthoredIndexedSubmissionStatus.Rejected)
+                throw new NotSupportedException($"WebGPU.Pipeline.IndirectFamilyUnavailable: {indirectReason}");
         }
         foreach ((string pass, string? identity) in requirements.Programs)
         {

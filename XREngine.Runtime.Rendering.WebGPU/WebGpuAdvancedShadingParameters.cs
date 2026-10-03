@@ -24,6 +24,7 @@ internal static class WebGpuAdvancedShadingParameters
         words[6] = frame.Cohorts[cohort]!.Kernel;
         words[7] = (request.RequireNativeOutput ? 2u : 0u) | (request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
             (request.EnableLightProbesAndIbl ? 8u : 0u) |
+            (request.EnableAuthoredDecals ? 16u : 0u) |
             ((uint)request.ShadingDebugView << 8);
         words[8] = request.FroxelDepthSlices;
         words[10] = (uint)visibility.Scene!.Snapshot.GlobalResources.Lights.PhysicalRecords.Length;
@@ -34,6 +35,8 @@ internal static class WebGpuAdvancedShadingParameters
         hashes[0] = DeferredHash; hashes[1] = ForwardHash; hashes[2] = MaskedHash; hashes[3] = MirrorHash;
         words[28] = MaterialBindingLayouts.OpaqueDeferred.RowWordCount;
         StandardWords.CopyTo(words[29..]);
+        words[37] = WebGpuAdvancedShadingCohort.SlotCount * 8u;
+        words[38] = (uint)frame.AuthoredDecalCount;
     }
 
     private static uint Word(string name)

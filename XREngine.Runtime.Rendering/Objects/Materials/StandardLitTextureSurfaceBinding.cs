@@ -38,6 +38,10 @@ public sealed class StandardLitTextureSurfaceBinding(XRMaterial material, bool a
     public static bool TryRead(XRMaterial material, out StandardLitTextureSurface surface, out string? reason)
         => TryReadCore(material, null, false, out surface, out reason);
 
+    /// <summary>Reads the exact generated authored surface without allocating a binding.</summary>
+    public static bool TryReadAuthoredCooked(XRMaterial material, out StandardLitTextureSurface surface, out string? reason)
+        => TryReadCore(material, null, true, out surface, out reason);
+
     /// <summary>
     /// Checks the same schema during offline cooking. The owner must prove complete texture
     /// equivalence before accepting a serialized alias and strictly validate its detached result.

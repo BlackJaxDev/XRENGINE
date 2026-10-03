@@ -20,6 +20,53 @@ namespace XREngine.Data.Trees
         public int SubDivLevel { get => _subDivLevel; set => _subDivLevel = value; }
         public EventList<T> Items => _items;
 
+        /// <summary>Releases node-owned list storage without destroying scene items.</summary>
+        internal void ReleaseStorage()
+        {
+            List<Exception>? failures = null;
+            for (int i = 0; i < _subNodes.Length; i++)
+            {
+                QuadtreeNode<T>? child = _subNodes[i];
+                if (child is null)
+                    continue;
+                try
+                {
+                    child.ReleaseStorage();
+                    _subNodes[i] = null;
+                }
+                catch (Exception ex)
+                {
+                    (failures ??= []).Add(ex);
+                }
+            }
+
+            for (int i = 0; i < _items.Count; i++)
+            {
+                T item = _items[i];
+                try
+                {
+                    if (!ReferenceEquals(item.QuadtreeNode, this))
+                        continue;
+                    item.QuadtreeNode = null;
+                    if (ReferenceEquals(item.QuadtreeNode, this))
+                        throw new InvalidOperationException("Quadtree item node detachment was vetoed.");
+                }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+            }
+            if (failures is null)
+            {
+                _items.Clear(reportRemovedRange: false, reportModified: false);
+                if (!_items.IsDestroyed)
+                    _items.Destroy(true);
+                if (!_items.IsDestroyed)
+                    failures = [new InvalidOperationException("Quadtree node storage destruction was vetoed.")];
+            }
+
+            if (failures is not null)
+                throw new AggregateException("Failed to release quadtree node storage.", failures);
+            _parentNode = null;
+        }
+
         protected override QuadtreeNodeBase? GetNodeInternal(int index)
             => _subNodes[index];
 
@@ -54,7 +101,7 @@ namespace XREngine.Data.Trees
             //need to try subdividing for all items at that point.
 
             if (item?.CullingVolume != null)
-                Owner.MovedItems.Enqueue(item);
+                Owner.QueueMoved(item);
         }
 
         public override void HandleMovedItem(IQuadtreeItem item)
@@ -275,7 +322,10 @@ namespace XREngine.Data.Trees
                         continue;
 
                     if (node.RemoveHereOrSmaller(item))
+                    {
+                        Owner.RetireNode(node);
                         _subNodes[i] = null;
+                    }
                 }
 
             return _items.Count == 0 && HasNoSubNodesExcept(-1);
@@ -665,8 +715,11 @@ namespace XREngine.Data.Trees
         #region Private Helper Methods
         private void ClearSubNode(int index)
         {
-            if (index >= 0)
+            if (index >= 0 && _subNodes[index] is { } node)
+            {
+                Owner.RetireNode(node);
                 _subNodes[index] = null;
+            }
         }
         private bool HasNoSubNodesExcept(int index)
         {

@@ -98,7 +98,7 @@ internal static partial class ProjectBuilder
             {
                 _configuration = configuration;
                 _siteRoot = global::CodeManager.Instance.PublishBrowserApplication(
-                    configuration, PublishRoot, context.Settings.IncludePdbFiles, Cancellation);
+                    configuration, PublishRoot, context.Settings.IncludePdbFiles, context.IntermediateDirectory, Cancellation);
             }
             catch
             {
@@ -114,7 +114,7 @@ internal static partial class ProjectBuilder
                 string recipe = _recipePath ?? throw new InvalidOperationException("Browser world export did not produce a recipe.");
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
                 string configuration = _configuration ?? throw new InvalidOperationException("Browser publish configuration was not recorded.");
-                WriteBrowserRuntimeMetadata(configuration, SourceRoot, site);
+                WriteBrowserRuntimeMetadata(configuration, context.IntermediateDirectory, SourceRoot, site);
                 BrowserContentPackageBuilder.Build(recipe, Path.Combine(site, "content"), Cancellation);
                 PublishBrowserSharedWorldPackage(_sharedWorldPackage, Path.Combine(site, "content"), Cancellation);
             }

@@ -21,7 +21,8 @@ internal readonly record struct GpuSceneMeshCommandSnapshot(
     uint StableQueryKey,
     GpuSceneOwnerSnapshot Owner,
     RenderingParameters? RenderOptionsOverride = null,
-    bool DisableMeshletCulling = false)
+    bool DisableMeshletCulling = false,
+    GpuMeshSubmissionLodTransforms? LodTransforms = null)
 {
     internal static GpuSceneMeshCommandSnapshot CaptureLive(RenderInfo renderInfo,
         IRenderCommandMesh command)
@@ -29,7 +30,8 @@ internal readonly record struct GpuSceneMeshCommandSnapshot(
             command.MaterialOverride, command.Instances, command.RenderPass,
             command.ForceCpuRendering, command.EditorHighlightBits, command.StableQueryKey,
             GpuSceneOwnerSnapshot.CaptureLive(renderInfo), command.RenderOptionsOverride,
-            command is RenderCommandMesh3D command3D && command3D.WorldCullingVolumeOverride.HasValue);
+            command is RenderCommandMesh3D command3D && command3D.WorldCullingVolumeOverride.HasValue,
+            command is RenderCommandMesh3D lodCommand ? lodCommand.GetLodTransformsForLiveCapture() : null);
 
     internal Matrix4x4 ModelMatrix => WorldMatrixIsModelMatrix ? WorldMatrix : Matrix4x4.Identity;
 }

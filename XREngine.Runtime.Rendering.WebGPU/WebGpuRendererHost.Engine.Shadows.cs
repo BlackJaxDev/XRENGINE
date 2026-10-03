@@ -5,6 +5,7 @@ using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Rendering.WebGPU;
 
@@ -123,8 +124,13 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
             ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "position-normal-uv-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
         EngineMaterialVariantKey tangentTexturedReceiver = new(EngineMaterialSemanticIdentity.StandardLitTextureV1,
             ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "position-normal-tangent-uv-v1", local ? "linear-hdr-local-shadows-v1" : "linear-hdr-directional-shadow-v1");
+        // Individual material preparation still validates every physical binding.
+        // This coarse gate also recognizes a generated receiver in the frozen catalog.
+        bool authoredCoverageReceiver = _shaderArtifacts is ShaderProgramArtifactCatalog catalog &&
+            catalog.ContainsProgram(ShaderCompileTarget.WebGPUWgsl, "MaterialRecipe",
+                EngineLitMaterialShaderGenerator.ColorCoverageSchema, "forward-coverage");
         if (_materialVariants is null || count > 0 && !_materialVariants.TryResolve(depth, out _) ||
-            (_materialVariants.TryResolve(receiver, out _) != true && _materialVariants.TryResolve(coverageReceiver, out _) != true &&
+            (!authoredCoverageReceiver && _materialVariants.TryResolve(receiver, out _) != true && _materialVariants.TryResolve(coverageReceiver, out _) != true &&
              _materialVariants.TryResolve(texturedReceiver, out _) != true && _materialVariants.TryResolve(tangentTexturedReceiver, out _) != true))
             throw ShadowUnsupported("the package must supply exact caster and selected local/directional receiver variants");
     }

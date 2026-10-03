@@ -19,9 +19,12 @@ internal sealed class WebGpuMeshletWork : IDisposable
     private int _indexHandle;
     private long _meshBufferRevision;
     private long _rendererBufferRevision;
+    private WebGpuAuthoredIndexedLodSelection? _lodSelection;
     internal WebGpuOwnedStorageBuffer Indices { get; }
     internal WebGpuOwnedStorageBuffer State { get; }
     internal WebGpuOwnedStorageBuffer Bounds { get; }
+
+    internal void SetLodSelection(WebGpuAuthoredIndexedLodSelection selection) => _lodSelection = selection;
 
     internal WebGpuMeshletWork(WebGpuRendererHost renderer)
     {
@@ -36,6 +39,7 @@ internal sealed class WebGpuMeshletWork : IDisposable
         WebGpuRenderProgram finalize, WebGpuRenderProgram refit, bool cullEnabled, float expansion)
     {
         if (_renderer.CurrentFrameOutput is not { } output) return false;
+        RenderFrameViewSelection view = _renderer.RequireFrozenView();
         uint indexCount = checked(geometry.SourceTriangleCount * 3u);
         Indices.EnsureCapacity(checked((int)Math.Max(indexCount * 4u, 16u)));
         State.EnsureCapacity(32);
@@ -103,8 +107,12 @@ internal sealed class WebGpuMeshletWork : IDisposable
             cull.BindStorageBuffer(1, Bounds);
             cull.BindStorageBuffer(2, Indices);
             cull.BindStorageBuffer(3, State);
+            cull.BindStorageBuffer(4, _lodSelection?.Selected
+                ?? throw new InvalidOperationException("Meshlet expansion requires its recorded GPU LOD selection."));
+            if (prepared.Instances is { } instanceSource) cull.Data.BindBuffer(instanceSource.Buffer, 5);
+            else cull.BindStorageBuffer(5, _lodSelection.Selected);
             cull.Data.Uniform("ModelMatrix", record.CurrentWorld);
-            cull.Data.Uniform("ViewProjection", camera.ViewProjectionMatrix);
+            cull.Data.Uniform("ViewProjection", view.ViewProjectionMatrix);
             cull.Data.Uniform("MeshletCount", geometry.MeshletCount);
             cull.Data.Uniform("SourceTriangleCount", geometry.SourceTriangleCount);
             cull.Data.Uniform("VertexCount", geometry.VertexCount);
@@ -120,20 +128,23 @@ internal sealed class WebGpuMeshletWork : IDisposable
             cull.Data.Uniform("CullEnabled", cullEnabled ? 1u : 0u);
             cull.Data.Uniform("UseRefitBounds", prepared.Deformation is null ? 0u : 1u);
             cull.Data.Uniform("SphereExpansion", expansion);
-            uint layerMask = unchecked((uint)camera.CullingMask.Value);
+            uint layerMask = view.View.CameraCullingMask;
             bool enabled = (record.Metadata.LayerMask & layerMask) != 0 &&
-                (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass != true ||
+                (!view.ShadowPass ||
                  (record.Metadata.Flags & (uint)GPUIndirectRenderFlags.CastShadow) != 0);
             cull.Data.Uniform("DrawEnabled", enabled ? 1u : 0u);
+            cull.Data.Uniform("CandidateMeshId", record.Metadata.MeshID);
+            cull.Data.Uniform("CandidateLod", record.Metadata.LodPolicy);
+            WebGpuAuthoredInstanceContract.SetCullParameters(cull.Data, record.InstanceCount, prepared.Instances);
             cull.RecordCompute(dispatchX, dispatchY, 1);
             finalize.SetNativeBindingCacheOwner(State);
             finalize.BindStorageBuffer(0, State);
             finalize.Data.Uniform("MeshletCount", geometry.MeshletCount);
             finalize.Data.Uniform("IndexCapacity", Indices.ByteLength / 4);
             finalize.Data.Uniform("SourceTriangleCount", geometry.SourceTriangleCount);
-            finalize.Data.Uniform("Reserved0", 0u);
+            finalize.Data.Uniform("InstanceCount", record.InstanceCount);
             finalize.RecordCompute(1, 1, 1);
-            _draw.RecordMeshletIndirect(prepared.Bindings, State);
+            _draw.RecordOwnedIndexedIndirect(prepared.Bindings, State, record.InstanceCount);
             return true;
         }
         finally

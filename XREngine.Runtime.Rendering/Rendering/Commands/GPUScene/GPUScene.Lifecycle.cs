@@ -40,6 +40,7 @@ namespace XREngine.Rendering.Commands
             {
                 _advancedScenePublisher = new AdvancedGpuScenePublisher();
                 _advancedScenePublisherDisposed = false;
+                _advancedGlobalResources.AuthoredDecals.Release();
                 _advancedGlobalResources = default;
                 Interlocked.Exchange(ref _advancedPublicationRequested, 0);
             }
@@ -133,7 +134,14 @@ namespace XREngine.Rendering.Commands
             ResetMeshSubmissionPublications();
             if (!_advancedScenePublisherDisposed)
             {
-                _advancedScenePublisher.Dispose();
+                try { _advancedScenePublisher.Dispose(); }
+                finally
+                {
+                    _advancedGlobalResources.AuthoredDecals.Release();
+                    _advancedGlobalResources = default;
+                    _hasAdvancedGlobalResourceCapture = false;
+                    Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 0);
+                }
                 _advancedScenePublisherDisposed = true;
             }
             UnsubscribeAllMeshletPayloadChanges();

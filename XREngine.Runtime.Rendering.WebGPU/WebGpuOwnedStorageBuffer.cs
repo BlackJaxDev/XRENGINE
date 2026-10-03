@@ -86,6 +86,8 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
     {
         if (_renderer.IsRecordingEngineFrame && _recordedFrameSequence == _renderer.EngineFrameSequence)
             throw new InvalidOperationException("WebGPU.Advanced.RecordedStorage: immediate writes or capacity replacement cannot change an earlier unsubmitted command's storage.");
+        if (_renderer.HasUnsubmittedEngineBufferUpload(_handle))
+            throw new InvalidOperationException("WebGPU.Advanced.PendingStorage: immediate preparation or capacity replacement cannot overtake an unsubmitted storage snapshot.");
     }
 
     private void RequireLiveOwner()

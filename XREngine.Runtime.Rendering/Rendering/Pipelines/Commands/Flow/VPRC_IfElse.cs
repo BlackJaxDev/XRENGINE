@@ -33,8 +33,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _trueCommands;
             set
             {
-                _trueCommands = value;
+                if (!SetField(ref _trueCommands, value)) return;
                 AttachPipeline(_trueCommands);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 
@@ -44,8 +45,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _falseCommands;
             set
             {
-                _falseCommands = value;
+                if (!SetField(ref _falseCommands, value)) return;
                 AttachPipeline(_falseCommands);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 

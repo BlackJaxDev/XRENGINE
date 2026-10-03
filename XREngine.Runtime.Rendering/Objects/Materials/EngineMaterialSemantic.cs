@@ -25,4 +25,6 @@ public enum EngineMaterialSemantic
     UIQuadBatchedTexture = 17,
     /// <summary>Premultiplied linear canvas texture composited onto a scene surface.</summary>
     UICanvasSurface = 18,
+    /// <summary>Canonical inverse-hull outline with an explicit modeled Uber surface contract.</summary>
+    UberOutline = 19,
 }

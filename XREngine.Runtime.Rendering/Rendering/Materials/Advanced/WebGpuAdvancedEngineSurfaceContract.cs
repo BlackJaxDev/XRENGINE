@@ -7,7 +7,9 @@ public static class WebGpuAdvancedEngineSurfaceContract
 {
     public static string? GetRejection(in AdvancedMaterialRecord material, AdvancedMaterialPublicationSnapshot payloads)
     {
-        if (material.SourceContract != EAdvancedMaterialSourceContract.StandardSurface) return null;
+        if (material.SourceContract is not (EAdvancedMaterialSourceContract.StandardSurface or EAdvancedMaterialSourceContract.EngineGeneratedSurface)) return null;
+        if (material.CoverageMode is not (EAdvancedMaterialCoverageMode.Opaque or EAdvancedMaterialCoverageMode.Masked))
+            return "Sorted transparency cannot enter native opaque engine-surface shading.";
         if (!payloads.TryGetEngineSurface(in material, out AdvancedEngineSurfaceRecord surface) ||
             surface.SchemaVersion != AdvancedEngineSurfaceRecord.CurrentSchemaVersion || surface.Generation != material.Generation)
             return "The engine material has no current generation-checked native surface companion.";

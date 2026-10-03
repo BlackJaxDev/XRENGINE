@@ -1,12 +1,13 @@
 // The browser companion preserves the authored engine surface independently of
 // the canonical legacy material constants and their packed texture slots.
-#if !defined(XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION) || XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION != 1
-#error Native engine surface shading requires the schema 1 cooked recipe define.
+#if !defined(XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION) || XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION != 2
+#error Native engine surface shading requires the schema 2 cooked recipe define.
 #endif
 #define XR_ADV_ENGINE_SURFACE_TABLE 32u
 #define XR_ADV_ENGINE_SURFACE_WORD_COUNT 76u
 #define XR_ADV_ENGINE_SURFACE_SCHEMA XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION
 #define XR_ADV_ENGINE_SURFACE_SOURCE 1u
+#define XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE 7u
 #define XR_ADV_ENGINE_SURFACE_COLOR 1u
 #define XR_ADV_ENGINE_SURFACE_TEXTURE 2u
 #define XR_ADV_ENGINE_SURFACE_TEXTURE_NORMAL 3u
@@ -18,7 +19,8 @@
 bool XR_ADV_IsEngineSurfaceMaterial(XRAdvancedMaterialRecord material)
 {
     // The final canonical header word is EAdvancedMaterialSourceContract.
-    return material.reserved == XR_ADV_ENGINE_SURFACE_SOURCE;
+    return material.reserved == XR_ADV_ENGINE_SURFACE_SOURCE ||
+        material.reserved == XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE;
 }
 
 float4 XR_ADV_EngineSurfaceVector(uint word)

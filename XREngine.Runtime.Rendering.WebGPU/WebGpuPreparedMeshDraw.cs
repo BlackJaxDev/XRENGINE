@@ -4,4 +4,5 @@ namespace XREngine.Rendering.WebGPU;
 internal readonly record struct WebGpuPreparedMeshDraw(
     WebGpuMaterial Material,
     WebGpuBindingSet Bindings,
-    WebGpuMeshDeformation? Deformation);
+    WebGpuMeshDeformation? Deformation,
+    AuthoredMeshInstanceSource? Instances = null);

@@ -15,5 +15,6 @@ public struct AdvancedRenderStateRecord
     public uint DepthMode;
     public uint BlendMode;
     public uint ColorWriteMask;
+    /// <summary>Low 24 bits retain GPU draw flags; the high byte carries EAdvancedNativeRasterStateFlags.</summary>
     public uint Flags;
 }

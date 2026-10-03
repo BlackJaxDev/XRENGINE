@@ -32,7 +32,7 @@ internal sealed partial class BrowserEngineSession
             renderer.BindLuminanceMipmapArtifact(luminanceMipmapArtifact);
         renderer.BindShaderArtifacts(_rendererShaderArtifacts, _rendererMaterialVariants);
         renderer.BindAdvancedPipelineArtifacts(_pipelineArtifacts);
-        renderer.BindMeshletPipelineArtifacts(_pipelineArtifacts);
+        renderer.BindAuthoredIndexedPipelineArtifacts(_pipelineArtifacts);
     }
 
     /// <summary>Retires only GPU ownership, retaining the authored world, player, viewport and gameplay state.</summary>

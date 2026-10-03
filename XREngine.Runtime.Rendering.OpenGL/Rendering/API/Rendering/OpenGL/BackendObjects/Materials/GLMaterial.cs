@@ -179,7 +179,7 @@ namespace XREngine.Rendering.OpenGL
                         if (shadowBindingSource.HasSettingShadowUniformHandlers)
                             shadowBindingSource.OnSettingShadowUniforms(materialProgram.Data);
                         else if (shadowBindingSource.HasSettingUniformsHandlers ||
-                            shadowBindingSource.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2)
+                            shadowBindingSource.EngineSemantic.IsColorCoverage())
                             shadowBindingSource.OnSettingUniforms(materialProgram.Data);
                     }
                     else

@@ -27,6 +27,19 @@ namespace XREngine.Rendering.UI
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
         }
 
+        protected override void OnDestroying()
+        {
+            try
+            {
+                base.OnDestroying();
+            }
+            finally
+            {
+                try { RenderInfo3D.Dispose(); }
+                finally { RenderInfo2D.Dispose(); }
+            }
+        }
+
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
 
         private static int _shouldRender3DDiagCount = 0;

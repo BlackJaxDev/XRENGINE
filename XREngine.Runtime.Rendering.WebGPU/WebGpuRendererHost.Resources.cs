@@ -19,6 +19,10 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
     public void WriteBuffer(int handle, int offset, Span<byte> bytes)
     {
         RequireOwnedResource(handle);
+        // Direct control writes have no managed descriptor/range owner. They must
+        // not overtake or poison a queued engine-owned mutation of this buffer.
+        if (HasUnsubmittedEngineBufferUpload(handle))
+            throw new NotSupportedException("WebGPU.Buffer.PendingWriteUnsupported: a direct buffer write cannot overtake an unsubmitted engine mutation; use its owned buffer upload path or wait for frame acceptance.");
         WebGpuImports.WriteBuffer(_session, handle, offset, bytes);
     }
 
@@ -36,6 +40,8 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
     {
         RequireOwnedResource(source);
         RequireOwnedResource(destination);
+        if (HasUnsubmittedEngineBufferUpload(source) || HasUnsubmittedEngineBufferUpload(destination))
+            throw new NotSupportedException("WebGPU.Buffer.PendingCopyUnsupported: a standalone buffer copy cannot overtake unsubmitted mutations; record a retained buffer-copy command in the engine frame.");
         WebGpuImports.CopyBuffer(_session, source, sourceOffset, destination, destinationOffset, size);
     }
 

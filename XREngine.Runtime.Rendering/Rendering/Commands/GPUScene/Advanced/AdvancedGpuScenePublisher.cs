@@ -158,6 +158,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // Release the prior frame's references even if this boundary rejects early.
         Array.Clear(_plannedCommands, 0, _plannedCommandCount);
         Array.Clear(_plannedDeformationSources, 0, _legacyMappingCount);
+        Array.Clear(_plannedDecals, 0, _plannedDecalCount);
+        _plannedDecalCount = 0;
         _plannedCommandCount = 0;
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
@@ -174,7 +176,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         }
 
         int capturedGlobalResourceCount = globalResources.FrameId == frameId
-            ? Math.Max(globalResources.Lights.Length, globalResources.Probes.Length)
+            ? Math.Max(Math.Max(globalResources.Lights.Length, globalResources.Probes.Length), globalResources.AuthoredDecals.Count)
             : 0;
         bool hasBoundaryCapacity;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.BoundaryCapacity"))
@@ -1065,6 +1067,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         out XRMeshRenderer? capturedRenderer,
         out XRMesh? mesh,
         out XRMaterial? material,
+        out RenderingParameters? renderOptions,
         out int sourcePrimitiveCount)
     {
         AdvancedMeshRenderSnapshot snapshot = source is RenderCommandMesh3D mesh3D
@@ -1097,6 +1100,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             material = null;
         }
         material = snapshot.MaterialOverride ?? material;
+        renderOptions = snapshot.RenderOptionsOverride ?? material?.RenderOptions;
     }
 
     private bool CanAddRegistration(AdvancedGpuSceneDatabase tables)
@@ -1193,6 +1197,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             VisibilityFlags = EAdvancedInstanceVisibilityFlags.Enabled,
             LayerMask = command.LayerMask,
             RenderPassMask = command.RenderPassMask,
+            Reserved0 = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked
+                ? command.RenderPass : 0u,
         };
 
     private static AdvancedDeformationRecord CreateDeformation(
@@ -1260,14 +1266,17 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static AdvancedRenderStateRecord CreateRenderState(
         XRMesh? mesh,
+        RenderingParameters? renderOptions,
         in DrawMetadata command)
         => new()
         {
             StateClass = command.StateClassID,
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
-            CullMode = (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u ? 0u : 1u,
-            Flags = StructuralDrawFlags(command.Flags),
+            CullMode = checked((uint)(renderOptions?.CullMode ?? ECullMode.Back)),
+            // Existing GPU draw flags occupy the low 24 bits. Native admission
+            // retains the actual command override's unsupported raster features.
+            Flags = StructuralDrawFlags(command.Flags) | (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(

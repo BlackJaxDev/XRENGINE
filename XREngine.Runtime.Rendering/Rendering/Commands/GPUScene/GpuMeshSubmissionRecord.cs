@@ -29,6 +29,7 @@ public readonly record struct GpuMeshSubmissionRecord
     public BoundsGpu Bounds { get; init; }
     public Matrix4x4 CurrentWorld { get; init; }
     public Matrix4x4 PreviousWorld { get; init; }
+    public GpuMeshSubmissionLodTransforms? LodTransforms { get; init; }
     public bool WorldMatrixIsModelMatrix { get; init; }
     public bool ForceCpuRendering { get; init; }
     public EMeshBillboardMode BillboardMode { get; init; }
@@ -36,6 +37,14 @@ public readonly record struct GpuMeshSubmissionRecord
     public bool DisableMeshletCulling { get; init; }
     public bool HasSkinning { get; init; }
     public bool HasBlendshapes { get; init; }
+    public bool MaterialBasePassDisabled { get; init; }
+    public bool MaterialShadowPassDisabled { get; init; }
+    public bool RequiresLodAuxiliaryPassPublication { get; init; }
+    public bool RequiresLodTransformPublication { get; init; }
+    public IRenderCommandMesh? MaterialOutlineCommand { get; init; }
+    public MaterialPassDefinition? OutlinePass { get; init; }
+    public XRMaterial? OutlineMaterial { get; init; }
+    public GpuMeshSubmissionSourceBindings? OutlineSourceBindings { get; init; }
     public uint LodCount { get; init; }
     public GPUScene.LODTableEntry LodMetadata { get; init; }
     public MeshletPayload? MeshletPayload { get; init; }
@@ -46,6 +55,30 @@ public readonly record struct GpuMeshSubmissionRecord
     public uint AuthoredInstanceCount { get; init; }
     public uint AuthoredPrimitiveInstanceCount { get; init; }
     public uint InstanceCount => AuthoredInstanceCount;
+
+    /// <summary>Uses the authored collection policy frozen for this exact LOD renderer.</summary>
+    public bool IsMaterialPassEnabled(bool shadowPass)
+        => !(shadowPass ? MaterialShadowPassDisabled : MaterialBasePassDisabled);
+
+    /// <summary>Projects the same frozen geometry and deformation owner into its authored auxiliary pass.</summary>
+    public bool TryGetOutlineCandidate(out GpuMeshSubmissionRecord candidate)
+    {
+        candidate = default;
+        if (OutlinePass is not { Enabled: true } pass || OutlineMaterial is not { } material || OutlineSourceBindings is not { } bindings)
+            return false;
+        DrawMetadata metadata = Metadata;
+        metadata.RenderPass = unchecked((uint)pass.RenderPass);
+        metadata.Flags &= ~(uint)(GPUIndirectRenderFlags.Transparent | GPUIndirectRenderFlags.CpuFallbackOnly);
+        if (material.IsTransparentLike()) metadata.Flags |= (uint)GPUIndirectRenderFlags.Transparent;
+        candidate = this with
+        {
+            Material = material, MaterialOverride = material, SourceBindings = bindings,
+            RenderPass = pass.RenderPass, RenderOptionsOverride = pass.RenderOptions, Metadata = metadata,
+            DisableMeshletCulling = true, MaterialBasePassDisabled = false, MaterialShadowPassDisabled = true,
+            OutlinePass = null, OutlineMaterial = null, OutlineSourceBindings = null,
+        };
+        return true;
+    }
 
     /// <summary>Checks the captured owner proof without rereading a mutable mesh payload.</summary>
     public bool HasValidatedMeshletPayload

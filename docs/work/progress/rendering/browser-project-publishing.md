@@ -29,23 +29,66 @@ When saved startup settings have no window target, the project may select a
 saved `.asset` beneath its Assets directory with `StartupScenePath`; existing
 single-window selection and conflicting-world checks remain in force.
 
-The current publisher requires a source checkout containing `XREngine.Browser`.
-Publishing from a packaged editor is still open. Use the pinned SDK/workload in
-`global.json` and prepare the approved Jolt source before publishing:
+An Editor installation that supplies its normal engine assets and the
+`BrowserPublishing` sidecar can build the browser
+target outside a source checkout. The Editor publish copies the portable source
+project closure, build policies and generators, browser web assets, and the
+reviewed browser Jolt managed source and native archives with their pins and
+license notices. Browser builds select that payload beside the Editor; source
+builds continue to use the checkout. The Editor publish builds the sidecar in a
+sibling staging directory and replaces the previous manifest-owned payload only
+after every file is copied and hashed. A prior payload with added or changed
+files is left in place and raises `BrowserPublisher.PayloadModified`. The
+packaged Editor checks the complete manifest before browser builds, and writes
+browser graph outputs under the project's `Intermediate/BrowserPublishing`
+directory so installed source files can remain read-only. The game project's
+existing compiled assembly path is preserved. The sidecar excludes build
+caches, launch profiles, and desktop native binaries. It uses the Editor's
+ordinary `Build/CommonAssets` asset tree rather than carrying another copy.
+The sidecar target does not yet copy that normal asset tree; standalone Editor
+packaging must supply it separately before the installation is complete.
+
+To prepare an Editor package that supports browser publishing, use the pinned
+SDK in `global.json`, install its `wasm-tools` workload, and prepare the approved
+Jolt source before publishing:
 
 ```powershell
 dotnet workload install wasm-tools
 pwsh Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory Build/Dependencies/JoltBrowser/managed
 pwsh Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory Build/Dependencies/JoltBrowser/native
+dotnet publish XREngine.Editor/XREngine.Editor.csproj -c Release -p:JoltBrowserManagedSourceDirectory=<prepared-jolt-root>/managed/staged -p:JoltBrowserArchiveDirectory=<prepared-jolt-root>/native/archives
 ```
 
 The native command uses Emscripten's internal Python tooling, CMake and Ninja.
-It verifies exact source/compiler pins and ships notices. See the
+The Editor publish checks the native source/compiler pin and required
+source/notices, then records content hashes for the copied source and archives.
+The native pin does not certify byte-identical archives across platforms. A
+packaged Editor still needs the pinned .NET SDK,
+`wasm-tools`, and PowerShell on the machine that publishes a browser project;
+it does not install them. See the
 [Jolt supply record](../../design/platform/jolt-browser-native-supply.md).
 Agent validation uses its reserved output directory and explicit MSBuild path
 properties instead. Desktop Jolt package supply and the desktop physics default
 are unchanged. Browser restore/publish sets `XREngineJoltBrowser=true` globally
 so NuGet resolves the reviewed source binding throughout the graph.
+
+### Packaged build-graph execution (2026-10-03)
+
+The genuine `BuildCurrentProjectSynchronously` browser chain completes through
+the compiled Editor methods with the installed sidecar selected: portable game
+build/load, authored-world export, native-WASM publication, exact linked-game
+MVID and managed-closure checks, content packaging, launch configuration and
+atomic activation. The authored world remains unchanged. Browser compilation
+uses a frozen portable source payload and project-owned artifacts, and the
+installed-source manifest remains valid afterward.
+
+This portable Linux invocation exercises the production publisher methods; it
+is not the Windows Editor CLI or a browser-render acceptance run. Normal engine
+assets are supplied explicitly for this check. Standalone Editor packaging still
+needs to include its ordinary `Build/CommonAssets` tree. The pinned browser SDK
+uses the configuration-only managed output pivot, such as
+`Artifacts/bin/XREngine.Browser/release`; assuming a `_browser-wasm` suffix was
+rejected by the actual closure check and corrected.
 
 ## Same assets and game code
 
@@ -196,7 +239,7 @@ engine parity permits its approved retirement.
 Serve published output over same-origin HTTPS (loopback HTTP for development)
 with correct WebAssembly MIME/compression and manifest revalidation. Immutable
 payload caching may be reused from [content delivery](browser-cooked-content.md).
-Production hosting, complete capability reporting, packaged-editor delivery,
+Production hosting, complete capability reporting, packaged-editor end-to-end acceptance,
 audio/input/UI coverage, desktop comparisons and physical-device qualification
 remain tracked in the [active runtime plan](../../todo/platform/unified-desktop-browser-runtime-todo.md).
 

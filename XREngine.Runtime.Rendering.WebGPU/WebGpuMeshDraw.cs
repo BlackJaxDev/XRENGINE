@@ -29,6 +29,8 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     private WebGpuInstanceStorageContract? _instanceStorage;
     private WebGpuDataBuffer? _instanceBuffer;
     private uint _instanceLimit;
+    private uint _commandInstanceLimit;
+    internal WebGpuMeshDeformation? Deformation { get; }
     private int _pipeline;
     private readonly Dictionary<WebGpuBindingSet, int> _commands = [];
     private bool _disposed;
@@ -37,7 +39,8 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         XRDataBuffer indices, IndexSize indexSize, WebGpuRasterState state, in RenderFrameOutputDescription output,
         WebGpuFrameBuffer? frameBuffer, WebGpuInstanceStorageContract? instanceStorage,
         WebGpuDataBuffer? instanceBuffer, uint instanceLimit, WebGpuMeshDeformation? deformation = null,
-        XRMeshRenderer? streamOwner = null)
+        XRMeshRenderer? streamOwner = null, GpuMeshSubmissionSourceBindings? sources = null,
+        bool indirectFirstInstanceFeature = true)
     {
         _renderer = renderer;
         _program = program;
@@ -47,12 +50,14 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         _instanceStorage = instanceStorage;
         _instanceBuffer = instanceBuffer;
         _instanceLimit = instanceLimit;
+        Deformation = deformation;
         _indexSize = indexSize;
+        _indirectFirstInstanceFeature = indirectFirstInstanceFeature;
         if (indexSize is not (IndexSize.TwoBytes or IndexSize.FourBytes))
             throw Unsupported("only unsigned 16-bit and 32-bit indices are admitted");
         _indices = (WebGpuDataBuffer)renderer.GetOrCreateAPIRenderObject(indices, generateNow: true)!;
         _indexCount = indices.ElementCount;
-        _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation, streamOwner);
+        _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation, streamOwner, sources);
         _preparation = PrepareAsync();
     }
 
@@ -69,6 +74,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         _output = output;
         _frameBuffer = frameBuffer;
         _generatedIndices = indices;
+        Deformation = deformation;
         _indexSize = IndexSize.FourBytes;
         _indirectFirstInstanceFeature = false;
         _streams = ResolveStreams(renderer, program.Artifact, mesh, deformation, null, sources);
@@ -111,13 +117,19 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
             _renderer.MarkEngineDrawPending();
             return;
         }
-        if ((_instanceLimit == 0 && instances != 1) || (_instanceLimit != 0 && instances > _instanceLimit))
-            throw Unsupported("the requested instance count exceeds the cooked storage binding range");
+        ValidateInstanceRange(instances);
         if (_instanceStorage is { } storage && _instanceBuffer is not null &&
             instances > _instanceBuffer.Data.Length / (uint)storage.StrideBytes)
             throw Unsupported("the requested instance count exceeds the published logical storage length");
         if (_instanceStorage is { } uiStorage)
-            ValidateUIStorageExtent(uiStorage.Name, instances);
+            ValidateUIStorageExtent(_program, uiStorage.Name, instances);
+        uint limit = DirectInstanceLimit();
+        if (_commandInstanceLimit != limit)
+        {
+            foreach (int handle in _commands.Values) _renderer.RetireEngineResourceAfterFrame(handle);
+            _commands.Clear();
+            _commandInstanceLimit = limit;
+        }
         (BoundingRectangle? viewport, BoundingRectangle? scissor) = _renderer.ResolveEngineDrawArea();
         bool croppedOut = scissor is { Width: 0 } or { Height: 0 };
         if (!_commands.TryGetValue(bindings, out int commands))
@@ -129,11 +141,11 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         }
         Span<uint> offsets = stackalloc uint[16];
         int count = _program.SnapshotUniforms(offsets);
-        _renderer.RecordEngineCommands(commands, offsets[..count], _instanceLimit == 0 ? null : instances,
+        _renderer.RecordEngineCommands(commands, offsets[..count], instances,
             viewport, scissor);
         _renderer.MarkEngineViewHistoryDrawWrite(_frameBuffer, in _output,
             _program.Artifact.FragmentEntryPoint is not null, _state.ColorWriteMask,
-            _indices is null ? 0 : _indexCount, _instanceLimit == 0 ? 1U : instances, scissor);
+            _indices is null ? 0 : _indexCount, instances, scissor);
         bindings.MarkRecorded();
         if (!croppedOut)
         {
@@ -142,19 +154,41 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         }
     }
 
-    private void ValidateUIStorageExtent(string sourceName, uint instances)
+    /// <summary>Checks authored instance addressing without inspecting any GPU-produced visibility or count.</summary>
+    internal void ValidateInstanceRange(uint instances)
+    {
+        if (_instanceLimit != 0 && instances > _instanceLimit)
+            throw Unsupported("the requested instance count exceeds the cooked storage binding range");
+        foreach (WebGpuVertexStream stream in _streams)
+            if (stream.StepMode == "instance" &&
+                (stream.Buffer.Data.InstanceDivisor != 1 || stream.Buffer.Data.ElementSize != stream.Stride ||
+                 instances > stream.Buffer.Data.ElementCount || (ulong)instances * (uint)stream.Stride > stream.Buffer.Data.Length))
+                throw Unsupported("the requested instance count exceeds an authored instance-step stream");
+    }
+
+    private uint DirectInstanceLimit()
+    {
+        uint limit = _instanceLimit == 0 ? uint.MaxValue : _instanceLimit;
+        foreach (WebGpuVertexStream stream in _streams)
+            if (stream.StepMode == "instance")
+                limit = Math.Min(limit, Math.Min(stream.Buffer.Data.ElementCount, stream.Buffer.Data.Length / checked((uint)stream.Stride)));
+        if (limit == 0) throw Unsupported("an authored instance-step stream has no complete row");
+        return limit;
+    }
+
+    internal static void ValidateUIStorageExtent(WebGpuRenderProgram program, string sourceName, uint instances)
     {
         if (sourceName == "QuadTransformBuffer")
         {
-            RequireStorageExtent("QuadColorBuffer", instances, 16);
-            RequireStorageExtent("QuadBoundsBuffer", instances, 16);
+            RequireStorageExtent(program, "QuadColorBuffer", instances, 16);
+            RequireStorageExtent(program, "QuadBoundsBuffer", instances, 16);
             return;
         }
         if (sourceName != "GlyphTransformsBuffer") return;
 
-        RequireStorageExtent("GlyphTexCoordsBuffer", instances, 16);
-        WebGpuDataBuffer indexBuffer = RequireStorageExtent("GlyphTextIndexBuffer", instances, 4);
-        WebGpuDataBuffer textBuffer = RequireStorageExtent("TextInstanceBuffer", 1, 128);
+        RequireStorageExtent(program, "GlyphTexCoordsBuffer", instances, 16);
+        WebGpuDataBuffer indexBuffer = RequireStorageExtent(program, "GlyphTextIndexBuffer", instances, 4);
+        WebGpuDataBuffer textBuffer = RequireStorageExtent(program, "TextInstanceBuffer", 1, 128);
         if (indexBuffer.Data is not XRDataBuffer<uint> indices)
             throw Unsupported("bitmap text requires a CPU-backed uint glyph-to-text index buffer");
         Span<uint> indexValues = indices.GetCpuMirrorSpan();
@@ -181,12 +215,13 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         }
     }
 
-    private WebGpuDataBuffer RequireStorageExtent(string name, uint instances, uint stride)
+    internal static WebGpuDataBuffer RequireStorageExtent(WebGpuRenderProgram program, string name, uint instances, uint stride,
+        bool requirePackedLength = true)
     {
-        if (!_program.TryGetStorageBinding(name, out WebGpuDataBuffer? buffer) || buffer is null ||
-            buffer.Data.Length % stride != 0 || buffer.Data.Length / stride < instances ||
+        if (!program.TryGetStorageBinding(name, out WebGpuDataBuffer? buffer) || buffer is null ||
+            requirePackedLength && buffer.Data.Length % stride != 0 || buffer.Data.Length / stride < instances ||
             buffer.BackendAllocatedByteSize < buffer.Data.Length)
-            throw Unsupported($"'{name}' does not cover the requested UI instance range");
+            throw Unsupported($"'{name}' does not cover the requested authored instance range");
         return buffer;
     }
 
@@ -299,14 +334,14 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         return streams.ToArray();
     }
 
-    private static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh? mesh, string semantic,
+    internal static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh? mesh, string semantic,
         WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner = null, GpuMeshSubmissionSourceBindings? sources = null)
     {
         string format = semantic switch
         {
             "position" or "normal" => "float32x3",
             "tangent" or "color0" => "float32x4",
-            "uv0" => "float32x2",
+            "uv0" or "uv1" or "uv2" or "uv3" => "float32x2",
             _ => throw Unsupported($"vertex semantic '{semantic}' has no engine stream mapping"),
         };
         if (deformation is not null)
@@ -318,7 +353,8 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         string streamName = semantic switch
         {
             "position" => "Position", "normal" => "Normal", "tangent" => "Tangent",
-            "color0" => "Color0", "uv0" => "TexCoord0",
+            "color0" => "Color0", "uv0" => "TexCoord0", "uv1" => "TexCoord1",
+            "uv2" => "TexCoord2", "uv3" => "TexCoord3",
             _ => throw Unsupported($"vertex semantic '{semantic}' has no canonical stream mapping"),
         };
         XRDataBuffer? published = null;
@@ -341,6 +377,9 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
                 "tangent" => mesh.TangentOffset,
                 "color0" => mesh.ColorCount > 0 ? mesh.ColorOffset : null,
                 "uv0" => mesh.TexCoordCount > 0 ? mesh.TexCoordOffset : null,
+                "uv1" => mesh.TexCoordCount > 1 ? mesh.TexCoordOffset + 8u : null,
+                "uv2" => mesh.TexCoordCount > 2 ? mesh.TexCoordOffset + 16u : null,
+                "uv3" => mesh.TexCoordCount > 3 ? mesh.TexCoordOffset + 24u : null,
                 _ => null,
             };
             XRDataBuffer? interleaved = sources is not null
@@ -359,6 +398,9 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
             "tangent" => mesh.TangentsBuffer,
             "color0" => mesh.ColorBuffers is { Length: > 0 } ? mesh.ColorBuffers[0] : null,
             "uv0" => mesh.TexCoordBuffers is { Length: > 0 } ? mesh.TexCoordBuffers[0] : null,
+            "uv1" => mesh.TexCoordBuffers is { Length: > 1 } ? mesh.TexCoordBuffers[1] : null,
+            "uv2" => mesh.TexCoordBuffers is { Length: > 2 } ? mesh.TexCoordBuffers[2] : null,
+            "uv3" => mesh.TexCoordBuffers is { Length: > 3 } ? mesh.TexCoordBuffers[3] : null,
             _ => null,
         };
         if (buffer is null || buffer.ComponentType != EComponentType.Float)
@@ -509,6 +551,8 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
                 }
                 if (!found) throw Unsupported("the instance storage contract has no cooked program binding");
             }
+            else if (indirectBuffer == 0 && HasIndexBuffer)
+                writer.WriteNumber("engineInstanceCountLimit", DirectInstanceLimit());
             writer.WriteStartArray("draws");
             writer.WriteStartObject();
             if (indirectBuffer != 0)

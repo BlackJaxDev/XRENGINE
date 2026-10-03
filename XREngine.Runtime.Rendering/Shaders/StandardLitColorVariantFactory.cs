@@ -8,9 +8,13 @@ internal static class StandardLitColorVariantFactory
 {
     public static XRMaterial? Create(XRMaterial source, EStandardLitColorAuxiliaryPass pass)
     {
-        if (source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV2)
+        if (!source.EngineSemantic.IsColorCoverage())
             return null;
-        if (!StandardLitColorSurfaceBinding.TryCreate(source, out _, out string? reason))
+        bool authored = source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2;
+        bool valid = authored
+            ? StandardLitColorSurfaceBinding.TryCreateAuthoredCooked(source, out _, out string? reason)
+            : StandardLitColorSurfaceBinding.TryCreate(source, out _, out reason);
+        if (!valid)
             throw new NotSupportedException($"StandardLitColor.SurfaceUnsupported: {reason}");
         if (source.GetEffectiveTransparencyMode() is not (ETransparencyMode.Opaque or ETransparencyMode.Masked))
             throw new NotSupportedException("StandardLitColor.AuxiliaryCoverageUnsupported: blended surfaces do not write scene or shadow depth.");
@@ -18,7 +22,7 @@ internal static class StandardLitColorVariantFactory
         XRMaterial variant;
         if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
         {
-            if (source.Shaders.Count != 0)
+            if (!authored && source.Shaders.Count != 0)
                 throw new NotSupportedException("StandardLitColor.SourceUnsupported: cooked variants require source-free authored materials.");
             variant = new XRMaterial();
         }

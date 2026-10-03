@@ -5,14 +5,16 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Validates the exact portable meshlet expansion, bounds-refit, and indexed-indirect publication ABIs.</summary>
 internal static class WebGpuMeshletProgramContract
 {
-    internal const uint CullParameterByteSize = 192;
+    internal const uint CullParameterByteSize = 224;
+    internal const uint LodParameterByteSize = 96;
     internal const uint RefitParameterByteSize = 48;
     internal const uint FinalizeParameterByteSize = 16;
     internal const uint StateByteSize = 32;
     internal const uint DescriptorByteSize = 80;
     internal const uint PrimitiveMapEntriesPerMeshlet = 124;
 
-    private static readonly string[] CullResources = ["Source", "Bounds", "Indices", "State", "Parameters"];
+    private static readonly string[] CullResources = ["Source", "Bounds", "Indices", "State", "SelectedLod", "Instances", "Parameters"];
+    private static readonly string[] LodResources = ["SelectedLod", "Parameters"];
     private static readonly string[] RefitResources = ["Source", "Positions", "Bounds", "State", "Parameters"];
     private static readonly string[] FinalizeResources = ["State", "Parameters"];
     private static readonly string[] CullParameters =
@@ -20,28 +22,36 @@ internal static class WebGpuMeshletProgramContract
         "ModelMatrix", "ViewProjection", "MeshletCount", "SourceTriangleCount", "VertexCount", "IndexCapacity",
         "DescriptorWordOffset", "RemapWordOffset", "RemapCount", "TriangleWordOffset", "TriangleByteCount",
         "PrimitiveWordOffset", "PrimitiveCount", "BoundsWordOffset", "CullEnabled", "UseRefitBounds", "SphereExpansion", "DrawEnabled",
+        "CandidateMeshId", "CandidateLod", "InstanceCount", "InstanceSourceEnabled", "InstanceStrideWords", "InstanceTransformOffsetWords", "InstanceBoundsOffsetWords", "InstanceWordCount",
+    ];
+    private static readonly string[] LodParameters =
+    [
+        "BoundsSphere", "CameraPosition", "ProjectionAndViewport", "Lod0MeshId", "Lod1MeshId", "Lod2MeshId", "Lod3MeshId",
+        "Lod0MinRadius", "Lod1MinRadius", "Lod2MinRadius", "Lod3MinRadius", "LodCount", "CurrentMeshId", "CurrentLod", "Flags",
     ];
     private static readonly string[] RefitParameters =
     [
         "MeshletCount", "VertexCount", "PositionWordCount", "DescriptorWordOffset", "RemapWordOffset", "RemapCount",
         "BoundsWordOffset", "BoundsWordCount", "Reserved0", "Reserved1", "Reserved2", "Reserved3",
     ];
-    private static readonly string[] FinalizeParameters = ["MeshletCount", "IndexCapacity", "SourceTriangleCount", "Reserved0"];
+    private static readonly string[] FinalizeParameters = ["MeshletCount", "IndexCapacity", "SourceTriangleCount", "InstanceCount"];
 
     internal static void Validate(ShaderProgramArtifact artifact, string pass)
     {
         bool cull = pass == "cull-expand";
+        bool lod = pass == "select-lod";
         bool refit = pass == "refit-bounds";
-        if (!cull && !refit && pass != "finalize-indexed")
+        if (!cull && !refit && !lod && pass != "finalize-indexed")
             throw Invalid();
 
-        string name = cull ? "engine-meshlets-cull-expand" : refit ? "engine-meshlets-refit-bounds" : "engine-meshlets-finalize-indexed";
-        string entryPoint = cull ? "meshletsCullExpand" : refit ? "meshletsRefitBounds" : "meshletsFinalizeIndexed";
-        string[] resources = cull ? CullResources : refit ? RefitResources : FinalizeResources;
-        string[] providers = cull ? CullParameters : refit ? RefitParameters : FinalizeParameters;
-        uint uniformSize = cull ? CullParameterByteSize : refit ? RefitParameterByteSize : FinalizeParameterByteSize;
+        string name = lod ? "engine-meshlets-select-lod" : cull ? "engine-meshlets-cull-expand" : refit ? "engine-meshlets-refit-bounds" : "engine-meshlets-finalize-indexed";
+        string entryPoint = lod ? "meshletsSelectLod" : cull ? "meshletsCullExpand" : refit ? "meshletsRefitBounds" : "meshletsFinalizeIndexed";
+        string[] resources = lod ? LodResources : cull ? CullResources : refit ? RefitResources : FinalizeResources;
+        string[] providers = lod ? LodParameters : cull ? CullParameters : refit ? RefitParameters : FinalizeParameters;
+        uint uniformSize = lod ? LodParameterByteSize : cull ? CullParameterByteSize : refit ? RefitParameterByteSize : FinalizeParameterByteSize;
         uint workgroupSize = cull || refit ? 64u : 1u;
         int matrixCount = cull ? 2 : 0;
+        int vectorCount = lod ? 3 : 0;
         int uniformBinding = resources.Length - 1;
 
         if (artifact.DescriptorBytes.IsDefaultOrEmpty || artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.SourceLanguage != "WGSL" ||
@@ -61,7 +71,7 @@ internal static class WebGpuMeshletProgramContract
                 throw Invalid();
             if (binding != uniformBinding)
             {
-                string bindingType = uniformBinding == 4 && binding < 2 ? "read-only-storage" : "storage";
+                string bindingType = (cull || refit) && binding < 2 || cull && binding is 4 or 5 ? "read-only-storage" : "storage";
                 if (resource.BindingType != bindingType || resource.DynamicOffset || !resource.RuntimeArray ||
                     contract.Kind != ShaderAbiResourceKind.StorageBuffer || contract.Frequency != ShaderAbiFrequency.Frame ||
                     contract.ByteSize != 4 || !contract.Members.IsEmpty)
@@ -77,10 +87,13 @@ internal static class WebGpuMeshletProgramContract
             {
                 ShaderAbiMemberContract member = contract.Members[index];
                 bool matrix = index < matrixCount;
-                uint offset = checked((uint)(matrix ? index * 64 : matrixCount * 64 + (index - matrixCount) * 4));
-                string physicalType = matrix ? "mat4x4<f32>" : providers[index] == "SphereExpansion" ? "f32" : "u32";
+                bool vector = index < vectorCount;
+                uint offset = checked((uint)(matrix ? index * 64 : vector ? index * 16 :
+                    matrixCount * 64 + vectorCount * 16 + (index - matrixCount - vectorCount) * 4));
+                string physicalType = matrix ? "mat4x4<f32>" : vector ? "vec4<f32>" :
+                    providers[index] == "SphereExpansion" || lod && index is >= 7 and <= 10 ? "f32" : "u32";
                 if (member.ProviderName != providers[index] || !MatchesPhysicalName(member.PhysicalName, providers[index]) ||
-                    member.Offset != offset || member.Size != (matrix ? 64u : 4u) || member.PhysicalType != physicalType ||
+                    member.Offset != offset || member.Size != (matrix ? 64u : vector ? 16u : 4u) || member.PhysicalType != physicalType ||
                     member.ArrayCount != 0 || member.ArrayStride != 0 || member.CpuFieldName is not null ||
                     member.MatrixOrder != (matrix ? ShaderAbiMatrixOrder.ColumnMajor : ShaderAbiMatrixOrder.None) ||
                     member.MatrixStride != (matrix ? 16u : 0u))
