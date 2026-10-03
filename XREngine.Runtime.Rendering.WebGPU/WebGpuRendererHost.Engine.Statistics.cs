@@ -5,6 +5,17 @@ public sealed partial class WebGpuRendererHost
     private WebGpuEngineFrameStatistics? _engineFrameStatistics;
     private bool _engineFrameStatisticsActive;
 
+    /// <summary>Formats pending shader stages outside successful frame recording.</summary>
+    public string GetPendingEngineProgramStatus()
+    {
+        RequireEngineFrameStatisticsBoundary();
+        System.Text.StringBuilder output = new();
+        foreach (AbstractRenderAPIObject resource in RenderObjectCache.Values)
+            if (resource is WebGpuRenderProgram program)
+                program.AppendPendingPreparation(output);
+        return output.Length == 0 ? "none" : output.ToString();
+    }
+
     /// <summary>Changes allocation/counter capture between frames; storage is allocated only here.</summary>
     public void ConfigureEngineFrameStatistics(bool enabled, bool reset = true)
     {

@@ -181,3 +181,37 @@ Browser builds pass with zero warnings/errors; the full Editor build and its
 final assembly refresh also pass. Independent source review covers packed
 stream bounds/types, interleaved metadata, rich-source precedence, and resource
 revision reuse. These managed checks establish geometry admission, not GPU pixels.
+
+## First physical Advanced frame
+
+The exact published `6c91220f97ab9cc4554de9f38e4812e18c4d0cf1` snapshot passes a
+fresh shader cook, Release Editor build and real Editor browser publication on
+a physical Intel gen-12lp adapter with hardware fallback disabled. Two fresh
+browser startups visibly render the saved checker panel, and both resize runs
+retain the scene. All four inspected captures report four draws, twelve command
+records, no pending draw, no pipeline decline and no resource failure. The
+native visibility-pull draw and native shading dispatch are observed, and the
+NativeOpaqueShading stage reports BackendEnqueueAccepted with presented frames.
+The authored directional/point light intensities 2.2 and 6 are present in the
+uploaded GPU scene. Test-owned processes were closed after capture.
+
+This establishes the saved native scene's first hardware frame and resize path.
+It does not establish precise PBR interpretation: the separate scalar-map and
+surface-factor differences discovered during source review remain open, along
+with native MSAA, deformation, strategy coverage and desktop pixel comparison.
+
+The same snapshot's Linux software adapter still times out in
+[run 37095488264](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37095488264).
+Its retained diagnostics confirm one prepared draw and accepted native
+visibility, depth, AO and classification; only the native shading program
+family remains Pending at the 45-second first-frame deadline. The hardware
+failure no longer reproduces, so software shader-preparation duration and
+readiness are investigated separately. Completion guards and deadlines have
+not been relaxed.
+
+The follow-up cold status snapshot distinguishes each pending shader module from
+its compute pipeline and reports the pending phase's elapsed seconds. It reads
+retained task state only on an explicit status request, without changing
+compilation, frame acceptance, or successful-frame allocation behavior. The
+targeted WebGPU build passes with zero warnings and errors; the next CI run
+qualifies the browser caller and captures the software-only pending phase.

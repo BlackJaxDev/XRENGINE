@@ -126,6 +126,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}; " +
             $"advanced stages={advancedStages}; " +
             $"advanced preparation={advancedPreparation}; " +
+            $"program preparation={_renderer?.GetPendingEngineProgramStatus() ?? "none"}; " +
             $"recovery={_graphicsRecoveryPending}; attempts={_graphicsRecoveryAttempts}; " +
             $"recovery failure={_graphicsRecoveryFailure ?? "none"}.";
     }
