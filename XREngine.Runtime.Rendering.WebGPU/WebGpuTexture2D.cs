@@ -82,7 +82,8 @@ public sealed unsafe partial class WebGpuTexture2D : WebGpuObject<XRTexture2D>, 
         }
 
         int handle = Renderer.CreateTexture(new BrowserTextureDescription(checked((int)Data.Width), checked((int)Data.Height),
-            format, usage, mips.Length, checked((int)Data.MultiSampleCount), Data.Name ?? "Engine texture"));
+            format, usage, mips.Length, checked((int)Data.MultiSampleCount), Data.Name ?? "Engine texture",
+            AllowSrgbView: format == "rgba8unorm" && Data.MultiSampleCount == 1 && !Data.RequiresStorageUsage));
         // Validate and populate a replacement before retiring the active allocation.
         // A failed HDR upload must not invalidate existing views and draw bindings.
         try { UploadMipmaps(handle, Data.Width, Data.Height, Data.MultiSampleCount, Data.SizedInternalFormat, mips); }

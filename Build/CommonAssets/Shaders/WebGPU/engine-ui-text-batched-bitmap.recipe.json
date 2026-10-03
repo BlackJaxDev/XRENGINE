@@ -16,7 +16,7 @@
     "maxVertexBufferArrayStride": 12,
     "maxBindGroups": 3,
     "maxBindingsPerBindGroup": 4,
-    "maxUniformBufferBindingSize": 64,
+    "maxUniformBufferBindingSize": 80,
     "maxDynamicUniformBuffersPerPipelineLayout": 1,
     "maxUniformBuffersPerShaderStage": 1,
     "maxStorageBuffersPerShaderStage": 4,
@@ -29,9 +29,9 @@
   "coordinates": "xrengine.webgpu.coordinates.v1",
   "materialVariant": {
     "semantic": "UITextBatchedBitmap",
-    "semanticVersion": 1,
+    "semanticVersion": 2,
     "vertexProfile": "instanced-ui-bitmap-text-v1",
-    "outputProfile": "display-rgba-v1"
+    "outputProfile": "canvas-rgba-v2"
   },
   "layout": {
     "vertexBuffers": [
@@ -42,10 +42,11 @@
     "bindings": [
       {
         "name": "View", "physicalName": "view_0", "group": 0, "binding": 0,
-        "kind": "uniform", "visibility": ["vertex"], "owner": "Engine", "frequency": "View",
-        "bytes": 64, "dynamic": true,
+        "kind": "uniform", "visibility": ["vertex", "fragment"], "owner": "Engine", "frequency": "View",
+        "bytes": 80, "dynamic": true,
         "members": [
-          { "name": "viewProjection_0", "provider": "ViewProjection", "offset": 0, "bytes": 64, "type": "mat4x4<f32>" }
+          { "name": "viewProjection_0", "provider": "ViewProjection", "offset": 0, "bytes": 64, "type": "mat4x4<f32>" },
+          { "name": "outputMode_0", "provider": "UIOutputMode", "offset": 64, "bytes": 16, "type": "vec4<f32>" }
         ]
       },
       {

@@ -39,6 +39,18 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 
     public static EngineMaterialSemanticIdentity UITextBatchedBitmapV1 => new(EngineMaterialSemantic.UITextBatchedBitmap, 1);
 
+    /// <summary>Batched quads with explicit display or premultiplied linear canvas output.</summary>
+    public static EngineMaterialSemanticIdentity UIQuadBatchedV2 => new(EngineMaterialSemantic.UIQuadBatched, 2);
+
+    /// <summary>Batched image quads with explicit display or premultiplied linear canvas output.</summary>
+    public static EngineMaterialSemanticIdentity UIQuadBatchedTextureV2 => new(EngineMaterialSemantic.UIQuadBatchedTexture, 2);
+
+    /// <summary>Batched bitmap glyphs with explicit display or premultiplied linear canvas output.</summary>
+    public static EngineMaterialSemanticIdentity UITextBatchedBitmapV2 => new(EngineMaterialSemantic.UITextBatchedBitmap, 2);
+
+    /// <summary>Premultiplied linear canvas texture composited onto an authored scene surface.</summary>
+    public static EngineMaterialSemanticIdentity UICanvasSurfaceV1 => new(EngineMaterialSemantic.UICanvasSurface, 1);
+
     public static EngineMaterialSemanticIdentity SkyboxGradientV1 => new(EngineMaterialSemantic.SkyboxGradient, 1);
     public static EngineMaterialSemanticIdentity SkyboxEquirectangularV1 => new(EngineMaterialSemantic.SkyboxEquirectangular, 1);
     public static EngineMaterialSemanticIdentity SkyboxOctahedralV1 => new(EngineMaterialSemantic.SkyboxOctahedral, 1);
@@ -69,7 +81,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
             return;
         if (Semantic is EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle && Version == 1)
             return;
-        if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap && Version == 1)
+        if (Semantic is EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap && Version is 1 or 2)
+            return;
+        if (Semantic == EngineMaterialSemantic.UICanvasSurface && Version == 1)
             return;
         if (IsSkybox())
             return;

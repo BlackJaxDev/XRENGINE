@@ -6,6 +6,7 @@ using XREngine.Data.Core;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI
@@ -39,7 +40,7 @@ namespace XREngine.Rendering.UI
             };
         }
 
-        /// <summary>Creates the shared tinted image material for desktop and cooked screen UI.</summary>
+        /// <summary>Creates the shared tinted image material for desktop and cooked canvas UI.</summary>
         public static XRMaterial CreateImageMaterial(XRTexture2D texture, Vector4 tint)
         {
             ArgumentNullException.ThrowIfNull(texture);
@@ -53,8 +54,24 @@ namespace XREngine.Rendering.UI
             return new XRMaterial([new ShaderVector4(tint, "MatColor")], [texture], shaders)
             {
                 RenderPass = (int)EDefaultRenderPass.TransparentForward,
-                EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1
+                EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1,
+                SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture,
+                    IsSrgb: texture.ImportedColorSpace == ETextureColorSpace.Srgb,
+                    WrapU: texture.UWrap, WrapV: texture.VWrap)]
             };
+        }
+
+        /// <summary>Resolves image encoding from material metadata retained alongside the cooked texture payload.</summary>
+        public static bool UsesSrgbImage(XRMaterial material, XRTexture2D image)
+        {
+            MaterialSurfaceTextureBinding[] bindings = material.SurfaceTextureBindings;
+            for (int index = 0; index < bindings.Length; index++)
+            {
+                MaterialSurfaceTextureBinding binding = bindings[index];
+                if (binding.Semantic == EMaterialTextureSemantic.BaseColor && ReferenceEquals(binding.Texture, image))
+                    return binding.IsSrgb;
+            }
+            return image.ImportedColorSpace == ETextureColorSpace.Srgb;
         }
 
         /// <summary>Checks that an authored desktop stage is exactly the engine's image shader.</summary>
@@ -78,7 +95,7 @@ namespace XREngine.Rendering.UI
             if (texture.MultiSampleCount != 1 || texture.Width == 0 || texture.Height == 0 ||
                 texture.Mipmaps.Length == 0 || texture.AutoGenerateMipmaps ||
                 texture.SizedInternalFormat != ESizedInternalFormat.Rgba8)
-                reason = "the image must be a single-sample, display-space RGBA8 texture with explicit mips";
+                reason = "the image must be a single-sample RGBA8 texture with explicit mips";
             else if (texture.EnableComparison || texture.SamplerName is not (null or "Texture0") || texture.LodBias != 0 ||
                 texture.UWrap is not (ETexWrapMode.Repeat or ETexWrapMode.MirroredRepeat or ETexWrapMode.ClampToEdge) ||
                 texture.VWrap is not (ETexWrapMode.Repeat or ETexWrapMode.MirroredRepeat or ETexWrapMode.ClampToEdge) ||
@@ -296,7 +313,9 @@ namespace XREngine.Rendering.UI
                     (!ClipToBounds || UseWebGpuBatchOnly) &&
                     (material?.Textures is null || material.Textures.Count == 0 ||
                      UseWebGpuBatchOnly && material.Textures.Count == 1 &&
-                     material.Textures[0] is XRTexture2D image && TryGetWebGpuImageProfile(image, out _)) &&
+                     material.Textures[0] is XRTexture2D image && TryGetWebGpuImageProfile(image, out _) &&
+                     (BoundableTransform.GetCanvasTransform() is not { DrawSpace: not ECanvasDrawSpace.Screen } ||
+                      !image.RequiresStorageUsage || !UsesSrgbImage(material, image))) &&
                     (!UseWebGpuBatchOnly ||
                      material is not null &&
                      (material.Textures.Count == 0
@@ -327,7 +346,7 @@ namespace XREngine.Rendering.UI
                 1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
             collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds,
                 UIClipRegion.ResolveCrop(tfm, ClipToBounds),
-                texture, uv);
+                texture, uv, imageSrgb: texture is not null && Material is not null && UsesSrgbImage(Material, texture));
             return true;
         }
 

@@ -1,6 +1,5 @@
 // Textured screen UI uses the shared collector's row-major instance matrices.
-struct UIView { float4x4 viewProjection; };
-[[vk::binding(0, 0)]] ConstantBuffer<UIView> view;
+#include "UIOutput.slang"
 [[vk::binding(0, 1)]] StructuredBuffer<float4> quadTransforms;
 [[vk::binding(1, 1)]] StructuredBuffer<float4> quadColors;
 [[vk::binding(2, 1)]] StructuredBuffer<float4> quadBounds;
@@ -42,5 +41,11 @@ float4 uiQuadTextureFragment(UIQuadTextureOutput input) : SV_Target0
 {
     if (any(isnan(input.bounds)))
         discard;
-    return imageTexture.Sample(imageSampler, input.uv) * input.color;
+    float4 image = imageTexture.Sample(imageSampler, input.uv);
+    if (!uiLinearOffscreenOutput())
+        return image * input.color;
+    float alpha = saturate(image.a * input.color.a);
+    // The offscreen binding preserves linear images or selects the retained sRGB
+    // view to decode display texels before filtering. Tint still needs decoding.
+    return float4(image.rgb * uiDisplayToLinear(input.color.rgb) * alpha, alpha);
 }

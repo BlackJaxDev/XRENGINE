@@ -45,7 +45,10 @@ public sealed partial class AdvancedGpuDeformationResources
             _controlBuffers[_currentFrameSlot].Write(0, _controlScratch.AsSpan(0, jobs.Length));
     }
 
-    /// <summary>Returns canonical CPU-authored input storage and exact used bytes without mapping GPU output.</summary>
+    /// <summary>
+    /// Returns canonical CPU input storage and exact used bytes without mapping GPU output.
+    /// Palette ranges covered by the publication's GPU copies have no authoritative CPU image.
+    /// </summary>
     public XRDataBuffer GetPackedInputSection(int section, out uint byteLength)
     {
         if (!UsesPackedAggregateInputs)

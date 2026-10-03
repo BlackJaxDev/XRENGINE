@@ -146,9 +146,10 @@ public static partial class BrowserContentPackageBuilder
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
                 string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "OpaqueShadowDepth",
-                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
+                    "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "UICanvasSurface", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
                     "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
-                int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1);
+                int maximumSemanticVersion = semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" ? 2 : 1;
+                int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, maximumSemanticVersion);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
@@ -197,8 +198,12 @@ public static partial class BrowserContentPackageBuilder
                     _ => null,
                 };
                 if (uiProfile is not null)
-                    Require(pass == "screen-ui" && vertexProfile == uiProfile && outputProfile == "display-rgba-v1",
-                        "Screen UI requires its exact batched pass and profiles.");
+                    Require(pass == "screen-ui" && vertexProfile == uiProfile &&
+                        outputProfile == (semanticVersion == 2 ? "canvas-rgba-v2" : "display-rgba-v1"),
+                        "Screen UI requires its exact versioned output profile and batched pass.");
+                if (semantic == "UICanvasSurface")
+                    Require(pass == "canvas-composite" && vertexProfile == "position-uv-v1" && outputProfile == "linear-hdr-premultiplied-rgba-v1",
+                        "Canvas surfaces require their exact composite pass and profiles.");
                 string? descriptorIdentity = variant.GetProperty("descriptorIdentity").GetString();
                 Require(descriptorIdentity is not null && Regex.IsMatch(descriptorIdentity, "^[0-9a-f]{64}\\z", RegexOptions.CultureInvariant),
                     "Material variant references an absent shader descriptor.");
@@ -215,6 +220,14 @@ public static partial class BrowserContentPackageBuilder
                     Require(entries.GetProperty("vertex").GetString() == "depthVertex",
                         "Opaque shadow depth requires a vertex-only depth entry point.");
                 }
+                if (semantic == "UICanvasSurface")
+                {
+                    JsonElement entries = descriptor.GetProperty("entryPoints");
+                    Members(entries, "vertex", "fragment");
+                    Require(entries.GetProperty("vertex").GetString() == "canvasSurfaceVertex" &&
+                        entries.GetProperty("fragment").GetString() == "canvasSurfaceFragment",
+                        "Canvas surfaces require their exact vertex and fragment entry points.");
+                }
                 if (semantic is "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or "SkyboxGradient" or "SkyboxEquirectangular" or
                     "SkyboxOctahedral" or "SkyboxCubemap" or "SkyboxDynamicProcedural")
                 {
@@ -227,7 +240,7 @@ public static partial class BrowserContentPackageBuilder
                     "Material variant is absent from its hash-owned shader descriptor.");
                 Members(declaration, "semantic", "semanticVersion", "vertexProfile", "outputProfile");
                 Require(declaration.GetProperty("semantic").GetString() == semantic
-                    && Integer(declaration.GetProperty("semanticVersion"), 1, semantic == "StandardLitColor" ? 2 : 1) == semanticVersion
+                    && Integer(declaration.GetProperty("semanticVersion"), 1, maximumSemanticVersion) == semanticVersion
                     && declaration.GetProperty("vertexProfile").GetString() == vertexProfile
                     && declaration.GetProperty("outputProfile").GetString() == outputProfile,
                     "Material variant differs from its hash-owned shader descriptor.");

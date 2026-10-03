@@ -5,6 +5,7 @@ using System.Diagnostics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI;
@@ -121,12 +122,14 @@ public sealed class UIBatchCollector : IDisposable
     {
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Texture;
+        public bool ImageSrgb;
         public readonly List<MaterialQuadEntry> Entries = [];
 
         public void Clear()
         {
             CropRegion = null;
             Texture = null;
+            ImageSrgb = false;
             Entries.Clear();
         }
     }
@@ -174,6 +177,7 @@ public sealed class UIBatchCollector : IDisposable
         public EBatchMarkerKind? ActiveKind;
         public BoundingRectangle? ActiveCropRegion;
         public XRTexture2D? ActiveMaterialTexture;
+        public bool ActiveMaterialImageSrgb;
         public XRTexture2D? ActiveTextAtlas;
         public int ActiveTextAtlasType;
         public float ActiveTextDistanceRange;
@@ -187,6 +191,7 @@ public sealed class UIBatchCollector : IDisposable
             ActiveKind = null;
             ActiveCropRegion = null;
             ActiveMaterialTexture = null;
+            ActiveMaterialImageSrgb = false;
             ActiveTextAtlas = null;
             ActiveTextAtlasType = TextAtlasBitmap;
             ActiveTextDistanceRange = 0.0f;
@@ -295,8 +300,8 @@ public sealed class UIBatchCollector : IDisposable
     private XRDataBuffer<Vector4>? _matQuadColorBuf;      // binding 1: vec4 per instance
     private XRDataBuffer<Vector4>? _matQuadBoundsBuf;     // binding 2: vec4 per instance
     private XRDataBuffer<Vector4>? _matQuadUvBuf;         // textured binding 3: UV rectangle per instance
-    private readonly Dictionary<XRTexture2D, XRMeshRenderer> _materialTextureMeshes = [];
-    private readonly List<XRTexture2D> _staleMaterialTextures = [];
+    private readonly Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
+    private readonly List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
     private uint _matQuadCapacity;
     private bool _matQuadNeedsPush;
@@ -385,7 +390,8 @@ public sealed class UIBatchCollector : IDisposable
         in Vector4 uixywh,
         BoundingRectangle? cropRegion = null,
         XRTexture2D? texture = null,
-        Vector4 uv = default)
+        Vector4 uv = default,
+        bool imageSrgb = false)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
@@ -393,6 +399,7 @@ public sealed class UIBatchCollector : IDisposable
         MaterialQuadBatchData batch;
         if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveCropRegion == cropRegion &&
             ReferenceEquals(state.ActiveMaterialTexture, texture) &&
+            state.ActiveMaterialImageSrgb == imageSrgb &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -403,9 +410,11 @@ public sealed class UIBatchCollector : IDisposable
             batch.Clear();
             batch.CropRegion = cropRegion;
             batch.Texture = texture;
+            batch.ImageSrgb = imageSrgb;
             state.ActiveKind = EBatchMarkerKind.Material;
             state.ActiveCropRegion = cropRegion;
             state.ActiveMaterialTexture = texture;
+            state.ActiveMaterialImageSrgb = imageSrgb;
             state.ActiveTextAtlas = null;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
@@ -656,7 +665,7 @@ public sealed class UIBatchCollector : IDisposable
             }
         };
         if (webGpu)
-            material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV1;
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV2;
 
         _matQuadMesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
@@ -729,18 +738,19 @@ public sealed class UIBatchCollector : IDisposable
         }
     }
 
-    private XRMeshRenderer EnsureMaterialTextureMesh(XRTexture2D texture)
+    private XRMeshRenderer EnsureMaterialTextureMesh(XRTexture2D texture, bool srgb)
     {
-        if (_materialTextureMeshes.TryGetValue(texture, out XRMeshRenderer? existing))
+        var key = (texture, srgb);
+        if (_materialTextureMeshes.TryGetValue(key, out XRMeshRenderer? existing))
             return existing;
 
         // Old image materials are retired on the render thread. They borrow the
         // image resource, so replacement must not destroy the authored texture.
         _staleMaterialTextures.Clear();
-        foreach (XRTexture2D cached in _materialTextureMeshes.Keys)
+        foreach (var cached in _materialTextureMeshes.Keys)
             if (!IsCurrentMaterialTexture(cached))
                 _staleMaterialTextures.Add(cached);
-        foreach (XRTexture2D stale in _staleMaterialTextures)
+        foreach (var stale in _staleMaterialTextures)
         {
             XRMeshRenderer retired = _materialTextureMeshes[stale];
             XRMaterial? retiredMaterial = retired.Material;
@@ -749,12 +759,13 @@ public sealed class UIBatchCollector : IDisposable
             _materialTextureMeshes.Remove(stale);
         }
         if (_materialTextureMeshes.Count >= MaxMaterialTextureMeshes)
-            throw new NotSupportedException("WebGPU.UI.ImageTextureBudgetExceeded: at most 64 distinct image textures may be visible in one frame.");
+            throw new NotSupportedException("WebGPU.UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
 
         EnsureMaterialQuadMesh();
         XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], Array.Empty<XRShader>())
         {
             Name = "UIBatchMaterialTexture",
+            SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture, IsSrgb: srgb)],
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
             RenderOptions = new RenderingParameters
             {
@@ -769,7 +780,7 @@ public sealed class UIBatchCollector : IDisposable
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
-        material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1;
+        material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
         XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
         {
             Name = "UIBatchMaterialTextureRenderer",
@@ -782,15 +793,15 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
         DisableShaderPipelines(mesh);
         mesh.EnsureRenderPipelineVersionsCreated();
-        _materialTextureMeshes.Add(texture, mesh);
+        _materialTextureMeshes.Add(key, mesh);
         return mesh;
     }
 
-    private bool IsCurrentMaterialTexture(XRTexture2D texture)
+    private bool IsCurrentMaterialTexture((XRTexture2D Texture, bool Srgb) key)
     {
         foreach (BatchPool<MaterialQuadBatchData> groups in _renderMaterialGroups.Values)
             for (int index = 0; index < groups.Count; index++)
-                if (ReferenceEquals(groups[index].Texture, texture))
+                if (ReferenceEquals(groups[index].Texture, key.Texture) && groups[index].ImageSrgb == key.Srgb)
                     return true;
         return false;
     }
@@ -899,7 +910,7 @@ public sealed class UIBatchCollector : IDisposable
             }
         };
         if (webGpu)
-            material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV1;
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV2;
 
         gpu.Mesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
@@ -1068,7 +1079,7 @@ public sealed class UIBatchCollector : IDisposable
         }
 
         XRMeshRenderer materialQuadMesh = batch.Texture is { } texture
-            ? EnsureMaterialTextureMesh(texture) : _matQuadMesh!;
+            ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
 
         var version = GetImmediateRenderVersion(materialQuadMesh);
         bool prepared;

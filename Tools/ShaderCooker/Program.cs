@@ -199,10 +199,11 @@ internal static class Program
                 string semantic = String(variant, "semantic");
                 int semanticVersion = Integer(variant, "semanticVersion");
                 Require(semantic is "StandardLitColor" or "StandardLitTexture" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
-                    "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
+                    "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" or "UICanvasSurface" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
                     "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
                     "SkyboxCubemap" or "SkyboxDynamicProcedural"
-                    && (semanticVersion == 1 || semantic == "StandardLitColor" && semanticVersion == 2),
+                    && (semanticVersion == 1 || semanticVersion == 2 &&
+                        semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap"),
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
                 if (semantic is "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
@@ -243,8 +244,13 @@ internal static class Program
                 };
                 if (uiProfile is not null)
                     Require(String(recipe, "pass") == "screen-ui" && vertexProfile == uiProfile &&
-                        outputProfile == "display-rgba-v1",
-                        $"{stageContext}: screen UI requires its exact display pass and profiles.");
+                        outputProfile == (semanticVersion == 2 ? "canvas-rgba-v2" : "display-rgba-v1"),
+                        $"{stageContext}: screen UI requires its exact versioned output profile and batched pass.");
+                if (semantic == "UICanvasSurface")
+                    Require(String(recipe, "pass") == "canvas-composite" && vertexProfile == "position-uv-v1" &&
+                        outputProfile == "linear-hdr-premultiplied-rgba-v1" &&
+                        engineLayout.VertexEntryPoint == "canvasSurfaceVertex" && engineLayout.FragmentEntryPoint == "canvasSurfaceFragment",
+                        $"{stageContext}: canvas surfaces require their exact composite pass, profiles, and entry points.");
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");

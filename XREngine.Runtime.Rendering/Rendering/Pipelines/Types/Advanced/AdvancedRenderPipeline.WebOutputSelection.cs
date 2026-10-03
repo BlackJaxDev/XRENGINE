@@ -38,6 +38,7 @@ public partial class AdvancedRenderPipeline
 
     private void DescribeAdvancedWebPostRequirements(RenderPipelineRequirements requirements)
     {
+        requirements.ScenePasses.Add((int)EDefaultRenderPass.PreRender);
         requirements.RequireOperation("fullscreen-quad");
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Fxaa);
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Smaa);

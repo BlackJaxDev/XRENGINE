@@ -103,15 +103,16 @@ namespace XREngine.Components
 
         private void EnsureOffscreenResourcesInitialized()
         {
-            if (OperatingSystem.IsBrowser() || AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU ||
-                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            EnsureWorldSpaceRenderInfoInitialized();
+            bool webGpu = OperatingSystem.IsBrowser() || AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU ||
+                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked;
+            if (webGpu)
             {
-                if (CanvasDrawSpaceOrDefault != ECanvasDrawSpace.Screen)
-                    throw new NotSupportedException("WebGPU.UI.CanvasSpaceUnsupported: the cooked UI profile admits screen-space canvases only.");
-                // A screen canvas has no world quad. Do not construct its desktop-only
-                // offscreen material or register an unused scene object on browser startup.
-                SetField(ref _renderedObjects, Array.Empty<RenderInfo>());
-                return;
+                ValidateWebGpuProfile();
+                // Keep registration stable for a later draw-space change without
+                // allocating an unused texture, material or mesh for screen UI.
+                if (CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen)
+                    return;
             }
             if (_offscreenFbo is not null)
                 return;
@@ -119,22 +120,43 @@ namespace XREngine.Components
             var offscreenTexture = XRTexture2D.CreateFrameBufferTexture(
                 1u,
                 1u,
-                EPixelInternalFormat.Rgba8,
+                webGpu ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
                 EPixelFormat.Rgba,
-                EPixelType.UnsignedByte,
+                webGpu ? EPixelType.HalfFloat : EPixelType.UnsignedByte,
                 EFrameBufferAttachment.ColorAttachment0);
             SetField(ref _ownedOffscreenTexture, offscreenTexture);
 
-            _offscreenMaterial = XRMaterial.CreateUnlitTextureMaterialForward(offscreenTexture);
-            _offscreenMaterial.EnableTransparency();
-            _offscreenMaterial.RenderOptions.CullMode = ECullMode.None;
+            XRMaterial offscreenMaterial;
+            if (webGpu)
+            {
+                offscreenTexture.MinFilter = ETexMinFilter.Linear;
+                offscreenTexture.MagFilter = ETexMagFilter.Linear;
+                offscreenMaterial = UICanvasSurfaceMaterial.Create(offscreenTexture);
+            }
+            else
+            {
+                offscreenMaterial = XRMaterial.CreateUnlitTextureMaterialForward(offscreenTexture);
+                offscreenMaterial.EnableTransparency();
+            }
+            offscreenMaterial.RenderOptions.CullMode = ECullMode.None;
+            SetField(ref _offscreenMaterial, offscreenMaterial);
 
             var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
-            var quadRenderer = new XRMeshRenderer(quadMesh, _offscreenMaterial);
+            var quadRenderer = new XRMeshRenderer(quadMesh, offscreenMaterial);
             SetField(ref _ownedOffscreenMesh, quadMesh);
             SetField(ref _ownedOffscreenRenderer, quadRenderer);
 
-            _worldSpaceQuadCommand = new RenderCommandMesh3D((int)EDefaultRenderPass.TransparentForward, quadRenderer, Matrix4x4.Identity);
+            _worldSpaceQuadCommand!.Mesh = quadRenderer;
+
+            SetField(ref _offscreenFbo, new XRMaterialFrameBuffer(offscreenMaterial));
+        }
+
+        private void EnsureWorldSpaceRenderInfoInitialized()
+        {
+            if (_worldSpaceQuadRenderInfo is not null)
+                return;
+
+            _worldSpaceQuadCommand = new RenderCommandMesh3D(EDefaultRenderPass.TransparentForward);
             _worldSpacePreRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, RenderNonScreenCanvasToTexture);
             _worldSpaceQuadRenderInfo = RenderInfo3D.New(this, _worldSpaceQuadCommand, _worldSpacePreRenderCommand);
             _worldSpaceQuadRenderInfo.PreCollectCommandsCallback = ShouldRenderWorldSpaceQuad;
@@ -142,9 +164,16 @@ namespace XREngine.Components
             _worldSpaceQuadRenderInfo.ReceivesShadows = false;
             _worldSpaceQuadRenderInfo.VisibleInLightingProbes = false;
 
-            _offscreenFbo = new XRMaterialFrameBuffer(_offscreenMaterial);
+            SetField(ref _renderedObjects, [_worldSpaceQuadRenderInfo]);
+        }
 
-            _renderedObjects = [_worldSpaceQuadRenderInfo];
+        /// <summary>Checks the canvas route implemented by the cooked WebGPU UI family.</summary>
+        public void ValidateWebGpuProfile()
+        {
+            if (StrictOneByOneRenderCalls)
+                throw new NotSupportedException("WebGPU.UI.UnbatchedUnsupported: the cooked canvas requires the shared UI batch collector.");
+            if (CanvasDrawSpaceOrDefault != ECanvasDrawSpace.Screen && !UseOffscreenRenderingForNonScreenSpaces())
+                throw new NotSupportedException("WebGPU.UI.DirectCanvasUnsupported: camera/world canvases require their owned offscreen target; direct and viewport-backdrop canvas paths are not admitted.");
         }
 
         private bool _strictOneByOneRenderCalls = false;
@@ -912,6 +941,38 @@ namespace XREngine.Components
             if (_worldSpaceQuadCommand is null || _worldSpaceQuadRenderInfo is null)
                 return;
 
+            Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
+            float width = size.X;
+            float height = size.Y;
+            _worldSpaceQuadCommand.WorldMatrix = Matrix4x4.CreateScale(width, height, 1.0f) * world;
+
+            _worldSpaceQuadRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(width, height, 0.05f));
+            _worldSpaceQuadRenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(width * 0.5f, height * 0.5f, 0.0f) * world;
+        }
+
+        /// <summary>
+        /// Resolves the inverse of the displayed canvas placement, including automatic world/camera placement.
+        /// Pointer rays use this same mapping as the composited world quad.
+        /// </summary>
+        public bool TryGetWorldToCanvasMatrix(out Matrix4x4 worldToCanvas)
+            => TryGetWorldToCanvasMatrix(out worldToCanvas, out _);
+
+        /// <summary>Also returns the resolved local extent used by the displayed canvas quad.</summary>
+        public bool TryGetWorldToCanvasMatrix(out Matrix4x4 worldToCanvas, out Vector2 canvasSize)
+        {
+            Matrix4x4 canvasToWorld;
+            if (UseOffscreenRenderingForNonScreenSpaces())
+                canvasToWorld = GetWorldSpaceCanvasMatrix(out canvasSize);
+            else
+            {
+                canvasToWorld = CanvasTransform.WorldMatrix;
+                canvasSize = CanvasTransform.ActualSize;
+            }
+            return Matrix4x4.Invert(canvasToWorld, out worldToCanvas);
+        }
+
+        private Matrix4x4 GetWorldSpaceCanvasMatrix(out Vector2 size)
+        {
             var tfm = CanvasTransform;
             var bounds = tfm.GetActualBounds();
             if (bounds.Width <= 1.0f || bounds.Height <= 1.0f)
@@ -925,11 +986,8 @@ namespace XREngine.Components
                 height = 1080.0f;
             }
 
-            var world = ResolveWorldSpaceCanvasMatrix(tfm, width, height);
-            _worldSpaceQuadCommand.WorldMatrix = Matrix4x4.CreateScale(width, height, 1.0f) * world;
-
-            _worldSpaceQuadRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(width, height, 0.05f));
-            _worldSpaceQuadRenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(width * 0.5f, height * 0.5f, 0.0f) * world;
+            size = new Vector2(width, height);
+            return ResolveWorldSpaceCanvasMatrix(tfm, width, height);
         }
 
         private Matrix4x4 ResolveWorldSpaceCanvasMatrix(UICanvasTransform transform, float width, float height)
@@ -946,7 +1004,7 @@ namespace XREngine.Components
                         csCameraRight * (width * 0.5f) -
                         csCameraUp * (height * 0.5f);
 
-                    return Matrix4x4.CreateWorld(csBottomLeft, -csCameraForward, csCameraUp);
+                    return Matrix4x4.CreateWorld(csBottomLeft, csCameraForward, csCameraUp);
                 }
 
                 return world;
@@ -967,7 +1025,7 @@ namespace XREngine.Components
                 cameraRight * (width * 0.5f) -
                 cameraUp * (height * 0.5f);
 
-            return Matrix4x4.CreateWorld(bottomLeft, -cameraForward, cameraUp);
+            return Matrix4x4.CreateWorld(bottomLeft, cameraForward, cameraUp);
         }
 
         private static bool TryGetCameraSpaceBasis(UICanvasTransform transform, out Vector3 position, out Vector3 forward, out Vector3 up, out Vector3 right)

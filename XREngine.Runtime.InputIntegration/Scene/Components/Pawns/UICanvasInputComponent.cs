@@ -427,6 +427,11 @@ namespace XREngine.Components
 
         private static Vector2? GetUICoordinate(XRViewport worldVP, XRCamera? inputCamera, Vector2 normCoord, UICanvasTransform canvasTransform, ECanvasDrawSpace space)
         {
+            Matrix4x4 worldToCanvas = canvasTransform.InverseWorldMatrix;
+            Vector2 canvasSize = canvasTransform.ActualSize;
+            if (space != ECanvasDrawSpace.Screen && canvasTransform.GetCanvasComponent() is { } canvas &&
+                !canvas.TryGetWorldToCanvasMatrix(out worldToCanvas, out canvasSize))
+                return null;
             Vector2? uiCoord;
             //Convert to ui coord depending on the draw space
             switch (space)
@@ -440,29 +445,22 @@ namespace XREngine.Components
                         break;
                     }
                 case ECanvasDrawSpace.Camera:
-                    {
-                        var camera = inputCamera ?? canvasTransform.CameraSpaceCamera ?? worldVP.ActiveCamera;
-                        if (camera is null)
-                            return null;
-                        //Convert the normalized coord to world space using the draw distance
-                        Vector3 worldCoord = camera.NormalizedViewportToWorldCoordinate(
-                            normCoord,
-                            XRMath.DistanceToDepth(
-                                canvasTransform.CameraDrawSpaceDistance,
-                                camera.NearZ,
-                                camera.FarZ,
-                                camera.IsReversedDepth));
-
-                        //Transform the world coord to the canvas' local space
-                        Matrix4x4 worldToLocal = canvasTransform.InverseWorldMatrix;
-                        uiCoord = Vector3.Transform(worldCoord, worldToLocal).XY();
-                        break;
-                    }
                 case ECanvasDrawSpace.World:
                     {
-                        // Get the world segment from the normalized coord
-                        // Transform the world segment to the canvas' local space
-                        Segment localSegment = worldVP.GetWorldSegment(normCoord).TransformedBy(canvasTransform.InverseWorldMatrix);
+                        Segment worldSegment;
+                        if (space == ECanvasDrawSpace.Camera)
+                        {
+                            var camera = inputCamera ?? canvasTransform.CameraSpaceCamera ?? worldVP.ActiveCamera;
+                            if (camera is null)
+                                return null;
+                            worldSegment = camera.GetWorldSegment(normCoord);
+                        }
+                        else
+                            worldSegment = worldVP.GetWorldSegment(normCoord);
+
+                        // Intersect the displayed plane instead of assuming its depth;
+                        // camera placement may clamp the authored draw distance.
+                        Segment localSegment = worldSegment.TransformedBy(worldToCanvas);
 
                         // Check if the segment intersects the canvas' plane
                         if (GeoUtil.Intersect.SegmentWithPlane(
@@ -473,7 +471,7 @@ namespace XREngine.Components
                             out Vector3 localIntersectionPoint))
                         {
                             // Check if the point is within the canvas' bounds
-                            var bounds = new BoundingRectangleF(Vector2.Zero, canvasTransform.ActualSize);
+                            var bounds = new BoundingRectangleF(Vector2.Zero, canvasSize);
                             Vector2 point = localIntersectionPoint.XY();
                             uiCoord = bounds.Contains(point) ? point : null;
                         }

@@ -3,15 +3,18 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Shaders.Generation;
+using XREngine.Rendering.UI;
+using System.Numerics;
 using System.Text.RegularExpressions;
 
 namespace XREngine.Editor.Publishing;
 
 /// <summary>
-/// Projects built-in or exact-companion authored lit textures while the browser serializer
+/// Projects built-in UI images and built-in or exact-companion authored lit textures while the browser serializer
 /// walks an ordinary engine world. Authored objects remain borrowed and are never rewritten.
 /// </summary>
 internal sealed class BrowserMaterialCookProjection : IDisposable
@@ -34,8 +37,10 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
     private object? Project(object? value)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial)
+        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial or PublishedUiImageMaterial)
             return value;
+        if (source.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1)
+            return ProjectUiImage(source);
         if (source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
             return ProjectAuthored(source);
         if (source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1)
@@ -71,6 +76,60 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
             copy.EngineSemantic = source.EngineSemantic;
             if (!StandardLitTextureSurfaceBinding.TryCreate(copy, out _, out reason))
                 throw new InvalidDataException($"BrowserCook.TexturedProjectionMismatch: '{source.Name}': {reason}");
+            _copies.Add(source, copy);
+            return copy;
+        }
+        catch
+        {
+            Release(copy);
+            throw;
+        }
+    }
+
+    private XRMaterial ProjectUiImage(XRMaterial source)
+    {
+        if (_copies.TryGetValue(source, out XRMaterial? existing)) return existing;
+        if (source.GetType() != typeof(XRMaterial) || source.Parameters.Length != 1 ||
+            source.Parameters[0] is not ShaderVector4 { Name: "MatColor" } ||
+            source.Textures.Count != 1 || source.Textures[0] is not XRTexture2D image ||
+            image.GetType() != typeof(XRTexture2D))
+            throw new NotSupportedException($"BrowserCook.UiImageProjectionUnsupported: '{source.Name}' requires the exact built-in image material with MatColor and one XRTexture2D.");
+        if (!UIMaterialComponent.TryGetWebGpuImageProfile(image, out string? reason))
+            throw new NotSupportedException($"BrowserCook.UiImageProjectionUnsupported: '{source.Name}': {reason}.");
+        _ = PublishedStandardLitTextureSettings.Capture(image);
+        if (source.SurfaceTextureBindings.Length > 1 ||
+            source.SurfaceTextureBindings.Length == 1 &&
+            (source.SurfaceTextureBindings[0] is not { Semantic: EMaterialTextureSemantic.BaseColor, Texture: XRTexture2D boundImage } binding ||
+             !EquivalentTexture(image, boundImage) || binding.TexCoordSet != 0 || binding.Channel != 0 ||
+             binding.UvScaleOffset != new Vector4(1, 1, 0, 0) || binding.UvRotation != 0))
+            throw new NotSupportedException($"BrowserCook.UiImageBindingUnsupported: '{source.Name}' requires one canonical BaseColor image binding when metadata is present.");
+        if (source.Shaders.Count != 0) VerifyImageStage(source);
+
+        // The bounded carrier adds the existing shared settings record without
+        // rewriting the borrowed image or the general texture payload. Material
+        // role encoding remains separate from the image's importer metadata.
+        using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+        using IDisposable cache = XRObjectBase.SuppressObjectCacheRegistration();
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(EngineMaterialConstructionTarget.WebGpuCooked);
+        XRMaterial copy = new PublishedUiImageMaterial();
+        try
+        {
+            copy.AdoptPersistentID(source.ID);
+            copy.Name = source.Name;
+            copy.Parameters = source.Parameters;
+            copy.Textures = [image];
+            copy.SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, image,
+                // Distinct YAML occurrences may be joined only after EquivalentTexture
+                // above proved identical persistent identity, pixels and all settings.
+                IsSrgb: source.SurfaceTextureBindings.Length == 1 ? source.SurfaceTextureBindings[0].IsSrgb :
+                    image.ImportedColorSpace == ETextureColorSpace.Srgb,
+                // UI sampling is image-owned; authored metadata may predate a
+                // later sampler edit and is recanonicalized to the actual image.
+                WrapU: image.UWrap, WrapV: image.VWrap)];
+            copy.RenderOptions = source.RenderOptions;
+            copy.RenderPass = source.RenderPass;
+            copy.TransparentSortPriority = source.TransparentSortPriority;
+            copy.EngineSemantic = source.EngineSemantic;
             _copies.Add(source, copy);
             return copy;
         }
@@ -213,6 +272,31 @@ internal sealed class BrowserMaterialCookProjection : IDisposable
         }
         if (!string.Equals(shader.Source?.Text, canonical, StringComparison.Ordinal))
             throw new NotSupportedException($"BrowserCook.AuthoredLitColorStageUnsupported: '{material.Name}' desktop GLSL source differs from the engine PBR fragment.");
+        VerifySnippets(material, shader, canonical);
+    }
+
+    private void VerifyImageStage(XRMaterial material)
+    {
+        if (_engineRoot is null || material.Shaders.Count != 1)
+            throw new NotSupportedException($"BrowserCook.UiImageStageUnsupported: '{material.Name}' has no canonical desktop image stage.");
+        XRShader shader = material.Shaders[0];
+        if (shader.Type != EShaderType.Fragment || shader.SourceLanguage != ShaderSourceLanguage.Glsl ||
+            shader.EntryPoint != "main" || shader.IsGeneratedUberVariant || shader.GeneratedUberVariantHash != 0 ||
+            !shader.SlangOptions.Defines.IsDefaultOrEmpty || !shader.SlangOptions.Includes.IsDefaultOrEmpty ||
+            !shader.SlangOptions.RequiredCapabilities.IsDefaultOrEmpty || !shader.SlangOptions.Resources.IsDefaultOrEmpty)
+            throw new NotSupportedException($"BrowserCook.UiImageStageUnsupported: '{material.Name}' requires the canonical engine GLSL image fragment without extensions.");
+        string path = Path.GetFullPath(Path.Combine(_engineRoot, "Shaders", "Common", "UiTexturedForward.fs"));
+        string? sourcePath = shader.Source?.FilePath ?? shader.FilePath;
+        if (sourcePath is null || !string.Equals(Path.GetFullPath(sourcePath), path,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new NotSupportedException($"BrowserCook.UiImageStageUnsupported: '{material.Name}' has a noncanonical desktop GLSL source path.");
+        if (!_canonicalSources.TryGetValue(path, out string? canonical))
+        {
+            canonical = File.ReadAllText(path);
+            _canonicalSources.Add(path, canonical);
+        }
+        if (!string.Equals(shader.Source?.Text, canonical, StringComparison.Ordinal))
+            throw new NotSupportedException($"BrowserCook.UiImageStageUnsupported: '{material.Name}' desktop GLSL source differs from the engine image fragment.");
         VerifySnippets(material, shader, canonical);
     }
 

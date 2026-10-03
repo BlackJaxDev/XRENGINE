@@ -1,6 +1,5 @@
 // C# Matrix4x4 rows are stored as four float4 values per UI quad.
-struct UIView { float4x4 viewProjection; };
-[[vk::binding(0, 0)]] ConstantBuffer<UIView> view;
+#include "UIOutput.slang"
 [[vk::binding(0, 1)]] StructuredBuffer<float4> quadTransforms;
 [[vk::binding(1, 1)]] StructuredBuffer<float4> quadColors;
 [[vk::binding(2, 1)]] StructuredBuffer<float4> quadBounds;
@@ -36,5 +35,5 @@ float4 uiQuadFragment(UIQuadOutput input) : SV_Target0
 {
     if (any(isnan(input.bounds)))
         discard;
-    return input.color;
+    return uiSolidOutput(input.color);
 }

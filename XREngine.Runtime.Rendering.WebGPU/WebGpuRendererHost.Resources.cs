@@ -48,7 +48,7 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
             throw new NotSupportedException($"WebGPU.Quality.TextureDimensionExceeded: texture '{description.Label}' size {description.Width}x{description.Height} exceeds the selected browser texture limit {qualityLimit}; authored textures are not resized implicitly.");
         return Track(WebGpuImports.CreateTextureResource(_session, description.Width, description.Height,
             description.MipLevelCount, description.SampleCount, description.Format, (int)description.Usage,
-            description.Label, description.ArrayLayerCount));
+            description.Label, description.ArrayLayerCount, description.AllowSrgbView));
     }
 
     public void UploadTextureMip(int handle, int mip, int x, int y, int width, int height, Span<byte> bytes)
@@ -78,7 +78,7 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
         RequireOwnedResource(description.TextureHandle);
         return Track(WebGpuImports.CreateTextureView(_session, description.TextureHandle,
             description.BaseMip, description.MipCount, description.Aspect, description.Label,
-            description.BaseArrayLayer, description.ArrayLayerCount, description.Dimension));
+            description.BaseArrayLayer, description.ArrayLayerCount, description.Dimension, description.Format));
     }
 
     public int CreateSampler(BrowserSamplerDescription description)

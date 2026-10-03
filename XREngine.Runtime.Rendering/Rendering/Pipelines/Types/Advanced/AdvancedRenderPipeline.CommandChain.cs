@@ -48,6 +48,8 @@ public partial class AdvancedRenderPipeline
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer commands = new(this);
+        // Canvas and other nested producers must run before native/late scene consumers.
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
         if (!UsesMinimalVisibilityOutput && !Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             commands.Add<VPRC_PrecomputeBRDF>();
         IReadOnlyList<AdvancedRenderStageDescriptor> stages =

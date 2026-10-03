@@ -145,6 +145,9 @@ public static class ShaderProgramArtifactReader
         if (materialVariant?.Semantic.IsSkybox() == true)
             Require(vertex == "skyVertex" && fragment == "skyFragment" && compute is null,
                 "skybox variants require their exact vertex and fragment entry points");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.UICanvasSurfaceV1)
+            Require(vertex == "canvasSurfaceVertex" && fragment == "canvasSurfaceFragment" && compute is null,
+                "canvas surfaces require their exact vertex and fragment entry points");
         if (materialVariant is { } debugEntries &&
             debugEntries.Semantic.Semantic is (EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle))
             Require(vertex is not null && fragment is not null && compute is null,
@@ -192,6 +195,12 @@ public static class ShaderProgramArtifactReader
                 buffers[0].StepMode == "vertex" && buffers[0].Attributes.Length == 1 &&
                 buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" },
                 "screen UI variants require the fixed indexed position quad");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.UICanvasSurfaceV1)
+            Require(buffers.Count == 1 && buffers[0].Slot == 0 && buffers[0].Stride == 20 &&
+                buffers[0].StepMode == "vertex" && buffers[0].Attributes.Length == 2 &&
+                buffers[0].Attributes[0] is { Location: 0, Offset: 0, Format: "float32x3", Semantic: "position" } &&
+                buffers[0].Attributes[1] is { Location: 1, Offset: 12, Format: "float32x2", Semantic: "uv0" },
+                "canvas surfaces require the exact position and UV vertex stream");
         ImmutableArray<ShaderStageResourceLayout>.Builder resources = ImmutableArray.CreateBuilder<ShaderStageResourceLayout>();
         HashSet<(int, int)> bindings = [];
         foreach (JsonElement resource in Property(layout, "bindings", JsonValueKind.Array).EnumerateArray())
@@ -339,11 +348,24 @@ public static class ShaderProgramArtifactReader
             Require(resources.Count == (text ? 7 : texturedQuad ? 7 : 4) &&
                 resources.Count(resource => resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer) == (text || texturedQuad ? 4 : 3),
                 "screen UI variants require their exact storage and atlas bindings");
-            Require(resources.Any(resource => resource.Contract.Name == "View" &&
-                resource.Contract.Set == 0 && resource.Contract.Binding == 0 &&
-                resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer &&
-                resource.Contract.ByteSize == 64 && resource.Visibility == ShaderStageVisibility.Vertex),
-                "screen UI variants require the exact camera projection binding");
+            if (uiVariant.Semantic.Version == 2)
+                Require(resources.Any(resource => resource is
+                    {
+                        BindingType: "uniform", DynamicOffset: true, RuntimeArray: false,
+                        Contract: { Name: "View", PhysicalName: "view_0", Set: 0, Binding: 0,
+                            Kind: ShaderAbiResourceKind.UniformBuffer, Owner: ShaderAbiResourceOwner.Engine,
+                            Frequency: ShaderAbiFrequency.View, ByteSize: 80, Members.Length: 2 },
+                    } && resource.Visibility == (ShaderStageVisibility.Vertex | ShaderStageVisibility.Fragment) &&
+                    IsMatrixMember(resource.Contract.Members[0], "viewProjection_0", "ViewProjection") &&
+                    resource.Contract.Members[1] is { PhysicalName: "outputMode_0", ProviderName: "UIOutputMode",
+                        Offset: 64, Size: 16, PhysicalType: "vec4<f32>" }),
+                    "canvas UI variants require the exact 80-byte camera projection and output-mode binding");
+            else
+                Require(resources.Any(resource => resource.Contract.Name == "View" &&
+                    resource.Contract.Set == 0 && resource.Contract.Binding == 0 &&
+                    resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer &&
+                    resource.Contract.ByteSize == 64 && resource.Visibility == ShaderStageVisibility.Vertex),
+                    "screen UI variants require the exact camera projection binding");
             if (text || texturedQuad)
                 Require(resources.Any(resource => resource.Contract.Name == "Texture0" &&
                     resource.Contract.Set == 2 && resource.Contract.Binding == 0 &&
@@ -354,6 +376,8 @@ public static class ShaderProgramArtifactReader
                     "textured screen UI requires an exact image and sampler pair");
             CheckLimit(limits, "maxStorageBufferBindingSize", checked(65536 * (text ? 128 : 64)));
         }
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.UICanvasSurfaceV1)
+            ValidateCanvasSurfaceBindings(resources);
         CheckLimit(limits, "maxDynamicStorageBuffersPerPipelineLayout", resources.Count(resource => resource.DynamicOffset && resource.Contract.Kind == ShaderAbiResourceKind.StorageBuffer));
         string sourcePath = Property(descriptor, "source").ValueKind == JsonValueKind.String
             ? Text(descriptor, "source") : Text(Property(descriptor, "source"), "path");
@@ -363,6 +387,42 @@ public static class ShaderProgramArtifactReader
             buffers.OrderBy(buffer => buffer.Slot).ToImmutableArray(), resources.ToImmutable(), limits.ToImmutable())
             { ComputeWorkgroupSize = workgroupSize, SourceLanguage = Text(descriptor, "sourceLanguage") };
     }
+
+    private static void ValidateCanvasSurfaceBindings(ImmutableArray<ShaderStageResourceLayout>.Builder resources)
+    {
+        Require(resources.Count == 4 && resources.Any(resource => resource is
+            {
+                BindingType: "uniform", DynamicOffset: true, RuntimeArray: false, Visibility: ShaderStageVisibility.Vertex,
+                Contract: { Name: "View", PhysicalName: "view_0", Set: 0, Binding: 0,
+                    Kind: ShaderAbiResourceKind.UniformBuffer, Owner: ShaderAbiResourceOwner.Engine,
+                    Frequency: ShaderAbiFrequency.View, ByteSize: 64, Members.Length: 1 },
+            } && IsMatrixMember(resource.Contract.Members[0], "viewProjection_0", "ViewProjection")) &&
+            resources.Any(resource => resource is
+            {
+                BindingType: "uniform", DynamicOffset: true, RuntimeArray: false, Visibility: ShaderStageVisibility.Vertex,
+                Contract: { Name: "Object", PhysicalName: "object_0", Set: 0, Binding: 1,
+                    Kind: ShaderAbiResourceKind.UniformBuffer, Owner: ShaderAbiResourceOwner.Engine,
+                    Frequency: ShaderAbiFrequency.Object, ByteSize: 64, Members.Length: 1 },
+            } && IsMatrixMember(resource.Contract.Members[0], "modelMatrix_0", "ModelMatrix")) &&
+            resources.Any(resource => resource is
+            {
+                BindingType: "texture-2d-float", DynamicOffset: false, RuntimeArray: false, Visibility: ShaderStageVisibility.Fragment,
+                Contract: { Name: "Texture0", PhysicalName: "materialTexture_0", Set: 1, Binding: 0,
+                    Kind: ShaderAbiResourceKind.SampledImage, Owner: ShaderAbiResourceOwner.Material,
+                    Frequency: ShaderAbiFrequency.Material, ByteSize: 0, Members.Length: 0 },
+            }) && resources.Any(resource => resource is
+            {
+                BindingType: "filtering-sampler", DynamicOffset: false, RuntimeArray: false, Visibility: ShaderStageVisibility.Fragment,
+                Contract: { Name: "Texture0", PhysicalName: "materialSampler_0", Set: 1, Binding: 1,
+                    Kind: ShaderAbiResourceKind.Sampler, Owner: ShaderAbiResourceOwner.Material,
+                    Frequency: ShaderAbiFrequency.Material, ByteSize: 0, Members.Length: 0 },
+            }), "canvas surfaces require the exact view, object, texture, and sampler bindings");
+    }
+
+    private static bool IsMatrixMember(ShaderAbiMemberContract member, string physicalName, string providerName)
+        => member.PhysicalName == physicalName && member.ProviderName == providerName &&
+            member is { Offset: 0, Size: 64, PhysicalType: "mat4x4<f32>",
+                MatrixOrder: ShaderAbiMatrixOrder.ColumnMajor, MatrixStride: 16 };
 
     internal static int VertexFormatBytes(string format) => format switch
     {
@@ -418,6 +478,7 @@ public static class ShaderProgramArtifactReader
             semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
                 EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
                 EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap or
+                EngineMaterialSemantic.UICanvasSurface or
                 EngineMaterialSemantic.SkyboxGradient or EngineMaterialSemantic.SkyboxEquirectangular or
                 EngineMaterialSemantic.SkyboxOctahedral or EngineMaterialSemantic.SkyboxCubemap or
                 EngineMaterialSemantic.SkyboxDynamicProcedural,

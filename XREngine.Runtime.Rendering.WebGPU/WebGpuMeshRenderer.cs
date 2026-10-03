@@ -77,20 +77,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
             return Pending("ProgramsPending");
-        if (apiMaterial.UISemantic != EngineMaterialSemantic.None)
-        {
-            WebGpuRasterState state = Renderer.RasterState;
-            if (frameBuffer is not null || output.Properties.SampleCount != 1 ||
-                output.Properties.ColorEncoding is not ("rgba8unorm" or "bgra8unorm") ||
-                state.DepthEnabled || state.DepthWrite || state.CullMode != ECullMode.None ||
-                !state.BlendEnabled || state.SourceRgb != EBlendingFactor.SrcAlpha ||
-                state.DestinationRgb != EBlendingFactor.OneMinusSrcAlpha ||
-                state.SourceAlpha != EBlendingFactor.SrcAlpha ||
-                state.DestinationAlpha != EBlendingFactor.OneMinusSrcAlpha ||
-                state.RgbEquation != EBlendEquationMode.FuncAdd ||
-                state.AlphaEquation != EBlendEquationMode.FuncAdd)
-                throw Unsupported("screen UI requires the display output and exact straight-alpha, no-depth, no-cull raster state");
-        }
+        WebGpuRasterState rasterState = ResolveUiRasterState(apiMaterial, Renderer.RasterState, frameBuffer, output);
         WebGpuInstanceStorageContract? instanceStorage = apiMaterial.InstanceStorageContract;
         WebGpuDataBuffer? instanceBuffer = null;
         uint instanceLimit = 0;
@@ -119,7 +106,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         XRDataBuffer? indices = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out var indexSize);
         if (indices is null)
             return Pending("IndicesPending");
-        DrawKey key = new(mesh, apiMaterial, Renderer.RasterState, frameBuffer, attachmentRevision);
+        DrawKey key = new(mesh, apiMaterial, rasterState, frameBuffer, attachmentRevision);
         if (!_draws.TryGetValue(key, out draw))
         {
             int meshVariants = 0;

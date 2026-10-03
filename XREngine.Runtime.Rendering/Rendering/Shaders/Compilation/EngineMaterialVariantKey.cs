@@ -67,10 +67,15 @@ public readonly record struct EngineMaterialVariantKey(
             EngineMaterialSemantic.UITextBatchedBitmap => "instanced-ui-bitmap-text-v1",
             _ => null,
         };
+        string uiOutputProfile = Semantic.Version == 2 ? "canvas-rgba-v2" : "display-rgba-v1";
         if (uiProfile is not null &&
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "screen-ui" ||
-             VertexProfile != uiProfile || OutputProfile != "display-rgba-v1"))
-            throw new ArgumentException($"{Semantic.Semantic}V1 requires the WebGPU screen-ui/{uiProfile}/display-rgba-v1 variant.");
+             VertexProfile != uiProfile || OutputProfile != uiOutputProfile))
+            throw new ArgumentException($"{Semantic.Semantic}V{Semantic.Version} requires the WebGPU screen-ui/{uiProfile}/{uiOutputProfile} variant.");
+        if (Semantic == EngineMaterialSemanticIdentity.UICanvasSurfaceV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "canvas-composite" ||
+             VertexProfile != "position-uv-v1" || OutputProfile != "linear-hdr-premultiplied-rgba-v1"))
+            throw new ArgumentException("UICanvasSurfaceV1 requires the WebGPU canvas-composite/position-uv-v1/linear-hdr-premultiplied-rgba-v1 variant.");
     }
 
     private bool IsLitCoverageProfile()

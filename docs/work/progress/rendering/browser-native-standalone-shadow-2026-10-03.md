@@ -78,7 +78,39 @@ Genuine Editor export produces a 45,034-byte cooked world; fresh-process load
 and BeginPlay preserve its pipeline/settings, four material identities and
 pawn-camera link. Original authored sample files remain unchanged.
 
-That fixture has not yet rendered in a browser. Moving sources, resized/lost
-devices, sloped normal-mapped receivers, spot shadows, MSAA edges and numeric
-comparison remain live acceptance work. The physical `71684f00` material pass
-uses disabled shadows and does not provide this evidence.
+The subsequent visible-occluder ON/OFF fixture at `feca3bcc` completed three
+hardware Edge startups and resize captures on Intel gen-12lp without a fallback
+adapter. Directional shadows produced three caster draws into the authored
+256-by-256 depth target. Outside the foreground occluders, enabling shadows
+darkened 4,929 receiver pixels initially and 2,409 after resize. Point shadows
+instead allocated 1024-by-1024 faces despite authored 256 dimensions, and all six
+faces completed clear/store with zero caster draws. This is bounded directional
+evidence, not point-shadow acceptance. The sizing, suppressed-restoration and
+collection fixes at `d660296f` have managed witnesses in the
+[point-shadow record](browser-point-shadow-restoration-2026-10-03.md); their
+physical point-shadow retest remains pending.
+
+Moving sources, lost devices, sloped normal-mapped receivers, spot shadows,
+MSAA edges and numeric comparison remain live acceptance work. The physical
+`71684f00` material pass uses disabled shadows and does not provide this evidence.
+
+## Native pipeline preparation
+
+The software-Chromium Advanced job in
+[run 37112417751](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37112417751)
+still exceeded the 45-second first-frame guard at `d660296f`. The shader module
+completed and both error scopes fulfilled without errors in 20.8 milliseconds;
+the native `createComputePipelineAsync` promise remained pending after
+42,873.6 milliseconds. This does not identify the native compiler's internal
+cause or establish a speedup from the preceding receiver-helper loop change.
+
+The next source correction traverses the selected cascade and its optional
+blend neighbor through one shadow-sampling call site. Primary eligibility,
+adjacent eligibility, reason propagation, sample order, blend weight and the
+no-neighbor result remain unchanged. All eight native/depth/MSAA/export recipes
+cook with identical ABI and program contracts. Emitted native WGSL retains the
+loop and function-local out argument; expanded call edges fall from 2,888 to
+2,132, reconstruction expansions from three to two, and texture-pair expansions
+from 31 to 24. These are structural measurements, not measured runtime or
+pipeline-creation performance. The guard and complete-family admission remain
+unchanged; the next authorized browser run owns the timing result.

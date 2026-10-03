@@ -146,7 +146,7 @@ internal sealed class BrowserTextInputBridge
     private void UpdateGeometry(XRViewport? viewport)
     {
         UITextInputComponent? target = _target;
-        if (target is null || !BrowserUiBoundsProjection.TryProject(target, viewport,
+        if (target is null || !BrowserUiBoundsProjection.TryProjectVisible(target, viewport,
             out float x, out float y, out float width, out float height))
         {
             X = Y = -1;

@@ -120,10 +120,127 @@ the previous world rectangle instead starts at `(815, -205)` in the translated
 fixture. Nested clipping, clip toggles, empty intersections and rotated children
 are covered. This is a managed execution witness, not GPU pixel acceptance.
 
-The browser non-screen rejection remains intentional. Browser UI variants still
-admit only the display target, and the existing world-canvas composition material
-uses desktop GLSL. Completing this path requires admitting the actual offscreen
-attachment, a cooked world-composition material, and a defined alpha/color-space
-contract across the offscreen and scene passes. The generic WebGPU framebuffer
-resource and binding implementation already exists. Coordinate validation does
-not establish browser offscreen execution or physical-device clipping parity.
+## WebGPU offscreen canvas route (2026-10-03)
+
+Camera/world canvases now reuse the existing owned framebuffer, `PreRender`
+producer and sorted `TransparentForward` world quad on WebGPU. The Advanced
+pipeline also declares and executes the CPU-only producer lane before scene
+stages. This does not introduce another UI renderer or replay opaque geometry.
+Screen canvases retain lazy offscreen allocation; a stable render-info identity
+allows draw-space changes without losing world registration. Resizing retains
+the sampled texture object and lets the existing backend generation/retirement
+path replace its physical storage and dependent views. Composition requires
+current-frame production; an unready canvas defers the frame instead of sampling
+an uninitialized or stale allocation.
+
+The cooked quad, image and bitmap-text batches use semantic revision 2 with an
+80-byte view block: the existing projection matrix followed by `UIOutputMode`.
+Screen mode preserves the existing display RGB and straight-alpha behavior.
+Offscreen mode accumulates linear premultiplied RGBA into a single-sample
+`Rgba16f` texture cleared to transparent black. RGB and alpha both use
+`One, OneMinusSrcAlpha`. The source-free `UICanvasSurfaceV1` material samples that
+associated color directly into the scene's HDR target, depth-tests without
+depth writes, and applies one WebGPU render-texture Y flip. It is an unlit scene
+surface subject to scene exposure and tonemapping, so screen and world canvases
+need not have identical displayed brightness. Desktop GLSL and material creation
+remain on their existing branch.
+
+sRGB images use a retained `rgba8unorm-srgb` view declared when the same RGBA8
+allocation is created, so texels decode before filtering. Explicitly linear
+images keep the raw view. Authored tint decodes independently; text fill/outline
+colors decode before coverage composition, while bitmap coverage and alpha are
+unchanged. A detached image-material cook projection preserves the existing
+`BaseColor/IsSrgb` role independently of imported image color space.
+Batch/material keys distinguish image interpretations. Both aliases
+retain the original texture owner and retire through the existing replacement
+and teardown path; no view is created per warmed draw.
+
+Revision-1 UI artifacts remain readable. New publication requires the V2 batch
+variants and the canvas-surface variant; older shader catalogs require recooking,
+without an authored-asset migration. Individual UI draws, custom stages, rotated
+glyphs, non-bitmap text and direct/backdrop-grab world canvases remain explicitly
+outside this cooked profile. Offscreen sRGB storage images are rejected rather
+than substituting an incompatible sampled view.
+
+### Published UI image metadata
+
+`PublishedUiImageMaterial` has a bounded version-1 payload for the source-free
+authored image semantic. It carries one image and the existing 19-byte
+`PublishedStandardLitTextureSettings` record: anisotropy, comparison enable and
+function, imported color space and usage, normal-map green flip and storage
+usage. The lit version-1/version-2 payloads, raw `XRTexture2D` codec, XRTS and
+authored YAML layouts remain unchanged. The cooked factory registration and
+compiled browser assembly metadata include the new carrier; publishing requires
+the newly built assembly closure.
+
+Projection borrows the source image without changing it. Decode restores the
+record only onto the newly decoded image and reconstructs the texture list and
+BaseColor role with the same object reference. The role's `IsSrgb` bit is encoded
+separately, so distinct material roles may interpret one borrowed image
+differently. Runtime role lookup requires exact reference identity. The cook
+projection joins separate YAML occurrences only after proving equal persistent
+identity, complete raw payload and all seven settings. It releases cloned
+material subscriptions before disposal and never destroys borrowed images.
+Legacy generic UI materials retain their existing reader; unknown versions and
+unsupported or nonresident image profiles reject explicitly.
+
+Each custom cooked payload has an independent reference scope. Two material
+carriers may retain the same persistent image ID while decoding separate local
+images; neither can resolve or change an image decoded earlier in the outer
+graph. The runtime witness checks an outer raw image plus two UI carriers: the
+outer image retains raw-default anisotropy 1 and each local image restores 8.
+
+## Displayed placement and DOM geometry
+
+Pointer rays and DOM geometry now use the same resolved world/camera placement
+and local extent as the composited quad, including startup extent fallback and
+the camera-distance clamp. Camera/default world placement also uses the camera's
+forward vector directly with `Matrix4x4.CreateWorld`; negating it mirrored local
+X relative to the camera's right vector and placed the quad on the wrong side of
+its computed bottom-left corner. Explicit authored world transforms are retained.
+
+Spatial DOM bounds use the current observing viewport camera. The canvas's
+anchor camera controls placement. Stack-based polygon clipping intersects actual
+control corners with the canvas extent, ancestor scissor and homogeneous view
+frustum before projecting to top-left normalized DOM bounds. A control crossing
+near/far/side planes keeps its visible part. The text editor uses those same
+visible bounds; focused-editor generations and cross-canvas ownership are
+unchanged. Exact curved-edge bounds under nonlinear lens warps and scene-depth
+occlusion are not resolved by this geometric projection. No GPU readback or new
+occlusion policy is introduced.
+
+## Offscreen validation
+
+The four production UI recipes cook successfully. The managed Rendering,
+WebGPU, InputIntegration, ShaderCooker, BrowserContentCooker and Editor graphs
+compile; the final managed probe builds have zero warnings/errors. Runtime
+witnesses cover:
+
+- 86 offscreen factory, placement, pointer, resize ownership, physical target,
+  premultiplied-alpha, actual Editor image projection and cooked reload checks,
+  including all seven settings, anisotropy 8/trilinear, independent sRGB/linear
+  roles, exact/shared versus conflicting same-ID aliases, unchanged source/YAML,
+  clone disposal, isolated decoded images, sampler edits after material creation,
+  payload-version rejection, V2 ABI rejection and legacy V1 artifact reading
+- 48 production DOM geometry checks, including screen parity, nested/rotated
+  clipping, observer versus anchor, distance clamp, partial frustum/reversed-depth
+  cases, text geometry and zero warmed allocations
+- 19 actual JS resource/import checks for declared sRGB formats, raw-view
+  preservation, shared allocation, bounded rejection and last-alias retirement
+- Six lit version-1/version-2 payloads are byte-for-byte identical between frozen
+  pre-UI and updated runtime assemblies: all-shared, metallic/roughness-shared and
+  four-distinct images. The production `CookedAssetReader` preserves all settings
+  and role references (196 baseline and 208 updated checks). The actual compiled
+  `BuildBrowser` metadata includes the new UI carrier, and hash-verified metadata
+  in Published mode restores it through the production BinaryV2 reader
+
+The final native-WASM browser build also passes with zero warnings/errors,
+including the P/Invoke scan, native compilation and linking. The isolated host
+runs the same pinned SDK tasks in process for task-host compatibility; no scan,
+link or packaging check is disabled.
+
+These are source, cook, managed execution and JS-boundary witnesses; they do not
+establish GPU pixels or browser/device/assistive-technology/IME acceptance. The
+bounded UI carrier preserves omitted image settings for its admitted published
+materials. General standalone/raw texture metadata preservation remains a
+separate asset-cooking gap; this change does not migrate that texture schema.

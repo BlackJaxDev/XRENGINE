@@ -21,14 +21,14 @@ export function installWebGpuImports(runtime, renderers) {
         writeBuffer: (id, handle, offset, bytes) => renderer(id).resources.writeBuffer(handle, offset, bytes),
         copyBuffer: (id, source, sourceOffset, destination, destinationOffset, size) =>
             renderer(id).resources.copyBuffer(source, sourceOffset, destination, destinationOffset, size),
-        createTextureResource: (id, width, height, mips, samples, format, usage, label, layers) =>
-            renderer(id).resources.createTexture(width, height, mips, samples, format, usage, label, layers),
+        createTextureResource: (id, width, height, mips, samples, format, usage, label, layers, allowSrgbView) =>
+            renderer(id).resources.createTexture(width, height, mips, samples, format, usage, label, layers, allowSrgbView),
         uploadTextureMip: (id, handle, mip, x, y, width, height, bytes, layer) =>
             renderer(id).resources.uploadTextureMip(handle, mip, x, y, width, height, bytes, layer),
         copyTextureSubresource: (id, source, destination, sourceMip, destinationMip, destinationLayer, width, height) =>
             renderer(id).resources.copyTextureSubresource(source, destination, sourceMip, destinationMip, destinationLayer, width, height),
-        createTextureView: (id, texture, baseMip, mipCount, aspect, label, baseLayer, layerCount, dimension) =>
-            renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label, baseLayer, layerCount, dimension),
+        createTextureView: (id, texture, baseMip, mipCount, aspect, label, baseLayer, layerCount, dimension, format) =>
+            renderer(id).resources.createTextureView(texture, baseMip, mipCount, aspect, label, baseLayer, layerCount, dimension, format),
         createSampler: (id, addressU, addressV, addressW, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp, compare) =>
             renderer(id).resources.createSampler(addressU, addressV, minFilter, magFilter, mipmapFilter, label, lodMaxClamp, maxAnisotropy, lodMinClamp, compare, addressW),
         createMesh: (id, vertices, indices) => renderer(id).createMesh(vertices, indices),
