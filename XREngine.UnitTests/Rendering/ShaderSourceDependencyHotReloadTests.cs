@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 
 namespace XREngine.UnitTests.Rendering;
@@ -77,6 +78,41 @@ public sealed class ShaderSourceDependencyHotReloadTests
         afterText.ShouldBeGreaterThan(initial);
         afterType.ShouldBeGreaterThan(afterText);
         shader.SourceRevision.ShouldBeGreaterThan(afterType);
+    }
+
+    [Test]
+    public void RestoredSource_RebindsChangesWithoutRetainingPreviousSource()
+    {
+        TextFile previous = TextFile.FromText("void main() {}\n");
+        TextFile restored = TextFile.FromText("void main() { }\n");
+        using XRShader shader = new(EShaderType.Fragment, previous);
+        try
+        {
+            using (XRBase.SuppressPropertyNotifications())
+                shader.Source = restored;
+
+            var lifecycle = (IPostCookedBinaryDeserialize)shader;
+            lifecycle.OnPostCookedBinaryDeserialize();
+            lifecycle.OnPostCookedBinaryDeserialize();
+            long revision = shader.SourceRevision;
+            int notifications = 0;
+            shader.SourceChanged += _ => notifications++;
+
+            previous.Text += "// detached\n";
+            shader.SourceRevision.ShouldBe(revision);
+            restored.Text += "// restored\n";
+            shader.SourceRevision.ShouldBe(revision + 1);
+            notifications.ShouldBe(1);
+
+            shader.Destroy(now: true);
+            restored.Text += "// destroyed\n";
+            shader.SourceRevision.ShouldBe(revision + 1);
+        }
+        finally
+        {
+            previous.Destroy(now: true);
+            restored.Destroy(now: true);
+        }
     }
 
     [TestCase(EShaderType.Vertex)]

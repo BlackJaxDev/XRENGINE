@@ -59,6 +59,7 @@ The supported exact model IDs are:
 
 - `gpt-6-luna`
 - `gpt-6-sol`
+- `gpt-6.1-sol` (explicit independent runs)
 - `gpt-6-astra`
 - `gpt-5.6-luna` (deprecated)
 - `gpt-5.6-terra` (deprecated)
@@ -69,9 +70,14 @@ bounded tasks, Sol for ordinary implementation, and Astra for difficult or
 high-risk reasoning. Explicit `model_family: "gpt-5.6"` retains legacy
 recommendations and reports `deprecated_model: true`. Legacy start requests
 also report this marker. No route automatically selects or falls back to GPT-5.6.
-GPT-6 Astra accepts `low`, `medium`, `high`, `xhigh`, and `max` reasoning;
-GPT-6 Luna and Sol also accept `none`. Unsupported Astra effort is rejected
-before a paid call. See the official [GPT-6 model guidance](https://developers.openai.com/api/docs/guides/latest-model).
+GPT-6 Astra and GPT-6.1 Sol accept `low`, `medium`, `high`, `xhigh`, and `max`
+reasoning; GPT-6 Luna and Sol also accept `none`. GPT-6.1 Sol rejects both
+`none` and `minimal` before a paid call. Use `requested_model: "gpt-6.1-sol"`
+and `reasoning_effort: "max"` for an explicit independent worker.
+Automatic route advice continues to choose `gpt-6-sol` for ordinary work;
+hierarchical swarms require `gpt-6-luna` at `max`. See the official
+[GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+and [GPT-6 model guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
 The broker rejects aliases and provider-reported dated snapshot suffixes: both
 the requested and actual model must be the same exact approved model ID.
@@ -123,6 +129,13 @@ already following the response tail. Scrolling upward keeps that position stable
 so earlier prompt or response text remains readable. Windows animation settings
 are respected; when animations are disabled, updates and tail movement are
 immediate.
+
+Large prompts start collapsed so the response is immediately reachable. Click
+**PROMPT — Show** to expand the complete prompt and **PROMPT — Hide** to collapse
+it again; system instructions have the same control. Your choice is preserved
+while that response streams. The window title area stays compact, and the
+conversation has its own visible vertical scrollbar. **Raw text** still shows
+the complete prompt and response.
 
 Responses also typeset LaTeX math: `\(...\)` or `$...$` for inline formulas,
 and `\[...\]` or `$$...$$` for display equations. Fractions, sums, integrals,
@@ -312,6 +325,11 @@ deployment. Killing the child process alone closes the old transport and does
 not hot-rebind it. If a tray companion from an older deployment is already
 running, choose **Exit** from its menu; the next prompt starts the newly
 published version.
+
+For a manual tray launch that immediately opens the history window, run the
+published `tray/XREngine.LocalAgentBroker.Tray.exe` with
+`--repo-root <repo-root> --show-history`. The optional flag applies to a new
+tray instance; an already-running instance continues to own its checkout.
 
 Alternatively, the opt-in agent-tool bootstrap includes the same setup:
 
@@ -724,10 +742,28 @@ are also resolved on demand by the launcher and broker:
 |---|---:|---|
 | `XRE_LOCAL_AGENT_BROKER_API_KEY_ENV` | `OPENAI_API_KEY` | Valid environment-variable name |
 | `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV` | unset | Name of an optional editor bearer-token variable |
-| `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY` | 4 | 1-8 |
-| `XRE_LOCAL_AGENT_BROKER_MAX_RUNS` | 32 | 4-256 |
+| `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY` | 4 | 1-100 |
+| `XRE_LOCAL_AGENT_BROKER_MAX_RUNS` | Larger of 32 and configured concurrency | 4-256; at least configured concurrency |
 | `XRE_LOCAL_AGENT_BROKER_RETENTION_MINUTES` | 120 | 1-1440 |
 | `XRE_LOCAL_AGENT_BROKER_TRACE` | `off` | `off` or `metadata` |
+
+Concurrency limits simultaneously executing provider requests within one broker
+process. Admitted work beyond that limit stays queued. `MAX_RUNS` bounds the
+combined queued, running, and retained terminal registry records; admission can
+evict terminal records, but never active work. The default capacity grows with
+concurrency so a configured maximum of 100 can admit 100 simultaneous runs.
+An explicit capacity below configured concurrency is rejected at startup.
+
+For a batch of 20 independent workers, set this in the environment that launches
+its new broker process:
+
+```powershell
+$env:XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY = '20'
+```
+
+The supported ceiling is 100; the unset default remains 4. Configuration changes
+apply to new processes. An existing MCP transport keeps its original limit.
+Provider rate limits and the API project's quota still apply.
 
 The normal named-session workflow uses loopback without bearer authentication.
 When editor auth is enabled, put the bearer token in the environment variable

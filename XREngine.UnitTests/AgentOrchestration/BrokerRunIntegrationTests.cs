@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.AgentOrchestration;
@@ -98,6 +99,76 @@ public class BrokerRunIntegrationTests
             snapshot.Result!.FinalText.ShouldBe("fake complete");
             snapshot.Usage.TotalTokens.ShouldBe(7);
             handler.RequestBodies.Count.ShouldBe(3);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(apiKeyEnvironmentVariable, null);
+            if (Directory.Exists(temporaryRoot))
+                Directory.Delete(temporaryRoot, recursive: true);
+        }
+    }
+
+    [TestCase(AgentModelCatalog.Sol61, AgentRunStatus.Completed)]
+    [TestCase(AgentModelCatalog.Sol6, AgentRunStatus.Failed)]
+    public async Task Gpt61SolMaxIndependentRunPreservesControlsAndExactModel(
+        string actualModel,
+        AgentRunStatus expectedStatus)
+    {
+        string temporaryRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"xrengine-agent-broker-test-{Guid.NewGuid():N}");
+        string apiKeyEnvironmentVariable = $"XRE_TEST_OPENAI_KEY_{Guid.NewGuid():N}";
+
+        try
+        {
+            Directory.CreateDirectory(temporaryRoot);
+            Environment.SetEnvironmentVariable(apiKeyEnvironmentVariable, "test-key");
+            var handler = new QueueHttpMessageHandler();
+            handler.EnqueueSse($$$$"""
+                data: {"type":"response.created","response":{"id":"resp_sol61","model":"{{{{actualModel}}}}"}}
+
+                data: {"type":"response.completed","response":{"id":"resp_sol61","model":"{{{{actualModel}}}}","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fake complete"}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}
+
+                data: [DONE]
+
+                """);
+            using var httpClient = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var configuration = new BrokerConfiguration
+            {
+                RepositoryRoot = temporaryRoot,
+                ApiKeyEnvironmentVariable = apiKeyEnvironmentVariable,
+            };
+            await using var registry = new AgentRunRegistry(configuration, httpClient);
+            string runId = registry.Start(new AgentRunRequest
+            {
+                Objective = "Complete the independent fake run.",
+                RequestedModel = AgentModelCatalog.Sol61,
+                ReasoningEffort = "max",
+                Budget = new AgentRunBudget { MaxTurns = 1, MaxToolCalls = 0, MaxRetries = 0 },
+            });
+
+            AgentRunSnapshot snapshot = registry.Get(runId);
+            using var pollingTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (snapshot.Status is AgentRunStatus.Queued or AgentRunStatus.Running)
+            {
+                await Task.Delay(10, pollingTimeout.Token);
+                snapshot = registry.Get(runId);
+            }
+
+            snapshot.Status.ShouldBe(expectedStatus);
+            snapshot.RequestedModel.ShouldBe(AgentModelCatalog.Sol61);
+            snapshot.ActualModel.ShouldBe(actualModel);
+            snapshot.RequestedReasoningEffort.ShouldBe("max");
+            if (expectedStatus == AgentRunStatus.Completed)
+                snapshot.Result!.FinalText.ShouldBe("fake complete");
+            else
+                snapshot.Result!.Failure!.Category.ShouldBe(AgentFailureCategory.ModelSubstitution);
+            handler.RequestBodies.Count.ShouldBe(1);
+            using JsonDocument payload = JsonDocument.Parse(handler.RequestBodies[0]);
+            payload.RootElement.GetProperty("model").GetString().ShouldBe(AgentModelCatalog.Sol61);
+            payload.RootElement.GetProperty("reasoning").GetProperty("effort").GetString().ShouldBe("max");
+            payload.RootElement.GetProperty("store").GetBoolean().ShouldBeFalse();
+            payload.RootElement.TryGetProperty("tools", out _).ShouldBeFalse();
         }
         finally
         {

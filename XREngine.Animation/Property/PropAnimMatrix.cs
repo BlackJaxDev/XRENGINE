@@ -9,6 +9,11 @@ namespace XREngine.Animation
         private DelGetValue<Matrix4x4> _getValue;
 
         private BakedValueStore<Matrix4x4>? _baked = null;
+
+        internal Matrix4x4[] CapturePublishedBakedValues() => _baked?.CaptureValues() ?? [];
+
+        internal void RestorePublishedBakedValues(Matrix4x4[] values, EAnimationValueCompressionAlgorithm encodedCompression)
+            => _baked = BakedValueStore<Matrix4x4>.EncodeUnmanaged(values, encodedCompression);
         /// <summary>
         /// The default value to return when no keyframes are set.
         /// </summary>

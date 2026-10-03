@@ -1,6 +1,7 @@
 using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XRWorld = XREngine.Scene.XRWorld;
@@ -309,7 +310,8 @@ namespace XREngine
                     }
 
                     // Step 5: Call GameMode.OnBeginPlay
-                    Controller.ActiveGameMode?.OnBeginPlay();
+                    using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                        Controller.ActiveGameMode?.OnBeginPlay();
                     LogTransitionContext("EnterPlay", "AfterGameModeBeginPlay", targetWorld);
 
                     State = EPlayModeState.Play;
@@ -363,7 +365,8 @@ namespace XREngine
                     Time.Timer.Paused = false;
 
                     // Step 1: Call GameMode.OnEndPlay
-                    Controller.ActiveGameMode?.OnEndPlay();
+                    using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                        Controller.ActiveGameMode?.OnEndPlay();
 
                     // Step 2: End play on all world instances
                     foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
@@ -629,7 +632,8 @@ namespace XREngine
                         ?? worldInstance.BeginPlayAsync());
                 }
 
-                Controller.ActiveGameMode?.OnBeginPlay();
+                using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                    Controller.ActiveGameMode?.OnBeginPlay();
 
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;
@@ -687,7 +691,8 @@ namespace XREngine
                         ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
                 }
 
-                Controller.ActiveGameMode?.OnBeginPlay();
+                using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                    Controller.ActiveGameMode?.OnBeginPlay();
 
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;

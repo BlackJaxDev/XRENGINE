@@ -1,3 +1,4 @@
+#if !XRE_PUBLISHED
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -702,3 +703,4 @@ public static partial class CookedBinarySerializer
     }
 
 }
+#endif

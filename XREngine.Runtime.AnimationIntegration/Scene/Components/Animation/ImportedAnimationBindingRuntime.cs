@@ -820,7 +820,9 @@ internal sealed class ImportedAnimationBindingRuntime(XRComponent owner)
         Type loadType = targetType;
         if (loadType == typeof(object) || loadType.IsInterface)
             loadType = IsTexturePath(reference.ResolvedAssetPath) ? typeof(XRTexture2D) : typeof(XRAsset);
-        if (!typeof(XRAsset).IsAssignableFrom(loadType) || loadType.IsAbstract || loadType.GetConstructor(Type.EmptyTypes) is null)
+        if (!typeof(XRAsset).IsAssignableFrom(loadType) || loadType.IsAbstract
+            || (loadType != typeof(XRTexture2D) && loadType != typeof(XRMaterial)
+                && loadType.GetConstructor(Type.EmptyTypes) is null))
         {
             diagnostic = $"Native target type '{targetType.FullName}' is not a loadable XRAsset type.";
             return false;
@@ -828,9 +830,14 @@ internal sealed class ImportedAnimationBindingRuntime(XRComponent owner)
 
         try
         {
-            asset = LoadAssetMethod
-                .MakeGenericMethod(loadType)
-                .Invoke(RuntimeRenderingHostServices.Assets, [reference.ResolvedAssetPath]);
+            if (loadType == typeof(XRTexture2D))
+                asset = RuntimeRenderingHostServices.Assets.LoadAsset<XRTexture2D>(reference.ResolvedAssetPath);
+            else if (loadType == typeof(XRMaterial))
+                asset = RuntimeRenderingHostServices.Assets.LoadAsset<XRMaterial>(reference.ResolvedAssetPath);
+            else
+                asset = LoadAssetMethod
+                    .MakeGenericMethod(loadType)
+                    .Invoke(RuntimeRenderingHostServices.Assets, [reference.ResolvedAssetPath]);
         }
         catch (Exception exception)
         {

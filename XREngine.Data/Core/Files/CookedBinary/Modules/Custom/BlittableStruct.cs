@@ -43,6 +43,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (!runtimeType.IsValueType || runtimeType.IsPrimitive || runtimeType.IsEnum || !IsBlittableStruct(runtimeType))
@@ -72,5 +73,6 @@ public static partial class CookedBinarySerializer
             builder.AddFixedLeaf(node, "data", "blob", blittableSize, $"{blittableSize} bytes");
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

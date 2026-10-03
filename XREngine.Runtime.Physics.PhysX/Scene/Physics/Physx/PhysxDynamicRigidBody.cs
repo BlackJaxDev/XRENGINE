@@ -21,6 +21,9 @@ namespace XREngine.Scene.Physics.Physx
         private Vector3 _cachedAngularVelocity;
         private Vector3 _cachedLinearVelocity;
         private bool _cachedIsSleeping = true;
+        private (Vector3 position, Quaternion rotation)? _pendingKinematicTarget;
+        private bool _reportedDisabledKinematicTarget;
+        private Action? _applyPendingKinematicTarget;
 
         /// <summary>
         /// Returns the angular velocity captured after the latest completed simulation.
@@ -148,6 +151,12 @@ namespace XREngine.Scene.Physics.Physx
         {
             get
             {
+                if (_obj is null || IsReleased)
+                    return null;
+                if (RuntimePhysicsServices.Current.IsPhysicsThread && _pendingKinematicTarget is { } pending)
+                    return pending;
+                if (ScenePtr is null || !SimulationEnabled)
+                    return null;
                 PxTransform tfm;
                 bool hasTarget = _obj->GetKinematicTarget(&tfm);
                 return hasTarget ? (tfm.p, tfm.q) : null;
@@ -175,16 +184,61 @@ namespace XREngine.Scene.Physics.Physx
                 if (!Flags.HasFlag(PxRigidBodyFlags.Kinematic))
                     Flags |= PxRigidBodyFlags.Kinematic;
 
-                var tfm = PhysxScene.MakeTransform(value.Value.position, value.Value.rotation);
-                _obj->SetKinematicTargetMut(&tfm);
+                _pendingKinematicTarget = value;
+                TryApplyPendingKinematicTarget();
                 //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
             }
             else
             {
+                _pendingKinematicTarget = null;
+                _reportedDisabledKinematicTarget = false;
                 // Clear kinematic target by making body non-kinematic.
                 if (Flags.HasFlag(PxRigidBodyFlags.Kinematic))
                     Flags &= ~PxRigidBodyFlags.Kinematic;
             }
+        }
+
+        internal void TryApplyPendingKinematicTarget()
+        {
+            if (!RuntimePhysicsServices.Current.IsPhysicsThread)
+            {
+                if (!IsReleased && !RuntimePhysicsServices.Current.IsShuttingDown)
+                    RuntimeThreadServices.Current.EnqueuePhysicsThread(
+                        _applyPendingKinematicTarget ??= TryApplyPendingKinematicTarget);
+                return;
+            }
+
+            if (_obj is null || IsReleased || _pendingKinematicTarget is not { } target || ScenePtr is null)
+                return;
+
+            // A newer body-mode change supersedes a deferred target.
+            if (!Flags.HasFlag(PxRigidBodyFlags.Kinematic))
+            {
+                _pendingKinematicTarget = null;
+                _reportedDisabledKinematicTarget = false;
+                return;
+            }
+
+            if (!SimulationEnabled)
+            {
+                if (!_reportedDisabledKinematicTarget)
+                {
+                    _reportedDisabledKinematicTarget = true;
+                    Debug.Log(ELogCategory.Physics, "[PhysxDynamicRigidBody] Delayed kinematic target: actor simulation is disabled ptr=0x{0:X}", (nint)_obj);
+                }
+                return;
+            }
+
+            var tfm = PhysxScene.MakeTransform(target.position, target.rotation);
+            _obj->SetKinematicTargetMut(&tfm);
+            _pendingKinematicTarget = null;
+            _reportedDisabledKinematicTarget = false;
+        }
+
+        protected override void OnBeforeNativeRelease()
+        {
+            _pendingKinematicTarget = null;
+            _reportedDisabledKinematicTarget = false;
         }
 
         public float WakeCounter

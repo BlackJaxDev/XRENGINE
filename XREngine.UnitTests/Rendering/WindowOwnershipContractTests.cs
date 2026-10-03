@@ -131,7 +131,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void EngineTimer_InteractiveResizeDispatchUsesNormalFrameAndCollectPublication()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Host/Core/Time/EngineTimer.cs");
         int dispatchStart = source.IndexOf("public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(", StringComparison.Ordinal);
         dispatchStart.ShouldBeGreaterThanOrEqualTo(0);
         int normalDispatchStart = source.IndexOf("public bool DispatchRender()", dispatchStart, StringComparison.Ordinal);

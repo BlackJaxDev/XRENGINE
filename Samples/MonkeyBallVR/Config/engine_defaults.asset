@@ -22,6 +22,7 @@ OpenGL:
 Vulkan:
   Startup: {}
   Presentation:
+    Profile: Uncapped
     MaximumFramesAhead: 1
     LimiterSpinThresholdMilliseconds: 0.25
   TargetMode: {}
@@ -110,6 +111,7 @@ SkinnedBoundsGpuDirectAabbWrite: true
 AllowInitialSkinnedBoundsBuildWhenNever: true
 CpuSceneCullingStructure: Bvh
 VulkanGpuDrivenProfile: Diagnostics
+VulkanPresentationProfile: Uncapped
 EnableVulkanPrimaryCommandBufferReuse: true
 EnableVulkanDescriptorIndexing: true
 EnableVulkanBindlessMaterialTable: true

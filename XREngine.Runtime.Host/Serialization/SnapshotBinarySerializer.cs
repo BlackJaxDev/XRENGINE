@@ -27,18 +27,20 @@ internal static class SnapshotBinarySerializer
         if (instance is null)
             return null;
 
+        using var authoringScope = AotParityDiagnostics.EnterSynchronousAuthoringPath();
         return CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
             () => CookedBinarySerializer.Serialize(instance, Callbacks));
     }
 
     public static T? Deserialize<T>(byte[]? payload) where T : class
     {
-        using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.CookedSnapshotLoad);
         if (payload is null || payload.Length == 0)
             return null;
 
-        T? restored = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-            () => CookedBinarySerializer.Deserialize(typeof(T), payload, Callbacks) as T);
+        T? restored;
+        using (AotParityDiagnostics.EnterSynchronousAuthoringPath())
+            restored = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+                () => CookedBinarySerializer.Deserialize(typeof(T), payload, Callbacks) as T);
         if (restored is XRScene scene)
             SnapshotSceneReferenceResolver.Repair(scene);
         return restored;

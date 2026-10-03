@@ -109,6 +109,30 @@ public static class AotParityDiagnostics
         return new AotParityPlayerPathScope(entered: true, synchronous: true);
     }
 
+    /// <summary>
+    /// Temporarily leaves the player path for synchronous editor snapshot serialization.
+    /// Explicit player scopes entered inside this block still enable parity diagnostics.
+    /// </summary>
+    public static SynchronousAuthoringScope EnterSynchronousAuthoringPath()
+    {
+        int logicalDepth = PlayerPathDepth.Value;
+        int synchronousDepth = _synchronousPlayerPathDepth;
+        if (logicalDepth > 0)
+            PlayerPathDepth.Value = 0;
+        _synchronousPlayerPathDepth = 0;
+        return new SynchronousAuthoringScope(logicalDepth, synchronousDepth);
+    }
+
+    public readonly struct SynchronousAuthoringScope(int logicalDepth, int synchronousDepth) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (logicalDepth > 0)
+                PlayerPathDepth.Value = logicalDepth;
+            _synchronousPlayerPathDepth = synchronousDepth;
+        }
+    }
+
     internal static void ExitPlayerPath(bool synchronous)
     {
         if (synchronous)

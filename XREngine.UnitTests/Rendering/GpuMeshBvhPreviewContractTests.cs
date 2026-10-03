@@ -527,7 +527,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         raycastDispatcherSource.ShouldNotContain("program.Uniform(\"uRayCount\", (int)request.RayCount);");
         raycastDispatcherSource.ShouldNotContain("program.Uniform(\"uMaxStackDepth\", (int)(request.MaxStackDepth ?? DefaultStackLimit));");
 
-        string preferencesSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
+        string preferencesSource = ReadWorkspaceFile("XREngine.Runtime.Host/Settings/EditorPreferences.cs");
         preferencesSource.ShouldContain("public bool GpuMeshBvhClickPickEnabled");
         preferencesSource.ShouldNotContain("enum EMeshBvhClickPickMode");
 

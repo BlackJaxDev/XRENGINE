@@ -49,6 +49,18 @@ generation-owned descriptors; OpenGL creates concrete objects through the
 existing factories, while Vulkan stages a pending physical resource plan before
 swapping it into active renderer state.
 
+If a resize callback temporarily has no current or retained camera, preserve the
+last output's AO enablement and mode in its resource feature mask, including the
+required forward prepass. Recompute those fields when a camera becomes available;
+an explicitly disabled camera AO setting must not inherit the previous mode.
+
+Vulkan publication commits allocator ownership before retiring old physical
+resources. A retirement failure must not roll back the newly published allocator.
+Retire each eligible group independently and quarantine failed groups with their
+owners retained. Shared groups remain excluded from retirement. The retired
+generation count is a soft bound: absent, pending, or failed completion receipts
+must never be treated as permission to dispose resources still in use.
+
 Initial generations use the same bounded owner-thread materializer as
 replacements; they must not bypass slice limits merely because no active
 generation exists. Ordinary slices stop at 2 ms or four completed specs, while

@@ -250,8 +250,34 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(Component.Transform);
             }
 
+            PublishRenderCommandCullingVolume();
             CaptureRenderDeformationSettings(IsSkinned);
+            EnsureInitialSubscriptions();
             RuntimeEngine.Rendering.SettingsChanged += Rendering_SettingsChanged;
+        }
+
+        private void EnsureInitialSubscriptions()
+        {
+            // Snapshot restoration can suppress SetField notifications while this mesh is
+            // constructed. Replacing an existing handler keeps the normal path idempotent.
+            TransformBase transform = Component.Transform;
+            transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;
+            transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
+            transform.WorldMatrixChanged += Component_WorldMatrixPreviewChanged;
+            transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+
+            Component.PropertyChanged -= ComponentPropertyChanged;
+            Component.PropertyChanging -= ComponentPropertyChanging;
+            Component.PropertyChanged += ComponentPropertyChanged;
+            Component.PropertyChanging += ComponentPropertyChanging;
+
+            if (RootBone is not { } rootBone)
+                return;
+
+            rootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
+            rootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
+            rootBone.WorldMatrixChanged += RootBone_WorldMatrixPreviewChanged;
+            rootBone.RenderMatrixChanged += RootBone_WorldMatrixChanged;
         }
 
         #endregion
@@ -515,6 +541,18 @@ namespace XREngine.Components.Scene.Mesh
         {
             RuntimeEngine.Rendering.SettingsChanged -= Rendering_SettingsChanged;
             RenderInfo.PropertyChanged -= RenderInfoPropertyChanged;
+            RenderInfo.RenderCommands.Clear();
+            if (RootBone is { } rootBone)
+            {
+                rootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
+                rootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
+            }
+
+            TransformBase transform = Component.Transform;
+            transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;
+            transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
+            Component.PropertyChanged -= ComponentPropertyChanged;
+            Component.PropertyChanging -= ComponentPropertyChanging;
             UntrackAllBones();
             SkinnedMeshBoundsCalculator.Instance.UnregisterSkinnedMesh(this, World?.VisualScene?.GPUCommands);
             RenderableLOD[] lods;

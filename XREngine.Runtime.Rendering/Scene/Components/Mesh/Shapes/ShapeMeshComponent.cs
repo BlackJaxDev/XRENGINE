@@ -51,6 +51,19 @@ namespace XREngine.Components.Mesh.Shapes
                 RebuildMeshWhenAttached();
         }
 
+        protected override void OwningSceneNodePostDeserialize()
+        {
+            base.OwningSceneNodePostDeserialize();
+
+            // Shape is derived from serialized dimensions and is not itself serialized.
+            // Snapshot restoration suppresses property notifications, so rebuild once
+            // after the owning node has restored its material and transform.
+            SetField(ref _shape, CreateShapeFromProperties(), publishNotifications: false, nameof(Shape));
+            RebuildMeshWhenAttached();
+        }
+
+        protected abstract IShape CreateShapeFromProperties();
+
         private void RebuildMeshWhenAttached()
         {
             if (SceneNode is null)
@@ -59,7 +72,10 @@ namespace XREngine.Components.Mesh.Shapes
                 return;
             }
 
+            RenderableMesh[] oldMeshes = Meshes.Count == 0 ? [] : Meshes.ToArray();
             Meshes.Clear();
+            foreach (RenderableMesh mesh in oldMeshes)
+                mesh.Dispose();
             _meshRebuildPending = false;
 
             IShape? shape = Shape;

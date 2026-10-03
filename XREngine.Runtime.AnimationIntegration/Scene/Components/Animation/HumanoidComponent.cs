@@ -135,9 +135,19 @@ namespace XREngine.Components.Animation
         }
 
         private bool HasPersistedAvatarDefinition()
-            => AvatarDefinition.SchemaVersion == HumanoidAvatarDefinitionMetadata.CurrentSchemaVersion
-                && AvatarDefinition.Bones is { Length: > 0 }
-                && !string.IsNullOrWhiteSpace(AvatarDefinition.DefinitionContentSha256);
+        {
+            if (AvatarDefinition.SchemaVersion != HumanoidAvatarDefinitionMetadata.CurrentSchemaVersion
+                || AvatarDefinition.Bones is not { Length: > 0 } bindings
+                || string.IsNullOrWhiteSpace(AvatarDefinition.DefinitionContentSha256))
+                return false;
+
+            foreach (HumanoidAvatarBoneBinding binding in bindings)
+                if (!string.IsNullOrEmpty(binding.NodePath)
+                    || !string.IsNullOrEmpty(binding.StructuralSha256))
+                    return true;
+
+            return false;
+        }
 
         private float _sourceModelUnitsPerMeter;
 
@@ -760,7 +770,7 @@ namespace XREngine.Components.Animation
                 Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(rotation);
             }
 
-            RefreshAvatarDefinition();
+            RefreshAvatarDefinition(profileResult: null, regenerateCanonicalCorrections: true);
 
             if (applyPreview && PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
                 ApplyNeutralPosePreview();
@@ -769,7 +779,7 @@ namespace XREngine.Components.Animation
         public void ClearNeutralPoseOffsets()
         {
             Settings.NeutralPoseBoneRotations.Clear();
-            RefreshAvatarDefinition();
+            RefreshAvatarDefinition(profileResult: null, regenerateCanonicalCorrections: true);
             if (PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
                 ApplyNeutralPosePreview();
         }
@@ -783,7 +793,7 @@ namespace XREngine.Components.Animation
             // sampled on a different avatar. Explicit local-pose overrides have
             // their own authoring API and are never part of the native preset.
             Settings.NeutralPoseBoneRotations.Clear();
-            RefreshAvatarDefinition();
+            RefreshAvatarDefinition(profileResult: null, regenerateCanonicalCorrections: true);
             if (applyPreview && PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
                 ApplyNeutralPosePreview();
         }
@@ -810,7 +820,7 @@ namespace XREngine.Components.Animation
                 Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(bindRelativeRotation);
             }
 
-            RefreshAvatarDefinition();
+            RefreshAvatarDefinition(profileResult: null, regenerateCanonicalCorrections: true);
 
             if (applyPreview && PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
                 ApplyNeutralPosePreview();
@@ -929,17 +939,7 @@ namespace XREngine.Components.Animation
             => NormalizeOrFallback(RejectAxis(direction, bodyUp), fallback);
 
         public void ApplyNeutralPoseRotations(IReadOnlyDictionary<string, Quaternion> rotations)
-        {
-            Settings.NeutralPoseBoneRotations.Clear();
-            foreach ((string boneName, Quaternion rotation) in rotations)
-            {
-                string targetBoneName = ResolveNeutralPoseBoneSettingKey(boneName);
-                Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(rotation);
-            }
-
-            if (PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
-                ApplyNeutralPosePreview();
-        }
+            => ApplyNeutralPoseBindRelativeRotations(rotations, applyPreview: true);
 
         public (TransformBase? tfm, Matrix4x4 offset) GetIKTarget(EHumanoidIKTarget target)
             => target switch

@@ -19,6 +19,9 @@ param(
     # Seconds to remain in play mode before exiting and collecting logs.
     [ValidateRange(1, 3600)][int]$PlaySeconds = 10,
 
+    # Repeat transitions in one process to expose stale registrations and restoration state.
+    [ValidateRange(1, 10)][int]$PlayCycles = 1,
+
     # Directory that receives the archived session log and the summary JSON.
     [string]$OutputDirectory = '',
 
@@ -70,12 +73,33 @@ function Wait-PlayState([bool]$Expected) {
     throw "Play-mode transition did not complete (expected inPlayMode=$Expected)."
 }
 
+function Wait-WorldReady {
+    $deadline = [DateTime]::UtcNow.AddSeconds(120)
+    do {
+        $response = & $invoke -Session $Name -Method 'tools/call' -Params @{ name = 'list_worlds'; arguments = @{} } -TimeoutSec 10 | ConvertFrom-Json
+        if ($null -ne $response -and $response.PSObject.Properties.Name -contains 'error') {
+            if ($response.error.message -notlike '*requires unavailable capabilities: World*') {
+                throw "World readiness failed: $($response.error.message)"
+            }
+        }
+        elseif ($null -ne $response -and $null -ne $response.result -and
+            -not ($response.result.PSObject.Properties.Name -contains 'isError' -and $response.result.isError)) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'The MCP endpoint became ready, but the editor did not create an active world. Inspect the session startup log.'
+}
+
 $violationLines = @()
 $sessionJson = $null
 $failure = $null
+$completedCycles = 0
+$runStartedUtc = [DateTime]::UtcNow
 try {
     $sessionJson = & $manage @startArgs | ConvertFrom-Json
     if (-not $sessionJson.McpReady) { throw 'Parity editor session did not become ready.' }
+    Wait-WorldReady
 
     $projectFullPath = [IO.Path]::GetFullPath((Join-Path $repoRoot $ProjectPath))
     Invoke-CheckedMcp 'tools/call' @{ name = 'load_game_project'; arguments = @{ project_path = $projectFullPath } } | Out-Null
@@ -83,12 +107,15 @@ try {
 
     $worldFullPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $WorldAssetPath))
     Invoke-CheckedMcp 'tools/call' @{ name = 'load_world'; arguments = @{ asset_path = $worldFullPath } } | Out-Null
-    Invoke-CheckedMcp 'tools/call' @{ name = 'enter_play_mode'; arguments = @{} } | Out-Null
-    Wait-PlayState $true
-    Start-Sleep -Seconds $PlaySeconds
-    Wait-PlayState $true
-    Invoke-CheckedMcp 'tools/call' @{ name = 'exit_play_mode'; arguments = @{} } | Out-Null
-    Wait-PlayState $false
+    for ($cycle = 0; $cycle -lt $PlayCycles; $cycle++) {
+        Invoke-CheckedMcp 'tools/call' @{ name = 'enter_play_mode'; arguments = @{} } | Out-Null
+        Wait-PlayState $true
+        Start-Sleep -Seconds $PlaySeconds
+        Wait-PlayState $true
+        Invoke-CheckedMcp 'tools/call' @{ name = 'exit_play_mode'; arguments = @{} } | Out-Null
+        Wait-PlayState $false
+        $completedCycles++
+    }
 }
 catch { $failure = $_.Exception.Message }
 finally {
@@ -100,7 +127,12 @@ finally {
 
 $logSource = if ($null -ne $sessionJson) { [string]$sessionJson.Logs } else { '' }
 if (-not [string]::IsNullOrWhiteSpace($logSource) -and (Test-Path -LiteralPath $logSource)) {
-    Copy-Item -LiteralPath $logSource -Destination (Join-Path $OutputDirectory 'logs') -Recurse -Force
+    $archiveRoot = Join-Path $OutputDirectory 'logs'
+    foreach ($logFile in Get-ChildItem -LiteralPath $logSource -Recurse -File | Where-Object LastWriteTimeUtc -ge $runStartedUtc) {
+        $destination = Join-Path $archiveRoot ([IO.Path]::GetRelativePath($logSource, $logFile.FullName))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        Copy-Item -LiteralPath $logFile.FullName -Destination $destination -Force
+    }
     $violationLines = @(Get-ChildItem -LiteralPath (Join-Path $OutputDirectory 'logs') -Recurse -File |
         Select-String -Pattern '\[AotParity\]|AotParityViolationException' |
         ForEach-Object { $_.Line })
@@ -116,6 +148,8 @@ $summary = [pscustomobject]@{
     world = $WorldAssetPath
     project = $ProjectPath
     playSeconds = $PlaySeconds
+    playCycles = $PlayCycles
+    completedCycles = $completedCycles
     violationCount = $violationLines.Count
     violations = $violationLines
     failure = $failure

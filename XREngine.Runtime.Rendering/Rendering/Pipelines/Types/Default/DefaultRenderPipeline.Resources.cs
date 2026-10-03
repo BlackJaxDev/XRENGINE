@@ -93,6 +93,19 @@ public partial class DefaultRenderPipeline
         bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
         bool usesStereoResources = UsesStereoResources(instance, viewport);
         AmbientOcclusionSettings? generationAoSettings = ResolveAmbientOcclusionSettings(instance, viewport);
+        bool cameraUnavailable = instance.RenderState.SceneCamera is null
+            && instance.RenderState.RenderingCamera is null
+            && instance.LastSceneCamera is null
+            && instance.LastRenderingCamera is null
+            && viewport?.ActiveCamera is null;
+        ulong previousFeatureMask = 0UL;
+        bool usePreviousAoFeatures = cameraUnavailable
+            && generationAoSettings is null
+            && instance.TryGetLastResourceFeatureMask(viewport, out previousFeatureMask);
+        DefaultPipelineResourceFeature previousAoFeatures = usePreviousAoFeatures
+            ? (DefaultPipelineResourceFeature)(previousFeatureMask &
+                ((ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled | AoModeFieldMask))
+            : DefaultPipelineResourceFeature.None;
 
         if (EnableDeferredMsaa && !useOpenXrVulkanSafePath &&
             ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
@@ -100,7 +113,8 @@ public partial class DefaultRenderPipeline
         if (!useOpenXrVulkanSafePath && ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
             mask |= DefaultPipelineResourceFeature.MsaaTargetsEnabled;
         bool useForwardPrePassResources = !useOpenXrVulkanSafePath
-            && (ForwardDepthPrePassEnabled || generationAoSettings?.Enabled == true);
+            && (ForwardDepthPrePassEnabled || generationAoSettings?.Enabled == true
+                || (previousAoFeatures & DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0);
         if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
         bool useVendorUpscale = !useOpenXrVulkanSafePath && RuntimeEnableVendorUpscale;
@@ -131,6 +145,12 @@ public partial class DefaultRenderPipeline
                 int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(activeAoSettings.Type) + 1;
                 mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
             }
+            else if (usePreviousAoFeatures)
+            {
+                // A resize callback can arrive while its viewport camera is unavailable.
+                // Keep the last camera-owned AO layout until that camera can be resolved again.
+                mask |= previousAoFeatures;
+            }
 
             if (ShouldUseBloomForGeneration(instance, viewport))
                 mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
@@ -159,8 +179,8 @@ public partial class DefaultRenderPipeline
         }
 
         GroundTruthAmbientOcclusionSettings.EResolution gtaoResolution = generationAoSettings?.GroundTruth.Resolution
-            ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousMask)
-                ? ResolveGtaoResolutionFromFeatureMask(previousMask)
+            ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousResolutionMask)
+                ? ResolveGtaoResolutionFromFeatureMask(previousResolutionMask)
                 : GroundTruthAmbientOcclusionSettings.DefaultResolution);
         mask |= gtaoResolution switch
         {

@@ -100,7 +100,7 @@ internal sealed class VulkanResourceGenerationTransactionService
         return true;
     }
 
-    private FrameOpResourcePlannerSwitchingState Publish(
+    private (FrameOpResourcePlannerSwitchingState SwitchingState, List<VulkanResourceAllocator> RetiredAllocators) Publish(
         VulkanBackendObjectContext backendContext,
         ref ResourcePlannerRuntimeState state,
         in VulkanFrameOpPlannerStateKey key,
@@ -138,15 +138,13 @@ internal sealed class VulkanResourceGenerationTransactionService
             VulkanResourcePlannerSessionService.MarkStateUsed(switchingState, key);
             CollectEvictedAllocators(switchingState, retiredAllocators);
 
-            state.ResourceAllocator.CommitReusedPhysicalImageMetadata();
+            ResourcePlannerRuntimeGeneration publication = new(state);
             _planner.PublishResourcePlannerGeneration(
-                new ResourcePlannerRuntimeGeneration(state));
+                publication);
             _planner.PublishPlan(state.RenderGraphPlan);
         }
 
-        for (int index = 0; index < retiredAllocators.Count; index++)
-            _ = retiredAllocators[index].TryRetirePhysicalResources(backendContext);
-        return switchingState;
+        return (switchingState, retiredAllocators);
     }
 
     private void RestoreFramebufferWrappers(
@@ -270,7 +268,8 @@ internal sealed class VulkanResourceGenerationTransactionService
                 owner._sessions.RestoreRuntimeState(validationPrevious);
             }
 
-            FrameOpResourcePlannerSwitchingState switchingState =
+            (FrameOpResourcePlannerSwitchingState switchingState,
+                List<VulkanResourceAllocator> retiredAllocators) =
                 owner.Publish(
                     backendContext,
                     ref pendingState,
@@ -278,21 +277,36 @@ internal sealed class VulkanResourceGenerationTransactionService
                     manifest,
                     allowSynchronousResourceUploads);
             _committed = true;
+            pendingState.ResourceAllocator.CommitReusedPhysicalImageMetadata();
+            for (int index = 0; index < retiredAllocators.Count; index++)
+                TryRetireAllocator(retiredAllocators[index], backendContext, pendingKey.ResourceGeneration);
+
+            if (!ReferenceEquals(previousState.ResourceAllocator, pendingState.ResourceAllocator) &&
+                !IsAllocatorOwned(switchingState, previousState.ResourceAllocator))
+            {
+                TryRetireAllocator(
+                    previousState.ResourceAllocator,
+                    backendContext,
+                    pendingKey.ResourceGeneration,
+                    reusedImageGroups);
+            }
+        }
+
+        private static void TryRetireAllocator(
+            VulkanResourceAllocator allocator,
+            VulkanBackendObjectContext backendContext,
+            ulong resourceGeneration,
+            IReadOnlySet<VulkanPhysicalImageGroup>? exceptImageGroups = null)
+        {
             try
             {
-                if (!ReferenceEquals(previousState.ResourceAllocator, pendingState.ResourceAllocator) &&
-                    !IsAllocatorOwned(switchingState, previousState.ResourceAllocator))
-                {
-                    _ = previousState.ResourceAllocator.TryRetirePhysicalResources(
-                        backendContext,
-                        exceptImageGroups: reusedImageGroups);
-                }
+                _ = allocator.TryRetirePhysicalResources(backendContext, exceptImageGroups: exceptImageGroups);
             }
             catch (Exception ex)
             {
                 Debug.VulkanWarning(
                     "[VulkanResourcePlanner] Generation {0} published, but post-commit retirement failed: {1}",
-                    pendingKey.ResourceGeneration,
+                    resourceGeneration,
                     ex.Message);
             }
         }

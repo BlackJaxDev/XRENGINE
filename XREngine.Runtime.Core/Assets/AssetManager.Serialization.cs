@@ -12,39 +12,58 @@ namespace XREngine
 {
     public partial class AssetManager
     {
+#if !XRE_PUBLISHED
         private static readonly Lazy<IReadOnlyList<IYamlTypeConverter>> RegisteredYamlTypeConverters = new(CreateYamlTypeConverters);
 
         private static readonly Lazy<ISerializer> SerializerInstance = new(CreateSerializer);
 
         private static readonly Lazy<IDeserializer> DeserializerInstance = new(() => new CompatibilityNormalizingYamlDeserializer(CreateDeserializer()));
+#endif
 
-        internal static bool SupportsYamlAssetRuntime => !XRRuntimeEnvironment.IsPublishedBuild;
+        internal static bool SupportsYamlAssetRuntime
+#if XRE_PUBLISHED
+            => false;
+#else
+            => !XRRuntimeEnvironment.IsPublishedBuild;
+#endif
 
         internal static IReadOnlyList<IYamlTypeConverter> YamlTypeConverters
         {
+#if XRE_PUBLISHED
+            get => throw CreateYamlRuntimeNotSupportedException();
+#else
             get
             {
                 EnsureYamlAssetRuntimeSupported();
                 return RegisteredYamlTypeConverters.Value;
             }
+#endif
         }
 
         public static ISerializer Serializer
         {
+#if XRE_PUBLISHED
+            get => throw CreateYamlRuntimeNotSupportedException();
+#else
             get
             {
                 EnsureYamlAssetRuntimeSupported();
                 return SerializerInstance.Value;
             }
+#endif
         }
 
         public static IDeserializer Deserializer
         {
+#if XRE_PUBLISHED
+            get => throw CreateYamlRuntimeNotSupportedException();
+#else
             get
             {
                 EnsureYamlAssetRuntimeSupported();
                 return DeserializerInstance.Value;
             }
+#endif
         }
 
         internal static void EnsureYamlAssetRuntimeSupported(string? path = null)
@@ -52,13 +71,19 @@ namespace XREngine
             if (SupportsYamlAssetRuntime)
                 return;
 
+            throw CreateYamlRuntimeNotSupportedException(path);
+        }
+
+        private static NotSupportedException CreateYamlRuntimeNotSupportedException(string? path = null)
+        {
             string detail = string.IsNullOrWhiteSpace(path)
                 ? "Published runtime does not support YAML asset serialization or deserialization."
                 : $"Published runtime does not support YAML asset serialization or deserialization for '{path}'.";
 
-            throw new NotSupportedException($"{detail} Use cooked published content instead.");
+            return new NotSupportedException($"{detail} Use cooked published content instead.");
         }
 
+#if !XRE_PUBLISHED
         private static IReadOnlyList<IYamlTypeConverter> CreateYamlTypeConverters()
         {
             List<IYamlTypeConverter> converters = XRRuntimeEnvironment.IsAotRuntimeBuild
@@ -169,13 +194,19 @@ namespace XREngine
 
             return builder.Build();
         }
+#endif
 
         private static void ResetYamlReadContext()
         {
+#if XRE_PUBLISHED
+            throw CreateYamlRuntimeNotSupportedException();
+#else
             YamlDefaultTypeContext.ResetReadState();
             YamlTransformReferenceContext.ResetReadState();
+#endif
         }
 
+#if !XRE_PUBLISHED
         private sealed class CompatibilityNormalizingYamlDeserializer(IDeserializer inner) : IDeserializer
         {
             private readonly IDeserializer _inner = inner;
@@ -536,5 +567,6 @@ namespace XREngine
 
             return assemblies;
         }
+#endif
     }
 }

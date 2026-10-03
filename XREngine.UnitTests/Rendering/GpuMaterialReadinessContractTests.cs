@@ -26,7 +26,7 @@ public sealed class GpuMaterialReadinessContractTests
         string passSource = SourceContractWorkspace.ReadFile(
             "XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string capabilitySource = SourceContractWorkspace.ReadFile(
-            "XREngine.Runtime.Rendering/Rendering/Materials/IMaterialTableBackendCapability.cs");
+            "XREngine.Runtime.Rendering/Runtime/RendererModules/IMaterialTableBackendCapability.cs");
         string vulkanTableSource = SourceContractWorkspace.ReadFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs");
         string stateSource = SourceContractWorkspace.ReadFile(

@@ -54,8 +54,11 @@ internal sealed class BrokerHistoryForm : Form
 
         var split = new SplitContainer
         {
+            Size = ClientSize,
             Dock = DockStyle.Fill,
-            SplitterDistance = 390,
+            SplitterDistance = 340,
+            Panel1MinSize = 260,
+            Panel2MinSize = 400,
             FixedPanel = FixedPanel.Panel1,
             BackColor = Color.FromArgb(220, 224, 230),
         };
@@ -86,20 +89,25 @@ internal sealed class BrokerHistoryForm : Form
             BackColor = Color.White,
             Padding = new Padding(18),
         };
-        details.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        details.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        // The complete objective belongs in the scrollable preview, not an unbounded header row.
+        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        details.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _titleLabel = new Label
         {
-            AutoSize = true,
-            MaximumSize = new Size(680, 0),
+            AutoSize = false,
+            AutoEllipsis = true,
+            Dock = DockStyle.Fill,
             Font = new Font("Segoe UI Semibold", 16F),
             ForeColor = Color.FromArgb(30, 36, 46),
             Margin = new Padding(0, 0, 0, 6),
         };
         _metadataLabel = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
+            AutoEllipsis = true,
+            Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(95, 104, 120),
             Margin = new Padding(0, 0, 0, 16),
         };
@@ -266,7 +274,7 @@ internal sealed class BrokerHistoryForm : Form
 
         _titleLabel.Text = string.IsNullOrWhiteSpace(record.Objective)
             ? "Untitled broker prompt"
-            : record.Objective.Trim();
+            : PromptTitle(record.Objective);
         string model = string.IsNullOrWhiteSpace(record.ActualModel)
             ? record.RequestedModel
             : $"{record.RequestedModel} → {record.ActualModel}";
@@ -357,5 +365,12 @@ internal sealed class BrokerHistoryForm : Form
     {
         string value = text.ReplaceLineEndings(" ").Trim();
         return value.Length == 0 ? "Untitled prompt" : value;
+    }
+
+    private static string PromptTitle(string text)
+    {
+        const int maximumLength = 160;
+        string value = OneLine(text);
+        return value.Length <= maximumLength ? value : value[..(maximumLength - 3)] + "...";
     }
 }

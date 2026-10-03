@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
@@ -28,7 +27,11 @@ public sealed class AmbientOcclusionModeSelectionTests
     [TestCase(typeof(AdvancedRenderPipeline))]
     public void AmbientOcclusionSelector_UsesCanonicalLabels(Type pipelineType)
     {
-        string[] labels = InvokeBuildAmbientOcclusionTypeOptions(pipelineType)
+        var pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
+        pipeline.PostProcessSchema.TryGetStage(CommonPostProcessStages.AmbientOcclusionStageKey, out var stage).ShouldBeTrue();
+        stage.ShouldNotBeNull();
+        var selector = stage!.Parameters.Single(parameter => parameter.Name == nameof(AmbientOcclusionSettings.Type));
+        string[] labels = selector.EnumOptions
             .Select(option => option.Label)
             .ToArray();
 
@@ -48,18 +51,5 @@ public sealed class AmbientOcclusionModeSelectionTests
         labels.ShouldNotContain("Spatial Hash AO (Experimental)");
         labels.ShouldNotContain("Multi-View AO (Custom)");
         labels.ShouldNotContain("Multi-Radius AO (Prototype)");
-    }
-
-    private static PostProcessEnumOption[] InvokeBuildAmbientOcclusionTypeOptions(Type pipelineType)
-    {
-        MethodInfo? method = pipelineType.GetMethod(
-            "BuildAmbientOcclusionTypeOptions",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        method.ShouldNotBeNull();
-
-        object? result = method.Invoke(null, null);
-        result.ShouldBeOfType<PostProcessEnumOption[]>();
-        return (PostProcessEnumOption[])result;
     }
 }

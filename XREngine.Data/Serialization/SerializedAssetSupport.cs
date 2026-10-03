@@ -7,22 +7,24 @@ public static class SerializedAssetSupport
 {
     public static void WriteModel<TAsset, TModel>(CookedBinaryWriter writer, TAsset asset, Func<TAsset, TModel> createModel)
         where TAsset : class
+        where TModel : class
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(asset);
         ArgumentNullException.ThrowIfNull(createModel);
 
-        writer.WriteValue(createModel(asset));
+        CookedBinarySerializer.WriteTypedMemoryPackModel(writer, createModel(asset));
     }
 
     public static TAsset ReadModel<TAsset, TModel>(CookedBinaryReader reader, Func<TAsset> createAsset, Action<TAsset, TModel?> applyModel)
         where TAsset : class
+        where TModel : class
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(createAsset);
         ArgumentNullException.ThrowIfNull(applyModel);
 
-        TModel? model = reader.ReadValue<TModel>();
+        TModel? model = CookedBinarySerializer.ReadTypedMemoryPackModel<TModel>(reader);
         TAsset asset = createAsset();
         applyModel(asset, model);
         return asset;
@@ -30,11 +32,12 @@ public static class SerializedAssetSupport
 
     public static long CalculateModelSize<TAsset, TModel>(TAsset asset, Func<TAsset, TModel> createModel)
         where TAsset : class
+        where TModel : class
     {
         ArgumentNullException.ThrowIfNull(asset);
         ArgumentNullException.ThrowIfNull(createModel);
 
-        return CookedBinarySerializer.CalculateSize(createModel(asset));
+        return CookedBinarySerializer.CalculateTypedMemoryPackModelSize(createModel(asset));
     }
 
     public static void RegisterFormatter<TAsset>(MemoryPackFormatter<TAsset> formatter)

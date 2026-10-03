@@ -18,17 +18,22 @@ public static class AgentModelCatalog
     public const string Luna6 = "gpt-6-luna";
     public const string Sol6 = "gpt-6-sol";
 
+    /// <summary>
+    /// GPT-6.1 Sol model available for explicit broker runs.
+    /// </summary>
+    public const string Sol61 = "gpt-6.1-sol";
+
     private static readonly IReadOnlyList<string> s_allReasoningEfforts =
         Array.AsReadOnly(["none", "low", "medium", "high", "xhigh", "max"]);
 
-    private static readonly IReadOnlyList<string> s_gpt6AstraReasoningEfforts =
+    private static readonly IReadOnlyList<string> s_reasoningEffortsWithoutNone =
         Array.AsReadOnly(["low", "medium", "high", "xhigh", "max"]);
 
     private static readonly HashSet<string> s_modelSet =
-        new(StringComparer.Ordinal) { Luna, Terra, Sol, Astra6, Luna6, Sol6 };
+        new(StringComparer.Ordinal) { Luna, Terra, Sol, Astra6, Luna6, Sol6, Sol61 };
 
     public static IReadOnlyList<string> Models { get; } =
-        Array.AsReadOnly([Luna6, Sol6, Astra6, Luna, Terra, Sol]);
+        Array.AsReadOnly([Luna6, Sol6, Sol61, Astra6, Luna, Terra, Sol]);
 
     /// <summary>
     /// Preferred GPT-6 models for all new broker routing and agent configuration.
@@ -64,7 +69,7 @@ public static class AgentModelCatalog
     public static IReadOnlyList<string> GetSupportedReasoningEfforts(string model)
         => model switch
         {
-            Astra6 => s_gpt6AstraReasoningEfforts,
+            Astra6 or Sol61 => s_reasoningEffortsWithoutNone,
             Luna or Terra or Sol or Luna6 or Sol6 => s_allReasoningEfforts,
             _ => [],
         };

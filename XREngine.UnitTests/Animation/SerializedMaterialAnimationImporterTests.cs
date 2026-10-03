@@ -66,7 +66,7 @@ AnimationClip:
             .Single(x => x.SourceProperty == "_MainTex");
         texture.MaterialSlot.ShouldBe(1);
         texture.ValueKind.ShouldBe(SerializedMaterialAnimationValueKind.Texture);
-        clip.MaterialBindingDiagnostics.Single().ShouldContain("XRTexture");
+        clip.MaterialBindingDiagnostics.Single().ShouldContain("typed runtime resolver");
 
         Enumerate(clip.RootMember!).Count(x => x.MemberName == "GetMaterialAnimationBinding")
             .ShouldBe(2);

@@ -723,8 +723,6 @@ public partial class XRTexture2D
         SizedInternalFormat = ReadStructOrDefault(reader, SizedInternalFormat);
     }
 
-    [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinaryWriter.WriteValue(Object)")]
-    [RequiresDynamicCode("Calls XREngine.Core.Files.RuntimeCookedBinaryWriter.WriteValue(Object)")]
     private static void WriteStreamableMipmaps(CookedBinaryWriter writer, Mipmap2D[]? mipmaps)
     {
         writer.Write(StreamableMipSectionMagic);
@@ -925,8 +923,10 @@ public partial class XRTexture2D
         return true;
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinaryReader.ReadValue<T>()")]
     [RequiresDynamicCode("Calls XREngine.Core.Files.RuntimeCookedBinaryReader.ReadValue<T>()")]
+#endif
     private static Mipmap2D[] ReadMipmapsLegacy(CookedBinaryReader reader)
     {
         int mipCount = ReadStructOrDefault(reader, 0);
@@ -957,8 +957,6 @@ public partial class XRTexture2D
         return mipmaps;
     }
 
-    [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinarySerializer.CalculateSize(Object)")]
-    [RequiresDynamicCode("Calls XREngine.Core.Files.RuntimeCookedBinarySerializer.CalculateSize(Object)")]
     private static long CalculateStreamableMipmapSize(Mipmap2D[]? mipmaps)
     {
         long size = sizeof(int) * 4;
