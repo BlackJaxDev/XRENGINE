@@ -57,6 +57,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         if (_preparation is null)
         {
             SetField(ref _artifact, artifact);
+            SetField(ref _modulePreparationStartedAt, System.Diagnostics.Stopwatch.GetTimestamp(), publishNotifications: false);
             SetField(ref _preparation, PrepareAsync(artifact, _preparationEpoch));
         }
         Task preparation = _preparation

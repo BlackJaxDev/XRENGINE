@@ -19,9 +19,13 @@ public sealed partial class WebGpuRenderProgram
         Generate();
         if (Artifact.ComputeEntryPoint is null || Artifact.ComputeWorkgroupSize is null)
             throw new NotSupportedException("WebGPU.Compute.ArtifactInvalid: a cooked compute entry and verified workgroup size are required.");
-        Task preparation = _computePreparation ?? PrepareComputeAsync(_preparationEpoch);
         if (_computePreparation is null)
-            SetField(ref _computePreparation, preparation, publishNotifications: false);
+        {
+            SetField(ref _computePreparationStartedAt, System.Diagnostics.Stopwatch.GetTimestamp(), publishNotifications: false);
+            SetField(ref _computePreparation, PrepareComputeAsync(_preparationEpoch), publishNotifications: false);
+        }
+        Task preparation = _computePreparation
+            ?? throw new InvalidOperationException("WebGPU.Compute.PreparationMissing: the pipeline preparation request was not retained.");
         if (preparation.IsFaulted || preparation.IsCanceled)
             preparation.GetAwaiter().GetResult();
         return _computePipeline != 0 && preparation.IsCompletedSuccessfully;
