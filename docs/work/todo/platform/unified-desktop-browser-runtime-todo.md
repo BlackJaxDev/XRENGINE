@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: local implementation resumed after the 2026-10-03 workspace reconstruction. The published `e8e381a2` milestone remains **65/114**; the current local checklist separates implemented source from remaining implementation and live acceptance. **77 of 130 named items are checked; 53 remain open.** Fresh Rendering, WebGPU and Editor builds and all 75 shader recipe cooks pass, with fresh 35-assertion saved-camera and 25-assertion native-admission probes. Genuine Editor Prepare/Export and separate-process cooked hydration/BeginPlay preserve the single-camera static Advanced source/settings, four texture identities and pawn-camera alias; no reconstructed native Browser build or new browser pixels have passed yet. Historical publication and device results below apply to their recorded snapshots. At the owner's request, coherent source groups use narrow compile/cook checks; full browser and regression qualification occurs at end-to-end milestones.
+Status: the published `eca89ed7` checkpoint has **77/130** checked. The next source group below has **83 of 137 named items checked; 54 remain open**. It adds shared pipeline identity, native skin/morph, per-sample x4 MSAA, persisted capability reports and bounded generic meshlet submission, corrects the existing RollingBall serializer status, and repairs native scalar-map interpretation. Seven extra leaves separate material displacement, shadow/decal integration and four remaining generic meshlet producers. Fresh managed/native builds, production shader cooking and genuine Editor export/hydration pass; browser acceptance remains open for these changes. Physical Intel hardware already renders the published static Advanced sample through two startups and both resize checks. Coherent source groups use narrow compile/cook checks and complete browser/regression qualification at end-to-end milestones.
 
 Created: 2026-09-29. Updated: 2026-10-03.
 
@@ -21,23 +21,31 @@ The editor stays a desktop application and gains an honest browser publish targe
 
 ## Current State (2026-10-03)
 
-The local source now contains a bounded static, mono, single-sample Advanced
+The local source now contains a bounded mono Advanced
 family: canonical scene residency, CPU-direct and GPU indirect/compute-meshlet
 visibility, classification/reconstruction, native PBR shading, exact texture
-cohorts, depth/AO stages and selected output/post/exposure paths. Native
-deformation, per-sample MSAA and the generic Default/custom meshlet family remain
-explicit implementation gaps. The split below counts source implementation and
+cohorts, depth/AO stages and selected output/post/exposure paths, plus native
+skin/morph production and faithful per-sample x4 MSAA. Material vertex displacement
+remains an explicit implementation gap. The generic Default/custom compute-meshlet family now has a bounded single-LOD, single-instance route with authored shaders and completion-retained resources; dynamic LOD, multiple instances, distinct-submesh deformation and transparent ordering remain open.
+The split below counts source implementation and
 live acceptance independently, with each requirement owned by one named row.
 
-Fresh post-reconstruction evidence is limited to Rendering/WebGPU/Editor builds,
-all 75 shader cooks, 35 saved-camera assertions, 25 admission/reservation
-assertions and a clear source-boundary review. Genuine Editor Prepare/Export and
+Fresh post-reconstruction evidence includes Rendering/WebGPU/Editor and native
+Browser builds, the original 75 shader cooks and new deformation/MSAA companion
+cooks, 48 saved-camera/identity assertions, 25 admission/reservation assertions,
+24 production MSAA profile checks and source-boundary reviews. Genuine Editor Prepare/Export and
 separate-process cooked hydration/BeginPlay also pass for the single-camera static
 Advanced sample, preserving its pipeline/settings, four texture identities and
 pawn-camera alias. The [fresh integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md)
-records that evidence. The native Browser build/publication and live Advanced
-pixels have not been refreshed; none of the historical browser or physical-device
-results below is a fresh result for this local source. **77 of 130 named items are checked; 53 remain open.**
+records that evidence. The real Windows Editor publishes all three saved samples,
+and the existing Linux browser, RollingBall and RenderingParity lanes pass at
+`48fc5778`; its Advanced lane fails first-frame acceptance. The subsequent `6c91220f` fix changes the exact cooked mesh's canonical admission
+from `InvalidGeometrySource` to accepted without changing its buffers or indices.
+A physical Intel run then renders the saved panel in two fresh startups and both
+resize checks, with native visibility/shading and no pending draw or resource
+failure. The software CI path still waits on shading-program preparation; exact
+PBR, native deformation/MSAA and broader acceptance remain open.
+**83 of 137 named items are checked; 54 remain open.**
 
 The published `e8e381a2` checkpoint retains its historical **65/114** count and
 the preceding Default/RenderingParity evidence: metadata-bearing RollingBall
@@ -339,14 +347,14 @@ compile/cook, focused-probe and genuine Editor export/hydration evidence above
 supports the checked local source leaves, not native Browser publication,
 rendered output or device recovery. The change
 in denominator is decomposition, not a claim that the published milestone ran
-additional tests. **77 of 130 named items are checked; 53 remain open.**
+additional tests. That first split checked 77/130. This implementation group checks **83 of 137 named items; 54 remain open**. UR06.10e separates skin/morph from material displacement; UR06.09f separates the admitted generic meshlet route from four remaining producers; UR06.10b separates native material interpretation from shadow publication/depth sampling and authored decals. These seven additional leaves expose remaining work without counting summary parents. UR10.08 corrects an already-published serializer status. Source closures do not close browser execution acceptance.
 
 | Kind | Checked | Open | Total |
 | --- | ---: | ---: | ---: |
-| `impl` | 65 | 30 | 95 |
+| `impl` | 71 | 31 | 102 |
 | `verify` | 6 | 22 | 28 |
 | `owner` | 6 | 1 | 7 |
-| **Total** | **77** | **53** | **130** |
+| **Total** | **83** | **54** | **137** |
 
 ## Build Gate
 
@@ -389,7 +397,7 @@ These block the listed items. Record each decision here with its date when it is
 
 ## Remaining Work
 
-The historical 2026-10-02 modular-contract gate checked 65 of 114 items. The current restructured source checklist checks 77 of 130, with 53 open; its kind totals are recorded above. The [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+The historical 2026-10-02 modular-contract gate checked 65 of 114 items. The current restructured source checklist checks 83 of 137, with 54 open; its kind totals are recorded above. The [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -398,8 +406,8 @@ Sizes are rough planning estimates for one engineer: **S** is days, **M** is one
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
 | Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Remaining native subsystem acceptance; broader physics parity before any default-promotion consideration |
 | U1: engine boots | UR17, UR01, UR02, UR03 | 7 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
-| U2: engine renders | UR04, UR05, UR06 | 17 | UR04 XL, UR05 XL, UR06 L | Extend the qualified depth and lit/HDR profile to remaining production passes, shadows and UI; compare supported worlds and preserve desktop rendering; D7 is approved |
-| U3: project plays | UR07, UR08, UR09, UR10, UR11 | 9 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
+| U2: engine renders | UR04, UR05, UR06 | 24 | UR04 XL, UR05 XL, UR06 L | Complete remaining native eligibility, generic meshlets, vertex displacement and UI; qualify supported worlds and preserve desktop rendering; D7 is approved |
+| U3: project plays | UR07, UR08, UR09, UR10, UR11 | 7 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete browser physics/audio/input/UI and authored-project play evidence; D2, D3 and D4 are approved |
 | U4: production | UR13, UR14, UR15, UR16 | 15 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
 | U5: networked client | UR12 | 1 | L | U3 |
 
@@ -615,7 +623,7 @@ infrastructure. The following leaves own its camera-persistence integration and
 remaining cold-admission/reference-identity gaps.
 
 - [x] **UR06.02a** `impl` Persist and restore authored camera pipeline sources, nested executable commands, branch lifetime, custom postprocess settings and camera AA/MSAA/HDR overrides; preserve unassigned-camera defaults across fresh factory IDs and synchronize already bound viewports. Fresh 35-assertion camera checks and genuine single-camera Advanced Editor export/separate-process cooked hydration preserve the source/settings, four texture identities and pawn-camera alias. This does not establish shared multi-camera reference equality. See the [camera contract record](../../progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md) and [fresh static integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md).
-- [ ] **UR06.02b** `impl` Preserve one shared authored pipeline object's reference identity across multiple cameras through generic cooked binary hydration and standalone camera-array serialization. Existing world/scene YAML alias behavior and equal IDs/settings do not close this requirement; do not deduplicate distinct authored assets merely by ID.
+- [x] **UR06.02b** `impl` Preserve one shared authored pipeline object's reference identity across multiple cameras through generic cooked binary hydration and standalone camera-array serialization. Generic BinaryV2 definitions/uses and document-scoped YAML anchors retain exact aliases; distinct objects with equal IDs stay distinct. The 48-check managed probe includes two cameras sharing a custom pipeline in an XRWorld, independent camera settings, standalone arrays, repeated YAML documents, cycles and explicit old-cache recook diagnostics. See the [shared graph contract](../../../architecture/assets/cooked-asset-aot-and-io.md); browser multi-camera acceptance remains UR06.11a.
 - [ ] **UR06.02c** `impl` Complete cold publication admission for the selected native scene's geometry, deformation, vertex-displacement and material-cohort eligibility, using the same contracts as runtime and naming the asset/pass/resource and reason. Existing command/program/output-profile checks are UR06.08; remaining failures discovered only during native preparation must move before rendering. Implemented new families must update both admission paths.
 - [x] **UR06.03** `impl` Historical safety gate: make unavailable `AdvancedRenderPipeline` requests report a reason through `Available` and fail under `Required`, rather than silently substituting a pipeline. The initial WebGPU rejection was implemented. D15 supersedes keeping Advanced permanently unsupported; this completed guard is not Advanced rendering support. Its replacement with concrete capability checks and real execution is explicitly open in UR06.08–UR06.11.
 - [x] **UR06.04** `impl` Baseline mesh submission: resolve `CpuDirect` for WebGPU. This implemented baseline remains valid and does not establish Advanced GPU-scene submission. D15 requires the selected pipeline's real GPU-driven paths, tracked in UR06.09; measurement still governs performance claims and default promotion, rather than blocking required source implementation.
@@ -642,20 +650,32 @@ and [native admission record](../../progress/rendering/browser-advanced-admissio
 - [x] **UR06.09c** `impl` Lower indexed-indirect/count and indirect-compute dispatch through ordered WebGPU passes and copies. GPU-count lowering zeros inactive bounded slots on the GPU; pass-boundary visibility and completion receipts replace blocking waits. Require optional indexed first-instance support only for the routes that consume it.
 - [x] **UR06.09d** `impl` Preserve Advanced's authored CPU-direct, GPU-driven indirect and GPU meshlet zero-readback submission. Emit direct draws for the direct producer and vertex-pulled indirect draws for GPU-produced indexed/meshlet streams; reject missing resident meshlets and strategy downgrades. Hardware task/mesh extensions remain a distinct unavailable capability.
 - [x] **UR06.09e** `impl` Reserve bounded native output families against exact device/program contracts, owner identity, publication, resource generation and stage order. Retain retiring reservations until queue completion and prevent partial/post-only native frames from submitting. The fresh 25-assertion admission probe covers these source boundaries; live lifetime behavior remains UR14.01 with the native cases listed under UR06.11.
-- [ ] **UR06.09f** `impl` Implement the generic Default/custom `VPRC_RenderMeshesPassShared` compute/indirect meshlet lowering and its cooked companions. Its `gpu-meshlet-meshes` operation currently rejects even though the separate Advanced native algorithm exists. Preserve the selected zero-readback contract and do not substitute indexed or CPU submission.
+**UR06.09f — Generic authored meshlet submission (non-counted summary).** The material-independent route preserves authored Default/custom graphs and shaders. Its initial executable profile and remaining producers have separate owners below; none may substitute indexed or CPU submission.
+
+- [x] **UR06.09f1** `impl` Implement the single-LOD, single-instance generic compute/indirect meshlet route, exact cooked cull/refit/finalize companions, original primitive/corner ordering, frozen CPU ownership and completion-retained publication/work slots. Unknown vertex behavior uses conservative unbounded GPU expansion; canonical GPU deformation refits its final position stream. Zero-instance commands remain no-ops. Combined WebGPU/Editor/native Browser builds and all three companion cooks pass; runtime strategy acceptance remains UR06.11b. See the [authored meshlet record](../../progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md).
+- [ ] **UR06.09f2** `impl` Publish GPU-selected mesh/LOD decisions and use them in generic meshlet expansion, preserving authored LOD policy without CPU visibility/count readback. The initial route explicitly rejects dynamic multi-LOD sources.
+- [ ] **UR06.09f3** `impl` Publish per-instance transforms and bounds for generic meshlet submission with more than one logical instance; consume them in culling, deformation and raster addressing without substituting a single instance.
+- [ ] **UR06.09f4** `impl` Publish exact deformation streams and ownership for distinct authored submeshes sharing a renderer, so each generic meshlet source refits and draws its own selected current geometry.
+- [ ] **UR06.09f5** `impl` Add shared GPU ordering for view-dependent transparent generic meshlet work and preserve the authored blend/depth contract. The initial route rejects ordering-dependent transparency explicitly.
 
 **UR06.10 — Advanced cooked stages and output (non-counted summary).**
-The checked family is static, mono and single-sample. All 75 canonical recipes
-cook after reconstruction; the [fresh integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+The initial family was static, mono and single-sample; the current group adds native skin/morph and mono x4 MSAA. All 87 canonical recipes cook; the [fresh integration record](../../progress/rendering/browser-advanced-static-integration-2026-10-03.md)
 also records genuine Editor export and cooked source reload, not browser GPU
 execution. Generic logical texture encoding is counted only in UR05.04.
 
 - [x] **UR06.10a** `impl` Cook and connect static visibility compaction/finalization/raster, integer reconstruction, work classification, depth-pyramid and GTAO stages to the canonical frame contract. Preserve static current/previous transforms and primitive/material identities; no synthetic scene or alternate pipeline stands in for these producers.
-- [x] **UR06.10b** `impl` Cook and bind native standard-material PBR/background shading, supported coverage, retained light/shadow/probe resources and declared surface exports. Consume canonical material constants and the exact cohort encoding from UR05.04; classify work and dispatch native shading from GPU-written arguments.
+**UR06.10b — Native material and global sampling (non-counted summary).** Material interpretation and missing physical depth sampling are separate implementation leaves. Selected-global cold admission remains solely UR06.02c; known-value pixels remain UR06.11c.
+
+- [x] **UR06.10b1** `impl` Cook and bind native standard-material PBR/background shading, admitted float-texture cohorts, retained light/global resources and declared surface exports. The versioned engine-surface companion preserves independent metallic/roughness red-channel maps, BaseColor/Opacity/Specular/Emission factors and the frontend normal convention without changing desktop records. Runtime global closure retains probe, shadow and decal references that satisfy the existing float-bank contract. Four exact native/MSAA/export companions cook; fresh builds and genuine Editor export/hydration pass. Old artifacts missing the schema witness reject with an explicit recook diagnostic. Depth-texture sampling remains the next leaf.
+- [ ] **UR06.10b2** `impl` Connect standalone browser directional/point/spot outputs to canonical native shadow publications, then add depth-texture/comparison-sampler bindings and exact cooked shader companions. Existing global capture only publishes atlas allocations. The existing float-texture/filtering-sampler bank rejects depth formats; active depth shadows must not disappear or be silently converted into a different sampling contract.
+- [ ] **UR06.10b3** `impl` Publish ordinary authored decals into canonical native global rows and consume their exact admitted material semantics. Current capture leaves decals empty; the shader/cohort consumer alone does not establish authored decal support. Engine-surface decals must preserve independent maps and normal/factor interpretation.
 - [x] **UR06.10c** `impl` Connect Advanced scene-copy/presentation and selected bounded postprocess programs, including bloom, motion blur, depth of field, FXAA/SMAA and GPU auto-exposure history. Resource declarations and cooked dependencies follow authored settings; disabled effects do not own execution targets/history. Unsupported temporal reconstruction, atmosphere/fog and other unavailable profiles retain explicit diagnostics.
 - [x] **UR06.10d** `impl` Install and validate exact scoped Advanced program ABIs/dependencies at initial output creation and device replacement, and re-evaluate the native capability/reservation contract for the replacement device. This is native-family integration with the recovery owner UR04.06, not a second implementation of general device recovery.
-- [ ] **UR06.10e** `impl` Implement canonical current/previous native deformation producers and matching visibility/reconstruction/shading companions for skinned/morph geometry and selected vertex displacement. Retain deformation generations and temporal relations; ordinary mesh compute from UR06.05a does not satisfy this native family.
-- [ ] **UR06.10f** `impl` Implement faithful per-sample Advanced MSAA visibility, reconstruction, shading and resolve with declared storage/format/sample contracts and exact cooked companions. Ordinary color resolve does not supply per-sample integer visibility; the current single-sample rejection is not completion.
+**UR06.10e — Native deformation families (non-counted summary).** Ordinary mesh compute from UR06.05a does not satisfy these producers; live numeric and rendered evidence remains separately owned.
+
+- [x] **UR06.10e1** `impl` Implement canonical current/previous native skinning and sparse-morph production, authored controls, ordered geometry copies and matching visibility/reconstruction/shading consumers. Retain deformation generations and prepared temporal relations. Exact aggregate/copy companions cook and the integrated native Browser build passes; desktop GLSL/bindings and authored rich-morph policy remain unchanged. Numeric parity remains UR06.05b and native motion execution remains UR06.11d.
+- [ ] **UR06.10e2** `impl` Implement selected material vertex-displacement producers and exact visibility/reconstruction/shading companions with conservative geometry bounds and retained current/previous relations. The native path's explicit VertexCohortUnsupported rejection remains an implementation gap.
+- [x] **UR06.10f** `impl` Implement faithful per-sample Advanced MSAA visibility, reconstruction, shading and resolve with declared storage/format/sample contracts and exact cooked companions. The mono x4 profile preserves all covered samples through native shading and resolves canonical sidecars coherently; x2/x8/x16, stereo and unavailable profiles reject explicitly. Seven new companions plus the original visibility recipe cook; integrated builds and 24 production profile checks pass. See the [MSAA integration record](../../progress/rendering/browser-advanced-msaa-2026-10-03.md). Actual per-sample pixels remain UR06.11e.
 
 **UR06.11 — Browser execution acceptance (non-counted summary).**
 A source build, recipe cook, admission probe or Editor export does not pass these
@@ -667,9 +687,9 @@ existing matrix. UR04.06 and UR14.02 own the underlying recovery/stale-completio
 implementation. This cross-reference adds no recovery checkbox.
 
 - [ ] **UR06.11a** `verify` Publish and run saved Default, Advanced, clear-only and unrelated quad pipeline assets in the browser. Verify output, authored asset/settings identity, custom schema/AA settings, scoped-program alias isolation and precise capability rejection. Exercise multiple cameras sharing one source after UR06.02b; the fresh single-camera export is preparatory evidence only.
-- [ ] **UR06.11b** `verify` Run the static native Advanced world in CPU-direct, GPU-driven indirect and compute/indirect meshlet modes. Verify selected mode and visibility output, and demonstrate that zero-readback modes keep count/visibility data on the GPU with no CPU fallback.
+- [ ] **UR06.11b** `verify` Run native Advanced and authored Default/custom worlds in their implemented CPU-direct, GPU-driven indirect and compute/indirect meshlet modes. Verify selected mode, original primitive/corner order, authored material/deformation output and explicit unsupported-profile diagnostics. Demonstrate that zero-readback modes keep count/visibility data on the GPU with no CPU fallback.
 - [ ] **UR06.11c** `verify` Capture known-value native PBR/background, masked coverage, texture/sampler/array cohorts, lighting/shadow/probe, depth/AO and selected output/post/exposure results. Exercise disabled effects and resource replacement; shader cooking alone does not establish material interpretation or produced pixels.
-- [ ] **UR06.11d** `verify` After UR06.10e, exercise native deformed visibility/reconstruction and current/previous motion output in the selected submission modes. Reuse numeric deformation results from UR06.05b rather than counting the same parity comparison twice.
+- [ ] **UR06.11d** `verify` Exercise each implemented native deformation family from UR06.10e1–e2 through visibility/reconstruction and current/previous motion output in the selected submission modes. Skin/morph acceptance need not wait for displacement implementation. Reuse numeric deformation results from UR06.05b rather than counting the same parity comparison twice.
 - [ ] **UR06.11e** `verify` After UR06.10f, render each implemented Advanced MSAA sample profile and verify per-sample visibility/coverage/shading and final resolve, including selected-profile identity and explicit rejection of unsupported forms.
 
 **Acceptance (U2):** a representative engine world renders in the browser through engine objects and the web tier, with documented differences from desktop.
@@ -721,7 +741,7 @@ The remaining items make the parity target portable. They apply to RollingBall u
 
 - [x] **UR10.06** `impl` Move the sample's PhysX-specific calls onto the backend-neutral physics contracts so it runs on Jolt. Otherwise UR07.04 rejects it at publish.
 - [x] **UR10.07** `impl` Separate the sample's VR rig, OpenVR manifest, and startup-settings generation from its gameplay code, so the gameplay assembly references only portable projects and the desktop build adds the VR part.
-- [ ] **UR10.08** `impl` Bring the sample's cooked-world serializer under the platform cook target from UR03.03, or replace it with the engine's cooked format, so desktop and web load the same world asset.
+- [x] **UR10.08** `impl` Bring the sample's cooked-world serializer under the platform cook target from UR03.03 so desktop and web load the same world asset. This corrects the status of source already published at `2ce09a0d`: RollingBall registers the same explicit v5/v6 serializer/dependencies for both hosts, and the platform publisher uses that registered RuntimeBinaryV1 route before generic cooking. Existing v5 bytes remain unchanged; v6 carries the explicit audio requirement.
 
 **Acceptance:** the same compiled game code runs on desktop and in the browser.
 
@@ -733,7 +753,7 @@ The remaining items make the parity target portable. They apply to RollingBall u
   3. Publish the browser host with the engine assemblies, game assemblies, and selected leaves.
   4. Write the launch descriptor.
   5. Activate the output atomically, reusing the branch's staging and rollback.
-- [ ] **UR11.02** `impl` Before publishing, report web-unsupported components and features per world with scene paths and reasons. Unsupported required features block the publish; optional ones are listed.
+- [x] **UR11.02** `impl` Persist the bounded authored-world capability audits before publication, with scene/node/component/material/pass paths and reasons. Required findings block activation; optional findings remain listed; an incomplete report survives interrupted preflight. Genuine Editor Prepare/Export yields zero required/two optional findings for unchanged RollingBall and three required/two optional findings for the copied negative world. See the [report contract and evidence](../../progress/platform/browser-capability-report-2026-10-03.md). Additional native cold eligibility is owned only by UR06.02c; arbitrary runtime-created behavior is not statically certified.
 - [x] **UR11.03** `impl` Ship a player shell page (canvas, loading progress, errors, audio unlock) separate from the developer harness page.
 - [ ] **UR11.04** `impl` Keep the CLI entry point (`--build-project <project> --build-platform BrowserWebGPU`) and the editor Build Project action stable. Browser publishing must also work from a packaged editor, not only a source checkout.
 - [ ] **UR11.05** `verify` Publish the parity target and a lit, textured, animated test world; play them in the browser and compare with desktop.

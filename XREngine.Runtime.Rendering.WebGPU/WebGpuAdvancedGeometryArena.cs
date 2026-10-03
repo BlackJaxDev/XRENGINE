@@ -18,11 +18,14 @@ internal sealed class WebGpuAdvancedGeometryArena
     private int _usedBytes;
     private int _maximumBytes;
     private ulong _databaseEpoch;
+    private uint _currentDeformationBytes;
+    private uint _previousDeformationBytes;
 
     internal ReadOnlySpan<byte> Bytes => _bytes.AsSpan(0, _usedBytes);
 
-    internal bool Matches(AdvancedGeometryPublicationSnapshot geometry, ulong databaseEpoch)
+    internal bool Matches(AdvancedGeometryPublicationSnapshot geometry, ulong databaseEpoch, uint currentDeformationBytes, uint previousDeformationBytes)
         => _databaseEpoch == databaseEpoch && _usedBytes >= HeaderBytes &&
+           _currentDeformationBytes == currentDeformationBytes && _previousDeformationBytes == previousDeformationBytes &&
            Matches(0, geometry.StaticVertices) && Matches(1, geometry.Indices) &&
            Matches(2, geometry.PreSkinnedCurrent) && Matches(3, geometry.PreSkinnedPrevious) &&
            Matches(4, geometry.MeshletDescriptors) && Matches(5, geometry.MeshletVertexIndices) &&
@@ -31,25 +34,29 @@ internal sealed class WebGpuAdvancedGeometryArena
     private bool Matches(int stream, in AdvancedImmutableByteArenaPublicationSnapshot source)
         => _handles[stream] == source.BufferHandle && _lengths[stream] == source.ByteCount;
 
-    internal void Pack(AdvancedGeometryPublicationSnapshot geometry, ulong databaseEpoch, int maximumBytes)
+    internal void Pack(AdvancedGeometryPublicationSnapshot geometry, ulong databaseEpoch, int maximumBytes,
+        uint currentDeformationBytes, uint previousDeformationBytes)
     {
         _maximumBytes = maximumBytes;
         _usedBytes = HeaderBytes;
         _bytes.AsSpan(0, HeaderBytes).Clear();
         Write(0, geometry.StaticVertices);
         Write(1, geometry.Indices);
-        Write(2, geometry.PreSkinnedCurrent);
-        Write(3, geometry.PreSkinnedPrevious);
+        Write(2, geometry.PreSkinnedCurrent, currentDeformationBytes);
+        Write(3, geometry.PreSkinnedPrevious, previousDeformationBytes);
         Write(4, geometry.MeshletDescriptors);
         Write(5, geometry.MeshletVertexIndices);
         Write(6, geometry.MeshletTriangleWords);
         _databaseEpoch = databaseEpoch;
+        _currentDeformationBytes = currentDeformationBytes;
+        _previousDeformationBytes = previousDeformationBytes;
     }
 
-    private void Write(int stream, in AdvancedImmutableByteArenaPublicationSnapshot source)
+    private void Write(int stream, in AdvancedImmutableByteArenaPublicationSnapshot source, uint reservedBytes = 0)
     {
         int offset = checked((_usedBytes + 15) & ~15);
-        int end = checked((offset + source.Data.Length + 3) & ~3);
+        uint usedBytes = Math.Max(source.ByteCount, reservedBytes);
+        int end = checked((offset + checked((int)usedBytes) + 3) & ~3);
         if (end > _maximumBytes)
             throw new NotSupportedException("WebGPU.Advanced.GeometryCapacity: the exact immutable geometry image exceeds the retained storage binding limit.");
         if (end > _bytes.Length)
@@ -62,7 +69,7 @@ internal sealed class WebGpuAdvancedGeometryArena
         source.Data.CopyTo(_bytes.AsSpan(offset, source.Data.Length));
         Span<uint> directory = MemoryMarshal.Cast<byte, uint>(_bytes.AsSpan(0, HeaderBytes));
         directory[stream * 4] = checked((uint)(offset / sizeof(uint)));
-        directory[stream * 4 + 1] = source.ByteCount;
+        directory[stream * 4 + 1] = usedBytes;
         _handles[stream] = source.BufferHandle;
         _lengths[stream] = source.ByteCount;
         _usedBytes = end;

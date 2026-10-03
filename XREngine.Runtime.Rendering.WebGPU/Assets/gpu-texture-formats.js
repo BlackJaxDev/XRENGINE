@@ -11,6 +11,7 @@ color('bgra8unorm-srgb', 4, 1, 'float', false, true, true, 8);
 color('r16float', 2, 2, 'float');
 color('rg16float', 4, 2, 'float');
 color('rgba16float', 8, 2, 'float', true);
+color('rgba16uint', 8, 2, 'uint', true, true, false);
 for (const [prefix, bytes] of [['r', 4], ['rg', 8], ['rgba', 16]]) {
     color(`${prefix}32uint`, bytes, 4, 'uint', true, false, false);
     color(`${prefix}32sint`, bytes, 4, 'sint', true, false, false);
@@ -67,7 +68,7 @@ export function assertColorClear(format, components) {
     const info = formats.get(format);
     if (info?.sampleType !== 'uint' && info?.sampleType !== 'sint') return;
     const minimum = info.sampleType === 'uint' ? 0 : -0x80000000;
-    const maximum = info.sampleType === 'uint' ? 0xffffffff : 0x7fffffff;
+    const maximum = format === 'rgba16uint' ? 0xffff : info.sampleType === 'uint' ? 0xffffffff : 0x7fffffff;
     if (components.some(value => !Number.isInteger(value) || value < minimum || value > maximum))
         throw new RangeError('Integer attachment clears require exactly representable components in the format numeric range.');
 }

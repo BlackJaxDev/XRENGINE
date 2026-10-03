@@ -142,6 +142,7 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
             else
                 VisualScene.GPUCommands.SetAdvancedGlobalResources(in globalResources);
         }
+        VisualScene.GPUCommands.SetMeshSubmissionFrameId(frameId);
         VisualScene.GlobalSwapBuffers();
         RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
         RuntimeEngine.Rendering.Stats.Octree.SwapOctreeStats();

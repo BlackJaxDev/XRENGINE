@@ -403,6 +403,7 @@ public sealed class MeshletPayload
 
 public static class MeshletPayloadUtility
 {
+    private static readonly ulong s_runtimeCompatibilityToken = CreateRuntimeCompatibilityToken();
     private const int SourceMeshHashVersion = 3;
     private const int MeshletSettingsHashVersion = 1;
     private const int LodSettingsHashVersion = 1;
@@ -536,6 +537,9 @@ public static class MeshletPayloadUtility
     }
 
     public static ulong ComputeRuntimeCompatibilityToken(MeshletGenerationSettingsSnapshot settings)
+        => s_runtimeCompatibilityToken;
+
+    private static ulong CreateRuntimeCompatibilityToken()
     {
         XxHash64 hash = new();
         AppendInt32(hash, MeshletPayload.CurrentPayloadVersion);

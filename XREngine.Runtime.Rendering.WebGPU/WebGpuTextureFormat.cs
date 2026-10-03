@@ -5,35 +5,11 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Exact texture encodings and transfer shapes; no format widening or numeric reinterpretation.</summary>
 internal static class WebGpuTextureFormat
 {
-    public static string Map(ESizedInternalFormat format) => format switch
-    {
-        ESizedInternalFormat.R8 => "r8unorm",
-        ESizedInternalFormat.Rgba8 => "rgba8unorm",
-        ESizedInternalFormat.Srgb8Alpha8 => "rgba8unorm-srgb",
-        ESizedInternalFormat.R16f => "r16float",
-        ESizedInternalFormat.Rg16f => "rg16float",
-        ESizedInternalFormat.Rgba16f => "rgba16float",
-        ESizedInternalFormat.R32f => "r32float",
-        ESizedInternalFormat.Rg32f => "rg32float",
-        ESizedInternalFormat.Rgba32f => "rgba32float",
-        ESizedInternalFormat.R32ui => "r32uint",
-        ESizedInternalFormat.Rg32ui => "rg32uint",
-        ESizedInternalFormat.Rgba32ui => "rgba32uint",
-        ESizedInternalFormat.R32i => "r32sint",
-        ESizedInternalFormat.Rg32i => "rg32sint",
-        ESizedInternalFormat.Rgba32i => "rgba32sint",
-        ESizedInternalFormat.DepthComponent16 => "depth16unorm",
-        ESizedInternalFormat.DepthComponent24 => "depth24plus",
-        ESizedInternalFormat.DepthComponent32f => "depth32float",
-        ESizedInternalFormat.Depth24Stencil8 => "depth24plus-stencil8",
-        ESizedInternalFormat.Depth32fStencil8 => "depth32float-stencil8",
-        _ => throw Unsupported($"format '{format}' has no exact admitted WebGPU encoding"),
-    };
-
-    public static bool IsDepth(string format) => format.StartsWith("depth", StringComparison.Ordinal);
-    public static bool HasStencil(string format) => format is "depth24plus-stencil8" or "depth32float-stencil8";
-    public static bool IsInteger(string format) => format.EndsWith("uint", StringComparison.Ordinal) || format.EndsWith("sint", StringComparison.Ordinal);
-    public static bool SupportsStorage(string format) => format is "rgba8unorm" or "rgba16float" or
+    public static string Map(ESizedInternalFormat format) => WebGpuTextureFormatContract.Map(format);
+    public static bool IsDepth(string format) => WebGpuTextureFormatContract.IsDepth(format);
+    public static bool HasStencil(string format) => WebGpuTextureFormatContract.HasStencil(format);
+    public static bool IsInteger(string format) => WebGpuTextureFormatContract.IsInteger(format);
+    public static bool SupportsStorage(string format) => format is "rgba8unorm" or "rgba16float" or "rgba16uint" or
         "r32float" or "rg32float" or "rgba32float" or "r32uint" or "rg32uint" or "rgba32uint" or
         "r32sint" or "rg32sint" or "rgba32sint";
 
@@ -41,7 +17,7 @@ internal static class WebGpuTextureFormat
     {
         if (format == "depth32float-stencil8" && renderer.DeviceCapabilities?.Features.Contains("depth32float-stencil8") != true)
             throw Unsupported("depth32float-stencil8 requires the enabled selected-device depth32float-stencil8 feature");
-        if (samples > 1 && (IsInteger(format) || format is "rg32float" or "rgba32float"))
+        if (samples > 1 && (IsInteger(format) && format != "rgba16uint" || format is "rg32float" or "rgba32float"))
             throw Unsupported($"format '{format}' does not support multisampling in WebGPU");
         if (storage && (samples != 1 || !SupportsStorage(format)))
             throw Unsupported($"format '{format}' with {samples} samples has no admitted storage-image encoding");
@@ -61,6 +37,7 @@ internal static class WebGpuTextureFormat
             "r16float" => (EPixelFormat.Red, EPixelType.HalfFloat, 2),
             "rg16float" => (EPixelFormat.Rg, EPixelType.HalfFloat, 4),
             "rgba16float" => (EPixelFormat.Rgba, EPixelType.HalfFloat, 8),
+            "rgba16uint" => (EPixelFormat.RgbaInteger, EPixelType.UnsignedShort, 8),
             "r32float" => (EPixelFormat.Red, EPixelType.Float, 4),
             "rg32float" => (EPixelFormat.Rg, EPixelType.Float, 8),
             "rgba32float" => (EPixelFormat.Rgba, EPixelType.Float, 16),

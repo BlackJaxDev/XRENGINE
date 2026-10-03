@@ -16,6 +16,18 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+WebGPU preserves the requested authored strategy. Its generic meshlet route
+uses a material-independent resident `GPUScene` publication, cooked GPU
+cull/expand and bounds-refit companions, and GPU-written uint32 indices and
+`drawIndexedIndirect` arguments. It reuses the original authored raster program
+and does not require Advanced native material eligibility or hardware task/mesh
+stages. Pending or rejected meshlet work never falls through to original
+indexed replay. Dynamic LOD, transparent GPU ordering, and other unavailable
+selected profiles report specific diagnostics. The [authored meshlet lowering
+record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
+describes ownership, conservative bounds, capacities, and pending runtime
+acceptance.
+
 Advanced late color and participating temporal passes declare filtered
 `CpuDirect` submission independently of the opaque native GPU family. Their
 draws still execute on the GPU; the CPU filters authored late-lane eligibility.

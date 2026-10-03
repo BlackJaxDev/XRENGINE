@@ -25,9 +25,10 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
             return;
         bool linearCopy = requirements.OutputProfile.ExternalTargetKind == RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer;
         requirements.RequireRasterProgram(linearCopy ? "advanced::scene-copy" : "advanced::present");
-        if (requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1 ||
-            requirements.OutputProfile.MsaaSampleCount != 1)
-            requirements.Diagnostics.Add("Cooked presentation requires a mono, single-sample output.");
+        if (requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("Cooked presentation requires a mono output.");
+        // The cooked program requires a single-sample source. Its actual binding
+        // enforces that contract independently of the scene's configured AA mode.
         if (!linearCopy && requirements.OutputProfile.OutputHDR)
             requirements.Diagnostics.Add("The cooked canvas presentation operation requires SDR output.");
         if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))

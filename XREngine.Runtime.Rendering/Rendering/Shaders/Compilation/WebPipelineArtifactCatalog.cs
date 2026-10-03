@@ -82,7 +82,7 @@ public sealed class WebPipelineArtifactCatalog
             if (samplers.Length == 0) continue;
             ShaderStageResourceLayout texture = textures[0], sampler = samplers[0];
             if (!ShaderTextureBindingType.TryParse(texture.BindingType, out ShaderTextureBindingType shape) ||
-                shape.SampleType is "uint" or "sint" || (shape.SampleType == "depth") != (sampler.BindingType == "comparison-sampler") ||
+                shape.IsMultisampled || shape.SampleType is "uint" or "sint" || (shape.SampleType == "depth") != (sampler.BindingType == "comparison-sampler") ||
                 shape.SampleType == "unfilterable-float" && sampler.BindingType != "non-filtering-sampler" ||
                 texture.Contract.Owner != sampler.Contract.Owner || texture.Contract.Frequency != sampler.Contract.Frequency)
                 throw new InvalidDataException($"PipelineArtifact.BindingUnsupported: '{group.Key}' texture and sampler contracts are incompatible.");

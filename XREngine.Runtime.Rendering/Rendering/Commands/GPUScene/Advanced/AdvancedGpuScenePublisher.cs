@@ -1385,6 +1385,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     MaterialBindingLayouts.ProjectiveMirror.Textures.Count))));
         uint materialConstantWords = checked(capacity * maximumConstantWords);
         uint materialTextureBindings = checked(capacity * maximumTextureBindings);
+        uint materialResourceReferences = checked(capacity * (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount));
 
         return new(
             new AdvancedGpuSceneCapacityProfile(
@@ -1409,8 +1410,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             materialLayoutMemberCapacity,
             materialConstantWords,
             materialTextureBindings,
-            materialTextureBindings,
-            materialTextureBindings,
+            materialResourceReferences,
+            materialResourceReferences,
             capacity,
             capacity,
             capacity,

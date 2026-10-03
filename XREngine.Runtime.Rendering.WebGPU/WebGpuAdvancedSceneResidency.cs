@@ -23,7 +23,7 @@ internal sealed class WebGpuAdvancedSceneResidency : IDisposable
         for (int index = 0; index < _slots.Length; index++) _slots[index].Reclaim(completedSequence);
     }
 
-    internal bool TryAcquire(BackendReadyFramePackage package, uint frameSequence,
+    internal bool TryAcquire(BackendReadyFramePackage package, uint frameSequence, uint currentDeformationBytes, uint previousDeformationBytes,
         out WebGpuAdvancedSceneSlot? slot, out string reason)
     {
         slot = null;
@@ -41,6 +41,11 @@ internal sealed class WebGpuAdvancedSceneResidency : IDisposable
             if (candidate.RecordingSequence == frameSequence) recordedPublications++;
             if (candidate.RecordingSequence == frameSequence && candidate.Publication == reference.Publication)
             {
+                if (candidate.CurrentDeformationBytes != currentDeformationBytes || candidate.PreviousDeformationBytes != previousDeformationBytes)
+                {
+                    reason = "WebGPU.Advanced.DeformationChanged: outputs sharing one canonical publication must retain the same aggregate output extent.";
+                    return false;
+                }
                 slot = candidate;
                 reason = string.Empty;
                 return true;
@@ -69,7 +74,7 @@ internal sealed class WebGpuAdvancedSceneResidency : IDisposable
                 reason = "WebGPU.Advanced.PublicationMismatch: canonical scene, geometry, material, and global records must share one retained publication.";
                 return false;
             }
-            selected.Prepare(lease, snapshot, frameSequence);
+            selected.Prepare(lease, snapshot, frameSequence, currentDeformationBytes, previousDeformationBytes);
             _nextSlot = (_nextSlot + 1) % _slots.Length;
             slot = selected;
             committed = true;

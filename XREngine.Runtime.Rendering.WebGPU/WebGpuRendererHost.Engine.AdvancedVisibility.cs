@@ -33,6 +33,7 @@ public sealed partial class WebGpuRendererHost
         WebGpuAdvancedVisibilityOutput output = GetAdvancedVisibilityOutput(instance);
         if (!output.TryPrepare(in request, out reason)) return false;
         WebGpuAdvancedVisibilityFrame frame = output.Current;
+        if (!TryCopyAdvancedDeformation(frame, instance.Pipeline!, out reason)) return false;
         WebGpuRenderProgram compact = GetAdvancedStageApi(instance.Pipeline!, "advanced::compact-triangles");
         WebGpuRenderProgram finalize = GetAdvancedStageApi(instance.Pipeline!, "advanced::finalize-triangles");
         WebGpuAdvancedVisibilityProgramContract.Validate(compact.Artifact, "compact-triangles");
@@ -46,7 +47,7 @@ public sealed partial class WebGpuRendererHost
         for (int index = 0; index < frame.BucketCount; index++)
         {
             WebGpuAdvancedVisibilityBucket bucket = frame.Buckets[index];
-            if (bucket.Key.Producer == EAdvancedGeometryProducer.CpuDirectStaticIndexed) continue;
+            if (bucket.Key.Producer is EAdvancedGeometryProducer.CpuDirectStaticIndexed or EAdvancedGeometryProducer.CpuDirectPreSkinned) continue;
             try
             {
                 compact.SetNativeBindingCacheOwner(frame.Payloads);
@@ -96,8 +97,10 @@ public sealed partial class WebGpuRendererHost
     {
         if (!TryGetAdvancedVisibilityFrame(instance, in request, out WebGpuAdvancedVisibilityFrame? frame, out reason) || frame is null)
             return false;
-        WebGpuRenderProgram raster = GetAdvancedStageApi(instance.Pipeline!, "advanced::visibility-pull");
-        WebGpuAdvancedVisibilityProgramContract.Validate(raster.Artifact, "visibility-pull");
+        string pass = request.MsaaSampleCount == 4 ? "visibility-pull-msaa" : "visibility-pull";
+        WebGpuRenderProgram raster = GetAdvancedStageApi(instance.Pipeline!, request.MsaaSampleCount == 4
+            ? "advanced::visibility-pull-msaa" : "advanced::visibility-pull");
+        WebGpuAdvancedVisibilityProgramContract.Validate(raster.Artifact, pass);
         if (!raster.TryPrepareForRendering())
         {
             MarkEngineDrawPending();
@@ -154,7 +157,7 @@ public sealed partial class WebGpuRendererHost
                     program.Uniform("MaterialFlagsWord", WebGpuAdvancedStandardMaterialContract.FlagsWord);
                     program.Uniform("Masked", bucket.Key.Coverage == EAdvancedMaterialCoverageMode.Masked ? 1u : 0u);
                     program.Sampler("CoverageTexture", bucket.CoverageTexture ?? EnsureDisabledAmbientOcclusion(), 0);
-                    bool direct = bucket.Key.Producer == EAdvancedGeometryProducer.CpuDirectStaticIndexed;
+                    bool direct = bucket.Key.Producer is EAdvancedGeometryProducer.CpuDirectStaticIndexed or EAdvancedGeometryProducer.CpuDirectPreSkinned;
                     program.Uniform("Direct", direct ? 1u : 0u);
                     if (direct)
                     {

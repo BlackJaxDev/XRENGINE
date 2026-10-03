@@ -9,7 +9,8 @@ namespace XREngine.Editor.Publishing;
 /// <summary>Rejects authored physics requirements that the browser Jolt adapter cannot preserve.</summary>
 internal static class BrowserPhysicsCapabilityAudit
 {
-    internal static void Inspect(XRComponent component, string path)
+    internal static void Inspect(XRComponent component, string path, BrowserCapabilityReport? report = null,
+        string? scenePath = null)
     {
         // PhysX controller sweeps currently use manager-wide unfiltered queries,
         // whereas Jolt applies a packed controller group/mask to movement. Even
@@ -57,11 +58,21 @@ internal static class BrowserPhysicsCapabilityAudit
         void Require(bool supported, string feature)
         {
             if (!supported)
-                throw new NotSupportedException($"BrowserCook.PhysicsFeatureUnsupported: '{path}' component '{component.GetType().FullName}', feature '{feature}' is not preserved by the browser Jolt adapter.");
+            {
+                NotSupportedException error = new($"BrowserCook.PhysicsFeatureUnsupported: '{path}' component '{component.GetType().FullName}', feature '{feature}' is not preserved by the browser Jolt adapter.");
+                if (report is null)
+                    throw error;
+                report.Inspect(() => throw error, scenePath ?? string.Empty, path, component.GetType().FullName);
+            }
         }
 
         void ReportMapping(string feature)
-            => Debug.LogWarning($"BrowserCook.PhysicsMaterialMapping: '{path}' component '{component.GetType().FullName}', '{feature}' uses Jolt's existing single dynamic-friction coefficient. The separate authored static coefficient is retained but has no separate Jolt solver parameter.");
+        {
+            string reason = $"'{feature}' uses Jolt's existing single dynamic-friction coefficient. The separate authored static coefficient is retained but has no separate Jolt solver parameter.";
+            Debug.LogWarning($"BrowserCook.PhysicsMaterialMapping: '{path}' component '{component.GetType().FullName}', {reason}");
+            report?.AddOptional("BrowserCook.PhysicsMaterialMapping", scenePath ?? string.Empty, path,
+                component.GetType().FullName, null, null, reason);
+        }
     }
 
     private static bool HasEquivalentBrowserGroupMask(PhysicsGroupsMask mask)

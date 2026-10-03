@@ -21,9 +21,8 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             return;
         requirements.RequireRasterProgram("advanced::fxaa");
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Fxaa);
-        if (Stereo || requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1 ||
-            requirements.OutputProfile.MsaaSampleCount != 1)
-            requirements.Diagnostics.Add("The cooked FXAA operation requires a mono, single-sample output.");
+        if (Stereo || requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("The cooked FXAA operation requires a mono output.");
         if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))
             requirements.Diagnostics.Add("The cooked FXAA operation requires an explicit source texture or framebuffer.");
     }

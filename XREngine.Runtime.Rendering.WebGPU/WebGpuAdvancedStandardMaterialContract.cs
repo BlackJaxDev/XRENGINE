@@ -8,13 +8,8 @@ internal static class WebGpuAdvancedStandardMaterialContract
     internal static readonly uint BaseColorWord = Word("BaseColorOpacity");
     internal static readonly uint AlphaCutoffWord = Word("AlphaCutoff");
     internal static readonly uint FlagsWord = Word("Flags");
-    private static readonly ulong DeferredLayout = Hash(MaterialBindingLayouts.OpaqueDeferred.LayoutHash);
-    private static readonly ulong ForwardLayout = Hash(MaterialBindingLayouts.ForwardOpaque.LayoutHash);
-    private static readonly ulong MaskedLayout = Hash(MaterialBindingLayouts.MaskedForward.LayoutHash);
-
     internal static bool IsStandard(in AdvancedMaterialRecord material)
-        => material.MaterialLayoutHash == DeferredLayout || material.MaterialLayoutHash == ForwardLayout ||
-            material.MaterialLayoutHash == MaskedLayout;
+        => WebGpuAdvancedMaterialContract.IsStandard(in material);
 
     private static uint Word(string name)
     {
@@ -27,11 +22,4 @@ internal static class WebGpuAdvancedStandardMaterialContract
         return member.WordOffset;
     }
 
-    private static ulong Hash(string value)
-    {
-        ulong hash = 14695981039346656037ul;
-        foreach (char character in value)
-            hash = unchecked((hash ^ character) * 1099511628211ul);
-        return hash;
-    }
 }

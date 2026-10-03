@@ -11,7 +11,7 @@ internal static class WebGpuAdvancedVisibilityProgramContract
 
     internal static void Validate(ShaderProgramArtifact artifact, string pass)
     {
-        bool raster = pass == "visibility-pull";
+        bool raster = pass is "visibility-pull" or "visibility-pull-msaa";
         bool compact = pass == "compact-triangles";
         if (!raster && !compact && pass != "finalize-triangles") throw Invalid();
         int count = raster ? 7 : compact ? 8 : 2;

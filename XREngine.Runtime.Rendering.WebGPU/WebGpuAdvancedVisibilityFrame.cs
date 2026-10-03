@@ -46,6 +46,9 @@ internal sealed class WebGpuAdvancedVisibilityFrame : IDisposable
     internal ulong PreparationGeneration;
     internal AdvancedViewRecord View;
     internal WebGpuAdvancedSceneSlot? Scene;
+    internal AdvancedGpuDeformationPublication Deformation;
+    internal uint CurrentDeformationBytes;
+    internal uint PreviousDeformationBytes;
 
     /// <summary>Changes command ownership only when direct extents or immutable raster topology change.</summary>
     internal void CommitRasterTopology(bool reversedDepth)

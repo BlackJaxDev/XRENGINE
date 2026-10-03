@@ -71,5 +71,7 @@ internal enum CookedBinaryTypeMarker : byte
     // Low-priority types
     BitArray = 59,
     CultureInfo = 60,
-    Regex = 61
+    Regex = 61,
+    ReferenceDefinition = 62,
+    Reference = 63
 }

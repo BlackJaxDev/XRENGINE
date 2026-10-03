@@ -64,17 +64,19 @@ float4 XR_ADV_UnpackRgba8(uint packedValue)
 
 bool XR_ADV_IsFinite(float2 value)
 {
-    return !any(isnan(value)) && !any(isinf(value));
+    // IEEE exponent classification avoids loop-based vector isnan/isinf lowering
+    // in cooked WGSL while retaining finite, infinity and NaN behavior exactly.
+    return all((asuint(value) & 0x7f800000u) != 0x7f800000u);
 }
 
 bool XR_ADV_IsFinite(float3 value)
 {
-    return !any(isnan(value)) && !any(isinf(value));
+    return all((asuint(value) & 0x7f800000u) != 0x7f800000u);
 }
 
 bool XR_ADV_IsFinite(float4 value)
 {
-    return !any(isnan(value)) && !any(isinf(value));
+    return all((asuint(value) & 0x7f800000u) != 0x7f800000u);
 }
 
 #define XR_ADV_RECONSTRUCTION_MIN_W 1.0e-6
@@ -727,18 +729,35 @@ bool XR_ADV_TryReconstructSurface(
         (requiredMask & XR_ADV_ATTRIBUTE_TANGENT) != 0u;
     float3x3 world3 = (float3x3)currentTransform.world;
     bool mirrored = determinant(world3) < 0.0;
+    uint engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles;
+    bool engineTextureSurface = XR_ADV_TryLoadEngineSurfaceHeader(material,
+        engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles) &&
+        engineSurfaceKind != XR_ADV_ENGINE_SURFACE_COLOR;
     float3 shadingNormal = geometricNormal;
     if ((requiredMask & XR_ADV_ATTRIBUTE_NORMAL) != 0u)
     {
-        float3 localNormal = XR_ADV_Interpolate(
-            XR_ADV_DecodeOct(current0.normalOct),
-            XR_ADV_DecodeOct(current1.normalOct),
-            XR_ADV_DecodeOct(current2.normalOct),
-            weights,
-            flatQualified);
         float3x3 normalMatrix =
             NormalMatrix(world3);
-        shadingNormal = XR_ADV_NormalizeOr(mul(localNormal, normalMatrix), geometricNormal);
+        if (engineTextureSurface)
+        {
+            // The engine texture vertex program normalizes each transformed
+            // normal before perspective interpolation.
+            shadingNormal = XR_ADV_Interpolate(
+                XR_ADV_NormalizeOr(mul(XR_ADV_DecodeOct(current0.normalOct), normalMatrix), float3(0.0)),
+                XR_ADV_NormalizeOr(mul(XR_ADV_DecodeOct(current1.normalOct), normalMatrix), float3(0.0)),
+                XR_ADV_NormalizeOr(mul(XR_ADV_DecodeOct(current2.normalOct), normalMatrix), float3(0.0)),
+                weights, flatQualified);
+        }
+        else
+        {
+            float3 localNormal = XR_ADV_Interpolate(
+                XR_ADV_DecodeOct(current0.normalOct),
+                XR_ADV_DecodeOct(current1.normalOct),
+                XR_ADV_DecodeOct(current2.normalOct),
+                weights,
+                flatQualified);
+            shadingNormal = XR_ADV_NormalizeOr(mul(localNormal, normalMatrix), geometricNormal);
+        }
     }
     float3 tangent;
     float3 bitangent;
@@ -760,13 +779,6 @@ bool XR_ADV_TryReconstructSurface(
             XR_ADV_DecodeTangent(
                 current2.tangentOctAndSign,
                 tangentSign2);
-        tangent = mul(XR_ADV_Interpolate(
-            localTangent0,
-            localTangent1,
-            localTangent2,
-            weights,
-            flatQualified), world3);
-        tangent = XR_ADV_OrthogonalTangent(shadingNormal, tangent);
         float sourceHandedness = flatQualified
             ? tangentSign0
             : dot(
@@ -774,17 +786,54 @@ bool XR_ADV_TryReconstructSurface(
                 weights) < 0.0
                 ? -1.0
                 : 1.0;
-        handedness =
-            sourceHandedness * (mirrored ? -1.0 : 1.0);
-        bitangent =
-            normalize(cross(shadingNormal, tangent)) *
-            handedness;
+        if (engineTextureSurface)
+        {
+            // Match StandardLitColor's texture-normal vertex program: transform
+            // both authored tangent and bitangent with the normal matrix, then
+            // interpolate the independently normalized vertex basis. Keep a
+            // cancelling basis at zero for the material's normal-map guard.
+            float3x3 normalMatrix = NormalMatrix(world3);
+            float3 tangent0 = XR_ADV_NormalizeOr(mul(localTangent0, normalMatrix), float3(0.0));
+            float3 tangent1 = XR_ADV_NormalizeOr(mul(localTangent1, normalMatrix), float3(0.0));
+            float3 tangent2 = XR_ADV_NormalizeOr(mul(localTangent2, normalMatrix), float3(0.0));
+            float3 bitangent0 = XR_ADV_NormalizeOr(mul(
+                cross(XR_ADV_DecodeOct(current0.normalOct), localTangent0) * tangentSign0,
+                normalMatrix), float3(0.0));
+            float3 bitangent1 = XR_ADV_NormalizeOr(mul(
+                cross(XR_ADV_DecodeOct(current1.normalOct), localTangent1) * tangentSign1,
+                normalMatrix), float3(0.0));
+            float3 bitangent2 = XR_ADV_NormalizeOr(mul(
+                cross(XR_ADV_DecodeOct(current2.normalOct), localTangent2) * tangentSign2,
+                normalMatrix), float3(0.0));
+            tangent = XR_ADV_Interpolate(tangent0, tangent1, tangent2, weights, flatQualified);
+            bitangent = XR_ADV_Interpolate(bitangent0, bitangent1, bitangent2, weights, flatQualified);
+            handedness = sourceHandedness;
+        }
+        else
+        {
+            tangent = mul(XR_ADV_Interpolate(
+                localTangent0,
+                localTangent1,
+                localTangent2,
+                weights,
+                flatQualified), world3);
+            tangent = XR_ADV_OrthogonalTangent(shadingNormal, tangent);
+            handedness = sourceHandedness * (mirrored ? -1.0 : 1.0);
+            bitangent = normalize(cross(shadingNormal, tangent)) * handedness;
+        }
     }
     else
     {
-        tangent = XR_ADV_FallbackTangent(shadingNormal);
-        bitangent =
-            normalize(cross(shadingNormal, tangent));
+        if (engineTextureSurface)
+        {
+            tangent = float3(0.0);
+            bitangent = float3(0.0);
+        }
+        else
+        {
+            tangent = XR_ADV_FallbackTangent(shadingNormal);
+            bitangent = normalize(cross(shadingNormal, tangent));
+        }
     }
 
     bool derivativesRequested =

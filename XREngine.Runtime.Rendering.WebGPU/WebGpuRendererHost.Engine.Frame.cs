@@ -95,6 +95,7 @@ public sealed partial class WebGpuRendererHost
         ObjectDisposedException.ThrowIf(State == BrowserRendererState.Disposed, this);
         if (_engineRecording)
             throw new InvalidOperationException("WebGPU.Frame.Active: the engine viewport cannot change during recording.");
+        DiscardEngineViewHistory();
         SetField(ref _engineViewport, viewport);
     }
 
@@ -104,6 +105,7 @@ public sealed partial class WebGpuRendererHost
         ObjectDisposedException.ThrowIf(State == BrowserRendererState.Disposed, this);
         if (_engineRecording)
             throw new InvalidOperationException("WebGPU.Frame.Active: canvas dimensions cannot change during recording.");
+        DiscardEngineViewHistory();
         XRViewport viewport = _engineViewport
             ?? throw new InvalidOperationException("WebGPU.Viewport.Required: bind the engine viewport before synchronizing its surface.");
         using ThreadCurrentScope scope = EnterThreadCurrentScope(this);
@@ -136,7 +138,9 @@ public sealed partial class WebGpuRendererHost
             throw new InvalidOperationException("WebGPU.Frame.Reentrant: an engine frame is already recording.");
         if (_engineFrameSequence == uint.MaxValue)
             throw new InvalidOperationException("WebGPU.Frame.SequenceExhausted: restart the canvas renderer.");
+        DiscardEngineViewHistory();
         ReclaimAdvancedSceneSlots();
+        ReclaimMeshletSlots();
         SetField(ref _engineFrameSequence, _engineFrameSequence + 1, publishNotifications: false);
         SetField(ref _engineCommandCount, 0, publishNotifications: false);
         SetField(ref _engineUniformBytes, 0, publishNotifications: false);
@@ -281,7 +285,7 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineUploadCount, _engineUploadCount + 1, publishNotifications: false);
     }
 
-    private void SubmitEngineFrame(in RenderFrameOutputDescription output)
+    private void SubmitEngineFrame(in RenderFrameOutputDescription output, ref bool submitted)
     {
         int uploadStart = EngineFrameHeaderBytes + _engineCommandCount * EngineFrameRecordBytes;
         int uploadLength = _engineUploadCount * EngineUploadRecordBytes;
@@ -305,9 +309,22 @@ public sealed partial class WebGpuRendererHost
         CountEngineFrameSubmission(length, uniforms.Length, _engineStorageBytes);
         bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms,
             _engineStorageArena.AsSpan(0, _engineStorageBytes));
-        // The executor returning confirms queue submission even when no canvas pass
-        // was present. Seal GPU ownership before any later managed bookkeeping can fail.
-        EndAdvancedSceneRecording(submitted: true);
+        // Queue ownership survives any failure in subsequent managed bookkeeping.
+        submitted = true;
+        try
+        {
+            // The complete-frame gate has passed. Canvas presentation alone is not a
+            // color-write receipt: settle only the exact authored and attested views.
+            // These CPU metadata slots do not wait for the GPU completion watermark.
+            SettleSubmittedEngineViewHistory(presented, in output);
+        }
+        finally
+        {
+            // The executor returning confirms queue submission even when no canvas
+            // pass was present. Seal GPU ownership even if metadata settlement fails.
+            try { EndAdvancedSceneRecording(submitted: true); }
+            finally { EndMeshletRecording(submitted: true); }
+        }
         CountEngineFrameSubmissionResult(presented);
         for (int index = _enginePendingStorage.Count - 1; index >= 0; index--)
         {

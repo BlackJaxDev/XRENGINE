@@ -28,6 +28,8 @@ internal sealed partial class WebGpuMeshDraw
         Span<uint> offsets = stackalloc uint[16];
         int count = _program.SnapshotUniforms(offsets);
         _renderer.RecordEngineCommands(command, offsets[..count], viewport: viewport, scissor: scissor);
+        _renderer.MarkEngineViewHistoryDrawWrite(_frameBuffer, in _output,
+            _program.Artifact.FragmentEntryPoint is not null, _state.ColorWriteMask, vertices, instances, scissor);
         bindings.MarkRecorded();
         if (scissor is not ({ Width: 0 } or { Height: 0 }))
         {

@@ -18,7 +18,8 @@
     1
   ],
   "defines": [
-    "XR_ADV_SURFACE_EXPORTS"
+    "XR_ADV_SURFACE_EXPORTS",
+    "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1"
   ],
   "includes": [],
   "specialization": {},

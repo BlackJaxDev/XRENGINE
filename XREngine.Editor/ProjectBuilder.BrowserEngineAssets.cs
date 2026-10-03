@@ -18,16 +18,18 @@ internal static partial class ProjectBuilder
         out IReadOnlyList<BrowserUiFontCookRequest> authoredFonts)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
+        string worldPath = "/game/" + relativeWorld;
+        using BrowserCapabilityReport capabilityReport = new(worldPath, project.IntermediateDirectory!, cancellationToken);
+        capabilityReport.Save(complete: false);
         GameStartupSettings settings = Engine.PersistentGameSettings.DeepClone();
-        BrowserRenderingCapabilityAudit.InspectStartup(settings);
+        BrowserRenderingCapabilityAudit.InspectStartup(settings, capabilityReport);
         RenderPipelineResourceProfile outputProfile = BrowserRenderPipelineOutputProfile.FromStartup(settings);
         Directory.CreateDirectory(sourceDirectory);
         // The existing serializer owns component graphs and game-specific formats. No
         // browser scene projection is allowed to remove authored gameplay behavior.
         IShaderProgramArtifactResolver? resolver = Engine.CurrentProject is { ProjectDirectory: { } projectDirectory, BrowserShaderArtifactManifestPath: { Length: > 0 } manifest }
             ? new BrowserShaderArtifactSource(projectDirectory, manifest) : null;
-        string relativeWorld = Path.GetRelativePath(assetRoot, world.FilePath!).Replace('\\', '/');
-        string worldPath = "/game/" + relativeWorld;
         includesDefaultUiFont = PrepareBrowserUiFonts(world.Scenes, assetRoot, out authoredFonts);
         if (string.Equals(worldPath, "/game/startup.asset", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Browser startup world conflicts with the cooked startup-settings identity.");
@@ -43,6 +45,8 @@ internal static partial class ProjectBuilder
         }
         Dictionary<string, ShaderProgramArtifact> shaderArtifacts = new(StringComparer.Ordinal);
         HashSet<int> admittedScenePasses = [];
+        List<RenderPipelineRequirements> admittedPipelineRequirements = [];
+        BrowserNativeSceneCapabilityAudit nativeAdmission = new();
         // Inspect what the browser will actually hydrate. A registered game serializer may
         // intentionally project desktop shader data into explicit cooked material semantics.
         // This CPU-only audit may run in a live desktop editor; temporary materials must not
@@ -52,14 +56,16 @@ internal static partial class ProjectBuilder
             using IDisposable materialTarget = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(EngineMaterialConstructionTarget.WebGpuCooked);
             using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
             XRWorld runtimeWorld = CookedAssetReader.LoadAsset(
-                File.ReadAllBytes(Path.Combine(sourceDirectory, "startup-world.bin")), typeof(XRWorld)) as XRWorld
+                File.ReadAllBytes(Path.Combine(sourceDirectory, "startup-world.bin")), typeof(XRWorld),
+                requireReferenceGraph: true) as XRWorld
                 ?? throw new InvalidDataException("The browser startup payload did not hydrate an XRWorld.");
             VerifyPublishedUiFontReferences(world.Scenes, runtimeWorld.Scenes);
             if (!BrowserStreamedSceneBindings(world.Scenes).SequenceEqual(
                 BrowserStreamedSceneBindings(runtimeWorld.Scenes), StringComparer.Ordinal))
                 throw new InvalidDataException("BrowserCook.StreamedSceneReferenceLost: the cooked startup world changed its authored scene targets.");
             foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(runtimeWorld, resolver,
-                cancellationToken, outputProfile, admittedScenePasses: admittedScenePasses))
+                cancellationToken, outputProfile, admittedScenePasses: admittedScenePasses,
+                report: capabilityReport, admittedPipelineRequirements: admittedPipelineRequirements, nativeAdmission: nativeAdmission))
                 shaderArtifacts.TryAdd(artifact.Identity, artifact);
             // Keep authored IDs intact during inspection; publishing beside the
             // source world would rekey collisions before per-pipeline state lookup.
@@ -68,7 +74,10 @@ internal static partial class ProjectBuilder
         (string[] streamedRoots, bool streamedUsesDefaultFont, IReadOnlyList<BrowserUiFontCookRequest> streamedFonts,
             IReadOnlyList<ShaderProgramArtifact> streamedShaders) =
             CookBrowserStreamedScenes(project, world, assetRoot, sourceDirectory, dependencyCooker, resolver,
-                cookedFonts, cancellationToken, outputProfile, admittedScenePasses);
+                cookedFonts, cancellationToken, outputProfile, admittedScenePasses, capabilityReport, admittedPipelineRequirements, nativeAdmission);
+        nativeAdmission.Complete(capabilityReport, cancellationToken);
+        string capabilityReportPath = capabilityReport.Save();
+        capabilityReport.ThrowIfBlocked(capabilityReportPath);
         includesDefaultUiFont |= streamedUsesDefaultFont;
         authoredFonts = [.. authoredFonts.Concat(streamedFonts).DistinctBy(static font => font.CatalogPath)
             .OrderBy(static font => font.CatalogPath, StringComparer.Ordinal)];

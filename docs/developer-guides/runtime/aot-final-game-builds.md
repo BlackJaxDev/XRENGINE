@@ -81,4 +81,4 @@ The headless NativeAOT build command disables `CopyGameAssemblies` and
 and its native DLLs, license files, and subdirectories are copied beside the
 renamed launcher. Analyzer logs and PDBs are excluded from release output.
 
-Published AOT launchers reject legacy `BinaryV1` cooked assets at runtime. Runtime-loadable assets must be registered with `PublishedCookedAssetRegistry` so they cook as `RuntimeBinaryV1`, and any runtime type lookup must resolve through `AotRuntimeMetadata.bin` or an explicit generated registry.
+Published AOT launchers reject generic `BinaryV1` and `BinaryV2` cooked assets at runtime. Runtime-loadable assets must be registered with `PublishedCookedAssetRegistry` so they cook as `RuntimeBinaryV1`, and any runtime type lookup must resolve through `AotRuntimeMetadata.bin` or an explicit generated registry.

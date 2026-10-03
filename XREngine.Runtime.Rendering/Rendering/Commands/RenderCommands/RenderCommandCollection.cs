@@ -744,6 +744,11 @@ namespace XREngine.Rendering.Commands
                 _updatingPasses,
                 passMetadata);
 
+            XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
+            if (pipeline?.RequiresGpuMeshSubmissionPublication == true ||
+                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented)
+                scene?.RequestMeshSubmissionPublication();
+
             if (pipeline?.RequiresCanonicalGpuScenePublication != true)
             {
                 _updatingBackendReadyPackage.ResetCanonical();
@@ -1902,6 +1907,55 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>Preserves explicit CPU ownership without consulting native material admission for generic authored GPU meshes.</summary>
+        public void RenderCPUNonMeshAndExplicitlyExcluded(int renderPass)
+            => RenderCPUExplicitlyExcludedCore(renderPass, includeNonMesh: true);
+
+        /// <summary>Auxiliary generic meshlet passes replay only explicitly CPU-owned meshes, never late callbacks.</summary>
+        public void RenderCPUExplicitlyExcludedMeshes(int renderPass)
+            => RenderCPUExplicitlyExcludedCore(renderPass, includeNonMesh: false);
+
+        private void RenderCPUExplicitlyExcludedCore(int renderPass, bool includeNonMesh)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> commands)) return;
+            IRuntimeRenderCommandExecutionState? execution = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
+            if (execution?.WorldSnapshot is not { } world ||
+                !world.GpuScene.TryAcquireMeshSubmissionPublication(out GpuMeshSubmissionPublicationLease lease))
+                return; // The immediately following GPU request marks the atomic frame pending.
+            using (lease)
+            {
+                GpuMeshSubmissionPublication publication = lease.Publication;
+                if (publication.FrameId != world.FrameId) return;
+                if (publication.TryGetInvalidSourceOwnership(renderPass, out EGpuMeshSubmissionSourceOwnership invalidOwnership))
+                    throw new NotSupportedException(invalidOwnership == EGpuMeshSubmissionSourceOwnership.MixedExplicitOwnership
+                        ? "WebGPU.Meshlets.MixedExplicitOwnership: one selected source mixes CPU-exempt and GPU-owned primitives; exact primitive replay is required."
+                        : "WebGPU.Meshlets.IncompleteSource: the selected resident publication omits an authored primitive; whole-source replay is forbidden.");
+                // Establish all source ownership before executing callbacks or any CPU mesh.
+                for (int index = 0; index < commands.Count; index++)
+                {
+                    RenderCommand command = GetCommandAt(commands, index);
+                    if (command is not IRenderCommandMesh mesh || HasZeroAuthoredMeshInstances(command, mesh)) continue;
+                    if (publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.Missing)
+                        throw new NotSupportedException("WebGPU.Meshlets.SourceOwnershipMissing: a visible source has no frozen resident primitive ownership; implicit CPU replay is forbidden.");
+                }
+                for (int index = 0; index < commands.Count; index++)
+                {
+                    RenderCommand command = GetCommandAt(commands, index);
+                    if (command is not IRenderCommandMesh mesh)
+                    {
+                        if (includeNonMesh) RenderWithGpuScope(command, renderPass);
+                    }
+                    else if (!HasZeroAuthoredMeshInstances(command, mesh) &&
+                        publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu)
+                        RenderWithGpuScope(command, renderPass);
+                }
+            }
+        }
+
+        private static bool HasZeroAuthoredMeshInstances(RenderCommand command, IRenderCommandMesh mesh)
+            => command is RenderCommandMesh3D frozen ? frozen.CaptureGpuSceneSnapshot().Instances == 0 : mesh.Instances == 0;
+
         /// <summary>
         /// Renders only commands in the specified pass that satisfy the given predicate.
         /// </summary>
@@ -2141,6 +2195,22 @@ namespace XREngine.Rendering.Commands
             int renderGraphPassIndex)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (primitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly &&
+                AbstractRenderer.Current is IMeshletIndexedBackendCapability indexedMeshlets)
+            {
+                IRuntimeRenderCommandExecutionState? execution = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
+                if (execution?.WorldSnapshot is not { } publishedWorld ||
+                    (execution.RenderingCamera ?? execution.SceneCamera) is not XRCamera meshletCamera)
+                    throw new NotSupportedException("RenderMeshes.MeshletPublicationUnavailable: the generic meshlet route requires its frozen world publication and camera.");
+                MeshletIndexedBackendRequest request = new(publishedWorld.GpuScene, publishedWorld.FrameId, renderPass,
+                    renderGraphPassIndex, meshletCamera, meshSubmissionMode);
+                EMeshletSubmissionStatus status = indexedMeshlets.EnqueueMeshletIndexed(in request, out string reason);
+                if (status == EMeshletSubmissionStatus.Rejected)
+                    XREngine.Debug.RenderingWarningEvery("RenderMeshes.MeshletIndexedRejected", TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] Compute meshlet pass {0} rejected: {1}", renderPass, reason);
+                return;
+            }
 
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;

@@ -18,7 +18,7 @@ public partial class AdvancedRenderPipeline
             return 0;
         XRCamera? camera = viewport?.ActiveCamera ?? instance.RenderState.SceneCamera ?? instance.LastSceneCamera;
         PipelinePostProcessState? state = camera?.GetPostProcessState(this);
-        ulong features = 0;
+        ulong features = AdvancedVisibilitySampleContract.PackedUInt16FeatureBit;
         if (GetSettings<BloomSettings>(state) is not { Enabled: false })
             features |= WebBloomFeatureBit;
         if (GetSettings<MotionBlurSettings>(state) is { Enabled: true })
@@ -40,8 +40,8 @@ public partial class AdvancedRenderPipeline
         requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Smaa);
         RenderPipelineResourceProfile profile = requirements.OutputProfile;
         if (Stereo || profile.Stereo || profile.ViewCount != 1 ||
-            profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount != 1)
-            requirements.Diagnostics.Add("Advanced WebGPU visibility requires a single mono view with one integer color sample.");
+            profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount is not (1 or 4))
+            requirements.Diagnostics.Add("Advanced WebGPU visibility requires one mono view and either one sample or the exact packed16 four-sample family.");
         if (OffscreenProfile is not null)
             requirements.Diagnostics.Add("The selected Advanced offscreen export profile has no installed WebGPU export route.");
         if (GlobalIlluminationMode is not (EGlobalIlluminationMode.None or EGlobalIlluminationMode.LightProbesAndIbl))

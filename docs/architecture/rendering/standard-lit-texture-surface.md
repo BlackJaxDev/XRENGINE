@@ -80,7 +80,7 @@ rewritten, and cleanup detaches borrowed parameter subscriptions before
 destroying only the temporary material. Source destruction retires owned normal
 and shadow companions and their subscriptions without destroying borrowed maps.
 
-The binary format remains `BinaryV1`. For this explicit projection, nested
+The generic binary format is `BinaryV2` and older `BinaryV1` payloads remain readable. For this explicit projection, nested
 MemoryPack envelopes are suppressed so embedded materials remain visible to the
 serializer callback. The source-free `PublishedStandardLitTextureMaterial`
 carrier uses the existing custom binary-object contract: one bounded table of
@@ -117,6 +117,48 @@ Missing programs, incompatible vertices, unsupported state, or a changed
 normal-map layout reject explicitly. Optional absent scalar maps are disabled
 by material controls while retaining an already owned texture binding; no
 authored map is replaced or silently ignored.
+
+## Native Advanced surface publication
+
+Native WebGPU shading retains a separate versioned engine-surface row for each
+generation-checked logical material. Its 304 bytes contain the exact typed
+base-color/opacity and roughness/metallic/specular/emission values, plus four
+independent base-color, normal, metallic and roughness roles. Each role preserves
+its texture/sampler handles and authored UV/channel/decode metadata. The current
+executable companion retains the strict UV0, identity-transform, red-scalar and
+linear RGB-normal contract described above. Metadata does not authorize extra
+sampling behavior or add an sRGB conversion to an already decoded GPU format.
+
+These rows share the existing material database publication lifetime and are
+copied into retained snapshots. Role resources participate in the same whole-scene
+acquire/release preflight as legacy slots, including separate references when
+roles alias one image. Updates advance the corresponding material content,
+resource-binding or layout generation; final material retirement clears its
+companion while older snapshots retain their copies. A new scene-arena directory
+table carries these rows without adding a GPU binding. The desktop material
+layout and its four legacy texture slots remain unchanged.
+
+Cold admission and runtime texture cohorts include both legacy slots and engine
+roles, deduplicated by texture/sampler pair within the existing ten-2D, one-cube,
+one-array bank. Native shading reads only frozen rows. It samples independent
+metallic and roughness red channels, preserves the authored specular factor in
+lighting, ignores texture alpha and vertex color for this surface family, and
+keeps emission independent of sampled base color. Lit-color materials use the
+same typed reader as the raster frontend, including forward roughness 0.9 and
+`MatSpecularIntensity`.
+
+All four native shading and surface-export recipes, including MSAA, carry the
+`XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1` compile define. The shader requires it,
+and runtime validation checks the define in the hash-verified cooked descriptor.
+Older artifacts with the same resource bindings are rejected with an explicit
+recook diagnostic rather than being accepted as an engine-surface companion.
+
+An `AuthoredLitV1` raster cook identity does not prove equivalence to the native
+hardcoded surface evaluator. Such materials require verified engine-generated
+native provenance or an executable native companion; otherwise native admission
+reports that missing companion explicitly. Opaque lit-color and the documented
+opaque lit-texture family are the implemented engine-surface kinds. Masked or
+blended lit-color coverage remains outside this companion.
 
 The leaf shader-cooker build and all seven recipes have been compiled locally.
 A saved ordinary authored world has also completed Editor projection, package

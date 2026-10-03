@@ -17,7 +17,8 @@ internal static partial class ProjectBuilder
         CookBrowserStreamedScenes(XRProject project, XRWorld startupWorld, string assetRoot, string sourceDirectory,
             BrowserAssetDependencyCooker dependencyCooker, IShaderProgramArtifactResolver? resolver,
             HashSet<string> cookedFonts, CancellationToken cancellationToken, RenderPipelineResourceProfile outputProfile,
-            HashSet<int> admittedScenePasses)
+            HashSet<int> admittedScenePasses, BrowserCapabilityReport capabilityReport,
+            List<RenderPipelineRequirements> admittedPipelineRequirements, BrowserNativeSceneCapabilityAudit nativeAdmission)
     {
         SortedSet<string> pending = new(StringComparer.Ordinal);
         foreach (string path in project.BrowserStreamedScenePaths ?? [])
@@ -68,7 +69,8 @@ internal static partial class ProjectBuilder
             using IDisposable wrapperSuppression = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
             using IDisposable materialTarget = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(EngineMaterialConstructionTarget.WebGpuCooked);
             using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
-            XRScene runtimeScene = CookedAssetReader.LoadAsset(File.ReadAllBytes(Path.Combine(sourceDirectory, sourceName)), typeof(XRScene)) as XRScene
+            XRScene runtimeScene = CookedAssetReader.LoadAsset(File.ReadAllBytes(Path.Combine(sourceDirectory, sourceName)), typeof(XRScene),
+                requireReferenceGraph: true) as XRScene
                 ?? throw new InvalidDataException($"BrowserCook.StreamedSceneInvalid: '{identity}' did not hydrate an XRScene.");
             VerifyPublishedUiFontReferences([scene], [runtimeScene]);
             string[] authoredBindings = BrowserStreamedSceneBindings([scene]);
@@ -77,7 +79,8 @@ internal static partial class ProjectBuilder
                 throw new InvalidDataException($"BrowserCook.StreamedSceneReferenceLost: '{identity}' changed its authored scene targets.");
             XRWorld auditWorld = new(identity, runtimeScene);
             foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(auditWorld, resolver,
-                cancellationToken, outputProfile, admittedScenePasses, admittedScenePasses))
+                cancellationToken, outputProfile, admittedScenePasses, admittedScenePasses,
+                capabilityReport, admittedPipelineRequirements, admittedPipelineRequirements, nativeAdmission))
                 shaderArtifacts.TryAdd(artifact.Identity, artifact);
             using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
             using ObjectCacheOwnership authoredOwnership = authoredPublication.CompleteWithOwnership();

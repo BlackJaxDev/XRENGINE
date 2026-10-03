@@ -27,7 +27,7 @@ public sealed partial class WebGpuRendererHost
         => byteCount >= 0 && recordCount >= 0 && byteCount <= EngineStorageCapacity - _engineStorageBytes &&
            recordCount <= EngineMaximumUploads - _engineUploadCount;
 
-    internal bool TryAcquireAdvancedScene(BackendReadyFramePackage package,
+    internal bool TryAcquireAdvancedScene(BackendReadyFramePackage package, uint currentDeformationBytes, uint previousDeformationBytes,
         out WebGpuAdvancedSceneSlot? slot, out string reason)
     {
         RequireReady();
@@ -39,7 +39,7 @@ public sealed partial class WebGpuRendererHost
             SetField(ref _advancedSceneResidency, residency, publishNotifications: false);
             ReclaimAdvancedSceneSlots();
         }
-        return residency.TryAcquire(package, _engineFrameSequence, out slot, out reason);
+        return residency.TryAcquire(package, _engineFrameSequence, currentDeformationBytes, previousDeformationBytes, out slot, out reason);
     }
 
     private void ReclaimAdvancedSceneSlots()

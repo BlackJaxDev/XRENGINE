@@ -3,7 +3,7 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>One compatible native kernel and bounded exact texture/sampler closure.</summary>
 internal sealed class WebGpuAdvancedShadingCohort : IDisposable
 {
-    internal const int SlotCount = 12;
+    internal const int SlotCount = WebGpuAdvancedMaterialContract.TextureSlotCount;
     private readonly WebGpuRendererHost _renderer;
     private readonly int[] _textureHandles = new int[SlotCount];
     private readonly int[] _mips = new int[SlotCount];

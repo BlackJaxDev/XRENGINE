@@ -293,7 +293,7 @@ The launcher is compiled as `XRE_PUBLISHED`, but the expected `Config/GameConfig
 
 The executable is running as `XRE_AOT_RUNTIME`, but `AotRuntimeMetadata.bin` is not present in `GameConfig.pak`. Rebuild with `--publish-native-aot true`, clean stale archives, and verify the config archive was regenerated.
 
-`Cooked asset type ... was published with legacy 'BinaryV1'.`
+`Cooked asset type ... was published with generic 'BinaryV1'` (or `BinaryV2`).
 
 The asset is being loaded by a published AOT runtime without an explicit runtime serializer. Register the type with `PublishedCookedAssetRegistry`, make sure it cooks as `RuntimeBinaryV1`, and republish content.
 

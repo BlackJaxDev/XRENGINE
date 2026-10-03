@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-advanced-deformation-copy",
+  "pass": "deformation-copy",
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "deformation-copy"
+  },
+  "source": "AdvancedDeformationCopy.wgsl",
+  "entryPoints": {
+    "compute": "advancedDeformationCopy"
+  },
+  "workgroupSize": [
+    256,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 4,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 3,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 256,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "CurrentOutput",
+        "physicalName": "current",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "PreviousOutput",
+        "physicalName": "previous",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "GeometryArena",
+        "physicalName": "geometry",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 3,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "currentWordCount",
+            "provider": "CurrentWordCount",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "previousWordCount",
+            "provider": "PreviousWordCount",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved0",
+            "provider": "Reserved0",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "Reserved1",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -3,7 +3,7 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Completion-slot-owned classification buffers; counts and dispatch dimensions remain GPU-owned.</summary>
 internal sealed class WebGpuAdvancedShadingFrame : IDisposable
 {
-    internal const int MaximumCohorts = 128;
+    internal const int MaximumCohorts = WebGpuAdvancedMaterialContract.MaximumCohorts;
     internal const int MaximumRetainedCohorts = MaximumCohorts * (int)AdvancedFrameSlotContract.DefaultSlotCount *
         WebGpuRendererHost.MaximumAdvancedOutputFamilies;
     internal WebGpuAdvancedShadingFrame(WebGpuRendererHost renderer)

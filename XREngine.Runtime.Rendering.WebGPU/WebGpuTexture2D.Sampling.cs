@@ -12,12 +12,12 @@ public sealed unsafe partial class WebGpuTexture2D
     private SamplerState _samplerState;
     private int _samplerHandle;
 
-    internal int GetSampledView(bool depth)
+    internal int GetSampledView(bool depth, bool multisampled = false)
     {
         Generate();
         bool depthFormat = WebGpuTextureFormat.IsDepth(Format);
-        if (_samples != 1 || depth != depthFormat)
-            throw Unsupported("Sample", "the shader binding requires a matching single-sample color or depth texture");
+        if ((_samples > 1) != multisampled || depth != depthFormat)
+            throw Unsupported("Sample", "the shader binding requires a matching sample count and color or depth texture");
         int baseMip = Data.LargestMipmapLevel;
         int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
         if (baseMip < 0 || baseMip > finalMip)

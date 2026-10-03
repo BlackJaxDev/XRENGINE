@@ -368,8 +368,8 @@ bool XR_ADV_TrySampleProbe(XRAdvancedProbeRecord probe, float3 worldPosition, fl
     diffuse = XR_ADV_SampleTexture2D(irradianceReference, XR_ADV_OctahedralUv(N)).rgb * normalization;
     float mip = roughness * max(float(prefilterRecord.mipCount) - 1.0, 0.0);
     specular = XR_ADV_SampleTexture2DLod(prefilterReference, XR_ADV_OctahedralUv(R), mip).rgb * normalization;
-    return !any(isnan(diffuse)) && !any(isinf(diffuse)) &&
-        !any(isnan(specular)) && !any(isinf(specular));
+    return XR_ADV_IsFinite(diffuse) &&
+        XR_ADV_IsFinite(specular);
 }
 
 
@@ -430,7 +430,7 @@ bool XR_ADV_ProjectShadow(XRAdvancedShadowRecord record, float3 position, out fl
     coordinate = float3(0.0);
     if (record.type == 3u) return record.renderedLightPositionAndFar.w > 0.0;
     float4 clip = XR_ADV_TransformRowVector(float4(position, 1.0), record.worldToShadow);
-    if (clip.w <= 0.000001 || any(isnan(clip)) || any(isinf(clip))) return false;
+    if (clip.w <= 0.000001 || !XR_ADV_IsFinite(clip)) return false;
     float3 ndc = clip.xyz / clip.w;
     coordinate = float3(ndc.xy * 0.5 + 0.5,
         (record.flags & 32u) != 0u ? ndc.z : ndc.z * 0.5 + 0.5);
@@ -621,7 +621,7 @@ void XR_ADV_ApplyDecalToSurface(
     if (decal.layerMask != 0u && (decal.layerMask & surface.layerMask) == 0u) return;
 
     float4 decalLocalPos = XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), decal.worldToDecal);
-    if (abs(decalLocalPos.w) < 0.00001 || any(isnan(decalLocalPos)) || any(isinf(decalLocalPos))) return;
+    if (abs(decalLocalPos.w) < 0.00001 || !XR_ADV_IsFinite(decalLocalPos)) return;
     decalLocalPos /= decalLocalPos.w;
 
     // Box bounds test in decal local space.
@@ -729,6 +729,8 @@ void XR_ADV_EvaluateProbeIbl(
     float3 albedo,
     float roughness,
     float metallic,
+    float specularIntensity,
+    bool engineSurface,
     out float3 diffuseIndirect,
     out float3 specularIndirect)
 {
@@ -777,7 +779,9 @@ void XR_ADV_EvaluateProbeIbl(
     prefiltered /= sum;
     float NoV = max(dot(N, V), 0.0);
     float3 F0 = lerp(float3(0.04), albedo, metallic);
-    float3 F = XR_ADV_FresnelSchlick(NoV, F0);
+    float3 F = engineSurface
+        ? XR_ADV_EngineSurfaceIndirectFresnel(NoV, F0, roughness, specularIntensity)
+        : XR_ADV_FresnelSchlick(NoV, F0);
     diffuseIndirect = irradiance * albedo / PI * (float3(1.0) - F) * (1.0 - metallic);
     float2 brdf = XR_ADV_IntegrateSpecularBrdf(NoV, roughness);
     specularIndirect = prefiltered * (F * brdf.x + brdf.y);
@@ -789,7 +793,9 @@ float3 XR_ADV_EvaluateLight(
     float3 V,
     float3 albedo,
     float roughness,
-    float metallic)
+    float metallic,
+    float specularIntensity,
+    bool engineSurface)
 {
     XRAdvancedLightRecord light = XR_ADV_LoadLight(index);
     if (!XR_ADV_LightAffectsView(light, surface.viewIndex)) return float3(0.0);
@@ -818,8 +824,13 @@ float3 XR_ADV_EvaluateLight(
     shadowVisibility = min(shadowVisibility, visibility);
     float3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation * visibility;
     float3 diffuse, specular;
-    float3 result = XR_ADV_EvaluatePBRDirect(N, V, L, radiance, albedo,
-        roughness, metallic, diffuse, specular);
+    float3 result;
+    if (engineSurface)
+        result = XR_ADV_EvaluateEngineSurfaceDirect(N, V, L, radiance, albedo,
+            roughness, metallic, specularIntensity, diffuse, specular);
+    else
+        result = XR_ADV_EvaluatePBRDirect(N, V, L, radiance, albedo,
+            roughness, metallic, diffuse, specular);
     directDiffuse += diffuse;
     directSpecular += specular;
     return result;
@@ -894,12 +905,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
 
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
     XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
-    if (XR_ADV_IsProjectiveMirrorMaterial(material))
+    bool engineSurface = XR_ADV_IsEngineSurfaceMaterial(material);
+    if (!engineSurface && XR_ADV_IsProjectiveMirrorMaterial(material))
     {
         float3 mirrorColor;
         bool matchedView = XR_ADV_TrySampleProjectiveMirror(
             material, view, surface.worldPosition, mirrorColor);
-        result.radiance = matchedView ? mirrorColor : float3(0.0);
+        result.radiance = matchedView ? max(mirrorColor, float3(0.0)) : float3(0.0);
         result.opacity = 1.0;
         return;
     }
@@ -912,31 +924,48 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         return;
     }
 
-    uint materialFlags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
-    float4 base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD) * surface.color0;
-    float4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
-    if ((materialFlags & 1u) != 0u)
-        base *= XR_ADV_StandardTexture(material, 0u, surface.texCoord0,
-            surface.texCoord0Dx, surface.texCoord0Dy, float4(1.0));
-    float3 emittedRadiance = XR_ADV_ResolveStandardEmission(material,
-        surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
-        surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy,
-        base.rgb, rmse.w);
-    if ((materialFlags & 4u) != 0u)
-        rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
-            surface.texCoord0Dx, surface.texCoord0Dy, float4(1.0)).rg;
-    float3 N = normalize(surface.shadingNormal);
-    if ((materialFlags & 2u) != 0u &&
-        XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
+    float4 base;
+    float4 rmse;
+    float3 emittedRadiance;
+    float3 N;
+    if (engineSurface)
     {
-        float3 normalTex = XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
-            surface.texCoord0Dx, surface.texCoord0Dy,
-            float4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
-        N = normalize(surface.tangent * normalTex.x +
-            surface.bitangent * normalTex.y + N * normalTex.z);
+        if (!XR_ADV_TryEvaluateEngineSurface(material, surface, base, rmse, N, emittedRadiance))
+        {
+            // A missing or stale authored companion is a failed contract, not
+            // permission to reinterpret the canonical legacy material slots.
+            textureFailure |= 1u << 17u;
+            return;
+        }
+    }
+    else
+    {
+        uint materialFlags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+        base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD) * surface.color0;
+        rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
+        if ((materialFlags & 1u) != 0u)
+            base *= XR_ADV_StandardTexture(material, 0u, surface.texCoord0,
+                surface.texCoord0Dx, surface.texCoord0Dy, float4(1.0));
+        emittedRadiance = XR_ADV_ResolveStandardEmission(material,
+            surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
+            surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy,
+            base.rgb, rmse.w);
+        if ((materialFlags & 4u) != 0u)
+            rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
+                surface.texCoord0Dx, surface.texCoord0Dy, float4(1.0)).rg;
+        N = normalize(surface.shadingNormal);
+        if ((materialFlags & 2u) != 0u &&
+            XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
+        {
+            float3 normalTex = XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
+                surface.texCoord0Dx, surface.texCoord0Dy,
+                float4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
+            N = normalize(surface.tangent * normalTex.x +
+                surface.bitangent * normalTex.y + N * normalTex.z);
+        }
     }
     float3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
-    float roughness = clamp(rmse.x, 0.04, 1.0);
+    float roughness = clamp(rmse.x, engineSurface ? 0.0 : 0.04, 1.0);
     float metallic = clamp(rmse.y, 0.0, 1.0);
     float linearDepth = -XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), view.view).z;
     // Exact canonical overflow evaluation, with the same view/layer/volume tests.
@@ -950,12 +979,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     {
         uint lightCount = min(u_Push.lightCount, SceneCount(5u));
         for (uint lightIndex = 0u; lightIndex < lightCount; ++lightIndex)
-            color += XR_ADV_EvaluateLight(lightIndex, surface, N, V, base.rgb, roughness, metallic);
+            color += XR_ADV_EvaluateLight(lightIndex, surface, N, V, base.rgb,
+                roughness, metallic, rmse.z, engineSurface);
         if ((u_Push.flags & 8u) != 0u)
         {
             float3 diffuseIndirect, specularIndirect;
             XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V,
-                base.rgb, roughness, metallic, diffuseIndirect, specularIndirect);
+                base.rgb, roughness, metallic, rmse.z, engineSurface, diffuseIndirect, specularIndirect);
             color += ((u_Push.flags & 16u) != 0u
                     ? float3(0.0)
                     : diffuseIndirect * ambientOcclusion) +
@@ -985,15 +1015,16 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             float3(1.0, 0.0, float(shadowReason) / 6.0);
     else if (debugView == 10u) color = float3(ambientOcclusion);
 
-    result.radiance = max(color, float3(0.0));
+    result.radiance = engineSurface ? color : max(color, float3(0.0));
     result.opacity = base.a;
     result.velocity = surface.motionNdc;
     result.reactive = (surface.flags &
         (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0;
     result.diagnostics = shadowReason |
         (uint(round(clamp(shadowVisibility, 0.0, 1.0) * 255.0)) << 8u);
-    result.emittedRadiance = emittedRadiance;
-    result.albedoOpacity = float4(unlit ? float3(0.0) : max(base.rgb, float3(0.0)), base.a);
+    result.emittedRadiance = engineSurface ? emittedRadiance : max(emittedRadiance, float3(0.0));
+    result.albedoOpacity = float4(unlit ? float3(0.0) :
+        engineSurface ? base.rgb : max(base.rgb, float3(0.0)), base.a);
     result.normal = N;
     result.rmse = rmse;
     result.roughness = roughness;

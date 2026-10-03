@@ -29,11 +29,14 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         WebGpuAdvancedShadingFrame frame = _frames[visibility.Scene!.SlotIndex];
         if (frame.ClassifiedSequence == visibility.FrameSequence && frame.PreparationGeneration == visibility.PreparationGeneration)
         { reason = string.Empty; return true; }
-        WebGpuRenderProgram classify = Program(instance, "shade-classify");
+        bool multisample = request.MsaaSampleCount == 4;
+        WebGpuRenderProgram classify = Program(instance, multisample ? "shade-classify-msaa" : "shade-classify");
         WebGpuRenderProgram finalize = Program(instance, "shade-finalize");
         if (!(Prepare(classify) & Prepare(finalize))) return Pending(out reason);
-        XRTexture2D identity = Texture(instance, request.IdentityTargetName, request.Target.Width, request.Target.Height);
-        XRTexture2D metadata = Texture(instance, request.MetadataTargetName, request.Target.Width, request.Target.Height);
+        XRTexture2D identity = Texture(instance, multisample ? AdvancedVisibilityResourceNames.IdentityMultisample : request.IdentityTargetName,
+            request.Target.Width, request.Target.Height, request.MsaaSampleCount);
+        XRTexture2D metadata = Texture(instance, multisample ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : request.MetadataTargetName,
+            request.Target.Width, request.Target.Height, request.MsaaSampleCount);
         try
         {
             PrepareCohorts(in request, visibility, frame);
@@ -47,8 +50,8 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
             classify.BindStorageBuffer(2, frame.Tiles);
             classify.BindStorageBuffer(3, frame.Counts);
             classify.SetUniformBlock("Parameters", MemoryMarshal.AsBytes(parameters));
-            classify.Data.Sampler("VisibilityIdentity", identity, 0);
-            classify.Data.Sampler("VisibilityMetadata", metadata, 1);
+            classify.Data.Sampler(multisample ? "RawVisibilityIdentity" : "VisibilityIdentity", identity, 0);
+            classify.Data.Sampler(multisample ? "RawVisibilityMetadataSelection" : "VisibilityMetadata", metadata, 1);
             classify.RecordCompute(parameters[2], parameters[3], 1);
             parameters.Clear(); parameters[0] = (uint)frame.CohortCount; parameters[1] = frame.TileCapacity;
             finalize.BindStorageBuffer(0, frame.Counts);
@@ -70,6 +73,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         if (frame.ClassifiedSequence != visibility.FrameSequence || frame.PreparationGeneration != visibility.PreparationGeneration ||
             frame.Width != request.Target.Width || frame.Height != request.Target.Height)
         { reason = "WebGPU.Advanced.ClassificationMissing: shade requires the same frozen view, scene slot, and GPU classification generation."; return false; }
+        if (request.MsaaSampleCount == 4) return TryShadeMultisample(in request, instance, visibility, frame, out reason);
         WebGpuRenderProgram native = Program(instance, "shade-native");
         WebGpuRenderProgram background = Program(instance, "shade-background");
         WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-surface-exports") : null;
@@ -135,7 +139,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
 
     private void BindNative(WebGpuRenderProgram api, WebGpuAdvancedVisibilityFrame visibility,
         WebGpuAdvancedShadingFrame frame, uint index, ReadOnlySpan<uint> parameters,
-        XRTexture2D identity, XRTexture2D metadata, XRTexture2D depth, XRTexture2D ao)
+        XRTexture2D identity, XRTexture2D metadata, XRTexture2D depth, XRTexture2D ao, bool multisample = false)
     {
         WebGpuAdvancedShadingCohort cohort = frame.Cohorts[index]!;
         api.SetNativeBindingCacheOwner(cohort.Bindings);
@@ -148,8 +152,9 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         api.BindStorageBuffer(6, cohort.Bindings);
         api.SetUniformBlock("FrozenView", MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(in visibility.View, 1)));
         api.SetUniformBlock("Parameters", MemoryMarshal.AsBytes(parameters));
-        api.Data.Sampler("VisibilityIdentity", identity, 0); api.Data.Sampler("VisibilityMetadata", metadata, 1);
-        api.Data.Sampler("VisibilityDepth", depth, 2); api.Data.Sampler("AmbientOcclusion", ao, 3);
+        api.Data.Sampler(multisample ? "RawVisibilityIdentity" : "VisibilityIdentity", identity, 0);
+        api.Data.Sampler(multisample ? "RawVisibilityMetadataSelection" : "VisibilityMetadata", metadata, 1);
+        api.Data.Sampler(multisample ? "RawVisibilityDepth" : "VisibilityDepth", depth, 2); api.Data.Sampler("AmbientOcclusion", ao, 3);
         for (int slot = 0; slot < TextureNames.Length; slot++)
         {
             AbstractRenderAPIObject? texture = cohort.TextureOwners[slot];
@@ -176,7 +181,21 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
     }
     private WebGpuRenderProgram Program(XRRenderPipelineInstance instance, string pass)
     {
-        WebGpuRenderProgram api = _renderer.GetAdvancedStageApi(instance.Pipeline!, pass switch { "shade-classify" => "advanced::shade-classify", "shade-finalize" => "advanced::shade-finalize", "shade-native" => "advanced::shade-native", "shade-surface-exports" => "advanced::shade-surface-exports", "shade-background" => "advanced::shade-background", "shade-background-exports" => "advanced::shade-background-exports", _ => throw Invalid("ShadingProgram", "unknown native program") });
+        WebGpuRenderProgram api = _renderer.GetAdvancedStageApi(instance.Pipeline!, pass switch
+        {
+            "shade-classify" => "advanced::shade-classify",
+            "shade-classify-msaa" => "advanced::shade-classify-msaa",
+            "shade-finalize" => "advanced::shade-finalize",
+            "shade-native" => "advanced::shade-native",
+            "shade-native-msaa" => "advanced::shade-native-msaa",
+            "shade-surface-exports" => "advanced::shade-surface-exports",
+            "shade-surface-exports-msaa" => "advanced::shade-surface-exports-msaa",
+            "shade-background" => "advanced::shade-background",
+            "shade-background-exports" => "advanced::shade-background-exports",
+            "shade-background-exports-msaa" => "advanced::shade-background-exports-msaa",
+            "shade-msaa-resolve" => "advanced::shade-msaa-resolve",
+            _ => throw Invalid("ShadingProgram", "unknown native program"),
+        });
         WebGpuAdvancedShadingProgramContract.Validate(api.Artifact, pass);
         return api;
     }
@@ -187,11 +206,11 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         reason = "WebGPU.Advanced.ShadingPending: the complete native shading program family is preparing.";
         return false;
     }
-    private static XRTexture2D Texture(XRRenderPipelineInstance instance, string name, uint width, uint height)
+    private static XRTexture2D Texture(XRRenderPipelineInstance instance, string name, uint width, uint height, uint samples = 1)
     {
         if (!instance.Resources.TryGetTexture(name, out XRTexture? value) || value is not XRTexture2D texture ||
-            texture.Width != width || texture.Height != height || texture.MultiSampleCount != 1)
-            throw Invalid("ShadingResourceMismatch", "the frozen output requires matching single-sample 2D shading resources");
+            texture.Width != width || texture.Height != height || texture.MultiSampleCount != samples)
+            throw Invalid("ShadingResourceMismatch", "the frozen output requires matching 2D shading resources and exact sample counts");
         return texture;
     }
     public void Dispose()

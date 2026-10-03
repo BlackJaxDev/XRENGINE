@@ -17,7 +17,9 @@
     16,
     1
   ],
-  "defines": [],
+  "defines": [
+    "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=1"
+  ],
   "includes": [],
   "specialization": {},
   "requiredFeatures": [],

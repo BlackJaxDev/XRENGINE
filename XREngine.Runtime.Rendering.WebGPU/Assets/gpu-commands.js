@@ -172,7 +172,7 @@ export class GpuCommands {
                 oneOf(e.texture.sampleType, ['float', 'unfilterable-float', 'uint', 'sint', 'depth'], 'texture sample type');
                 if (!['2d', '2d-array', 'cube'].includes(e.texture.viewDimension) ||
                     (e.texture.multisampled !== undefined && typeof e.texture.multisampled !== 'boolean') ||
-                    e.texture.multisampled === true && e.texture.viewDimension !== '2d')
+                    e.texture.multisampled === true && (e.texture.viewDimension !== '2d' || e.texture.sampleType === 'float'))
                     throw new TypeError('Texture binding dimension or multisample declaration is unsupported.');
             }
         }

@@ -49,6 +49,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
     {
         if (State == BrowserRendererState.Disposed)
             return;
+        DiscardEngineViewHistory();
         SetField(ref _deviceLost, _deviceLost || deviceLost);
         State = _deviceLost ? BrowserRendererState.Lost : BrowserRendererState.Failed;
         SetField(ref _submittedFrame, false);
@@ -172,6 +173,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
     {
         if (State == BrowserRendererState.Disposed)
             return;
+        DiscardEngineViewHistory();
         BeginBackendRetirement();
         try
         {
@@ -180,6 +182,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
                 PrepareForApiObjectTeardown();
                 _indirectCountKernel?.Dispose();
                 SetField(ref _indirectCountKernel, null, publishNotifications: false);
+                DestroyMeshletPrograms();
                 DestroyMeshDeformationResources();
                 DestroyAutoExposureHistories();
                 DestroyCachedAPIRenderObjects();
@@ -205,6 +208,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             finally
             {
                 DisposeAdvancedSceneResidency();
+                DisposeMeshletResources();
                 _resources.Clear();
                 SetField(ref _engineClearCommands, 0);
                 SetField(ref _engineUniformBuffer, 0);

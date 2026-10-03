@@ -10,6 +10,7 @@ public sealed partial class WebGpuRendererHost
     private static readonly string[] RequiredAdvancedPrograms =
     [
         "advanced::compact-triangles", "advanced::finalize-triangles", "advanced::visibility-pull",
+        "advanced::aggregate-deformation", "advanced::deformation-copy",
         "advanced::depth-pyramid", "advanced::gtao", "advanced::shade-classify",
         "advanced::shade-finalize", "advanced::shade-native", "advanced::shade-background",
     ];
@@ -36,7 +37,9 @@ public sealed partial class WebGpuRendererHost
                 break;
             }
             string pass = artifact.Pass;
-            if (pass is "compact-triangles" or "finalize-triangles" or "visibility-pull")
+            if (pass is "aggregate-deformation" or "deformation-copy")
+                WebGpuAdvancedDeformationProgramContract.Validate(artifact, pass == "deformation-copy");
+            else if (pass is "compact-triangles" or "finalize-triangles" or "visibility-pull")
                 WebGpuAdvancedVisibilityProgramContract.Validate(artifact, pass);
             else if (pass is "depth-pyramid" or "gtao")
                 WebGpuAdvancedDepthProgramContract.Validate(artifact, pass == "gtao");
@@ -45,6 +48,7 @@ public sealed partial class WebGpuRendererHost
         }
         SetField(ref _advancedPipelineArtifacts, artifacts, publishNotifications: false);
         SetField(ref _advancedProgramFailure, failure, publishNotifications: false);
+        SetField(ref _advancedMultisampleProgramFailure, ValidateAdvancedMultisamplePrograms(artifacts), publishNotifications: false);
     }
 
     /// <summary>Admits only the installed single-view native family against the actual device limits.</summary>
@@ -153,15 +157,17 @@ public sealed partial class WebGpuRendererHost
             reason = "WebGPU.Advanced.OwnerRetained: the pipeline instance still belongs to another active or retiring output incarnation.";
             return false;
         }
+        int nativeOffset = request.MsaaSampleCount == 4 ? 5 : 4;
         int operation = request.Stage switch
         {
             EAdvancedRenderStage.VisibilityPreparation => 0,
             EAdvancedRenderStage.VisibilityRaster => 1,
             EAdvancedRenderStage.DepthPyramidAndLateVisibility => request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute ? 2 :
-                request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 3 : -1,
-            EAdvancedRenderStage.AmbientOcclusion => 4,
-            EAdvancedRenderStage.WorkClassification => 5,
-            EAdvancedRenderStage.NativeOpaqueShading => 6,
+                request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 3 :
+                request.MsaaSampleCount == 4 && request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve ? 4 : -1,
+            EAdvancedRenderStage.AmbientOcclusion => nativeOffset,
+            EAdvancedRenderStage.WorkClassification => nativeOffset + 1,
+            EAdvancedRenderStage.NativeOpaqueShading => nativeOffset + 2,
             _ => -1,
         };
         if (operation == 0 && bank.RecordingSequence != _engineFrameSequence)
@@ -176,7 +182,8 @@ public sealed partial class WebGpuRendererHost
             owner.ResourceGeneration != bank.ResourceGeneration || request.Publication != bank.Request.Publication ||
             request.RenderFrameId != bank.Request.RenderFrameId || !request.Views.Equals(bank.Request.Views) ||
             !ReferenceEquals(request.BackendReadyPackage, bank.Request.BackendReadyPackage) ||
-            !ReferenceEquals(request.Target, bank.Request.Target))
+            request.MsaaSampleCount != bank.Request.MsaaSampleCount || request.SampleEncoding != bank.Request.SampleEncoding ||
+            !IsAdvancedStageTargetCurrent(owner, in request))
         {
             reason = "WebGPU.Advanced.FamilyChanged: the stage must preserve its frozen publication, view, output generation, and native stage order.";
             return false;
@@ -196,7 +203,7 @@ public sealed partial class WebGpuRendererHost
         bool primaryComplete = primary?.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true };
         foreach (WebGpuAdvancedOutputReservation? bank in _advancedReservations)
         {
-            if (bank?.RecordingSequence == _engineFrameSequence && bank.NextOperation != (bank.Request.IsMinimalVisibilityOutput ? 4 : 7))
+            if (bank?.RecordingSequence == _engineFrameSequence && bank.NextOperation != (bank.Request.IsMinimalVisibilityOutput ? 4 : 7) + (bank.Request.MsaaSampleCount == 4 ? 1 : 0))
                 return false;
             if (bank?.RecordingSequence == _engineFrameSequence && ReferenceEquals(bank.Owner, primary))
                 primaryComplete = true;
