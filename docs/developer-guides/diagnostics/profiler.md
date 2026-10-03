@@ -630,8 +630,37 @@ mode is reserved for diagnostics, is marked in manifests and samples via
 
 The in-editor **Profiler Settings** panel also exposes **Enable Profiler
 Component Timing**, which independently controls per-component tick timing
-capture for the Components panel without affecting frame logging or render
-statistics.
+capture for the Component Timings panel without affecting frame logging or
+render statistics. While it is on, the profiler installs itself as
+`RuntimeComponentTickTiming.Recorder`, and the world tick dispatch
+(`RuntimeWorldLifecycle`) times each callback and reports it with the
+component that owns it: the callback's target, or the component captured by a
+compiler-generated closure such as an animation tick. Callbacks run during a
+timed update frame are shown; fixed-update ticks between frames are not. The
+panel reads the frame snapshot, so **Frame Logging** must be on as well. While
+the toggle is off, the dispatch reads one static field per queue and times
+nothing. The world tick counters below report per kind of callback rather than
+per component; with both on, the component recording adds its cost to the
+counters' callback time.
+
+### World Tick Counters
+
+Set `XRE_WORLD_TICK_TELEMETRY=1` before launch to observe the world tick path
+(`RuntimeWorldLifecycle`): per tick group, how often it is dispatched and how
+long the queue snapshot, pending registration and callbacks take; per kind of
+callback, its invocations, total and longest time with a timestamp, counts of
+invocations of at least 0.25, 1, 4 and 16 ms (and how many of the 1 ms ones
+coincided with a garbage collection), and the bytes the dispatching thread
+allocated. A callback registered through a compiler-generated closure, such as
+an animation tick, is named by the method it forwards to. Read the counters
+with the read-only MCP tool `get_world_tick_telemetry`; they are cumulative
+since launch, so compare two reads to observe a window. World update calls
+skipped because the world is not playing are counted separately.
+
+With the variable unset, the dispatch loop runs its unobserved path and the
+counters stay at zero. With it set, the observer adds a few timestamp and
+counter reads per queue and per callback, and identifies each newly registered
+callback once, outside the reported pending-registration time.
 
 When code-profiler frame logging is enabled, the stats thread also writes
 disk diagnostics for severe frame anomalies:

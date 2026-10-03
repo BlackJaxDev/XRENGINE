@@ -282,6 +282,71 @@ ExitPlayModeAsync()
 └── 11. Fire PostExitPlay event
 ```
 
+### Transition Failures
+
+Every transition leaves the editor in a consistent, live state:
+
+- **Capture failure refuses entry.** If any scene or the world settings cannot
+  be serialized, the snapshot is invalid, entry stops before anything changes,
+  and the world stays in edit mode. Restoring an invalid snapshot never
+  removes a scene, because a scene missing from it may have failed to
+  serialize rather than been added during play.
+- **Any other failure recovers into edit mode.** When entry (after its
+  snapshot restore began) or exit throws, recovery releases the game mode,
+  restores the edit snapshot unless the failed transition already attempted
+  it, restarts every world in edit mode, which finishes an interrupted play
+  session and relinks the world's timer callbacks, and then publishes the
+  Edit state and `PostExitPlay`. Each recovery step is guarded, so one failing
+  step does not skip the rest.
+- **Failures are recorded where Release builds keep them.** Engine log output
+  (`Debug.Log`, `Debug.LogWarning`, `Debug.LogException`) is compiled only in
+  Debug builds. Each failed step is therefore also written, with the
+  transition, the step and the exception, to the auxiliary log
+  `playmode-transitions.log`; capture and restore failures, with their
+  exceptions, are written to `playmode-snapshot-diagnostics.log`. Both are in
+  the session's log folder, `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`.
+
+### Snapshot Contents And Ownership
+
+Entry captures the edit state and restores it at once, so play runs on a
+deserialized copy; exit restores a copy of the captured edit state. Scenes and
+world settings go through the cooked binary format with snapshot callbacks
+(`SnapshotBinarySerializer`):
+
+- **Assets without a file path are written by value, once per capture.** The
+  snapshot enables `CookedBinarySerializationCallbacks.ShareReference` for
+  every `XRAsset`: the first occurrence of an asset is written as a shared
+  definition and later occurrences as references to it, so a restore returns
+  one object per captured object with the captured sharing (materials shared
+  by many submeshes stay shared).
+- **File-backed assets are written as references** and resolve to the loaded
+  instance, by identity and then by path, accepting only an asset of the
+  referenced type. A path loaded as another type (a shader and its source
+  file) is not loaded again, since that would evict the loaded asset.
+- **Text files the asset manager does not hold are written by value with
+  their path.** Generated shader sources keep their canonical file's path for
+  include resolution and program identity while holding generated text, which
+  neither a reference nor asset serialization (which leaves paths out) would
+  restore.
+- **Each asset is prepared once per capture**, so a reference or record is
+  written, and resolved or restored, once however many objects share it.
+
+A restore owns the copy it creates. The next restore of the same scene
+destroys the roots it replaces and the render assets (render objects, and
+meshes with the buffers they own) the previous restore deserialized, since
+nothing else owns them and they would otherwise keep their renderer resources
+registered (`SnapshotRestoredContent`). The world as loaded before the first
+entry was not created by a restore and can share objects with other owners,
+such as import caches and engine defaults, so it is left alone: one extra copy
+remains for the rest of the session.
+
+Restored objects carry their captured identities, but the global object cache
+(`XRObjectBase.ObjectsCache`) keeps the object that registered an identity
+first, which after the first entry is the original world's detached object.
+Identity lookups therefore resolve to that object for the rest of the session;
+editor tooling that resolves components prefers the one on the live node it
+was given.
+
 ## Assembly Isolation
 
 ### GameplayAssemblyManager

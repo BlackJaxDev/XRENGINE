@@ -289,7 +289,9 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     public void FixedUpdate()
     {
         ThrowIfDisposed();
-        if (PlayState != RuntimeWorldPlayState.Playing)
+        bool playing = PlayState == RuntimeWorldPlayState.Playing;
+        RuntimeWorldTickTelemetry.FixedUpdateCalled(playing);
+        if (!playing)
             return;
         TickGroup(ETickGroup.PrePhysics);
         if (PhysicsEnabled)

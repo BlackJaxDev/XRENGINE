@@ -1513,7 +1513,7 @@ namespace XREngine.Editor.Mcp
             }
 
             using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope(instance);
-            if (plannerScope is null &&
+            if (renderer is VulkanRenderer && plannerScope is null &&
                 (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
                  ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport)))
             {

@@ -4,16 +4,20 @@ namespace XREngine.Components.Scene.Transforms
     {
         public const int DynamicIndex = 0;
         public const int StaticIndex = 1;
+        /// <summary>Engine-owned layer for a local VR avatar, hidden by first-person cameras.</summary>
+        public const int LocalVrAvatarIndex = 30;
         public const int GizmosIndex = 31;
 
         public static string Dynamic { get; } = "Dynamic";
         public static string Static { get; } = "Static";
+        public static string LocalVrAvatar { get; } = "Local VR Avatar";
         public static string Gizmos { get; } = "Gizmos";
 
         public static Dictionary<int, string> All { get; } = new()
         {
             { DynamicIndex, Dynamic },
             { StaticIndex, Static },
+            { LocalVrAvatarIndex, LocalVrAvatar },
             { GizmosIndex, Gizmos }
         };
 
@@ -22,5 +26,8 @@ namespace XREngine.Components.Scene.Transforms
         /// Useful for scene capture cameras that should not capture debug visuals.
         /// </summary>
         public static int EverythingExceptGizmos => ~(1 << GizmosIndex);
+
+        /// <summary>First-person view mask; spectator cameras retain the local avatar layer.</summary>
+        public static int FirstPersonVr => ~(1 << LocalVrAvatarIndex);
     }
 }

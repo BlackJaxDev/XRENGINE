@@ -1,6 +1,8 @@
 using System.Linq;
 using XREngine;
 using XREngine.Components;
+using XREngine.Components.Animation;
+using XREngine.Components.Movement;
 using XREngine.Components.VR;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -25,10 +27,14 @@ internal static class EditorOpenXrPawnSwitcher
     private static PawnComponent? _desktopPawn;
     private static PawnComponent? _vrPawn;
     private static SceneNode? _ownedVrRoot;
+    private static SceneNode? _ownedVrFootNode;
+    private static EditorVrAvatarLease? _avatarLease;
     private static IRuntimeRenderWorld? _vrPawnWorld;
     private static EditorWorldIntegration? _vrEditorIntegration;
+    private static EVrDesktopView _desktopView = EVrDesktopView.FirstPerson;
 
     public static bool IsRequested => _requested;
+    public static EVrDesktopView DesktopView => _desktopView;
     public static Guid? OwnedVrRigNodeId => _ownedVrRoot?.ID;
     public static bool OwnedVrRigIsInEditorScene => _ownedVrRoot is { } root &&
         _vrEditorIntegration?.IsInEditorScene(root) == true;
@@ -65,7 +71,11 @@ internal static class EditorOpenXrPawnSwitcher
 
             return api.RuntimeState switch
             {
-                OpenXRAPI.OpenXrRuntimeState.SessionRunning => _requested ? "VR session running" : "Stopping VR",
+                OpenXRAPI.OpenXrRuntimeState.SessionRunning => _requested
+                    ? _vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>() is { HumanoidComponent: null }
+                        ? "VR session running; no avatar for body calibration"
+                        : "VR session running"
+                    : "Stopping VR",
                 OpenXRAPI.OpenXrRuntimeState.SessionStopping or OpenXRAPI.OpenXrRuntimeState.SessionLost => "Stopping VR",
                 OpenXRAPI.OpenXrRuntimeState.Unavailable => "OpenXR unavailable; see diagnostics",
                 OpenXRAPI.OpenXrRuntimeState.DesktopOnly => _requested ? "Starting VR" : "Desktop",
@@ -148,6 +158,23 @@ internal static class EditorOpenXrPawnSwitcher
         _requested = enabled;
         Engine.EnqueueUpdateThreadTask(SynchronizePawnControl);
         return true;
+    }
+
+    /// <summary>Changes only the VR pawn's desktop camera; input remains with the same pawn.</summary>
+    public static void SetDesktopView(EVrDesktopView view)
+    {
+        _desktopView = view;
+        Engine.EnqueueUpdateThreadTask(ApplyDesktopView);
+    }
+
+    private static void ApplyDesktopView()
+    {
+        if (_vrPawn?.SceneNode?.GetComponent<VrSpectatorOutputComponent>() is not { } output)
+            return;
+
+        output.EditorCamera = _desktopPawn?.CameraComponent as CameraComponent;
+        output.DesktopView = _desktopView;
+        output.ApplyDesktopView();
     }
 
     private static async Task StartSelectedRuntimeAsync(EditorOpenXrRuntimeChoice choice)
@@ -242,13 +269,17 @@ internal static class EditorOpenXrPawnSwitcher
                     if (_vrPawn is null)
                     {
                         _ownedVrRoot = new SceneNode { Name = "Editor OpenXR Rig" };
-                        (_, _vrPawn) = BootstrapPawnFactory.CreateVrPawn(_ownedVrRoot);
+                        (_ownedVrFootNode, _vrPawn) = BootstrapPawnFactory.CreateVrPawn(_ownedVrRoot);
                         _vrEditorIntegration = EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld);
                         _vrEditorIntegration.AddToEditorScene(_ownedVrRoot);
                     }
                 }
 
+                if (_ownedVrRoot is not null && _avatarLease is null)
+                    TryAttachDesktopAvatar(world);
+
                 _vrPawn.PossessByLocalPlayer(ELocalPlayerIndex.One);
+                ApplyDesktopView();
                 return;
             }
 
@@ -287,15 +318,79 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void DestroyOwnedVrPawn()
     {
+        _avatarLease?.Dispose();
+        _avatarLease = null;
         if (_ownedVrRoot is { } root)
         {
             _vrEditorIntegration?.RemoveFromEditorScene(root);
             root.Destroy();
             _ownedVrRoot = null;
         }
+        _ownedVrFootNode = null;
         _vrPawn = null;
         _vrPawnWorld = null;
         _vrEditorIntegration = null;
+    }
+
+    private static void TryAttachDesktopAvatar(IRuntimeRenderWorld world)
+    {
+        SceneNode? character = _vrPawn?.SceneNode;
+        SceneNode? foot = _ownedVrFootNode;
+        SceneNode? playspace = foot?.FindDescendant(transform => transform.SceneNode?.Name == "Playspace Node");
+        if (character?.GetComponent<CharacterMovement3DComponent>() is null ||
+            foot is null || playspace is null)
+        {
+            LastError = "Full-body VR needs a character pawn with a playspace and an imported avatar.";
+            return;
+        }
+
+        SceneNode? selected = null;
+        SceneNode? desktopSelected = null;
+        int candidates = 0;
+        int desktopCandidates = 0;
+        foreach (SceneNode root in world.RootNodes)
+        {
+            foreach (SceneNode node in SceneNodePrefabUtility.EnumerateHierarchy(root))
+            {
+                if (node.GetComponent<HumanoidComponent>() is null ||
+                    IsDescendantOf(node, _ownedVrRoot))
+                    continue;
+                selected = node;
+                candidates++;
+                if (_desktopPawn?.SceneNode is { } desktopNode && IsDescendantOf(node, desktopNode))
+                {
+                    desktopSelected = node;
+                    desktopCandidates++;
+                }
+            }
+        }
+
+        if (desktopCandidates == 1)
+            selected = desktopSelected;
+        else if (desktopCandidates > 1 || candidates != 1)
+        {
+            LastError = candidates == 0
+                ? "No imported desktop avatar is available for full-body VR."
+                : "Multiple desktop avatars are available; select one before enabling full-body VR.";
+            return;
+        }
+
+        if (selected is null) return;
+
+        if (!EditorVrAvatarLease.TryAttach(selected, foot, character, playspace,
+            (RuntimeWorld)world.WorldContext,
+            out _avatarLease, out string? diagnostic))
+            LastError = diagnostic;
+        else
+            LastError = null;
+    }
+
+    private static bool IsDescendantOf(SceneNode node, SceneNode? ancestor)
+    {
+        if (ancestor is null) return false;
+        for (SceneNode? current = node; current is not null; current = current.Parent)
+            if (ReferenceEquals(current, ancestor)) return true;
+        return false;
     }
 
     private static IRuntimeRenderWorld? ResolveWorld()

@@ -668,6 +668,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
 | `get_vulkan_gpu_counter_diagnostics` | Return the latest opt-in raw Vulkan GPU counter evidence captured by the zero-readback diagnostics gate. |
 | `get_vulkan_live_resource_owners` | Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame. |
+| `get_world_tick_telemetry` | Read cumulative world tick counters: tick group dispatches, pending registration cost and the costliest kinds of tick callback. Set XRE_WORLD_TICK_TELEMETRY=1 before editor launch to enable observation; compare two reads to observe a window. |
 | `get_zero_readback_material_table_diagnostics` | Return the fixed per-pass zero-readback material-table gate reached by the latest render frame. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
 | `import_third_party_asset` | Import a third-party file into game assets. External Unity prefabs are converted directly to native .asset output without copying or modifying their source project. |

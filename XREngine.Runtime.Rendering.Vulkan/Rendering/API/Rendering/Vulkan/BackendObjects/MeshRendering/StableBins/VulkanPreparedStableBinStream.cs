@@ -36,6 +36,19 @@ internal sealed class VulkanPreparedStableBinStream
     private readonly byte[] _deformationOverlayWrites;
     private readonly FrameOpResourceUse[] _lateResourceUses;
     private readonly VulkanBinOrderedExceptionStream _exceptions;
+    // One prepared raster pipeline per (coverage, meshlet, cull class) for the
+    // duration of a single TryPrepareVisibilityRasterPipelines call: those are
+    // the only header inputs the visibility pipeline depends on besides the
+    // call's one target closure.
+    private const int RasterPipelineScratchCapacity = 8;
+    private readonly VulkanVisibilityRasterPipeline[] _rasterPipelineScratch =
+        new VulkanVisibilityRasterPipeline[RasterPipelineScratchCapacity];
+    private readonly bool[] _rasterPipelineScratchValid =
+        new bool[RasterPipelineScratchCapacity];
+    // Freeze ordering sorts these compact keys and applies the resulting
+    // permutation to the records in place; both live for the stream's lifetime.
+    private readonly VulkanPreparedStableBinSortKey[] _freezeSortKeys;
+    private readonly int[] _freezeSortOrder;
     private int _recordCount;
     private int _lateResourceUseCount;
     private int _headerCount;
@@ -79,6 +92,8 @@ internal sealed class VulkanPreparedStableBinStream
         _deformationOverlayWrites = new byte[capacity];
         _lateResourceUses = new FrameOpResourceUse[resourceUseCapacity];
         _exceptions = new VulkanBinOrderedExceptionStream(capacity);
+        _freezeSortKeys = new VulkanPreparedStableBinSortKey[capacity];
+        _freezeSortOrder = new int[capacity];
     }
 
     internal int RecordCount => _recordCount;
@@ -212,6 +227,8 @@ internal sealed class VulkanPreparedStableBinStream
             return false;
         }
 
+        S13aPublicationTelemetry.StepProbe payloadProbe =
+            S13aPublicationTelemetry.BeginAdvancedFamilyStep();
         for (int payloadIndex = 0; payloadIndex < payloads.Length; ++payloadIndex)
         {
             AdvancedVisibilityPayload payload = payloads[payloadIndex];
@@ -496,8 +513,12 @@ internal sealed class VulkanPreparedStableBinStream
                 return false;
             }
         }
+        payloadProbe.End(S13aAdvancedFamilyStep.BinGeometryPayloads);
 
+        S13aPublicationTelemetry.StepProbe freezeProbe =
+            S13aPublicationTelemetry.BeginAdvancedFamilyStep();
         Freeze();
+        freezeProbe.End(S13aAdvancedFamilyStep.BinGeometryFreeze);
         return true;
     }
 
@@ -610,23 +631,69 @@ internal sealed class VulkanPreparedStableBinStream
     {
         if (_frozen)
             return;
-        for (int index = 1; index < _recordCount; ++index)
-        {
-            VulkanPreparedStableBinRecord record = _records[index];
-            int insertion = index;
-            while (insertion > 0 && Compare(record, _records[insertion - 1]) < 0)
-            {
-                _records[insertion] = _records[insertion - 1];
-                --insertion;
-            }
-            _records[insertion] = record;
-        }
+        SortRecordsForFreeze();
         _headerCount = 0;
         _submissionPlansSealed = false;
         _frozen = true;
         if (VulkanFeatureProfile.ActiveProfile is
             EVulkanGpuDrivenProfile.DevParity or EVulkanGpuDrivenProfile.Diagnostics)
             _ = TryBuildCpuIndirectParity(out _);
+    }
+
+    /// <summary>
+    /// Orders the appended records by bin key, template and ingress identity.
+    /// The compact keys are sorted separately and the permutation is applied
+    /// in place by following each cycle once, so every record moves at most
+    /// once instead of shifting through an insertion sort; the appended
+    /// position is the final tiebreaker, which reproduces a stable sort's
+    /// order exactly. The result is verified against the full comparison when
+    /// observation is enabled.
+    /// </summary>
+    private void SortRecordsForFreeze()
+    {
+        int count = _recordCount;
+        if (count < 2)
+            return;
+        Span<VulkanPreparedStableBinSortKey> keys = _freezeSortKeys.AsSpan(0, count);
+        Span<int> order = _freezeSortOrder.AsSpan(0, count);
+        for (int index = 0; index < count; ++index)
+        {
+            keys[index] = VulkanPreparedStableBinSortKey.From(in _records[index], index);
+            order[index] = index;
+        }
+        keys.Sort(order);
+        // order[position] is the source index of the record that belongs at
+        // that position; each cycle is rotated once through one displaced copy.
+        for (int position = 0; position < count; ++position)
+        {
+            if (order[position] == position)
+                continue;
+            VulkanPreparedStableBinRecord displaced = _records[position];
+            int destination = position;
+            while (true)
+            {
+                int source = order[destination];
+                order[destination] = destination;
+                if (source == position)
+                {
+                    _records[destination] = displaced;
+                    break;
+                }
+                _records[destination] = _records[source];
+                destination = source;
+            }
+        }
+        if (S13aPublicationTelemetry.Enabled)
+            S13aPublicationTelemetry.AdvancedBinFreezeOrder(count, CountFreezeOrderViolations());
+    }
+
+    private int CountFreezeOrderViolations()
+    {
+        int violations = 0;
+        for (int index = 1; index < _recordCount; ++index)
+            if (Compare(_records[index], _records[index - 1]) < 0)
+                violations++;
+        return violations;
     }
 
     internal void ThawForReuse()
@@ -1408,7 +1475,12 @@ internal sealed class VulkanPreparedStableBinStream
     /// Replaces each sealed range owner's ordinary material pipeline with an
     /// exact visibility program/pipeline closure. All members of the range
     /// must share one indexed geometry binding; mismatches reject the family
-    /// before command recording begins.
+    /// before command recording begins. Readiness, the raster program and the
+    /// prepared pipeline depend only on a header's coverage, meshlet mode and
+    /// cull class plus this call's one target closure, so each distinct
+    /// combination is resolved once per call and propagated to every header
+    /// that shares it; a header whose pipeline survived from an earlier attempt
+    /// is reused only while its program link generation is unchanged.
     /// </summary>
     internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareVisibilityRasterPipelines(
         VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
@@ -1424,6 +1496,8 @@ internal sealed class VulkanPreparedStableBinStream
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
+        _rasterPipelineScratchValid.AsSpan().Clear();
+        bool multiview = target.DynamicRenderingFormats.ViewMask != 0u;
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
             VulkanPreparedStableBinHeader header = _headers[headerIndex];
@@ -1436,7 +1510,13 @@ internal sealed class VulkanPreparedStableBinStream
                     reason = "one accepted stable-bin stream cannot target multiple visibility framebuffer closures";
                     return VulkanAdvancedVisibilityPipelineReadiness.Failed;
                 }
-                continue;
+                if (header.RasterPipeline.ProgramLinkGeneration ==
+                    header.RasterPipeline.Program.LinkGeneration)
+                {
+                    continue;
+                }
+                // The program relinked after this header was prepared (a retry
+                // across a shader reload): prepare it again below.
             }
             if (header.RecordCount <= 0)
             {
@@ -1458,28 +1538,59 @@ internal sealed class VulkanPreparedStableBinStream
                 reason = "visibility raster requires one exact triangle-list primitive per range";
                 return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
-            VulkanAdvancedVisibilityPipelineReadiness rasterReadiness =
-                visibilityPipelines.TryGetRasterProgram(
-                    header.IndirectRange.Key.Coverage,
-                    meshlet,
-                    out VkRenderProgram program,
-                    out reason,
-                    multiview: target.DynamicRenderingFormats.ViewMask != 0u);
-            if (rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
-                !VulkanCanonicalVisibilityPipelineFactory.TryPrepare(
-                    program,
-                    header.IndirectRange.Key.Coverage,
-                    meshlet,
-                    header.IndirectRange.Key.CullMode,
-                    in target,
-                    out VulkanVisibilityRasterPipeline raster,
-                    out reason))
+
+            EAdvancedMaterialCoverageMode coverage = header.IndirectRange.Key.Coverage;
+            uint cullMode = header.IndirectRange.Key.CullMode;
+            int scratchIndex = ResolveRasterPipelineScratchIndex(coverage, meshlet, cullMode);
+            VulkanVisibilityRasterPipeline raster;
+            if (scratchIndex >= 0 && _rasterPipelineScratchValid[scratchIndex])
             {
-                return rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready
-                    ? rasterReadiness
-                    : VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                raster = _rasterPipelineScratch[scratchIndex];
+            }
+            else
+            {
+                S13aPublicationTelemetry.StepProbe programProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                VulkanAdvancedVisibilityPipelineReadiness rasterReadiness =
+                    visibilityPipelines.TryGetRasterProgram(
+                        coverage,
+                        meshlet,
+                        out VkRenderProgram program,
+                        out reason,
+                        multiview);
+                programProbe.End(S13aAdvancedFamilyStep.RasterProgramLookup);
+                bool rasterPrepared = false;
+                raster = default;
+                if (rasterReadiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                {
+                    S13aPublicationTelemetry.StepProbe factoryProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                    rasterPrepared = VulkanCanonicalVisibilityPipelineFactory.TryPrepare(
+                        program,
+                        coverage,
+                        meshlet,
+                        cullMode,
+                        in target,
+                        out raster,
+                        out reason);
+                    factoryProbe.End(S13aAdvancedFamilyStep.RasterPipelineFactory);
+                }
+                if (rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                    !rasterPrepared)
+                {
+                    return rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready
+                        ? rasterReadiness
+                        : VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+                if (scratchIndex >= 0)
+                {
+                    _rasterPipelineScratch[scratchIndex] = raster;
+                    _rasterPipelineScratchValid[scratchIndex] = true;
+                }
             }
 
+            S13aPublicationTelemetry.StepProbe validationProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             int recordEnd = header.RecordOffset + header.RecordCount;
             for (int recordIndex = header.RecordOffset;
                  recordIndex < recordEnd;
@@ -1535,10 +1646,31 @@ internal sealed class VulkanPreparedStableBinStream
                 RasterPipeline = raster,
                 NativeState = rasterNative,
             };
+            validationProbe.End(S13aAdvancedFamilyStep.RasterHeaderValidation);
         }
 
         reason = "Ready";
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    /// <summary>
+    /// Maps a header's raster pipeline inputs to a per-call scratch slot, or -1
+    /// for a coverage mode the visibility family does not prepare.
+    /// </summary>
+    private static int ResolveRasterPipelineScratchIndex(
+        EAdvancedMaterialCoverageMode coverage,
+        bool meshlet,
+        uint cullMode)
+    {
+        int coverageIndex = coverage switch
+        {
+            EAdvancedMaterialCoverageMode.Opaque => 0,
+            EAdvancedMaterialCoverageMode.Masked => 1,
+            _ => -1,
+        };
+        if (coverageIndex < 0)
+            return -1;
+        return coverageIndex * 4 + (meshlet ? 2 : 0) + (cullMode == 0u ? 0 : 1);
     }
 
     private bool TryResolveExactRange(

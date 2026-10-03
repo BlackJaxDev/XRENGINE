@@ -4,7 +4,7 @@
 **Created:** September 23, 2026  
 **Revised:** September 26, 2026 — calibration model settled (proximity binding for up to eight trackers, manual body measurements), SteamVR tracker roles dropped, and sparse-tracking estimation moved to the [body estimation TODO][estimator-todo].  
 **Review baseline:** `master` at `7ab827983`. Findings describe that commit; links are repository-relative and open the current code.  
-**Status:** W00 is complete and reproduces calibrated-target loss. Target ownership, capture math, tracker transport, the player flow, and the spectator are pending.  
+**Status:** Runtime implementation is integrated and synthetic live validation passes 3-, 6-, and 11-point calibration, stable targets, limb response, source loss/restoration, and spectator image publication. Checked work items record implemented changes; each package acceptance statement and the final definition of done remain separate release gates. The current focused selection passes 24/24. The broader selection passes 229/290 with the same 61 failure names as the prior 224/285 selection; this is not a clean repository-HEAD baseline. An earlier physical SteamVR OpenGL session reached Focused and submitted both eyes, and one editor avatar borrow/restore cycle passed. Native HTCX enumeration returned zero tracker paths despite trackers appearing through OpenVR. A later Ready/zero-frame session exposed a root-list enumeration race; the stable-snapshot fix builds and its regression passes, but live confirmation is pending. The next physical retry could not acquire an OpenXR system because the Beyond was out of range and then the SteamVR server was absent. Full hardware calibration, final eye preview, Vulkan output, and performance acceptance remain open. See the [implementation and live validation record](../../progress/avatar/openxr-full-body-calibration-spectator-implementation.md) for exact evidence and limitations.
 **Related:** [calibration baseline evidence][baseline-evidence] · [body estimation TODO][estimator-todo] · [editor OpenXR toggle TODO][toggle-todo] · [OpenXR/OpenVR parity TODO][parity-todo] · [SteamVR OpenXR hardware validation][hardware-validation]
 
 > **Assignment policy:** XREngine binds trackers to body slots by proximity every time the player calibrates. SteamVR tracker roles are never read for assignment, offered as an override, or mentioned in player instructions. Players rarely know roles exist and routinely swap in whichever tracker is charged.
@@ -176,20 +176,20 @@ Run W20.01 on hardware as early as possible; its result decides whether this mil
 - [x] **W00.05** Record target counts, avatar/root scale, tracking origin, and component activation state before and after calibration. Add assertions for leaked or duplicated target nodes.
 - [x] **W00.06** Audit both pawn-construction paths. Decide which shared runtime factory/service owns the new integration so editor and runtime behavior do not drift.
 
-Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceTransform`, and [`VRIKCalibrationTests`][calibration-tests]; results are in the [baseline evidence][baseline-evidence]. The persistence regression `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` is marked `Explicit` and fails by design until W10 lands. W00.06 predates the editor pawn switcher (F15); W10.07 extends its decision to that path.
+Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceTransform`, and [`VRIKCalibrationTests`][calibration-tests]. The persistence regression `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` now runs without `Explicit` and checks eleven stable avatar-owned targets. Baseline findings are in the [baseline evidence][baseline-evidence], and current results are in the [implementation record](../../progress/avatar/openxr-full-body-calibration-spectator-implementation.md). W10.07 covers the editor pawn switcher as well as runtime pawn construction.
 
 ## 7. W10 — Rig ownership and slot contract
 
 **Primary files:** [player component][player], [humanoid component][humanoid], [humanoid IK base][ik-base], [VRIK solver][vr-solver], [calibrator][calibrator], [runtime calibrator bridge][runtime-calibrator], [runtime pawn factory][bootstrap-pawns], [editor pawn switcher][pawn-switcher].
 
-- [ ] **W10.01** Introduce one rig owner that holds a stable concrete target for the head, both hands, and each of the eight tracker slots. Store raw device references separately; never install a raw pose source where the solver expects a calibrated target.
-- [ ] **W10.02** Make `SyncSolverTargets` consume the rig owner's targets, or have calibration publish them into `HumanoidComponent`, so one store is authoritative. Then remove `Explicit` from `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` and replace the loss characterization with the corrected contract.
-- [ ] **W10.03** Give each target exactly one offset representation (3.2) and remove the duplicate humanoid tuple offsets.
-- [ ] **W10.04** Define the per-slot source contract used by W50 and the estimator: bound tracker, estimator, or none, each with a crossfade weight. A slot with no source contributes zero weight.
-- [ ] **W10.05** Rebuild or re-parent a target when its slot binds to a different tracker, so no target stays under the previous tracker. Destroy owned targets on teardown; repeated calibration must not accumulate nodes.
-- [ ] **W10.06** Return a typed success or failure result with the calibrated data through the runtime bridge; a non-null reflection result or an enabled component is not success. Supply calibration settings in production (F09) and fail explicitly when they are missing.
-- [ ] **W10.07** Build the avatar rig and calibration in one shared runtime service used by `BootstrapPawnFactory.CreatePlayerPawn`, `BootstrapPawnFactory.CreateVrPawn`, and the unit-testing world. The editor supplies only UI and synthetic inputs.
-- [ ] **W10.08** Validate matrices and rotations before committing them; reject non-finite values, singular transforms, and zero-length quaternions.
+- [x] **W10.01** Introduce one rig owner that holds a stable concrete target for the head, both hands, and each of the eight tracker slots. Store raw device references separately; never install a raw pose source where the solver expects a calibrated target.
+- [x] **W10.02** Make `SyncSolverTargets` consume the rig owner's targets, or have calibration publish them into `HumanoidComponent`, so one store is authoritative. Then remove `Explicit` from `Calibration_TargetsRemainNonNullAndIdenticalAcrossSolverUpdates` and replace the loss characterization with the corrected contract.
+- [x] **W10.03** Give each target exactly one offset representation (3.2) and remove the duplicate humanoid tuple offsets.
+- [x] **W10.04** Define the per-slot source contract used by W50 and the estimator: bound tracker, estimator, or none, each with a crossfade weight. A slot with no source contributes zero weight.
+- [x] **W10.05** Rebuild or re-parent a target when its slot binds to a different tracker, so no target stays under the previous tracker. Destroy owned targets on teardown; repeated calibration must not accumulate nodes.
+- [x] **W10.06** Return a typed success or failure result with the calibrated data through the runtime bridge; a non-null reflection result or an enabled component is not success. Supply calibration settings in production (F09) and fail explicitly when they are missing.
+- [x] **W10.07** Build the avatar rig and calibration in one shared runtime service used by `BootstrapPawnFactory.CreatePlayerPawn`, `BootstrapPawnFactory.CreateVrPawn`, and the unit-testing world. The editor supplies only UI and synthetic inputs.
+- [x] **W10.08** Validate matrices and rotations before committing them; reject non-finite values, singular transforms, and zero-length quaternions.
 
 **Acceptance:** every target stays bound across solver updates; expected and actual target matrices match under translation, rotation, and a non-origin playspace; repeated calibration never accumulates offsets or nodes.
 
@@ -197,15 +197,15 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 
 **Primary files:** [calibrator][calibrator], [calibration settings][calibration-settings], [player component][player], [humanoid component][humanoid], [synthetic rig][synthetic-rig].
 
-- [ ] **W15.01** Capture every tracker slot's offset as-is (2.6). Remove the foot path's yaw derivation from `FootTrackerForward`/`FootTrackerUp` and its snap to the avatar's foot height.
-- [ ] **W15.02** Bind the headset to the avatar's eye position with a fixed offset derived from the avatar's eye geometry, independent of the headset pose at capture. Remove the captured head target.
-- [ ] **W15.03** Add preset grip-to-wrist offsets for every supported interaction profile, replacing the zero `HandOffset` and the identity controller offsets. Record where each preset comes from.
-- [ ] **W15.04** Pose the avatar in a canonical T-pose during calibration regardless of its bind pose (F12), reusing the humanoid avatar definition where possible.
-- [ ] **W15.05** Place the calibration pose as 2.2 specifies—eyes at the headset, headset yaw, scale from W45—and remove calibration-time scale writes (F10).
-- [ ] **W15.06** Refuse capture when headset pitch or roll exceeds `CalibrationHeadTiltTolerance`, with a message telling the player to look straight ahead.
-- [ ] **W15.07** Sample a short stationary window ending at the capture gesture, reject high-motion samples, and take every device from one coherent snapshot.
-- [ ] **W15.08** Retire the `VRIKCalibrationSettings` fields that only served removed paths—the foot and head axes and offsets and the scale multiplier—after checking for serialized instances.
-- [ ] **W15.09** Extend the synthetic harness with perturbed captures: a tilted head, which must be refused; a head yawed relative to the body; arbitrarily rotated tracker mounts; a stance wider than the avatar's; and player measurements that differ from the avatar's. The current rig puts devices exactly on the bones with a level head, so W10 alone passes there.
+- [x] **W15.01** Capture every tracker slot's offset as-is (2.6). Remove the foot path's yaw derivation from `FootTrackerForward`/`FootTrackerUp` and its snap to the avatar's foot height.
+- [x] **W15.02** Bind the headset to the avatar's eye position with a fixed offset derived from the avatar's eye geometry, independent of the headset pose at capture. Remove the captured head target.
+- [x] **W15.03** Add preset grip-to-wrist offsets for every supported interaction profile, replacing the zero `HandOffset` and the identity controller offsets. Record where each preset comes from.
+- [x] **W15.04** Pose the avatar in a canonical T-pose during calibration regardless of its bind pose (F12), reusing the humanoid avatar definition where possible.
+- [x] **W15.05** Place the calibration pose as 2.2 specifies—eyes at the headset, headset yaw, scale from W45—and remove calibration-time scale writes (F10).
+- [x] **W15.06** Refuse capture when headset pitch or roll exceeds `CalibrationHeadTiltTolerance`, with a message telling the player to look straight ahead.
+- [x] **W15.07** Sample a short stationary window ending at the capture gesture, reject high-motion samples, and take every device from one coherent snapshot.
+- [x] **W15.08** Retire the `VRIKCalibrationSettings` fields that only served removed paths—the foot and head axes and offsets and the scale multiplier—after checking for serialized instances.
+- [x] **W15.09** Extend the synthetic harness with perturbed captures: a tilted head, which must be refused; a head yawed relative to the body; arbitrarily rotated tracker mounts; a stance wider than the avatar's; and player measurements that differ from the avatar's. The current rig puts devices exactly on the bones with a level head, so W10 alone passes there.
 
 **Acceptance:** arbitrarily rotated tracker mounts reproduce the displayed pose exactly at capture and follow rigidly afterwards; a tilted head is refused; calibration never changes scale.
 
@@ -216,22 +216,24 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 ### Transport
 
 - [ ] **W20.01** On SteamVR's OpenXR runtime, determine whether every connected tracker streams through a persistent-path subaction path whatever its role, including duplicated and default roles; the [extension][htcx-spec] allows either path as a subaction path. Record the runtime version, extension revision, enumeration results, bindings, and pose results, and what happens to a tracker SteamVR has disabled.
-- [ ] **W20.02** Suggest bindings only on role paths, covering every role the extension defines (including `handheld_object` and the revision 3 wrist and ankle roles), and use persistent paths only as subaction paths. This removes the invalid bindings behind F14.
-- [ ] **W20.03** Define the late-connection policy. Actions cannot change after action sets are attached, so a tracker connected after session start needs a controlled input rebuild. The candidate is to rebuild when calibration opens and the connected set has changed; never rebuild during gameplay without a player action.
-- [ ] **W20.04** If W20.01 fails, record the blocker and propose a SteamVR tracker provider for approval (3.1). Headset rendering and controller input stay on OpenXR.
+- [x] **W20.02** Suggest bindings only on role paths, covering every role the extension defines (including `handheld_object` and the revision 3 wrist and ankle roles), and use persistent paths only as subaction paths. This removes the invalid bindings behind F14.
+- [x] **W20.03** Define the late-connection policy. Actions cannot change after action sets are attached, so a tracker connected after session start needs a controlled input rebuild. The candidate is to rebuild when calibration opens and the connected set has changed; never rebuild during gameplay without a player action.
+- [x] **W20.04** If W20.01 fails, record the blocker and propose a SteamVR tracker provider for approval (3.1). Headset rendering and controller input stay on OpenXR.
+
+The tested SteamVR OpenXR runtime advertised `XR_HTCX_vive_tracker_interaction`, but two native HTCX enumeration probes returned zero persistent paths while a later OpenVR inventory named three Tundra trackers with valid poses plus a pair of Knuckles controllers. This is a concrete blocker for tracker capture on that configuration. The proposed separate SteamVR tracker provider would keep headset rendering and controller input on OpenXR while reconciling tracker serial identity, pose publication time, and OpenVR-to-OpenXR reference-space transforms explicitly. Provider implementation needs the pending owner approval; W20.01 still lacks duplicate-role, disabled-tracker, and late-connection evidence.
 
 ### Identity and lifecycle
 
-- [ ] **W20.05** Use a session-scoped physical identity, the provider's persistent path. Never serialize a numeric `XrPath`, synthetic device index, or collection order.
-- [ ] **W20.06** Key scene trackers by physical identity so each tracker appears exactly once, including across role changes.
-- [ ] **W20.07** Reconcile collection membership, native handles, and owned nodes across disconnects, reconnects, component reactivation, and session recreation without duplicating nodes (F04).
-- [ ] **W20.08** Publish immutable or double-buffered tracking snapshots, and marshal scene-graph changes onto the scene owner instead of mutating live collections from runtime callbacks.
+- [x] **W20.05** Use a session-scoped physical identity, the provider's persistent path. Never serialize a numeric `XrPath`, synthetic device index, or collection order.
+- [x] **W20.06** Key scene trackers by physical identity so each tracker appears exactly once, including across role changes.
+- [x] **W20.07** Reconcile collection membership, native handles, and owned nodes across disconnects, reconnects, component reactivation, and session recreation without duplicating nodes (F04).
+- [x] **W20.08** Publish immutable or double-buffered tracking snapshots, and marshal scene-graph changes onto the scene owner instead of mutating live collections from runtime callbacks.
 
 ### Current validity
 
-- [ ] **W20.09** Replace sticky availability with current state: connected, action active, position and orientation valid, sample time, snapshot ID, and last valid sample. A failed location clears current usability; keep an `EverTracked` diagnostic separately.
-- [ ] **W20.10** Audit headset and controller validity the same way; a cached accessor that always succeeds is not proof of a fresh calibration pose.
-- [ ] **W20.11** Never let an unavailable real device fall through to identity or its offset during gameplay; keep synthetic and debug pose behavior separate.
+- [x] **W20.09** Replace sticky availability with current state: connected, action active, position and orientation valid, sample time, snapshot ID, and last valid sample. A failed location clears current usability; keep an `EverTracked` diagnostic separately.
+- [x] **W20.10** Audit headset and controller validity the same way; a cached accessor that always succeeds is not proof of a fresh calibration pose.
+- [x] **W20.11** Never let an unavailable real device fall through to identity or its offset during gameplay; keep synthetic and debug pose behavior separate.
 - [ ] **W20.12** Distinguish not discovered, disabled in SteamVR, discovered but unbound, bound but inactive, stale, and tracking lost in diagnostics. No message tells players to assign roles.
 
 **Acceptance:** every connected tracker appears once with an honest current pose; identity survives reconnection within a session; role-free streaming is demonstrated or its limitation is recorded.
@@ -240,12 +242,12 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 
 **Primary files:** [player component][player], [tracker collection][tracker-collection], plus a focused binding service in the runtime input integration layer.
 
-- [ ] **W30.01** Replace per-tracker nearest search with one-to-one nearest-pair matching between the eight slots and all current, valid trackers. The result must not depend on enumeration order.
-- [ ] **W30.02** Measure upper-arm distances to the shoulder-to-elbow segment and knee distances to the segment spanning the knee (mid-thigh to mid-shin); hips, chest, and feet use their bones.
-- [ ] **W30.03** Scale the cutoff with avatar scale. Trackers beyond it stay unassigned and appear that way in the preview.
-- [ ] **W30.04** Drive the live marker preview (2.3) from the same matching function capture uses.
-- [ ] **W30.05** Freeze bindings until the next calibration (2.6).
-- [ ] **W30.06** Exclude controllers and invalid trackers; enforce one tracker per slot and one slot per tracker.
+- [x] **W30.01** Replace per-tracker nearest search with one-to-one nearest-pair matching between the eight slots and all current, valid trackers. The result must not depend on enumeration order.
+- [x] **W30.02** Measure upper-arm distances to the shoulder-to-elbow segment and knee distances to the segment spanning the knee (mid-thigh to mid-shin); hips, chest, and feet use their bones.
+- [x] **W30.03** Scale the cutoff with avatar scale. Trackers beyond it stay unassigned and appear that way in the preview.
+- [x] **W30.04** Drive the live marker preview (2.3) from the same matching function capture uses.
+- [x] **W30.05** Freeze bindings until the next calibration (2.6).
+- [x] **W30.06** Exclude controllers and invalid trackers; enforce one tracker per slot and one slot per tracker.
 
 **Acceptance:** for canonical stances, 0–8 trackers bind correctly under every enumeration order; distant extra trackers stay unassigned; bindings never change during gameplay.
 
@@ -253,11 +255,11 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 
 **Primary files:** [calibrator][calibrator], [VRIK solver][vr-solver], [VRIK spine solver][ik-spine], [VRIK solver core][ik-solver-vr].
 
-- [ ] **W35.01** Calibrate the chest, upper-arm, and knee slots through the W15 capture path.
-- [ ] **W35.02** Feed the chest target to the spine solver's chest goal.
-- [ ] **W35.03** Drive knee bend goals from knee trackers and remove the forced zero weight.
-- [ ] **W35.04** Drive shoulder (clavicle) and elbow placement from upper-arm trackers while hand targets stay authoritative for the wrists. Define and document the priority when these constraints conflict.
-- [ ] **W35.05** Rename the `LeftElbow`/`RightElbow` humanoid targets to upper-arm slots, or document that they represent upper-arm trackers.
+- [x] **W35.01** Calibrate the chest, upper-arm, and knee slots through the W15 capture path.
+- [x] **W35.02** Feed the chest target to the spine solver's chest goal.
+- [x] **W35.03** Drive knee bend goals from knee trackers and remove the forced zero weight.
+- [x] **W35.04** Drive shoulder (clavicle) and elbow placement from upper-arm trackers while hand targets stay authoritative for the wrists. Define and document the priority when these constraints conflict.
+- [x] **W35.05** Rename the `LeftElbow`/`RightElbow` humanoid targets to upper-arm slots, or document that they represent upper-arm trackers.
 
 **Acceptance:** an 11-point synthetic rig reproduces chest rotation, shoulder elevation, elbow direction, and knee direction from its trackers without disturbing hand or foot targets.
 
@@ -265,16 +267,16 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 
 **Primary files:** [player component][player], [calibrator][calibrator], [runtime bridge][runtime-calibrator], [player input set][input-set], [editor pawn wiring][editor-pawns], [runtime-neutral OpenXR input][input-neutral].
 
-- [ ] **W40.01** Replace the calibration boolean with explicit states: uncalibrated, calibrating, calibrated, and failed. Tracking degradation is not loss of calibration.
-- [ ] **W40.02** Remove the mute hookup and the automatic start on activation (F06); muting never affects calibration.
-- [ ] **W40.03** Add dedicated open and cancel actions to the runtime-neutral input layer, bound on every supported interaction profile, and capture when both triggers are pulled together. Handlers act on the press edge and read the action value.
-- [ ] **W40.04** Before calibrating, snapshot bindings, offsets, targets, solver activation and weights, and root-controller state. Cancel restores the snapshot without calibrating again.
-- [ ] **W40.05** Build proposed bindings and offsets as temporary state, validate them, and publish them atomically. A missing headset or controller pose, invalid output, or exception is a failure that leaves the previous rig active.
-- [ ] **W40.06** Pause competing animation and root-motion writers while calibrating and restore them afterwards.
-- [ ] **W40.07** Route requests to one scene or simulation owner, never block the render thread, and remove the ignored `Wait(100)`.
-- [ ] **W40.08** Provide in-VR feedback: markers, slot labels, footprints, the head-tilt message, and specific failure messages. Place text at eye level so reading it never tilts the head.
-- [ ] **W40.09** Make calibration input reach the VR player while the desktop editor camera has focus or possession.
-- [ ] **W40.10** When the player enters a VR pawn without a calibration, run head-and-hands IK and offer calibration instead of starting it.
+- [x] **W40.01** Replace the calibration boolean with explicit states: uncalibrated, calibrating, calibrated, and failed. Tracking degradation is not loss of calibration.
+- [x] **W40.02** Remove the mute hookup and the automatic start on activation (F06); muting never affects calibration.
+- [x] **W40.03** Add dedicated open and cancel actions to the runtime-neutral input layer, bound on every supported interaction profile, and capture when both triggers are pulled together. Handlers act on the press edge and read the action value.
+- [x] **W40.04** Before calibrating, snapshot bindings, offsets, targets, solver activation and weights, and root-controller state. Cancel restores the snapshot without calibrating again.
+- [x] **W40.05** Build proposed bindings and offsets as temporary state, validate them, and publish them atomically. A missing headset or controller pose, invalid output, or exception is a failure that leaves the previous rig active.
+- [x] **W40.06** Pause competing animation and root-motion writers while calibrating and restore them afterwards.
+- [x] **W40.07** Route requests to one scene or simulation owner, never block the render thread, and remove the ignored `Wait(100)`.
+- [x] **W40.08** Provide in-VR feedback: markers, slot labels, footprints, the head-tilt message, and specific failure messages. Place text at eye level so reading it never tilts the head.
+- [x] **W40.09** Make calibration input reach the VR player while the desktop editor camera has focus or possession.
+- [x] **W40.10** When the player enters a VR pawn without a calibration, run head-and-hands IK and offer calibration instead of starting it.
 
 **Acceptance:** on every supported controller profile, a player opens calibration, captures with one trigger pull, cancels, and retries without a keyboard; a failure leaves the previous rig active; muting and camera switching have no calibration side effects.
 
@@ -282,12 +284,12 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 
 **Primary files:** [height scale base][height-scale], [VR state][vr-state], [VR state contract][vr-state-contract], [humanoid component][humanoid], [calibrator][calibrator].
 
-- [ ] **W45.01** Add player settings for the measurement mode and value (2.7), stored with the player's settings rather than the unit-testing world.
-- [ ] **W45.02** Players enter standing height; define and document how it converts to the eye height the scale ratio uses.
-- [ ] **W45.03** Measure avatar arm span fingertip to fingertip in the canonical T-pose, the way people measure themselves. When finger bones are missing, use wrist span plus an estimated hand length and report that fallback.
-- [ ] **W45.04** Make one component own avatar scale (3.3): remove `CalibrateScale` and reconcile `HeightScaleBaseComponent`. Validate ranges, denominators, and finite values.
-- [ ] **W45.05** Until the player sets a value, show a notice in the calibration flow rather than silently using the 1.8 m default.
-- [ ] **W45.06** In height mode, warn at capture when the headset's eye height disagrees with the setting by more than a tolerance. Never correct the setting automatically.
+- [x] **W45.01** Add player settings for the measurement mode and value (2.7), stored with the player's settings rather than the unit-testing world.
+- [x] **W45.02** Players enter standing height; define and document how it converts to the eye height the scale ratio uses.
+- [x] **W45.03** Measure avatar arm span fingertip to fingertip in the canonical T-pose, the way people measure themselves. When finger bones are missing, use wrist span plus an estimated hand length and report that fallback.
+- [x] **W45.04** Make one component own avatar scale (3.3): remove `CalibrateScale` and reconcile `HeightScaleBaseComponent`. Validate ranges, denominators, and finite values.
+- [x] **W45.05** Until the player sets a value, show a notice in the calibration flow rather than silently using the 1.8 m default.
+- [x] **W45.06** In height mode, warn at capture when the headset's eye height disagrees with the setting by more than a tolerance. Never correct the setting automatically.
 
 **Acceptance:** changing the measurement rescales the avatar through one owner; both modes produce the expected scale for synthetic avatars; tracked real-world units are unaffected.
 
@@ -297,16 +299,16 @@ Implemented by [`SyntheticVrCalibrationRig`][synthetic-rig], `SyntheticVrDeviceT
 
 The IK base schedules normal and late animation work, while VR device transforms also react to predicted and late runtime updates. Audit the resulting order instead of assuming a calibrated target implies a fresh rendered skeleton.
 
-- [ ] **W50.01** Define the frame order explicitly: publish the tracking snapshot, update the playspace and locomotion, update slot sources (tracker or estimator), update targets, evaluate the avatar and IK, publish the renderable pose, then evaluate the spectator anchor from the matching state.
-- [ ] **W50.02** Identify the owner and coordinate space of each matrix: runtime reference space, playspace, world, avatar root, raw device, and calibrated target. Replace hierarchy-order lookups such as `GetRelevantMovementTransforms` with explicit rig references where practical.
-- [ ] **W50.03** Keep the simulation snapshot coherent; never combine a newly located controller with old hip or foot transforms in a calibration sample.
-- [ ] **W50.04** Document how late-located headset and controller poses relate to the skeleton rendered for that frame. Use a deliberate late-pose strategy or documented simulation-pose behavior; never mutate live bones from the render thread as an ad hoc latency fix.
-- [ ] **W50.05** Fix `MovePlayer()`, which applies the device-to-body offset before playspace conversion and again when building the movement matrix. Test locomotion and room-scale movement with nonzero tracker offsets.
-- [ ] **W50.06** When a bound tracker stops being usable, hold its last valid target briefly (configurable), then crossfade the slot to the estimator, or fade its weight to zero until the estimator exists. Retained poses never satisfy calibration.
-- [ ] **W50.07** When the same physical tracker returns, crossfade the slot back. A different tracker never inherits the slot; show that recalibration is needed.
-- [ ] **W50.08** Handle reference-space changes and recenter as coordinate-basis events: apply a known transform coherently, or invalidate and request recalibration when the relationship is unknown.
-- [ ] **W50.09** Publish discontinuity events—teleport, snap turn, recenter, avatar replacement, and session-generation change—and reset smoothing and history on them. The spectator and the estimator consume the same events.
-- [ ] **W50.10** Avoid new per-frame allocations, blocking waits, and unsynchronized collection mutation in pose updates, binding lookup, target updates, and spectator follow. Keep discovery, UI, and calibration allocations off the per-frame path.
+- [x] **W50.01** Define the frame order explicitly: publish the tracking snapshot, update the playspace and locomotion, update slot sources (tracker or estimator), update targets, evaluate the avatar and IK, publish the renderable pose, then evaluate the spectator anchor from the matching state.
+- [x] **W50.02** Identify the owner and coordinate space of each matrix: runtime reference space, playspace, world, avatar root, raw device, and calibrated target. Replace hierarchy-order lookups such as `GetRelevantMovementTransforms` with explicit rig references where practical.
+- [x] **W50.03** Keep the simulation snapshot coherent; never combine a newly located controller with old hip or foot transforms in a calibration sample.
+- [x] **W50.04** Document how late-located headset and controller poses relate to the skeleton rendered for that frame. Use a deliberate late-pose strategy or documented simulation-pose behavior; never mutate live bones from the render thread as an ad hoc latency fix.
+- [x] **W50.05** Fix `MovePlayer()`, which applies the device-to-body offset before playspace conversion and again when building the movement matrix. Test locomotion and room-scale movement with nonzero tracker offsets.
+- [x] **W50.06** When a bound tracker stops being usable, hold its last valid target briefly (configurable), then crossfade the slot to the estimator, or fade its weight to zero until the estimator exists. Retained poses never satisfy calibration.
+- [x] **W50.07** When the same physical tracker returns, crossfade the slot back. A different tracker never inherits the slot; show that recalibration is needed.
+- [x] **W50.08** Handle reference-space changes and recenter as coordinate-basis events: apply a known transform coherently, or invalidate and request recalibration when the relationship is unknown.
+- [x] **W50.09** Publish discontinuity events—teleport, snap turn, recenter, avatar replacement, and session-generation change—and reset smoothing and history on them. The spectator and the estimator consume the same events.
+- [x] **W50.10** Avoid new per-frame allocations, blocking waits, and unsynchronized collection mutation in pose updates, binding lookup, target updates, and spectator follow. Keep discovery, UI, and calibration allocations off the per-frame path.
 
 **Acceptance:** standing, turning, walking, crouching, and lifting either foot preserve alignment; tracker loss never snaps to the origin and fades without popping; recenter and teleport never apply offsets twice; all view consumers see one published avatar pose.
 
@@ -314,20 +316,20 @@ The IK base schedules normal and late animation work, while VR device transforms
 
 **Primary files:** [runtime pawn factory][bootstrap-pawns], [editor pawn factory][editor-pawns], existing camera, smoothing, and boom types, and the viewport/output ownership integration. Read the [DefaultRenderPipeline invariants][pipeline-notes] and [mesh submission contracts][mesh-submission] before changing rendering code.
 
-- [ ] **W60.01** Add a dedicated spectator-follow component or rig associated explicitly with the local VR player. Do not reinterpret the existing desktop-only `ThirdPersonPawn` switch as VR support.
-- [ ] **W60.02** Build a follow anchor from the player-root position and the hips slot, with world up and stable body yaw. Never parent the spectator directly to the headset's full rotation.
-- [ ] **W60.03** Provide configurable distance, height, shoulder offset, aim point, field of view, and follow smoothing. In the engine's `-Z` forward convention a trailing offset lies behind the player's forward direction; verify the sign in a test scene.
-- [ ] **W60.04** Use frame-rate-independent follow behavior. Reuse existing smoothing components where their update and space semantics fit; never smooth the OpenXR eye cameras with spectator settings.
-- [ ] **W60.05** Add collision avoidance using the existing boom and shapecast pattern where suitable. Exclude the player's own collision body and define behavior when the desired position is obstructed.
-- [ ] **W60.06** Keep body turns distinct from head glances. Define a stable fallback heading when the hips slot has no source, and handle degenerate look-at vectors safely.
-- [ ] **W60.07** Give the spectator its own monoscopic camera and output or viewport, with temporal history, projection, culling, and mutable pipeline state isolated from both eyes and other cameras.
-- [ ] **W60.08** Render the complete local avatar in the spectator view while applying first-person head and body hiding only to the headset views. Never deactivate meshes globally to hide them from the headset.
-- [ ] **W60.09** Route desktop output between the first-person preview, the spectator, and the editor camera without changing VR pawn possession, controller routing, headset camera ownership, or the tracking origin.
-- [ ] **W60.10** Keep the headset listener for player audio by default. A recording-specific listener or audio bus is an explicit optional feature, not a side effect of adding a camera.
-- [ ] **W60.11** Produce one clean spectator output usable for desktop capture or a render texture, and reuse it for previews instead of rendering the spectator scene again.
-- [ ] **W60.12** Add configurable spectator resolution and update cadence. A slower cadence may reuse the last completed spectator frame but must never delay OpenXR frame submission.
-- [ ] **W60.13** Respect GPU completion and consumer lifetimes when publishing offscreen output: never expose an unfinished target or reuse its storage before outstanding consumers finish.
-- [ ] **W60.14** Reset follow interpolation and per-view temporal history on the W50.09 discontinuity events and on camera mode changes.
+- [x] **W60.01** Add a dedicated spectator-follow component or rig associated explicitly with the local VR player. Do not reinterpret the existing desktop-only `ThirdPersonPawn` switch as VR support.
+- [x] **W60.02** Build a follow anchor from the player-root position and the hips slot, with world up and stable body yaw. Never parent the spectator directly to the headset's full rotation.
+- [x] **W60.03** Provide configurable distance, height, shoulder offset, aim point, field of view, and follow smoothing. In the engine's `-Z` forward convention a trailing offset lies behind the player's forward direction; verify the sign in a test scene.
+- [x] **W60.04** Use frame-rate-independent follow behavior. Reuse existing smoothing components where their update and space semantics fit; never smooth the OpenXR eye cameras with spectator settings.
+- [x] **W60.05** Add collision avoidance using the existing boom and shapecast pattern where suitable. Exclude the player's own collision body and define behavior when the desired position is obstructed.
+- [x] **W60.06** Keep body turns distinct from head glances. Define a stable fallback heading when the hips slot has no source, and handle degenerate look-at vectors safely.
+- [x] **W60.07** Give the spectator its own monoscopic camera and output or viewport, with temporal history, projection, culling, and mutable pipeline state isolated from both eyes and other cameras.
+- [x] **W60.08** Render the complete local avatar in the spectator view while applying first-person head and body hiding only to the headset views. Never deactivate meshes globally to hide them from the headset.
+- [x] **W60.09** Route desktop output between the first-person preview, the spectator, and the editor camera without changing VR pawn possession, controller routing, headset camera ownership, or the tracking origin.
+- [x] **W60.10** Keep the headset listener for player audio by default. A recording-specific listener or audio bus is an explicit optional feature, not a side effect of adding a camera.
+- [x] **W60.11** Produce one clean spectator output usable for desktop capture or a render texture, and reuse it for previews instead of rendering the spectator scene again.
+- [x] **W60.12** Add configurable spectator resolution and update cadence. A slower cadence may reuse the last completed spectator frame but must never delay OpenXR frame submission.
+- [x] **W60.13** Respect GPU completion and consumer lifetimes when publishing offscreen output: never expose an unfinished target or reuse its storage before outstanding consumers finish.
+- [x] **W60.14** Reset follow interpolation and per-view temporal history on the W50.09 discontinuity events and on camera mode changes.
 - [ ] **W60.15** Validate output orientation, aspect ratio, color space, post-processing, and visibility independently of the headset, especially on Vulkan.
 
 **Acceptance:** the headset stays first-person while the desktop or render texture shows a stable third-person follow view of the complete avatar; camera activation, capture cadence, and desktop focus never steal VR input or change headset tracking.
@@ -341,10 +343,10 @@ The IK base schedules normal and late animation work, while VR device transforms
 
 **Primary files:** [editor pawn switcher][pawn-switcher], [runtime pawn factory][bootstrap-pawns], and the W10 rig owner.
 
-- [ ] **W70.01** Keep the committed calibration—bindings by session identity, offsets, and the measurement in use—outside the temporary rig, so VR toggles and pawn recreation within a session restore it while the same trackers are connected.
-- [ ] **W70.02** When a bound tracker is missing on restore, restore the other slots, let missing slots fall back (W50), and offer recalibration.
-- [ ] **W70.03** Require recalibration after an avatar change, because offsets are relative to the previous avatar's bones.
-- [ ] **W70.04** Stay consistent with the [editor OpenXR toggle TODO][toggle-todo], which destroys the temporary rig when OpenXR is turned off.
+- [x] **W70.01** Keep the committed calibration—bindings by session identity, offsets, and the measurement in use—outside the temporary rig, so VR toggles and pawn recreation within a session restore it while the same trackers are connected.
+- [x] **W70.02** When a bound tracker is missing on restore, restore the other slots, let missing slots fall back (W50), and offer recalibration.
+- [x] **W70.03** Require recalibration after an avatar change, because offsets are relative to the previous avatar's bones.
+- [x] **W70.04** Stay consistent with the [editor OpenXR toggle TODO][toggle-todo], which destroys the temporary rig when OpenXR is turned off.
 
 **Acceptance:** toggling VR off and on in the editor restores the previous calibration while the same trackers are connected, and never binds a different tracker.
 
@@ -354,10 +356,10 @@ The IK base schedules normal and late animation work, while VR device transforms
 
 Each work package's acceptance defines its own tests. Keep these guards in `XREngine.UnitTests/`:
 
-- [ ] **W80.01** Target persistence: the W00 regression passes without `Explicit`.
-- [ ] **W80.02** Binding invariance: every enumeration order produces the same one-to-one binding, and distant trackers stay unassigned.
-- [ ] **W80.03** Transactional rollback: failure and cancel restore the previous rig exactly.
-- [ ] **W80.04** Capture math: the W15.09 perturbations reproduce the displayed pose at capture.
+- [x] **W80.01** Target persistence: the W00 regression passes without `Explicit`.
+- [x] **W80.02** Binding invariance: every enumeration order produces the same one-to-one binding, and distant trackers stay unassigned.
+- [x] **W80.03** Transactional rollback: failure and cancel restore the previous rig exactly.
+- [x] **W80.04** Capture math: the W15.09 perturbations reproduce the displayed pose at capture.
 
 ### OpenXR hardware procedure
 
@@ -380,19 +382,23 @@ powershell -ExecutionPolicy Bypass `
 
 Do not invent a command-line flag for `SequentialViews`; use the existing rendering setting. Explicit `VR.Mode=OpenXR` must never fall back to OpenVR. Headset rendering baselines, sequential and single-pass stereo, are owned by the [parity TODO][parity-todo]; this milestone consumes them.
 
-- [ ] **W80.05** Record the headset, controller models, tracker models and count, runtime and version, active manifest, GPU and driver, backend, view mode, and implementation commit.
+- [x] **W80.05** Record the headset, controller models, tracker models and count, runtime and version, active manifest, GPU and driver, backend, view mode, and implementation commit.
 - [ ] **W80.06** Calibrate at 6 points and with as many trackers as are available (up to 11 points), using trackers in their default SteamVR state and trackers swapped between sessions.
 - [ ] **W80.07** Test standing, looking around independently of body yaw, turning, crouching, lifting either foot, crossed feet after calibration, and room-scale walking.
 - [ ] **W80.08** Test tracker occlusion, power cycling, swapping a tracker mid-session, controller loss, headset removal, dashboard focus, recenter, runtime and session restart, and the editor VR toggle.
 - [ ] **W80.09** Run the calibration flow on each available controller profile: open, head-tilt refusal, capture, cancel, recalibrate, and avatar change.
 - [ ] **W80.10** Run the spectator alongside VR and check full-avatar visibility, obstruction, teleport resets, input focus, output cadence, and audio-listener ownership.
 - [ ] **W80.11** Measure headset frame time, missed deadlines, allocations, and spectator cost with the spectator disabled and enabled; report measurements, not inferences from code structure.
+
+Short physical OpenGL Debug samples recorded first-person and spectator timing, deadline misses, and whole-process allocation rates. Every sampled headset submission missed its deadline, and the allocation rates include editor and MCP work; spectator-only cost has not been isolated. This partial measurement does not pass W80.11.
 - [ ] **W80.12** Attach logs, normalized smoke summaries, test results, and short visual evidence, and update the hardware validation record with the tested commit, configuration, and remaining failures.
+
+The evidence run contains named OpenGL hardware diagnostics, a normalized smoke summary, test reports, and synthetic spectator images. The Ready/zero-frame retry exposed a root-list enumeration exception; its stable-snapshot fix passed a deterministic regression, but a later physical retry returned `ErrorFormFactorUnavailable` before graphics startup. An initial simulated Vulkan run stopped on a concurrent mesh-swap fault after offscreen output was enabled. The corrected staged spectator path subsequently completed 119 captures through cuts, disable/re-enable, resize, and component reactivation without that fault. A final Vulkan offscreen readback produced a viewed, upright 1920 × 1080 image with finite HDR samples and no editor overlays. It still showed overbright avatar color and straight garment geometry in the full scene; its broad gray lower region is consistent with the scene's physics floor. A held Body-and-Shirt view did not reproduce the straight arms, and RenderDoc confirmed populated finite GPU skin palettes for both meshes in that capture. The full-scene visual cause remains unresolved. Full visual/color acceptance, final eye evidence, and physical Vulkan headset evidence remain missing. The final focused selection passed 36/36 and the broad selection retained the same 61 failure names. W60.15 and W80.12 remain open.
 
 ### Documentation
 
-- [ ] **W80.13** Update the [runtime guide][runtime-guide]'s tracker sections: remove the instruction to assign SteamVR roles once W20 lands, and document any recorded runtime limitation.
-- [ ] **W80.14** Document the calibration flow, measurement settings, failure messages, spectator controls, and which capture outputs were validated.
+- [x] **W80.13** Update the [runtime guide][runtime-guide]'s tracker sections: remove the instruction to assign SteamVR roles once W20 lands, and document any recorded runtime limitation.
+- [x] **W80.14** Document the calibration flow, measurement settings, failure messages, spectator controls, and which capture outputs were validated.
 - [ ] **W80.15** Mark work complete only with behavioral tests and hardware evidence attached; checkboxes in older parity documents do not substitute for this evidence.
 
 ## 18. Definition of done

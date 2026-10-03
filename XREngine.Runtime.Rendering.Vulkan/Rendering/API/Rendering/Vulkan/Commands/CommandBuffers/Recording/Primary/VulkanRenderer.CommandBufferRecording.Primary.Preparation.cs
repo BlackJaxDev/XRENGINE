@@ -581,11 +581,16 @@ namespace XREngine.Rendering.Vulkan
         private bool TryPrepareAdvancedVisibilityOperations(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
+            bool observe = S13aPublicationTelemetry.Enabled;
+            long gateRequested = observe ? Stopwatch.GetTimestamp() : 0L;
             // Every bank uses one arena lane, including transactional rollback.
             // This also serializes the publication preparation scratch shared by
             // parallel eye workers; native recording consumes frozen closures later.
             lock (ResourceRuntime.AdvancedVisibilityStorageGate)
             {
+                long bodyStarted = observe ? Stopwatch.GetTimestamp() : 0L;
+                long allocatedBefore = observe ? GC.GetAllocatedBytesForCurrentThread() : 0L;
+                int advancedOperationCount = 0;
                 Span<AdvancedVisibilityFamilyReservation> families =
                     stackalloc AdvancedVisibilityFamilyReservation[VulkanAdvancedVisibilityOutputCapacity.Maximum];
                 int familyCount = 0;
@@ -593,6 +598,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (recordingState.Ops.GetHeader(i).OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
                         continue;
+                    advancedOperationCount++;
                     AdvancedVisibilityFamilyReservation reservation = recordingState.Ops.GetAdvancedVisibility(i).Request.Reservation;
                     bool found = false;
                     for (int f = 0; f < familyCount; f++)
@@ -614,10 +620,28 @@ namespace XREngine.Rendering.Vulkan
                     }
                     families[familyCount++] = reservation;
                 }
+                long discoveryFinished = observe ? Stopwatch.GetTimestamp() : 0L;
+                bool prepared = true;
                 for (int f = 0; f < familyCount; f++)
-                    if (!TryPrepareAdvancedVisibilityFamily(ref recordingState, in families[f]))
-                        return false;
-                return true;
+                {
+                    if (TryPrepareAdvancedVisibilityFamily(ref recordingState, in families[f]))
+                        continue;
+                    prepared = false;
+                    break;
+                }
+                if (observe)
+                {
+                    S13aPublicationTelemetry.AdvancedPlanDiscovery(
+                        recordingState.Ops.Length,
+                        advancedOperationCount,
+                        familyCount,
+                        discoveryVisits: recordingState.Ops.Length,
+                        discoveryTicks: discoveryFinished - bodyStarted,
+                        preparationTicks: Stopwatch.GetTimestamp() - bodyStarted,
+                        gateWaitTicks: bodyStarted - gateRequested,
+                        allocatedBytes: GC.GetAllocatedBytesForCurrentThread() - allocatedBefore);
+                }
+                return prepared;
             }
         }
 
@@ -800,6 +824,8 @@ namespace XREngine.Rendering.Vulkan
                         .RecoverAfterStateChange;
                     return false;
                 }
+                S13aPublicationTelemetry.StepProbe targetProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 if (requiresGraphicsTargetClosure)
                 {
                     // A deferrable output consumes only its preflighted native
@@ -877,6 +903,7 @@ namespace XREngine.Rendering.Vulkan
                     rasterTargetClosure = targetClosure;
                 else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
                     lateRasterTargetClosure = targetClosure;
+                targetProbe.End(S13aAdvancedFamilyStep.TargetClosure);
                 }
                 // The scene publication depends only on the family key (runtime,
                 // current package, database/publication, frame plan and slot,
@@ -911,6 +938,8 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     long prepareStarted = observe ? Stopwatch.GetTimestamp() : 0L;
+                    S13aPublicationTelemetry.StepProbe sceneProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     scenePrepared = TryPrepareAdvancedVisibilityScenePublication(
                             framePlan,
                             recordingState.FrameDataSlot,
@@ -927,6 +956,7 @@ namespace XREngine.Rendering.Vulkan
                             observedAttempts++;
                         observedPrepareTicks += Stopwatch.GetTimestamp() - prepareStarted;
                     }
+                    sceneProbe.End(S13aAdvancedFamilyStep.ScenePublication);
                 }
                 if (!scenePrepared)
                 {
@@ -967,16 +997,24 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanCommandRecordingFailureKind.RendererTerminal;
                     return false;
                 }
+                bool binsSealed = true;
+                string binReason = "Ready";
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
-                    !familyBins.HasSealedSubmissionPlans &&
-                    !TrySealAdvancedVisibilityBins(
+                    !familyBins.HasSealedSubmissionPlans)
+                {
+                    S13aPublicationTelemetry.StepProbe binProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                    binsSealed = TrySealAdvancedVisibilityBins(
                         familyBins,
                         in request,
                         input,
                         in sceneState,
                         in operationContext,
                         operationPassIndex,
-                        out string binReason))
+                        out binReason);
+                    binProbe.End(S13aAdvancedFamilyStep.BinSealing);
+                }
+                if (!binsSealed)
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: stable-bin sealing failed: {binReason}";
@@ -987,22 +1025,38 @@ namespace XREngine.Rendering.Vulkan
                     }
                     return false;
                 }
-                if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
-                    !familyBins.TryRetainTemplatesForFramePlan(
+                bool templatesRetained = true;
+                string templateRetentionReason = "Ready";
+                if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
+                {
+                    S13aPublicationTelemetry.StepProbe templateProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                    templatesRetained = familyBins.TryRetainTemplatesForFramePlan(
                         ResourceRuntime.ResidentDrawTemplates,
-                        out string templateRetentionReason))
+                        out templateRetentionReason);
+                    templateProbe.End(S13aAdvancedFamilyStep.TemplateRetention);
+                }
+                if (!templatesRetained)
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: template retention failed: {templateRetentionReason}";
                     return false;
                 }
-                if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
-                    familyBins.TryPrepareVisibilityRasterPipelines(
+                VulkanAdvancedVisibilityPipelineReadiness rasterPipelineReadiness =
+                    VulkanAdvancedVisibilityPipelineReadiness.Ready;
+                string rasterPipelineReason = "Ready";
+                if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
+                {
+                    S13aPublicationTelemetry.StepProbe rasterPipelineProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                    rasterPipelineReadiness = familyBins.TryPrepareVisibilityRasterPipelines(
                         ResourceRuntime.AdvancedVisibilityPipelines,
                         input.Payloads,
                         in targetClosure,
-                        out string rasterPipelineReason) is not
-                            VulkanAdvancedVisibilityPipelineReadiness.Ready and var rasterPipelineReadiness)
+                        out rasterPipelineReason);
+                    rasterPipelineProbe.End(S13aAdvancedFamilyStep.RasterPipelines);
+                }
+                if (rasterPipelineReadiness is not VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 {
                     bool pending = rasterPipelineReadiness is
                         VulkanAdvancedVisibilityPipelineReadiness.Pending or
@@ -1015,6 +1069,8 @@ namespace XREngine.Rendering.Vulkan
                         : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                     return false;
                 }
+                S13aPublicationTelemetry.StepProbe associationProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 if (requiresGraphicsTargetClosure &&
                     !recordingState.Ops.Stream.TryAssociateAdvancedVisibilityTarget(
                         operationIndex,
@@ -1075,10 +1131,13 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                associationProbe.End(S13aAdvancedFamilyStep.StageAssociation);
                 ReadOnlySpan<AdvancedVisibilityPayload> visibilityPayloads =
                     input.Payloads;
                 if (request.Stage != EAdvancedRenderStage.VisibilityRaster)
                     continue;
+                S13aPublicationTelemetry.StepProbe realizationProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 if (!familyBins.TryBuildVisibilityRasterPayloads(
                     visibilityPayloads,
                     out visibilityPayloads,
@@ -1128,6 +1187,7 @@ namespace XREngine.Rendering.Vulkan
                             : EVulkanCommandRecordingFailureKind.RendererTerminal;
                     return false;
                 }
+                realizationProbe.End(S13aAdvancedFamilyStep.RasterRealization);
             }
 
             if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
@@ -1173,11 +1233,14 @@ namespace XREngine.Rendering.Vulkan
                     EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
             }
+            S13aPublicationTelemetry.StepProbe computePipelineProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             VulkanAdvancedVisibilityPipelineReadiness computePipelineReadiness =
                 ResourceRuntime.AdvancedVisibilityPipelines.TryGetComputePipelines(
                     out VkRenderProgram earlyVisibilityProgram,
                     out VkRenderProgram buildIndirectProgram,
                     out string pipelineReason);
+            computePipelineProbe.End(S13aAdvancedFamilyStep.ComputePipelines);
             if (computePipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
             {
                 recordingState.RecordingDeferredReason =
@@ -1207,6 +1270,8 @@ namespace XREngine.Rendering.Vulkan
                 VulkanAdvancedVisibilityStageRequest request = payload.Request;
                 if (request.Reservation != familyReservation)
                     continue;
+                S13aPublicationTelemetry.StepProbe stateProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 VulkanAdvancedVisibilityPipelineReadiness stateAssociationReadiness =
                     recordingState.Ops.Stream.TryAssociateAdvancedVisibilityState(
                         operationIndex,
@@ -1215,6 +1280,7 @@ namespace XREngine.Rendering.Vulkan
                         earlyVisibilityProgram,
                         buildIndirectProgram,
                         out string stateAssociationReason);
+                stateProbe.End(S13aAdvancedFamilyStep.StateAssociation);
                 if (stateAssociationReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 {
                     recordingState.RecordingDeferredReason =
@@ -1231,6 +1297,8 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                S13aPublicationTelemetry.StepProbe nativeProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 if (request.RequiresNativeComputeClosure ||
                     request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve)
                 {
@@ -1252,11 +1320,18 @@ namespace XREngine.Rendering.Vulkan
                     ref readonly VulkanAdvancedVisibilityOperationPayload nativePayload = ref
                         recordingState.Ops.GetAdvancedVisibility(operationIndex);
                     VulkanAdvancedNativeComputeClosure nativeClosure;
+                    S13aPublicationTelemetry.StepProbe closureProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                    bool closureCaptured;
+                    string nativeClosureReason = "Ready";
                     if (nativePayload.NativeComputeClosure is { } capturedClosure)
                     {
                         nativeClosure = capturedClosure;
+                        closureCaptured = true;
                     }
-                    else if (!familyResources
+                    else
+                    {
+                        closureCaptured = familyResources
                             .TryCaptureNativeComputeClosure(
                                 nativeOperationPlan,
                                 nativeGeneration,
@@ -1269,7 +1344,10 @@ namespace XREngine.Rendering.Vulkan
                                 request.RequiresMaterialSurfaceExports,
                                 nativeStorage,
                                 out nativeClosure,
-                                out string nativeClosureReason))
+                                out nativeClosureReason);
+                    }
+                    closureProbe.End(S13aAdvancedFamilyStep.NativeClosureCapture);
+                    if (!closureCaptured)
                     {
                         recordingState.RecordingDeferredReason =
                             $"Advanced visibility operation is Unsupported: sealed native-compute closure failed: {nativeClosureReason}.";
@@ -1278,22 +1356,29 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    if (!familyResources
+                    S13aPublicationTelemetry.StepProbe descriptorProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                    bool nativeDescriptorsPrepared = familyResources
                             .TryPrepareNativeComputeDescriptors(
                                 in familyState,
                                 in nativeClosure,
                                 out DescriptorSet nativeDescriptorSet,
-                                out string nativeDescriptorReason))
+                                out string nativeDescriptorReason);
+                    descriptorProbe.End(S13aAdvancedFamilyStep.NativeDescriptors);
+                    if (!nativeDescriptorsPrepared)
                     {
                         recordingState.RecordingDeferredReason =
                             $"Advanced visibility operation is Unsupported: immutable native-compute descriptor sealing failed: {nativeDescriptorReason}.";
                         return false;
                     }
+                    S13aPublicationTelemetry.StepProbe nativePipelineProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     VulkanAdvancedVisibilityPipelineReadiness nativePipelineReadiness =
                         ResourceRuntime.AdvancedVisibilityPipelines
                             .TryGetNativeComputePipelines(
                                 out VulkanAdvancedNativeComputePipelines nativePipelines,
                                 out string nativePipelineReason);
+                    nativePipelineProbe.End(S13aAdvancedFamilyStep.NativePipelineLookup);
                     if (nativePipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                     {
                         recordingState.RecordingDeferredReason = nativePipelineReadiness is
@@ -1308,6 +1393,8 @@ namespace XREngine.Rendering.Vulkan
                                 : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                         return false;
                     }
+                    S13aPublicationTelemetry.StepProbe nativeAssociationProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     if (nativePipelines.Shade.UsesAddressRoot &&
                         nativePipelines.Shade.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
                         throw new VulkanPlanPreconditionException("The native shading pipeline root ABI is not supported by this recorder.");
@@ -1330,10 +1417,14 @@ namespace XREngine.Rendering.Vulkan
                             "Advanced visibility operation is Unsupported: immutable native-compute closure publication was rejected.";
                         return false;
                     }
+                    nativeAssociationProbe.End(S13aAdvancedFamilyStep.NativeAssociation);
+                    nativeProbe.End(S13aAdvancedFamilyStep.NativeCompute);
                 }
 
                 if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute)
                 {
+                    S13aPublicationTelemetry.StepProbe lateProbe =
+                        S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     VulkanCompiledRenderGraph operationGraph =
                         recordingState.RenderGraphPlan.CompiledGraph;
                     FrameOpContext operationContext =
@@ -1483,6 +1574,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         lateStorage.ReleaseAcquiredViews(ResourceRuntime.Images);
                     }
+                    lateProbe.End(S13aAdvancedFamilyStep.LateClosure);
                 }
             }
 
@@ -1495,6 +1587,11 @@ namespace XREngine.Rendering.Vulkan
                     observedReuses,
                     observedPrepareTicks,
                     failures: 0);
+                // Both stage loops above visit every sealed operation header once,
+                // and every stage checks the plan lease.
+                S13aPublicationTelemetry.AdvancedPlanFamilyScan(
+                    visits: 2 * recordingState.Ops.Length,
+                    leaseChecks: observedStages);
             }
             return true;
         }
@@ -1618,7 +1715,9 @@ namespace XREngine.Rendering.Vulkan
             // ingress may coexist for other passes, but it must never decide
             // which geometry address space this ABI consumes.
             bins.ThawForReuse();
-            if (!bins.TryBuildVisibilityGeometryStream(
+            S13aPublicationTelemetry.StepProbe geometryProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool geometryBuilt = bins.TryBuildVisibilityGeometryStream(
                     ResourceRuntime,
                     input.Payloads,
                     input.DeformationSlices,
@@ -1628,13 +1727,19 @@ namespace XREngine.Rendering.Vulkan
                     passIndex,
                     outputViewMask,
                     in context,
-                    out reason))
+                    out reason);
+            geometryProbe.End(S13aAdvancedFamilyStep.BinGeometryStream);
+            if (!geometryBuilt)
                 return false;
-            if (!bins.TryResolveManifests(
+            S13aPublicationTelemetry.StepProbe manifestProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool manifestsResolved = bins.TryResolveManifests(
                     ResourceRuntime.ResidentDrawTemplates
                         .StableBinManifestCache,
                     package.CanonicalScenePublication.TopologyGeneration,
-                    out VulkanBinResourceManifestFailure manifestFailure))
+                    out VulkanBinResourceManifestFailure manifestFailure);
+            manifestProbe.End(S13aAdvancedFamilyStep.BinManifests);
+            if (!manifestsResolved)
             {
                 reason = $"canonical visibility atlas manifests could not be sealed: {manifestFailure}";
                 return false;
@@ -1688,7 +1793,9 @@ namespace XREngine.Rendering.Vulkan
                 reason = outputPolicy.DescribeCanonicalVisibilityRejection();
                 return false;
             }
-            if (!bins.TrySealSubmissionPlans(
+            S13aPublicationTelemetry.StepProbe submissionProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool plansSealed = bins.TrySealSubmissionPlans(
                     ResourceRuntime.ResidentDrawTemplates,
                     input.Payloads,
                     input.IndirectRanges,
@@ -1698,7 +1805,9 @@ namespace XREngine.Rendering.Vulkan
                     in outputPolicy,
                     diagnosticNode,
                     requestCpuSafetyNet: false,
-                    out VulkanSubmissionPlanRejectionReason rejection))
+                    out VulkanSubmissionPlanRejectionReason rejection);
+            submissionProbe.End(S13aAdvancedFamilyStep.BinSubmissionPlans);
+            if (!plansSealed)
             {
                 reason = rejection.ToString();
                 return false;

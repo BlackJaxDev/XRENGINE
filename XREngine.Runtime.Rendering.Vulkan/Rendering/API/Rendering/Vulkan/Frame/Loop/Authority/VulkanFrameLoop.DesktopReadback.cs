@@ -1,4 +1,6 @@
 using System.Text;
+using System.Runtime.CompilerServices;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -152,6 +154,16 @@ internal sealed partial class VulkanFrameLoop
     {
         VulkanFrameOpPlannerStateKey key = VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(requested);
         bool offscreen = requested.PipelineInstance?.Pipeline is AdvancedRenderPipeline { OffscreenProfile: not null };
+        if (!offscreen && requested.PipelineInstance?.LastWindowViewport is { } sourceViewport &&
+            sourceViewport.PipelineRequest.Purpose == ERenderPipelinePurpose.OffscreenCapture &&
+            RuntimeHelpers.GetHashCode(sourceViewport) == requested.ViewportIdentity)
+        {
+            // A Default-pipeline capture also loses its transient scene-capture
+            // pass and caller framebuffer when the post-render readback runs.
+            // Require the exact viewport that last rendered this pipeline;
+            // all stable planner-key fields and the submitted receipt still match.
+            offscreen = true;
+        }
         int matchedIndex = -1;
         for (int index = 0; index < _desktopReadbackReceipts.Length; index++)
         {

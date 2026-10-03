@@ -791,6 +791,19 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>
+        /// Abandons an unsubmitted private capture after its collection callback has
+        /// exited. No render-side consumer may own this collection when called.
+        /// </summary>
+        internal void ResetUnsubmittedCapture()
+        {
+            using (_lock.EnterScope())
+            {
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+                ClearPipelineTransitionPublicationsNoLock();
+            }
+        }
+
         /// <summary>Releases a completed one-shot output's canonical scene pin.
         /// Exact generation matching protects a newer use of a shared capture
         /// viewport. The caller must settle its submission before invoking this.</summary>

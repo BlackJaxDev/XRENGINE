@@ -1043,6 +1043,7 @@ internal sealed partial class VulkanFrameLoop
         int warmRequestCount = 0;
         int coldRequestCount = 0;
         int resumeRequestIndex = -1;
+        bool coldTailDeferred = false;
         int reusableCohortEntryCount = 0;
         int cohortResourceUseCount = 0;
         bool cohortMaterializationComplete = true;
@@ -1199,15 +1200,23 @@ internal sealed partial class VulkanFrameLoop
                 bool resourcesReady = previouslyMaterialized;
                 // PresentNow retries an incomplete cohort without publishing its
                 // partial operations. Successfully prepared signatures remain warm
-                // across frames, and the cursor resumes at the deferred tail.
+                // across frames, and the cursor resumes at the deferred tail. Once a
+                // cold request is deferred, no operation of this frame's scene is
+                // published: PresentNow resets them and the primary path keeps only
+                // dynamic UI. The remaining requests are therefore deferred as well
+                // instead of materialized and discarded, which kept every frame of a
+                // cold admission as expensive as a full scene. The frame that
+                // finishes the cold tail materializes every request in order.
                 if ((!foregroundRequired || sliceColdPreparation) &&
                     !requireCompleteCohort &&
                     !dynamicUiOverlay &&
-                    !resourcesReady &&
-                    coldPreparationTicks >= ColdMeshPreparationSliceTicks)
+                    (coldTailDeferred ||
+                     (!resourcesReady &&
+                      coldPreparationTicks >= ColdMeshPreparationSliceTicks)))
                 {
                     deferredRequestCount++;
                     cohortMaterializationComplete = false;
+                    coldTailDeferred = true;
                     if (resumeRequestIndex < 0)
                         resumeRequestIndex = requestIndex;
                     continue;

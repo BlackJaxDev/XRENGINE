@@ -1018,6 +1018,24 @@ namespace XREngine.Rendering
             Window = null;
         }
 
+
+        /// <summary>Discards an exact private capture that was collected but never submitted.</summary>
+        internal void ResetUnsubmittedCapture()
+        {
+            _pendingExactOutputCollectionGeneration = 0UL;
+            _pendingExactOutputPackageGeneration = 0L;
+            _pendingExactOutputCommandCollection = null;
+            _renderingExactOutputCollectionGeneration = 0UL;
+            _renderingExactOutputCommandCollection = null;
+            _pendingFrameOutputPacing = default;
+            _renderingFrameOutputPacing = default;
+            _pendingFrameOutputSceneDue = false;
+            _renderingFrameOutputSceneDue = false;
+            TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+            (MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands)
+                .ResetUnsubmittedCapture();
+        }
+
         /// <summary>
         /// Ensures this viewport is registered in the active camera's Viewports list.
         /// Call this after play mode transitions or snapshot restore to fix broken bindings.
@@ -2818,7 +2836,7 @@ namespace XREngine.Rendering
 
             bool cameraIsInEditorScene = world.IsInEditorScene(camComp.SceneNode);
             IRuntimeScreenSpaceUserInterface? fallback = null;
-            foreach (var root in world.RootNodes)
+            foreach (var root in world.RootNodeSnapshot)
             {
                 if (root is null)
                     continue;

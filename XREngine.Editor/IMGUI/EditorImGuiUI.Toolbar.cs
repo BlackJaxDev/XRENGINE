@@ -2,6 +2,7 @@ using ImGuiNET;
 using System;
 using System.Numerics;
 using XREngine;
+using XREngine.Components.VR;
 using XREngine.Scene.Components.Editing;
 
 namespace XREngine.Editor;
@@ -15,6 +16,13 @@ public static partial class EditorImGuiUI
     private static float _snapScaleValue = 0.1f;
     private static bool _openXrRuntimePromptRequested;
     private const string OpenXrRuntimePopupName = "Choose OpenXR runtime##EditorOpenXrRuntime";
+    private static readonly (EVrDesktopView View, string Label)[] OpenXrDesktopViews =
+    [
+        (EVrDesktopView.FirstPerson, "First person"),
+        (EVrDesktopView.Spectator, "Spectator"),
+        (EVrDesktopView.EditorCamera, "Editor camera"),
+        (EVrDesktopView.TextureOutput, "Spectator texture"),
+    ];
     
     private const float ToolbarButtonSize = 26f;
     private const float ToolbarHeight = 34f;
@@ -323,6 +331,23 @@ public static partial class EditorImGuiUI
 
         ImGui.SameLine(0f, ToolbarSpacing);
         ImGui.TextDisabled(EditorOpenXrPawnSwitcher.Status);
+
+        if (!requested)
+            return;
+
+        ImGui.SameLine(0f, ToolbarSpacing);
+        EVrDesktopView view = EditorOpenXrPawnSwitcher.DesktopView;
+        string currentLabel = OpenXrDesktopViews[(int)view].Label;
+        if (!ImGui.BeginCombo("Desktop view##OpenXR", currentLabel))
+            return;
+
+        foreach ((EVrDesktopView option, string label) in OpenXrDesktopViews)
+        {
+            if (ImGui.Selectable(label, option == view))
+                EditorOpenXrPawnSwitcher.SetDesktopView(option);
+        }
+
+        ImGui.EndCombo();
     }
 
     private static void DrawOpenXrRuntimePrompt()

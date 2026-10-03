@@ -115,6 +115,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfilerPort = "XRE_PROFILER_PORT";
     public const string MemoryProfile = "XRE_MEMORY_PROFILE";
     public const string MemoryDiagnostics = "XRE_MEMORY_DIAGNOSTICS";
+    /// <summary>Set to 1 before launch to count world tick dispatch, pending registration and per-callback cost.</summary>
+    public const string WorldTickTelemetry = "XRE_WORLD_TICK_TELEMETRY";
     public const string GcLatencyMode = "XRE_GC_LATENCY_MODE";
     public const string DisableMaintenanceGc = "XRE_DISABLE_MAINTENANCE_GC";
     public const string BenchmarkNoGcRegion = "XRE_BENCHMARK_NOGC_REGION";

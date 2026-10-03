@@ -112,12 +112,16 @@ public sealed class RuntimeWorldHost : IDisposable
             childRecalculationLoopType: Engine.EffectiveSettings.RecalcChildMatricesLoopType);
     }
 
-    /// <summary>Returns a composed world to editor operation without a game mode or simulation.</summary>
+    /// <summary>
+    /// Returns a composed world to editor operation without a game mode or simulation.
+    /// A session that is still beginning or ending, because its transition threw, is
+    /// ended first so the world restarts from a stopped state with its timer callbacks linked.
+    /// </summary>
     public Task BeginEditModeAsync()
     {
         ThrowIfDisposed();
-        if (CoreWorld.IsPlaySessionActive)
-            EndPlay();
+        if (CoreWorld.PlayState != RuntimeWorldPlayState.Stopped)
+            EndPlaySession();
 
         CoreWorld.PhysicsEnabled = false;
         CoreWorld.GameMode = null;
@@ -130,6 +134,11 @@ public sealed class RuntimeWorldHost : IDisposable
         if (_disposed || !CoreWorld.IsPlaySessionActive)
             return;
 
+        EndPlaySession();
+    }
+
+    private void EndPlaySession()
+    {
         UnlinkTimeCallbacks();
         CoreWorld.EndPlay(
             afterNodeDeactivation: () =>

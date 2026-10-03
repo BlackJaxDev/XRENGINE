@@ -50,6 +50,9 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
     /// <summary>Reflected slots may reuse the same ownership protocol with the Default pipeline.</summary>
     protected virtual bool UsesAdvancedPipeline => true;
 
+    /// <summary>Configures a newly allocated private viewport before its first capture.</summary>
+    protected virtual void ConfigureCaptureViewport(XRViewport viewport) { }
+
     internal bool HasPendingCapture => HasPendingWriter;
     internal bool IsCaptureQuarantined
     {
@@ -294,6 +297,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         {
             _retirementRequested = true;
             _canonicalLifetime?.Withdraw();
+            CancelStagedCapture();
             // Invalidate the old request atomically with retirement. A later
             // activation must not lose its new request to stale cancellation.
             CancelQueuedCapture();
@@ -380,6 +384,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         _viewport.AllowUIRender = false;
         _viewport.AllowAutomaticInternalResolution = false;
         _viewport.CullWithFrustum = true;
+        ConfigureCaptureViewport(_viewport);
         _allocatedWidth = width;
         _allocatedHeight = height;
         _resourcesDirty = Width != width || Height != height;
