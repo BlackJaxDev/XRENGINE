@@ -44,6 +44,10 @@ public sealed partial class WebGpuRendererHost
     public IShaderProgramArtifactResolver? ShaderArtifacts => _shaderArtifacts;
     internal EngineMaterialVariantCatalog? MaterialVariants => _materialVariants;
     public int LastEngineMeshDrawCount => _engineMeshDrawCount;
+    /// <summary>Reports the last recording attempt without allocating a statistics snapshot.</summary>
+    public int LastEngineCommandCount => _engineCommandCount;
+    /// <summary>Reports whether a producer deferred the last recording attempt.</summary>
+    public bool HasPendingEngineDraw => _engineDrawPending;
     /// <summary>Reports a complete engine submission for the current drawable surface, not an earlier resize generation.</summary>
     public bool IsEngineOutputFrameReady => _submittedFrame &&
         TryDescribeFrameOutput(out RenderFrameOutputDescription output) &&

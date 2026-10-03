@@ -6,7 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Cross-backend packing helpers for the canonical deformation vertex.
 /// </summary>
-public static class AdvancedPackedVertexCodec
+public static partial class AdvancedPackedVertexCodec
 {
     /// <summary>Source vertex contains an authored second texture-coordinate set.</summary>
     public const uint HasTexCoord1Flag = 1u << 0;

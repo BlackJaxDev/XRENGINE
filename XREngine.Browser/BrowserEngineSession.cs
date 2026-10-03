@@ -94,12 +94,38 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public string GetRenderingStatus()
     {
         XRRenderPipelineInstance? pipeline = _renderViewport?.RenderPipelineInstance;
+        string advancedStages = "none";
+        string advancedPreparation = "unused";
+        if (pipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
+        {
+            if (AdvancedSharedPreparationService.GetCurrentDiagnostics() is { } preparation)
+                advancedPreparation = $"draws={preparation.Publication.DrawCount}, " +
+                    $"published={preparation.Publication.GpuResourcesPublished}, " +
+                    $"generation={preparation.Publication.PublicationGeneration}, " +
+                    $"deferral={preparation.DeferralReason}";
+            System.Text.StringBuilder stages = new();
+            foreach (AdvancedProfileStageDiagnostic stage in pipeline.CaptureAdvancedProfileStageDiagnostics())
+            {
+                if (!stage.Observed)
+                    continue;
+                if (stages.Length != 0)
+                    stages.Append(" | ");
+                stages.Append(stage.Stage).Append('/').Append(stage.Phase).Append('=')
+                    .Append(stage.State).Append(" frame=").Append(stage.FrameId)
+                    .Append(" generation=").Append(stage.ResourceGeneration)
+                    .Append(" reason=").Append(stage.Reason ?? "none");
+            }
+            advancedStages = stages.Length == 0 ? "unobserved" : stages.ToString();
+        }
         return $"Renderer={_renderer?.State.ToString() ?? "absent"}; " +
             $"pipeline={pipeline?.Pipeline?.GetType().Name ?? "absent"}; " +
             $"resource profile={(pipeline?.PendingGeneration ?? pipeline?.ActiveGeneration)?.Key.ToString() ?? "absent"}; " +
             $"draws={_renderer?.LastEngineMeshDrawCount ?? 0}; " +
+            $"commands={_renderer?.LastEngineCommandCount ?? 0}; pending draw={_renderer?.HasPendingEngineDraw ?? false}; " +
             $"pipeline decline={pipeline?.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}; " +
+            $"advanced stages={advancedStages}; " +
+            $"advanced preparation={advancedPreparation}; " +
             $"recovery={_graphicsRecoveryPending}; attempts={_graphicsRecoveryAttempts}; " +
             $"recovery failure={_graphicsRecoveryFailure ?? "none"}.";
     }
