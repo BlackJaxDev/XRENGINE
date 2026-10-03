@@ -22,7 +22,8 @@ internal static class WebGpuAdvancedShadingParameters
         words[2] = (frame.Width + 15) / 16; words[3] = (frame.Height + 15) / 16;
         words[4] = request.NativeViewIndex; words[5] = (uint)request.Views.ViewCount;
         words[6] = frame.Cohorts[cohort]!.Kernel;
-        words[7] = (request.RequireNativeOutput ? 2u : 0u) | (request.EnableLightProbesAndIbl ? 8u : 0u) |
+        words[7] = (request.RequireNativeOutput ? 2u : 0u) | (request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
+            (request.EnableLightProbesAndIbl ? 8u : 0u) |
             ((uint)request.ShadingDebugView << 8);
         words[8] = request.FroxelDepthSlices;
         words[10] = (uint)visibility.Scene!.Snapshot.GlobalResources.Lights.PhysicalRecords.Length;

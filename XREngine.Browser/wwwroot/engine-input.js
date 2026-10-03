@@ -37,6 +37,7 @@ export class BrowserEngineInput {
         this.cursorX = 0;
         this.cursorY = 0;
         this.textElement = null;
+        this.textProxy = null;
         this.textEvents = null;
         this.textGeneration = 0;
         this.textVersion = 0;
@@ -50,12 +51,13 @@ export class BrowserEngineInput {
         this.textPosition = { hidden: false, left: NaN, top: NaN, width: NaN, height: NaN,
             clipTop: NaN, clipRight: NaN, clipBottom: NaN, clipLeft: NaN };
         this.textCursor = -1;
-        this.controlElement = null;
-        this.controlEvents = null;
-        this.controlGeneration = 0;
-        this.controlLabelVersion = 0;
-        this.controlPosition = { hidden: false, left: NaN, top: NaN, width: NaN, height: NaN,
-            clipTop: NaN, clipRight: NaN, clipBottom: NaN, clipLeft: NaN };
+        this.controlRoot = null;
+        this.controlNodes = new Map();
+        this.controlOrder = [];
+        this.controlRevision = 0;
+        this.controlScan = 0;
+        this.focusedTextControl = null;
+        this.controlCanvasRect = { left: NaN, top: NaN, width: NaN, height: NaN };
     }
 
     install() {
@@ -260,7 +262,7 @@ export class BrowserEngineInput {
     reset() {
         this.cancelPointers();
         this.removeTextElement();
-        this.removeAccessibleControl();
+        this.removeAccessibleControls();
         this.engine.ResetInput();
     }
 
@@ -272,12 +274,12 @@ export class BrowserEngineInput {
     ownsFocus() {
         return !document.hidden && document.hasFocus() &&
             (document.activeElement === this.canvas || document.activeElement === this.textElement ||
-                document.activeElement === this.controlElement);
+                this.controlRoot?.contains(document.activeElement));
     }
 
     /** Called after the engine frame so focused UI and projected bounds are current. */
     syncTextFocus() {
-        this.syncAccessibleControl();
+        this.syncAccessibleControls();
         const generation = this.engine.RefreshTextInput();
         if (!generation) {
             this.removeTextElement();
@@ -317,7 +319,8 @@ export class BrowserEngineInput {
 
     createTextElement(generation) {
         const focusWasOnCanvas = document.activeElement === this.canvas ||
-            document.activeElement === this.textElement;
+            document.activeElement === this.textElement ||
+            document.activeElement === this.focusedTextControl?.element;
         this.removeTextElement();
         const singleLine = this.engine.GetTextInputSingleLine();
         const element = document.createElement(singleLine ? 'input' : 'textarea');
@@ -409,7 +412,19 @@ export class BrowserEngineInput {
                     this.restoreTextElement();
             }
         }, { signal });
-        document.body.appendChild(element);
+        const proxy = this.focusedTextControl?.element;
+        this.textProxy = this.focusedTextControl;
+        if (proxy) {
+            proxy.appendChild(element);
+            proxy.setAttribute('role', 'presentation');
+            proxy.removeAttribute('aria-label');
+            proxy.removeAttribute('aria-readonly');
+            proxy.removeAttribute('aria-multiline');
+            proxy.tabIndex = -1;
+            this.textProxy.nativeText = true;
+        } else {
+            document.body.appendChild(element);
+        }
         this.positionTextElement();
         if (focusWasOnCanvas && !this.textPosition.hidden) element.focus({ preventScroll: true });
     }
@@ -460,8 +475,8 @@ export class BrowserEngineInput {
         element.setAttribute('aria-hidden', this.textPosition.hidden ? 'true' : 'false');
     }
 
-    positionProjectedElement(element, position, x, y, width, height) {
-        const rect = this.canvas.getBoundingClientRect();
+    positionProjectedElement(element, position, x, y, width, height, canvasRect = null) {
+        const rect = canvasRect ?? this.canvas.getBoundingClientRect();
         const left = rect.left + x * rect.width;
         const top = rect.top + y * rect.height;
         const boxWidth = width * rect.width;
@@ -505,37 +520,138 @@ export class BrowserEngineInput {
         position.clipLeft = clipLeft;
     }
 
-    syncAccessibleControl() {
-        const generation = this.engine.RefreshAccessibleControl();
-        if (!generation || !this.canvas.isConnected) {
-            this.removeAccessibleControl();
+    syncAccessibleControls() {
+        const revision = this.engine.RefreshAccessibleControls();
+        if (!this.canvas.isConnected) {
+            this.removeAccessibleControls();
             return;
         }
-        if (generation !== this.controlGeneration)
-            this.createAccessibleControl(generation);
-        const element = this.controlElement;
-        if (!element) return;
-        const labelVersion = this.engine.GetAccessibleControlLabelVersion();
-        if (labelVersion !== this.controlLabelVersion) {
-            this.controlLabelVersion = labelVersion;
-            element.setAttribute('aria-label', this.engine.GetAccessibleControlLabel() || 'Engine button');
+        const rect = this.canvas.getBoundingClientRect();
+        const previous = this.controlCanvasRect;
+        const moved = rect.left !== previous.left || rect.top !== previous.top ||
+            rect.width !== previous.width || rect.height !== previous.height;
+        if (revision === this.controlRevision && !moved) return;
+        previous.left = rect.left;
+        previous.top = rect.top;
+        previous.width = rect.width;
+        previous.height = rect.height;
+        this.controlRevision = revision;
+        this.controlScan++;
+        this.focusedTextControl = null;
+        const count = Math.min(256, this.engine.GetAccessibleControlCount());
+        this.controlOrder.length = count;
+        if (count && !this.controlRoot) {
+            this.controlRoot = document.createElement('div');
+            this.canvas.insertAdjacentElement('afterend', this.controlRoot);
         }
-        this.positionProjectedElement(element, this.controlPosition,
-            this.engine.GetAccessibleControlX(), this.engine.GetAccessibleControlY(),
-            this.engine.GetAccessibleControlWidth(), this.engine.GetAccessibleControlHeight());
-        if (this.controlPosition.hidden && document.activeElement === element)
-            this.canvas.focus({ preventScroll: true });
-        element.tabIndex = this.controlPosition.hidden ? -1 : 0;
-        element.setAttribute('aria-hidden', this.controlPosition.hidden ? 'true' : 'false');
+        for (let index = 0; index < count; index++) {
+            const generation = this.engine.GetAccessibleControlGeneration(index);
+            const role = this.engine.GetAccessibleControlRole(index);
+            let node = this.controlNodes.get(generation);
+            if (!node || node.role !== role) {
+                if (node) this.removeAccessibleNode(node);
+                node = this.createAccessibleNode(generation, role);
+                this.controlNodes.set(generation, node);
+            }
+            node.seen = this.controlScan;
+            this.controlOrder[index] = node;
+            const version = this.engine.GetAccessibleControlVersion(index);
+            if (node.version !== version) {
+                node.version = version;
+                node.name = this.engine.GetAccessibleControlName(index) || 'Engine control';
+                if (!node.nativeText) node.element.setAttribute('aria-label', node.name);
+                if (role === 3) {
+                    const checked = this.engine.GetAccessibleControlChecked(index);
+                    node.element.setAttribute('aria-checked', checked === 2 ? 'mixed' : checked === 1 ? 'true' : 'false');
+                }
+                if (role === 2) {
+                    node.readOnly = this.engine.GetAccessibleControlReadOnly(index);
+                    node.multiline = this.engine.GetAccessibleControlMultiline(index);
+                    if (!node.nativeText) {
+                        node.element.setAttribute('aria-readonly', String(node.readOnly));
+                        node.element.setAttribute('aria-multiline', String(node.multiline));
+                    }
+                }
+                node.x = this.engine.GetAccessibleControlX(index);
+                node.y = this.engine.GetAccessibleControlY(index);
+                node.width = this.engine.GetAccessibleControlWidth(index);
+                node.height = this.engine.GetAccessibleControlHeight(index);
+            }
+            if (role === 2 && this.engine.GetAccessibleControlFocused(index))
+                this.focusedTextControl = node;
+            if (moved || node.position.left !== rect.left + node.x * rect.width ||
+                node.position.top !== rect.top + node.y * rect.height ||
+                node.position.width !== node.width * rect.width ||
+                node.position.height !== node.height * rect.height)
+                this.positionProjectedElement(node.element, node.position, node.x, node.y, node.width, node.height, rect);
+            if (node.position.hidden && document.activeElement === node.element)
+                this.canvas.focus({ preventScroll: true });
+            const ownsNativeText = role === 2 && this.textElement?.parentElement === node.element;
+            if (node.hidden !== node.position.hidden || node.nativeText !== ownsNativeText) {
+                node.hidden = node.position.hidden;
+                node.nativeText = ownsNativeText;
+                node.element.tabIndex = node.hidden || ownsNativeText ? -1 : 0;
+                if (node.hidden) node.element.setAttribute('aria-hidden', 'true');
+                else node.element.removeAttribute('aria-hidden');
+                if (role === 2) {
+                    node.element.setAttribute('role', ownsNativeText ? 'presentation' : 'textbox');
+                    if (ownsNativeText) {
+                        node.element.removeAttribute('aria-label');
+                        node.element.removeAttribute('aria-readonly');
+                        node.element.removeAttribute('aria-multiline');
+                    } else {
+                        node.element.setAttribute('aria-label', node.name);
+                        node.element.setAttribute('aria-readonly', String(node.readOnly));
+                        node.element.setAttribute('aria-multiline', String(node.multiline));
+                    }
+                }
+            }
+        }
+        for (const node of this.controlNodes.values()) {
+            if (node.seen !== this.controlScan) {
+                this.removeAccessibleNode(node);
+                this.controlNodes.delete(node.generation);
+            }
+        }
+        this.orderAccessibleNodes();
+        if (!count) {
+            this.controlRoot?.remove();
+            this.controlRoot = null;
+        }
     }
 
-    createAccessibleControl(generation) {
-        const hadFocus = document.activeElement === this.controlElement;
-        this.removeAccessibleControl();
-        const element = document.createElement('button');
-        element.type = 'button';
-        element.setAttribute('aria-label', this.engine.GetAccessibleControlLabel() || 'Engine button');
-        this.controlLabelVersion = this.engine.GetAccessibleControlLabelVersion();
+    orderAccessibleNodes() {
+        const root = this.controlRoot;
+        if (!root) return;
+        const order = this.controlOrder;
+        let needsOrder = false;
+        let activeIndex = -1;
+        for (let index = 0; index < order.length; index++) {
+            if (root.children[index] !== order[index].element) needsOrder = true;
+            if (order[index].element.contains(document.activeElement)) activeIndex = index;
+        }
+        if (!needsOrder) return;
+        if (activeIndex < 0) {
+            for (let index = 0; index < order.length; index++)
+                if (root.children[index] !== order[index].element)
+                    root.insertBefore(order[index].element, root.children[index] ?? null);
+            return;
+        }
+        const active = order[activeIndex].element;
+        for (let index = 0; index < activeIndex; index++)
+            root.insertBefore(order[index].element, active);
+        let anchor = null;
+        for (let index = order.length - 1; index > activeIndex; index--) {
+            root.insertBefore(order[index].element, anchor);
+            anchor = order[index].element;
+        }
+    }
+
+    createAccessibleNode(generation, role) {
+        const element = document.createElement(role === 2 ? 'div' : 'button');
+        if (role !== 2) element.type = 'button';
+        if (role === 3) element.setAttribute('role', 'checkbox');
+        if (role === 2) element.setAttribute('role', 'textbox');
         element.style.position = 'fixed';
         element.style.zIndex = '2147483647';
         element.style.boxSizing = 'border-box';
@@ -546,54 +662,57 @@ export class BrowserEngineInput {
         element.style.pointerEvents = 'none';
         const controller = new AbortController();
         const signal = controller.signal;
-        this.controlEvents = controller;
-        this.controlElement = element;
-        this.controlGeneration = generation;
-        element.addEventListener('focus', () => { element.style.outline = '2px solid #90c9ef'; }, { signal });
+        const node = { element, controller, generation, role, name: '', version: 0, seen: 0,
+            readOnly: false, multiline: false,
+            hidden: null, nativeText: null,
+            x: -1, y: -1, width: 0, height: 0,
+            position: { hidden: false, left: NaN, top: NaN, width: NaN, height: NaN,
+                clipTop: NaN, clipRight: NaN, clipBottom: NaN, clipLeft: NaN } };
+        element.addEventListener('focus', () => {
+            if (!this.engine.FocusAccessibleControl(generation)) {
+                this.canvas.focus({ preventScroll: true });
+                return;
+            }
+            element.style.outline = '2px solid #90c9ef';
+            if (role === 2) queueMicrotask(() => {
+                if (this.controlNodes.get(generation) === node) this.syncTextFocus();
+            });
+        }, { signal });
         element.addEventListener('blur', () => {
             element.style.outline = '0';
             this.engine.ResetInput();
         }, { signal });
         element.addEventListener('keydown', event => {
-            if (!this.ownsFocus() || event.isComposing || event.altKey || event.metaKey ||
-                event.code === 'Enter' || event.code === 'Space' || event.code === 'Tab') return;
+            if (event.target !== element || !this.ownsFocus() || event.isComposing || event.altKey || event.metaKey ||
+                event.code === 'Tab' || (role !== 2 && (event.code === 'Enter' || event.code === 'Space')))
+                return;
             const key = keys.get(event.code);
             if (key === undefined) return;
             this.engine.InputKey(key, true);
+            if (role === 2 && event.key.length === 1 && !event.ctrlKey)
+                this.engine.InputText(event.key);
             event.preventDefault();
         }, { signal });
         element.addEventListener('keyup', event => {
-            if (event.code === 'Enter' || event.code === 'Space' || event.code === 'Tab') return;
+            if (event.target !== element || event.code === 'Tab' ||
+                (role !== 2 && (event.code === 'Enter' || event.code === 'Space')))
+                return;
             const key = keys.get(event.code);
             if (key === undefined) return;
             this.engine.InputKey(key, false);
             if (this.ownsFocus()) event.preventDefault();
         }, { signal });
-        element.addEventListener('click', () => {
+        if (role !== 2) element.addEventListener('click', () => {
             this.engine.ActivateAccessibleControl(generation);
         }, { signal });
-        this.canvas.insertAdjacentElement('afterend', element);
-        this.positionProjectedElement(element, this.controlPosition,
-            this.engine.GetAccessibleControlX(), this.engine.GetAccessibleControlY(),
-            this.engine.GetAccessibleControlWidth(), this.engine.GetAccessibleControlHeight());
-        element.tabIndex = this.controlPosition.hidden ? -1 : 0;
-        element.setAttribute('aria-hidden', this.controlPosition.hidden ? 'true' : 'false');
-        if (hadFocus && !this.controlPosition.hidden) element.focus({ preventScroll: true });
+        return node;
     }
 
-    removeAccessibleControl() {
-        const hadFocus = this.controlElement && document.activeElement === this.controlElement;
-        this.controlEvents?.abort();
-        this.controlEvents = null;
-        this.controlElement?.remove();
-        this.controlElement = null;
-        this.controlGeneration = 0;
-        this.controlLabelVersion = 0;
-        this.controlPosition.hidden = false;
-        this.controlPosition.left = this.controlPosition.top = NaN;
-        this.controlPosition.width = this.controlPosition.height = NaN;
-        this.controlPosition.clipTop = this.controlPosition.clipRight = NaN;
-        this.controlPosition.clipBottom = this.controlPosition.clipLeft = NaN;
+    removeAccessibleNode(node) {
+        if (this.textProxy === node) this.removeTextElement();
+        const hadFocus = node.element.contains(document.activeElement);
+        node.controller.abort();
+        node.element.remove();
         if (hadFocus) {
             this.engine.ResetInput();
             if (this.canvas.isConnected && !document.hidden && document.hasFocus())
@@ -601,12 +720,34 @@ export class BrowserEngineInput {
         }
     }
 
+    removeAccessibleControls() {
+        for (const node of this.controlNodes.values()) this.removeAccessibleNode(node);
+        this.controlNodes.clear();
+        this.controlOrder.length = 0;
+        this.controlRoot?.remove();
+        this.controlRoot = null;
+        this.controlRevision = 0;
+        this.focusedTextControl = null;
+        this.controlCanvasRect.left = this.controlCanvasRect.top = NaN;
+        this.controlCanvasRect.width = this.controlCanvasRect.height = NaN;
+    }
+
     removeTextElement() {
         const hadFocus = this.textElement && document.activeElement === this.textElement;
+        const proxy = this.textElement?.parentElement;
         ++this.textEpoch;
         this.textEvents?.abort();
         this.textEvents = null;
         this.textElement?.remove();
+        if (proxy && proxy === this.textProxy?.element && proxy.isConnected) {
+            proxy.setAttribute('role', 'textbox');
+            proxy.setAttribute('aria-label', this.textProxy.name);
+            proxy.setAttribute('aria-readonly', String(this.textProxy.readOnly));
+            proxy.setAttribute('aria-multiline', String(this.textProxy.multiline));
+            proxy.tabIndex = this.textProxy.position.hidden ? -1 : 0;
+            this.textProxy.nativeText = false;
+        }
+        this.textProxy = null;
         this.textElement = null;
         this.textGeneration = 0;
         this.textVersion = 0;

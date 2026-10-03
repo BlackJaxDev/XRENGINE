@@ -11,12 +11,13 @@ public sealed partial class WebGpuRendererHost
     [
         "advanced::compact-triangles", "advanced::finalize-triangles", "advanced::visibility-pull",
         "advanced::aggregate-deformation", "advanced::deformation-copy",
-        "advanced::depth-pyramid", "advanced::gtao", "advanced::shade-classify",
+        "advanced::depth-pyramid", "advanced::shade-classify",
         "advanced::shade-finalize", "advanced::shade-native", "advanced::shade-native-depth", "advanced::shade-background",
     ];
     private readonly WebGpuAdvancedOutputReservation?[] _advancedReservations = new WebGpuAdvancedOutputReservation[MaximumAdvancedOutputFamilies];
     private WebPipelineArtifactCatalog? _advancedPipelineArtifacts;
     private string? _advancedProgramFailure = "WebGPU.Advanced.CatalogMissing: the output package has not installed its native program family.";
+    private string? _advancedAmbientOcclusionProgramFailure = "WebGPU.Advanced.AmbientOcclusionCatalogMissing: the GTAO program is not installed.";
     private bool _advancedReservationsInitialized;
     private long _advancedReservationIncarnation;
     private int _advancedReservationFailures;
@@ -41,14 +42,36 @@ public sealed partial class WebGpuRendererHost
                 WebGpuAdvancedDeformationProgramContract.Validate(artifact, pass == "deformation-copy");
             else if (pass is "compact-triangles" or "finalize-triangles" or "visibility-pull")
                 WebGpuAdvancedVisibilityProgramContract.Validate(artifact, pass);
-            else if (pass is "depth-pyramid" or "gtao")
-                WebGpuAdvancedDepthProgramContract.Validate(artifact, pass == "gtao");
+            else if (pass == "depth-pyramid")
+                WebGpuAdvancedDepthProgramContract.Validate(artifact, ambientOcclusion: false);
             else
                 WebGpuAdvancedShadingProgramContract.Validate(artifact, pass);
         }
         SetField(ref _advancedPipelineArtifacts, artifacts, publishNotifications: false);
         SetField(ref _advancedProgramFailure, failure, publishNotifications: false);
+        SetField(ref _advancedAmbientOcclusionProgramFailure,
+            ValidateAdvancedAmbientOcclusionProgram(artifacts), publishNotifications: false);
         SetField(ref _advancedMultisampleProgramFailure, ValidateAdvancedMultisamplePrograms(artifacts), publishNotifications: false);
+    }
+
+    private static string? ValidateAdvancedAmbientOcclusionProgram(WebPipelineArtifactCatalog? artifacts)
+    {
+        if (artifacts is null || !artifacts.TryResolve("advanced::gtao", out ShaderProgramArtifact? artifact))
+            return "WebGPU.Advanced.AmbientOcclusionProgramMissing: enabled AO requires 'advanced::gtao'.";
+        WebGpuAdvancedDepthProgramContract.Validate(artifact, ambientOcclusion: true);
+        return null;
+    }
+
+    private string? GetAdvancedAmbientOcclusionRejection()
+    {
+        if (_advancedAmbientOcclusionProgramFailure is { } missing)
+            return missing;
+        if (!_advancedPipelineArtifacts!.TryResolve("advanced::gtao", out ShaderProgramArtifact? artifact))
+            return "WebGPU.Advanced.AmbientOcclusionCatalogChanged: the selected GTAO program is missing.";
+        foreach ((string limit, int required) in artifact.RequiredLimits)
+            if (!HasAdvancedLimit(limit, required))
+                return $"WebGPU.Advanced.AmbientOcclusionLimit: 'advanced::gtao' requires {limit}>={required}.";
+        return null;
     }
 
     /// <summary>Admits only the installed single-view native family against the actual device limits.</summary>
@@ -158,6 +181,7 @@ public sealed partial class WebGpuRendererHost
             return false;
         }
         int nativeOffset = request.MsaaSampleCount == 4 ? 5 : 4;
+        bool ambientOcclusion = request.AmbientOcclusionTargetName == AdvancedAmbientOcclusionContract.ResourceName;
         int operation = request.Stage switch
         {
             EAdvancedRenderStage.VisibilityPreparation => 0,
@@ -165,9 +189,9 @@ public sealed partial class WebGpuRendererHost
             EAdvancedRenderStage.DepthPyramidAndLateVisibility => request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute ? 2 :
                 request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 3 :
                 request.MsaaSampleCount == 4 && request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve ? 4 : -1,
-            EAdvancedRenderStage.AmbientOcclusion => nativeOffset,
-            EAdvancedRenderStage.WorkClassification => nativeOffset + 1,
-            EAdvancedRenderStage.NativeOpaqueShading => nativeOffset + 2,
+            EAdvancedRenderStage.AmbientOcclusion => ambientOcclusion ? nativeOffset : -1,
+            EAdvancedRenderStage.WorkClassification => nativeOffset + (ambientOcclusion ? 1 : 0),
+            EAdvancedRenderStage.NativeOpaqueShading => nativeOffset + (ambientOcclusion ? 2 : 1),
             _ => -1,
         };
         if (operation == 0 && bank.RecordingSequence != _engineFrameSequence)
@@ -183,6 +207,8 @@ public sealed partial class WebGpuRendererHost
             request.RenderFrameId != bank.Request.RenderFrameId || !request.Views.Equals(bank.Request.Views) ||
             !ReferenceEquals(request.BackendReadyPackage, bank.Request.BackendReadyPackage) ||
             request.MsaaSampleCount != bank.Request.MsaaSampleCount || request.SampleEncoding != bank.Request.SampleEncoding ||
+            request.EnableBuiltInAmbientOcclusion != bank.Request.EnableBuiltInAmbientOcclusion ||
+            request.AmbientOcclusionTargetName != bank.Request.AmbientOcclusionTargetName ||
             !IsAdvancedStageTargetCurrent(owner, in request))
         {
             reason = "WebGPU.Advanced.FamilyChanged: the stage must preserve its frozen publication, view, output generation, and native stage order.";
@@ -203,7 +229,10 @@ public sealed partial class WebGpuRendererHost
         bool primaryComplete = primary?.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true };
         foreach (WebGpuAdvancedOutputReservation? bank in _advancedReservations)
         {
-            if (bank?.RecordingSequence == _engineFrameSequence && bank.NextOperation != (bank.Request.IsMinimalVisibilityOutput ? 4 : 7) + (bank.Request.MsaaSampleCount == 4 ? 1 : 0))
+            if (bank?.RecordingSequence == _engineFrameSequence && bank.NextOperation !=
+                (bank.Request.IsMinimalVisibilityOutput ? 4 : 6 +
+                    (bank.Request.AmbientOcclusionTargetName == AdvancedAmbientOcclusionContract.ResourceName ? 1 : 0)) +
+                (bank.Request.MsaaSampleCount == 4 ? 1 : 0))
                 return false;
             if (bank?.RecordingSequence == _engineFrameSequence && ReferenceEquals(bank.Owner, primary))
                 primaryComplete = true;

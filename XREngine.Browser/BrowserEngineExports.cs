@@ -282,19 +282,36 @@ public static partial class BrowserEngineExports
     public static bool ActOnTextInput(int generation, int expectedVersion, bool submit)
         => _session?.ActOnTextInput(generation, expectedVersion, submit) ?? false;
     [JSExport]
-    public static int RefreshAccessibleControl() => _session?.RefreshAccessibleControl() ?? 0;
+    public static int RefreshAccessibleControls() => _session?.RefreshAccessibleControls() ?? 0;
     [JSExport]
-    public static string GetAccessibleControlLabel() => _session?.AccessibleControlLabel ?? string.Empty;
+    public static int GetAccessibleControlCount() => _session?.AccessibleControlCount ?? 0;
     [JSExport]
-    public static int GetAccessibleControlLabelVersion() => _session?.AccessibleControlLabelVersion ?? 0;
+    public static int GetAccessibleControlGeneration(int index) => _session?.AccessibleControlGeneration(index) ?? 0;
     [JSExport]
-    public static float GetAccessibleControlX() => _session?.AccessibleControlX ?? -1;
+    public static int GetAccessibleControlVersion(int index) => _session?.AccessibleControlVersion(index) ?? 0;
     [JSExport]
-    public static float GetAccessibleControlY() => _session?.AccessibleControlY ?? -1;
+    public static int GetAccessibleControlRole(int index) => _session?.AccessibleControlRole(index) ?? 0;
     [JSExport]
-    public static float GetAccessibleControlWidth() => _session?.AccessibleControlWidth ?? 0;
+    public static string GetAccessibleControlName(int index) => _session?.AccessibleControlName(index) ?? string.Empty;
     [JSExport]
-    public static float GetAccessibleControlHeight() => _session?.AccessibleControlHeight ?? 0;
+    public static bool GetAccessibleControlReadOnly(int index) => _session?.AccessibleControlReadOnly(index) ?? false;
+    [JSExport]
+    public static bool GetAccessibleControlMultiline(int index) => _session?.AccessibleControlMultiline(index) ?? false;
+    [JSExport]
+    public static int GetAccessibleControlChecked(int index) => _session?.AccessibleControlChecked(index) ?? 0;
+    [JSExport]
+    public static bool GetAccessibleControlFocused(int index) => _session?.AccessibleControlFocused(index) ?? false;
+    [JSExport]
+    public static float GetAccessibleControlX(int index) => _session?.AccessibleControlX(index) ?? -1;
+    [JSExport]
+    public static float GetAccessibleControlY(int index) => _session?.AccessibleControlY(index) ?? -1;
+    [JSExport]
+    public static float GetAccessibleControlWidth(int index) => _session?.AccessibleControlWidth(index) ?? 0;
+    [JSExport]
+    public static float GetAccessibleControlHeight(int index) => _session?.AccessibleControlHeight(index) ?? 0;
+    [JSExport]
+    public static bool FocusAccessibleControl(int generation)
+        => _session?.FocusAccessibleControl(generation) ?? false;
     [JSExport]
     public static bool ActivateAccessibleControl(int generation)
         => _session?.ActivateAccessibleControl(generation) ?? false;

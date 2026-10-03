@@ -2,7 +2,7 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: the published `71684f00` milestone has **83/137** checked. The next source group has **85 of 137 named items checked; 52 remain open**, adding native standalone shadow sampling/publication and shared cold native admission. It adds shared pipeline identity, native skin/morph, per-sample x4 MSAA, persisted capability reports and bounded generic meshlet submission, corrects the existing RollingBall serializer status, and repairs native scalar-map interpretation. Seven extra leaves separate material displacement, shadow/decal integration and four remaining generic meshlet producers. Fresh managed/native builds, production shader cooking and genuine Editor export/hydration pass; browser acceptance remains open for these changes. Physical Intel hardware renders this published static Advanced sample through two startups and both resize checks, with four distinct material maps and both authored lights. This remains bounded material-path evidence, not numeric, active-MSAA, native-deformation or meshlet-strategy acceptance. Coherent source groups use narrow compile/cook checks and complete browser/regression qualification at end-to-end milestones.
+Status: the published `37e197f0` milestone has **85/137** checked. The current source has **87 of 138 named items checked; 51 remain open**, adding complete quality-effect resource gating and the engine control accessibility bridge. One new acceptance leaf explicitly tracks live keyboard, IME and assistive-technology behavior. Shared source implementation remains separate from browser acceptance. Physical Intel hardware renders the preceding `71684f00` static Advanced material sample through two startups and both resize checks. The `37e197f0` shadow extension fails WGSL pointer-address-space validation on both Chromium CI and physical Intel; the narrow helper correction is included here and freshly cooked, but has not yet passed a browser run. Coherent source groups use narrow compile/cook checks and complete browser/regression qualification at end-to-end milestones.
 
 Created: 2026-09-29. Updated: 2026-10-03.
 
@@ -45,7 +45,7 @@ A physical Intel run then renders the saved panel in two fresh startups and both
 resize checks, with native visibility/shading and no pending draw or resource
 failure. The software CI path still waits on shading-program preparation; exact
 PBR, native deformation/MSAA and broader acceptance remain open.
-**85 of 137 named items are checked; 52 remain open.**
+**87 of 138 named items are checked; 51 remain open.** The [quality/accessibility record](../../progress/platform/browser-quality-accessibility-2026-10-03.md) documents the new source, reviewed lifetime fixes, native-WASM build evidence, shadow helper correction and remaining live acceptance.
 
 The published `e8e381a2` checkpoint retains its historical **65/114** count and
 the preceding Default/RenderingParity evidence: metadata-bearing RollingBall
@@ -347,14 +347,14 @@ compile/cook, focused-probe and genuine Editor export/hydration evidence above
 supports the checked local source leaves, not native Browser publication,
 rendered output or device recovery. The change
 in denominator is decomposition, not a claim that the published milestone ran
-additional tests. That first split checked 77/130. The published group checks **83 of 137 named items**; the next native shadow/cold-admission group checks **85 of 137, with 52 open**. UR06.10e separates skin/morph from material displacement; UR06.09f separates the admitted generic meshlet route from four remaining producers; UR06.10b separates native material interpretation from shadow publication/depth sampling and authored decals. These seven additional leaves expose remaining work without counting summary parents. UR10.08 corrects an already-published serializer status. Source closures do not close browser execution acceptance.
+additional tests. That first split checked 77/130. The material group checked 83/137 and the published native shadow/cold-admission group checked 85/137. The current quality/accessibility group checks **87/138, with 51 open**: UR06.06 and UR09.04 now have compiled, reviewed implementations; new UR09.06 owns the still-unverified live text/accessibility behavior. UR06.10e separates skin/morph from material displacement; UR06.09f separates the admitted generic meshlet route from four remaining producers; UR06.10b separates native material interpretation from shadow publication/depth sampling and authored decals. Summary parents are not counted. UR10.08 corrects an already-published serializer status. Source closures do not close browser execution acceptance.
 
 | Kind | Checked | Open | Total |
 | --- | ---: | ---: | ---: |
-| `impl` | 73 | 29 | 102 |
-| `verify` | 6 | 22 | 28 |
+| `impl` | 75 | 27 | 102 |
+| `verify` | 6 | 23 | 29 |
 | `owner` | 6 | 1 | 7 |
-| **Total** | **85** | **52** | **137** |
+| **Total** | **87** | **51** | **138** |
 
 ## Build Gate
 
@@ -634,7 +634,7 @@ current/previous native producer integration is owned only by UR06.10e.
 
 - [x] **UR06.05a** `impl` Run the admitted ordinary engine mesh skinning/blendshape profile through its selected CPU or canonical packed WebGPU compute route, publishing position/normal/tangent streams with exact palette and morph ownership and no silent GPU-to-CPU substitution. `WebGpuMeshDeformation` and the cooked packed-skinning family are included in the fresh renderer/Editor builds and 75-recipe cook.
 - [ ] **UR06.05b** `verify` Compare CPU and GPU positions, normals and tangents for matched skeletal, morph-only and combined deformation inputs, including palette bases, spill influences and sparse morphs. Record numeric tolerances and known-value rendered results; historical visible animation alone is insufficient.
-- [ ] **UR06.06** `impl` Add mobile quality tiers to engine settings: backing resolution and DPR caps, shadow sizes and cadence, light counts, texture tiers, and post effects. Disabled effects must not allocate resources.
+- [x] **UR06.06** `impl` Add mobile quality tiers to engine settings: backing resolution and DPR caps, shadow sizes and cadence, light counts, texture tiers, and post effects. Disabled effects must not allocate resources. Done 2026-10-03: shared profiles control both pipeline families; disabled GTAO/bloom omit their targets, stages and programs. Native AO uses a schema-validated neutral binding, with the selection frozen into resource generation and reservation order. Combined WebGPU/native-WASM Browser builds and independent source review pass; live resource/pixel acceptance remains in UR06.11c. See the [implementation record](../../progress/platform/browser-quality-accessibility-2026-10-03.md).
 - [ ] **UR06.07** `verify` Render the same test worlds on OpenGL, Vulkan, and WebGPU using Default, Advanced and an unrelated authored modular pipeline; compare tolerant captures and document deliberate differences and concrete capability limits.
 - [x] **UR06.08** `impl` Replace browser-specific concrete-pipeline and global pass-name gates with shared pipeline/command requirement and cooked-program dependency contracts, generic metadata, scoped program references and backward-readable existing manifests. Publication and runtime consume the same declarations without a concrete-type whitelist, Default artifact requirement or implicit Default postprocess schema. A shader-free custom clear pipeline and an unrelated quad pipeline require only their own operations/programs. The historical 2026-10-02 full compile/native-WASM gate established this foundation; fresh camera/admission probes recheck its reconstructed integration. Camera persistence is counted only in UR06.02a–b and remaining native cold eligibility in UR06.02c. See the [implementation record](../../progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md); actual GPU output remains UR06.11.
 
@@ -722,8 +722,9 @@ Depends on the [Jolt browser proof and default-promotion gates](native-subsystem
 - [x] **UR09.01** `impl` Implement a browser input leaf that feeds `XREngine.Input` devices from pointer, touch, keyboard, IME, wheel, and Gamepad API events, reusing `browser-input.js`. Player controllers and input mappings are unchanged. Done 2026-10-02: `engine-input.js` adapts the reference event approach into shared device/contact snapshots and the existing viewport/player mapping path, rather than importing the frozen page-owned gameplay controller. Focus/content generations protect IME and DOM edits. See the [input record](../../progress/platform/browser-ui-clip-input-2026-10-02.md); device/IME and full accessibility acceptance remain open.
 - [ ] **UR09.02** `impl` Render engine UI through WebGPU with hit testing in the same coordinate convention as rendering.
 - [x] **UR09.03** `impl` Cook glyph atlases with FreeType at cook time and render cooked fonts at runtime. Desktop shipping builds may use the same path.
-- [ ] **UR09.04** `impl` Bridge text entry, IME, and accessibility to DOM elements.
+- [x] **UR09.04** `impl` Bridge text entry, IME, and accessibility to DOM elements. Done 2026-10-03: bounded shared-control projection supplies DOM button, checkbox and textbox semantics; clipped geometry, local canvas ownership, cross-canvas focus, native editing/IME and generation-based stale-event rejection share engine state. The native-WASM build and independent lifetime review pass. See the [implementation record](../../progress/platform/browser-quality-accessibility-2026-10-03.md); live acceptance is owned by UR09.06.
 - [x] **UR09.05** `impl` Express mobile touch controls (virtual sticks, buttons) as engine input mappings and UI, not page-specific script.
+- [ ] **UR09.06** `verify` Exercise browser Tab/Shift+Tab traversal, activation, readonly/multiline editing, selection, IME composition and assistive-technology names/roles/states. Verify clipped/hidden controls, cross-canvas focus, reordered and removed/recreated controls, interrupted editing and world teardown against the shared engine state.
 
 **Acceptance:** a user can play with touch, keyboard/mouse, or gamepad through the engine's own input and UI.
 

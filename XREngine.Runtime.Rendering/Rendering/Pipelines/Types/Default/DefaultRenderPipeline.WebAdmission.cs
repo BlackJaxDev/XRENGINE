@@ -48,7 +48,8 @@ public partial class DefaultRenderPipeline
         if (GetWebPostProcessRejection(state, out string pass) is { } effect)
             requirements.Diagnostics.Add($"Pass '{pass}': {effect}");
         AmbientOcclusionSettings? ao = GetSettings<AmbientOcclusionSettings>(state);
-        if (GetWebAmbientOcclusionRejection(ao) is { } aoReason)
+        BrowserWebGpuQualitySettings quality = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality;
+        if (quality.EnableGtao && GetWebAmbientOcclusionRejection(ao) is { } aoReason)
             requirements.Diagnostics.Add(aoReason);
         requirements.RequireOperation("cpu-direct-meshes");
         requirements.RequireOperation("fullscreen-quad");
@@ -62,14 +63,14 @@ public partial class DefaultRenderPipeline
         foreach (EDefaultRenderPass scenePass in Enum.GetValues<EDefaultRenderPass>())
             if (IsWebSceneMeshPassSupported((int)scenePass))
                 requirements.ScenePasses.Add((int)scenePass);
-        if (ao is { Enabled: true })
+        if (quality.EnableGtao && ao is { Enabled: true })
         {
             requirements.RequireRasterProgram("depth-normal");
             requirements.RequireRasterProgram("gtao-generate");
             requirements.RequireRasterProgram("gtao-blur-horizontal");
             requirements.RequireRasterProgram("gtao-blur-vertical");
         }
-        if (GetSettings<BloomSettings>(state) is { Enabled: true })
+        if (quality.EnableBloom && GetSettings<BloomSettings>(state) is { Enabled: true })
         {
             requirements.RequireRasterProgram("bloom-copy");
             requirements.RequireRasterProgram("bloom-downsample");

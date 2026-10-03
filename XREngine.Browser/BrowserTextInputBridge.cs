@@ -17,6 +17,7 @@ internal sealed class BrowserTextInputBridge
     private int _generation;
     private int _contentVersion;
     private int _labelVersion;
+    private XRViewport? _viewport;
 
     public int Generation => _generation;
     public int ContentVersion
@@ -38,11 +39,16 @@ internal sealed class BrowserTextInputBridge
     public float Width { get; private set; }
     public float Height { get; private set; }
 
-    public int Refresh(object? focusedInteractable, XRViewport? viewport)
+    public int Refresh(object? focusedInteractable, XRViewport? viewport, bool hasActiveOwner)
     {
+        _viewport = viewport;
         UITextInputComponent? target = focusedInteractable as UITextInputComponent;
-        if (target is not { IsActiveInHierarchy: true, IsFocused: true } ||
-            !target.UITransform.IsVisibleInHierarchy)
+        if (!hasActiveOwner || target is not { IsActiveInHierarchy: true, IsFocused: true } ||
+            target.AccessibilityHidden ||
+            target.UserInterfaceCanvas is not { IsActiveInHierarchy: true } ||
+            !target.UITransform.IsVisibleInHierarchy ||
+            !BrowserUiBoundsProjection.TryProjectVisible(target, viewport,
+                out _, out _, out _, out _))
             target = null;
         if (!ReferenceEquals(target, _target))
         {
@@ -64,14 +70,15 @@ internal sealed class BrowserTextInputBridge
         _observedValue = null;
         _observedLabel = "Engine text input";
         _generation = 0;
+        _viewport = null;
         X = Y = -1;
         Width = Height = 0;
     }
 
-    public bool Edit(int generation, int expectedVersion, object? focusedInteractable,
+    public bool Edit(int generation, int expectedVersion, object? focusedInteractable, bool hasActiveOwner,
         string value, int selectionStart, int selectionEnd)
     {
-        if (!Owns(generation, focusedInteractable) || ReadOnly || value is null || value.Length > MaximumTextLength)
+        if (!Owns(generation, focusedInteractable, hasActiveOwner) || ReadOnly || value is null || value.Length > MaximumTextLength)
             return false;
         ObserveContent();
         if (expectedVersion != _contentVersion)
@@ -81,9 +88,9 @@ internal sealed class BrowserTextInputBridge
         return accepted;
     }
 
-    public bool Select(int generation, int expectedVersion, object? focusedInteractable, int cursor)
+    public bool Select(int generation, int expectedVersion, object? focusedInteractable, bool hasActiveOwner, int cursor)
     {
-        if (!Owns(generation, focusedInteractable))
+        if (!Owns(generation, focusedInteractable, hasActiveOwner))
             return false;
         ObserveContent();
         if (expectedVersion != _contentVersion || cursor < 0 || cursor > _target!.Text.Length)
@@ -92,9 +99,9 @@ internal sealed class BrowserTextInputBridge
         return true;
     }
 
-    public bool Action(int generation, int expectedVersion, object? focusedInteractable, bool submit)
+    public bool Action(int generation, int expectedVersion, object? focusedInteractable, bool hasActiveOwner, bool submit)
     {
-        if (!Owns(generation, focusedInteractable) || ReadOnly || !_target!.SingleLineMode)
+        if (!Owns(generation, focusedInteractable, hasActiveOwner) || ReadOnly || !_target!.SingleLineMode)
             return false;
         ObserveContent();
         if (expectedVersion != _contentVersion)
@@ -119,7 +126,7 @@ internal sealed class BrowserTextInputBridge
 
     private void ObserveLabel()
     {
-        string label = _target?.Name ?? _target?.SceneNode?.Name ?? "Engine text input";
+        string label = _target?.AccessibilityName ?? "Engine text input";
         if (!string.Equals(label, _observedLabel, StringComparison.Ordinal))
         {
             _observedLabel = label;
@@ -127,10 +134,13 @@ internal sealed class BrowserTextInputBridge
         }
     }
 
-    private bool Owns(int generation, object? focusedInteractable)
-        => generation != 0 && generation == _generation &&
+    private bool Owns(int generation, object? focusedInteractable, bool hasActiveOwner)
+        => hasActiveOwner && generation != 0 && generation == _generation &&
            _target is { IsActiveInHierarchy: true, IsFocused: true } &&
+           !_target.AccessibilityHidden &&
+           _target.UserInterfaceCanvas is { IsActiveInHierarchy: true } &&
            _target.UITransform.IsVisibleInHierarchy &&
+           BrowserUiBoundsProjection.TryProjectVisible(_target, _viewport, out _, out _, out _, out _) &&
            ReferenceEquals(_target, focusedInteractable);
 
     private void UpdateGeometry(XRViewport? viewport)

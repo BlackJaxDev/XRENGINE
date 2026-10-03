@@ -5,6 +5,8 @@ namespace XREngine.Rendering.UI
 {
     public class UIToggleComponent : UIInspectorEditorComponent
     {
+        public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.CheckBox;
+        public override bool AccessibilityActivate() => Toggle();
         public XREvent<ECurrentState>? OnStateChanged;
 
         protected override void OnComponentActivated()
@@ -185,14 +187,17 @@ namespace XREngine.Rendering.UI
                     Property.SetValue(target, value);
         }
 
-        private void OnToggleChecked()
+        public bool Toggle()
         {
             if (Property == null || Targets == null || Targets.Length == 0)
-                return;
+                return false;
 
             bool majorityValue = GetMajorityValue();
             bool newValue = !majorityValue; // Toggle the value
             SetValue(newValue);
+            return true;
         }
+
+        private void OnToggleChecked() => Toggle();
     }
 }

@@ -1,5 +1,9 @@
 // Canonical Advanced record layouts and raw scene/geometry access.
 // The source records mirror Advanced/Access and VisibilityInterface exactly.
+#if !defined(XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION) || XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION != 1
+#error Native shading requires the AO flag and neutral-binding semantic contract.
+#endif
+
 struct XRAdvancedGpuHandle
 {
     uint index;

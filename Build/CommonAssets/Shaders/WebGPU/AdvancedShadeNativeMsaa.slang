@@ -69,6 +69,9 @@ void advancedShadeNativeMsaa(uint3 group : SV_GroupID, uint3 local : SV_GroupThr
     if (viewIndex != Parameters.viewIndex) return;
     uint2 pixel = uint2(packed & 65535u, packed >> 16u) * 16u + local.xy;
     if (any(pixel >= Parameters.screenExtent) || viewIndex >= Parameters.viewCount) return;
+    float ambientOcclusion = 1.0;
+    if ((Parameters.flags & 4u) != 0u)
+        ambientOcclusion = AmbientOcclusion.Load(int3(pixel, 0));
     uint selectedSample = XR_WEB_SelectSidecarSample(pixel);
     for (uint sampleIndex = 0u; sampleIndex < 4u; ++sampleIndex)
     {
@@ -92,7 +95,7 @@ void advancedShadeNativeMsaa(uint3 group : SV_GroupID, uint3 local : SV_GroupThr
         XRAdvancedOpaqueSampleResult result;
         XR_ADV_EvaluateNativeOpaqueSample(pixel, viewIndex, identity, metadata,
             RawVisibilityDepth.Load(int2(pixel), int(sampleIndex)), float2(pixel) + XR_WEB_SamplePosition(sampleIndex),
-            AmbientOcclusion.Load(int3(pixel, 0)), false, ShadeTiles[tileWord + 3u], !diagnostic, result);
+            ambientOcclusion, false, ShadeTiles[tileWord + 3u], !diagnostic, result);
         if (diagnostic && resolved && metadataMatchesView) textureFailure |= 1u << 17u;
         if (textureFailure != 0u)
         {
