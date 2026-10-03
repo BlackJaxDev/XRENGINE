@@ -102,3 +102,22 @@ this recovered static Advanced family remain pending in CI. Live acceptance
 must cover rendered output, selected effects, resize, submission/completion,
 device recovery, and relevant rejection diagnostics. No staging, commit, or
 push is part of this recovery record.
+
+## First published browser attempt
+
+Commit `2ce09a0d770922cd1d6e422e54475d9d89567969` passed genuine Windows
+Editor publication of RollingBall, RenderingParity, and the saved Advanced
+project in [run 37088721123](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37088721123).
+The Advanced browser bundle then failed at startup admission, before rendering.
+Its camera explicitly selected AA None, while the runtime profile retained the
+inactive configured MSAA count of four. The Advanced post-requirement check
+incorrectly treated that dormant count as active multisampling.
+
+The correction checks the sample count only when the selected AA mode is MSAA,
+matching the existing stage request and resource declaration behavior. Mono and
+stereo requirements remain unconditional, and this static profile still rejects
+active four-sample MSAA. Browser acceptance remains pending a corrected run.
+The focused managed requirement check passes None, FXAA and SMAA with dormant
+count four and still rejects active four-sample MSAA. The dependency-enabled
+Rendering/WebGPU build has zero warnings and errors. This does not replace the
+pending browser run.
