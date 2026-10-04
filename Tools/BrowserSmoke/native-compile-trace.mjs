@@ -7,6 +7,8 @@ const knownCategories = Object.freeze([...categories, 'gpu.dawn.validation', 'gp
 const maxBytes = 16 * 1024 * 1024;
 const maxEvents = 100000;
 const maxStageEvents = 256;
+const processCpuQueryBudgetMs = 500;
+const processCpuDeadlineLeadMs = 1000;
 const stages = new Set(['CreatePipelineAsyncEvent::InitializeAsync', 'CreatePipelineAsyncEvent::InitializeImpl',
     'ShaderModuleVk::GetHandleAndSpirv', 'tint::spirv::writer::Generate()', 'vkCreateShaderModule']);
 
@@ -59,12 +61,18 @@ export async function startNativeCompileTrace(browser, output, result) {
         startAcknowledgedBeforeReplay: false,
         identity: { browser: result.browser, module: result.recipe.module, recipeSha256: result.recipeSha256,
             backend: result.backendComparison?.isolated ?? null }, markers: [], errors: [], cleanup: {},
+        processCpu: { status: 'not-started', queryBudgetMs: processCpuQueryBudgetMs,
+            preDeadlineLeadMs: processCpuDeadlineLeadMs, snapshots: [],
+            interpretation: 'Cumulative CPU seconds across every GPU-process thread. The delta cannot identify worker CPU, a compiler stage, or the cause of low activity. Query request/response times bound each read. Node cleanup overlap is recorded; page disposal can precede Node cleanup, so page cleanup overlap cannot be excluded.' },
         lifecycle: 'The page keeps its existing device disposal. Tracing is drained after page cleanup and before context/browser closure; no stop-before-device-destroy guarantee.' };
     let session, requested = false, finalizing, resolveComplete, completionRecord, drainFinished = false;
     const completed = new Promise(resolve => { resolveComplete = resolve; });
     const chunks = [];
     const streamClosures = new Map();
     const markerTasks = [];
+    const processCpuTasks = [];
+    let processCpuTimer;
+    let processCpuStopped = false;
     const failure = (stage, error) => {
         if (data.errors.length < 12) data.errors.push({ stage,
             name: /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error?.name ?? '') ? error.name : 'Error',
@@ -74,6 +82,10 @@ export async function startNativeCompileTrace(browser, output, result) {
     };
     const controller = {
         mark(name) {
+            if (name === 'compile-deadline' || name === 'node-cleanup-started') {
+                if (name === 'node-cleanup-started') data.processCpu.nodeCleanupStartedAtNodeMonotonicMs = performance.now();
+                stopProcessCpuObservation(name);
+            }
             if (data.markers.length >= 8) return;
             const marker = { name, utc: new Date().toISOString(), nodeMonotonicMs: performance.now(),
                 syncId: `native-compile-${name}-${randomUUID()}` };
@@ -87,6 +99,33 @@ export async function startNativeCompileTrace(browser, output, result) {
                     }));
             }
         },
+        startProcessCpuObservation(compileBudgetMs, compileStartedAtNodeMonotonicMs = performance.now()) {
+            const observation = data.processCpu;
+            if (processCpuStopped || observation.status !== 'not-started') return;
+            if (!Number.isFinite(compileBudgetMs) || !Number.isFinite(compileStartedAtNodeMonotonicMs)
+                || compileBudgetMs <= processCpuDeadlineLeadMs + processCpuQueryBudgetMs) {
+                observation.status = 'unavailable';
+                observation.reason = 'InvalidCompileBudget';
+                return;
+            }
+            observation.status = 'pending';
+            observation.startedAtNodeMonotonicMs = compileStartedAtNodeMonotonicMs;
+            observation.compileBudgetMs = compileBudgetMs;
+            observation.scheduledLateReadAfterMs = compileBudgetMs - processCpuDeadlineLeadMs;
+            observation.snapshots = [{ name: 'compile-start', status: 'scheduled' }, { name: 'before-deadline', status: 'scheduled' }];
+            // Neither read is awaited by the compile callback or watchdog.
+            processCpuTasks.push(readProcessCpu(observation.snapshots[0]));
+            processCpuTimer = setTimeout(() => {
+                processCpuTimer = undefined;
+                const late = observation.snapshots[1];
+                if (performance.now() >= observation.startedAtNodeMonotonicMs + compileBudgetMs - processCpuQueryBudgetMs) {
+                    late.status = 'unavailable';
+                    late.reason = 'PreDeadlineWindowMissed';
+                    return;
+                }
+                processCpuTasks.push(readProcessCpu(late));
+            }, Math.max(0, observation.startedAtNodeMonotonicMs + observation.scheduledLateReadAfterMs - performance.now()));
+        },
         finish() { return finalizing ??= finish(); },
         async browserClosed(closed) {
             data.cleanup.ownerBrowserClosed = closed;
@@ -98,6 +137,57 @@ export async function startNativeCompileTrace(browser, output, result) {
             await Promise.all(streamClosures.values());
         },
     };
+    function stopProcessCpuObservation(reason) {
+        processCpuStopped = true;
+        clearTimeout(processCpuTimer);
+        if (data.processCpu.status === 'not-started') { data.processCpu.status = 'cancelled'; data.processCpu.reason = reason; }
+        const late = data.processCpu.snapshots[1];
+        if (late?.status === 'scheduled') { late.status = 'cancelled'; late.reason = reason; }
+    }
+    async function readProcessCpu(snapshot) {
+        snapshot.status = 'pending';
+        snapshot.requestedUtc = new Date().toISOString();
+        snapshot.requestedNodeMonotonicMs = performance.now();
+        try {
+            if (!session) throw new Error('ProcessCpuSessionUnavailable');
+            const value = await bounded(() => session.send('SystemInfo.getProcessInfo'), processCpuQueryBudgetMs);
+            if (!Array.isArray(value?.processInfo) || value.processInfo.length > 1024) throw new Error('ProcessCpuShape');
+            const gpu = value.processInfo.filter(process => process?.type === 'GPU');
+            if (gpu.length !== 1) throw new Error(gpu.length ? 'ProcessCpuAmbiguousGpu' : 'ProcessCpuMissingGpu');
+            if (!Number.isSafeInteger(gpu[0].id) || gpu[0].id <= 0 || !Number.isFinite(gpu[0].cpuTime) || gpu[0].cpuTime < 0)
+                throw new Error('ProcessCpuShape');
+            snapshot.pid = gpu[0].id;
+            snapshot.cpuSeconds = gpu[0].cpuTime;
+            snapshot.status = 'available';
+        } catch (error) {
+            snapshot.status = 'unavailable';
+            snapshot.reason = ['TraceBudget', 'ProcessCpuSessionUnavailable', 'ProcessCpuShape',
+                'ProcessCpuAmbiguousGpu', 'ProcessCpuMissingGpu'].includes(error?.message) ? error.message : 'ProtocolOrIoError';
+        } finally {
+            snapshot.completedUtc = new Date().toISOString();
+            snapshot.completedNodeMonotonicMs = performance.now();
+            snapshot.elapsedMs = snapshot.completedNodeMonotonicMs - snapshot.requestedNodeMonotonicMs;
+        }
+    }
+    function summarizeProcessCpu() {
+        const observation = data.processCpu;
+        for (const snapshot of observation.snapshots) {
+            if (!Number.isFinite(snapshot.requestedNodeMonotonicMs)) continue;
+            snapshot.overlappedNodeCleanup = Number.isFinite(observation.nodeCleanupStartedAtNodeMonotonicMs)
+                && snapshot.completedNodeMonotonicMs >= observation.nodeCleanupStartedAtNodeMonotonicMs;
+            snapshot.completedAfterScheduledDeadline = snapshot.completedNodeMonotonicMs
+                >= observation.startedAtNodeMonotonicMs + observation.compileBudgetMs;
+        }
+        if (observation.status !== 'pending') return;
+        const [first, last] = observation.snapshots;
+        if (first.status !== 'available' || last.status !== 'available') { observation.status = 'unavailable'; return; }
+        if (first.pid !== last.pid) { observation.status = 'pid-replaced'; return; }
+        if (last.cpuSeconds < first.cpuSeconds) { observation.status = 'counter-decreased'; return; }
+        observation.status = 'available';
+        observation.delta = { pid: first.pid, cpuSeconds: last.cpuSeconds - first.cpuSeconds,
+            minimumIntervalSeconds: Math.max(0, last.requestedNodeMonotonicMs - first.completedNodeMonotonicMs) / 1000,
+            maximumIntervalSeconds: (last.completedNodeMonotonicMs - first.requestedNodeMonotonicMs) / 1000 };
+    }
     async function closeStream(handle, late = false) {
         if (streamClosures.has(handle)) return streamClosures.get(handle);
         const closing = (async () => {
@@ -122,6 +212,7 @@ export async function startNativeCompileTrace(browser, output, result) {
     }
     async function finish() {
         let stream;
+        stopProcessCpuObservation('trace-finish');
         data.outcome = { status: result.status, compileWatchdog: result.compileWatchdog,
             compile: result.replay?.compile ?? null };
         data.identity.cookedArtifact = result.replay?.cookedArtifact ?? null;
@@ -130,6 +221,7 @@ export async function startNativeCompileTrace(browser, output, result) {
         let stage = 'stop';
         const remaining = action => bounded(action, Math.max(0, deadline - performance.now()));
         try {
+            await remaining(() => Promise.all(processCpuTasks));
             if (!session || !requested) return;
             controller.mark('trace-stop-requested');
             await remaining(() => Promise.all(markerTasks));
@@ -165,6 +257,7 @@ export async function startNativeCompileTrace(browser, output, result) {
             failure(stage, error);
             data.status = 'incomplete';
         } finally {
+            summarizeProcessCpu();
             drainFinished = true;
             const receivedStream = stream ?? completionRecord?.stream;
             if (typeof receivedStream === 'string' && receivedStream) await closeStream(receivedStream, !stream);

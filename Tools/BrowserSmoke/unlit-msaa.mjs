@@ -78,9 +78,9 @@ async function waitReady(page, previous, timeout, stage) {
 
 async function sampleStage(page, stage, config, capturePixels) {
     const startedAt = performance.now();
-    stage.pause = await page.evaluate(() => {
+    stage.pause = await page.evaluate(async () => {
         const host = window.engineMeshDiagnostic;
-        const token = host.pauseUnlitFrames();
+        const token = await host.pauseUnlitFrames();
         return { token, session: host.session, readyFrames: host.readyFrames,
             frameSubmitCalls: host.statistics().frameSubmitCalls, startedAt: performance.now(),
             nativeEvidence: globalThis.indirectSnapshot?.() ?? null };

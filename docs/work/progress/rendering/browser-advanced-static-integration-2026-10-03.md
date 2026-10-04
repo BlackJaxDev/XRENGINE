@@ -535,8 +535,8 @@ include `gpu.dawn` and its validation, recording and GPU-work siblings.
 separate task scheduling from `InitializeImpl`.
 [Vulkan shader spans](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/native/vulkan/ShaderModuleVk.cpp)
 cover `GetHandleAndSpirv`, the combined Tint IR/SPIR-V generation region and
-`vkCreateShaderModule`. Their presence in the actual browser binary must still
-be checked. The pinned [compute-pipeline implementation](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/native/vulkan/ComputePipelineVk.cpp)
+`vkCreateShaderModule`. The exact `918b91af` capture below verifies their presence
+in the actual browser binary. The pinned [compute-pipeline implementation](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/native/vulkan/ComputePipelineVk.cpp)
 has no dedicated `vkCreateComputePipelines` trace span: its cache-hit/miss
 histograms are recorded after return. Time after shader preparation but inside
 `InitializeImpl` therefore cannot by itself be attributed to SwiftShader compilation.
@@ -584,9 +584,98 @@ Sixteen bounded local checks cover JSON/base64 transport, byte/event limits,
 loss, invalid JSON, missing categories, failed markers/start/stop, late starts/handles,
 hung reads and cleanup. The existing isolation and Uber comparison checks
 continue to pass. These are mocked CDP/lifecycle checks, not native tracing or
-rendering evidence. Exact pinned-browser event capture remains pending. This
+rendering evidence. Exact pinned-browser event capture is recorded below. This
 route installs no dependency, changes no OS security setting and uploads no
 trace to an external viewer. If native events cannot locate the delay more
 narrowly, report that boundary before proposing new native instrumentation or
 profiler tooling. JavaScript CPU profiles alone cannot answer the native-stage
 question.
+
+### Captured post-preparation boundary
+
+Exact commit `918b91af`, CI run `37238768014`, job `111548627205`, produced artifact
+`11316982298` (archive SHA-256
+`1638cc493ff5e0f42e8ebd829969518b459ba0a29b5a759aae41f3bc81982a35`).
+Its `native-compile-trace-bcf48b43-ac03-442e-82ba-320731cf84d0.json` is 6,517,005
+bytes with SHA-256 `a4155a742305cc87db1a88729143e81d1463e428669b12ef9570bffb0e0b1ba7`.
+All 42,408 exported events were inspected, with no transport loss, byte/event
+truncation or retained-stage omission. Perfetto metadata also reports no buffer
+overwrite or packet loss. `Tracing.getCategories` did not enumerate `gpu.dawn`,
+but the capture contains 42,300 actual events in that category. Enumeration
+absence therefore did not mean this browser lacked the instrumentation.
+
+GPU process `3238`, worker thread `3249`, contains these nested native events
+(trace timestamps and durations are microseconds):
+
+- `InitializeAsync` spans `381060118` to `381060176` on GPU main thread `3238`;
+  `InitializeImpl` begins on the worker at `381060201` and has no exported end.
+- `GetHandleAndSpirv` completes from `381060225` to `381211206`, duration 150.981 ms.
+- Its Tint generation span completes from `381060268` to `381136469`, duration
+  76.201 ms. Its `vkCreateShaderModule` span completes from `381207763` to
+  `381207939`, duration 0.176 ms.
+
+All five generated clock-sync IDs are present. The compile-start marker is
+`381058936`, deadline marker `426061226`, Node cleanup marker `426061391`, and
+trace-stop marker `426065151`. The interval from completed shader preparation to
+the deadline marker is 44.850020 seconds. This is an observed marker interval
+inside the still-open initialization scope, not a completed compiler duration.
+The start marker's Node request/acknowledgement interval is 0.888175 ms; the
+deadline marker's is 1.354270 ms. These bound command delivery rather than GPU
+progress, and page disposal still precedes Node trace cleanup. GPU main continues
+42,292 short `APITick::IsDeviceIdle` events through `426059823`; that demonstrates
+continued tick servicing, not worker CPU activity. There are no native stack
+samples or later worker-stage events in this capture.
+
+The exact [SwiftShader Vulkan entry point](https://github.com/google/swiftshader/blob/5b0479bd2d15058aaa9eb490e364f920ff824a8c/src/Vulkan/libVulkan.cpp#L2247)
+synchronously calls pipeline creation and `compileShaders`; the latter includes
+[SPIR-V optimization and compute-program creation](https://github.com/google/swiftshader/blob/5b0479bd2d15058aaa9eb490e364f920ff824a8c/src/Vulkan/VkPipeline.cpp#L623).
+The trace does not establish entry into `vkCreateComputePipelines` or any of
+those individual SwiftShader stages. The demonstrated boundary is native
+initialization after completed shader preparation. Further shader restructuring
+is not justified by this trace.
+
+Both isolated native and Uber creations still exceed the unchanged 45-second
+budget. Their compilation-info calls complete cleanly in 90.7 and 90.8 ms,
+respectively, and all device/context/browser cleanup flags are true. The ordinary
+native artifact is restored to 381,715 bytes, SHA-256
+`2bc58ce18a4c0122b5edce3152215f67440fb3204fcb19db3607d9b60bac436d`; Uber remains
+349,410 bytes, SHA-256
+`ec242d5bae9a0d1e55cd966a21d5dc4f1fef7ab8e3df02ed1c57a1f13d6c6336`.
+Both isolated adapters identify SwiftShader with fallback true and match one
+another. The application GPU/process metadata snapshot timed out, so equality
+with the application's backend is unavailable for this run. Its first-frame
+acceptance still fails. The trace narrows the failure without changing acceptance
+or demonstrating equal total compile times.
+
+### Bounded process CPU observation
+
+The next local addition uses two direct `SystemInfo.getProcessInfo` reads on the
+existing isolated-native CDP session, near compile start and at 44 seconds from
+the recorded watchdog origin. Each query has a 500-ms bound. Neither is awaited
+by the compile callback or watchdog; a delayed second read is omitted when its
+budget no longer fits before the scheduled deadline. Deadline, early completion,
+or cleanup permanently cancels future observation. In-flight reads settle within
+the existing five-second trace cleanup budget before trace stop. The 45-second
+compile verdict and page-device cleanup sequence remain unchanged.
+
+Only a unique valid GPU PID and its cumulative CPU seconds are retained, with
+UTC/Node request and completion times, unavailable-read reasons, replacement or
+decreasing-counter outcomes, and Node cleanup/deadline overlap flags. A delta is
+reported only for two valid nondecreasing counters on the same PID, with elapsed
+interval bounds derived from both query windows. Page cleanup overlap cannot be
+excluded because disposal can precede the Node cleanup marker. The
+[CDP counter definition](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/SystemInfo.pdl)
+covers all threads in that process; activity cannot be attributed to this worker
+or a compiler stage, and low activity cannot distinguish waiting from other
+causes. The existing combined metadata capture used `Promise.all`, so its timeout
+does not identify which metadata call stalled. These direct CPU reads do not
+depend on completing `SystemInfo.getInfo`.
+
+The existing bounded local check mechanism now passes 32 cases: the original 16
+trace checks plus CPU delta/zero, replaced or missing/ambiguous GPU, invalid data,
+decreasing counters, failed/hung/late reads, cleanup overlap, early completion,
+missed pre-deadline window and attempts to start after cleanup/finish. These use
+mocked CDP and do not demonstrate actual process activity. Pinned CI CPU evidence
+remains pending. No new profiler, dependency, runner, security setting or CPU
+sampling is introduced; native stack profiling remains a separate capability
+boundary requiring verified runner tooling, access and symbols.

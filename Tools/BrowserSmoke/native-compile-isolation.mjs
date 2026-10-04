@@ -454,13 +454,15 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         let rejectCompileDeadline;
         const compileDeadline = new Promise((_, reject) => { rejectCompileDeadline = reject; });
         await page.exposeFunction('nativeCompileStarting', () => {
-            result.compileWatchdog = { startedUtc: new Date().toISOString(), budgetMs: result.compileBudgetMs };
+            result.compileWatchdog = { startedUtc: new Date().toISOString(), startedAtNodeMonotonicMs: performance.now(),
+                budgetMs: result.compileBudgetMs };
             compileTimer = setTimeout(() => {
                 result.compileWatchdog.expired = true;
                 trace?.mark('compile-deadline');
                 rejectCompileDeadline(new Error('Native compile isolation exceeded its 45000 ms external compile deadline.'));
             }, result.compileBudgetMs);
             trace?.mark('compile-start');
+            trace?.startProcessCpuObservation(result.compileBudgetMs, result.compileWatchdog.startedAtNodeMonotonicMs);
         });
         // Also bound a wedged page/GPU IPC path, whose in-page timer might never run.
         const replay = page.evaluate(replayNativeCompile, { recipe,

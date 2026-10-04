@@ -442,3 +442,58 @@ failed browser artifacts are under
 This source-level validation does not establish corrected browser acceptance.
 Local browser launch remains blocked by the execution environment's Unix-socket
 restriction, so rendered x1/x4 acceptance remains pending on exact-commit CI.
+
+## Coherent accepted-frame sampling
+
+Linux job `111551509123` in run `37241689117`, at exact commit
+`996101dbefeca794b59e61870ec37ab8175558be`, passes the first x1 submitted-packet
+snapshot and all nine authored HDR/display center comparisons. Maximum HDR
+component error is approximately `0.0002297794`; display-byte error is zero.
+The sampling pause again records two accepted frames, 40 compute dispatches,
+20 indexed-indirect calls and zero read mappings. The nine explicit HDR copies
+account for all nine later read mappings, with no rendering during the pause.
+
+The next failure is a mixed-frame diagnostic observation. The retained accepted
+packet has sequence 340, while the executor has processed 342 acceptance calls:
+two scene frames and 340 preparation-only attempts. `GetUnlitState` reads the
+current managed attempt, whose indexed reason is `CpuReplayPending` and draw
+count is one. The pause previously required only historical successful frames,
+so a later incomplete attempt could run between readiness polling and pause.
+
+Source tracing rules out both a missing successful status update and an
+indirect draw-counter omission. `IndexedResult` stores the successful `Ready`
+reason at the end of each admitted indexed pass. `RecordIndirectCore` increments
+`CountEngineMeshDraw` for each recorded indirect raster with nonempty scissor,
+and `BeginEngineFrame` resets that counter for every attempt. The fixture's
+successful `Frame` return itself requires at least all ten authored materials.
+The later incomplete attempt overwrites those values; its global pending flag
+can also be reported by a later CPU-exempt replay check. That last reason does
+not establish that this fixture authored a CPU-owned scene island.
+
+`pauseUnlitFrames` now waits for a new successful managed `Frame` with no retiring
+resources and pauses its next scheduled frame in the same synchronous task.
+The smoke sampler awaits that pause before reading managed selection metadata,
+the retained packet, API counters or pixels. It therefore observes one accepted
+frame without manufacturing a successful state or retaining stale managed
+counters. The existing `Ready`, draw-count, packet and pixel assertions are
+unchanged, as are all production submission paths and the synchronous effects
+diagnostic pause.
+
+The single pending pause owns an exact session, epoch, renderer, renderer owner
+and surface generation. Failure, stop, resize, replacement or its fixed 45-second
+deadline rejects the request and clears its timer; duplicate requests cannot
+replace it. The successful path cancels the next animation callback before
+resolving, preventing another authoring attempt during sampling.
+
+JavaScript syntax checks and `git diff --check` pass. Independent review finds no
+blocking callback, promise or retirement-lifetime issue. A disposable witness
+using the actual diagnostic host methods passes 13 focused cases covering
+pending-versus-accepted frame selection, settled resources, synchronous pause
+before promise continuation, duplicate requests, timeout, stop, frame failure,
+resize, owner/session/epoch/renderer/generation replacement and unchanged effects
+pause behavior. Its controlled frame results are not GPU acceptance. Evidence is
+under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/unlit-accepted-pause-witness.json`
+and `reports/ci-996101db-linux/` within that same task evidence root. Corrected
+full x1/x4 selection, resize and restart acceptance remains pending on physical
+exact-commit browser CI.
