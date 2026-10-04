@@ -11,12 +11,14 @@ public sealed class WebGpuTextureView : WebGpuObject<XRTextureViewBase>, IWebGpu
     private ViewKey _key;
     private WebGpuTextureResource _source;
     private int _view;
+    private WebGpuResourceRequest? _viewRequest;
+    private WebGpuResourceRequest? _samplerRequest;
     private uint _lastRecordedFrame;
     private int _sampler;
     private SamplerState _samplerState;
 
     public WebGpuTextureView(WebGpuRendererHost renderer, XRTextureViewBase data) : base(renderer, data) { }
-    public override bool IsGenerated => _view != 0;
+    public override bool IsGenerated => _view != 0 && _viewRequest is null;
     public override nint GetHandle() => _view;
     public string Format => _key.Format;
     public uint Width => Math.Max(1u, _source.Width >> checked((int)Data.MinLevel));
@@ -64,12 +66,17 @@ public sealed class WebGpuTextureView : WebGpuObject<XRTextureViewBase>, IWebGpu
             throw Unsupported("the authored view aspect is absent from its source");
         ViewKey key = new(physical.Handle, checked((int)Data.MinLevel), checked((int)Data.NumLevels),
             checked((int)Data.MinLayer), checked((int)Data.NumLayers), format, aspect, dimension);
-        if (_view != 0 && key == _key) return;
+        if (_view != 0 && key == _key)
+        {
+            if (_viewRequest is { } obsolete) Renderer.CancelEngineResourceRequest(obsolete);
+            _viewRequest = null;
+            return;
+        }
         if (_view != 0 && Renderer.IsRecordingEngineFrame && _lastRecordedFrame == Renderer.EngineFrameSequence)
             throw Unsupported("view ranges cannot change after a dependent pass was recorded");
-        int candidate = Renderer.CreateTextureView(new BrowserTextureViewDescription(physical.Handle, key.Mip,
+        int candidate = Renderer.CreateEngineReplacement(this, ref _viewRequest, 3, new BrowserTextureViewDescription(physical.Handle, key.Mip,
             key.Mips, key.Aspect, Data.Name ?? "Engine texture view", key.Layer, key.Layers, key.Dimension));
-        Destroy();
+        ReleaseAllocation();
         SetField(ref _source, physical, publishNotifications: false);
         SetField(ref _key, key, publishNotifications: false);
         SetField(ref _view, candidate);
@@ -86,7 +93,7 @@ public sealed class WebGpuTextureView : WebGpuObject<XRTextureViewBase>, IWebGpu
         if (_key.Mips == 1 && _key.Layers == 1 && _key.Dimension == "2d") return _view;
         if (_renderViews.TryGetValue((mip, selectedLayer), out int handle)) return handle;
         if (_renderViews.Count >= 192) throw Unsupported("the view exceeds 192 retained render subresources");
-        handle = Renderer.CreateTextureView(new BrowserTextureViewDescription(_source.Handle, _key.Mip + mip,
+        handle = Renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(_source.Handle, _key.Mip + mip,
             1, "all", Data.Name ?? "Engine render texture view", _key.Layer + selectedLayer));
         _renderViews.Add((mip, selectedLayer), handle);
         return handle;
@@ -109,8 +116,13 @@ public sealed class WebGpuTextureView : WebGpuObject<XRTextureViewBase>, IWebGpu
         if (minimum > maximum || minimum > 32 || maximum < 0 || !mapped && (Data.MinLOD > 0 || Data.MaxLOD < 0))
             throw Unsupported("the authored view LOD range is invalid");
         SamplerState state = new(Address(Data.UWrap), Address(Data.VWrap), min, mag, mip, minimum, maximum);
-        if (_sampler != 0 && state == _samplerState) return _sampler;
-        int candidate = Renderer.CreateSampler(new BrowserSamplerDescription(state.U, state.V, min, mag, mip,
+        if (_sampler != 0 && state == _samplerState)
+        {
+            if (_samplerRequest is { } obsolete) Renderer.CancelEngineResourceRequest(obsolete);
+            _samplerRequest = null;
+            return _sampler;
+        }
+        int candidate = Renderer.CreateEngineReplacement(this, ref _samplerRequest, 4, new BrowserSamplerDescription(state.U, state.V, min, mag, mip,
             Data.Name ?? "Engine view sampler", maximum, LodMinClamp: minimum));
         if (_sampler != 0)
         {
@@ -134,11 +146,32 @@ public sealed class WebGpuTextureView : WebGpuObject<XRTextureViewBase>, IWebGpu
         MarkRecorded();
         SourceProduction.MarkProduced();
     }
+    internal void MarkSubresourceProduced(int mip, int layer)
+    {
+        int selectedLayer = layer == -1 && _key.Layers == 1 ? 0 : layer;
+        if (mip < 0 || mip >= _key.Mips || selectedLayer < 0 || selectedLayer >= _key.Layers)
+            throw Unsupported("the produced subresource must belong to the retained view range");
+        MarkRecorded();
+        int sourceMip = _key.Mip + mip, sourceLayer = _key.Layer + selectedLayer;
+        switch (_source.Owner)
+        {
+            case WebGpuTexture2DArray array: array.MarkSubresourceProduced(sourceMip, sourceLayer); break;
+            case WebGpuTextureCube cube: cube.MarkSubresourceProduced(sourceMip, sourceLayer); break;
+            default: SourceProduction.MarkProduced(); break;
+        }
+    }
     public void CommitProducedFrame(uint frameSequence) => SourceProduction.CommitProducedFrame(frameSequence);
     public bool WasProducedInFrame(uint frameSequence) => SourceProduction.WasProducedInFrame(frameSequence);
     public bool HasCommittedProduction => IsGenerated && SourceProduction.HasCommittedProduction;
 
     public override void Destroy()
+    {
+        Renderer.CancelEngineResourceRequests(this);
+        _viewRequest = _samplerRequest = null;
+        ReleaseAllocation();
+    }
+
+    private void ReleaseAllocation()
     {
         if (_view == 0 && _sampler == 0) return;
         Renderer.ReleaseEngineDrawDependencies(this);

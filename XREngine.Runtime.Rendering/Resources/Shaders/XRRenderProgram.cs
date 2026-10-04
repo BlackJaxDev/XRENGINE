@@ -8,6 +8,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shaders.Compilation;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
@@ -222,6 +223,8 @@ namespace XREngine.Rendering
         private EUniformRequirements _cachedActiveEngineUniformRequirements;
 
         private bool _shaderInterfaceDirty = true;
+        private bool? _cachedInterfaceHostFileAccess;
+        private IShaderProgramArtifactResolver? _cachedInterfaceResolver;
 
         private ShaderProgramMetadata _shaderMetadata = ShaderProgramMetadata.Empty;
         private ShaderProgramDiagnosticMetadata _diagnosticMetadata = ShaderProgramDiagnosticMetadata.Empty;
@@ -610,27 +613,52 @@ namespace XREngine.Rendering
 
         private void EnsureShaderInterfaceMetadata()
         {
-            if (!_shaderInterfaceDirty)
+            bool hostFileAccess = ShaderSourceResolver.CanAccessHostShaderFiles;
+            IShaderProgramArtifactResolver? resolver = RuntimeEngineMaterialArtifactServices.Resolver;
+            if (!_shaderInterfaceDirty && _cachedInterfaceHostFileAccess == hostFileAccess &&
+                (hostFileAccess || ReferenceEquals(_cachedInterfaceResolver, resolver)))
                 return;
 
-            RebuildShaderInterfaceMetadata();
+            RebuildShaderInterfaceMetadata(hostFileAccess, resolver);
         }
 
-        private void RebuildShaderInterfaceMetadata()
+        private void RebuildShaderInterfaceMetadata(bool hostFileAccess, IShaderProgramArtifactResolver? resolver)
         {
-            var builder = new ShaderInterfaceBuilder();
+            if (!hostFileAccess &&
+                TryGetCookedArtifact(ShaderCompileTarget.WebGPUWgsl, resolver,
+                    out ShaderProgramArtifact? cookedArtifact))
+            {
+                (_cachedUniformBindings, _cachedTextureBindings) = BuildCookedShaderInterface(cookedArtifact);
+            }
+            else
+            {
+                if (!hostFileAccess && HasDeclaredCookedArtifactIdentity())
+                    throw new NotSupportedException($"ShaderSource.CookedInterfaceUnavailable: program '{Name}' requires its exact cooked WebGPU artifact to inspect bindings.");
 
-            foreach (var shader in Shaders)
-                builder.ProcessShader(shader);
-
-            (_cachedUniformBindings, _cachedTextureBindings) = builder.Build();
+                var builder = new ShaderInterfaceBuilder();
+                foreach (var shader in Shaders)
+                    builder.ProcessShader(shader);
+                (_cachedUniformBindings, _cachedTextureBindings) = builder.Build();
+            }
             _cachedActiveEngineUniformRequirements = ComputeActiveEngineUniformRequirements(
                 _cachedUniformBindings,
                 _cachedTextureBindings);
 
             _shaderInterfaceDirty = false;
+            _cachedInterfaceHostFileAccess = hostFileAccess;
+            _cachedInterfaceResolver = resolver;
 
             ShaderInterfaceChanged?.Invoke(this);
+        }
+
+        private bool HasDeclaredCookedArtifactIdentity()
+        {
+            if (CookedArtifactIdentity is not null)
+                return true;
+            foreach (XRShader shader in Shaders)
+                if (shader.CookedArtifactIdentity is not null)
+                    return true;
+            return false;
         }
 
         /// <summary>
@@ -1294,6 +1322,13 @@ namespace XREngine.Rendering
             => HasUniform(uniformName.ToString());
         public bool HasUniform(string uniformName)
         {
+            if (!ShaderSourceResolver.CanAccessHostShaderFiles)
+            {
+                EnsureShaderInterfaceMetadata();
+                return _cachedUniformBindings.ContainsKey(uniformName) ||
+                    _cachedTextureBindings.ContainsKey(uniformName);
+            }
+
             for (int shaderIndex = 0; shaderIndex < Shaders.Count; shaderIndex++)
                 if (Shaders[shaderIndex].HasUniform(uniformName))
                     return true;

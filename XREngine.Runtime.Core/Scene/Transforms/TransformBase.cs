@@ -1222,6 +1222,11 @@ namespace XREngine.Scene.Transforms
 
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
+            if (recalcAllChildRenderMatrices && (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+            {
+                SetRenderMatrixHierarchyImmediate(matrix);
+                return Task.CompletedTask;
+            }
             SetRenderMatrixImmediate(matrix);
 
             if (recalcAllChildRenderMatrices)
@@ -1235,6 +1240,29 @@ namespace XREngine.Scene.Transforms
         {
             PublishRenderState(matrix);
             OnRenderMatrixChanged();
+        }
+
+        /// <summary>Publishes the render matrix and every descendant on the owning caller thread.</summary>
+        public void SetRenderMatrixHierarchyImmediate(Matrix4x4 matrix)
+        {
+            SetRenderMatrixImmediate(matrix);
+            var children = RentChildrenCopy(out int count);
+            Matrix4x4 parentRenderMatrix = RenderMatrix;
+            AffineMatrix4x3 parentRenderAffine = default;
+            bool canUseAffine = IsGuaranteedAffine && AffineMatrix4x3.TryFromMatrix4x4(parentRenderMatrix, out parentRenderAffine);
+            try
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    TransformBase child = children[i];
+                    child.SetRenderMatrixHierarchyImmediate(
+                        ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine));
+                }
+            }
+            finally
+            {
+                ReturnChildrenCopy(children);
+            }
         }
 
         private void PublishRenderState(Matrix4x4 matrix)

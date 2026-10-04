@@ -41,7 +41,8 @@ export function installWebGpuImports(runtime, renderers) {
         copyTexture: (id, source, destination, sourceX, sourceY, destinationX, destinationY, width, height) =>
             renderer(id).copyTexture(source, destination, sourceX, sourceY, destinationX, destinationY, width, height),
         beginBufferReadback: (id, handle, offset, size) => renderer(id).readback.beginBuffer(handle, offset, size),
-        beginTextureReadback: (id, handle, mip, x, y, width, height) => renderer(id).readback.beginTexture(handle, mip, x, y, width, height),
+        beginTextureReadback: (id, handle, mip, x, y, width, height, layer, format, producerFrameSequence) =>
+            renderer(id).readback.beginTexture(handle, mip, x, y, width, height, layer, format, producerFrameSequence),
         beginCanvasReadback: (id, generation, x, y, width, height) => renderer(id).readback.beginCanvas(generation, x, y, width, height),
         prepareLuminance: (id, source) => renderer(id).luminance.prepare(source),
         prepareLuminance2D: (id, source) => renderer(id).luminance.prepare2D(source),
@@ -51,7 +52,7 @@ export function installWebGpuImports(runtime, renderers) {
                 firstMip, lastMip, detail, strictEncodedSrgb),
         beginCanvasLuminance: (id, generation, x, y, width, height, red, green, blue) =>
             renderer(id).luminance.beginCanvas(generation, x, y, width, height, red, green, blue),
-        beginCompletion: id => renderer(id).readback.beginCompletion(),
+        beginCompletion: (id, producerFrameSequence) => renderer(id).readback.beginCompletion(producerFrameSequence),
         pollEngineFrameCompletion: id => renderer(id).commands.engineFrame.scopes.pollCompletedSequence(),
         waitReadback: (id, ticket) => renderer(id).readback.wait(ticket),
         copyReadback: (id, ticket, destination) => renderer(id).readback.copy(ticket, destination),
@@ -67,7 +68,8 @@ export function installWebGpuImports(runtime, renderers) {
         },
         prepareCommands: (id, json) => renderer(id).commands.prepareCommands(json),
         submitPreparedCommands: (id, handle) => renderer(id).commands.submitPreparedCommands(handle),
-        submitEngineFrame: (id, commands, uniforms, storage) => renderer(id).commands.submitEngineFrame(commands, uniforms, storage),
+        submitEngineFrame: (id, commands, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts) =>
+            renderer(id).commands.submitEngineFrame(commands, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts),
         retireResource: (id, handle) => renderer(id).retireResource(handle),
         disposeRenderer: id => renderers.get(id)?.dispose()
     });

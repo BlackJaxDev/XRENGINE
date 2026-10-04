@@ -37,7 +37,7 @@ Frozen mesh publications reject removed sources and changes between primary and 
 
 ## Explicit remaining profiles
 
-Dynamic LOD follows the GPU-selected authored candidate profile below. Automatic GPU-requested residency and differing per-level primitive membership remain separate producer requirements. View-dependent transparent ordering likewise requires a shared GPU sort publication. Multiple logical instances use the runtime publication described below. A submesh-local instance count other than one remains rejected: it belongs to the renderer-local indirect API, and no command-count multiplication contract exists. The RenderCommand path preserves its existing command count. These remaining profiles are not silently approximated.
+Dynamic LOD follows the GPU-selected authored candidate profile below. Automatic GPU-requested residency and differing per-level primitive membership remain separate producer requirements. View-dependent transparent ordering follows the bounded full-resident publication described below. Multiple logical instances use the runtime publication described below. A submesh-local instance count other than one remains rejected: it belongs to the renderer-local indirect API, and no command-count multiplication contract exists. The RenderCommand path preserves its existing command count. These remaining profiles are not silently approximated.
 
 The initial bounded implementation retains three scene-publication slots and at most 256 generated draws per scene slot in one atomic frame. Selected device storage limits remain authoritative. Queue-owned slots are not reused or overwritten to meet capacity.
 
@@ -63,7 +63,7 @@ The primary command also seals component matrices and skinning policy before swa
 
 Each source and candidate freezes Base/Shadow enablement using the same effective command override or primary renderer material as authored visible collection. Empty pass sets enable both; a nonempty set disables a missing or explicitly disabled Base/Shadow entry. GPU selection may choose a disabled candidate, in which case that requested pass emits no geometry. A no-shadow candidate remains valid in a normal view, and a disabled-base candidate remains valid in a shadow view. The same frozen policy applies to a single-level source. An effective override governs enablement and outline admission even when its pass set differs from the underlying renderer materials.
 
-The following producer profiles remain explicit rejections, rather than permanent WebGPU capability limits: more than four authored levels; differing primitive membership across levels; mixed static/skinned temporal images without proven source/default transform correspondence; and enabled Outline passes without an exact modeled companion. Outline admission examines all authored levels, including nonresident levels, before CPU-exempt auxiliary replay and GPU recording in non-shadow views. The bounded canonical outline producer described below supplies candidate-specific material/options and geometry tied to the primary GPU selection. Multiple logical instances follow the runtime producer below; view-dependent transparent order retains its separate restriction.
+The following producer profiles remain explicit rejections, rather than permanent WebGPU capability limits: more than four authored levels; differing primitive membership across levels; mixed static/skinned temporal images without proven source/default transform correspondence; and enabled Outline passes without an exact modeled companion. Outline admission examines all authored levels, including nonresident levels, before CPU-exempt auxiliary replay and GPU recording in non-shadow views. The bounded canonical outline producer described below supplies candidate-specific material/options and geometry tied to the primary GPU selection. Multiple logical instances follow the runtime producer below; transparent order follows the bounded shared producer described below.
 
 The retained budget remains 256 generated candidate draws per scene slot, including every resident level and repeated view/pass submission. A fully resident four-level source therefore uses four candidates, and three slots stay within the existing compute command-cache budget. Capacity is checked before recording that source's LOD producer; exhaustion rejects the atomic frame instead of dropping levels.
 
@@ -103,7 +103,7 @@ The scoped `indirect::cull-primitive` companion now uses four storage bindings, 
 
 The producer replaces all five argument words every time, zeroing disabled/unselected/rejected geometry and keeping first index, base vertex and first instance zero. It neither expands nor reorders source indices. A CPU loop records the upper-bound resident candidates; GPU LOD/visibility decides their argument contents. No count, index, bounds or visibility buffer is mapped back to the CPU. Instrumented mode currently uses this same no-readback algorithm and reports its accurate strategy identity; it does not imply unavailable GPU diagnostic counters.
 
-The shared budget remains three completion-owned scene slots, 256 source/view selections and 256 candidate draws per slot, counting repeated passes, resident LODs and modeled outlines. Whole-primitive refit adds a bounded GPU position scan per admitted finite candidate/pass, unlike meshlet-local culling; no performance equivalence is claimed without device measurements. Renderer-local primitive instance semantics, arbitrary transparency sorting, billboard/stereo profiles, and other explicitly rejected source profiles remain open. The existing desktop LOD compatibility decision above is unchanged.
+The shared budget remains three completion-owned scene slots, 256 source/view selections and 256 candidate draws per slot, counting repeated passes, resident LODs and modeled outlines. Whole-primitive refit adds a bounded GPU position scan per admitted finite candidate/pass, unlike meshlet-local culling; no performance equivalence is claimed without device measurements. Renderer-local primitive instance semantics, unproven source-order contracts, billboard/stereo profiles, and other explicitly rejected source profiles remain open. The existing desktop LOD compatibility decision above is unchanged.
 
 The new companion passes production offline cooking. Source review identified and repaired stale-bounds rejection, unfrozen cached indices, indefinite terminal-index warmup, mismatched original-index scalar shape and storage-limit rejection before conservative refit. The managed and Browser build results and disposable production-method evidence are tracked separately from real GPU acceptance; this section does not establish rendered output, device timing, zero-readback runtime traces, queue reuse, or device-recovery acceptance.
 
@@ -130,4 +130,162 @@ The final focused managed build and disposable instance witness pass with zero w
 
 The combined native Browser build after the final instance and ordered dynamic-buffer changes passes with zero warnings and errors. This closes the implementation build boundary while leaving the rendered, recovery and runtime trace acceptance above open.
 
-For this promotion snapshot, the shared registration owner-resolution hunk remains withheld pending the desktop compatibility decision. The browser publication still records the authored LOD count and rejects a mismatch with the unchanged shared resident table before GPU recording. Multi-LOD implementation and desktop promotion are not claimed complete by this source group.
+## Bounded resident transparent source ordering
+
+The generic indirect and compute-meshlet routes now share a bounded ordering
+producer for GPU-owned mesh sources, extended to supported explicitly direct
+sources through the typed rank gates below. The
+producer observes successful `AddCPU` insertions only inside an explicitly
+identified full-resident GPU collection. It captures the actual post-callback
+command order, command-level world AABB or fallback position, and the existing
+authored transparent priority. It does not derive a tie token from the GPU
+scene's compacted dense index or a CPU-frustum-visible subset. The consumed
+backend-ready package freezes frame, collection generation, scene, camera and
+view identities; incomplete or mismatched publications reject before source
+ranking is recorded.
+
+Pass, zero-instance and frozen camera-layer eligibility are applied consistently
+before token lookup and candidate replay. A layer excluded by the authored
+camera mask cannot require a token that the collection never inserted. GPU
+geometric visibility, LOD selection and rank remain GPU-owned.
+
+The desktop comparator and insertion-counter behavior are unchanged. Priority
+sorts ascending where the shared transparent pass applies it, distance follows
+the configured near/far policy, and equal-distance ties preserve actual
+collection insertion order. CPU tree traversal and GPU-mode resident
+enumeration can already visit equal-distance sources in different orders; this
+producer preserves each selected collection's existing behavior and does not
+claim cross-mode identical ties. GPU distance arithmetic uses the same nearest
+AABB/fallback rule, including the comparator's NaN ordering, but finite
+almost-equal distances still need rendered CPU/GPU parity evidence for device
+rounding.
+
+The `authored-indexed::rank-sources` compute companion compares at most 64
+logical sources. The `mask-ranked-arguments` companion copies the exact
+five-word native indexed argument record into one record per possible rank,
+zeroing the inactive counts. Retained raster commands replay rank first and
+candidate second. Within the selected source, primitive ordering remains the
+authored primitive ordinal; LOD masks, original/generated index streams,
+corners, instance counts and zero first-instance semantics remain authoritative.
+No GPU visibility, argument count or rank is read back and no CPU rank sort
+selects the raster order.
+
+Callbacks, deformation and culling execute once per candidate. Immediately
+after their producer commands, retained GPU buffer copies freeze every readable
+raster vertex/index/storage input in candidate-owned storage. Uniform offsets
+and raster binding groups are retained with those copies. Meshlet-generated
+indices already belong to that candidate's completion-owned work slot.
+Later callbacks can therefore reuse or overwrite shared palette, vertex or
+storage buffers without changing an earlier candidate's deferred raster.
+Sampled images are held read-only until replay completes; CPU mutation and
+later framebuffer/storage-image writes reject explicitly. Writable raster
+storage/images and nested callback raster submissions require separate exact
+contracts. Retired original buffer generations do not invalidate their
+already-captured copies; obsolete frozen raster dependencies retire through
+the existing frame/queue lifetime.
+
+The outer limits are 64 sources, 256 candidates and 4096 source-by-candidate
+raster records per pass, with 32 copied input buffers per candidate and 8 MiB
+of copied raster inputs per atomic frame. The existing 4097 total frame-command
+limit also includes clears, LOD selection, culling/finalization, copies and
+masks, so these outer limits do not promise admission of a 64-by-64 cohort.
+Capacity failures reject the complete frame. Source ranking is quadratic and
+heterogeneous raster pipelines are replayed at every possible rank; GPU memory,
+copy and command costs require device measurements.
+
+The cooked output's own pipeline requirements and viewport strategy now request
+the existing full-resident collection even when the world retains its global
+CPU-direct preference. Its CPU spatial tree remains available to other outputs;
+the masked CPU-visible-subset optimization is bypassed only for the selected
+authored GPU output. An explicit CPU-direct viewport override retains ordinary
+CPU collection. This intentionally selects full-enumeration callback membership
+and tie order for a browser viewport-only GPU request; desktop target policy and
+global submission settings remain unchanged. Opaque state-bucket ordering and
+unproven command subtypes retain specific missing-contract diagnostics.
+
+Both new companions pass the production ShaderCooker. The disposable ordering
+witness passes 33 checks of their exact runtime ABI, actual collection insertion
+and CPU comparator behavior, immutable source inputs, and frame/scene/view or
+incomplete-producer rejections, direct-source replay identity and output-local
+collection selection. One thousand warmed source-publication copies
+allocate zero managed bytes. The managed WebGPU graph passes without warnings.
+Nine checks through the actual JavaScript
+command preparation/replay methods cover native copy admission, immutable
+shared vertex snapshots, ranked argument offsets, instance preservation,
+callbacks once and dependency release. Evidence is under
+`Build/_AgentValidation/20261001-225000-lit-surface/authored-ordering/`.
+These results do not establish browser pixels, physical GPU shader execution,
+queue recovery, runtime zero-readback traces or device performance.
+
+## Mixed direct and GPU transparent replay
+
+The shared command graph declares whether its GPU operation also owns no CPU
+replay, mesh-only exemptions, or mesh and non-mesh exemptions. Ordinary mesh
+passes and capture helpers preserve their full replay intent; depth/normal,
+motion and overdraw auxiliaries preserve mesh-only replay and do not duplicate
+their callbacks. The backend controls when that already-authorized replay runs.
+An unordered pass replays exemptions once before GPU work. An ordered pass
+invokes each supported explicit-direct command once through its original
+`RenderWithGpuScope`, captures its original CPU-selected renderer/LOD, and joins
+the same immutable candidate table as the GPU sources.
+
+Explicit-direct V2 color/coverage materials use a separately cooked, verified
+vertex companion. The companion exposes a read-only rank buffer at group zero,
+binding two, and a 16-byte dynamic object uniform at binding three. Its source
+index, active rank, source count and enable flag are frozen for each replay rank.
+The original vertex calculation runs first. An inactive rank moves only the
+final clip position outside the frustum; the active rank preserves the original
+vertex output and fragment entry, including coverage discard, derivatives,
+blend and depth state. No fragment rank discard is introduced. Plain,
+directional-shadow-receiving and local-shadow-receiving StandardLitColorV2
+outputs are supported, together with the exact generated AuthoredLitV2
+local-shadow source whose canonical ABI and provenance match that companion.
+Other source families require their own proven companion.
+
+Typed admission verifies the complete canonical source/include hashes, original
+descriptor identity, coordinates, vertex inputs, original resources and output
+profile, then permits only the two exact gate resources. Native opaque vertex
+companions and occupied gate slots cannot silently combine with this contract.
+The original material, normal program, parameters, callbacks and authored
+render options remain authoritative; surface publication targets the separate
+gate program explicitly.
+
+Direct candidates still issue native `drawIndexed` with the original unsigned
+instance count and first instance zero. GPU candidates still issue their
+original indexed indirect or compute-meshlet lowering. All routes share GPU
+source ranks and rank-major replay without a readback or CPU rank sort. Direct
+uniform images are captured once per rank after the one authored callback;
+all other readable raster inputs use completion-owned GPU copies. The computed
+rank buffer is retained through its exact gate resource contract. The existing
+4 MiB uniform arena is an additional admission bound, so increasing ranks can
+exhaust uniform capacity before the outer candidate/command limits.
+
+Missing or incomplete source ownership, unsupported shader gates, immediate
+raster emitted outside captured candidates, and selected non-mesh callbacks
+reject the atomic frame. A mesh-only operation continues to omit non-mesh
+callbacks by its explicit replay policy. An unfinished direct shader or resource
+returns Pending before any ranked raster replay. These profiles retain their
+declared routes and do not silently become another mesh submission strategy.
+
+The direct-gate production witness passes 66 checks over seven actually cooked
+artifacts, including all three original/gate pairs and a generated AuthoredLitV2
+source. It rejects wrong companions, altered provenance, descriptor/ABI/limit
+changes and occupied slots. One thousand warmed proof operations allocate zero
+managed bytes. The JavaScript executor witness now has 15 checks, including
+native direct replay with zero, one, 65537 and full uint32 instance counts.
+Shader-gate execution and physical browser pixel parity remain unverified.
+Gate evidence is under
+`Build/_AgentValidation/20261001-225000-lit-surface/authored-direct-gate/`.
+
+The browser content cooker and manifest reader admit the order-gate vertex
+profile only for StandardLitColor version two, the forward-coverage pass and
+the same three HDR output profiles. Descriptor hashing, declaration matching,
+catalog identity and duplicate-key checks remain active. Production packaging
+and manifest probes pass 51 cases: seven accepted packages using all three
+original/gate artifact pairs, 21 rejected cooker inputs and 23 rejected browser
+manifests. The negative cases include semantic/version misuse, unsupported
+pass/profile combinations, malformed selectors, descriptor identity/hash or
+declaration mismatches and duplicate keys. The standalone content cooker builds
+without warnings. These packaging checks do not execute the shaders or establish
+physical browser pixel parity; their retained evidence is
+`authored-direct-gate/package-probe/` under the same validation run.

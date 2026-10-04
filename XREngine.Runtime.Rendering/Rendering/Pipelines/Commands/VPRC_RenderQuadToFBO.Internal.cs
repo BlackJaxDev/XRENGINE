@@ -468,7 +468,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             else
                 DescribeInferredColorOutput(builder, destination, access, colorLoad, colorStore);
 
-            if (resources?.UseDestinationDepthStencil == true)
+            if (resources?.DestinationDepthAccess is { } depthAccess)
+                builder.UseDepthAttachment(MakeFboDepthResource(destination), depthAccess,
+                    ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+            else if (resources?.UseDestinationDepthStencil == true)
             {
                 builder.UseDepthAttachment(
                     MakeFboDepthResource(destination),

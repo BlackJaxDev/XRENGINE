@@ -9,6 +9,20 @@ public sealed partial class WebGpuRendererHost
     private WebGpuFrameBuffer? _boundEngineFrameBuffer;
     internal WebGpuRasterState RasterState => _rasterState;
 
+    public override bool TryGetFrozenViewDepthMode(out XRCamera.EDepthMode depthMode)
+    {
+        depthMode = _frozenView is { View.ReversedDepth: true }
+            ? XRCamera.EDepthMode.Reversed : XRCamera.EDepthMode.Normal;
+        return _frozenView.HasValue;
+    }
+
+    /// <summary>Uses the selected pass view, including independently captured shadow cameras.</summary>
+    internal EComparison MapAuthoredDepthComparison(EComparison comparison)
+        => RuntimeEngine.Rendering.State.MapDepthComparison(comparison,
+            _frozenView is { } view
+                ? view.View.ReversedDepth ? XRCamera.EDepthMode.Reversed : XRCamera.EDepthMode.Normal
+                : RuntimeEngine.Rendering.State.GetDepthMode());
+
     /// <summary>Preserves authored face coverage while an auxiliary shader owns the remaining raster state.</summary>
     internal void ApplyMeshFaceCoverage(RenderingParameters parameters)
         => SetField(ref _rasterState, _rasterState with
@@ -65,7 +79,7 @@ public sealed partial class WebGpuRendererHost
             {
                 DepthEnabled = parameters.DepthTest.IsEnabled,
                 DepthWrite = parameters.DepthTest.UpdateDepth,
-                DepthComparison = parameters.DepthTest.Function,
+                DepthComparison = MapAuthoredDepthComparison(parameters.DepthTest.Function),
             };
         if (parameters.BlendModeAllDrawBuffers is { IsUnchanged: false } blend)
             state = state with
@@ -87,11 +101,16 @@ public sealed partial class WebGpuRendererHost
             throw new NotSupportedException("WebGPU.View.SingularMatrix: camera uniforms require invertible frozen view and projection matrices.");
         WebGpuRenderProgram api = (WebGpuRenderProgram)GetOrCreateAPIRenderObject(program)!;
         api.SetMatrix("ViewProjection", view.ViewProjectionMatrix);
+        api.SetMatrix("ViewMatrix", view.View.ViewMatrix);
+        api.SetMatrix("ProjMatrix", view.ProjectionMatrix);
         api.SetMatrix("PreviousViewProjection", view.PreviousViewProjectionMatrix);
         Vector4 position = view.View.CameraPositionAndNear;
         api.SetVector4("CameraPosition", new Vector4(position.X, position.Y, position.Z, 1));
         api.SetMatrix("InverseViewMatrix", inverseView);
         api.SetMatrix("InverseProjMatrix", inverseProjection);
+        api.SetVector4("CameraDepthRange", view.View.ReversedDepth
+            ? new Vector4(1, 0, 1, 0) : new Vector4(0, 1, 0, 0));
+        program.Uniform("DepthMode", view.View.ReversedDepth ? 1 : 0);
     }
 
     public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)

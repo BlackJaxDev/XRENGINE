@@ -136,7 +136,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         {
             if (_commands.Count >= 64)
                 throw Unsupported("the draw exceeds 64 retained resource binding variants for its current pipeline");
-            commands = _renderer.PrepareCommands(DescribeDraw(bindings));
+            commands = _renderer.PrepareEngineCommands(this, DescribeDraw(bindings));
             _commands.Add(bindings, commands);
         }
         Span<uint> offsets = stackalloc uint[16];
@@ -311,7 +311,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         {
             foreach (ShaderVertexAttribute attribute in authored.Attributes)
             {
-                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation, streamOwner, sources);
+                (XRDataBuffer buffer, int offset, string format) = ResolveAttribute(mesh, attribute.Semantic, deformation, streamOwner, sources, renderer);
                 if (attribute.Format != format || buffer.InstanceDivisor > 1)
                     throw Unsupported($"vertex semantic '{attribute.Semantic}' has an incompatible format or instance divisor");
                 string stepMode = buffer.InstanceDivisor == 0 ? "vertex" : "instance";
@@ -323,7 +323,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
                     if (ReferenceEquals(streams[i].Buffer, api)) { stream = streams[i]; break; }
                 if (stream is null)
                 {
-                    stream = new WebGpuVertexStream(api, checked((int)buffer.ElementSize), stepMode);
+                    stream = new WebGpuVertexStream(api, renderer.IsAuthoredConstantVertex(buffer) ? 0 : checked((int)buffer.ElementSize), stepMode);
                     streams.Add(stream);
                 }
                 if (artifact.Pass == "screen-ui" && stream.Stride != authored.Stride)
@@ -335,8 +335,35 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     }
 
     internal static (XRDataBuffer Buffer, int Offset, string Format) ResolveAttribute(XRMesh? mesh, string semantic,
-        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner = null, GpuMeshSubmissionSourceBindings? sources = null)
+        WebGpuMeshDeformation? deformation, XRMeshRenderer? streamOwner = null, GpuMeshSubmissionSourceBindings? sources = null,
+        WebGpuRendererHost? renderer = null)
     {
+        if (semantic is "uv0-or-zero" or "uv1-or-zero" or "uv2-or-zero" or "uv3-or-zero" or "color0-or-default")
+        {
+            bool color = semantic == "color0-or-default";
+            int uv = color ? 0 : semantic[2] - '0';
+            string stream = color ? "Color0" : uv switch { 0 => "TexCoord0", 1 => "TexCoord1", 2 => "TexCoord2", _ => "TexCoord3" };
+            bool optionalPublished = sources is not null ? sources.TryGetRendererBuffer(stream, out _)
+                : streamOwner is not null && streamOwner.Buffers.ContainsKey(stream);
+            bool present = optionalPublished || (color ? mesh?.ColorCount > 0 : mesh?.TexCoordCount > uv);
+            if (!present)
+                return (renderer is not null ? color ? renderer.RequireUberBaseDefaultColor() : renderer.RequireUberBaseZeroUv()
+                    : throw Unsupported("canonical Uber attribute defaults require the owning renderer"), 0, color ? "float32x4" : "float32x2");
+            semantic = color ? "color0" : uv switch { 0 => "uv0", 1 => "uv1", 2 => "uv2", _ => "uv3" };
+        }
+        if (semantic is "tangent-or-zero" or "tangent-presence")
+        {
+            bool publishedTangent = sources is not null ? sources.TryGetRendererBuffer("Tangent", out _)
+                : streamOwner is not null && streamOwner.Buffers.ContainsKey("Tangent");
+            bool present = publishedTangent || deformation?.HasTangents == true || mesh?.HasTangents == true;
+            if (semantic == "tangent-presence")
+                return (renderer?.RequireAuthoredTangentPresence() ??
+                    throw Unsupported("the tangent-presence stream requires its owning renderer"), present ? 4 : 0, "float32");
+            if (!present)
+                return (renderer?.RequireAuthoredZeroTangent() ??
+                    throw Unsupported("the optional tangent sentinel requires its owning renderer"), 0, "float32x4");
+            semantic = "tangent";
+        }
         string format = semantic switch
         {
             "position" or "normal" => "float32x3",
@@ -484,7 +511,8 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
 
     private string DescribeDraw(WebGpuBindingSet bindings, int indirectBuffer = 0,
         uint indirectCount = 0, uint stride = 20, uint byteOffset = 0,
-        uint directVertices = 0, uint directFirstVertex = 0, uint directInstances = 1)
+        uint directVertices = 0, uint directFirstVertex = 0, uint directInstances = 1,
+        WebGpuAuthoredRasterSnapshot? rasterSnapshot = null)
     {
         ArrayBufferWriter<byte> bytes = new();
         using (Utf8JsonWriter writer = new(bytes))
@@ -521,14 +549,15 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
             foreach (WebGpuVertexStream stream in _streams)
             {
                 writer.WriteStartObject();
-                writer.WriteNumber("buffer", stream.Buffer.ResourceHandle);
+                writer.WriteNumber("buffer", rasterSnapshot?.ResolveBuffer(stream.Buffer.ResourceHandle) ?? stream.Buffer.ResourceHandle);
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
             if (HasIndexBuffer)
             {
                 writer.WriteStartObject("indexBuffer");
-                writer.WriteNumber("buffer", _generatedIndices?.ResourceHandle ?? _indices!.ResourceHandle);
+                writer.WriteNumber("buffer", _generatedIndices?.ResourceHandle ??
+                    (rasterSnapshot?.ResolveBuffer(_indices!.ResourceHandle) ?? _indices!.ResourceHandle));
                 writer.WriteString("format", _indexSize == IndexSize.TwoBytes ? "uint16" : "uint32");
                 writer.WriteEndObject();
             }
@@ -641,6 +670,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
 
     public void Dispose()
     {
+        _renderer.CancelEngineResourceRequests(this);
         if (_disposed) return;
         _disposed = true;
         if (_renderer.State != BrowserRendererState.Disposed)

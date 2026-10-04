@@ -223,6 +223,8 @@ namespace XREngine.Components.Physics
 
         public void GenerateConvexHullsFromModel()
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Synchronous convex decomposition requires desktop worker threads. Use the asynchronous convex generation API with a supported browser decomposition service, or provide cooked collider shapes.");
             GenerateConvexHullsFromModelAsync().GetAwaiter().GetResult();
         }
         public async Task GenerateConvexHullsFromModelAsync(

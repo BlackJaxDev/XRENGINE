@@ -27,11 +27,11 @@
   "semanticSchemaIdentity": "xrengine.engine.compute.v1",
   "requiredLimits": {
     "maxBindGroups": 1,
-    "maxBindingsPerBindGroup": 3,
+    "maxBindingsPerBindGroup": 4,
     "maxUniformBufferBindingSize": 16,
     "maxDynamicUniformBuffersPerPipelineLayout": 1,
     "maxUniformBuffersPerShaderStage": 1,
-    "maxStorageBuffersPerShaderStage": 2,
+    "maxStorageBuffersPerShaderStage": 3,
     "maxStorageBufferBindingSize": 4,
     "maxComputeWorkgroupSizeX": 256,
     "maxComputeWorkgroupSizeY": 1,
@@ -74,10 +74,26 @@
         "members": []
       },
       {
+        "name": "CurrentAuthoredBasisV1",
+        "physicalName": "authoredBasis",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
         "name": "Parameters",
         "physicalName": "parameters",
         "group": 0,
-        "binding": 2,
+        "binding": 3,
         "kind": "uniform",
         "visibility": [
           "compute"

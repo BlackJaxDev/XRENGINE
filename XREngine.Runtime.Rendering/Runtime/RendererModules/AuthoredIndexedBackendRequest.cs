@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering;
 
@@ -10,4 +11,7 @@ public readonly record struct AuthoredIndexedBackendRequest(
     int RenderGraphPassIndex,
     XRCamera Camera,
     RenderFrameViewSelection View,
-    EMeshSubmissionStrategy SubmissionStrategy);
+    EMeshSubmissionStrategy SubmissionStrategy,
+    BackendReadyFramePackage? OrderPublicationPackage = null,
+    IAuthoredIndexedCpuReplay? CpuReplay = null,
+    EAuthoredIndexedCpuReplayPolicy CpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None);

@@ -354,7 +354,24 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         plan.Renderer,
                         plan.Mesh,
                         checked((uint)Math.Max(0, plan.MeshVertexCount)),
-                        plan.ContentSignature, plan.StructuralSignature);
+                        plan.ContentSignature, plan.StructuralSignature)
+                    {
+                        BrowserBasisSource = (_plannedMaterialRequests[plan.MaterialPlanIndex].EngineSurface.SurfaceKind == AdvancedEngineSurfaceRecord.AuthoredTexturedKind ||
+                            _plannedMaterialRequests[plan.MaterialPlanIndex].UberBaseSurface.SchemaVersion != 0)
+                            ? AdvancedBrowserGeometryBasisSource.Capture(plan.Mesh, plan.MeshGeometryRevision) : null,
+                        BrowserUberAttributesSource = _plannedMaterialRequests[plan.MaterialPlanIndex].UberBaseSurface.SchemaVersion != 0
+                            ? AdvancedBrowserUberAttributeSource.Capture(plan.Mesh, plan.MeshGeometryRevision) : null,
+                        BrowserUberAttributesProducerRejection = plan.Renderer is { } attributeRenderer &&
+                            (attributeRenderer.HasSettingUniformsHandlers || attributeRenderer.HasRenderDataPreparation || attributeRenderer.BindingPublishers.Count != 0 ||
+                             attributeRenderer.Buffers.ContainsKey("TexCoord0") || attributeRenderer.Buffers.ContainsKey("TexCoord1") ||
+                             attributeRenderer.Buffers.ContainsKey("TexCoord2") || attributeRenderer.Buffers.ContainsKey("TexCoord3") ||
+                             attributeRenderer.Buffers.ContainsKey("Color0"))
+                            ? "WebGPU.Advanced.UberAttributeOverrideUnsupported: renderer callbacks, publishers or UV/color overrides require their own frozen source companion." : null,
+                        BrowserBasisProducerRejection = plan.Renderer is { } basisRenderer &&
+                            (basisRenderer.Buffers.ContainsKey("Normal") || basisRenderer.Buffers.ContainsKey("Tangent"))
+                            ? "WebGPU.Advanced.AuthoredBasisExternalStreamMetadataMissing: renderer normal/tangent overrides require a frozen basis-validity companion from that producer."
+                            : null,
+                    };
                 }
 
                 TombstoneMissingRegistrations();

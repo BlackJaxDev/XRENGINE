@@ -35,10 +35,13 @@ public sealed class WebComputeArtifactCatalog
         _artifacts = builder.ToImmutable();
     }
 
-    public int Count => _artifacts.Count;
+    private readonly ShaderArtifactCatalogProvider? _provider;
+    internal WebComputeArtifactCatalog(ShaderArtifactCatalogProvider provider) : this([], new ShaderProgramArtifactCatalog([])) => _provider = provider;
+    private WebComputeArtifactCatalog Current => _provider?.Snapshot.ComputeArtifacts ?? this;
+    public int Count => Current._artifacts.Count;
 
     public bool TryResolve(string kernel, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
-        => _artifacts.TryGetValue(kernel, out artifact);
+        => Current._artifacts.TryGetValue(kernel, out artifact);
 
     public static bool IsSupportedKernel(string? kernel)
         => kernel is PackedSkinningKernel or LuminanceReductionKernel or LuminanceReduction2DKernel or LuminanceMipmapKernel;

@@ -228,7 +228,7 @@ public sealed partial class WebGpuRendererHost
 
     private void RequireStandaloneSubmissionBoundary()
     {
-        if (_engineRecording || FindUnsubmittedEngineBufferUpload(0, authoredOnly: false))
+        if (_engineRecording || _enginePreparationCount != 0 || FindUnsubmittedEngineBufferUpload(0, authoredOnly: false))
             throw new NotSupportedException("WebGPU.Commands.PendingFrameUnsupported: standalone submission cannot overtake an active engine frame or its unsubmitted buffer mutations.");
     }
 }

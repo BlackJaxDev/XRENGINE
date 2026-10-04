@@ -24,7 +24,7 @@ public sealed partial class WebGpuRenderProgram
             int capacity = bindings.CacheOwner is null ? 128 : WebGpuAdvancedShadingFrame.MaximumRetainedCohorts;
             if (_indirectComputeCommands.Count >= capacity)
                 throw new InvalidOperationException($"WebGPU.Compute.IndirectCapacity: the program exceeds {capacity} retained indirect variants.");
-            command = Renderer.PrepareCommands(DescribeIndirectComputeCommand(bindings, argumentHandle, byteOffset));
+            command = Renderer.PrepareEngineCommands(this, DescribeIndirectComputeCommand(bindings, argumentHandle, byteOffset));
             _indirectComputeCommands.Add(key, command);
         }
         Span<uint> offsets = stackalloc uint[16];

@@ -15,9 +15,18 @@ namespace XREngine.Editor.Publishing;
 internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? startup = null)
 {
     private readonly HashSet<RenderPipelineRequirements> _requirements = [];
+    private readonly Dictionary<RenderPipelineRequirements, EAdvancedShadingDebugView> _shadingDebug = [];
+
+    internal void IncludeShadingDebug(RenderPipelineRequirements requirements, EAdvancedShadingDebugView debug)
+        => _shadingDebug[requirements] = debug;
     private readonly Dictionary<XRMesh, (string? Geometry, string? Deformation, string? Meshlets)> _geometry = new(ReferenceEqualityComparer.Instance);
     private readonly List<BrowserNativeScenePassAdmission> _passes = [];
     private readonly List<BrowserNativeResourceAdmission> _globals = [];
+    private readonly HashSet<RenderPipelineRequirements> _probeLighting = [];
+
+    internal void IncludeProbeLighting(RenderPipelineRequirements requirements, bool enabled)
+    { if (enabled) _probeLighting.Add(requirements); }
+
     private readonly EMeshSubmissionStrategy _startupStrategy = ResolveStartupStrategy(startup);
 
     internal void IncludeRequirements(IEnumerable<RenderPipelineRequirements> requirements)
@@ -58,7 +67,9 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
                 scenePath, path, $"material-texture/{pair.Texture?.Name ?? "<unnamed>"}", pair.Texture!,
                 pair.TextureRecord, pair.SamplerRecord, false)).ToArray();
             _passes.Add(new(scenePath, path, meshName, material.Name, pass, source, geometry.Geometry,
-                geometry.Deformation, geometry.Meshlets, admitted ? null : reason, resource, kernel, frozenPairs));
+                geometry.Deformation, geometry.Meshlets, admitted ? null : reason, resource, kernel, frozenPairs,
+                material.EngineSemantic.Semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or
+                    EngineMaterialSemantic.AuthoredLit or EngineMaterialSemantic.AuthoredLitTextured or EngineMaterialSemantic.AuthoredLitTextureAlpha));
         }
     }
 
@@ -95,14 +106,16 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
             }
         }
         if (component is not LightProbeComponent probe) return;
-        if (!probe.TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation))
+        try
         {
-            _globals.Add(new(scenePath, path, "probe-ibl-publication", probe, default, default, true,
-                "The selected probe has no exact cooked active irradiance/prefilter generation; runtime capture textures cannot be inferred or treated as already rendered during cold publication."));
-            return;
+            RetainedLightProbeIblProfile retained = RetainedLightProbeIblProfile.Capture(probe);
+            InspectProbeTexture(retained.Irradiance, "probe-irradiance");
+            InspectProbeTexture(retained.Prefilter, "probe-prefiltered-radiance");
         }
-        InspectProbeTexture(generation.Irradiance, "probe-irradiance");
-        InspectProbeTexture(generation.PrefilteredRadiance, "probe-prefiltered-radiance");
+        catch (Exception error) when (error is NotSupportedException or InvalidDataException)
+        {
+            _globals.Add(new(scenePath, path, "probe-ibl-publication", probe, default, default, true, error.Message));
+        }
 
         void InspectProbeTexture(XRTexture texture, string resource)
         {
@@ -123,7 +136,14 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
                     RejectGlobal(global, pass == (int)EDefaultRenderPass.WeightedBlendedOitForward
                         ? "Forward weighted OIT authored decals require an exact late-pass lowering."
                         : "The selected graph requests raster deferred decals, which require an exact GBuffer raster lowering; the native authored-decal operation cannot replace that pass.");
+            if (_probeLighting.Contains(requirements) && _globals.Any(global => global.Probe))
+                foreach (BrowserNativeScenePassAdmission receiver in _passes)
+                    if (receiver.RequiresForwardProbeReceiver && requirements.ScenePasses.Contains(receiver.Pass) &&
+                        (!requirements.NativeScenePasses.ContainsKey(receiver.Pass) || requirements.RasterScenePasses.Contains(receiver.Pass)))
+                        Reject(receiver, "forward-probe-receiver", "This selected built-in forward receiver has no exact probe companion in a scene whose pipeline requests retained probe lighting.");
             if (!requirements.RequiresNativeScenePasses && requirements.NativeScenePasses.Count == 0) continue;
+            bool onlyUber = _passes.Where(entry => requirements.NativeScenePasses.ContainsKey(entry.Pass))
+                .All(entry => entry.Kernel.EndsWith(":uber", StringComparison.Ordinal));
             List<BrowserNativeResourceAdmission> globals = [];
             Dictionary<EAdvancedShadowType, int> shadows = [];
             foreach (BrowserNativeResourceAdmission global in _globals)
@@ -147,7 +167,7 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
                         RejectGlobal(global, $"The complete startup and streamed native scene set selects {count} '{type}' receivers; only one standalone receiver of each shadow type is supported.");
                 }
                 AddPair(globals, global);
-                if (GetBankRejection(globals) is { } globalCapacity)
+                if (!onlyUber && GetBankRejection(globals) is { } globalCapacity)
                     RejectGlobal(global, globalCapacity);
             }
             List<(string Kernel, BrowserNativeResourceAdmission[] Pairs)> cohorts = [];
@@ -166,10 +186,21 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
                     Reject(entry, entry.Resource, material);
                     continue;
                 }
-                List<BrowserNativeResourceAdmission> pairs = [.. globals];
+                bool uberRaster = entry.Kernel.EndsWith(":uber", StringComparison.Ordinal);
+                if (uberRaster && _shadingDebug.TryGetValue(requirements, out EAdvancedShadingDebugView debug) &&
+                    debug is EAdvancedShadingDebugView.DirectDiffuse or EAdvancedShadingDebugView.DirectSpecular or
+                        EAdvancedShadingDebugView.ShadowMask or EAdvancedShadingDebugView.ShadowFallbackReason)
+                    Reject(entry, "uber-lighting-debug", $"The canonical Uber source exports complete lit RGB and cannot provide the selected decomposed lighting view '{debug}'.");
+                if (uberRaster && entry.Pass == (int)EDefaultRenderPass.OpaqueDeferred && requirements.Operations.Contains("native-authored-decals") &&
+                    _globals.Any(global => global.ScenePath == entry.ScenePath && global.AuthoredDecalPass == (int)EDefaultRenderPass.DeferredDecals))
+                    Reject(entry, "uber-authored-decal-receiver", "The selected scene contains a native deferred decal and a prelit Uber receiver; this cold mesh-only record cannot prove their draw bounds disjoint. An exact source-ordered decal receiver is not admitted for this combination.");
+                List<BrowserNativeResourceAdmission> pairs = uberRaster ? [] : [.. globals];
                 foreach (BrowserNativeResourceAdmission source in entry.Pairs)
-                    AddPair(pairs, source);
-                if (GetBankRejection(pairs) is { } capacity)
+                {
+                    if (source.Reason is { } sourceReason) Reject(entry, source.Resource, sourceReason);
+                    if (!uberRaster) AddPair(pairs, source);
+                }
+                if (GetBankRejection(pairs, uberRaster) is { } capacity)
                 {
                     Reject(entry, $"native-texture-bank/{string.Join(", ", pairs.Select(pair => pair.Resource))}", capacity);
                     continue;
@@ -217,7 +248,7 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
             pairs.Add(source);
     }
 
-    private static string? GetBankRejection(List<BrowserNativeResourceAdmission> pairs)
+    private static string? GetBankRejection(List<BrowserNativeResourceAdmission> pairs, bool uberRaster = false)
     {
         int color2D = 0, depth2D = 0, cube = 0, array = 0;
         foreach (BrowserNativeResourceAdmission pair in pairs)
@@ -231,6 +262,8 @@ internal sealed class BrowserNativeSceneCapabilityAudit(GameStartupSettings? sta
                 case EAdvancedTextureDimension.Texture2DArray: array++; break;
                 default: return $"Resource '{pair.Resource}' has no native sampled dimension companion.";
             }
+        if (uberRaster && (color2D > 8 || depth2D > 1 || cube > 1 || array > 1))
+            return "The Uber native lighting closure exceeds eight color 2D pairs, one depth pair, one color cube, or one color 2D-array; its seven material roles are sampled by the separate raster producer.";
         return WebGpuAdvancedMaterialContract.GetTextureBankRejection(color2D, depth2D, cube, array);
     }
 

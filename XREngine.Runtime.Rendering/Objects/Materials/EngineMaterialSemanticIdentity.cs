@@ -8,6 +8,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
 {
     public static EngineMaterialSemanticIdentity None => default;
 
+    /// <summary>Exact canonical 26-view camera-facing baked color and alpha.</summary>
+    public static EngineMaterialSemanticIdentity OctahedralImpostorV1 => new(EngineMaterialSemantic.OctahedralImpostor, 1);
+
     public static EngineMaterialSemanticIdentity StandardLitColorV1 => new(EngineMaterialSemantic.StandardLitColor, 1);
 
     /// <summary>Opaque deferred PBR textures with UV0, RGB normals and red-channel scalar maps.</summary>
@@ -19,8 +22,15 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Authored lit color with explicit uniform-alpha coverage and exact cooked stages.</summary>
     public static EngineMaterialSemanticIdentity AuthoredLitV2 => new(EngineMaterialSemantic.AuthoredLit, 2);
 
+    /// <summary>Exact forward textured PBR coverage with diffuse alpha and a separate red opacity mask.</summary>
+    public static EngineMaterialSemanticIdentity AuthoredLitTextureAlphaV1 => new(EngineMaterialSemantic.AuthoredLitTextureAlpha, 1);
+
+    /// <summary>Exact forward normal/height and specular-map families with optional red opacity.</summary>
+    public static EngineMaterialSemanticIdentity AuthoredLitTexturedV1 => new(EngineMaterialSemantic.AuthoredLitTextured, 1);
+
     /// <summary>Known authored PBR revisions whose retained stages require exact cooked companions.</summary>
-    public bool IsAuthoredLit() => Semantic == EngineMaterialSemantic.AuthoredLit && Version is 1 or 2;
+    public bool IsAuthoredLit() => Semantic == EngineMaterialSemantic.AuthoredLit && Version is 1 or 2 ||
+        this == AuthoredLitTextureAlphaV1 || this == AuthoredLitTexturedV1;
 
     /// <summary>Engine color surfaces sharing the uniform-alpha color, normal, and shadow contract.</summary>
     public bool IsColorCoverage() => this == StandardLitColorV2 || this == AuthoredLitV2;
@@ -63,6 +73,26 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Canonical inverse-hull expansion, color and authored alpha/dissolve coverage.</summary>
     public static EngineMaterialSemanticIdentity UberOutlineV1 => new(EngineMaterialSemantic.UberOutline, 1);
 
+    /// <summary>Canonical Uber base color, normal, selected-channel PBR, opacity and emission.</summary>
+    public static EngineMaterialSemanticIdentity UberBaseV1 => new(EngineMaterialSemantic.UberBase, 1);
+
+    /// <summary>Canonical uniform RGBA with no light evaluation.</summary>
+    public static EngineMaterialSemanticIdentity UnlitColorV1 => new(EngineMaterialSemantic.Unlit, 1);
+
+    /// <summary>Canonical Texture0 RGBA with no light evaluation.</summary>
+    public static EngineMaterialSemanticIdentity UnlitTextureV2 => new(EngineMaterialSemantic.Unlit, 2);
+
+    /// <summary>Canonical Texture0 RGB with alpha forced to one.</summary>
+    public static EngineMaterialSemanticIdentity UnlitOpaqueTextureV3 => new(EngineMaterialSemantic.Unlit, 3);
+
+    /// <summary>Canonical Texture0 RGBA with a source-alpha cutoff.</summary>
+    public static EngineMaterialSemanticIdentity UnlitAlphaTextureV4 => new(EngineMaterialSemantic.Unlit, 4);
+
+    /// <summary>Canonical Texture0 array sample from layer zero.</summary>
+    public static EngineMaterialSemanticIdentity UnlitTextureArraySliceV5 => new(EngineMaterialSemantic.Unlit, 5);
+
+    public bool IsUnlit() => Semantic == EngineMaterialSemantic.Unlit && Version is >= 1 and <= 5;
+
     public static EngineMaterialSemanticIdentity SkyboxGradientV1 => new(EngineMaterialSemantic.SkyboxGradient, 1);
     public static EngineMaterialSemanticIdentity SkyboxEquirectangularV1 => new(EngineMaterialSemantic.SkyboxEquirectangular, 1);
     public static EngineMaterialSemanticIdentity SkyboxOctahedralV1 => new(EngineMaterialSemantic.SkyboxOctahedral, 1);
@@ -99,7 +129,11 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
             return;
         if (Semantic == EngineMaterialSemantic.UberOutline && Version == 1)
             return;
-        if (IsSkybox())
+        if (Semantic == EngineMaterialSemantic.UberBase && Version == 1)
+            return;
+        if (IsUnlit())
+            return;
+        if (IsSkybox() || this == OctahedralImpostorV1)
             return;
         throw new ArgumentException($"Unsupported engine material semantic '{Semantic}' version {Version}.");
     }

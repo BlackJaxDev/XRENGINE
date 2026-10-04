@@ -27,4 +27,14 @@ public enum EngineMaterialSemantic
     UICanvasSurface = 18,
     /// <summary>Canonical inverse-hull outline with an explicit modeled Uber surface contract.</summary>
     UberOutline = 19,
+    /// <summary>Canonical forward diffuse RGBA multiplied by a separate red-channel opacity mask.</summary>
+    AuthoredLitTextureAlpha = 20,
+    /// <summary>Canonical forward diffuse with normal/height, specular and optional separate opacity maps.</summary>
+    AuthoredLitTextured = 21,
+    /// <summary>Canonical camera-facing blending of 26 baked octahedral views.</summary>
+    OctahedralImpostor = 22,
+    /// <summary>Exact canonical Uber base feature subset with a retained prepared variant and target companion.</summary>
+    UberBase = 23,
+    /// <summary>Canonical unlit RGBA and sampled forward surfaces.</summary>
+    Unlit = 24,
 }

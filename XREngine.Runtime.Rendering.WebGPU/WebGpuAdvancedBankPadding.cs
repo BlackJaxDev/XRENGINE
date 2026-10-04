@@ -36,14 +36,14 @@ internal sealed class WebGpuAdvancedBankPadding : AbstractRenderAPIObject
             for (int index = 0; index < _textures.Length; index++)
             {
                 int layers = index == 1 ? 6 : 1;
-                _textures[index] = _renderer.CreateTexture(new BrowserTextureDescription(1, 1, "rgba8unorm", BrowserTextureUsage.TextureBinding,
+                if (_textures[index] == 0) _textures[index] = _renderer.CreateEngineTexture(this, new BrowserTextureDescription(1, 1, "rgba8unorm", BrowserTextureUsage.TextureBinding,
                     Label: "Unreferenced native bank padding", ArrayLayerCount: layers));
-                _views[index] = _renderer.CreateTextureView(new BrowserTextureViewDescription(_textures[index], ArrayLayerCount: layers,
+                if (_views[index] == 0) _views[index] = _renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(_textures[index], ArrayLayerCount: layers,
                     Dimension: index == 0 ? "2d" : index == 1 ? "cube" : "2d-array"));
             }
-            SetField(ref _sampler, _renderer.CreateSampler(new BrowserSamplerDescription(Label: "Unreferenced native bank sampler")), publishNotifications: false);
+            SetField(ref _sampler, _renderer.CreateEngineSampler(this, new BrowserSamplerDescription(Label: "Unreferenced native bank sampler")), publishNotifications: false);
         }
-        catch { Destroy(); throw; }
+        catch (Exception error) when (error is not RenderResourcePreparationPendingException) { Destroy(); throw; }
     }
 
     private void GenerateDepthPadding()
@@ -52,29 +52,18 @@ internal sealed class WebGpuAdvancedBankPadding : AbstractRenderAPIObject
         if (_comparisonSampler != 0) return;
         // Depth descriptors belong only to the selected comparison family.
         // Publish the complete pair together; failure must preserve color padding.
-        int texture = 0, view = 0, sampler = 0;
-        try
-        {
-            texture = _renderer.CreateTexture(new BrowserTextureDescription(1, 1, "depth24plus", BrowserTextureUsage.TextureBinding,
+        if (_depthTexture == 0)
+            _depthTexture = _renderer.CreateEngineTexture(this, new BrowserTextureDescription(1, 1, "depth24plus", BrowserTextureUsage.TextureBinding,
                 Label: "Unreferenced native depth padding"));
-            view = _renderer.CreateTextureView(new BrowserTextureViewDescription(texture, Aspect: "depth-only"));
-            sampler = _renderer.CreateSampler(new BrowserSamplerDescription(
-                Label: "Unreferenced native depth comparison sampler", Compare: "less-equal"));
-        }
-        catch
-        {
-            if (sampler != 0) _renderer.RetireEngineResourceAfterFrame(sampler);
-            if (view != 0) _renderer.RetireEngineResourceAfterFrame(view);
-            if (texture != 0) _renderer.RetireEngineResourceAfterFrame(texture);
-            throw;
-        }
-        SetField(ref _depthTexture, texture, publishNotifications: false);
-        SetField(ref _depthView, view, publishNotifications: false);
-        SetField(ref _comparisonSampler, sampler, publishNotifications: false);
+        if (_depthView == 0)
+            _depthView = _renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(_depthTexture, Aspect: "depth-only"));
+        _comparisonSampler = _renderer.CreateEngineSampler(this, new BrowserSamplerDescription(
+            Label: "Unreferenced native depth comparison sampler", Compare: "less-equal"));
     }
 
     public override void Destroy()
     {
+        _renderer.CancelEngineResourceRequests(this);
         _renderer.ReleaseEngineDrawDependencies(this);
         for (int index = 0; index < _textures.Length; index++)
         {

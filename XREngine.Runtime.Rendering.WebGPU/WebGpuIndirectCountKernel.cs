@@ -44,13 +44,15 @@ internal sealed class WebGpuIndirectCountKernel : IDisposable
         int shader = await _renderer.CreateShaderModuleAsync(source, "Indirect count masking");
         if (!Accept(shader)) return;
         _shader = shader;
-        _layout = _renderer.CreateBindingLayout("""
+        int layout = await _renderer.CreateEngineBindingLayoutAsync(this, """
             {"label":"Indirect count masking","entries":[
             {"binding":0,"visibility":4,"buffer":{"type":"read-only-storage","minBindingSize":20}},
             {"binding":1,"visibility":4,"buffer":{"type":"read-only-storage","minBindingSize":4}},
             {"binding":2,"visibility":4,"buffer":{"type":"storage","minBindingSize":20}},
             {"binding":3,"visibility":4,"buffer":{"type":"uniform","minBindingSize":16}}]}
             """);
+        if (!Accept(layout)) return;
+        _layout = layout;
         int pipeline = await _renderer.CreateComputePipelineAsync(
             $$$"""{"label":"Indirect count masking","layouts":[{{{_layout}}}],"compute":{"shader":{{{_shader}}},"entryPoint":"mask","workgroupSize":[64,1,1]}}""");
         if (Accept(pipeline)) _pipeline = pipeline;
@@ -67,6 +69,7 @@ internal sealed class WebGpuIndirectCountKernel : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _renderer.CancelEngineResourceRequests(this);
         _renderer.RetireEngineResourceAfterFrame(_pipeline);
         _renderer.RetireEngineResourceAfterFrame(_layout);
         _renderer.RetireEngineResourceAfterFrame(_shader);

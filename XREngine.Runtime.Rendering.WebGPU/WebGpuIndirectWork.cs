@@ -19,11 +19,13 @@ internal sealed class WebGpuIndirectWork(WebGpuRendererHost renderer) : IDisposa
     private long _geometryRevision;
     private long _meshBufferRevision;
     private long _rendererBufferRevision;
+    private WebGpuAuthoredRasterSnapshot? _orderedRaster;
     internal WebGpuOwnedStorageBuffer Arguments { get; } = new(renderer,
         "Authored whole-primitive indexed arguments", BrowserBufferUsage.Indirect);
 
     internal bool TryRecord(in GpuMeshSubmissionRecord record, in WebGpuPreparedMeshDraw prepared,
-        WebGpuAuthoredIndexedLodSelection selection, WebGpuRenderProgram cull, ref bool cullEnabled, float expansion)
+        WebGpuAuthoredIndexedLodSelection selection, WebGpuRenderProgram cull, ref bool cullEnabled, float expansion,
+        WebGpuAuthoredOrderingBatch? ordering = null, int orderSourceIndex = 0, WebGpuRenderProgram? orderMask = null)
     {
         if (renderer.CurrentFrameOutput is not { } output) return false;
         if (record.Mesh.Type != EPrimitiveType.Triangles)
@@ -87,7 +89,7 @@ internal sealed class WebGpuIndirectWork(WebGpuRendererHost renderer) : IDisposa
             else cull.BindStorageBuffer(2, selection.Selected);
             if (prepared.Instances is { } instanceSource) cull.Data.BindBuffer(instanceSource.Buffer, 3);
             else cull.BindStorageBuffer(3, selection.Selected);
-            cull.Data.Uniform("ModelMatrix", record.CurrentWorld);
+            cull.Data.Uniform("ModelMatrix", WebGpuImpostorBounds.CullMatrix(in record, prepared.Material.Data, in view));
             cull.Data.Uniform("ViewProjection", view.ViewProjectionMatrix);
             cull.Data.Uniform("IndexCount", record.SourceBindings.IndexCount);
             cull.Data.Uniform("CandidateMeshId", record.Metadata.MeshID);
@@ -105,7 +107,9 @@ internal sealed class WebGpuIndirectWork(WebGpuRendererHost renderer) : IDisposa
             cull.Data.Uniform("Reserved3", 0u);
             WebGpuAuthoredInstanceContract.SetCullParameters(cull.Data, record.InstanceCount, prepared.Instances);
             cull.RecordCompute(1, 1, 1);
-            _draw.RecordOwnedIndexedIndirect(prepared.Bindings, Arguments, record.InstanceCount);
+            if (ordering is null) _draw.RecordOwnedIndexedIndirect(prepared.Bindings, Arguments, record.InstanceCount);
+            else _draw.CaptureRankedRaster(prepared.Bindings, Arguments, record.InstanceCount,
+                _orderedRaster ??= new(renderer), ordering, orderSourceIndex, record.PrimitiveIndex, orderMask!);
             return true;
         }
         finally { cull.ClearTransientComputeBindings(); }
@@ -120,18 +124,27 @@ internal sealed class WebGpuIndirectWork(WebGpuRendererHost renderer) : IDisposa
     internal void ReleaseDrawUsing(AbstractRenderAPIObject resource)
     {
         if (_draw?.DependsOn(resource) != true) return;
+        _orderedRaster?.InvalidateRaster();
         _draw.Dispose();
         _draw = null;
     }
 
     internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
-        => _draw?.ReleaseCommandsUsingHandle(resource, handle);
+    {
+        _orderedRaster?.ReleaseCommandsUsingHandle(resource, handle);
+        _draw?.ReleaseCommandsUsingHandle(resource, handle);
+    }
 
     internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
-        => _draw?.ReleaseCommandUsing(program, bindings);
+    {
+        _orderedRaster?.ReleaseCommandUsing(bindings);
+        _draw?.ReleaseCommandUsing(program, bindings);
+    }
 
     public void Dispose()
     {
+        _orderedRaster?.Dispose();
+        _orderedRaster = null;
         _draw?.Dispose();
         _draw = null;
         Arguments.Dispose();

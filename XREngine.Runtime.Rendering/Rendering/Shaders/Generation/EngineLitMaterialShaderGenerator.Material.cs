@@ -45,6 +45,35 @@ public static partial class EngineLitMaterialShaderGenerator
             reason = "Authored lit materials admit the engine's PBR factors and supported surface texture roles, but no Uber feature or static-property override.";
             return false;
         }
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+        {
+            AuthoredTexturedSurface textured;
+            if (equivalentTexture is null)
+            {
+                if (!AuthoredTexturedSurfaceBinding.TryRead(material, out textured, out reason)) return false;
+            }
+            else if (!AuthoredTexturedSurfaceBinding.TryReadForCook(material, equivalentTexture, out textured, out reason)) return false;
+            plan = EngineAuthoredTexturedShaderGenerator.Plan(CookName(material.ID), textured.TextureFlags,
+                textured.Values.TransparencyMode switch
+                {
+                    ETransparencyMode.Opaque => "opaque",
+                    ETransparencyMode.Masked => "masked",
+                    _ => "alpha-blend",
+                }, target);
+            return true;
+        }
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+        {
+            TexturedAlphaSurface alpha;
+            if (equivalentTexture is null)
+            {
+                if (!TexturedAlphaSurfaceBinding.TryRead(material, out alpha, out reason)) return false;
+            }
+            else if (!TexturedAlphaSurfaceBinding.TryReadForCook(material, equivalentTexture, out alpha, out reason)) return false;
+            plan = EngineTexturedAlphaShaderGenerator.Plan(CookName(material.ID),
+                alpha.Values.TransparencyMode == ETransparencyMode.Masked ? "masked" : "alpha-blend", target);
+            return true;
+        }
         if (material.SurfaceTextureBindings.Length == 0)
         {
             if (!StandardLitColorSurfaceBinding.TryCreateAuthoredCooked(material, out _, out reason)) return false;
@@ -87,13 +116,19 @@ public static partial class EngineLitMaterialShaderGenerator
 
     /// <summary>Emits the target material source to stage beside the versioned engine Slang frontend.</summary>
     public static string MaterialRecipeJson(EngineLitMaterialShaderPlan plan)
-        => JsonSerializer.Serialize(new
+        => plan.AuthoredTextureFlags != 0 ? JsonSerializer.Serialize(new
+        {
+            schemaVersion = 2, name = plan.Name, shadingModel = "lit", surface = plan.Surface,
+            baseColor = "authored-textured", normal = plan.UsesNormalTexture ? "texture" : "vertex",
+            textureFlags = plan.AuthoredTextureFlags,
+        }, new JsonSerializerOptions { WriteIndented = true }) : JsonSerializer.Serialize(new
         {
             schemaVersion = 2,
             name = plan.Name,
             shadingModel = "lit",
             surface = plan.Surface,
-            baseColor = plan.UsesBaseColorTexture ? "texture" : "tint",
+            baseColor = plan.SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema
+                ? "texture-alpha" : plan.UsesBaseColorTexture ? "texture" : "tint",
             normal = plan.UsesNormalTexture ? "texture" : "vertex",
         }, new JsonSerializerOptions { WriteIndented = true });
 }

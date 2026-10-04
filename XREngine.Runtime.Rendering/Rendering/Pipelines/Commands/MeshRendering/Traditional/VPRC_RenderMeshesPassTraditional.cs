@@ -41,8 +41,8 @@ internal static class VPRC_RenderMeshesPassTraditional
         RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
         if (AbstractRenderer.Current is IAuthoredIndexedBackendCapability)
         {
-            commands.RenderCPUNonMeshAndExplicitlyExcluded(command.RenderPass);
-            commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);
+            commands.RenderGPU(command.RenderPass, meshSubmissionStrategy, int.MinValue,
+                EAuthoredIndexedCpuReplayPolicy.MeshesAndNonMesh);
             return;
         }
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))

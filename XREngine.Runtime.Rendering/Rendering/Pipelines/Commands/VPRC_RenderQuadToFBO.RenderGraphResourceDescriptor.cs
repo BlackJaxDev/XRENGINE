@@ -25,6 +25,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             /// Gets or sets a value indicating whether the render-graph pass should use the destination FBO's depth-stencil attachment.
             /// </summary>
             public bool UseDestinationDepthStencil { get; set; }
+            /// <summary>Declares a depth-only output independently of stencil for shader depth resolves.</summary>
+            public ERenderGraphAccess? DestinationDepthAccess { get; set; }
 
             internal bool HasExplicitColorAttachments => _colorAttachments.Count > 0;
 

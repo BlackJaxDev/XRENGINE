@@ -22,24 +22,37 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
     {
-        requirements.RequireOperation(PathIntent == EMeshRenderingPathIntent.Meshlet ||
-            MeshSubmissionStrategy is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented
-            ? "gpu-meshlet-meshes" : MeshSubmissionStrategy == EMeshSubmissionStrategy.CpuDirect
+        DescribeSubmissionRequirements(requirements, MeshSubmissionStrategy, PathIntent == EMeshRenderingPathIntent.Meshlet);
+        requirements.RequireRasterScenePass(RenderPass);
+        if (_readWriteTextureNames.Count > 0) requirements.RequireOperation("storage-images");
+    }
+
+    /// <summary>Declares the exact operation and cooked producer closure for a shared raster strategy.</summary>
+    internal static void DescribeSubmissionRequirements(RenderPipelineRequirements requirements,
+        EMeshSubmissionStrategy strategy, bool meshletPath = false)
+    {
+        bool meshlets = meshletPath || strategy.IsAnyMeshletStrategy();
+        requirements.RequireOperation(meshlets
+            ? "gpu-meshlet-meshes" : strategy == EMeshSubmissionStrategy.CpuDirect
                 ? "cpu-direct-meshes" : "gpu-driven-meshes");
-        if (requirements.Backend == RendererBackendId.WebGPU && IsMeshletRequested(MeshSubmissionStrategy))
+        if (requirements.Backend == RendererBackendId.WebGPU && meshlets)
         {
             requirements.RequireComputeProgram("meshlets::cull-expand");
             requirements.RequireComputeProgram("meshlets::finalize-indexed");
             requirements.RequireComputeProgram("meshlets::refit-bounds");
             requirements.RequireComputeProgram("meshlets::select-lod");
         }
-        else if (requirements.Backend == RendererBackendId.WebGPU && MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
+        else if (requirements.Backend == RendererBackendId.WebGPU && strategy != EMeshSubmissionStrategy.CpuDirect)
         {
             requirements.RequireComputeProgram("indirect::cull-primitive");
             requirements.RequireComputeProgram("meshlets::select-lod");
         }
-        requirements.RequireRasterScenePass(RenderPass);
-        if (_readWriteTextureNames.Count > 0) requirements.RequireOperation("storage-images");
+        if (requirements.Backend == RendererBackendId.WebGPU &&
+            (meshlets || strategy != EMeshSubmissionStrategy.CpuDirect))
+        {
+            requirements.RequireComputeProgram("authored-indexed::rank-sources");
+            requirements.RequireComputeProgram("authored-indexed::mask-ranked-arguments");
+        }
     }
 
     public VPRC_RenderMeshesPassShared()

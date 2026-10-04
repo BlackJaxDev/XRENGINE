@@ -12,6 +12,22 @@ public static class RenderingPublishedCookedAssetRegistration
         {
             CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedStandardLitTextureMaterial),
                 static () => new PublishedStandardLitTextureMaterial());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedTexturedAlphaMaterial),
+                static () => new PublishedTexturedAlphaMaterial());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedUnlitMaterial),
+                static () => new PublishedUnlitMaterial());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(UnlitPublishedTextureProfile),
+                static () => new UnlitPublishedTextureProfile());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(UnlitPublishedImageEntry),
+                static () => new UnlitPublishedImageEntry());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(UnlitPublishedMipEntry),
+                static () => new UnlitPublishedMipEntry());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedAuthoredTexturedMaterial),
+                static () => new PublishedAuthoredTexturedMaterial());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(XREngine.Components.Capture.Lights.PublishedRetainedLightProbeComponent),
+                static () => new XREngine.Components.Capture.Lights.PublishedRetainedLightProbeComponent());
+            CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedUberBaseMaterial),
+                static () => new PublishedUberBaseMaterial());
             CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedUiImageMaterial),
                 static () => new PublishedUiImageMaterial());
             CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedDeferredDecalMaterial),

@@ -2,6 +2,7 @@ import { textureFormatInfo, assertStorageTextureFormat } from './gpu-texture-for
 
 const maximumBufferBytes = 256 * 1024 * 1024;
 const maximumTextureBytes = 256 * 1024 * 1024;
+const maximumCapturedAtlasBytes = 320 * 1024 * 1024;
 const maximumWriteBytes = 64 * 1024 * 1024;
 function uploadPixelBytes(format, device) {
     const info = textureFormatInfo(format, device);
@@ -129,9 +130,9 @@ export class GpuResources {
             throw new RangeError('sRGB views require a non-storage single-sample RGBA8 texture.');
         if (usage & GPUTextureUsage.STORAGE_BINDING) assertStorageTextureFormat(format, 'write-only', r.device);
         if (sampleCount > 1 && !info.multisample) throw new RangeError(`Texture format '${format}' does not support multisampling.`);
-        if (!color && ((usage & GPUTextureUsage.COPY_DST) ||
-            ((usage & GPUTextureUsage.COPY_SRC) && (format !== 'depth32float' || sampleCount !== 1))))
-            throw new RangeError('Depth transfers require a single-sample depth32float copy source; depth/stencil copy destinations are unsupported.');
+        if (!color && (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST)) &&
+            (!['depth16unorm', 'depth24plus', 'depth32float'].includes(format) || sampleCount !== 1))
+            throw new RangeError('Depth transfers require single-sample depth-only copy resources; combined depth/stencil transfers are unsupported.');
         if (sampleCount > 1 && (arrayLayerCount !== 1 || mipLevelCount !== 1 || !(usage & GPUTextureUsage.RENDER_ATTACHMENT) ||
             (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING))))
             throw new RangeError('Multisampled textures require one layer, attachment usage, one mip and no transfer usage.');
@@ -139,7 +140,14 @@ export class GpuResources {
         let estimatedBytes = 0;
         for (let mip = 0; mip < mipLevelCount; mip++)
             estimatedBytes += Math.max(1, Math.floor(width / 2 ** mip)) * Math.max(1, Math.floor(height / 2 ** mip)) * bytesPerPixel * sampleCount * arrayLayerCount;
-        if (estimatedBytes > maximumTextureBytes) throw new RangeError('Texture exceeds the bounded allocation budget.');
+        // The persisted 26-direction HDR atlas includes its complete mip chain.
+        // Keep this exception narrower than the general texture allocation cap.
+        const capturedAtlas = format === 'rgba16float' && arrayLayerCount === 26 && sampleCount === 1 &&
+            width <= 1024 && height <= 1024 && mipLevelCount === 1 + Math.floor(Math.log2(Math.max(width, height))) &&
+            (usage & (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT)) ===
+                (GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT);
+        if (estimatedBytes > (capturedAtlas ? maximumCapturedAtlasBytes : maximumTextureBytes))
+            throw new RangeError('Texture exceeds the bounded allocation budget.');
         debugLabel(label);
         r._setOperation('create-texture', label);
         const texture = r.device.createTexture({ label, size: { width, height, depthOrArrayLayers: arrayLayerCount },

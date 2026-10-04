@@ -21,9 +21,8 @@ internal static class VPRC_RenderMeshesPassMeshlet
         // callbacks are not silently dropped when mesh shaders are available.
         if (AbstractRenderer.Current is IAuthoredIndexedBackendCapability)
         {
-            commands.RenderCPUNonMeshAndExplicitlyExcluded(command.RenderPass);
             commands.RenderGPU(command.RenderPass, meshSubmissionStrategy.ToSubmissionMode(),
-                command.ResolvePrimitivePathPreference(meshSubmissionStrategy));
+                command.ResolvePrimitivePathPreference(meshSubmissionStrategy), EAuthoredIndexedCpuReplayPolicy.MeshesAndNonMesh);
             return;
         }
         else

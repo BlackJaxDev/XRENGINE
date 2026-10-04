@@ -153,13 +153,14 @@ namespace XREngine.Scene
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
 
-            if (IsGpuCulling)
+            if (IsGpuCulling || commands.RequiresFullResidentAuthoredCollection)
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive);
             }
             else
             {
+                commands.InvalidateFullResidentMeshOrderCollection();
                 I3DRenderTree<RenderInfo3D> cpuTree = ActiveCpuRenderTree;
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
                 long collectStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -592,24 +593,31 @@ namespace XREngine.Scene
                 ? collectionVolume
                 : null;
 
-            // Iterate by index to avoid per-frame ToArray() allocation.
-            // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
-            for (int i = 0; i < _renderables.Count; i++)
+            commands.BeginFullResidentMeshOrderCollection(GPUCommands, camera, allowRenderVolume is null && !modelDiagActive);
+            bool orderCollectionCompleted = false;
+            try
             {
-                var renderable = _renderables[i];
-                bool allowed = renderable.AllowRender(allowRenderVolume, commands, camera, false, collectMirrors);
-                if (!allowed)
+                // Iterate by index to avoid per-frame ToArray() allocation.
+                // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
+                for (int i = 0; i < _renderables.Count; i++)
                 {
-                    if (modelDiagActive)
-                        ModelRenderDiagnostics.LogRejected(renderable, collectionVolume, commands, camera, containsOnly: false, collectMirrors);
-                    continue;
-                }
+                    var renderable = _renderables[i];
+                    bool allowed = renderable.AllowRender(allowRenderVolume, commands, camera, false, collectMirrors);
+                    if (!allowed)
+                    {
+                        if (modelDiagActive)
+                            ModelRenderDiagnostics.LogRejected(renderable, collectionVolume, commands, camera, containsOnly: false, collectMirrors);
+                        continue;
+                    }
 
-                visibleRenderables++;
-                if (modelDiagActive)
-                    ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-                renderable.CollectCommands(commands, camera);
+                    visibleRenderables++;
+                    if (modelDiagActive)
+                        ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
+                    renderable.CollectCommands(commands, camera);
+                }
+                orderCollectionCompleted = true;
             }
+            finally { commands.EndFullResidentMeshOrderCollection(orderCollectionCompleted); }
 
             return visibleRenderables;
         }

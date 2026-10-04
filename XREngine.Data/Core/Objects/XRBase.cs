@@ -238,14 +238,50 @@ namespace XREngine.Data.Core
             return true;
         }
 
+        /// <summary>
+        /// Allows a subscriber to identify one of its callbacks as a guaranteed
+        /// no-op for a specific property. This query must be pure, nonthrowing,
+        /// thread-safe, allocation-free and independent of mutable subscriber state.
+        /// </summary>
+        protected virtual bool CanSkipPropertyNotification(Delegate handler, string? propertyName)
+            => false;
+
+        private static bool CanSkipAllPropertyNotifications<TDelegate>(TDelegate handlers, string? propertyName)
+            where TDelegate : Delegate
+        {
+            if (string.IsNullOrEmpty(propertyName))
+                return false;
+
+            foreach (TDelegate handler in Delegate.EnumerateInvocationList(handlers))
+            {
+                if (handler.Target is not XRBase subscriber)
+                    return false;
+                try
+                {
+                    if (!subscriber.CanSkipPropertyNotification(handler, propertyName))
+                        return false;
+                }
+                catch
+                {
+                    // A failed optional query must preserve ordinary dispatch.
+                    return false;
+                }
+            }
+            return true;
+        }
+
         protected virtual void OnPropertyChanged<T>(string? propName, T prev, T field)
-            => PropertyChanged?.Invoke(this, new XRPropertyChangedEventArgs<T>(propName, prev, field));
+        {
+            XRPropertyChangedEventHandler? changed = PropertyChanged;
+            if (changed is not null && !CanSkipAllPropertyNotifications(changed, propName))
+                changed(this, new XRPropertyChangedEventArgs<T>(propName, prev, field));
+        }
 
         protected virtual bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             var pc = PropertyChanging;
-            if (pc is null)
-                return true; // No subscribers, allow change by default.
+            if (pc is null || CanSkipAllPropertyNotifications(pc, propName))
+                return true;
 
             var args = new XRPropertyChangingEventArgs<T>(propName, field, @new);
             pc(this, args);

@@ -87,9 +87,10 @@ public partial class DefaultRenderPipeline
     private void DeclareWebResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderPipelineResourceProfile profile = builder.Profile;
-        if (profile.Stereo || profile.ViewCount != 1 || profile.OutputHDR ||
-            profile.AntiAliasingMode != EAntiAliasingMode.None || profile.OutputColorFormat != EPixelInternalFormat.Rgba8)
-            throw new NotSupportedException("WebGPU.DefaultPipeline.ProfileUnsupported: the forward-lit output requires mono SDR presentation, AA None, and one sample.");
+        ValidateWebSampleProfile(profile);
+        bool multisampled = WebMsaaEnabled(profile);
+        string forwardColor = multisampled ? WebMsaaHdrTextureName : HDRSceneTextureName;
+        string forwardDepth = multisampled ? WebMsaaDepthTextureName : DepthStencilTextureName;
 
         builder.Texture(HDRSceneTextureName)
             .Size(RenderResourceSizePolicy.Internal())
@@ -98,19 +99,16 @@ public partial class DefaultRenderPipeline
             .SizedFormat(ESizedInternalFormat.Rgba16f)
             .Factory(CreateWebHdrTexture)
             .Add();
-        builder.Texture(DepthStencilTextureName)
-            .Size(RenderResourceSizePolicy.Internal())
-            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
-            .Format(EPixelInternalFormat.DepthComponent32, EPixelFormat.DepthComponent, EPixelType.Float)
-            .SizedFormat(ESizedInternalFormat.DepthComponent32f)
-            .Factory(CreateWebDepthTexture)
-            .Add();
+        if (!multisampled || WebGtaoEnabled(profile))
+            DeclareWebDepthTexture(builder, DepthStencilTextureName, 1);
+        if (multisampled)
+            DeclareWebMsaaResources(builder);
         builder.FrameBuffer(ForwardPassFBOName)
             .Size(RenderResourceSizePolicy.Internal())
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, HDRSceneTextureName)
-            .Depth(DepthStencilTextureName)
-            .Factory(CreateWebForwardFbo)
+            .Color(0, forwardColor)
+            .Depth(forwardDepth)
+            .Factory(() => CreateWebColorFbo(ForwardPassFBOName, forwardColor, forwardDepth))
             .Add();
         DeclareWebEffectResources(builder);
         var tonemap = builder.QuadMaterial(WebTonemapFBOName).DependsOn(HDRSceneTextureName);
@@ -151,37 +149,18 @@ public partial class DefaultRenderPipeline
         return texture;
     }
 
-    private XRTexture CreateWebDepthTexture()
+    private XRTexture CreateWebDepthTexture(string name, uint samples)
     {
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
             EPixelInternalFormat.DepthComponent32, EPixelFormat.DepthComponent, EPixelType.Float, EFrameBufferAttachment.DepthAttachment);
-        texture.Name = DepthStencilTextureName;
+        texture.Name = name;
+        texture.MultiSampleCount = samples;
         texture.SizedInternalFormat = ESizedInternalFormat.DepthComponent32f;
         texture.Resizable = false;
         texture.AutoGenerateMipmaps = false;
         texture.MinFilter = ETexMinFilter.Nearest;
         texture.MagFilter = ETexMagFilter.Nearest;
         return texture;
-    }
-
-    private XRFrameBuffer CreateWebForwardFbo()
-    {
-        XRFrameBuffer framebuffer = new(
-            (GetTexture<XRTexture2D>(HDRSceneTextureName)!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (GetTexture<XRTexture2D>(DepthStencilTextureName)!, EFrameBufferAttachment.DepthAttachment, 0, -1))
-        { Name = ForwardPassFBOName };
-        try
-        {
-            // A newly created logical FBO defaults to complete. Materialize its physical
-            // attachment plan before the pending generation validates and commits it.
-            AbstractRenderer.Current!.GetOrCreateAPIRenderObject(framebuffer, generateNow: true);
-            return framebuffer;
-        }
-        catch
-        {
-            framebuffer.Destroy(true);
-            throw;
-        }
     }
 
     private XRTexture CreateWebAutoExposureTexture()
@@ -249,7 +228,7 @@ public partial class DefaultRenderPipeline
         commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
         commands.Add<VPRC_DepthWrite>().Allow = true;
         commands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, EMeshSubmissionStrategy.CpuDirect);
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, MeshSubmissionStrategy);
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(command => command.UseInternalResolution = true))
         {
             VPRC_IfElse aoChoice = commands.Add<VPRC_IfElse>();
@@ -273,26 +252,28 @@ public partial class DefaultRenderPipeline
             commands.Add<VPRC_Manual>().ManualAction = static () => RuntimeEngine.Rendering.State.EnableBlend(false);
             commands.Add<VPRC_DepthTest>().Enable = true;
             VPRC_RenderMeshesPass deferred = commands.Add<VPRC_RenderMeshesPass>();
-            deferred.SetOptions((int)EDefaultRenderPass.OpaqueDeferred, EMeshSubmissionStrategy.CpuDirect);
+            deferred.SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
             deferred.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
             VPRC_RenderMeshesPass forward = commands.Add<VPRC_RenderMeshesPass>();
-            forward.SetOptions((int)EDefaultRenderPass.OpaqueForward, EMeshSubmissionStrategy.CpuDirect);
+            forward.SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
             forward.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
             VPRC_RenderMeshesPass masked = commands.Add<VPRC_RenderMeshesPass>();
-            masked.SetOptions((int)EDefaultRenderPass.MaskedForward, EMeshSubmissionStrategy.CpuDirect);
+            masked.SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
             masked.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
             // Far-depth backgrounds fill only uncovered pixels. They must precede
             // sorted blending so transparent surfaces composite over authored HDR sky.
-            commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, EMeshSubmissionStrategy.CpuDirect);
+            commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
             // The canonical pass collection owns stable far-to-near ordering and
             // authored sort priority. Blending occurs in HDR before bloom/tonemap.
             VPRC_RenderMeshesPass transparent = commands.Add<VPRC_RenderMeshesPass>();
-            transparent.SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            transparent.SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
             transparent.SetSampledTexturesWhenDeclared(WebGtaoFinalTextureName);
             // A depth-tested debug primitive has no display-overlay equivalent. If one is
             // submitted, its explicit WebGPU material rejection preserves that distinction.
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = true;
             }
+
+            AppendWebColorResolveCommands(commands);
 
             VPRC_IfElse bloomChoice = commands.Add<VPRC_IfElse>();
             bloomChoice.Label = "WebBloom";
@@ -340,7 +321,7 @@ public partial class DefaultRenderPipeline
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = false;
             commands.Add<VPRC_RenderScreenSpaceUI>();
         }
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, EMeshSubmissionStrategy.CpuDirect);
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, MeshSubmissionStrategy);
         return commands;
     }
 
@@ -350,6 +331,7 @@ public partial class DefaultRenderPipeline
         int beforeForward = (int)EDefaultRenderPass.PreRender;
         string prepass = $"ForwardDepthNormalPrePass_{WebNormalFboName}";
         beforeForward = LinkWebPass(metadata, prepass, beforeForward);
+        beforeForward = LinkWebQuadPass(metadata, WebMsaaDepthNormalResolveQuadName, WebResolvedNormalFboName, beforeForward);
         beforeForward = LinkWebQuadPass(metadata, WebGtaoGenerateQuadName, WebGtaoRawFboName, beforeForward);
         beforeForward = LinkWebQuadPass(metadata, WebGtaoHorizontalQuadName, WebGtaoHorizontalFboName, beforeForward);
         beforeForward = LinkWebQuadPass(metadata, WebGtaoVerticalQuadName, WebGtaoFinalFboName, beforeForward);
@@ -365,6 +347,7 @@ public partial class DefaultRenderPipeline
             .DependsOn((int)EDefaultRenderPass.Background);
 
         int beforeOutput = (int)EDefaultRenderPass.TransparentForward;
+        beforeOutput = LinkWebPass(metadata, $"Blit_{ForwardPassFBOName}_to_{WebResolvedHdrFboName}", beforeOutput, ERenderGraphPassStage.Transfer);
         beforeOutput = LinkWebQuadPass(metadata, WebBloomCopyQuadName, WebBloomMipFboNames[0], beforeOutput);
         for (int level = 1; level <= 4; level++)
             beforeOutput = LinkWebQuadPass(metadata, WebBloomDownQuadNames[level], WebBloomMipFboNames[level], beforeOutput);
@@ -402,8 +385,6 @@ public partial class DefaultRenderPipeline
     private void ValidateWebFrameRequirements()
     {
         RequireSupportedOutputResources();
-        if (MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
-            throw new NotSupportedException("WebGPU.DefaultPipeline.SubmissionUnsupported: explicitly select CpuDirect for this output.");
         ValidateWebGlobalIllumination();
         XRRenderPipelineInstance instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline!;
         if (instance.RenderState.ScreenSpaceUserInterface is { IsActive: true, IsScreenSpace: false })

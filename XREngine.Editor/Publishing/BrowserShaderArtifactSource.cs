@@ -7,7 +7,7 @@ using XREngine.Rendering.Shaders.Generation;
 namespace XREngine.Editor.Publishing;
 
 /// <summary>Resolves authored descriptor identities from an explicitly selected offline cooker manifest.</summary>
-internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolver
+internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolver, IEngineMaterialVariantResolver
 {
     private readonly string _directory;
     private readonly Dictionary<string, string> _descriptors = new(StringComparer.Ordinal);
@@ -167,6 +167,10 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
         return false;
     }
 
+    bool IEngineMaterialVariantResolver.TryResolve(EngineMaterialVariantKey key,
+        [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+        => TryResolveMaterialVariant(key, out artifact);
+
     /// <summary>Finds the explicit per-material cook, then verifies its modeled surface profile.</summary>
     internal bool TryResolveAuthoredLit(XRMaterial material, EngineLitMaterialShaderPlan plan,
         [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
@@ -178,6 +182,29 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
             artifact.Name == name && artifact.SourceLanguage == "MaterialRecipe" &&
             artifact.SemanticSchemaIdentity == plan.SemanticSchemaIdentity &&
             artifact.Pass == plan.Pass;
+    }
+
+    /// <summary>Finds one ordinary unlit material's exact target cook by persistent identity.</summary>
+    internal bool TryResolveUnlit(XRMaterial material, EngineUnlitMaterialShaderPlan plan,
+        [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+    {
+        artifact = null;
+        string name = EngineUnlitMaterialShaderGenerator.CookName(material.ID);
+        return name == plan.Name && _names.TryGetValue(name, out string? identity) &&
+            TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out artifact) &&
+            artifact.Name == name && artifact.SourceLanguage == "MaterialRecipe" &&
+            artifact.SemanticSchemaIdentity == plan.SemanticSchemaIdentity && artifact.Pass == plan.Pass &&
+            EngineUnlitShaderProvenance.TryValidate(artifact, out _);
+    }
+
+    internal bool TryResolveUberBase(Guid materialId, UberBaseMaterialProfile profile, string pass,
+        [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
+    {
+        artifact = null;
+        string name = EngineUberBaseShaderContract.CookName(materialId, profile.Variant.VariantHash, pass);
+        return _names.TryGetValue(name, out string? identity) &&
+            TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out artifact) &&
+            EngineUberBaseMaterialAdmission.TryValidateArtifact(materialId, profile, artifact, pass, out _);
     }
 
     private static byte[] ReadBounded(string path, int maximum)

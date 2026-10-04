@@ -2170,13 +2170,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         IRenderResourceGenerationTransaction? backendTransaction = null;
         if (backend is not null)
         {
-            ERenderResourceGenerationPreparationStatus preparationStatus =
-                backend.PrepareRenderResourceGeneration(
-                this,
-                pending,
-                viewport,
-                out backendTransaction,
-                out string? backendFailureReason);
+            ERenderResourceGenerationPreparationStatus preparationStatus;
+            string? backendFailureReason;
+            try
+            {
+                preparationStatus = backend.PrepareRenderResourceGeneration(
+                    this,
+                    pending,
+                    viewport,
+                    out backendTransaction,
+                    out backendFailureReason);
+            }
+            catch (RenderResourcePreparationPendingException)
+            {
+                backendTransaction?.Dispose();
+                return false;
+            }
             if (preparationStatus == ERenderResourceGenerationPreparationStatus.Pending)
             {
                 backendTransaction?.Dispose();
@@ -2222,6 +2231,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             try
             {
                 backendTransaction?.Commit();
+            }
+            catch (RenderResourcePreparationPendingException)
+            {
+                return false;
             }
             catch (Exception ex)
             {

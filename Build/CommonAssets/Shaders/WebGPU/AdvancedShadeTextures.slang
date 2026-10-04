@@ -19,8 +19,12 @@
 [[vk::binding(17, 1)]] SamplerState NativeSampler6;
 [[vk::binding(18, 1)]] Texture2D<float4> NativeTexture7;
 [[vk::binding(19, 1)]] SamplerState NativeSampler7;
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+[[vk::binding(20, 1)]] Texture2DArray<float4> UberRasterSurface;
+#else
 [[vk::binding(20, 1)]] Texture2D<float4> NativeTexture8;
 [[vk::binding(21, 1)]] SamplerState NativeSampler8;
+#endif
 #if defined(XR_ADV_DEPTH_COMPARISON_BANK)
 [[vk::binding(22, 1)]] DepthTexture2D NativeTexture9;
 [[vk::binding(23, 1)]] SamplerComparisonState NativeSampler9;
@@ -42,7 +46,7 @@ float4 XR_ADV_TextureFallback(uint fallbackKind)
         return float4(0.0, 0.0, 0.0, 1.0);
     return float4(0.0);
 }
-bool ResolveTexturePair(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler, uint fallback, out XRAdvancedTextureRecord record, out XRAdvancedEncodedTextureReference encoded)
+bool ResolveTexturePairWithSampling(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler, uint fallback, uint samplingKey, out XRAdvancedTextureRecord record, out XRAdvancedEncodedTextureReference encoded)
 {
     record = (XRAdvancedTextureRecord)0;
     encoded = XRAdvancedEncodedTextureReference(0u, 0u, fallback, XR_ADV_RESOURCE_FLAG_FALLBACK);
@@ -62,7 +66,8 @@ bool ResolveTexturePair(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler
     {
         uint word = i * 8u;
         if (TextureBindings[word] != texture.index || TextureBindings[word+1u] != texture.generation ||
-            TextureBindings[word+2u] != sampler.index || TextureBindings[word+3u] != sampler.generation) continue;
+            TextureBindings[word+2u] != sampler.index || TextureBindings[word+3u] != sampler.generation ||
+            TextureBindings[word+7u] != samplingKey) continue;
         uint dimension = TextureBindings[word+4u];
         uint slot = TextureBindings[word+5u];
         bool depth = (record.flags & 8u) != 0u;
@@ -80,6 +85,11 @@ bool ResolveTexturePair(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler
     // A valid published texture with no physical binding is never a neutral sample.
     textureFailure |= 1u << 19u;
     return false;
+}
+bool ResolveTexturePair(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler, uint fallback,
+    out XRAdvancedTextureRecord record, out XRAdvancedEncodedTextureReference encoded)
+{
+    return ResolveTexturePairWithSampling(texture, sampler, fallback, 0u, record, encoded);
 }
 bool XR_ADV_TryResolveTextureReference(XRAdvancedMaterialTextureBinding binding, out XRAdvancedEncodedTextureReference encoded)
 {
@@ -99,6 +109,29 @@ bool XR_ADV_TryResolveTextureReference(XRAdvancedGpuHandle handle, uint2 texture
     XRAdvancedTextureRecord published = XR_ADV_LoadTexture(dense);
     return ResolveTexturePair(handle, published.defaultSampler, 0u, record, encoded);
 }
+uint2 XR_ADV_Texture2DDimensions(XRAdvancedEncodedTextureReference reference)
+{
+    uint width = 1u, height = 1u;
+    switch (reference.payload0)
+    {
+        case 0u: NativeTexture0.GetDimensions(width, height); break;
+        case 1u: NativeTexture1.GetDimensions(width, height); break;
+        case 2u: NativeTexture2.GetDimensions(width, height); break;
+        case 3u: NativeTexture3.GetDimensions(width, height); break;
+        case 4u: NativeTexture4.GetDimensions(width, height); break;
+        case 5u: NativeTexture5.GetDimensions(width, height); break;
+        case 6u: NativeTexture6.GetDimensions(width, height); break;
+        case 7u: NativeTexture7.GetDimensions(width, height); break;
+#if !defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+        case 8u: NativeTexture8.GetDimensions(width, height); break;
+#endif
+#if !defined(XR_ADV_DEPTH_COMPARISON_BANK)
+        case 9u: NativeTexture9.GetDimensions(width, height); break;
+#endif
+        default: textureFailure |= 1u << 19u; break;
+    }
+    return uint2(width, height);
+}
 float4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, float2 uv, float2 dx, float2 dy)
 {
     if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u) return XR_ADV_TextureFallback(reference.payload2);
@@ -112,7 +145,9 @@ float4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, f
         case 5u: return NativeTexture5.SampleGrad(NativeSampler5, uv, dx, dy);
         case 6u: return NativeTexture6.SampleGrad(NativeSampler6, uv, dx, dy);
         case 7u: return NativeTexture7.SampleGrad(NativeSampler7, uv, dx, dy);
+#if !defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
         case 8u: return NativeTexture8.SampleGrad(NativeSampler8, uv, dx, dy);
+#endif
 #if !defined(XR_ADV_DEPTH_COMPARISON_BANK)
         case 9u: return NativeTexture9.SampleGrad(NativeSampler9, uv, dx, dy);
 #endif
@@ -133,7 +168,9 @@ float4 XR_ADV_SampleTexture2DLod(XRAdvancedEncodedTextureReference reference, fl
         case 5u: return NativeTexture5.SampleLevel(NativeSampler5, uv, lod);
         case 6u: return NativeTexture6.SampleLevel(NativeSampler6, uv, lod);
         case 7u: return NativeTexture7.SampleLevel(NativeSampler7, uv, lod);
+#if !defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
         case 8u: return NativeTexture8.SampleLevel(NativeSampler8, uv, lod);
+#endif
 #if !defined(XR_ADV_DEPTH_COMPARISON_BANK)
         case 9u: return NativeTexture9.SampleLevel(NativeSampler9, uv, lod);
 #endif
@@ -168,7 +205,9 @@ float XR_ADV_LoadShadow2D(XRAdvancedEncodedTextureReference reference, int2 texe
         case 5u: return NativeTexture5.Load(int3(texel, 0)).r;
         case 6u: return NativeTexture6.Load(int3(texel, 0)).r;
         case 7u: return NativeTexture7.Load(int3(texel, 0)).r;
+#if !defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
         case 8u: return NativeTexture8.Load(int3(texel, 0)).r;
+#endif
 #if defined(XR_ADV_DEPTH_COMPARISON_BANK)
         case 9u: return NativeTexture9.Load(int3(texel, 0));
 #else

@@ -138,7 +138,8 @@ public partial class AdvancedRenderPipeline
         program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
     }
 
-    private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program, bool applyLensDistortion)
+    private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program,
+        bool applyLensDistortion, RenderFrameViewSelection? frozenView = null)
     {
         var vignette = GetSettings<VignetteSettings>(state);
         (vignette ?? new VignetteSettings()).SetUniforms(program);
@@ -150,7 +151,7 @@ public partial class AdvancedRenderPipeline
         (chroma ?? new ChromaticAberrationSettings()).SetUniforms(program);
 
         var fog = GetSettings<FogSettings>(state);
-        (fog ?? new FogSettings()).SetUniforms(program);
+        (fog ?? new FogSettings()).SetUniforms(program, frozenView);
 
         var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
         (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(program);
@@ -213,7 +214,8 @@ public partial class AdvancedRenderPipeline
         program.Uniform("BrownConradyTangential", Vector2.Zero);
     }
 
-    private void ApplyPostProcessProgramBindings(XRMaterial material, XRRenderProgram materialProgram)
+    private void ApplyPostProcessProgramBindings(XRMaterial material, XRRenderProgram materialProgram,
+        RenderFrameViewSelection? frozenView = null)
     {
         BindCurrentPostProcessTextures(material, materialProgram);
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
@@ -232,7 +234,7 @@ public partial class AdvancedRenderPipeline
         materialProgram.Uniform("EnableEditorOutline", enableEditorOutline);
 
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
-        ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false);
+        ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false, frozenView);
         if (Shaders.Compilation.WebPipelineRasterProgram.IsActive && GetTexture<XRTexture>(BloomBlurTextureName) is null)
         {
             materialProgram.Uniform("BloomStrength", 0.0f);
@@ -455,6 +457,9 @@ public partial class AdvancedRenderPipeline
     }
 
     private void ApplyDepthOfFieldProgramBindings(XRRenderProgram program)
+        => ApplyDepthOfFieldProgramBindings(program, null);
+
+    private void ApplyDepthOfFieldProgramBindings(XRRenderProgram program, RenderFrameViewSelection? frozenView)
     {
         float width = Math.Max(1u, InternalWidth);
         float height = Math.Max(1u, InternalHeight);
@@ -475,7 +480,7 @@ public partial class AdvancedRenderPipeline
         }
 
         var camera = ResolveCurrentSettingsCamera();
-        settings.SetUniforms(program, texelSize, camera, height);
+        settings.SetUniforms(program, texelSize, camera, height, frozenView);
     }
 
     private void ApplyMotionBlurProgramBindings(XRRenderProgram program)

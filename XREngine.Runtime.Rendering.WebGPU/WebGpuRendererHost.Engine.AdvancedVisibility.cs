@@ -34,6 +34,7 @@ public sealed partial class WebGpuRendererHost
         if (!output.TryPrepare(in request, out reason)) return false;
         WebGpuAdvancedVisibilityFrame frame = output.Current;
         if (!TryCopyAdvancedDeformation(frame, instance.Pipeline!, out reason)) return false;
+        if (!TryDispatchAdvancedNativeVertices(frame, out reason)) return false;
         WebGpuRenderProgram compact = GetAdvancedStageApi(instance.Pipeline!, "advanced::compact-triangles");
         WebGpuRenderProgram finalize = GetAdvancedStageApi(instance.Pipeline!, "advanced::finalize-triangles");
         WebGpuAdvancedVisibilityProgramContract.Validate(compact.Artifact, "compact-triangles");
@@ -52,7 +53,7 @@ public sealed partial class WebGpuRendererHost
             {
                 compact.SetNativeBindingCacheOwner(frame.Payloads);
                 compact.BindStorageBuffer(0, frame.Scene!.SceneArena);
-                compact.BindStorageBuffer(1, frame.Scene.GeometryArena);
+                compact.BindStorageBuffer(1, frame.GeometryArena);
                 compact.BindStorageBuffer(2, frame.Payloads);
                 compact.BindStorageBuffer(3, frame.Candidates);
                 compact.BindStorageBuffer(4, frame.Producers);
@@ -107,6 +108,12 @@ public sealed partial class WebGpuRendererHost
             reason = "WebGPU.Advanced.ProgramPending: the native integer visibility program is preparing.";
             return false;
         }
+        WebGpuRenderProgram? uberRaster = null;
+        if (frame.HasUberRaster)
+        {
+            if (!TryPrepareAdvancedUberRaster(in request, instance, frame, out reason)) return false;
+            uberRaster = GetAdvancedStageApi(instance.Pipeline!, request.MsaaSampleCount == 4 ? "advanced::uber-visibility-msaa" : "advanced::uber-visibility");
+        }
         WebGpuFrameBuffer? previousTarget = _boundEngineFrameBuffer;
         WebGpuRasterState previousState = _rasterState;
         Vector4 previousClear = _engineClearColor;
@@ -133,18 +140,19 @@ public sealed partial class WebGpuRendererHost
             for (int index = 0; index < frame.BucketCount; index++)
             {
                 WebGpuAdvancedVisibilityBucket bucket = frame.Buckets[index];
+                WebGpuRenderProgram selected = bucket.Key.UberMaterial.IsValid ? uberRaster! : raster;
                 SetField(ref _rasterState, _rasterState with
                 {
                     CullMode = bucket.Key.CullMode == 0 ? ECullMode.None : ECullMode.Back,
                 }, publishNotifications: false);
                 try
                 {
-                    raster.SetNativeRasterBindingCacheOwner(frame.Payloads, checked((uint)index), frame.RasterCacheRevision);
-                    raster.BindStorageBuffer(0, frame.Scene!.SceneArena);
-                    raster.BindStorageBuffer(1, frame.Scene.GeometryArena);
-                    raster.BindStorageBuffer(2, frame.Payloads);
-                    raster.BindStorageBuffer(3, frame.Triangles);
-                    XRRenderProgram program = raster.Data;
+                    selected.SetNativeRasterBindingCacheOwner(frame.Payloads, checked((uint)index), frame.RasterCacheRevision);
+                    selected.BindStorageBuffer(0, frame.Scene!.SceneArena);
+                    selected.BindStorageBuffer(1, frame.GeometryArena);
+                    selected.BindStorageBuffer(2, frame.Payloads);
+                    selected.BindStorageBuffer(3, frame.Triangles);
+                    XRRenderProgram program = selected.Data;
                     program.Uniform("ViewProjection", frame.View.ViewProjectionJittered);
                     program.Uniform("ViewProjectionUnjittered", frame.View.ViewProjectionUnjittered);
                     program.Uniform("PreviousViewProjectionUnjittered", frame.View.PreviousViewProjectionUnjittered);
@@ -156,7 +164,13 @@ public sealed partial class WebGpuRendererHost
                     program.Uniform("AlphaCutoffWord", WebGpuAdvancedStandardMaterialContract.AlphaCutoffWord);
                     program.Uniform("MaterialFlagsWord", WebGpuAdvancedStandardMaterialContract.FlagsWord);
                     program.Uniform("Masked", bucket.Key.Coverage == EAdvancedMaterialCoverageMode.Masked ? 1u : 0u);
-                    program.Sampler("CoverageTexture", bucket.CoverageTexture ?? EnsureDisabledAmbientOcclusion(), 0);
+                    program.Uniform("OpacityCoverage", bucket.Key.OpacityTexture.IsValid ? 1u : 0u);
+                    program.Uniform("RenderTimeBits", BitConverter.SingleToUInt32Bits(RequireFrozenView().ElapsedTime));
+                    if (bucket.Key.UberMaterial.IsValid)
+                        BindAdvancedUberRasterMaterial(selected, frame, index, in bucket);
+                    if (!bucket.Key.UberMaterial.IsValid && bucket.CoverageTexture is null) program.Sampler("CoverageTexture", EnsureDisabledAmbientOcclusion(), 0);
+                    if (!bucket.Key.UberMaterial.IsValid && bucket.OpacityTexture is null) program.Sampler("OpacityTexture", EnsureDisabledAmbientOcclusion(), 1);
+                    if (!bucket.Key.UberMaterial.IsValid) (frame.Sampling[index] ??= new()).Bind(this, selected, frame.Scene!.Snapshot, in bucket);
                     bool direct = bucket.Key.Producer is EAdvancedGeometryProducer.CpuDirectStaticIndexed or EAdvancedGeometryProducer.CpuDirectPreSkinned;
                     program.Uniform("Direct", direct ? 1u : 0u);
                     if (direct)
@@ -172,8 +186,9 @@ public sealed partial class WebGpuRendererHost
                     else
                         DrawVertexlessIndirect(program, frame.Arguments, checked((nuint)index * 32u));
                 }
-                finally { raster.ClearTransientComputeBindings(); }
+                finally { selected.ClearTransientComputeBindings(); }
             }
+            // Source lighting exports run after AO, immediately before native consumers.
         }
         finally
         {

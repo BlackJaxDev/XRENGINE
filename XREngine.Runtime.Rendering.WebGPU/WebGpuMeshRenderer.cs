@@ -10,7 +10,7 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMeshRenderer.BaseVersion data)
     : WebGpuObject<XRMeshRenderer.BaseVersion>(renderer, data), IApiMeshRenderer, IRenderPreparationState
 {
-    private readonly record struct DrawKey(XRMesh Mesh, WebGpuMaterial Material, WebGpuRasterState State,
+    private readonly record struct DrawKey(XRMesh Mesh, WebGpuMaterial Material, WebGpuRenderProgram Program, WebGpuRasterState State,
         WebGpuFrameBuffer? FrameBuffer, ulong AttachmentRevision);
     private readonly Dictionary<DrawKey, WebGpuMeshDraw> _draws = [];
     private readonly Dictionary<XRMesh, (long Geometry, long Buffers, long RendererBuffers, WebGpuMeshDeformation? Deformation)> _meshGenerations =
@@ -46,7 +46,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
     }
 
     private bool TryPrepareDraw(XRMesh? mesh, XRMaterial material, out WebGpuMaterial? apiMaterial,
-        out WebGpuMeshDraw? draw, bool recordDeformation = true)
+        out WebGpuMeshDraw? draw, bool recordDeformation = true, WebGpuRenderProgram? programOverride = null)
     {
         apiMaterial = null;
         draw = null;
@@ -56,6 +56,8 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             throw Unsupported("the current engine vertex profile admits indexed triangles only");
         if (Renderer.CurrentFrameOutput is not { } output)
             return Pending("OutputPending");
+        RequireNativeVertexRasterSource(mesh, material);
+        if (programOverride is not null) RequireNativeVertexRasterSource(mesh, programOverride.Artifact);
         if (!TryPrepareGeometry(mesh, out WebGpuMeshDeformation? deformation, recordDeformation))
             return Pending("DeformationPending");
         WebGpuFrameBuffer? frameBuffer = Renderer.GetBoundEngineFrameBuffer();
@@ -77,6 +79,8 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         apiMaterial = (WebGpuMaterial)Renderer.GetOrCreateAPIRenderObject(material)!;
         if (!apiMaterial.TryPrepareForRendering())
             return Pending("ProgramsPending");
+        WebGpuRenderProgram selectedProgram = programOverride ?? apiMaterial.Program;
+        RequireNativeVertexRasterSource(mesh, selectedProgram.Artifact);
         WebGpuRasterState rasterState = ResolveUiRasterState(apiMaterial, Renderer.RasterState, frameBuffer, output);
         WebGpuInstanceStorageContract? instanceStorage = apiMaterial.InstanceStorageContract;
         WebGpuDataBuffer? instanceBuffer = null;
@@ -106,7 +110,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         XRDataBuffer? indices = mesh.GetIndexBuffer(EPrimitiveType.Triangles, out var indexSize);
         if (indices is null)
             return Pending("IndicesPending");
-        DrawKey key = new(mesh, apiMaterial, rasterState, frameBuffer, attachmentRevision);
+        DrawKey key = new(mesh, apiMaterial, selectedProgram, rasterState, frameBuffer, attachmentRevision);
         if (!_draws.TryGetValue(key, out draw))
         {
             int meshVariants = 0;
@@ -114,7 +118,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
                 if (ReferenceEquals(existing.Mesh, mesh)) meshVariants++;
             if (meshVariants >= 32)
                 throw Unsupported("the mesh exceeds the bounded 32 material/raster variants for its current resource generation");
-            draw = new WebGpuMeshDraw(Renderer, apiMaterial.Program, mesh, indices, indexSize, key.State,
+            draw = new WebGpuMeshDraw(Renderer, selectedProgram, mesh, indices, indexSize, key.State,
                 output, frameBuffer, instanceStorage, instanceBuffer, instanceLimit, deformation, streamOwner: Data.Parent);
             _draws.Add(key, draw);
         }
@@ -168,7 +172,11 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         XRCamera? camera = indexed?.Camera ?? RuntimeEngine.Rendering.State.RenderingCamera;
         using var frozenView = Renderer.PushFrozenView(camera);
         ResolvedMeshRenderMaterial resolved = MeshRenderMaterialResolver.Resolve(Data.Parent, materialOverride, instances);
+        RequireNativeVertexRasterSource(mesh, materialOverride ?? Data.Parent.Material);
+        RequireNativeVertexRasterSource(mesh, resolved.Material);
         ValidateOutlineDrawBindings(Data.Parent, resolved.Material, RuntimeEngine.Rendering.State.RenderingPipelineState,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables);
+        ValidateUberBaseDrawBindings(Data.Parent, resolved.Material, RuntimeEngine.Rendering.State.RenderingPipelineState,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables);
         bool unprovenIndexedBindings = indexed is { } meshletSource && HasUnprovenIndexedVertexBindings(meshletSource.Record, resolved.Material);
         bool depthNormalPrepass = resolved.IsDepthNormalVariant &&
@@ -222,6 +230,14 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             Renderer.MarkEngineDrawPending();
             return false;
         }
+        bool orderedDirect = indexed is null && Renderer.IsAuthoredDirectOrderCapture;
+        WebGpuRenderProgram drawProgram = material.Program;
+        if (orderedDirect && !material.TryPrepareAuthoredOrderingProgram(out drawProgram))
+        {
+            Renderer.MarkEngineDrawPending();
+            return false;
+        }
+        using var directCapture = orderedDirect ? Renderer.EnterAuthoredDirectCandidate(Data.Parent) : default;
         if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "MaterialReady");
         material.ValidateUberOutlineSourceForDraw();
         if (Data.Parent.HasRenderDataPreparation)
@@ -229,22 +245,24 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "DataPrepared");
         try
         {
-            WebGpuRenderProgram program = material.Program;
+            WebGpuRenderProgram program = drawProgram;
+            RequireNativeVertexRasterSource(mesh, program.Artifact);
             // Fullscreen effect quads intentionally render without a mesh camera;
             // lit and prepass programs still declare camera-provided uniforms.
             if (camera is null && program.RequiresCameraUniforms)
                 throw new InvalidOperationException("WebGPU.Mesh.CameraMissing: the cooked pass requires engine camera uniforms.");
-            if (camera is not null && Renderer.RequireFrozenView().View.ReversedDepth)
-                throw Unsupported("the cooked coordinate contract has not admitted reversed-Z cameras");
             program.BeginResourceBindings();
             if (camera is not null) Renderer.SetEngineUniforms(program.Data, camera);
             program.SetMatrix("ModelMatrix", modelMatrix);
             program.SetMatrix("PreviousModelMatrix", previousModelMatrix);
-            if (!Matrix4x4.Invert(modelMatrix, out Matrix4x4 inverseModel))
-                throw Unsupported("the model transform is singular");
-            program.SetMatrix("NormalMatrix", Matrix4x4.Transpose(inverseModel));
+            if (resolved.Material.EngineSemantic != EngineMaterialSemanticIdentity.OctahedralImpostorV1)
+            {
+                if (!Matrix4x4.Invert(modelMatrix, out Matrix4x4 inverseModel))
+                    throw Unsupported("the model transform is singular");
+                program.SetMatrix("NormalMatrix", Matrix4x4.Transpose(inverseModel));
+            }
             Renderer.SetMaterialUniforms(resolved.Material, program.Data);
-            material.PublishSurface();
+            material.PublishSurface(program);
             Data.Parent.OnSettingUniforms(program.Data, program.Data);
             if (!ReferenceEquals(resolved.Material, Data.Parent.Material))
                 resolved.Material.OnSettingVertexUniforms(program.Data);
@@ -267,6 +285,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
                 deferMissingResources |= PublishBindings(Data.Parent.BindingPublishers, program.Data);
                 program.PublishStorageBindings(Data.Parent);
             }
+            if (orderedDirect) Renderer.PublishAuthoredDirectOrderGate(Data.Parent, program);
             if (!program.TrySnapshotBindings(deferMissingResources, out WebGpuBindingSet? bindings))
             {
                 if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "BindingsOrPipelinePending");
@@ -283,7 +302,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             }
             if (indexed is { } generated)
             {
-                if (Renderer.RasterState.BlendEnabled && !HasOpaqueOutlineBlend(resolved.Material, Renderer.RasterState))
+                if (generated.Ordering is null && Renderer.RasterState.BlendEnabled && !HasOpaqueOutlineBlend(resolved.Material, Renderer.RasterState))
                     throw new NotSupportedException("WebGPU.AuthoredIndexed.TransparentOrderUnavailable: authored blending requires a shared GPU source-order publication.");
                 if (!TryPrepareGeometry(generated.Record.Mesh, out WebGpuMeshDeformation? deformation)) return false;
                 RequireCurrentIndexedBindings(generated.Record, generated.IndirectWork is not null);
@@ -300,8 +319,10 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
                 WebGpuPreparedMeshDraw prepared = new(material, bindings!, deformation, instanceSource);
                 bool recorded = generated.MeshletWork is { } meshletWork
                     ? meshletWork.TryRecord(generated.Record, in prepared, generated.Geometry!,
-                        generated.Camera, generated.Cull, generated.FinalizeProgram!, generated.Refit!, cullEnabled, expansion)
-                    : generated.IndirectWork!.TryRecord(generated.Record, in prepared, generated.Selection, generated.Cull, ref cullEnabled, expansion);
+                        generated.Camera, generated.Cull, generated.FinalizeProgram!, generated.Refit!, cullEnabled, expansion,
+                        generated.Ordering, generated.OrderSourceIndex, generated.OrderMask)
+                    : generated.IndirectWork!.TryRecord(generated.Record, in prepared, generated.Selection, generated.Cull, ref cullEnabled, expansion,
+                        generated.Ordering, generated.OrderSourceIndex, generated.OrderMask);
                 unbounded = !cullEnabled;
                 if (!recorded)
                 {
@@ -311,10 +332,11 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             }
             else
             {
-                if (!TryPrepareDraw(mesh, resolved.Material, out _, out WebGpuMeshDraw? draw))
+                if (!TryPrepareDraw(mesh, resolved.Material, out _, out WebGpuMeshDraw? draw, programOverride: program))
                 { Renderer.MarkEngineDrawPending(); return false; }
                 _ = WebGpuAuthoredInstanceContract.Resolve(Data.Parent, mesh, program, instances, draw!.Deformation, null);
-                draw!.Record(bindings!, instances);
+                if (orderedDirect) Renderer.CaptureAuthoredOrderedDirect(draw!, bindings!, instances);
+                else draw!.Record(bindings!, instances);
             }
             if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "Recorded");
             return true;
@@ -401,12 +423,14 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         WebGpuMeshDeformation? deformation, bool unprovenVertexBindings, bool meshlets,
         out bool cullEnabled, out float expansion, out bool boundsDisabled)
     {
-        // Built-in source-free surface semantics prove identity position behavior;
-        // arbitrary cooked shaders remain admitted with an unbounded envelope.
+        // Built-in source-free surfaces prove their position behavior; impostors
+        // supply their exact camera-facing cull transform in the GPU producer.
+        // Arbitrary cooked shaders remain admitted with an unbounded envelope.
         EngineMaterialSemantic semantic = selected.EngineSemantic.Semantic;
         cullEnabled = selected.Shaders.Count == 0 && semantic is EngineMaterialSemantic.StandardLitColor or
             EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.OpaqueShadowDepth or
-            EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth;
+            EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
+            EngineMaterialSemantic.OctahedralImpostor;
         if (record.InstanceCount > 1 || unprovenVertexBindings || deformation is null && record.SourceBindings.TryGetRendererBuffer("Position", out _))
             cullEnabled = false;
         expansion = 0;

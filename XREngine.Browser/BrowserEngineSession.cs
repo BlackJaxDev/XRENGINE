@@ -289,10 +289,17 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
 
     private RenderPipeline CreateDefaultPipeline(RenderPipelineRequest request)
     {
-        if (request.Stereo || request.Purpose != ERenderPipelinePurpose.DesktopScene ||
-            request.OffscreenIntent is not null)
-            throw new NotSupportedException("WebGPU.DefaultPipeline.ProfileUnsupported: the forward-lit output requires a mono scene presentation; stereo, XR, and offscreen capture are not supported.");
-        if (EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
+        if (request.Stereo || request.Purpose is not (ERenderPipelinePurpose.DesktopScene or ERenderPipelinePurpose.OffscreenCapture))
+            throw new NotSupportedException("WebGPU.DefaultPipeline.ProfileUnsupported: the browser output requires a mono scene or offscreen capture; stereo and XR are not supported.");
+        // A camera may realize its default after startup's construction scopes have
+        // closed. Retain only this factory's allocations until all session outputs
+        // have stopped; authored sources assigned by callers remain borrowed.
+        return OwnConstruction(() => CreateDefaultPipelineSource(request));
+    }
+
+    private RenderPipeline CreateDefaultPipelineSource(RenderPipelineRequest request)
+    {
+        if (request.OffscreenIntent is not null || EngineRenderingSettingsApplication.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required)
         {
             // Device startup is asynchronous. Preserve the explicitly selected
             // source; the physical viewport reserves and admits it when ready.
@@ -314,6 +321,11 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     {
         if (!_running)
             return false;
+        // BeginPlay may queue capture jobs before asynchronous device startup.
+        // Keep them on the existing caller queue until this renderer is ready.
+        if (_renderer?.State == BrowserRendererState.Pending)
+            return true;
+        using var rendererOwner = _renderer?.EnterOwnerScope();
         if (_graphicsRecoveryPending && (_renderer?.State != BrowserRendererState.Ready || _graphicsRecoveryFailure is not null))
             return true;
         RefreshCamera();

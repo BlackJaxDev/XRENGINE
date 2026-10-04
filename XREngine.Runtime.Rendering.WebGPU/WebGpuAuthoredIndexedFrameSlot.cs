@@ -10,11 +10,15 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
     private readonly List<WebGpuMeshletWork> _work = new(32);
     private readonly List<WebGpuIndirectWork> _indirectWork = new(32);
     private readonly List<WebGpuAuthoredIndexedLodSelection> _lodSelections = new(32);
+    private readonly List<WebGpuAuthoredOrderingBatch> _orderings = new(4);
+    private readonly List<WebGpuAuthoredRasterSnapshot> _directSnapshots = new(8);
     private GpuMeshSubmissionPublicationLease _lease;
     private int _drawCount;
     private int _meshletDrawCount;
     private int _indirectDrawCount;
     private int _sourceCount;
+    private int _orderingCount;
+    private int _directSnapshotCount;
     internal uint RecordingSequence { get; private set; }
     internal uint SubmittedSequence { get; private set; }
     internal bool IsAvailable => RecordingSequence == 0 && SubmittedSequence == 0 && !_lease.IsValid;
@@ -32,6 +36,26 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
         _meshletDrawCount = 0;
         _indirectDrawCount = 0;
         _sourceCount = 0;
+        _orderingCount = 0;
+        _directSnapshotCount = 0;
+    }
+
+    internal WebGpuAuthoredOrderingBatch NextOrdering()
+    {
+        if (_orderingCount == 64)
+            throw new NotSupportedException("WebGPU.AuthoredOrdering.PassCapacity: one atomic scene submission exceeds 64 ordered passes.");
+        if (_orderingCount == _orderings.Count) _orderings.Add(new(renderer));
+        WebGpuAuthoredOrderingBatch ordering = _orderings[_orderingCount++];
+        ordering.Begin();
+        return ordering;
+    }
+
+    internal WebGpuAuthoredRasterSnapshot NextDirectSnapshot()
+    {
+        RequireCandidateCapacity(1);
+        _drawCount++;
+        if (_directSnapshotCount == _directSnapshots.Count) _directSnapshots.Add(new(renderer));
+        return _directSnapshots[_directSnapshotCount++];
     }
 
     internal WebGpuAuthoredIndexedLodSelection NextLodSelection()
@@ -87,18 +111,21 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
 
     internal void ReleaseDrawUsing(AbstractRenderAPIObject resource)
     {
+        foreach (WebGpuAuthoredRasterSnapshot snapshot in _directSnapshots) snapshot.ReleaseDrawUsing(resource);
         foreach (WebGpuMeshletWork work in _work) work.ReleaseDrawUsing(resource);
         foreach (WebGpuIndirectWork work in _indirectWork) work.ReleaseDrawUsing(resource);
     }
 
     internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
     {
+        foreach (WebGpuAuthoredRasterSnapshot snapshot in _directSnapshots) snapshot.ReleaseCommandsUsingHandle(resource, handle);
         foreach (WebGpuMeshletWork work in _work) work.ReleaseCommandsUsingHandle(resource, handle);
         foreach (WebGpuIndirectWork work in _indirectWork) work.ReleaseCommandsUsingHandle(resource, handle);
     }
 
     internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
     {
+        foreach (WebGpuAuthoredRasterSnapshot snapshot in _directSnapshots) snapshot.ReleaseCommandUsing(bindings);
         foreach (WebGpuMeshletWork work in _work) work.ReleaseCommandUsing(program, bindings);
         foreach (WebGpuIndirectWork work in _indirectWork) work.ReleaseCommandUsing(program, bindings);
     }
@@ -108,9 +135,13 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
         foreach (WebGpuMeshletWork work in _work) work.Dispose();
         foreach (WebGpuIndirectWork work in _indirectWork) work.Dispose();
         foreach (WebGpuAuthoredIndexedLodSelection selection in _lodSelections) selection.Dispose();
+        foreach (WebGpuAuthoredOrderingBatch ordering in _orderings) ordering.Dispose();
+        foreach (WebGpuAuthoredRasterSnapshot snapshot in _directSnapshots) snapshot.Dispose();
         _work.Clear();
         _indirectWork.Clear();
         _lodSelections.Clear();
+        _orderings.Clear();
+        _directSnapshots.Clear();
         Release();
     }
 }

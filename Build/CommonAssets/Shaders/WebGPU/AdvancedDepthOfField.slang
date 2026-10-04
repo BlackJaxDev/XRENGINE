@@ -18,6 +18,7 @@ struct OutputUniforms
     float DoFPhysicalFocusDistanceMm;
     float DoFPhysicalCoCRefMm;
     float DoFPhysicalPixelsPerMm;
+    int DepthMode;
 };
 [[vk::binding(0, 0)]] ConstantBuffer<OutputUniforms> outputUniforms;
 [[vk::binding(0, 1)]] Texture2D<float4> ColorSource;
@@ -48,6 +49,7 @@ ScreenOutput outputVertex(ScreenInput input)
 #define DoFPhysicalFocusDistanceMm outputUniforms.DoFPhysicalFocusDistanceMm
 #define DoFPhysicalCoCRefMm outputUniforms.DoFPhysicalCoCRefMm
 #define DoFPhysicalPixelsPerMm outputUniforms.DoFPhysicalPixelsPerMm
+#define DepthMode outputUniforms.DepthMode
 
 float ReadDepth(float2 uv)
 {
@@ -75,7 +77,8 @@ float ComputeCoC(float depth)
     if (DoFMode == 1)
     {
         // Convert normalized nonlinear depth to linear distance (matches XRCamera.DepthToDistance)
-        float zM = CameraNearZ * CameraFarZ / (CameraFarZ - depth * (CameraFarZ - CameraNearZ));
+        float normalDepth = DepthMode == 1 ? 1.0 - depth : depth;
+        float zM = CameraNearZ * CameraFarZ / (CameraFarZ - normalDepth * (CameraFarZ - CameraNearZ));
         float zMm = zM * 1000.0;
 
         float sMm = max(DoFPhysicalFocusDistanceMm, 0.001);
@@ -101,7 +104,7 @@ float ComputeCoC(float depth)
     }
     else
     {
-        float signedDepth = depth - FocusDepth;
+        float signedDepth = (depth - FocusDepth) * (DepthMode == 1 ? -1.0 : 1.0);
         if (!NearBlur && signedDepth < 0.0)
             return 0.0;
 

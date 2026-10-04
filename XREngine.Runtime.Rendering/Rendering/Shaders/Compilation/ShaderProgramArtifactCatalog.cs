@@ -4,15 +4,17 @@ using System.Diagnostics.CodeAnalysis;
 namespace XREngine.Rendering.Shaders.Compilation;
 
 /// <summary>
-/// An immutable, session-owned map of hash-verified cooked modules. Load sidecar
-/// bytes through the runtime asset source before publishing the catalog to a renderer.
+/// A map of hash-verified cooked modules. Ordinary catalogs are immutable;
+/// session provider views retain their identity while complete immutable snapshots are admitted.
 /// </summary>
 public sealed class ShaderProgramArtifactCatalog : IShaderProgramArtifactResolver
 {
     private readonly ImmutableDictionary<string, ShaderProgramArtifact> _artifacts;
     private readonly ImmutableHashSet<(ShaderCompileTarget Target, string Language, string Schema, string Pass)> _profiles;
 
-    public ShaderProgramArtifactCatalog(IEnumerable<ShaderProgramArtifact> artifacts)
+    public ShaderProgramArtifactCatalog(IEnumerable<ShaderProgramArtifact> artifacts) : this(artifacts, false) { }
+
+    internal ShaderProgramArtifactCatalog(IEnumerable<ShaderProgramArtifact> artifacts, bool artifactsAreVerified)
     {
         ArgumentNullException.ThrowIfNull(artifacts);
         ImmutableDictionary<string, ShaderProgramArtifact>.Builder builder = ImmutableDictionary.CreateBuilder<string, ShaderProgramArtifact>(StringComparer.Ordinal);
@@ -23,7 +25,8 @@ public sealed class ShaderProgramArtifactCatalog : IShaderProgramArtifactResolve
             ValidateIdentity(artifact.Identity);
             if (artifact.DescriptorBytes.IsDefaultOrEmpty)
                 throw new InvalidDataException($"ShaderArtifact.DescriptorMissing: '{artifact.Name}' has no verified descriptor bytes.");
-            ShaderProgramArtifact verified = ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
+            ShaderProgramArtifact verified = artifactsAreVerified ? artifact
+                : ShaderProgramArtifactReader.Read(artifact.DescriptorBytes.AsSpan(), artifact.Artifact.Bytes);
             if (verified.Identity != artifact.Identity)
                 throw new InvalidDataException($"ShaderArtifact.IdentityMismatch: '{artifact.Name}' differs from its descriptor bytes.");
             if (!builder.TryAdd(verified.Identity, verified))
@@ -34,15 +37,19 @@ public sealed class ShaderProgramArtifactCatalog : IShaderProgramArtifactResolve
         _profiles = profiles.ToImmutable();
     }
 
-    public int Count => _artifacts.Count;
+    private readonly ShaderArtifactCatalogProvider? _provider;
+    internal ShaderProgramArtifactCatalog(ShaderArtifactCatalogProvider provider) : this([]) => _provider = provider;
+    private ShaderProgramArtifactCatalog Current => _provider?.Snapshot.Artifacts ?? this;
+    internal IEnumerable<ShaderProgramArtifact> Artifacts => Current._artifacts.Values;
+    public int Count => Current._artifacts.Count;
 
     /// <summary>Checks a verified program profile without enumerating or allocating during frame admission.</summary>
     public bool ContainsProgram(ShaderCompileTarget target, string language, string schema, string pass)
-        => _profiles.Contains((target, language, schema, pass));
+        => Current._profiles.Contains((target, language, schema, pass));
 
     public bool TryResolve(string identity, ShaderCompileTarget target, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
     {
-        if (_artifacts.TryGetValue(identity, out artifact) && artifact.Target == target)
+        if (Current._artifacts.TryGetValue(identity, out artifact) && artifact.Target == target)
             return true;
         artifact = null;
         return false;

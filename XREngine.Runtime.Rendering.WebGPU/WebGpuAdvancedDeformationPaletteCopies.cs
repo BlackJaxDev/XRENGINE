@@ -10,7 +10,7 @@ internal sealed class WebGpuAdvancedDeformationPaletteCopies(WebGpuRendererHost 
 {
     private const int MaximumCopies = 4096;
     private const int VariantsPerCopy = 4;
-    private readonly record struct Entry(AdvancedGpuDeformationPaletteCopy Copy, int Destination, int Offset, int Command, uint LastUsedFrame);
+    private readonly record struct Entry(AdvancedGpuDeformationPaletteCopy Copy, int Destination, int Offset, int Command, uint LastUsedFrame, WebGpuResourceRequest? Request = null);
     private Entry[] _entries = [];
     private int _count;
 
@@ -58,10 +58,10 @@ internal sealed class WebGpuAdvancedDeformationPaletteCopies(WebGpuRendererHost 
             for (int variant = first; variant < first + VariantsPerCopy; variant++)
             {
                 ref Entry candidate = ref _entries[variant];
-                if (candidate.Command != 0 && (candidate.Destination != storage.ResourceHandle ||
+                if ((candidate.Command != 0 || candidate.Request is not null) && (candidate.Destination != storage.ResourceHandle ||
                     !candidate.Copy.IsSourceGenerationCurrent || candidate.Copy.SourceOwner.OwnerGeneration != renderer.BackendGeneration))
                     Retire(ref candidate);
-                if (candidate.Command == 0)
+                if (candidate.Command == 0 && candidate.Request is null)
                 {
                     if (replacement < 0 || oldest != 0)
                     { replacement = variant; oldest = 0; }
@@ -82,13 +82,18 @@ internal sealed class WebGpuAdvancedDeformationPaletteCopies(WebGpuRendererHost 
                 selected = replacement;
                 string descriptor = string.Create(CultureInfo.InvariantCulture,
                     $"{{\"label\":\"Canonical GPU palette copy\",\"commands\":[{{\"type\":\"copyBuffer\",\"source\":{copy.SourceHandle},\"sourceOffset\":{copy.SourceByteOffset},\"destination\":{storage.ResourceHandle},\"destinationOffset\":{destinationOffset},\"size\":{copy.ByteLength}}}]}}");
-                int command = renderer.PrepareCommands(descriptor);
+                WebGpuResourceRequest request = renderer.RequestEngineResource(this, 7, descriptor);
                 Retire(ref _entries[selected]);
-                _entries[selected] = new(copy, storage.ResourceHandle, destinationOffset, command, renderer.EngineFrameSequence);
+                _entries[selected] = new(copy, storage.ResourceHandle, destinationOffset, 0, renderer.EngineFrameSequence, request);
             }
             else
                 _entries[selected] = _entries[selected] with { Copy = copy, LastUsedFrame = renderer.EngineFrameSequence };
             _count = Math.Max(_count, index + 1);
+            if (_entries[selected].Command == 0)
+            {
+                int command = renderer.RequireEngineResource(_entries[selected].Request!);
+                _entries[selected] = _entries[selected] with { Command = command, Request = null };
+            }
             renderer.RecordEngineCommands(_entries[selected].Command, []);
             storage.MarkRecorded();
         }
@@ -99,6 +104,7 @@ internal sealed class WebGpuAdvancedDeformationPaletteCopies(WebGpuRendererHost 
 
     private void Retire(ref Entry entry)
     {
+        if (entry.Request is { } request) renderer.CancelEngineResourceRequest(request);
         if (entry.Command != 0)
             renderer.RetireEngineResourceAfterFrame(entry.Command);
         entry = default;
@@ -106,6 +112,7 @@ internal sealed class WebGpuAdvancedDeformationPaletteCopies(WebGpuRendererHost 
 
     public void Dispose()
     {
+        renderer.CancelEngineResourceRequests(this);
         for (int index = 0; index < _count * VariantsPerCopy; index++)
             Retire(ref _entries[index]);
         _count = 0;

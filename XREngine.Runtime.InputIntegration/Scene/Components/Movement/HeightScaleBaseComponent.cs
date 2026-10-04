@@ -261,7 +261,7 @@ namespace XREngine.Components
             float sumX = 0f, sumY = 0f, sumZ = 0f;
             int counted = 0;
 
-            Parallel.ForEach(mesh.Vertices, vertex =>
+            void AccumulateEyeVertex(XREngine.Data.Rendering.Vertex vertex)
             {
                 var weights = vertex.Weights;
                 if (weights is null)
@@ -276,7 +276,15 @@ namespace XREngine.Components
                 AtomicAdd(ref sumY, pos.Y);
                 AtomicAdd(ref sumZ, pos.Z);
                 Interlocked.Increment(ref counted);
-            });
+            }
+
+            if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            {
+                foreach (var vertex in mesh.Vertices)
+                    AccumulateEyeVertex(vertex);
+            }
+            else
+                Parallel.ForEach(mesh.Vertices, AccumulateEyeVertex);
 
             eyePosWorldAvg = new Vector3(sumX, sumY, sumZ);
             bool any = counted > 0;

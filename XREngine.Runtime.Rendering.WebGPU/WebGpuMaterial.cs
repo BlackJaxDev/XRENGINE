@@ -20,6 +20,7 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
     private bool _opaqueShadowDepth;
     private bool _opaquePointShadowDepth;
     private bool _opaqueSpotShadowDepth;
+    private bool _nativeVertexDepthNormal;
     private EStandardLitColorAuxiliaryPass _litAuxiliaryPass;
     private EngineMaterialSemantic _debugPrimitive;
     private EngineMaterialSemantic _uiSemantic;
@@ -37,7 +38,7 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
 
     internal EngineMaterialSemantic UISemantic => _uiSemantic;
 
-    public WebGpuRenderProgram Program => _apiProgram
+    public WebGpuRenderProgram Program => _surfacePublicationProgram ?? _apiProgram
         ?? throw new InvalidOperationException("WebGPU.Material.ProgramPending: the material has not been prepared.");
     public override bool IsGenerated => _apiProgram?.IsGenerated == true;
     public bool IsPreparedForRendering => IsGenerated;
@@ -50,8 +51,24 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
         if (_program is null)
         {
             ShaderProgramArtifact? artifact = null;
-            if (Data.EngineSemantic == EngineMaterialSemanticIdentity.UberOutlineV1)
+            if (Data is NativeVertexPassMaterial nativeVertex)
+            {
+                if (!AdvancedNativeVertexMaterialSource.TryResolveAuxiliary(nativeVertex.Source, Renderer.ShaderArtifacts,
+                    nativeVertex.NativePass, out artifact, out string reason) || artifact?.Identity != nativeVertex.Artifact.Identity)
+                    throw new NotSupportedException($"WebGPU.NativeVertex.AuxiliarySourceChanged: {reason}");
+                SetField(ref _opaqueShadowDepth, nativeVertex.NativePass == EngineNativeVertexAuxiliaryPass.DirectionalShadow);
+                SetField(ref _opaquePointShadowDepth, nativeVertex.NativePass == EngineNativeVertexAuxiliaryPass.PointShadow);
+                SetField(ref _opaqueSpotShadowDepth, nativeVertex.NativePass == EngineNativeVertexAuxiliaryPass.SpotShadow);
+                SetField(ref _nativeVertexDepthNormal, nativeVertex.NativePass == EngineNativeVertexAuxiliaryPass.DepthNormal);
+            }
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.OctahedralImpostorV1)
+                artifact = ResolveOctahedralImpostorArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.UberOutlineV1)
                 artifact = ResolveUberOutlineArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.UberBaseV1)
+                artifact = ResolveUberBaseArtifact();
+            else if (Data.EngineSemantic.IsUnlit())
+                artifact = ResolveUnlitArtifact();
             else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1)
             {
                 if (Data.Shaders.Count != 0 || Data.Parameters.Length != 0)
@@ -131,6 +148,10 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                 artifact = ResolveSkyboxArtifact();
             else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
                 artifact = ResolveLitTextureArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+                artifact = ResolveTexturedAlphaArtifact();
+            else if (Data.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+                artifact = ResolveAuthoredTexturedArtifact();
             else if (Data.EngineSemantic.IsAuthoredLit())
                 artifact = ResolveAuthoredLitArtifact();
             else if (Data.EngineSemantic.Semantic != EngineMaterialSemantic.None)
@@ -234,9 +255,19 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
             PublishCanvasSurface();
             return;
         }
+        if (TryPublishOctahedralImpostor())
+            return;
         if (TryPublishSkybox())
             return;
         if (TryPublishLitTexture())
+            return;
+        if (TryPublishTexturedAlpha())
+            return;
+        if (TryPublishUnlit())
+            return;
+        if (TryPublishAuthoredTextured())
+            return;
+        if (TryPublishUberBase())
             return;
         if (_uiSemantic != EngineMaterialSemantic.None)
         {
@@ -287,14 +318,22 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
                 throw new NotSupportedException("WebGPU.Material.ShadowDepthOutputUnsupported: the opaque caster requires one depth-only single-sample attachment.");
             return;
         }
+        if (_nativeVertexDepthNormal)
+        {
+            WebGpuFrameBuffer? nativeTarget = Renderer.GetBoundEngineFrameBuffer();
+            if (nativeTarget is null || !nativeTarget.HasDepth || nativeTarget.SampleCount is not (1 or 4) ||
+                nativeTarget.ColorFormats.Length != 1 || nativeTarget.ColorFormats[0] != "rgba16float")
+                throw new NotSupportedException("WebGPU.NativeVertex.DepthNormalOutputUnsupported: the exact local-function replay requires one RGBA16F normal target with matching one or four depth samples.");
+            return;
+        }
         if (_litSurface is null) return;
         if (!_litSurface.TryRead(out StandardLitColorSurface surface, out string? reason))
             throw new NotSupportedException($"WebGPU.Material.SurfaceUnsupported: '{Data.Name}': {reason}");
         WebGpuFrameBuffer? target = Renderer.GetBoundEngineFrameBuffer();
         if (Data.EngineSemantic.IsColorCoverage())
         {
-            if (target is null || !target.HasDepth || target.SampleCount != 1)
-                throw new NotSupportedException("WebGPU.Material.CoverageOutputUnsupported: coverage surfaces require a single-sample depth attachment.");
+            if (target is null || !target.HasDepth || target.SampleCount is not (1 or 4))
+                throw new NotSupportedException("WebGPU.Material.CoverageOutputUnsupported: coverage surfaces require a one- or four-sample depth attachment.");
             ValidateCoverageRasterState(surface);
             Program.SetVector4("StandardLitCoverage", new Vector4(
                 surface.TransparencyMode == Rendering.Models.Materials.ETransparencyMode.Masked ? 1 : 0,
@@ -314,7 +353,8 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
             Program.SetVector4("StandardLitBaseColorOpacity", new Vector4(surface.BaseColor, surface.Opacity));
             return;
         }
-        if (target is null || target.ColorFormats.Length != 1 || target.ColorFormats[0] != "rgba16float")
+        if (target is null || !target.HasDepth || target.SampleCount is not (1 or 4) ||
+            target.ColorFormats.Length != 1 || target.ColorFormats[0] != "rgba16float")
             throw new NotSupportedException("WebGPU.Material.OutputUnsupported: standard lit surfaces require one linear RGBA16F color attachment and explicit presentation.");
         Program.SetVector4("StandardLitBaseColorOpacity", new Vector4(surface.BaseColor, surface.Opacity));
         if (_litAuxiliaryPass == EStandardLitColorAuxiliaryPass.DepthNormal)
@@ -327,14 +367,25 @@ public sealed partial class WebGpuMaterial(WebGpuRendererHost renderer, XRMateri
 
     public override void Destroy()
     {
+        DestroyAuthoredOrderingProgram();
         _apiProgram?.Dispose();
         _program?.Destroy();
         SetField(ref _apiProgram, null);
         SetField(ref _program, null);
         SetField(ref _litSurface, null);
         SetField(ref _litTextureSurface, null);
+        SetField(ref _texturedAlphaSurface, null);
+        SetField(ref _texturedAlphaSourceIdentity, null);
+        SetField(ref _unlitSurface, null);
+        SetField(ref _unlitSourceIdentity, null);
+        SetField(ref _unlitSemantic, default);
+        SetField(ref _authoredTexturedSurface, null);
+        SetField(ref _authoredTexturedSourceIdentity, null);
+        SetField(ref _authoredTexturedFlags, 0);
         SetField(ref _litTextureVertexProfile, null);
         SetField(ref _authoredShadowReceiverKey, null);
+        SetField(ref _nativeVertexReceiver, null);
+        SetField(ref _nativeVertexDepthNormal, false);
         SetField(ref _directionalShadowReceiver, false);
         SetField(ref _localShadowReceiver, false);
         SetField(ref _opaqueShadowDepth, false);

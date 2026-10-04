@@ -359,11 +359,19 @@ public sealed partial class WebGpuRenderProgram
             Artifact.ComputeEntryPoint is null ? 64 : 1024;
         if (_bindingSets.Count >= bindingCapacity)
             throw UnsupportedBinding(Artifact.Name, $"the program exceeds {bindingCapacity} retained resource binding sets; retire unused resources before publishing more");
+        WebGpuResourceRequest[] requests = new WebGpuResourceRequest[_layouts.Length];
+        bool pending = false;
+        for (int group = 0; group < requests.Length; group++)
+        {
+            requests[group] = Renderer.RequestEngineResource(this, 6, DescribeGroup(Artifact, group, layout: false));
+            pending |= requests[group].State is WebGpuResourceRequestState.Queued or WebGpuResourceRequestState.Submitted;
+        }
+        if (pending) throw new WebGpuResourcePreparationPendingException("WebGPU.Bindings.Pending: retained binding groups await physical creation.");
         int[] groups = new int[_layouts.Length];
         try
         {
             for (int group = 0; group < groups.Length; group++)
-                groups[group] = Renderer.CreateBindingGroup(DescribeGroup(Artifact, group, layout: false));
+                groups[group] = Renderer.RequireEngineResource(requests[group]);
             bindings = new WebGpuBindingSet(Renderer, this, _resourceHandles, _resourceSizes, _resourceOwners, groups,
                 _bindingCacheOwner, _bindingCacheIndex, _bindingCacheRevision);
             _bindingSets.Add(bindings);
@@ -371,7 +379,7 @@ public sealed partial class WebGpuRenderProgram
             SetField(ref _lastBindingSet, bindings, publishNotifications: false);
             return true;
         }
-        catch
+        catch (Exception error) when (error is not RenderResourcePreparationPendingException)
         {
             foreach (int group in groups)
                 if (group != 0) Renderer.RetireEngineResourceAfterFrame(group);

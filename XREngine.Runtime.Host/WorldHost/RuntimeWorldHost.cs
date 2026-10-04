@@ -224,7 +224,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.UpdateFrame += CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame += ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate += CoreWorld.FixedUpdate;
-        Engine.Time.Timer.WorldSwapBuffers += RenderWorld.GlobalSwapBuffers;
+        Engine.Time.Timer.WorldSwapBuffers += SwapWorldBuffers;
         Engine.Time.Timer.PreCollectVisible += RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible += RenderWorld.GlobalCollectVisible;
         _timeCallbacksLinked = true;
@@ -238,7 +238,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.UpdateFrame -= CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame -= ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate -= CoreWorld.FixedUpdate;
-        Engine.Time.Timer.WorldSwapBuffers -= RenderWorld.GlobalSwapBuffers;
+        Engine.Time.Timer.WorldSwapBuffers -= SwapWorldBuffers;
         Engine.Time.Timer.PreCollectVisible -= RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible -= RenderWorld.GlobalCollectVisible;
         _timeCallbacksLinked = false;
@@ -246,6 +246,14 @@ public sealed class RuntimeWorldHost : IDisposable
 
     private void ProcessDirtyTransforms()
         => CoreWorld.ProcessDirtyTransforms(Engine.EffectiveSettings.RecalcChildMatricesLoopType);
+
+    private void SwapWorldBuffers()
+    {
+        if (Engine.Time.Timer.IsCallerThreadLoop)
+            RenderWorld.GlobalSwapBuffers(Engine.Time.Timer.CallerThreadCollectionRenderFrameId);
+        else
+            RenderWorld.GlobalSwapBuffers();
+    }
 
     /// <summary>Prepares native resources before world assignment can activate components.</summary>
     private void EnsurePhysicsInitialized()

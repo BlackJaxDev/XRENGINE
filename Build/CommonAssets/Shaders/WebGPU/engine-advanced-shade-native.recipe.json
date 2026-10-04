@@ -19,9 +19,12 @@
   ],
   "defines": [
     "XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1",
-    "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=2",
+    "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=6",
+    "XR_ADV_UBER_BASE_SCHEMA_VERSION=1",
+    "XR_ADV_SCENE_DIRECTORY_TABLE_COUNT=36",
     "XR_ADV_AUTHORED_DECAL_SCHEMA_VERSION=1",
-    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1"
+    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1",
+    "XR_ADV_AUTHORED_BASIS_SCHEMA_VERSION=1"
   ],
   "includes": [],
   "specialization": {},
@@ -625,8 +628,8 @@
             "type": "u32"
           },
           {
-            "name": "reserved2_0",
-            "provider": "reserved2",
+            "name": "renderTimeBits_0",
+            "provider": "RenderTimeBits",
             "offset": 156,
             "bytes": 4,
             "type": "u32"

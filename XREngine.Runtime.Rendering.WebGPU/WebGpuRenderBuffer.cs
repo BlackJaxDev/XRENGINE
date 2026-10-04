@@ -6,6 +6,7 @@ namespace XREngine.Rendering.WebGPU;
 public sealed class WebGpuRenderBuffer : WebGpuObject<XRRenderBuffer>, IWebGpuProducedTexture
 {
     private int _handle;
+    private WebGpuResourceRequest? _allocationRequest;
     private int _view;
     private uint _width;
     private uint _height;
@@ -24,7 +25,7 @@ public sealed class WebGpuRenderBuffer : WebGpuObject<XRRenderBuffer>, IWebGpuPr
         data.AllocateRequested += AllocateCurrent;
     }
 
-    public override bool IsGenerated => _handle != 0;
+    public override bool IsGenerated => _handle != 0 && _allocationRequest is null;
     public override nint GetHandle() => _handle;
     public uint Width => Data.Width;
     public uint Height => Data.Height;
@@ -34,7 +35,9 @@ public sealed class WebGpuRenderBuffer : WebGpuObject<XRRenderBuffer>, IWebGpuPr
     private void AllocateCurrent()
     {
         // A shared logical resource may also have wrappers for other physical outputs.
-        if (ReferenceEquals(AbstractRenderer.Current, Renderer)) Generate();
+        if (ReferenceEquals(AbstractRenderer.Current, Renderer))
+            try { Generate(); }
+            catch (RenderResourcePreparationPendingException) { }
     }
 
     private void OnDataChanged(object? sender, IXRPropertyChangedEventArgs change)
@@ -58,23 +61,29 @@ public sealed class WebGpuRenderBuffer : WebGpuObject<XRRenderBuffer>, IWebGpuPr
         if (_handle != 0 && Renderer.IsRecordingEngineFrame && _lastRecordedFrame == Renderer.EngineFrameSequence)
             throw Unsupported("InFrameMutation", "storage cannot change after a dependent pass was recorded");
 
-        int handle = Renderer.CreateTexture(new BrowserTextureDescription(checked((int)Data.Width),
+        BrowserTextureDescription descriptor = new(checked((int)Data.Width),
             checked((int)Data.Height), format, BrowserTextureUsage.RenderAttachment,
-            SampleCount: checked((int)Data.MultisampleCount), Label: Data.Name ?? "Engine renderbuffer"));
+            SampleCount: checked((int)Data.MultisampleCount), Label: Data.Name ?? "Engine renderbuffer");
+        if (_allocationRequest is { } obsolete && !obsolete.Descriptor.Equals(descriptor))
+        { Renderer.CancelEngineResourceRequest(obsolete); _allocationRequest = null; }
+        _allocationRequest ??= Renderer.RequestEngineResource(this, 2, descriptor, reuse: false);
+        int handle = Renderer.RequireEngineResource(_allocationRequest, claim: false);
         int view;
         try
         {
-            view = Renderer.CreateTextureView(new BrowserTextureViewDescription(handle, 0, 1, "all",
+            view = Renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(handle, 0, 1, "all",
                 Data.Name ?? "Engine renderbuffer view"));
         }
-        catch
+        catch (Exception error) when (error is not RenderResourcePreparationPendingException)
         {
             Renderer.RetireEngineResourceAfterFrame(handle);
             throw;
         }
 
         // Publish a complete replacement only after its texture and view were accepted.
-        Destroy();
+        ReleaseAllocation();
+        Renderer.ClaimEngineResource(_allocationRequest);
+        _allocationRequest = null;
         SetField(ref _handle, handle);
         SetField(ref _view, view);
         SetField(ref _width, Data.Width);
@@ -117,6 +126,13 @@ public sealed class WebGpuRenderBuffer : WebGpuObject<XRRenderBuffer>, IWebGpuPr
         _lastProducedFrame == _lastCommittedProducedFrame && _productionTicket == _committedProductionTicket;
 
     public override void Destroy()
+    {
+        Renderer.CancelEngineResourceRequests(this);
+        _allocationRequest = null;
+        ReleaseAllocation();
+    }
+
+    private void ReleaseAllocation()
     {
         if (_handle == 0) return;
         Renderer.ReleaseEngineDrawDependencies(this);

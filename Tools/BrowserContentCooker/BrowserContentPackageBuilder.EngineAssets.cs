@@ -10,7 +10,7 @@ public static partial class BrowserContentPackageBuilder
     private static void BuildEngineAssets(JsonElement recipe, string recipeDirectory, string outputDirectory,
         CancellationToken cancellationToken)
     {
-        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "publishedMetadata", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts", "essentialRoots", "streamedRoots"]);
+        MembersOptional(recipe, ["schema", "format", "startupWorld", "assets"], ["startupSettings", "publishedMetadata", "defaultUiFont", "shaderArtifacts", "materialVariants", "pipelineArtifacts", "computeArtifacts", "essentialRoots", "streamedRoots", "shaderDelivery"]);
         Require(Integer(recipe.GetProperty("schema"), 1, 1) == 1, "Unsupported engine asset schema.");
         Require(recipe.GetProperty("format").GetString() == "xrengine-assets", "Unsupported engine asset format.");
         string startupWorld = EngineAssetPath(recipe.GetProperty("startupWorld"));
@@ -74,8 +74,6 @@ public static partial class BrowserContentPackageBuilder
         {
             HashSet<string> essential = EngineAssetClosure(essentialRoots, dependencies);
             essentialClosure = essential;
-            HashSet<string> covered = EngineAssetClosure(streamedRoots!, dependencies);
-            covered.UnionWith(essential);
             Require(essential.Contains(startupWorld)
                 && (startupSettings is null || essential.Contains(startupSettings))
                 && (publishedMetadata is null || essential.Contains(publishedMetadata))
@@ -85,7 +83,6 @@ public static partial class BrowserContentPackageBuilder
                 && byPath[path].GetProperty("encoding").GetString() == "cooked-binary"
                 && path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)),
                 "A streamed scene root must be a separate cooked asset outside the essential closure.");
-            Require(covered.SetEquals(byPath.Keys), "Engine delivery roots must cover every declared asset.");
         }
 
         Dictionary<string, byte[]> payloads = new(StringComparer.Ordinal);
@@ -127,7 +124,8 @@ public static partial class BrowserContentPackageBuilder
                 string descriptor = EngineAssetPath(shader.GetProperty("descriptor"));
                 string source = EngineAssetPath(shader.GetProperty("source"));
                 Require(byPath.ContainsKey(descriptor) && byPath.ContainsKey(source), "Shader artifact payload is absent from the catalog.");
-                Require(essentialClosure is null || essentialClosure.Contains(descriptor) && essentialClosure.Contains(source),
+                Require(recipe.TryGetProperty("shaderDelivery", out _) || essentialClosure is null
+                    || essentialClosure.Contains(descriptor) && essentialClosure.Contains(source),
                     "Shader descriptor and source assets must be essential.");
                 byte[] descriptorBytes = ReadBounded(SourcePath(recipeDirectory, byPath[descriptor].GetProperty("source").GetString()!), JsonLimit);
                 Require(Convert.ToHexStringLower(SHA256.HashData(descriptorBytes)) == identity, "Shader descriptor identity mismatch.");
@@ -135,6 +133,20 @@ public static partial class BrowserContentPackageBuilder
                 shaderDescriptors.Add(identity!, descriptorDocument.RootElement.Clone());
                 shaderArtifacts.Add(new { identity, descriptor, source });
             }
+        }
+        JsonElement? shaderDelivery = ValidateEngineShaderDelivery(recipe, essentialClosure, streamedRoots,
+            shaderDescriptors.Keys, byPath, dependencies);
+        if (essentialClosure is not null)
+        {
+            HashSet<string> covered = EngineAssetClosure(streamedRoots!, dependencies);
+            covered.UnionWith(essentialClosure);
+            if (shaderDelivery is not null && recipe.TryGetProperty("shaderArtifacts", out JsonElement deliveryShaders))
+                foreach (JsonElement shader in deliveryShaders.EnumerateArray())
+                {
+                    covered.Add(shader.GetProperty("descriptor").GetString()!);
+                    covered.Add(shader.GetProperty("source").GetString()!);
+                }
+            Require(covered.SetEquals(byPath.Keys), "Engine delivery roots must cover every declared asset.");
         }
         List<object> materialVariants = [];
         if (recipe.TryGetProperty("materialVariants", out JsonElement variantValues))
@@ -145,7 +157,7 @@ public static partial class BrowserContentPackageBuilder
             foreach (JsonElement variant in variantValues.EnumerateArray())
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
-                string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "OpaqueShadowDepth",
+                string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "AuthoredLitTextureAlpha", "AuthoredLitTextured", "OctahedralImpostor", "OpaqueShadowDepth",
                     "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "UICanvasSurface", "UberOutline", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
                     "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
                 int maximumSemanticVersion = semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" ? 2 : 1;
@@ -154,6 +166,13 @@ public static partial class BrowserContentPackageBuilder
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
+                if (vertexProfile == "static-position-normal-order-gate-v1")
+                    Require(semantic == "StandardLitColor" && semanticVersion == 2,
+                        "Authored order gates require the versioned lit-color coverage semantic.");
+                if (semantic == "OctahedralImpostor")
+                    Require(pass == "forward-impostor" && vertexProfile is "position-uv4-billboard-v1" or "position-uv4-billboard-order-gate-v1" &&
+                        outputProfile == "linear-hdr-rgba-v1",
+                        "Octahedral impostors require their exact camera-facing 26-view RGBA profile.");
                 if (semantic == "UberOutline")
                     Require(pass == "outline" && vertexProfile == "position-normal-uv4-color-v1" &&
                         outputProfile is "linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1",
@@ -163,8 +182,39 @@ public static partial class BrowserContentPackageBuilder
                         (pass == "opaque-forward" && outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||
                          pass == "depth-normal" && vertexProfile == "position-normal-tangent-uv-v1" && outputProfile == "normal-rgba16f-v1"),
                         "Lit-texture surfaces require their exact opaque color or mapped-normal profile.");
+                if (semantic == "AuthoredLitTextured")
+                {
+                    string prefix = pass switch
+                    {
+                        "forward-authored-textured" => "linear-hdr-local-shadows",
+                        "depth-normal" => "normal-rgba16f",
+                        "depth" => "depth-normal",
+                        "point-shadow-depth" => "radial-r16f",
+                        "spot-shadow-depth" => "projected-r16f",
+                        _ => string.Empty,
+                    };
+                    string expectedVertex = pass switch
+                    {
+                        "forward-authored-textured" => "position-normal-optional-tangent-uv-order-gate-v1",
+                        "depth-normal" => "position-normal-optional-tangent-uv-v1",
+                        _ => "position-normal-uv-v1",
+                    };
+                    Require(prefix.Length != 0 && vertexProfile == expectedVertex &&
+                        outputProfile.Length == prefix.Length + 6 && outputProfile.StartsWith(prefix + "-f", StringComparison.Ordinal) &&
+                        outputProfile.EndsWith("-v1", StringComparison.Ordinal) && outputProfile[^4] is '1' or '2' or '3' or '5' or '6' or '7',
+                        "Authored textured selectors require exact feature-specific normal/shadow or ordered-raster companions.");
+                }
+                if (semantic == "AuthoredLitTextureAlpha")
+                    Require(pass == "forward-textured-alpha" && vertexProfile == "position-normal-uv-order-gate-v1" &&
+                            outputProfile == "linear-hdr-local-shadows-v1" ||
+                        vertexProfile == "position-normal-uv-v1" &&
+                        (pass == "depth-normal" && outputProfile == "normal-rgba16f-v1" ||
+                         pass == "depth" && outputProfile == "depth-normal-v1" ||
+                         pass == "point-shadow-depth" && outputProfile == "radial-r16f-v1" ||
+                         pass == "spot-shadow-depth" && outputProfile == "projected-r16f-v1"),
+                        "Textured-alpha selectors require exact normal/shadow or ordered-raster companions.");
                 if (semantic == "StandardLitColor" && semanticVersion == 2)
-                    Require(pass == "forward-coverage" && vertexProfile == "static-position-normal-v1" &&
+                    Require(pass == "forward-coverage" && vertexProfile is "static-position-normal-v1" or "static-position-normal-order-gate-v1" &&
                             outputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1" ||
                         pass == "depth-normal" && vertexProfile == "static-position-normal-v1" && outputProfile == "normal-rgba16f-v1" ||
                         pass == "depth" && vertexProfile == "static-position-v1" && outputProfile == "depth-normal-v1" ||
@@ -231,6 +281,14 @@ public static partial class BrowserContentPackageBuilder
                     Require(entries.GetProperty("vertex").GetString() == "canvasSurfaceVertex" &&
                         entries.GetProperty("fragment").GetString() == "canvasSurfaceFragment",
                         "Canvas surfaces require their exact vertex and fragment entry points.");
+                }
+                if (semantic == "OctahedralImpostor")
+                {
+                    JsonElement entries = descriptor.GetProperty("entryPoints");
+                    Members(entries, "vertex", "fragment");
+                    Require(entries.GetProperty("vertex").GetString() == "impostorVertex" &&
+                        entries.GetProperty("fragment").GetString() == "impostorFragment",
+                        "Octahedral impostors require their exact vertex and fragment entries.");
                 }
                 if (semantic is "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or "SkyboxGradient" or "SkyboxEquirectangular" or
                     "SkyboxOctahedral" or "SkyboxCubemap" or "SkyboxDynamicProcedural")
@@ -369,6 +427,8 @@ public static partial class BrowserContentPackageBuilder
             manifestModel.Add("essentialRoots", essentialRoots);
             manifestModel.Add("streamedRoots", streamedRoots);
         }
+        if (shaderDelivery is { } delivery)
+            manifestModel.Add("shaderDelivery", delivery);
         manifestModel.Add("assets", cookedAssets);
         byte[] manifest = JsonSerializer.SerializeToUtf8Bytes(manifestModel, OutputOptions);
         Require(manifest.Length <= JsonLimit, "Engine asset manifest exceeds 1 MiB.");

@@ -13,6 +13,8 @@ public partial class XRTexture2DArray
         ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1);
 
+        RuntimeTextureSourceAccess.RequireHostFiles();
+
         using RuntimeImage source = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(filePath));
         if (source.Width % columns != 0 || source.Height % rows != 0)
             throw new InvalidDataException(

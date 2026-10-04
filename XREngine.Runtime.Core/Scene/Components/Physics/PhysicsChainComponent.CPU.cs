@@ -82,8 +82,20 @@ public partial class PhysicsChainComponent
 
     internal void AttachCpuBackend(PhysicsChainWorld world, PhysicsChainCpuBackend backend)
     {
+        if (!ReferenceEquals(_cpuBackendWorld, world))
+            DetachCpuBackend();
         _cpuBackendWorld = world;
         _cpuBackend = backend;
+    }
+
+    internal void DetachWorldRuntime(PhysicsChainWorld world)
+    {
+        // An old world's deferred removal must not detach a replacement owner.
+        if (_cpuBackendWorld is not null && !ReferenceEquals(_cpuBackendWorld, world))
+            return;
+        AbortWorldLateTick();
+        DetachCpuBackend();
+        SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
     }
 
     internal void DetachCpuBackend()

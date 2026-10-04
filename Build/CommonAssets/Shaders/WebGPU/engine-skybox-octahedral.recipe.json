@@ -19,14 +19,14 @@
     "maxVertexBufferArrayStride": 12,
     "maxBindGroups": 2,
     "maxBindingsPerBindGroup": 3,
-    "maxUniformBufferBindingSize": 128,
+    "maxUniformBufferBindingSize": 144,
     "maxDynamicUniformBuffersPerPipelineLayout": 2,
     "maxUniformBuffersPerShaderStage": 2,
     "maxSampledTexturesPerShaderStage": 1,
     "maxSamplersPerShaderStage": 1
   },
   "matrixLayout": "column-major",
-  "semanticSchemaIdentity": "xrengine.engine.skybox.v1",
+  "semanticSchemaIdentity": "xrengine.engine.skybox.v2",
   "coordinates": "xrengine.webgpu.coordinates.v1",
   "materialVariant": {
     "semantic": "SkyboxOctahedral",
@@ -62,7 +62,7 @@
         ],
         "owner": "Engine",
         "frequency": "View",
-        "bytes": 128,
+        "bytes": 144,
         "dynamic": true,
         "members": [
           {
@@ -78,6 +78,13 @@
             "offset": 64,
             "bytes": 64,
             "type": "mat4x4<f32>"
+          },
+          {
+            "name": "depthRange_0",
+            "provider": "CameraDepthRange",
+            "offset": 128,
+            "bytes": 16,
+            "type": "vec4<f32>"
           }
         ]
       },

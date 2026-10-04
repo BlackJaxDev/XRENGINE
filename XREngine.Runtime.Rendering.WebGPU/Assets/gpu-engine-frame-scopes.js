@@ -35,6 +35,23 @@ export class GpuEngineFrameScopes {
         return this.completedSequence;
     }
 
+    /** Retains validation and completion for the exact just-accepted offscreen producer. */
+    getAcceptedProducerGate(sequence) {
+        this.renderer._requireOwner();
+        if (!Number.isSafeInteger(sequence) || sequence <= 0 || this.disposed)
+            throw new Error('WebGPU.SceneCapture.InvalidProducer: a live accepted frame sequence is required.');
+        for (const receipt of this.receipts) {
+            if (!receipt.active || !receipt.closed || !receipt.submitted || receipt.context.sequence !== sequence)
+                continue;
+            if (!receipt.gate) {
+                receipt.gate = new Promise(receipt.captureExecutor);
+                this.stats.captureGatePromises++;
+            }
+            return receipt.gate;
+        }
+        throw new Error('WebGPU.SceneCapture.ProducerReceiptUnavailable: readback must retain its exact producer before yielding.');
+    }
+
     dispose() { this.disposed = true; }
 }
 
@@ -43,6 +60,7 @@ class FrameScopeReceipt {
         this.pool = pool;
         this.active = false;
         this.closed = true;
+        this.submitted = false;
         this.device = null;
         this.scopeCount = 0;
         this.remaining = 0;
@@ -70,6 +88,7 @@ class FrameScopeReceipt {
         const r = this.pool.renderer, stats = this.pool.stats;
         this.active = true;
         this.closed = false;
+        this.submitted = false;
         this.device = r.device;
         this.error = null;
         this.context.owner = r._owner;
@@ -98,6 +117,7 @@ class FrameScopeReceipt {
     close(submitted = false) {
         const gate = this.gate;
         if (this.closed) return gate;
+        this.submitted = submitted;
         submitted = submitted && this.pool.trackCompletion;
         this.closed = true;
         const scopes = this.scopeCount;

@@ -69,6 +69,7 @@ export function assertColorClear(format, components) {
     if (info?.sampleType !== 'uint' && info?.sampleType !== 'sint') return;
     const minimum = info.sampleType === 'uint' ? 0 : -0x80000000;
     const maximum = format === 'rgba16uint' ? 0xffff : info.sampleType === 'uint' ? 0xffffffff : 0x7fffffff;
-    if (components.some(value => !Number.isInteger(value) || value < minimum || value > maximum))
-        throw new RangeError('Integer attachment clears require exactly representable components in the format numeric range.');
+    for (let index = 0; index < components.length; index++)
+        if (!Number.isInteger(components[index]) || components[index] < minimum || components[index] > maximum)
+            throw new RangeError('Integer attachment clears require exactly representable components in the format numeric range.');
 }

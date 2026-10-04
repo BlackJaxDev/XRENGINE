@@ -15,6 +15,11 @@ public static class EngineLitShadowCompanionContract
     {
         key = default;
         reason = "Opaque shadow replay requires a canonical generated AuthoredLitV1 surface; recook the authored material.";
+        if (AdvancedNativeVertexMaterialSource.IsRequested(material, resolver))
+        {
+            reason = "The authored local-vertex function has no matching shadow receiver/caster raster wrapper; unchanged-geometry shadow replay is unsupported.";
+            return false;
+        }
         if (material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitV1 ||
             !EngineAuthoredLitNativeAdmission.TryRead(material, resolver, out _, out StandardLitTextureSurface texture,
                 out bool textured, out reason))
@@ -111,7 +116,7 @@ public static class EngineLitShadowCompanionContract
         sources = [];
         if (key.Target != ShaderCompileTarget.WebGPUWgsl) return false;
         EngineLitMaterialShaderSource directional = new("StandardLitColorDirectionalShadow.slang", "eb50a3041d0ebfc17f8ed75d3e15b3196926df32d5cf5d4bf0e81d040c9b07fe");
-        EngineLitMaterialShaderSource sampling = new("StandardLitTextureSampling.slang", "dfae127a0b03b8022d5fa269c62728e9de12bdf60a50eacce3584c9fec3fb24c");
+        EngineLitMaterialShaderSource sampling = new("StandardLitTextureSampling.slang", "54b4fb19055f6413f755295090ce615dab078cbe9891a91bd001ff88938f0d35");
         EngineLitMaterialShaderSource localSampling = new("LocalShadowSampling.slang", "1d8aa4707225ae90e3a156369c6ac11c5e313de88892f00736857505fc9b32fc");
         bool local = key.OutputProfile == "linear-hdr-local-shadows-v1";
         if (key.Pass == "opaque-forward" && (local || key.OutputProfile == "linear-hdr-directional-shadow-v1"))

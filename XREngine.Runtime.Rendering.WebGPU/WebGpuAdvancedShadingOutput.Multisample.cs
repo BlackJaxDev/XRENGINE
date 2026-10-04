@@ -11,11 +11,15 @@ internal sealed partial class WebGpuAdvancedShadingOutput
         WebGpuAdvancedVisibilityFrame visibility, WebGpuAdvancedShadingFrame frame, out string reason)
     {
         WebGpuRenderProgram native = Program(instance, frame.DepthComparisonBank ? "shade-native-depth-msaa" : "shade-native-msaa");
+        WebGpuRenderProgram? uberNative = frame.HasUberRaster ? UberProgram(instance, frame.DepthComparisonBank, true, false) : null;
+        WebGpuRenderProgram? uberExports = frame.HasUberRaster && request.RequiresMaterialSurfaceExports ? UberProgram(instance, frame.DepthComparisonBank, true, true) : null;
         WebGpuRenderProgram resolve = Program(instance, "shade-msaa-resolve");
         WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, frame.DepthComparisonBank ? "shade-surface-exports-depth-msaa" : "shade-surface-exports-msaa") : null;
         WebGpuRenderProgram? clearExports = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports-msaa") : null;
         bool ready = Prepare(native) & Prepare(resolve);
         if (exports is not null) ready &= Prepare(exports) & Prepare(clearExports!);
+        if (uberNative is not null) ready &= Prepare(uberNative);
+        if (uberExports is not null) ready &= Prepare(uberExports);
         if (!ready) return Pending(out reason);
         _padding.Generate();
         XRTexture2D identity = Texture(instance, AdvancedVisibilityResourceNames.IdentityMultisample, frame.Width, frame.Height, 4);
@@ -52,18 +56,30 @@ internal sealed partial class WebGpuAdvancedShadingOutput
                 clearExports.RecordCompute((frame.Width + 15) / 16, (frame.Height + 15) / 16, 1);
             }
             Span<uint> parameters = stackalloc uint[40];
+            // Each scratch overwrite follows every consumer of the prior sample.
+            // Ordinary cohorts shade all samples once; Uber cohorts run one exact
+            // fragment export and its consumers for each sample in submission order.
+            for (uint samplePass = 0; samplePass < (frame.HasUberRaster ? 5u : 1u); samplePass++)
+            {
+                if (samplePass != 0 && !_renderer.TryEnqueueAdvancedUberSample(in request, instance, visibility, samplePass - 1u, out reason)) return false;
             for (uint cohort = 0; cohort < frame.CohortCount; cohort++)
             {
-                WebGpuAdvancedShadingParameters.Write(parameters, in request, visibility, frame, cohort);
-                BindNative(native, visibility, frame, cohort, parameters, identity, metadata, depth, ao, multisample: true);
-                native.Data.BindImageTexture(0, samples, 0, true, 0, EImageAccess.WriteOnly, EImageFormat.RGBA32F);
-                native.Data.BindImageTexture(1, velocity, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.RGBA16F);
-                native.Data.BindImageTexture(2, diagnostics, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.R32UI);
-                _renderer.DispatchComputeIndirect(native.Data, frame.Arguments, (nuint)cohort * 16);
-                if (exports is null) continue;
-                BindNative(exports, visibility, frame, cohort, parameters, identity, metadata, depth, ao, multisample: true);
-                BindExports(exports, emission!, albedo!, normal!, rmse!);
-                _renderer.DispatchComputeIndirect(exports.Data, frame.Arguments, (nuint)cohort * 16);
+                bool isUber = frame.Cohorts[cohort]!.UberRaster;
+                if (isUber != (samplePass != 0)) continue;
+                WebGpuRenderProgram selectedNative = frame.Cohorts[cohort]!.UberRaster ? uberNative! : native;
+                WebGpuRenderProgram? selectedExports = frame.Cohorts[cohort]!.UberRaster ? uberExports : exports;
+                WebGpuAdvancedShadingParameters.Write(parameters, in request, visibility, frame, cohort, _renderer.RequireFrozenView().ElapsedTime);
+                if (isUber) parameters[7] |= (samplePass - 1u) << 24;
+                BindNative(selectedNative, visibility, frame, cohort, parameters, identity, metadata, depth, ao, multisample: true);
+                selectedNative.Data.BindImageTexture(0, samples, 0, true, 0, EImageAccess.WriteOnly, EImageFormat.RGBA32F);
+                selectedNative.Data.BindImageTexture(1, velocity, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.RGBA16F);
+                selectedNative.Data.BindImageTexture(2, diagnostics, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.R32UI);
+                _renderer.DispatchComputeIndirect(selectedNative.Data, frame.Arguments, (nuint)cohort * 16);
+                if (selectedExports is null) continue;
+                BindNative(selectedExports, visibility, frame, cohort, parameters, identity, metadata, depth, ao, multisample: true);
+                BindExports(selectedExports, emission!, albedo!, normal!, rmse!);
+                _renderer.DispatchComputeIndirect(selectedExports.Data, frame.Arguments, (nuint)cohort * 16);
+            }
             }
             // Every covered sample has exactly one cohort owner. Uncovered scratch
             // layers are never read, and only the final reduction quantizes color.
@@ -76,11 +92,13 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             resolve.Data.BindImageTexture(5, velocity, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.RGBA16F);
             resolve.Data.BindImageTexture(6, diagnostics, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.R32UI);
             resolve.RecordCompute((frame.Width + 15) / 16, (frame.Height + 15) / 16, 1);
+            if (frame.HasUberRaster) return _renderer.TryCompleteAdvancedUberConsumers(out reason);
             reason = string.Empty;
             return true;
         }
         finally
         {
+            uberNative?.ClearTransientComputeBindings(); uberExports?.ClearTransientComputeBindings();
             native.ClearTransientComputeBindings(); resolve.ClearTransientComputeBindings();
             exports?.ClearTransientComputeBindings(); clearExports?.ClearTransientComputeBindings();
         }

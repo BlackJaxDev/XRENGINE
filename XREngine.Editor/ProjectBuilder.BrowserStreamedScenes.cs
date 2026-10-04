@@ -13,7 +13,7 @@ internal static partial class ProjectBuilder
 {
     /// <summary>Cooks explicitly authored scene roots through the same asset graph as the startup world.</summary>
     private static (string[] Roots, bool IncludesDefaultFont, IReadOnlyList<BrowserUiFontCookRequest> Fonts,
-        IReadOnlyList<ShaderProgramArtifact> ShaderArtifacts)
+        IReadOnlyList<ShaderProgramArtifact> ShaderArtifacts, IReadOnlyDictionary<string, string[]> SceneShaderIdentities)
         CookBrowserStreamedScenes(XRProject project, XRWorld startupWorld, string assetRoot, string sourceDirectory,
             BrowserAssetDependencyCooker dependencyCooker, IShaderProgramArtifactResolver? resolver,
             HashSet<string> cookedFonts, CancellationToken cancellationToken, RenderPipelineResourceProfile outputProfile,
@@ -30,6 +30,7 @@ internal static partial class ProjectBuilder
         Dictionary<string, string[]> sceneTargets = new(StringComparer.Ordinal);
         Dictionary<string, BrowserUiFontCookRequest> selectedFonts = new(StringComparer.Ordinal);
         Dictionary<string, ShaderProgramArtifact> shaderArtifacts = new(StringComparer.Ordinal);
+        Dictionary<string, string[]> sceneShaderIdentities = new(StringComparer.Ordinal);
         bool requiresDefaultFont = false;
         while (pending.Count != 0)
         {
@@ -86,9 +87,11 @@ internal static partial class ProjectBuilder
             if (!authoredBindings.SequenceEqual(cookedBindings, StringComparer.Ordinal))
                 throw new InvalidDataException($"BrowserCook.StreamedSceneReferenceLost: '{identity}' changed its authored scene targets.");
             XRWorld auditWorld = new(identity, runtimeScene);
-            foreach (ShaderProgramArtifact artifact in BrowserWorldCapabilityAudit.Inspect(auditWorld, resolver,
+            IReadOnlyList<ShaderProgramArtifact> sceneShaders = BrowserWorldCapabilityAudit.Inspect(auditWorld, resolver,
                 cancellationToken, outputProfile, admittedScenePasses, admittedScenePasses,
-                capabilityReport, admittedPipelineRequirements, admittedPipelineRequirements, nativeAdmission))
+                capabilityReport, admittedPipelineRequirements, admittedPipelineRequirements, nativeAdmission);
+            sceneShaderIdentities.Add(identity, [.. sceneShaders.Select(static artifact => artifact.Identity)]);
+            foreach (ShaderProgramArtifact artifact in sceneShaders)
                 shaderArtifacts.TryAdd(artifact.Identity, artifact);
             using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
             using ObjectCacheOwnership authoredOwnership = authoredPublication.CompleteWithOwnership();
@@ -106,7 +109,7 @@ internal static partial class ProjectBuilder
 
         return ([.. roots.Order(StringComparer.Ordinal)], requiresDefaultFont,
             [.. selectedFonts.Values.OrderBy(static font => font.CatalogPath, StringComparer.Ordinal)],
-            [.. shaderArtifacts.Values.OrderBy(static artifact => artifact.Identity, StringComparer.Ordinal)]);
+            [.. shaderArtifacts.Values.OrderBy(static artifact => artifact.Identity, StringComparer.Ordinal)], sceneShaderIdentities);
 
         void ValidateStreamTargets(string path, int depth)
         {

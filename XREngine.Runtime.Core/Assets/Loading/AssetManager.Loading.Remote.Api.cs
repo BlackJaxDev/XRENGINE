@@ -75,7 +75,7 @@ public partial class AssetManager
 
     private void EnsureSynchronousRemoteAssetLoadSupported()
     {
-        if (OperatingSystem.IsBrowser() || UsesRuntimeAssetCatalog || _runtimeAssetSource is { SupportsSynchronousReads: false })
+        if (!SupportsSynchronousAssetWork || _jobManagerProvider().IsCallerThreadExecutor)
             throw new NotSupportedException("AssetSource.AsyncReadRequired: synchronous remote asset loading is unavailable on this host; load packaged assets asynchronously by catalog path.");
     }
 
@@ -96,6 +96,8 @@ public partial class AssetManager
 
         if (UsesRuntimeAssetCatalog)
             throw new NotSupportedException("AssetSource.CatalogPathRequired: an unloaded packaged asset must be requested by its catalog path; remote jobs and host metadata lookup are unavailable.");
+
+        EnsureHostFileAssetAccess();
 
         if (TryResolveAssetPathById(assetId, out string? localPath) && File.Exists(localPath))
             return await LoadAsync<T>(localPath, priority).ConfigureAwait(false);

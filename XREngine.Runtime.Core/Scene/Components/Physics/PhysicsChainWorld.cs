@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using XREngine.Execution;
 
 namespace XREngine.Components;
 
@@ -8,7 +10,7 @@ namespace XREngine.Components;
 /// remain authoring facades; the world contributes only one callback to each
 /// required engine tick phase regardless of chain count.
 /// </summary>
-public sealed partial class PhysicsChainWorld
+public sealed partial class PhysicsChainWorld : IDisposable
 {
     private enum CommandKind : byte
     {
@@ -38,9 +40,11 @@ public sealed partial class PhysicsChainWorld
         public PhysicsChainArenaHandle OutputArenaHandle;
     }
 
-    private sealed class BatchWorkItem
+    private sealed class BatchWorkItem(PhysicsChainWorld owner) : IDisposable
     {
+        private readonly PhysicsChainWorld _owner = owner;
         private readonly ManualResetEventSlim _completed = new(initialState: true);
+        private readonly Lock _completionGate = new();
         private List<PhysicsChainComponent>? _components;
         private PhysicsChainCpuBackend? _cpuBackend;
         private PhysicsChainArenaHandle[]? _cpuHandles;
@@ -67,7 +71,7 @@ public sealed partial class PhysicsChainWorld
             _startInclusive = startInclusive;
             _endExclusive = endExclusive;
             Fault = null;
-            _completed.Reset();
+            ResetCompletion();
         }
 
         public void ConfigureCpuBatch(
@@ -88,7 +92,7 @@ public sealed partial class PhysicsChainWorld
             _startInclusive = startInclusive;
             _endExclusive = endExclusive;
             Fault = null;
-            _completed.Reset();
+            ResetCompletion();
         }
 
         public void ConfigurePrepare(
@@ -110,11 +114,19 @@ public sealed partial class PhysicsChainWorld
             _startInclusive = startInclusive;
             _endExclusive = endExclusive;
             Fault = null;
-            _completed.Reset();
+            ResetCompletion();
+        }
+
+        private void ResetCompletion()
+        {
+            using (_completionGate.EnterScope())
+                _completed.Reset();
         }
 
         public void Run()
         {
+            PhysicsChainWorld? previousOwner = _executingWorkerWorld;
+            _executingWorkerWorld = _owner;
             try
             {
                 List<PhysicsChainComponent>? components = _components;
@@ -145,23 +157,52 @@ public sealed partial class PhysicsChainWorld
             }
             finally
             {
-                _completed.Set();
+                _executingWorkerWorld = previousOwner;
+                using (_completionGate.EnterScope())
+                    _completed.Set();
             }
         }
 
         public void Wait()
             => _completed.Wait();
+
+        public void Dispose()
+        {
+            // Wait can observe the signal before Set itself returns. Serialize
+            // event destruction with that final worker operation as well.
+            using (_completionGate.EnterScope())
+                _completed.Dispose();
+            _components = null;
+            _cpuBackend = null;
+            _cpuHandles = null;
+            _cpuComponents = null;
+            _prepareComponents = null;
+            _prepareEligible = null;
+            _prepareResults = null;
+            _prepareFaults = null;
+            Fault = null;
+        }
     }
 
     private static readonly Lock RegistryLock = new();
-    private static readonly Dictionary<IRuntimeWorldContext, PhysicsChainWorld> Worlds =
-        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private static readonly ConditionalWeakTable<IRuntimeWorldContext, PhysicsChainWorld> Worlds = new();
+    private static readonly ConditionalWeakTable<IRuntimeWorldContext, object> ReleasedWorlds = new();
+    private static readonly object ReleasedWorld = new();
+    [ThreadStatic]
+    private static PhysicsChainWorld? _executingWorkerWorld;
 
     // Fixed updates run on their own timer thread and can overlap normal/late updates.
     // All three phases touch the same slot registries and component simulation state, so
     // serialize them at the world boundary instead of allowing concurrent collection access.
     private readonly Lock _tickGate = new();
-    private readonly IRuntimeWorldContext _world;
+    private IRuntimeWorldContext? _world;
+    private readonly Lock _commandGate = new();
+    private int _disposeRequested;
+    private bool _disposed;
+    private int _tickDepth;
+    private bool _attachingCallbacks;
+    private volatile bool _ownerDisposalPending;
+    private volatile bool _deferredOwnerDisposal;
     private readonly ConcurrentQueue<StructuralCommand> _commands = [];
     private readonly ConcurrentDictionary<PhysicsChainComponent, long> _latestCommandVersion =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -185,9 +226,8 @@ public sealed partial class PhysicsChainWorld
     private PhysicsChainWorld(IRuntimeWorldContext world)
     {
         _world = world;
-        world.RegisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Animation, FixedTick);
-        world.RegisterTick(ETickGroup.Normal, (int)ETickOrder.Animation, UpdateTick);
-        world.RegisterTick(ETickGroup.Late, (int)ETickOrder.Animation, LateTick);
+        if (world is RuntimeWorld runtimeWorld)
+            runtimeWorld.Disposing += OnWorldDisposing;
     }
 
     /// <summary>
@@ -233,15 +273,29 @@ public sealed partial class PhysicsChainWorld
             return;
 
         PhysicsChainWorld scheduler;
+        bool created = false;
         using (RegistryLock.EnterScope())
         {
+            if (ReleasedWorlds.TryGetValue(world, out _) || world is RuntimeWorld { IsDisposing: true })
+                return;
             if (!Worlds.TryGetValue(world, out scheduler!))
             {
                 scheduler = new PhysicsChainWorld(world);
                 Worlds.Add(world, scheduler);
+                created = true;
             }
         }
 
+        if (created)
+            scheduler.AttachCallbacks();
+
+        // Disposal can have started before the constructor subscribed to the event.
+        // Never enter the tick gate while holding the registry lock.
+        if (world is RuntimeWorld { IsDisposing: true })
+        {
+            scheduler.Dispose();
+            return;
+        }
         scheduler.EnqueueStructuralCommand(CommandKind.Add, component);
     }
 
@@ -280,7 +334,13 @@ public sealed partial class PhysicsChainWorld
     private void FixedTick()
     {
         using (_tickGate.EnterScope())
-            FixedTickExclusive();
+        {
+            if (IsDisposed)
+                return;
+            ++_tickDepth;
+            try { FixedTickExclusive(); }
+            finally { CompleteTick(); }
+        }
     }
 
     private void FixedTickExclusive()
@@ -297,7 +357,13 @@ public sealed partial class PhysicsChainWorld
     private void UpdateTick()
     {
         using (_tickGate.EnterScope())
-            UpdateTickExclusive();
+        {
+            if (IsDisposed)
+                return;
+            ++_tickDepth;
+            try { UpdateTickExclusive(); }
+            finally { CompleteTick(); }
+        }
     }
 
     private void UpdateTickExclusive()
@@ -314,7 +380,13 @@ public sealed partial class PhysicsChainWorld
     private void LateTick()
     {
         using (_tickGate.EnterScope())
-            LateTickExclusive();
+        {
+            if (IsDisposed)
+                return;
+            ++_tickDepth;
+            try { LateTickExclusive(); }
+            finally { CompleteTick(); }
+        }
     }
 
     private void LateTickExclusive()
@@ -438,9 +510,14 @@ public sealed partial class PhysicsChainWorld
 
     private void EnqueueStructuralCommand(CommandKind kind, PhysicsChainComponent component)
     {
-        long version = Interlocked.Increment(ref _nextCommandVersion);
-        _latestCommandVersion.AddOrUpdate(component, version, (_, current) => Math.Max(current, version));
-        _commands.Enqueue(new StructuralCommand(kind, component, version));
+        using (_commandGate.EnterScope())
+        {
+            if (IsDisposed)
+                return;
+            long version = Interlocked.Increment(ref _nextCommandVersion);
+            _latestCommandVersion.AddOrUpdate(component, version, (_, current) => Math.Max(current, version));
+            _commands.Enqueue(new StructuralCommand(kind, component, version));
+        }
     }
 
     private void DrainStructuralCommands()
@@ -472,8 +549,7 @@ public sealed partial class PhysicsChainWorld
             || !ReferenceEquals(component.World, _world)
             || !component.IsActiveInHierarchy)
         {
-            component.DetachCpuBackend();
-            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+            component.DetachWorldRuntime(this);
             return;
         }
 
@@ -535,7 +611,7 @@ public sealed partial class PhysicsChainWorld
     {
         if (!_slotByComponent.Remove(component, out int slotIndex))
         {
-            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+            component.DetachWorldRuntime(this);
             return;
         }
 
@@ -558,8 +634,7 @@ public sealed partial class PhysicsChainWorld
         slot.Generation = NextGeneration(slot.Generation);
         _slots[slotIndex] = slot;
         _freeSlots.Push(slotIndex);
-        component.DetachCpuBackend();
-        component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+        component.DetachWorldRuntime(this);
     }
 
     private static uint NextGeneration(uint generation)
@@ -588,7 +663,7 @@ public sealed partial class PhysicsChainWorld
     {
         const int minimumComponentsPerSlice = 32;
         int processorCount = Math.Max(Environment.ProcessorCount, 1);
-        int sliceCount = JobManager.IsJobWorkerThread
+        int sliceCount = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread || JobManager.IsJobWorkerThread
             ? 1
             : Math.Min(processorCount, Math.Max(1, (count + minimumComponentsPerSlice - 1) / minimumComponentsPerSlice));
         if (sliceCount <= 1)
@@ -664,7 +739,7 @@ public sealed partial class PhysicsChainWorld
     {
         int workCount = components.Count;
         int sliceCount = Math.Min(workCount, Math.Max(Environment.ProcessorCount, 1));
-        if (sliceCount <= 1 || JobManager.IsJobWorkerThread)
+        if (sliceCount <= 1 || OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread || JobManager.IsJobWorkerThread)
         {
             RunPreparedRange(components, 0, workCount);
             return;
@@ -717,7 +792,7 @@ public sealed partial class PhysicsChainWorld
         int previousLength = _parallelWorkItems.Length;
         Array.Resize(ref _parallelWorkItems, requiredWorkItems);
         for (int i = previousLength; i < requiredWorkItems; ++i)
-            _parallelWorkItems[i] = new BatchWorkItem();
+            _parallelWorkItems[i] = new BatchWorkItem(this);
     }
 
     private void BuildWeightedRanges(List<PhysicsChainComponent> components, int sliceCount)
@@ -771,7 +846,7 @@ public sealed partial class PhysicsChainWorld
 
         const int minimumHandlesPerSlice = 32;
         int processorCount = Math.Max(Environment.ProcessorCount, 1);
-        int sliceCount = JobManager.IsJobWorkerThread
+        int sliceCount = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread || JobManager.IsJobWorkerThread
             ? 1
             : Math.Min(processorCount, Math.Max(1, (count + minimumHandlesPerSlice - 1) / minimumHandlesPerSlice));
         if (sliceCount <= 1)

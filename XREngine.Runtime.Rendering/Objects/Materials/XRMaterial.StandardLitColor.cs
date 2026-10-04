@@ -16,7 +16,15 @@ public partial class XRMaterial
     internal XRMaterial GetStandardLitSpotShadowVariant()
     {
         if (_standardLitSpotShadowVariant is not null) return _standardLitSpotShadowVariant;
-        XRMaterial variant = Rendering.Shaders.StandardLitColorVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth)
+        XRMaterial variant = (EngineSemantic == EngineMaterialSemanticIdentity.UberBaseV1
+            ? Rendering.Shaders.UberBaseVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth)
+            : EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1
+            ? Rendering.Shaders.AuthoredTexturedVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth)
+            : EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1
+            ? Rendering.Shaders.TexturedAlphaVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth)
+            : EngineSemantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4
+            ? Rendering.Shaders.UnlitVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth)
+            : Rendering.Shaders.StandardLitColorVariantFactory.Create(this, EStandardLitColorAuxiliaryPass.SpotShadowDepth))
             ?? throw new NotSupportedException("StandardLitColor.SpotShadowUnsupported: an exact V2 coverage surface is required.");
         SetField(ref _standardLitSpotShadowVariant, variant, publishNotifications: false);
         return variant;

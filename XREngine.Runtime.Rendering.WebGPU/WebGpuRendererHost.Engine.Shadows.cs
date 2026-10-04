@@ -178,14 +178,15 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
         else
         {
             ValidateDirectionalShadowLight(selected);
-            texture = selected.PrimaryShadowReceiverTexture as XRTexture2D
+            SceneCaptureShadowSnapshot? captured = GetCapturedShadow(selected);
+            texture = (captured?.Texture ?? selected.PrimaryShadowReceiverTexture) as XRTexture2D
                 ?? throw ShadowUnsupported($"light '{selected.Name}' has no exact 2D depth receiver texture");
             WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(texture, generateNow: true)!;
             // A required map is never substituted with the disabled-binding default.
             // An unready nested shadow viewport causes the complete frame to defer.
-            if (!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(selected, texture))
+            if (captured is null && !api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(selected, texture))
                 MarkEngineDrawPending();
-            program.SetMatrix("DirectionalShadowViewProjection", selected.ShadowCamera!.ViewProjectionMatrix);
+            program.SetMatrix("DirectionalShadowViewProjection", captured?.ViewProjection ?? selected.ShadowCamera!.ViewProjectionMatrix);
             program.SetVector4("DirectionalShadowControl", new Vector4(1, selectedIndex, 0, 0));
             program.SetVector4("DirectionalShadowBiasProjection", selected.ShadowBiasProjectionParameters);
             program.SetVector4("DirectionalShadowBiasParams", selected.ShadowBiasParameters);
@@ -224,7 +225,7 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
             {
                 WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(_defaultDirectionalShadow, generateNow: true)!;
                 BrowserFrameBufferPlan plan = new([], new BrowserDepthStencilAttachmentPlan(api.GetRenderView(0, -1), depthClearValue: 1));
-                SetField(ref _defaultDirectionalShadowClear, PrepareCommands(
+                SetField(ref _defaultDirectionalShadowClear, PrepareEngineCommands(this,
                     "{\"label\":\"Disabled shadow depth initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}"));
             }
             RecordEngineCommands(_defaultDirectionalShadowClear, []);

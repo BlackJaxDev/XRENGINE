@@ -142,7 +142,9 @@ public sealed class RenderProfileSessionManager
             lock (_sync)
             {
                 Transition(RenderProfileState.Created, RenderProfileState.Preparing);
-                _preparationTask = Task.Run(PrepareAsync);
+                _preparationTask = OperatingSystem.IsBrowser()
+                    ? PrepareAsync()
+                    : Task.Run(PrepareAsync);
             }
         }
 
@@ -196,6 +198,9 @@ public sealed class RenderProfileSessionManager
 
         private void ArmCore(long? requestedFrameId)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException(
+                    "Render-profile capture requires a dedicated desktop capture thread; browser frame profiling needs a caller-thread capture implementation.");
             lock (_sync)
             {
                 if (_state != RenderProfileState.Created)

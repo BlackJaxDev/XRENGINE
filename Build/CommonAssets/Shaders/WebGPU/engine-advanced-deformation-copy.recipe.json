@@ -27,11 +27,11 @@
   "semanticSchemaIdentity": "xrengine.engine.compute.v1",
   "requiredLimits": {
     "maxBindGroups": 1,
-    "maxBindingsPerBindGroup": 4,
+    "maxBindingsPerBindGroup": 6,
     "maxUniformBufferBindingSize": 16,
     "maxDynamicUniformBuffersPerPipelineLayout": 1,
     "maxUniformBuffersPerShaderStage": 1,
-    "maxStorageBuffersPerShaderStage": 3,
+    "maxStorageBuffersPerShaderStage": 5,
     "maxStorageBufferBindingSize": 4,
     "maxComputeWorkgroupSizeX": 256,
     "maxComputeWorkgroupSizeY": 1,
@@ -90,10 +90,42 @@
         "members": []
       },
       {
+        "name": "CurrentAuthoredBasisV1",
+        "physicalName": "currentBasis",
+        "group": 0,
+        "binding": 3,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "PreviousAuthoredBasisV1",
+        "physicalName": "previousBasis",
+        "group": 0,
+        "binding": 4,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
         "name": "Parameters",
         "physicalName": "parameters",
         "group": 0,
-        "binding": 3,
+        "binding": 5,
         "kind": "uniform",
         "visibility": [
           "compute"

@@ -55,6 +55,7 @@ public sealed partial class WebGpuRendererHost
 
     private void DestroyAmbientOcclusionDefaults()
     {
+        DestroyUberEnvironmentDefaults();
         _disabledAmbientOcclusionOwnership?.Dispose();
         SetField(ref _disabledAmbientOcclusionOwnership, null);
         SetField(ref _disabledAmbientOcclusion, null);

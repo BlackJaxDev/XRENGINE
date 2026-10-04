@@ -26,7 +26,7 @@
     "maxSamplersPerShaderStage": 1
   },
   "matrixLayout": "column-major",
-  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "semanticSchemaIdentity": "xrengine.engine.depth-of-field.v2",
   "coordinates": "xrengine.webgpu.coordinates.v1",
   "layout": {
     "vertexBuffers": [
@@ -177,6 +177,13 @@
             "offset": 72,
             "bytes": 4,
             "type": "f32"
+          },
+          {
+            "name": "DepthMode_0",
+            "provider": "DepthMode",
+            "offset": 76,
+            "bytes": 4,
+            "type": "i32"
           }
         ]
       },

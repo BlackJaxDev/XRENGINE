@@ -261,6 +261,7 @@ namespace XREngine
         /// <returns>The created XRProject instance.</returns>
         public static XRProject CreateNew(string projectDirectoryPath, string projectName)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project creation");
             EnsureProjectDirectory(projectDirectoryPath);
 
             // Create the project file
@@ -293,11 +294,13 @@ namespace XREngine
         /// <returns>The loaded XRProject, or null if loading failed.</returns>
         public static XRProject? Load(string projectFilePath)
         {
-            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            if (string.IsNullOrWhiteSpace(projectFilePath))
                 return null;
 
-            var project = AssetSerializationServices.Current.LoadImmediate(projectFilePath, typeof(XRProject)) as XRProject;
-            project?.EnsureStructure();
+            IAssetSerializationServices services = AssetSerializationServices.Current;
+            XRProject? project = services.LoadImmediate(projectFilePath, typeof(XRProject)) as XRProject;
+            if (project is not null && services.SupportsHostProjectDirectories && SupportsDesktopProjectStructure())
+                project.EnsureStructure();
             return project;
         }
 
@@ -306,7 +309,12 @@ namespace XREngine
         /// </summary>
         public static XRProject? Load3rdPartyStatic(string projectFilePath)
         {
-            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            if (string.IsNullOrWhiteSpace(projectFilePath))
+                return null;
+
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Third-party project descriptor import");
+            if (!read.Exists(projectFilePath))
                 return null;
 
             XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(File.ReadAllText(projectFilePath));
@@ -322,7 +330,8 @@ namespace XREngine
         {
             ArgumentNullException.ThrowIfNull(assets);
             XRProject? project = assets.LoadImmediate<XRProject>(projectFilePath);
-            project?.EnsureStructure();
+            if (project is not null && assets.SupportsSynchronousAssetWork && SupportsDesktopProjectStructure())
+                project.EnsureStructure();
             return project;
         }
 
@@ -337,8 +346,14 @@ namespace XREngine
             EnsureProjectDirectory(ProjectDirectory);
         }
 
+        private static bool SupportsDesktopProjectStructure()
+            => !OperatingSystem.IsBrowser()
+                && !RuntimeAssetReadServices.IsCallerThread
+                && RuntimeAssetReadServices.Source?.SupportsHostFileAccess != false;
+
         private static void EnsureProjectDirectory(string projectDirectoryPath)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project directory creation");
             Directory.CreateDirectory(projectDirectoryPath);
 
             foreach (string folder in RequiredDirectoryNames)
@@ -387,6 +402,7 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(FilePath))
                 return;
 
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project descriptor save");
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
             string yaml = AssetManager.Serializer.Serialize(this);
             File.WriteAllText(FilePath, yaml);

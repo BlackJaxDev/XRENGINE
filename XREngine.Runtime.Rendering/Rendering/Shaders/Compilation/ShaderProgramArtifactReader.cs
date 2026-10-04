@@ -35,12 +35,18 @@ public static class ShaderProgramArtifactReader
         string[] keys = ["schemaVersion", "name", "pass", "sourceLanguage", "target", "entryPoints", "defines", "includes",
             "specialization", "requiredFeatures", "requiredLimits", "matrixLayout", "semanticSchemaIdentity", "layout", "pipeline",
             "coordinates", "compilerIdentity", "source", "sourceMap", "dependencies"];
+        if (descriptor.TryGetProperty("authoredTextureFlags", out _)) keys = [.. keys, "authoredTextureFlags"];
         if (descriptor.TryGetProperty("materialVariant", out _)) keys = [.. keys, "materialVariant"];
         if (descriptor.TryGetProperty("workgroupSize", out _)) keys = [.. keys, "workgroupSize"];
+        if (descriptor.TryGetProperty("nativeVertexCompanion", out _)) keys = [.. keys, "nativeVertexCompanion"];
         ExactKeys(descriptor, keys);
         if (descriptor.TryGetProperty("materialVariant", out JsonElement variant))
             _ = ReadMaterialVariantKey(variant, Text(descriptor, "pass"), ShaderCompileTarget.WebGPUWgsl);
         string language = Text(descriptor, "sourceLanguage"), compiler = Text(descriptor, "compilerIdentity");
+        if (descriptor.TryGetProperty("authoredTextureFlags", out JsonElement textureFlags))
+            Require(language == "MaterialRecipe" && Text(descriptor, "semanticSchemaIdentity") == Generation.EngineAuthoredTexturedShaderGenerator.Schema &&
+                !descriptor.TryGetProperty("materialVariant", out _) && textureFlags.TryGetInt32(out int flags) &&
+                Generation.EngineAuthoredTexturedShaderGenerator.ValidTextureFlags(flags), "authored texture flags require the exact authored-textured material recipe");
         Require(language is "Slang" or "WGSL" or "MaterialRecipe", "engine artifacts require Slang, WGSL, or an authored material source");
         Require(language switch
         {
@@ -142,6 +148,16 @@ public static class ShaderProgramArtifactReader
         if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
             Require(vertex is not null && fragment is not null && compute is null,
                 "lit-texture variants require vertex and fragment stages");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 ||
+            materialVariant?.Semantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+            Require(vertex is not null && fragment is not null && compute is null,
+                "textured-alpha companions require vertex and fragment stages, including every caster");
+        if (materialVariant?.Semantic.IsUnlit() == true)
+            Require(vertex == "unlitVertex" && fragment is not null && compute is null,
+                "ordinary unlit companions require the canonical vertex and fragment stages");
+        if (materialVariant?.Semantic == EngineMaterialSemanticIdentity.OctahedralImpostorV1)
+            Require(vertex == "impostorVertex" && fragment == "impostorFragment" && compute is null,
+                "octahedral impostors require their exact vertex and fragment entry points");
         if (materialVariant?.Semantic.IsSkybox() == true)
             Require(vertex == "skyVertex" && fragment == "skyFragment" && compute is null,
                 "skybox variants require their exact vertex and fragment entry points");
@@ -173,7 +189,17 @@ public static class ShaderProgramArtifactReader
                 string format = Text(attribute, "format"), semantic = Text(attribute, "semantic");
                 int bytes = VertexFormatBytes(format);
                 Require(locations.Add(location) && offset % 4 == 0 && offset + bytes <= stride, "overlapping vertex location or attribute outside its stride");
-                Require(semantic is "position" or "normal" or "tangent" or "uv0" or "uv1" or "uv2" or "uv3" or "color0", "unsupported engine vertex semantic '" + semantic + "'");
+                Require(semantic is "position" or "normal" or "tangent" or "tangent-or-zero" or "tangent-presence" or "uv0" or "uv1" or "uv2" or "uv3" or "color0" or
+                    "uv0-or-zero" or "uv1-or-zero" or "uv2-or-zero" or "uv3-or-zero" or "color0-or-default", "unsupported engine vertex semantic '" + semantic + "'");
+                Require(semantic != "tangent-or-zero" || format == "float32x4" &&
+                    schema is Generation.EngineAuthoredTexturedShaderGenerator.Schema or Generation.EngineAuthoredTexturedShaderGenerator.OrderGateSchema or Generation.EngineUberBaseShaderContract.Schema or Generation.EngineUberBaseShaderContract.OrderGateSchema,
+                    "optional tangent sentinels require the exact authored-textured float4 vertex contract");
+                Require(semantic is not ("uv0-or-zero" or "uv1-or-zero" or "uv2-or-zero" or "uv3-or-zero" or "color0-or-default") ||
+                    schema is (Generation.EngineUberBaseShaderContract.Schema or Generation.EngineUberBaseShaderContract.OrderGateSchema) && format == (semantic == "color0-or-default" ? "float32x4" : "float32x2"),
+                    "canonical optional UV/color defaults require the exact Uber base vertex contract");
+                Require(semantic != "tangent-presence" || format == "float32" &&
+                    schema is Generation.EngineAuthoredTexturedShaderGenerator.Schema or Generation.EngineAuthoredTexturedShaderGenerator.OrderGateSchema,
+                    "tangent presence requires the exact authored-textured scalar vertex contract");
                 foreach (ShaderVertexAttribute previous in attributes)
                     Require(offset + bytes <= previous.Offset || offset >= previous.Offset + VertexFormatBytes(previous.Format), "vertex attributes overlap within a buffer");
                 attributes.Add(new ShaderVertexAttribute(location, offset, format, semantic));
@@ -385,7 +411,33 @@ public static class ShaderProgramArtifactReader
         Require(RelativePath(sourcePath), "source path must be relative and normalized");
         return new ShaderProgramArtifact(identity, name, pass, sourcePath, artifact, schema, CoordinateConvention, vertex, fragment, compute,
             buffers.OrderBy(buffer => buffer.Slot).ToImmutableArray(), resources.ToImmutable(), limits.ToImmutable())
-            { ComputeWorkgroupSize = workgroupSize, SourceLanguage = Text(descriptor, "sourceLanguage") };
+            { ComputeWorkgroupSize = workgroupSize, SourceLanguage = Text(descriptor, "sourceLanguage"),
+                NativeVertexCompanion = ReadNativeVertexCompanion(descriptor) };
+    }
+
+    private static ShaderNativeVertexCompanion? ReadNativeVertexCompanion(JsonElement descriptor)
+    {
+        if (!descriptor.TryGetProperty("nativeVertexCompanion", out JsonElement native)) return null;
+        string[] keys = ["profile", "functionSource", "functionSha256"];
+        foreach (string optional in new[] { "computeIdentity", "depthNormalIdentity", "directionalShadowIdentity", "pointShadowIdentity",
+            "spotShadowIdentity", "directionalReceiverIdentity", "localReceiverIdentity" })
+            if (native.TryGetProperty(optional, out _)) keys = [.. keys, optional];
+        ExactKeys(native, keys);
+        string source = Text(native, "functionSource"), hash = Text(native, "functionSha256");
+        Require(source.Length is > 0 and <= 16384 && !source.Contains('\0') && !source.Contains('\r'), "invalid native vertex function source");
+        Require(Regex.IsMatch(hash, "^[0-9a-f]{64}$", RegexOptions.CultureInvariant) &&
+            Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source))) == hash,
+            "native vertex function hash does not match its source");
+        string? Identity(string key)
+        {
+            if (!native.TryGetProperty(key, out _)) return null;
+            string value = Text(native, key);
+            Require(Regex.IsMatch(value, "^[0-9a-f]{64}$", RegexOptions.CultureInvariant), "invalid native vertex companion identity");
+            return value;
+        }
+        return new(Text(native, "profile"), source, hash, Identity("computeIdentity"), Identity("depthNormalIdentity"),
+            Identity("directionalShadowIdentity"), Identity("pointShadowIdentity"), Identity("spotShadowIdentity"),
+            Identity("directionalReceiverIdentity"), Identity("localReceiverIdentity"));
     }
 
     private static void ValidateCanvasSurfaceBindings(ImmutableArray<ShaderStageResourceLayout>.Builder resources)
@@ -475,10 +527,10 @@ public static class ShaderProgramArtifactReader
     {
         string semanticName = Text(value, "semantic");
         Require(Enum.TryParse(semanticName, ignoreCase: false, out EngineMaterialSemantic semantic) &&
-            semantic is EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
+            semantic is EngineMaterialSemantic.Unlit or EngineMaterialSemantic.StandardLitColor or EngineMaterialSemantic.StandardLitTexture or EngineMaterialSemantic.AuthoredLitTextureAlpha or EngineMaterialSemantic.AuthoredLitTextured or EngineMaterialSemantic.OpaqueShadowDepth or EngineMaterialSemantic.OpaquePointShadowDepth or EngineMaterialSemantic.OpaqueSpotShadowDepth or
                 EngineMaterialSemantic.DebugPoint or EngineMaterialSemantic.DebugLine or EngineMaterialSemantic.DebugTriangle or
                 EngineMaterialSemantic.UIQuadBatched or EngineMaterialSemantic.UIQuadBatchedTexture or EngineMaterialSemantic.UITextBatchedBitmap or
-                EngineMaterialSemantic.UICanvasSurface or EngineMaterialSemantic.UberOutline or
+                EngineMaterialSemantic.UICanvasSurface or EngineMaterialSemantic.UberOutline or EngineMaterialSemantic.OctahedralImpostor or
                 EngineMaterialSemantic.SkyboxGradient or EngineMaterialSemantic.SkyboxEquirectangular or
                 EngineMaterialSemantic.SkyboxOctahedral or EngineMaterialSemantic.SkyboxCubemap or
                 EngineMaterialSemantic.SkyboxDynamicProcedural,

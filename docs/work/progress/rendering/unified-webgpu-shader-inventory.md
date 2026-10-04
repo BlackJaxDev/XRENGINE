@@ -3,6 +3,17 @@
 **Date:** 2026-10-01. **Baseline:** `11ef1f64663e631f969b36921eb5a02affabf9e5`.
 **Status:** source inventory and implementation guidance, not shader or rendering acceptance.
 
+**Scope update, 2026-10-04:** this document preserves the initial source census and
+its then-proposed classifications. Current implementation follows the owner's
+[modular pipeline scope](../../design/platform/modular-browser-render-pipelines-2026-10-02.md):
+Default, Advanced and authored custom pipelines, with CPU-direct, GPU-indirect and
+compute/indirect meshlet submission where the actual WebGPU operations qualify.
+The initial CPU-only recommendation and initial Advanced/meshlet exclusions below
+are historical. Concrete capability diagnostics remain required. Work proceeds in
+coherent implementation groups with narrow compile/cook checks and end-to-end
+browser acceptance at milestones; current coverage and evidence live in the
+[unified runtime checklist](../../todo/platform/unified-desktop-browser-runtime-todo.md).
+
 Related: [unified runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md),
 [pipeline invariants](../../../architecture/rendering/default-render-pipeline-notes.md),
 [mesh submission contracts](../../../architecture/rendering/mesh-submission-strategies.md),
@@ -309,5 +320,6 @@ They do not establish lit-material, texture, framebuffer, skinning, complete
 `DefaultRenderPipeline`, screenshot, mobile, or desktop-preservation acceptance.
 Unsupported resource types and operations still fail with named reasons. The
 initial clear path and depth diagnostic pass are validation surfaces, not a
-complete web-tier fallback. The shader group gate remains in force before later
-production pass groups are admitted.
+complete web-tier fallback. This checkpoint used a per-group rendering gate;
+the later owner-approved implementation and milestone-acceptance sequence is
+recorded in the scope update above.

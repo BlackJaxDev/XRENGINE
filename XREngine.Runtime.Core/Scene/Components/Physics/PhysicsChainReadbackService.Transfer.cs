@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace XREngine.Components;
 
 internal sealed partial class PhysicsChainReadbackService
@@ -545,13 +547,18 @@ internal sealed partial class PhysicsChainReadbackService
 
     private static void ReleaseStagingSlot(StagingSlot slot)
     {
-        slot.Source?.Dispose();
-        if (slot.Fence is IDisposable disposableFence)
-            disposableFence.Dispose();
+        IPhysicsChainReadbackStagingSource? source = slot.Source;
+        IDisposable? fence = slot.Fence as IDisposable;
         slot.Source = null;
         slot.Fence = null;
         slot.State = StagingSlotState.Free;
         slot.Plan = null;
+        ExceptionDispatchInfo? firstFault = null;
+        try { source?.Dispose(); }
+        catch (Exception ex) { firstFault = ExceptionDispatchInfo.Capture(ex); }
+        try { fence?.Dispose(); }
+        catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
+        firstFault?.Throw();
     }
 
     private static uint NextStagingGeneration(uint generation)

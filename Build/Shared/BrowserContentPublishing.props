@@ -17,5 +17,6 @@
     <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedSceneDto.cs" Link="Publishing/Contracts/BrowserCookedSceneDto.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Browser/BrowserCookedTextureDto.cs" Link="Publishing/Contracts/BrowserCookedTextureDto.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)../../Tools/BrowserContentCooker/BrowserContentPackageBuilder.EngineAssets.cs" Link="Publishing/BrowserContentPackageBuilder.EngineAssets.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../Tools/BrowserContentCooker/BrowserContentPackageBuilder.ShaderDelivery.cs" Link="Publishing/BrowserContentPackageBuilder.ShaderDelivery.cs" />
   </ItemGroup>
 </Project>

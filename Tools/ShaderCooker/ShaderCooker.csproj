@@ -13,11 +13,19 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderCompileTarget.cs" Link="Shared/ShaderCompileTarget.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderCompileDiagnostic.cs" Link="Shared/ShaderCompileDiagnostic.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderCompilationException.cs" Link="Shared/ShaderCompilationException.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Objects/Materials/EngineMaterialSemantic.cs" Link="Shared/EngineMaterialSemantic.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Objects/Materials/EngineMaterialSemanticIdentity.cs" Link="Shared/EngineMaterialSemanticIdentity.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/EngineMaterialVariantKey.cs" Link="Shared/EngineMaterialVariantKey.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/EngineMaterialVariantEntry.cs" Link="Shared/EngineMaterialVariantEntry.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/EngineMaterialVariantCatalog.cs" Link="Shared/EngineMaterialVariantCatalog.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/IEngineMaterialVariantResolver.cs" Link="Shared/IEngineMaterialVariantResolver.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderArtifactCatalogProvider.cs" Link="Shared/ShaderArtifactCatalogProvider.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderArtifactCatalogSnapshot.cs" Link="Shared/ShaderArtifactCatalogSnapshot.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderArtifact.cs" Link="Shared/ShaderArtifact.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifact.cs" Link="Shared/ShaderProgramArtifact.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderNativeVertexCompanion.cs" Link="Shared/ShaderNativeVertexCompanion.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderComputeWorkgroupSize.cs" Link="Shared/ShaderComputeWorkgroupSize.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/IShaderProgramArtifactResolver.cs" Link="Shared/IShaderProgramArtifactResolver.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Compilation/ShaderProgramArtifactCatalog.cs" Link="Shared/ShaderProgramArtifactCatalog.cs" />
@@ -40,7 +48,26 @@
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserMaterialShaderGenerator.cs" Link="Shared/BrowserMaterialShaderGenerator.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineLitMaterialShaderGenerator.cs" Link="Shared/EngineLitMaterialShaderGenerator.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineLitMaterialShaderProvenance.cs" Link="Shared/EngineLitMaterialShaderProvenance.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUnlitMaterialShaderGenerator.cs" Link="Shared/EngineUnlitMaterialShaderGenerator.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUnlitMaterialShaderPlan.cs" Link="Shared/EngineUnlitMaterialShaderPlan.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUnlitShaderProvenance.cs" Link="Shared/EngineUnlitShaderProvenance.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineTexturedAlphaShaderGenerator.cs" Link="Shared/EngineTexturedAlphaShaderGenerator.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineTexturedAlphaShaderProvenance.cs" Link="Shared/EngineTexturedAlphaShaderProvenance.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineNativeVertexShaderProvenance.cs" Link="Shared/EngineNativeVertexShaderProvenance.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineNativeVertexAuxiliaryPass.cs" Link="Shared/EngineNativeVertexAuxiliaryPass.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineNativeVertexShaderGenerator.cs" Link="Shared/EngineNativeVertexShaderGenerator.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/BrowserShaderAbi.cs" Link="Shared/BrowserShaderAbi.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineAuthoredTexturedShaderGenerator.cs" Link="Shared/EngineAuthoredTexturedShaderGenerator.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineAuthoredTexturedShaderProvenance.cs" Link="Shared/EngineAuthoredTexturedShaderProvenance.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineOctahedralImpostorShaderContract.cs" Link="Shared/EngineOctahedralImpostorShaderContract.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineOctahedralImpostorShaderProvenance.cs" Link="Shared/EngineOctahedralImpostorShaderProvenance.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Objects/Materials/UberBaseParameterSchema.cs" Link="Shared/UberBaseParameterSchema.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Objects/Materials/UberBaseStaticLiteral.cs" Link="Shared/UberBaseStaticLiteral.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUberBaseShaderContract.cs" Link="Shared/EngineUberBaseShaderContract.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUberBaseShaderContract.Layout.cs" Link="Shared/EngineUberBaseShaderContract.Layout.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUberBaseShaderContract.Environment.cs" Link="Shared/EngineUberBaseShaderContract.Environment.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUberBaseShaderContract.Ordering.cs" Link="Shared/EngineUberBaseShaderContract.Ordering.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering/Rendering/Shaders/Generation/EngineUberBaseShaderContract.Sources.cs" Link="Shared/EngineUberBaseShaderContract.Sources.cs" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 </Project>

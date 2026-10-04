@@ -47,4 +47,13 @@ public readonly record struct AdvancedManagedDeformationSourceRow(
     XRMesh? Mesh,
     uint MeshVertexCount,
     ulong SourceVersion,
-    ulong MeshVersion);
+    ulong MeshVersion)
+{
+    /// <summary>Immutable source facts retained before canonical packing repairs missing or degenerate bases.</summary>
+    public AdvancedBrowserGeometryBasisSource? BrowserBasisSource { get; init; }
+    /// <summary>Full-float source UV/color image associated with this exact geometry producer.</summary>
+    public AdvancedBrowserUberAttributeSource? BrowserUberAttributesSource { get; init; }
+    public string? BrowserUberAttributesProducerRejection { get; init; }
+    /// <summary>Identifies a producer whose output lacks a retained browser basis contract.</summary>
+    public string? BrowserBasisProducerRejection { get; init; }
+}

@@ -8,6 +8,10 @@ public static class EngineLitMaterialShaderProvenance
 {
     public static bool TryValidate(ShaderProgramArtifact artifact, out string reason)
     {
+        if (artifact.SemanticSchemaIdentity == EngineAuthoredTexturedShaderGenerator.Schema)
+            return EngineAuthoredTexturedShaderProvenance.TryValidate(artifact, out reason);
+        if (artifact.SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema)
+            return EngineTexturedAlphaShaderProvenance.TryValidate(artifact, out reason);
         reason = "The native surface requires a verified engine MaterialRecipe descriptor and its complete canonical source closure; recook the authored material.";
         if (artifact.SourceLanguage != "MaterialRecipe" || artifact.DescriptorBytes.IsDefaultOrEmpty)
             return false;

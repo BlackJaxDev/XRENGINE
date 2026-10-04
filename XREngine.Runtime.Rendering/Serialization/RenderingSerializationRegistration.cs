@@ -33,7 +33,13 @@ public static class RenderingSerializationRegistration
 
     private sealed class RenderingYamlContribution : IYamlSerializationContribution
     {
+        private const string TexturedAlphaTag = "!xre-textured-alpha-v1";
+        private const string AuthoredTexturedTag = "!xre-authored-textured-v1";
         public string OwnerName => "XREngine.Runtime.Rendering";
+
+        public void ConfigureSerializer(SerializerBuilder builder)
+            => builder.WithTagMapping(TexturedAlphaTag, typeof(AuthoredTexturedAlphaMaterial))
+                .WithTagMapping(AuthoredTexturedTag, typeof(AuthoredTexturedMaterial));
 
         public IEnumerable<IYamlTypeConverter> CreateTypeConverters()
             =>
@@ -52,6 +58,10 @@ public static class RenderingSerializationRegistration
 
         public void ConfigureDeserializer(DeserializerBuilder builder)
         {
+            // The new explicit schema must survive concrete XRMaterial slots;
+            // existing untagged material mappings retain their original reader.
+            builder.WithTagMapping(TexturedAlphaTag, typeof(AuthoredTexturedAlphaMaterial));
+            builder.WithTagMapping(AuthoredTexturedTag, typeof(AuthoredTexturedMaterial));
             builder.WithNodeDeserializer(
                 new ViewportRenderCommandContainerYamlNodeDeserializer(),
                 registration => registration.OnTop());

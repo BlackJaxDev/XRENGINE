@@ -554,11 +554,15 @@ namespace XREngine.Rendering
             // Numeric and mode edits must not destroy stable replay pipelines.
             // Replacing the parameter layout, shaders, or options still invalidates.
             bool preserveCoverageVariants = (EngineSemantic.IsColorCoverage() ||
-                EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1) &&
+                EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 ||
+                EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 ||
+                EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1) &&
                 propName is nameof(BindingValueVersion) or nameof(AlphaCutoff) or nameof(TransparencyMode)
                     or nameof(TransparentTechniqueOverride) or nameof(RenderPass) or nameof(TransparentSortPriority)
                     or nameof(Name);
-            if (!preserveCoverageVariants)
+            bool preserveNativeVertexValues = propName == nameof(BindingValueVersion) &&
+                _nativeVertexPassMaterials is not null && AdvancedNativeVertexMaterialSource.IsRequested(this);
+            if (!preserveCoverageVariants && !preserveNativeVertexValues)
             {
                 InvalidateDepthNormalPrePassVariant();
                 InvalidateShadowCasterVariant();
@@ -776,6 +780,7 @@ namespace XREngine.Rendering
 
         private void InvalidateDepthNormalPrePassVariant(bool now)
         {
+            DestroyNativeVertexPassMaterials(now);
             _depthNormalPrePassVariant?.Destroy(now);
             _depthNormalPrePassVariant = null;
             _depthNormalPrePassVariantResolved = false;
@@ -794,6 +799,7 @@ namespace XREngine.Rendering
 
         private void InvalidateShadowCasterVariant(bool now)
         {
+            DestroyNativeVertexPassMaterials(now);
             DestroyStandardLitSpotShadowVariant(now);
             _shadowCasterVariant?.Destroy(now);
             _shadowCasterVariant = null;
@@ -1013,12 +1019,13 @@ namespace XREngine.Rendering
 
             RecreateShaderPipelineProgramForCurrentSettings();
 
-            if (TryResolveMaterialShaderSources(out string[] sources))
+            if (!_preserveCookedUnlitParameters && TryResolveMaterialShaderSources(out string[] sources))
             {
                 SyncParametersToShaderUniforms(sources);
                 SyncRequiredEngineUniforms(sources);
             }
-            SyncAlphaCutoffParameter();
+            if (!_preserveCookedUnlitParameters)
+                SyncAlphaCutoffParameter();
             EnsureUberStateInitialized();
         }
 
@@ -1106,6 +1113,9 @@ namespace XREngine.Rendering
 
         private bool EnsureShaderPipelineUberSourceReady()
         {
+            if (ObserveCallerUberTerminalFailure())
+                return false;
+
             if (HasShaderPipelineRenderableUberSource())
                 return true;
 
@@ -1648,13 +1658,48 @@ namespace XREngine.Rendering
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)
-            => new([texture], ShaderHelper.UnlitAlphaTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.TransparentForward };
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitAlphaTextureV4,
+                "Common/UnlitAlphaTexturedForward.fs", EDefaultRenderPass.TransparentForward);
 
         public static XRMaterial CreateUnlitTextureMaterialForward(XRTexture texture)
-            => new([texture], ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitTextureV2,
+                "Common/UnlitTexturedForward.fs", EDefaultRenderPass.OpaqueForward);
 
         public static XRMaterial CreateUnlitTextureMaterialForward()
-            => new(ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => CreateUnlitTextureMaterial(null, EngineMaterialSemanticIdentity.UnlitTextureV2,
+                "Common/UnlitTexturedForward.fs", EDefaultRenderPass.OpaqueForward);
+
+        /// <summary>Creates the canonical unlit texture surface whose output alpha is always one.</summary>
+        public static XRMaterial CreateUnlitOpaqueTextureMaterialForward(XRTexture2D texture)
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitOpaqueTextureV3,
+                "Common/UnlitTexturedOpaqueForward.fs", EDefaultRenderPass.OpaqueForward);
+
+        /// <summary>Creates the canonical unlit array surface sampling layer zero.</summary>
+        public static XRMaterial CreateUnlitTextureArraySliceMaterialForward(XRTexture2DArray texture)
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitTextureArraySliceV5,
+                "Common/UnlitTexturedArraySliceForward.fs", EDefaultRenderPass.OpaqueForward);
+
+        private static XRMaterial CreateUnlitTextureMaterial(XRTexture? texture, EngineMaterialSemanticIdentity semantic,
+            string source, EDefaultRenderPass pass)
+        {
+            XRShader DesktopFragment() => semantic == EngineMaterialSemanticIdentity.UnlitTextureV2
+                ? ShaderHelper.UnlitTextureFragForward()!
+                : semantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4
+                    ? ShaderHelper.UnlitAlphaTextureFragForward()!
+                    : ShaderHelper.LoadEngineShader(source);
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl => texture is null
+                    ? new(DesktopFragment())
+                    : new([texture], DesktopFragment()),
+                EngineMaterialConstructionTarget.WebGpuCooked => texture is null ? new() : new([texture]),
+                _ => throw new InvalidOperationException("Unsupported built-in material construction target."),
+            };
+            material.RenderPass = (int)pass;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                material.EngineSemantic = semantic;
+            return material;
+        }
 
         private static ShaderVar[] CreateDeferredLitDefaults(ColorF4 color, float specular = 0.2f, float roughness = 0.0f, float metallic = 0.0f, float emission = 0.0f)
             =>
@@ -1756,7 +1801,19 @@ namespace XREngine.Rendering
         }
 
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
-            => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+        {
+            ShaderVar[] parameters = [new ShaderVector4(color, "MatColor")];
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl => new(parameters, ShaderHelper.UnlitColorFragForward()!),
+                EngineMaterialConstructionTarget.WebGpuCooked => new(parameters),
+                _ => throw new InvalidOperationException("Unsupported built-in material construction target."),
+            };
+            material.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                material.EngineSemantic = EngineMaterialSemanticIdentity.UnlitColorV1;
+            return material;
+        }
 
         /// <summary>
         /// Stencil bit reserved for tagging editor gizmo pixels (e.g. transform tool, light probe preview).

@@ -5,10 +5,10 @@ using System.Text.Json;
 namespace XREngine.Rendering.Shaders.Compilation;
 
 /// <summary>
-/// Immutable, content-verified catalog of complete engine material variants.
+/// Content-verified catalog of complete engine material variants, optionally backed by a stable session provider.
 /// Missing variants are unsupported rather than replaced by a guessed shader.
 /// </summary>
-public sealed class EngineMaterialVariantCatalog
+public sealed class EngineMaterialVariantCatalog : IEngineMaterialVariantResolver
 {
     private readonly ImmutableDictionary<EngineMaterialVariantKey, ShaderProgramArtifact> _variants;
 
@@ -38,8 +38,11 @@ public sealed class EngineMaterialVariantCatalog
         _variants = builder.ToImmutable();
     }
 
-    public int Count => _variants.Count;
+    private readonly ShaderArtifactCatalogProvider? _provider;
+    internal EngineMaterialVariantCatalog(ShaderArtifactCatalogProvider provider) : this([], new ShaderProgramArtifactCatalog([])) => _provider = provider;
+    private EngineMaterialVariantCatalog Current => _provider?.Snapshot.MaterialVariants ?? this;
+    public int Count => Current._variants.Count;
 
     public bool TryResolve(EngineMaterialVariantKey key, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
-        => _variants.TryGetValue(key, out artifact);
+        => Current._variants.TryGetValue(key, out artifact);
 }

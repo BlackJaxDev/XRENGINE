@@ -289,7 +289,13 @@ namespace XREngine.Rendering
             get
             {
                 lock (_generatedVertexShaderVersionsLock)
-                    return new Dictionary<int, BaseVersion>(_generatedVertexShaderVersions);
+                {
+                    Dictionary<int, BaseVersion> published = new(_generatedVertexShaderVersions.Count);
+                    foreach (var pair in _generatedVertexShaderVersions)
+                        if (Volatile.Read(ref _pendingVertexShaderVersionPublications[pair.Key]) is null)
+                            published.Add(pair.Key, pair.Value);
+                    return published;
+                }
             }
         }
 
@@ -553,15 +559,6 @@ namespace XREngine.Rendering
                 PendingVersionPublication? pendingToWaitFor = null;
                 lock (creationGate)
                 {
-                    lock (_generatedVertexShaderVersionsLock)
-                    {
-                        if (_generatedVertexShaderVersions.TryGetValue(versionKey, out BaseVersion? existing))
-                        {
-                            existing.ProgramPriority = ResolveProgramPriority(versionKey);
-                            return existing;
-                        }
-                    }
-
                     RenderObjectPublicationScope? activePublication =
                         GenericRenderObject.CurrentDeferredPublicationScope;
                     object? activeBatchIdentity = activePublication?.BatchIdentity;
@@ -583,35 +580,43 @@ namespace XREngine.Rendering
                     }
                     else
                     {
+                        lock (_generatedVertexShaderVersionsLock)
+                        {
+                            if (_generatedVertexShaderVersions.TryGetValue(versionKey, out BaseVersion? existing))
+                            {
+                                existing.ProgramPriority = ResolveProgramPriority(versionKey);
+                                return existing;
+                            }
+                        }
+
                         return CreateVersionForPublication(
                             versionKey,
-                            activeBatchIdentity,
                             creationGate);
                     }
                 }
 
+                if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+                    throw new RenderResourcePreparationPendingException(
+                        $"Mesh renderer shader version {versionKey} is pending publication on the caller thread; retry after the owner publishes it.");
                 pendingToWaitFor!.Completion.Wait();
             }
         }
 
         private BaseVersion CreateVersionForPublication(
             int versionKey,
-            object? activeBatchIdentity,
             object creationGate)
         {
             PendingVersionPublication? pending = null;
-            if (activeBatchIdentity is not null)
-            {
-                pending = new PendingVersionPublication(
-                    activeBatchIdentity,
-                    Environment.CurrentManagedThreadId);
-                _pendingVertexShaderVersionPublications[versionKey] = pending;
-            }
-
             bool lifetimeLeaseHeld = false;
             try
             {
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                // The map is installed before cache publication so rollback can restore it.
+                // Keep even a new root's version private until the root commits or aborts.
+                pending = new PendingVersionPublication(
+                    publication.BatchIdentity,
+                    Environment.CurrentManagedThreadId);
+                Volatile.Write(ref _pendingVertexShaderVersionPublications[versionKey], pending);
                 BaseVersion created = versionKey switch
                 {
                     0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
@@ -699,7 +704,7 @@ namespace XREngine.Rendering
             lock (creationGate)
             {
                 if (ReferenceEquals(_pendingVertexShaderVersionPublications[versionKey], pending))
-                    _pendingVertexShaderVersionPublications[versionKey] = null;
+                    Volatile.Write(ref _pendingVertexShaderVersionPublications[versionKey], null);
                 pending.Completion.Set();
             }
         }

@@ -36,6 +36,9 @@ internal static class SharedRenderHelperGeometry
 
                 if (entry.IsCreating)
                 {
+                    if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+                        throw new InvalidOperationException(
+                            $"Shared helper geometry '{entry.Name}' is still being created on the caller thread; retry after its owner publishes it.");
                     Monitor.Wait(SyncRoot);
                     continue;
                 }

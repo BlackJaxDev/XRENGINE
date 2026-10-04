@@ -15,6 +15,8 @@ using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
 using XREngine.Networking;
 using XREngine.Timers;
+using XREngine.Core.Files;
+using XREngine.Execution;
 
 namespace XREngine
 {
@@ -1680,8 +1682,17 @@ namespace XREngine
             }
 
             #region TCP
+            private static void RequireHostFileTransfer()
+            {
+                if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread
+                    || DirectStorageIO.Source is { SupportsSynchronousReads: false } or IRuntimeAssetCatalog)
+                    throw new NotSupportedException(
+                        "NetworkFileTransfer.HostFileUnavailable: this host cannot transfer operating-system file paths; use an already opened stream with an available transport.");
+            }
+
             public static async Task SendFileAsync(string filePath, string targetIP, int port, IProgress<double> progress)
             {
+                RequireHostFileTransfer();
                 var fileInfo = new FileInfo(filePath);
                 long fileLength = fileInfo.Length;
 
@@ -1692,6 +1703,7 @@ namespace XREngine
 
                 byte[] buffer = new byte[8192];
                 long totalSent = 0;
+                RequireHostFileTransfer();
                 using FileStream fs = File.OpenRead(filePath);
                 int bytesRead;
                 while ((bytesRead = await fs.ReadAsync(buffer)) > 0)
@@ -1721,12 +1733,14 @@ namespace XREngine
 
             public static async Task ReceiveFileAsync(string filePath, int port, IProgress<double> progress)
             {
+                RequireHostFileTransfer();
                 using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
                 byte[] lengthBytes = new byte[8];
                 await ns.ReadExactlyAsync(lengthBytes);
                 long fileLength = BitConverter.ToInt64(lengthBytes);
                 byte[] buffer = new byte[8192];
                 long totalReceived = 0;
+                RequireHostFileTransfer();
                 using FileStream fs = File.OpenWrite(filePath);
                 int bytesRead;
                 while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)

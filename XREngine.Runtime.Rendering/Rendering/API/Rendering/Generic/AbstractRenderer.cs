@@ -1171,6 +1171,13 @@ namespace XREngine.Rendering
         public abstract void AllowDepthWrite(bool allow);
         public abstract void DepthFunc(EComparison always);
 
+        /// <summary>Returns an active immutable pass convention when the backend owns an explicit view scope.</summary>
+        public virtual bool TryGetFrozenViewDepthMode(out XRCamera.EDepthMode depthMode)
+        {
+            depthMode = XRCamera.EDepthMode.Normal;
+            return false;
+        }
+
         public abstract void EnableStencilTest(bool enable);
         public abstract void StencilFunc(EComparison function, int reference, uint mask);
         public abstract void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass);

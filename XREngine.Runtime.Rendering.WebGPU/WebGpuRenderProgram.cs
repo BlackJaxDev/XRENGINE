@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Numerics;
 using System.Text;
 using System.Text.Json;
+using XREngine.Data.Vectors;
 using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.WebGPU;
@@ -27,6 +28,9 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         data.UniformSetVector2Requested += SetVector2;
         data.UniformSetVector3Requested += SetVector3;
         data.UniformSetVector4Requested += SetVector4;
+        data.UniformSetIVector2Requested += SetIVector2;
+        data.UniformSetIVector3Requested += SetIVector3;
+        data.UniformSetIVector4Requested += SetIVector4;
         data.UniformSetIntRequested += SetInt;
         data.UniformSetUIntRequested += SetUInt;
         data.UniformSetBoolRequested += SetBool;
@@ -43,7 +47,8 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
     public ReadOnlySpan<int> LayoutHandles => _layouts;
     public int UniformBlockCount => _blocks.Length;
     internal bool RequiresCameraUniforms => _uniforms.ContainsKey("ViewProjection") || _uniforms.ContainsKey("CameraPosition") ||
-        _uniforms.ContainsKey("InverseViewMatrix") || _uniforms.ContainsKey("InverseProjMatrix");
+        _uniforms.ContainsKey("InverseViewMatrix") || _uniforms.ContainsKey("InverseProjMatrix") ||
+        _uniforms.ContainsKey("CameraDepthRange");
     public override bool IsGenerated => _shaderHandle != 0 && _preparation?.IsCompletedSuccessfully == true;
     public bool IsPreparedForRendering => IsGenerated;
 
@@ -56,6 +61,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
             throw new NotSupportedException("WebGPU.Program.ArtifactChanged: replace the program and dependent mesh bindings at a resource-generation boundary.");
         if (_preparation is null)
         {
+            WebPipelineRasterProgram.ValidateDepthConvention(artifact);
             SetField(ref _artifact, artifact);
             SetField(ref _modulePreparationStartedAt, System.Diagnostics.Stopwatch.GetTimestamp(), publishNotifications: false);
             SetField(ref _preparation, PrepareAsync(artifact, _preparationEpoch));
@@ -91,11 +97,24 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         bool hasUniforms = false;
         foreach (ShaderStageResourceLayout resource in artifact.Resources)
             hasUniforms |= resource.Contract.Kind == ShaderAbiResourceKind.UniformBuffer;
-        SetField(ref _uniformArena, hasUniforms ? Renderer.EnsureEngineUniformBuffer() : 0);
+        int uniformArena = hasUniforms ? await Renderer.EnsureEngineUniformBufferAsync() : 0;
+        RequireCurrentPreparation(epoch);
+        SetField(ref _uniformArena, uniformArena);
         SetField(ref _layouts, new int[groupCount]);
         for (int group = 0; group < groupCount; group++)
-            _layouts[group] = Renderer.CreateBindingLayout(DescribeGroup(artifact, group, layout: true));
+        {
+            int layout = await Renderer.CreateEngineBindingLayoutAsync(this, DescribeGroup(artifact, group, layout: true));
+            try { RequireCurrentPreparation(epoch); }
+            catch { Renderer.RetireEngineResourceAfterFrame(layout); throw; }
+            _layouts[group] = layout;
+        }
         Data.SetBackendLinked(true);
+    }
+
+    private void RequireCurrentPreparation(int epoch)
+    {
+        if (IsRetired || Data.IsDestroyed || !Renderer.AcceptsBackendWork || epoch != _preparationEpoch)
+            throw new InvalidOperationException("WebGPU.Program.Obsolete: physical preparation completed after its owner retired.");
     }
 
     /// <summary>Installs CPU uniform targets before asynchronous module compilation can defer a frame.</summary>
@@ -192,6 +211,15 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
     public void SetVector4(string name, Vector4 value) => SetFloats(name, [value.X, value.Y, value.Z, value.W]);
     private void SetInt(string name, int value) => SetUInt(name, unchecked((uint)value));
     private void SetBool(string name, bool value) => SetUInt(name, value ? 1u : 0u);
+    private void SetIVector2(string name, IVector2 value) => SetIntegers(name, [value.X, value.Y]);
+    private void SetIVector3(string name, IVector3 value) => SetIntegers(name, [value.X, value.Y, value.Z]);
+    private void SetIVector4(string name, IVector4 value) => SetIntegers(name, [value.X, value.Y, value.Z, value.W]);
+
+    private void SetIntegers(string name, ReadOnlySpan<int> values)
+    {
+        if (_uniforms.TryGetValue(name, out List<UniformTarget>? targets))
+            foreach (UniformTarget target in targets) target.Block.WriteIntegers(target.Member, values);
+    }
 
     private void SetFloats(string name, ReadOnlySpan<float> values)
     {
@@ -214,6 +242,9 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
         Data.UniformSetVector2Requested -= SetVector2;
         Data.UniformSetVector3Requested -= SetVector3;
         Data.UniformSetVector4Requested -= SetVector4;
+        Data.UniformSetIVector2Requested -= SetIVector2;
+        Data.UniformSetIVector3Requested -= SetIVector3;
+        Data.UniformSetIVector4Requested -= SetIVector4;
         Data.UniformSetIntRequested -= SetInt;
         Data.UniformSetUIntRequested -= SetUInt;
         Data.UniformSetBoolRequested -= SetBool;
@@ -227,6 +258,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
 
     public override void Destroy()
     {
+        Renderer.CancelEngineResourceRequests(this);
         SetField(ref _preparationEpoch, checked(_preparationEpoch + 1));
         Renderer.ReleaseEngineDrawDependencies(this);
         DestroyCompute();

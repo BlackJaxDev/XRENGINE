@@ -27,19 +27,26 @@ public static class EngineAuthoredLitMaterialAdmission
         bool textured = artifact.SemanticSchemaIdentity is EngineLitMaterialShaderGenerator.TextureSchema or
             EngineLitMaterialShaderGenerator.NormalTextureSchema;
         bool normalTexture = artifact.SemanticSchemaIdentity == EngineLitMaterialShaderGenerator.NormalTextureSchema;
+        bool nativeVertex = artifact.SemanticSchemaIdentity == AdvancedNativeVertexMaterialSource.Schema;
+        if (nativeVertex && !AdvancedNativeVertexMaterialSource.TryCapture(material, out _, out string vertexReason))
+        {
+            reason = vertexReason;
+            return false;
+        }
         if (coverage ? artifact.SemanticSchemaIdentity != EngineLitMaterialShaderGenerator.ColorCoverageSchema :
             artifact.SemanticSchemaIdentity is not (EngineLitMaterialShaderGenerator.ColorSchema or
-                EngineLitMaterialShaderGenerator.TextureSchema or EngineLitMaterialShaderGenerator.NormalTextureSchema))
+                EngineLitMaterialShaderGenerator.TextureSchema or EngineLitMaterialShaderGenerator.NormalTextureSchema or
+                AdvancedNativeVertexMaterialSource.Schema))
         {
             reason = $"Authored lit schema '{artifact.SemanticSchemaIdentity}' is unsupported.";
             return false;
         }
-        if (!HasPhysicalPbrAbi(artifact, textured, normalTexture, coverage))
+        if (!HasPhysicalPbrAbi(artifact, textured, normalTexture, coverage, nativeVertex: nativeVertex))
         {
             reason = "Authored PBR descriptor does not declare the engine's complete physical vertex, factor, lighting, AO and sampled-texture ABI.";
             return false;
         }
-        if (coverage || artifact.SemanticSchemaIdentity == EngineLitMaterialShaderGenerator.ColorSchema)
+        if (coverage || nativeVertex || artifact.SemanticSchemaIdentity == EngineLitMaterialShaderGenerator.ColorSchema)
         {
             if (!StandardLitColorSurfaceBinding.TryCreateAuthoredCooked(material, out color, out reason)) return false;
             return true;
@@ -55,7 +62,7 @@ public static class EngineAuthoredLitMaterialAdmission
     }
 
     internal static bool HasPhysicalPbrAbi(ShaderProgramArtifact artifact, bool textured, bool normalTexture, bool coverage,
-        bool directionalShadows = false, bool localShadows = false)
+        bool directionalShadows = false, bool localShadows = false, bool nativeVertex = false)
     {
         localShadows |= coverage;
         directionalShadows |= localShadows;
@@ -68,7 +75,8 @@ public static class EngineAuthoredLitMaterialAdmission
             textured && !Vertex(artifact, 2, "uv0", "float32x2") ||
             normalTexture && !Vertex(artifact, 3, "tangent", "float32x4")) return false;
 
-        if (artifact.Resources.Length != (normalTexture ? 14 : textured ? 12 : 6) + (localShadows ? 8 : directionalShadows ? 3 : 0) ||
+        if (nativeVertex && (coverage || textured || directionalShadows || localShadows)) return false;
+        if (artifact.Resources.Length != (normalTexture ? 14 : textured ? 12 : 6) + (localShadows ? 8 : directionalShadows ? 3 : 0) + (nativeVertex ? 1 : 0) ||
             !Uniform(artifact, "View", 0, 0, ShaderAbiResourceOwner.Engine, 80,
                 "ViewProjection", "CameraPosition") ||
             !Uniform(artifact, "Object", 0, 1, ShaderAbiResourceOwner.Engine, 128,
@@ -82,6 +90,9 @@ public static class EngineAuthoredLitMaterialAdmission
             !Uniform(artifact, "ForwardLighting", 2, 0, ShaderAbiResourceOwner.Engine, 1072,
                 LightingProviders()) ||
             !Sampled(artifact, "AmbientOcclusionTexture", 2, 1, 2)) return false;
+        if (nativeVertex && !Uniform(artifact, "NativeVertexInputs", 1, 1, ShaderAbiResourceOwner.Material, 64,
+            AdvancedNativeVertexMaterialSource.Input0, AdvancedNativeVertexMaterialSource.Input1,
+            AdvancedNativeVertexMaterialSource.Input2, AdvancedNativeVertexMaterialSource.Input3)) return false;
         if (directionalShadows && !HasShadowAbi(artifact, localShadows)) return false;
         if (!textured) return true;
         return Sampled(artifact, "StandardLitBaseColorTexture", 1, 1, 2) &&
@@ -106,13 +117,13 @@ public static class EngineAuthoredLitMaterialAdmission
         ShaderStageVisibility visibility = name switch
         {
             "View" => ShaderStageVisibility.Vertex | ShaderStageVisibility.Fragment,
-            "Object" => ShaderStageVisibility.Vertex,
+            "Object" or "NativeVertexInputs" => ShaderStageVisibility.Vertex,
             _ => ShaderStageVisibility.Fragment,
         };
         ShaderAbiFrequency frequency = name switch
         {
             "Object" => ShaderAbiFrequency.Object,
-            "StandardLitMaterial" => ShaderAbiFrequency.Material,
+            "StandardLitMaterial" or "NativeVertexInputs" => ShaderAbiFrequency.Material,
             _ => ShaderAbiFrequency.View,
         };
         if (resource is null || resource.Contract.Name != name || resource.Contract.Kind != ShaderAbiResourceKind.UniformBuffer ||

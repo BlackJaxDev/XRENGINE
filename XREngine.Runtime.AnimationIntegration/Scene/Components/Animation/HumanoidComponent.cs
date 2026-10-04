@@ -5107,10 +5107,13 @@ namespace XREngine.Components.Animation
             if (rootTransform is null)
                 return;
 
-            rootTransform.RecalculateMatrixHierarchy(
-                forceWorldRecalc: true,
-                setRenderMatrixNow: true,
-                childRecalcType: RuntimeAnimationHostServices.Current.ChildRecalculationLoopType).Wait();
+            if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+                rootTransform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+            else
+                rootTransform.RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: true,
+                    childRecalcType: RuntimeAnimationHostServices.Current.ChildRecalculationLoopType).Wait();
         }
 
         private void ApplyNeutralPoseBoneRotation(SceneNode? node)

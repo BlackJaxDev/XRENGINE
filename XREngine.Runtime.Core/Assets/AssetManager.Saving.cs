@@ -64,6 +64,7 @@ namespace XREngine
         {
             if (UsesRuntimeAssetCatalog)
                 throw new NotSupportedException("AssetSource.ReadOnly: runtime content catalogs cannot persist authoring changes.");
+            EnsureHostFileAssetAccess();
         }
 
         public Task SaveAsync(XRAsset asset, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)

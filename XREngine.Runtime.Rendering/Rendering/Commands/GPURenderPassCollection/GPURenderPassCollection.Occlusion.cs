@@ -75,6 +75,7 @@ namespace XREngine.Rendering.Commands
                 _lastFlushTicks = nowTicks;
                 if (_stats.Count == 0)
                     return;
+                RuntimeAssetReadServices.EnsureHostFileAccess("HiZ stage log");
                 
                 _logPath ??= System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs", "hiz-stage-stats.log");
                 try
@@ -537,6 +538,7 @@ namespace XREngine.Rendering.Commands
         {
             if (!AreCrashBreadcrumbsEnabled())
                 return;
+            RuntimeAssetReadServices.EnsureHostFileAccess("Crash breadcrumb log");
             // No GPU sync: WaitForGpu may itself stall or throw on a corrupted context,
             // hiding the breadcrumb we are trying to capture.
             string line = "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] [CRUMB] " + label + Environment.NewLine;

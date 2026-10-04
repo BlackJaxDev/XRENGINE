@@ -15,8 +15,9 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
 {
     private readonly RenderPipelineResourceProfile _outputProfile = outputProfile ?? RenderPipelineResourceProfile.Empty;
     private bool _hasCamera;
-    private readonly List<(int Pass, string ScenePath, string Path, string Material, string? Mesh, string Source, string? SourcePath)> _sceneMaterialPasses = [];
+    private readonly List<(int Pass, string ScenePath, string Path, string Material, string? Mesh, string Source, string? SourcePath, bool NativeVertex, string? NativeDepthNormalReason)> _sceneMaterialPasses = [];
     private readonly BrowserNativeSceneCapabilityAudit _nativeAdmission = nativeAdmission ?? new();
+    private readonly List<(int Pass, string Scene, string Path, string Material)> _deformedNativeMaterials = [];
     internal List<RenderPipelineRequirements> PipelineRequirements { get; } = [];
 
     internal static void InspectStartup(GameStartupSettings settings, BrowserCapabilityReport? report = null)
@@ -42,8 +43,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         UserSettings user = settings.DefaultUserSettings;
         if (BrowserRenderPipelineOutputProfile.GetVendorOperationRejection(settings) is { } vendorReason)
             Reject("startup.asset/vendor-reconstruction", "vendor-reconstruction", vendorReason);
-        if (settings.DepthModeOverride is { HasOverride: true, Value: not XRCamera.EDepthMode.Normal })
-            Reject("startup.asset/DepthModeOverride", "camera-depth", "The cooked coordinate contract has not admitted reversed-Z cameras.");
+        if (settings.DepthModeOverride is { HasOverride: true, Value: not (XRCamera.EDepthMode.Normal or XRCamera.EDepthMode.Reversed) })
+            Reject("startup.asset/DepthModeOverride", "camera-depth", "The camera depth convention must be Normal or Reversed.");
         EGlobalIlluminationMode gi = user.GlobalIlluminationModeOverride.HasOverride
             ? user.GlobalIlluminationModeOverride.Value
             : settings.GlobalIlluminationModeOverride.HasOverride
@@ -74,8 +75,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
             Reject("postprocess-material", $"Authored postprocess material '{postprocess.Name}' has no installed browser output route.");
         if (component.OutputHDROverride == true)
             Reject("canvas-output", "Camera HDR presentation has no installed browser output route.");
-        if (camera is { DepthMode: not XRCamera.EDepthMode.Normal })
-            Reject("camera-depth", "The cooked coordinate contract has not admitted reversed-Z cameras.");
+        if (camera is { DepthMode: not (XRCamera.EDepthMode.Normal or XRCamera.EDepthMode.Reversed) })
+            Reject("camera-depth", "The camera depth convention must be Normal or Reversed.");
         if ((camera?.Parameters ?? component.CameraParameters) is XROVRCameraParameters or XROpenXRFovCameraParameters)
             Reject("camera-output", "XR eye projections require a browser XR service that is not enabled.");
 
@@ -108,6 +109,16 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         if (!_hasCamera && inheritedScenePasses is null)
             InspectPipeline(null, null, _outputProfile, worldPath, report, worldPath);
         foreach (var material in _sceneMaterialPasses)
+        {
+            if (material.NativeVertex && material.NativeDepthNormalReason is { } nativeDepthReason &&
+                (PipelineRequirements.Any(requirements => requirements.DepthNormalScenePasses.Contains(material.Pass)) ||
+                inheritedPipelineRequirements?.Any(requirements => requirements.DepthNormalScenePasses.Contains(material.Pass)) == true))
+            {
+                string reason = "The authored local-vertex function requires an exact depth-normal raster wrapper: " + nativeDepthReason;
+                if (report is null) throw Unsupported(material.Path, "depth-normal", reason);
+                report.Inspect(() => throw Unsupported(material.Path, "depth-normal", reason), material.ScenePath,
+                    material.Path, material: material.Material, pass: "depth-normal", sourcePath: material.SourcePath);
+            }
             if (inheritedScenePasses?.Contains(material.Pass) != true &&
                 !PipelineRequirements.Any(requirements => requirements.ScenePasses.Contains(material.Pass)))
             {
@@ -118,11 +129,31 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
                 report.Inspect(() => throw Unsupported(material.Path, pass, reason), material.ScenePath,
                     material.Path, material: material.Material, pass: pass, sourcePath: material.SourcePath);
             }
+        }
+        foreach (var material in _deformedNativeMaterials)
+        {
+            if (!PipelineRequirements.Any(RequiresGenericSource) && inheritedPipelineRequirements?.Any(RequiresGenericSource) != true)
+                continue;
+            const string reason = "The authored local-vertex function requires canonical aggregate morph/skin geometry; generic raster deformation supplies a different normal domain and needs an exact canonical source companion.";
+            if (report is null) throw Unsupported(material.Path, "native-vertex-source", reason);
+            report.Inspect(() => throw Unsupported(material.Path, "native-vertex-source", reason), material.Scene,
+                material.Path, material: material.Material, pass: "native-vertex-source");
+
+            bool RequiresGenericSource(RenderPipelineRequirements requirements)
+                => requirements.ScenePasses.Contains(material.Pass) &&
+                    (!requirements.NativeScenePasses.ContainsKey(material.Pass) || requirements.RasterScenePasses.Contains(material.Pass) ||
+                     requirements.DepthNormalScenePasses.Contains(material.Pass));
+        }
     }
 
     internal void InspectGeometry(XRMesh? mesh, XRMaterial material, string scenePath, string path, string? meshName,
         CancellationToken cancellationToken)
-        => _nativeAdmission.InspectGeometry(mesh, material, scenePath, path, meshName, cancellationToken);
+    {
+        _nativeAdmission.InspectGeometry(mesh, material, scenePath, path, meshName, cancellationToken);
+        if (mesh is not null && AdvancedNativeVertexMaterialSource.IsRequested(material, resolver) &&
+            AdvancedNativeVertexMaterialSource.RequiresCanonicalDeformationSource(mesh))
+            _deformedNativeMaterials.Add((material.RenderPass, scenePath, path, material.Name ?? string.Empty));
+    }
 
     internal void InspectGlobalResources(XRComponent component, string scenePath, string path)
         => _nativeAdmission.InspectGlobalResources(component, scenePath, path);
@@ -167,6 +198,10 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
                     requirements.ComputePrograms.Contains(pass), path), scenePath ?? string.Empty, path, pass: pass,
                     sourcePath: worldSourcePath);
         }
+        if (pipeline is IAdvancedRenderStageFamilyHost family)
+            _nativeAdmission.IncludeShadingDebug(requirements, family.AdvancedStageFamilyDefinition.ShadingDebugView);
+        _nativeAdmission.IncludeProbeLighting(requirements, pipeline is XREngine.Rendering.GI.Contracts.IGlobalIlluminationPlanHost giHost &&
+            giHost.GlobalIlluminationPlan.RequiresNativeProbeIblBindings);
         PipelineRequirements.Add(requirements);
 
         void Reject(string pass, string reason)
@@ -181,6 +216,11 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
     internal void InspectMaterial(XRMaterial material, string path, string? meshName, bool sceneRoute = true,
         BrowserCapabilityReport? report = null, string? scenePath = null)
     {
+        bool nativeVertex = AdvancedNativeVertexMaterialSource.IsRequested(material, resolver);
+        string? nativeDepthNormalReason = null;
+        if (nativeVertex && !AdvancedNativeVertexMaterialSource.TryResolveAuxiliary(material, resolver,
+            Rendering.Shaders.Generation.EngineNativeVertexAuxiliaryPass.DepthNormal, out _, out string nativeReason))
+            nativeDepthNormalReason = nativeReason;
         InspectPass(material.RenderPass, material.RenderOptions, "base");
         foreach (MaterialPassDefinition pass in material.PassSet.Passes)
             if (pass.Enabled)
@@ -190,7 +230,8 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         {
             if (sceneRoute)
                 _sceneMaterialPasses.Add((pass, scenePath ?? string.Empty, path, material.Name ?? string.Empty,
-                    meshName, source, MaterialSourcePath(material) ?? worldSourcePath));
+                    meshName, source, MaterialSourcePath(material) ?? worldSourcePath,
+                    nativeVertex, nativeDepthNormalReason));
             if (WebGpuPipelineAdmission.GetRasterStateRejection(options) is { } reason)
             {
                 string passName = pass.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -213,6 +254,7 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
             throw Unsupported(path, pass, "The selected camera pass requires a complete cooked WebGPU raster program.");
         if (requiresCompute && !WebPipelineArtifactCatalog.IsCompleteComputeProgram(artifact))
             throw Unsupported(path, pass, "The selected camera pass requires a complete cooked WebGPU compute program.");
+        WebPipelineRasterProgram.ValidateDepthConvention(artifact);
     }
 
     private static NotSupportedException Unsupported(string path, string pass, string reason)

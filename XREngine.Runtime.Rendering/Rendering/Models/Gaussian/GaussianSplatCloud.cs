@@ -6,6 +6,7 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Models.Gaussian;
@@ -98,11 +99,11 @@ public sealed partial class GaussianSplatCloud : XRAsset
 
     public static GaussianSplatCloud? Load(string path)
     {
-        if (!File.Exists(path))
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        if (!read.Exists(path))
             return null;
 
-        using FileStream stream = File.OpenRead(path);
-        return Load(stream);
+        return DecodeCapturedBytes(read, path, read.ReadAllBytes(path));
     }
 
     public static GaussianSplatCloud Load(Stream stream)

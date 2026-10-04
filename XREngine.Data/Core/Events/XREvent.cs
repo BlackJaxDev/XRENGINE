@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Runtime.ExceptionServices;
 
 namespace XREngine.Data.Core
 {
@@ -108,15 +109,34 @@ namespace XREngine.Data.Core
                 using (BeginProfiling("XREvent.AsyncActions"))
                 {
                     object? profilingContext = CaptureLinkedProfilingContext();
-                    var tasks = new Task[snapshot.Length];
-                    for (int i = 0; i < snapshot.Length; i++)
+                    if (OperatingSystem.IsBrowser())
                     {
-                        Action action = snapshot[i];
-                        int index = i;
-                        tasks[i] = Task.Run(() => InvokeLinkedListener(action, index, profilingContext, "XREvent.AsyncAction"));
+                        ExceptionDispatchInfo? firstFault = null;
+                        for (int i = 0; i < snapshot.Length; i++)
+                        {
+                            try
+                            {
+                                InvokeLinkedListener(snapshot[i], i, profilingContext, "XREvent.AsyncAction");
+                            }
+                            catch (Exception error)
+                            {
+                                firstFault ??= ExceptionDispatchInfo.Capture(error);
+                            }
+                        }
+                        firstFault?.Throw();
                     }
+                    else
+                    {
+                        var tasks = new Task[snapshot.Length];
+                        for (int i = 0; i < snapshot.Length; i++)
+                        {
+                            Action action = snapshot[i];
+                            int index = i;
+                            tasks[i] = Task.Run(() => InvokeLinkedListener(action, index, profilingContext, "XREvent.AsyncAction"));
+                        }
 
-                    await Task.WhenAll(tasks);
+                        await Task.WhenAll(tasks);
+                    }
                 }
             }
 
@@ -134,6 +154,8 @@ namespace XREngine.Data.Core
 
         public void InvokeParallel(int minParallelListeners)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Concurrent event invocation requires desktop worker threads. Use Invoke or InvokeAsync in a browser world.");
             var sample = BeginProfiling("XREvent.InvokeParallel");
             if (sample is null)
             {
@@ -278,15 +300,34 @@ namespace XREngine.Data.Core
                     using (BeginProfiling("XREvent<T>.AsyncActions"))
                     {
                         object? profilingContext = CaptureLinkedProfilingContext();
-                        var tasks = new Task[snapshot.Length];
-                        for (int i = 0; i < snapshot.Length; i++)
+                        if (OperatingSystem.IsBrowser())
                         {
-                            Action<T> action = snapshot[i];
-                            int index = i;
-                            tasks[i] = Task.Run(() => InvokeLinkedListener(action, item, index, profilingContext, "XREvent<T>.AsyncAction"));
+                            ExceptionDispatchInfo? firstFault = null;
+                            for (int i = 0; i < snapshot.Length; i++)
+                            {
+                                try
+                                {
+                                    InvokeLinkedListener(snapshot[i], item, i, profilingContext, "XREvent<T>.AsyncAction");
+                                }
+                                catch (Exception error)
+                                {
+                                    firstFault ??= ExceptionDispatchInfo.Capture(error);
+                                }
+                            }
+                            firstFault?.Throw();
                         }
+                        else
+                        {
+                            var tasks = new Task[snapshot.Length];
+                            for (int i = 0; i < snapshot.Length; i++)
+                            {
+                                Action<T> action = snapshot[i];
+                                int index = i;
+                                tasks[i] = Task.Run(() => InvokeLinkedListener(action, item, index, profilingContext, "XREvent<T>.AsyncAction"));
+                            }
 
-                        await Task.WhenAll(tasks);
+                            await Task.WhenAll(tasks);
+                        }
                     }
                 }
 

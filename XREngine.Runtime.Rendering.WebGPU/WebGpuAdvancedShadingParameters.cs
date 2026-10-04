@@ -15,7 +15,7 @@ internal static class WebGpuAdvancedShadingParameters
         Word("EmissionStrength"), Word("EmissionTextureMetadata"), Word("EmissionUvScaleOffset"), Word("EmissionUvRotation")];
 
     internal static void Write(Span<uint> words, in AdvancedVisibilityStageBackendRequest request,
-        WebGpuAdvancedVisibilityFrame visibility, WebGpuAdvancedShadingFrame frame, uint cohort)
+        WebGpuAdvancedVisibilityFrame visibility, WebGpuAdvancedShadingFrame frame, uint cohort, float renderTime)
     {
         words.Clear();
         words[0] = frame.Width; words[1] = frame.Height;
@@ -37,6 +37,7 @@ internal static class WebGpuAdvancedShadingParameters
         StandardWords.CopyTo(words[29..]);
         words[37] = WebGpuAdvancedShadingCohort.SlotCount * 8u;
         words[38] = (uint)frame.AuthoredDecalCount;
+        words[39] = BitConverter.SingleToUInt32Bits(renderTime);
     }
 
     private static uint Word(string name)

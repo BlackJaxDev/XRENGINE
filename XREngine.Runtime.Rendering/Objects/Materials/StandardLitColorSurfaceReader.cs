@@ -57,6 +57,7 @@ internal struct StandardLitColorSurfaceReader
     private bool _hasLayout;
     private bool _hasSurface;
     private bool _unversionedLayout;
+    private bool _nativeVertex;
     private StandardLitColorSurface _surface;
 
     private bool HasCoverage => _material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2 ||
@@ -151,6 +152,11 @@ internal struct StandardLitColorSurfaceReader
 
     private bool ValidateMaterial(out string? reason)
     {
+        _nativeVertex = false;
+        // This reader validates values only. Raster/native admission separately
+        // proves the shared-function artifacts before these extra inputs execute.
+        _nativeVertex = _authoredCooked && _material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1 &&
+            _material.Parameters.Length == 10;
         if (_authoredCooked ? !_material.EngineSemantic.IsAuthoredLit() || _material.Shaders.Count == 0 :
             _material.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitColorV1 && !HasCoverage)
         {
@@ -200,7 +206,7 @@ internal struct StandardLitColorSurfaceReader
     private bool MatchesCachedParameters(ShaderVar[] parameters)
     {
         if (!ReferenceEquals(parameters, _parameters) ||
-            parameters.Length != (HasCoverage ? 7 : _schema == StandardLitColorSurfaceSchema.Forward ? 3 : 6) ||
+            parameters.Length != (_nativeVertex ? 10 : HasCoverage ? 7 : _schema == StandardLitColorSurfaceSchema.Forward ? 3 : 6) ||
             !ReferenceEquals(parameters[0], _parameter0) || parameters[0].Name != _name0 ||
             !ReferenceEquals(parameters[1], _parameter1) || parameters[1].Name != _name1 ||
             !ReferenceEquals(parameters[2], _parameter2) || parameters[2].Name != _name2)
@@ -210,12 +216,14 @@ internal struct StandardLitColorSurfaceReader
             ReferenceEquals(parameters[3], _parameter3) && parameters[3].Name == _name3 &&
             ReferenceEquals(parameters[4], _parameter4) && parameters[4].Name == _name4 &&
             ReferenceEquals(parameters[5], _parameter5) && parameters[5].Name == _name5 &&
-            (parameters.Length == 6 || ReferenceEquals(parameters[6], _parameter6) && parameters[6].Name == _name6);
+            (_nativeVertex ? HasNativeVertexInputLayout(parameters) :
+                parameters.Length == 6 || ReferenceEquals(parameters[6], _parameter6) && parameters[6].Name == _name6);
     }
 
     private bool TryValidateLayout(ShaderVar[] parameters, out string? reason)
     {
-        if (HasCoverage ? parameters.Length != 7 : parameters.Length is not (3 or 6))
+        if (_nativeVertex ? parameters.Length != 10 || !HasNativeVertexInputLayout(parameters) :
+            HasCoverage ? parameters.Length != 7 : parameters.Length is not (3 or 6))
         {
             reason = "StandardLitColorV1 requires six deferred or three forward parameters; V2 requires its seven coverage parameters.";
             return false;
@@ -233,7 +241,7 @@ internal struct StandardLitColorSurfaceReader
         ShaderFloat? matSpecularIntensity = null;
         ShaderFloat? alphaCutoff = null;
 
-        for (int index = 0; index < parameters.Length; index++)
+        for (int index = 0; index < (_nativeVertex ? 6 : parameters.Length); index++)
         {
             ShaderVar? parameter = parameters[index];
             int bit = parameter?.Name switch
@@ -319,6 +327,13 @@ internal struct StandardLitColorSurfaceReader
         reason = null;
         return true;
     }
+
+    private static bool HasNativeVertexInputLayout(ShaderVar[] parameters)
+        => parameters.Length == 10 &&
+           parameters[6] is ShaderVector4 { Name: AdvancedNativeVertexMaterialSource.Input0 } &&
+           parameters[7] is ShaderVector4 { Name: AdvancedNativeVertexMaterialSource.Input1 } &&
+           parameters[8] is ShaderVector4 { Name: AdvancedNativeVertexMaterialSource.Input2 } &&
+           parameters[9] is ShaderVector4 { Name: AdvancedNativeVertexMaterialSource.Input3 };
 
     private StandardLitColorSurface ReadDeferred()
         => new(

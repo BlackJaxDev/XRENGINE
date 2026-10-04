@@ -379,7 +379,13 @@ public abstract class XRWorldObjectBase : XRObjectBase
                 ReplicatedTypes.AddOrUpdate(type, replication, (_, _) => replication);
         }
 
-        Parallel.ForEach(allTypes, TestType);
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+        {
+            foreach (Type type in allTypes)
+                TestType(type);
+        }
+        else
+            Parallel.ForEach(allTypes, TestType);
     }
 
     private bool ALocalClientPlayerOwnsThis()

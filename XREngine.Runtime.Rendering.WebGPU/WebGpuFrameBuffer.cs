@@ -8,6 +8,8 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
 {
     private readonly int[] _clearCommands = new int[4];
+    private readonly WebGpuResourceRequest?[] _clearRequests = new WebGpuResourceRequest?[4];
+    private WebGpuResourceRequest? _validationRequest;
     private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[] _targets = [];
     private AbstractRenderAPIObject[] _textures = [];
     private int[] _views = [];
@@ -18,10 +20,11 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
     private uint _width;
     private uint _height;
     private uint _sampleCount;
-    private Vector4 _clearColor;
-    private float _clearDepth;
     private bool _invalidated = true;
     private ulong _revision;
+    private uint _lastColorProducedFrame;
+    private ulong _lastColorProducedRevision;
+    private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[] _lastColorProducedTargets = [];
 
     public WebGpuFrameBuffer(WebGpuRendererHost renderer, XRFrameBuffer data) : base(renderer, data)
     {
@@ -92,7 +95,6 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
             }
         if (current) return;
 
-        Destroy();
         try
         {
             AbstractRenderAPIObject[] textures = new AbstractRenderAPIObject[targets.Length];
@@ -136,8 +138,11 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
                 snapshot[i] = target;
             }
             BrowserFrameBufferPlan plan = CreatePlan(false, false, default, 1);
-            int validationCommand = Renderer.PrepareCommands(
+            if (!MatchesAuthoredTargets(snapshot))
+                throw Unsupported("Create", "attachments changed while their physical view plan was being prepared");
+            int validationCommand = Renderer.CreateEngineReplacement(this, ref _validationRequest, 7,
                 "{\"label\":\"Engine framebuffer validation\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+            ReleaseAllocation();
             _targets = snapshot;
             _textures = textures;
             _views = views;
@@ -152,7 +157,7 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
             _invalidated = false;
             Data.IsLastCheckComplete = true;
         }
-        catch
+        catch (Exception error) when (error is not RenderResourcePreparationPendingException)
         {
             Data.IsLastCheckComplete = false;
             Destroy();
@@ -201,12 +206,64 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
 
     internal void MarkRecorded(bool color = true, bool depth = true)
     {
+        if (!HasCurrentAttachmentSnapshot())
+            throw Unsupported("Production", "the recorded attachment plan no longer matches the framebuffer targets");
         for (int i = 0; i < _textures.Length; i++)
         {
             bool writes = ColorSlot(_targets[i].Attachment) >= 0 ? color : depth;
-            if (writes && _textures[i] is IWebGpuProducedTexture produced) produced.MarkProduced();
+            if (writes)
+            {
+                int mip = _targets[i].MipLevel, layer = _targets[i].LayerIndex;
+                switch (_textures[i])
+                {
+                    case WebGpuTexture2DArray array: array.MarkSubresourceProduced(mip, layer); break;
+                    case WebGpuTextureCube cube: cube.MarkSubresourceProduced(mip, layer); break;
+                    case WebGpuTextureView view: view.MarkSubresourceProduced(mip, layer); break;
+                    case IWebGpuProducedTexture produced: produced.MarkProduced(); break;
+                    default: MarkAttachmentRecorded(_textures[i]); break;
+                }
+            }
             else MarkAttachmentRecorded(_textures[i]);
         }
+        if (color && HasColor)
+        {
+            SetField(ref _lastColorProducedFrame, Renderer.EngineFrameSequence, publishNotifications: false);
+            SetField(ref _lastColorProducedRevision, _revision, publishNotifications: false);
+            SetField(ref _lastColorProducedTargets, _targets, publishNotifications: false);
+        }
+    }
+
+    internal bool WasColorProducedInFrame(uint frameSequence)
+        => frameSequence != 0 && _lastColorProducedFrame == frameSequence && _lastColorProducedRevision == _revision &&
+            ReferenceEquals(_lastColorProducedTargets, _targets) && HasCurrentAttachmentSnapshot();
+
+    /// <summary>Requires the original attachment generation and exact produced target subresource.</summary>
+    internal bool WasColorProducedInFrame(uint frameSequence, ulong expectedRevision,
+        IFrameBufferAttachement target, int mip, int layer,
+        EFrameBufferAttachment attachment = EFrameBufferAttachment.ColorAttachment0)
+    {
+        if (expectedRevision != _revision || ColorSlot(attachment) < 0 || !WasColorProducedInFrame(frameSequence)) return false;
+        for (int index = 0; index < _lastColorProducedTargets.Length; index++)
+        {
+            var produced = _lastColorProducedTargets[index];
+            if (ReferenceEquals(produced.Target, target) && produced.Attachment == attachment &&
+                produced.MipLevel == mip && produced.LayerIndex == layer)
+                return true;
+        }
+        return false;
+    }
+
+    private bool HasCurrentAttachmentSnapshot()
+        => !_invalidated && _plan is not null && !IsRetired && !Data.IsDestroyed && MatchesAuthoredTargets(_targets);
+
+    private bool MatchesAuthoredTargets(
+        (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[] snapshot)
+    {
+        var targets = Data.Targets;
+        if (targets is null || targets.Length != snapshot.Length) return false;
+        for (int index = 0; index < snapshot.Length; index++)
+            if (targets[index] != snapshot[index]) return false;
+        return true;
     }
 
     public bool DependsOn(AbstractRenderAPIObject resource)
@@ -222,17 +279,11 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         EnsureCurrent();
         if ((!color && !depth) || color && !HasColor || depth && !HasDepth)
             throw Unsupported("Clear", "clear flags must select an attached color or depth aspect");
-        if (_clearColor != clearColor || _clearDepth != clearDepth)
-        {
-            RetireClearCommands();
-            _clearColor = clearColor;
-            _clearDepth = clearDepth;
-        }
         int index = (color ? 1 : 0) | (depth ? 2 : 0);
         if (_clearCommands[index] != 0) return _clearCommands[index];
-        BrowserFrameBufferPlan plan = CreatePlan(color, depth, clearColor, clearDepth);
-        _clearCommands[index] = Renderer.PrepareCommands(
-            "{\"label\":\"Engine framebuffer clear\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+        BrowserFrameBufferPlan plan = CreatePlan(color, depth, default, 1);
+        _clearCommands[index] = Renderer.CreateEngineReplacement(this, ref _clearRequests[index], 7,
+            "{\"label\":\"Engine framebuffer clear\",\"commands\":[{\"type\":\"clear\",\"engineClearValues\":true,\"pass\":" + plan.ToJson() + "}]}");
         return _clearCommands[index];
     }
 
@@ -242,10 +293,19 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         {
             if (_clearCommands[i] != 0) Renderer.RetireEngineResourceAfterFrame(_clearCommands[i]);
             _clearCommands[i] = 0;
+            if (_clearRequests[i] is { } request) Renderer.CancelEngineResourceRequest(request);
+            _clearRequests[i] = null;
         }
     }
 
     public override void Destroy()
+    {
+        Renderer.CancelEngineResourceRequests(this);
+        _validationRequest = null;
+        ReleaseAllocation();
+    }
+
+    private void ReleaseAllocation()
     {
         if (_plan is not null) Renderer.ReleaseEngineDrawDependencies(this);
         ReleaseColorResolvesUsing(this);
@@ -254,6 +314,9 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         _validationCommand = 0;
         _plan = null;
         _targets = [];
+        SetField(ref _lastColorProducedTargets, [], publishNotifications: false);
+        SetField(ref _lastColorProducedFrame, 0u, publishNotifications: false);
+        SetField(ref _lastColorProducedRevision, 0UL, publishNotifications: false);
         _textures = [];
         _views = [];
         _colorFormats = [];

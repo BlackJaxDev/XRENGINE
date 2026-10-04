@@ -10,6 +10,22 @@ public static class ShadowCasterVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.UberBaseV1)
+            return UberBaseVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+            return AuthoredTexturedVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+            return TexturedAlphaVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4)
+            return UnlitVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
+
         if (sourceMaterial.EngineSemantic.IsColorCoverage())
             return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.ShadowDepth);
 
@@ -53,6 +69,22 @@ public static class ShadowCasterVariantFactory
     public static XRMaterial? CreatePointLightMaterialVariant(XRMaterial sourceMaterial, EPointShadowMaterialKind kind)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.UberBaseV1 && kind == EPointShadowMaterialKind.None)
+            return UberBaseVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.PointShadowDepth);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 && kind == EPointShadowMaterialKind.None)
+            return AuthoredTexturedVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.PointShadowDepth);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 && kind == EPointShadowMaterialKind.None)
+            return TexturedAlphaVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.PointShadowDepth);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4 && kind == EPointShadowMaterialKind.None)
+            return UnlitVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.PointShadowDepth);
 
         if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
             sourceMaterial.EngineSemantic.IsColorCoverage() && kind == EPointShadowMaterialKind.None)

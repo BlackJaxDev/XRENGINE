@@ -36,6 +36,7 @@ public sealed partial class WebGpuRenderProgram
         Task modulePreparation = _preparation
             ?? throw new InvalidOperationException("WebGPU.Compute.ModuleMissing: prepare the cooked shader module first.");
         await modulePreparation;
+        RequireCurrentPreparation(epoch);
         int pipeline = await Renderer.CreateComputePipelineAsync(DescribeComputePipeline());
         if (IsRetired || Data.IsDestroyed || !Renderer.AcceptsBackendWork || epoch != _preparationEpoch)
         {
@@ -87,7 +88,7 @@ public sealed partial class WebGpuRenderProgram
         {
             if (_computeCommands.Count >= 1024)
                 throw new InvalidOperationException("WebGPU.Compute.CommandCapacity: the program exceeds 1024 retained binding/workgroup variants.");
-            command = Renderer.PrepareCommands(DescribeComputeCommand(bindings, groupsX, groupsY, groupsZ));
+            command = Renderer.PrepareEngineCommands(this, DescribeComputeCommand(bindings, groupsX, groupsY, groupsZ));
             _computeCommands.Add(key, command);
         }
         Span<uint> offsets = stackalloc uint[16];

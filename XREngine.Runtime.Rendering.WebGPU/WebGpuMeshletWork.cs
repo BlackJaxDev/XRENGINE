@@ -20,6 +20,7 @@ internal sealed class WebGpuMeshletWork : IDisposable
     private long _meshBufferRevision;
     private long _rendererBufferRevision;
     private WebGpuAuthoredIndexedLodSelection? _lodSelection;
+    private WebGpuAuthoredRasterSnapshot? _orderedRaster;
     internal WebGpuOwnedStorageBuffer Indices { get; }
     internal WebGpuOwnedStorageBuffer State { get; }
     internal WebGpuOwnedStorageBuffer Bounds { get; }
@@ -36,7 +37,8 @@ internal sealed class WebGpuMeshletWork : IDisposable
 
     internal bool TryRecord(in GpuMeshSubmissionRecord record, in WebGpuPreparedMeshDraw prepared,
         WebGpuMeshletGeometry geometry, XRCamera camera, WebGpuRenderProgram cull,
-        WebGpuRenderProgram finalize, WebGpuRenderProgram refit, bool cullEnabled, float expansion)
+        WebGpuRenderProgram finalize, WebGpuRenderProgram refit, bool cullEnabled, float expansion,
+        WebGpuAuthoredOrderingBatch? ordering = null, int orderSourceIndex = 0, WebGpuRenderProgram? orderMask = null)
     {
         if (_renderer.CurrentFrameOutput is not { } output) return false;
         RenderFrameViewSelection view = _renderer.RequireFrozenView();
@@ -111,7 +113,7 @@ internal sealed class WebGpuMeshletWork : IDisposable
                 ?? throw new InvalidOperationException("Meshlet expansion requires its recorded GPU LOD selection."));
             if (prepared.Instances is { } instanceSource) cull.Data.BindBuffer(instanceSource.Buffer, 5);
             else cull.BindStorageBuffer(5, _lodSelection.Selected);
-            cull.Data.Uniform("ModelMatrix", record.CurrentWorld);
+            cull.Data.Uniform("ModelMatrix", WebGpuImpostorBounds.CullMatrix(in record, prepared.Material.Data, in view));
             cull.Data.Uniform("ViewProjection", view.ViewProjectionMatrix);
             cull.Data.Uniform("MeshletCount", geometry.MeshletCount);
             cull.Data.Uniform("SourceTriangleCount", geometry.SourceTriangleCount);
@@ -144,7 +146,9 @@ internal sealed class WebGpuMeshletWork : IDisposable
             finalize.Data.Uniform("SourceTriangleCount", geometry.SourceTriangleCount);
             finalize.Data.Uniform("InstanceCount", record.InstanceCount);
             finalize.RecordCompute(1, 1, 1);
-            _draw.RecordOwnedIndexedIndirect(prepared.Bindings, State, record.InstanceCount);
+            if (ordering is null) _draw.RecordOwnedIndexedIndirect(prepared.Bindings, State, record.InstanceCount);
+            else _draw.CaptureRankedRaster(prepared.Bindings, State, record.InstanceCount,
+                _orderedRaster ??= new(_renderer), ordering, orderSourceIndex, record.PrimitiveIndex, orderMask!);
             return true;
         }
         finally
@@ -158,18 +162,27 @@ internal sealed class WebGpuMeshletWork : IDisposable
     internal void ReleaseDrawUsing(AbstractRenderAPIObject resource)
     {
         if (_draw?.DependsOn(resource) != true) return;
+        _orderedRaster?.InvalidateRaster();
         _draw.Dispose();
         _draw = null;
     }
 
     internal void ReleaseCommandsUsingHandle(AbstractRenderAPIObject resource, int handle)
-        => _draw?.ReleaseCommandsUsingHandle(resource, handle);
+    {
+        _orderedRaster?.ReleaseCommandsUsingHandle(resource, handle);
+        _draw?.ReleaseCommandsUsingHandle(resource, handle);
+    }
 
     internal void ReleaseCommandUsing(WebGpuRenderProgram program, WebGpuBindingSet bindings)
-        => _draw?.ReleaseCommandUsing(program, bindings);
+    {
+        _orderedRaster?.ReleaseCommandUsing(bindings);
+        _draw?.ReleaseCommandUsing(program, bindings);
+    }
 
     public void Dispose()
     {
+        _orderedRaster?.Dispose();
+        _orderedRaster = null;
         _draw?.Dispose();
         _draw = null;
         if (_geometry is not null) _geometry.LeaseCount--;

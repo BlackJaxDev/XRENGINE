@@ -80,8 +80,9 @@ internal static partial class ProjectBuilder
             // source world would rekey collisions before per-pipeline state lookup.
             using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
         }
+        HashSet<string> startupShaderIdentities = new(shaderArtifacts.Keys, StringComparer.Ordinal);
         (string[] streamedRoots, bool streamedUsesDefaultFont, IReadOnlyList<BrowserUiFontCookRequest> streamedFonts,
-            IReadOnlyList<ShaderProgramArtifact> streamedShaders) =
+            IReadOnlyList<ShaderProgramArtifact> streamedShaders, IReadOnlyDictionary<string, string[]> sceneShaderIdentities) =
             CookBrowserStreamedScenes(project, world, assetRoot, sourceDirectory, dependencyCooker, resolver,
                 cookedFonts, cancellationToken, outputProfile, admittedScenePasses, capabilityReport, admittedPipelineRequirements, nativeAdmission);
         nativeAdmission.Complete(capabilityReport, cancellationToken);
@@ -138,8 +139,11 @@ internal static partial class ProjectBuilder
             string textType = typeof(TextFile).AssemblyQualifiedName!;
             assets.Add(new { path = descriptor, type = textType, encoding = "utf8-text", source = descriptorName, dependencies = Array.Empty<string>() });
             assets.Add(new { path = source, type = textType, encoding = "utf8-text", source = sourceName, dependencies = Array.Empty<string>() });
-            essentialRoots.Add(descriptor);
-            essentialRoots.Add(source);
+            if (startupShaderIdentities.Contains(artifact.Identity))
+            {
+                essentialRoots.Add(descriptor);
+                essentialRoots.Add(source);
+            }
             shaderReferences.Add(new { identity = artifact.Identity, descriptor, source });
         }
         List<object> materialVariants = [];
@@ -179,13 +183,23 @@ internal static partial class ProjectBuilder
                 computeArtifacts.Add(new { kernel, descriptorIdentity = identity });
             }
         }
+        object? shaderDelivery = shaderArtifacts.Count == startupShaderIdentities.Count ? null : new
+        {
+            schema = 1,
+            startup = startupShaderIdentities.Order(StringComparer.Ordinal),
+            // Every scene already borrows startup programs. Record only the
+            // additional membership so global bindings are not repeated per root.
+            scenes = sceneShaderIdentities.OrderBy(static entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => new { path = entry.Key,
+                    identities = entry.Value.Where(identity => !startupShaderIdentities.Contains(identity)).Order(StringComparer.Ordinal) })
+        };
         byte[] recipe = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schema = 1, format = "xrengine-assets", startupWorld = worldPath,
             startupSettings = "/game/startup.asset", publishedMetadata = runtimeMetadataPath, shaderArtifacts = shaderReferences,
             defaultUiFont = includesDefaultUiFont ? BrowserDefaultUiFontPath : null,
             essentialRoots = essentialRoots.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal),
-            streamedRoots, materialVariants, pipelineArtifacts, computeArtifacts, assets
+            streamedRoots, shaderDelivery, materialVariants, pipelineArtifacts, computeArtifacts, assets
         }, new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
         string path = Path.Combine(sourceDirectory, "engine-assets.recipe.json");
         File.WriteAllBytes(path, recipe);

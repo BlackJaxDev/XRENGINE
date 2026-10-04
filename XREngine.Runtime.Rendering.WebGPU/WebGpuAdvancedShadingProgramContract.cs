@@ -9,6 +9,16 @@ internal static class WebGpuAdvancedShadingProgramContract
     internal static void Validate(ShaderProgramArtifact artifact, string pass)
     {
         if (pass == "shade-msaa-resolve") { WebGpuAdvancedMsaaProgramContract.Validate(artifact, pass); return; }
+        string requestedPass = pass;
+        bool uberRaster = pass.StartsWith("shade-uber-", StringComparison.Ordinal);
+        if (uberRaster) pass = pass switch
+        {
+            "shade-uber-native" => "shade-native", "shade-uber-native-depth" => "shade-native-depth",
+            "shade-uber-native-msaa" => "shade-native-msaa", "shade-uber-native-depth-msaa" => "shade-native-depth-msaa",
+            "shade-uber-surface-exports" => "shade-surface-exports", "shade-uber-surface-exports-depth" => "shade-surface-exports-depth",
+            "shade-uber-surface-exports-msaa" => "shade-surface-exports-msaa", "shade-uber-surface-exports-depth-msaa" => "shade-surface-exports-depth-msaa",
+            _ => throw Invalid(),
+        };
         bool multisample = pass.EndsWith("-msaa", StringComparison.Ordinal);
         bool depthBank = pass is "shade-native-depth" or "shade-surface-exports-depth" or "shade-native-depth-msaa" or "shade-surface-exports-depth-msaa";
         bool native = depthBank || pass is "shade-native" or "shade-surface-exports" or "shade-native-msaa" or "shade-surface-exports-msaa";
@@ -17,14 +27,16 @@ internal static class WebGpuAdvancedShadingProgramContract
         bool background = pass is "shade-background" or "shade-background-exports" or "shade-background-exports-msaa";
         if (!native && !classify && !finalize && !background) throw Invalid();
         int count = native ? (multisample && !exports ? 40 : 41) : classify ? 7 : finalize ? 3 : exports ? 5 : 6;
-        if (artifact.Pass != pass || artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Resources.Length != count ||
+        if (uberRaster) count--;
+        if (uberRaster && artifact.SemanticSchemaIdentity != "xrengine.engine.uber-raster-consumer.v2") throw Invalid();
+        if (artifact.Pass != requestedPass || artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Resources.Length != count ||
             artifact.ComputeEntryPoint is null || artifact.VertexEntryPoint is not null || artifact.FragmentEntryPoint is not null ||
             artifact.ComputeWorkgroupSize != (finalize ? new ShaderComputeWorkgroupSize(64, 1, 1) : new ShaderComputeWorkgroupSize(16, 16, 1)))
             throw Invalid();
         if (native)
         {
-            if (!HasNativeSchemas(artifact, exports, depthBank))
-                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook the selected native shading and export companions with engine-surface schema 2, authored-decal schema 1, standalone-shadow schema 1, ambient-occlusion schema 1, and the exact ordinary or depth-comparison bank define.");
+            if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster))
+                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook native shading and exports with engine-surface schema 5, Uber-base schema 1, the 36-table scene directory, authored-basis/decal/shadow/AO schema 1, and the selected texture-bank contract.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
             Require(artifact, 0, 7, "uniform", 944, "FrozenView");
             Require(artifact, 0, 8, "uniform", 160, "Parameters");
@@ -34,6 +46,7 @@ internal static class WebGpuAdvancedShadingProgramContract
             Require(artifact, 1, 3, "texture-2d-unfilterable-float", name: "AmbientOcclusion");
             for (uint slot = 0; slot < 12; slot++)
             {
+                if (uberRaster && slot == 8) { Require(artifact, 1, 20, "texture-2d-array-unfilterable-float", name: "UberRasterSurface"); continue; }
                 Require(artifact, 1, 4 + slot * 2, depthBank && slot == 9 ? "texture-depth-2d" : slot < 10 ? "texture-2d-float" : slot == 10 ? "texture-cube-float" : "texture-2d-array-float");
                 Require(artifact, 1, 5 + slot * 2, depthBank && slot == 9 ? "comparison-sampler" : "filtering-sampler");
             }
@@ -67,7 +80,7 @@ internal static class WebGpuAdvancedShadingProgramContract
         }
     }
 
-    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank)
+    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank, bool uberRaster)
     {
         if (artifact.SourceLanguage != "Slang" || artifact.DescriptorBytes.IsDefaultOrEmpty) return false;
         // Program validation also runs while recording. Inspect the retained,
@@ -83,16 +96,36 @@ internal static class WebGpuAdvancedShadingProgramContract
                 continue;
             }
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
-            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false;
+            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndArray)
-                    return schemaSeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
+                    return rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
                 if (reader.TokenType != JsonTokenType.String) return false;
-                if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=2"u8))
+                if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=6"u8))
                 {
                     if (schemaSeen) return false;
                     schemaSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION=2"u8))
+                {
+                    if (!uberRaster || rasterSeen) return false;
+                    rasterSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_UBER_BASE_SCHEMA_VERSION=1"u8))
+                {
+                    if (uberSeen) return false;
+                    uberSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_SCENE_DIRECTORY_TABLE_COUNT=36"u8))
+                {
+                    if (directorySeen) return false;
+                    directorySeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_AUTHORED_BASIS_SCHEMA_VERSION=1"u8))
+                {
+                    if (basisSeen) return false;
+                    basisSeen = true;
                 }
                 else if (reader.ValueTextEquals("XR_ADV_SURFACE_EXPORTS"u8))
                 {

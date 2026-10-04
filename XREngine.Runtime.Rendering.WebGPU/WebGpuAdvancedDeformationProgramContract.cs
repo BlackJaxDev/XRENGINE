@@ -10,9 +10,10 @@ internal static class WebGpuAdvancedDeformationProgramContract
 
     internal static void Validate(ShaderProgramArtifact artifact, bool copy)
     {
-        uint uniformBinding = copy ? 3u : 2u;
+        uint uniformBinding = copy ? 5u : 3u;
         string[] parameters = copy ? CopyParameters : AggregateParameters;
-        if (artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Pass != (copy ? "deformation-copy" : "aggregate-deformation") ||
+        if (artifact.SourceLanguage != "WGSL" || artifact.SemanticSchemaIdentity != "xrengine.engine.compute.v1" ||
+            artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Pass != (copy ? "deformation-copy" : "aggregate-deformation") ||
             artifact.ComputeEntryPoint != (copy ? "advancedDeformationCopy" : "advancedAggregateDeformation") ||
             artifact.VertexEntryPoint is not null || artifact.FragmentEntryPoint is not null ||
             artifact.ComputeWorkgroupSize != new ShaderComputeWorkgroupSize(256, 1, 1) ||
@@ -27,9 +28,11 @@ internal static class WebGpuAdvancedDeformationProgramContract
             if (selected is not { } entry) throw Invalid();
             if (binding != uniformBinding)
             {
-                string type = binding == uniformBinding - 1 ? "storage" : "read-only-storage";
+                string type = (copy ? binding == 2u : binding is 1u or 2u) ? "storage" : "read-only-storage";
                 if (entry.BindingType != type || entry.DynamicOffset || !entry.RuntimeArray ||
                     entry.Contract.ByteSize != 4 || !entry.Contract.Members.IsEmpty) throw Invalid();
+                if ((!copy && binding == 2u || copy && binding == 3u) && entry.Contract.Name != "CurrentAuthoredBasisV1" ||
+                    copy && binding == 4u && entry.Contract.Name != "PreviousAuthoredBasisV1") throw Invalid();
                 continue;
             }
             if (entry.BindingType != "uniform" || !entry.DynamicOffset || entry.RuntimeArray ||
@@ -44,5 +47,5 @@ internal static class WebGpuAdvancedDeformationProgramContract
     }
 
     private static NotSupportedException Invalid()
-        => new("WebGPU.Advanced.DeformationAbiMismatch: the cooked program must implement the exact canonical aggregate or geometry-copy contract.");
+        => new("WebGPU.Advanced.DeformationAbiMismatch: recook the canonical aggregate and geometry-copy programs with authored-basis schema 1 and their three/five storage bindings.");
 }

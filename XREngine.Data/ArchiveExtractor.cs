@@ -31,6 +31,7 @@ namespace XREngine
             bool overwrite,
             CancellationToken cancellationToken = default)
         {
+            XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Archive extraction");
             var tempFolder = Path.Combine(Path.GetTempPath(), $"{Path.GetFileName(packagePath)}.archive.extract");
             yield return new ArchiveExtractionProgress(0f, EArchiveExtractionPhase.Preparing, "Preparing extraction...");
             try
@@ -55,7 +56,10 @@ namespace XREngine
             bool overwrite,
             IProgress<ArchiveExtractionProgress>? progress = null,
             CancellationToken cancellationToken = default)
-            => Task.Run(() => Extract(packagePath, destinationFolderPath, overwrite, progress, cancellationToken), cancellationToken);
+        {
+            XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Archive extraction");
+            return Task.Run(() => Extract(packagePath, destinationFolderPath, overwrite, progress, cancellationToken), cancellationToken);
+        }
 
         private static IEnumerable<ArchiveExtractionProgress> ExtractArchiveWithProgress(
             string packagePath,

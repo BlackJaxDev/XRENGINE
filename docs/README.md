@@ -22,6 +22,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md), including ordered snapshot-input edges and callback ownership
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [WebGPU Sky Backgrounds](architecture/rendering/webgpu-sky-background.md)
+- [Native Authored Material Vertex Functions](work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
@@ -128,6 +129,8 @@ browser representations under one verified managed-admission identity.
 
 [Portable browser engine boot qualification](work/progress/platform/portable-browser-engine-boot.md) records the earlier startup and asset round-trip boundaries. The [current checkpoint](work/progress/platform/unified-browser-checkpoint-2026-10-01.md) records subsequent shared-world lifecycle, native browser Jolt and rendered-game evidence, together with the remaining acceptance limits.
 
+[Browser output source and companion ownership](work/progress/rendering/browser-output-lifetime-2026-10-04.md) records generated pipeline-source ownership, auxiliary material options and terminal command-container cleanup, with bounded production-method lifetime evidence.
+
 [Browser project publishing](work/progress/rendering/browser-project-publishing.md) connects the existing editor/CLI build flow to saved-world export, a shared content packager and a static browser bundle. The genuine Editor-published RollingBall bundle now renders in Chromium/SwiftShader, but complete gameplay and physical-device acceptance remain open; packaged-editor publishing also remains open. See the [current checkpoint](work/progress/platform/unified-browser-checkpoint-2026-10-01.md) and [publishing record](work/progress/rendering/browser-project-publishing.md) for exact evidence and limits.
 
 [Browser static hosting](developer-guides/runtime/browser-static-hosting.md) documents production HTTPS, MIME, compression, cache, CSP and conditional cross-origin isolation requirements. It is deployment guidance, not evidence that a production host or physical device was tested.
@@ -161,9 +164,25 @@ browser representations under one verified managed-admission identity.
 
 [Batched browser upload bridge](work/progress/rendering/browser-upload-bridge.md) records reusable upload arenas, typed resource updates, ownership/overflow rules and bridge diagnostics. Exact-runtime lifetime and performance acceptance remains deferred.
 
+[Browser engine resource acceptance](work/progress/rendering/browser-engine-resource-acceptance-2026-10-03.md) records retained physical-resource requests and transfers, one acceptance import for complete or pending scenes, cached queue completion, lifetime witnesses and remaining browser acceptance.
+
+[Caller-thread physics-chain scheduling](work/progress/platform/browser-physics-chain-scheduling-2026-10-03.md) records inline CPU range execution, preserved solver selection, deterministic world cleanup and zero-allocation transform notification evidence on native .NET and the Node-hosted browser-wasm interpreter. Whole-browser allocation and lifetime acceptance remain separate.
+
+[Caller-thread blocking-site inventory](work/progress/platform/browser-caller-blocking-inventory-2026-10-03.md) records queued mesh/BVH work, immediate transform publication, deferred shader-version readiness, browser event behavior and the remaining shared-code scheduling boundaries.
+
+[Asset-manager source boundaries](work/progress/platform/browser-asset-manager-source-boundaries-2026-10-03.md) records catalog-only owner lifetime, host-file admission, retired watcher rejection and nonblocking remote-response publication with exact rollback ownership.
+
+[Lower-level asset source admission](work/progress/platform/browser-lower-asset-source-boundary-2026-10-03.md) records captured raw text reads, source retirement, caller-thread admission and early file-mapping capability checks.
+
 [Browser shader cooking and material generation](work/progress/rendering/browser-shader-cooking.md) records the C# cooker, typed WGSL generation, optional pinned Slang route, coordinate/layout contracts and bounded startup. Compiler/layout qualification and runtime acceptance remain deferred.
 
+[Shader cook diagnostics](work/progress/platform/browser-shader-cook-diagnostics-2026-10-04.md) records material/pass/source context, mapped compiler locations, conservative fallback errors and genuine failed-cook evidence.
+
 [Authored color coverage](work/progress/platform/browser-authored-color-coverage-2026-10-03.md) records explicit generated PBR color coverage, preserved opacity/cutoff/blending, exact normal/shadow companions, unchanged older texture payloads, and the separate device-acceptance boundary.
+
+[Authored two-image alpha materials](work/progress/platform/browser-authored-textured-alpha-2026-10-03.md) records exact diffuse-alpha/red-mask coverage, additive authored and cooked carriers, matching receiver and auxiliary passes, native material roles, and real export/package evidence. Rendered coverage remains open.
+
+[Authored forward normal and specular texture families](work/progress/platform/browser-authored-textured-families-2026-10-03.md) records six exact forward material families, shared RGB/height normal mapping, feature-specific raster companions, additive serialization and native source-basis preservation. Rendered acceptance remains separate.
 
 [Native generated PBR surfaces](work/progress/platform/browser-native-authored-lit-2026-10-03.md) records exact cooked provenance, owner-scoped native admission, frozen factors/maps/coverage and raster-state rejection, with GPU acceptance kept separate.
 
@@ -176,6 +195,10 @@ browser representations under one verified managed-admission identity.
 [Modular browser pipeline requirements](work/design/platform/modular-browser-render-pipelines-2026-10-02.md) records the shared Default, Advanced and authored-pipeline scope, including GPU-driven zero-readback submission. The [implementation record](work/progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md) distinguishes generic asset/catalog contracts from pending Advanced stage execution.
 
 [Engine color MSAA resolve](work/progress/rendering/browser-color-msaa-resolve-2026-10-02.md) records shared renderbuffer ownership, retained four-to-one color resolves, precise unsupported combinations and remaining GPU acceptance.
+
+[Default and generic browser MSAA](work/progress/rendering/browser-default-generic-msaa-2026-10-04.md) records x4 forward/prepass attachments, nearest-sample GTAO sidecars, ordered color resolve, preserved submission strategies and the separate generic reversed-depth gap.
+
+[Generic browser reversed depth](work/progress/rendering/browser-generic-reversed-depth-2026-10-04.md) records frozen camera comparisons and clears, sky/postprocess ABI updates, custom callback compatibility and remaining known-value rendering.
 
 [Advanced browser depth primitives](work/progress/rendering/browser-advanced-depth-stages-2026-10-02.md) records exact GTAO and conservative depth reduction and explicit storage encodings. [Native-family admission](work/progress/rendering/browser-advanced-admission-2026-10-02.md) records selected-device and program validation, output reservations, completion ownership, and remaining browser evidence.
 
@@ -190,3 +213,15 @@ browser representations under one verified managed-admission identity.
 [Browser authored meshlet indexed submission](work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md) records material-independent resident publication, conservative GPU cull/refit/expansion, exact authored raster reuse, completion ownership, explicit remaining profiles, and the pending runtime acceptance boundary.
 
 [Native browser standalone shadows](work/progress/rendering/browser-native-standalone-shadow-2026-10-03.md) records typed depth/color banks, immutable producer receipts, exact receiver controls, shared cold admission, and the remaining live shadow acceptance.
+
+[Mipmap caller-thread resizing](work/progress/platform/browser-mipmap-caller-resize-2026-10-03.md) records request-owned pixels, cancellation and unchanged serialization evidence. [Uber caller preparation](work/progress/rendering/browser-uber-caller-preparation-2026-10-03.md) records the implemented job route and owner-observed scheduler failures and remaining cooked-program boundary.
+
+[Canonical Uber base materials](work/progress/rendering/browser-uber-base-material-contract-2026-10-04.md) records the exact source subset, target-only material/probe carriers, native companion tables, final cook/hydration evidence and remaining rendered acceptance.
+
+[Ordinary engine Unlit materials](work/progress/rendering/browser-engine-unlit-materials-2026-10-04.md) records canonical authored cooks, runtime factory variants, target-only reflection ownership, genuine publication/hydration and remaining rendered acceptance.
+
+[Runtime asset wrappers](work/progress/platform/browser-runtime-asset-wrapper-boundaries-2026-10-03.md) record serialization-owner admission. [Gaussian and baked DDGI consumers](work/progress/platform/browser-gaussian-ddgi-asset-consumers-2026-10-04.md) record captured asynchronous reads, owner-side adoption and reviewed cancellation lifetimes. [Caller frame identity](work/progress/rendering/browser-caller-scene-frame-identity-2026-10-03.md) records canonical collection, scene and retained-package identity. [Octahedral billboard preparation](work/progress/rendering/browser-octahedral-impostor-2026-10-03.md) and [asynchronous scene capture](work/progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md) distinguish shader/geometry implementation from capture lifetime and physical rendering acceptance.
+
+[Runtime I/O admission](work/progress/platform/browser-runtime-io-admission-2026-10-04.md) records captured remote-response ownership, cooked-font diagnostics and host-only capture, profiling, archive and transport boundaries.
+
+[Browser download size](work/progress/platform/browser-download-size-boundary-2026-10-04.md) separates current framework build-resource measurements from final transfer acceptance and records implemented scene-shader deferral and the remaining managed-assembly boundaries.

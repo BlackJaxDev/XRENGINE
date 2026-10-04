@@ -18,6 +18,20 @@ public partial class AssetManager
         && !UsesRuntimeAssetCatalog
         && _runtimeAssetSource is not { SupportsSynchronousReads: false };
 
+    /// <summary>Admits direct host-file asset operations before file probes or job scheduling.</summary>
+    internal void EnsureHostFileAssetAccess()
+    {
+        if (!SupportsSynchronousAssetWork)
+            throw new NotSupportedException("AssetSource.HostFileUnavailable: direct asset files and import caches require a synchronous host-file owner; load packaged assets through LoadAsync or LoadFromRuntimeSourceAsync.");
+    }
+
+    private void EnsureHostFileLoadRoute(bool bypassJobThread)
+    {
+        EnsureHostFileAssetAccess();
+        if (!bypassJobThread && !IsOnJobThread && _jobManagerProvider().IsCallerThreadExecutor)
+            throw new NotSupportedException("AssetSource.HostFileUnavailable: a caller-thread asset job cannot perform direct host-file loading.");
+    }
+
     /// <summary>Changes when a runtime catalog owner is bound or invalidated.</summary>
     public int RuntimeSourceEpoch => Volatile.Read(ref _runtimeSourceEpoch);
 
@@ -32,17 +46,19 @@ public partial class AssetManager
             throw new InvalidOperationException("AssetSource.RootMismatch: a runtime source cannot change this asset owner's virtual roots.");
         lock (_runtimePublicationGate)
         {
+            RejectRemoteAssetLifecycleOverlap();
             if (_runtimeSourceTeardown || _runtimeSourceUnbinding)
                 throw new InvalidOperationException("AssetSource.TeardownPending: wait for the previous content owner to finish teardown.");
             if (ReferenceEquals(_runtimeAssetSource, source))
                 return;
-            if (_runtimeSourceObjects.Count != 0)
+            if (_runtimeSourceObjects.Count != 0 || _failedRemoteAssetOwnership.Count != 0)
                 throw new InvalidOperationException("AssetSource.TeardownPending: the previous content owner still owns engine objects.");
             if (_runtimeAssetSource is not null)
                 throw new InvalidOperationException("AssetSource.AlreadyBound: unload the current world before replacing its content owner.");
             _runtimeAssetSource = source;
             _runtimeSourceLifetime.Dispose();
             _runtimeSourceLifetime = new CancellationTokenSource();
+            _runtimeCatalogOwner = true;
             Interlocked.Increment(ref _runtimeSourceEpoch);
         }
     }
@@ -52,6 +68,7 @@ public partial class AssetManager
     {
         lock (_runtimePublicationGate)
         {
+            RejectRemoteAssetLifecycleOverlap();
             if (!ReferenceEquals(_runtimeAssetSource, source) || _runtimeSourceUnbinding || _runtimeSourceDisposing)
                 return;
             _runtimeSourceUnbinding = true;
@@ -127,6 +144,13 @@ public partial class AssetManager
                 ?? throw new InvalidDataException($"AssetSource.TypeNotRegistered: '{entry.TypeName}' for '{path}'.");
             if (!typeof(XRAsset).IsAssignableFrom(type) || !expectedType.IsAssignableFrom(type))
                 throw new InvalidDataException($"AssetSource.TypeMismatch: '{path}' declares '{type}' but requires '{expectedType}'.");
+
+            if (source is IRuntimeAssetPreparationSource preparation)
+            {
+                await preparation.PrepareAssetAsync(path, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                EnsureRuntimeSourceCurrent(source, epoch);
+            }
 
             foreach (string dependency in entry.Dependencies)
                 await LoadCatalogAssetAsync(Path.GetFullPath(dependency), typeof(XRAsset), source, catalog, epoch,
@@ -293,11 +317,23 @@ public partial class AssetManager
     private XRAsset RequireCachedRuntimeAsset(string path, Type expectedType)
     {
         path = Path.GetFullPath(path);
-        if (_runtimeAssetSource is IRuntimeAssetCatalog catalog && !catalog.TryGetAsset(path, out _))
-            throw new FileNotFoundException($"AssetSource.NotPackaged: '{path}' is not in the runtime content catalog.", path);
-        if (TryGetAssetByPath(path, out XRAsset? asset))
-            return RequireRuntimeAssetType(path, asset, expectedType);
-        throw new NotSupportedException($"AssetSource.AsyncReadRequired: '{path}' must be loaded asynchronously before synchronous reference resolution.");
+        IRuntimeAssetSource? source = _runtimeAssetSource;
+        int epoch = Volatile.Read(ref _runtimeSourceEpoch);
+        if (_runtimeCatalogOwner && source is not IRuntimeAssetCatalog)
+            throw new NotSupportedException("AssetSource.CatalogUnavailable: the runtime content catalog is no longer bound.");
+        bool packaged = source is not IRuntimeAssetCatalog catalog || catalog.TryGetAsset(path, out _);
+        lock (_runtimePublicationGate)
+        {
+            if (_runtimeSourceTeardown || _runtimeSourceUnbinding || _runtimeSourceDisposing
+                || !ReferenceEquals(source, _runtimeAssetSource)
+                || epoch != Volatile.Read(ref _runtimeSourceEpoch))
+                throw new OperationCanceledException("AssetSource.StaleSession: the world content owner is retiring.");
+            if (!packaged)
+                throw new FileNotFoundException($"AssetSource.NotPackaged: '{path}' is not in the runtime content catalog.", path);
+            if (TryGetAssetByPath(path, out XRAsset? asset) && !asset.IsDestroyed)
+                return RequireRuntimeAssetType(path, asset, expectedType);
+            throw new NotSupportedException($"AssetSource.AsyncReadRequired: '{path}' must be loaded asynchronously before synchronous reference resolution.");
+        }
     }
 
     /// <summary>Finds an already published engine asset without starting an I/O operation.</summary>

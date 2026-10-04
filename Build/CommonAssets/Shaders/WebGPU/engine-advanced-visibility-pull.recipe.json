@@ -20,17 +20,17 @@
     "vertex": "advancedVisibilityVertex",
     "fragment": "advancedVisibilityFragment"
   },
-  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "semanticSchemaIdentity": "xrengine.engine.advanced-visibility.v3",
   "requiredLimits": {
     "maxBindGroups": 1,
-    "maxBindingsPerBindGroup": 7,
+    "maxBindingsPerBindGroup": 9,
     "maxUniformBufferBindingSize": 240,
     "maxDynamicUniformBuffersPerPipelineLayout": 1,
     "maxUniformBuffersPerShaderStage": 1,
     "maxStorageBuffersPerShaderStage": 4,
     "maxStorageBufferBindingSize": 4,
-    "maxSampledTexturesPerShaderStage": 1,
-    "maxSamplersPerShaderStage": 1
+    "maxSampledTexturesPerShaderStage": 2,
+    "maxSamplersPerShaderStage": 2
   },
   "layout": {
     "vertexBuffers": [],
@@ -207,15 +207,15 @@
             "type": "u32"
           },
           {
-            "name": "reserved0",
-            "provider": "Reserved0",
+            "name": "opacityCoverage",
+            "provider": "OpacityCoverage",
             "offset": 232,
             "bytes": 4,
             "type": "u32"
           },
           {
-            "name": "reserved1",
-            "provider": "Reserved1",
+            "name": "renderTimeBits",
+            "provider": "RenderTimeBits",
             "offset": 236,
             "bytes": 4,
             "type": "u32"
@@ -242,6 +242,36 @@
         "physicalName": "coverageSampler",
         "group": 0,
         "binding": 6,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Pass",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "OpacityTexture",
+        "physicalName": "opacityTexture",
+        "group": 0,
+        "binding": 7,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Pass",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "OpacityTexture",
+        "physicalName": "opacitySampler",
+        "group": 0,
+        "binding": 8,
         "kind": "filtering-sampler",
         "visibility": [
           "fragment"

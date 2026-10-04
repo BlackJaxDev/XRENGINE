@@ -40,7 +40,7 @@ public static partial class RuntimeEngine
     public static float Delta => Time.Timer.Update.Delta;
     public static float SmoothedDelta => (float)RuntimeRenderingHostServices.FrameTiming.SmoothedUpdateDeltaSeconds;
     public static long ElapsedTicks => RuntimeRenderingHostServices.FrameTiming.ElapsedTicks;
-    public static float ElapsedTime => RuntimeRenderingHostServices.FrameTiming.ElapsedTime;
+    public static float ElapsedTime => RenderFrameViewSetCapture.ResolveElapsedTime(RuntimeRenderingHostServices.FrameTiming.ElapsedTime);
     public static bool IsEditor => false;
     public static bool IsRenderThread
         => Environment.CurrentManagedThreadId == RenderThreadId;
@@ -109,6 +109,9 @@ public static partial class RuntimeEngine
     {
         if (IsRenderThread)
             return [.. EnumerateActiveViewports(mode)];
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            throw new InvalidOperationException(
+                "Active viewport enumeration requires the render owner on a caller-thread host.");
 
         var completion = new TaskCompletionSource<IReadOnlyList<XRViewport>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1134,11 +1137,28 @@ public static partial class RuntimeEngine
             public static void AllowDepthWrite(bool allow) => AbstractRenderer.Current?.AllowDepthWrite(allow);
             public static void DepthFunc(EComparison comparison) => AbstractRenderer.Current?.DepthFunc(MapDepthComparison(comparison));
             public static void ColorMask(bool red, bool green, bool blue, bool alpha) => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);
-            public static XRCamera.EDepthMode GetDepthMode() => RenderingCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
-            public static float GetDefaultDepthClearValue() => RenderingCamera?.GetDepthClearValue() ?? 1.0f;
-            public static EComparison MapDepthComparison(EComparison comparison)
+            public static XRCamera.EDepthMode GetDepthMode()
             {
-                if (GetDepthMode() != XRCamera.EDepthMode.Reversed)
+                XRCamera? camera = RenderingCamera;
+                AbstractRenderer? renderer = AbstractRenderer.Current;
+                if (renderer is not null && renderer.BackendId == RendererBackendId.WebGPU)
+                {
+                    if (renderer.TryGetFrozenViewDepthMode(out XRCamera.EDepthMode mode))
+                        return mode;
+                    if (camera is not null &&
+                        RenderFrameViewSetCapture.FindCapturedPassView(ActiveRenderCommandExecutionState, camera) is { } view)
+                        return view.ReversedDepth ? XRCamera.EDepthMode.Reversed : XRCamera.EDepthMode.Normal;
+                }
+                return camera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+            }
+            public static float GetDefaultDepthClearValue() => GetDepthMode() == XRCamera.EDepthMode.Reversed ? 0.0f : 1.0f;
+            public static EComparison MapDepthComparison(EComparison comparison)
+                => MapDepthComparison(comparison, GetDepthMode());
+
+            /// <summary>Maps an authored comparison using an explicitly captured camera depth convention.</summary>
+            public static EComparison MapDepthComparison(EComparison comparison, XRCamera.EDepthMode depthMode)
+            {
+                if (depthMode != XRCamera.EDepthMode.Reversed)
                     return comparison;
 
                 return comparison switch

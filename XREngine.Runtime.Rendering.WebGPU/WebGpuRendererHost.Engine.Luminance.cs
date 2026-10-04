@@ -108,7 +108,7 @@ public sealed partial class WebGpuRendererHost
         if (_engineRecording)
             throw new InvalidOperationException("WebGPU.Luminance.InFrameUnsupported: a reduction during frame recording would sample stale contents.");
         WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(texture, generateNow: true)!;
-        RequireLuminanceTexture(api.Format, api.SampleCount, api.ProductionTicket, api.HasCommittedProduction);
+        RequireLuminanceTexture(api.Format, api.SampleCount, api.HasUncommittedProduction);
         int mip = averageBase ? 0 : XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height,
             texture.SmallestAllowedMipmapLevel);
         if ((uint)mip >= (uint)(texture.Mipmaps?.Length ?? 0))
@@ -144,7 +144,7 @@ public sealed partial class WebGpuRendererHost
                 texture.SmallestAllowedMipmapLevel == allowedMip && texture.LargestMipmapLevel == baseMip &&
                 texture.SparseTextureStreamingEnabled == sparseStreaming &&
                 (!genMipmapsNow || RuntimeEngine.Rendering.Settings.UseDetailPreservingComputeMipmaps == detailSetting) &&
-                (productionTicket == 0 || api.HasCommittedProduction), cancellationToken);
+                !api.HasUncommittedProduction, cancellationToken);
     }
 
     /// <summary>Samples the first texel of the selected authored mip from every array layer with equal weight.</summary>
@@ -167,7 +167,7 @@ public sealed partial class WebGpuRendererHost
         if (_engineRecording)
             throw new InvalidOperationException("WebGPU.Luminance.InFrameUnsupported: a reduction during frame recording would sample stale contents.");
         WebGpuTexture2DArray api = (WebGpuTexture2DArray)GetOrCreateAPIRenderObject(texture, generateNow: true)!;
-        RequireLuminanceTexture(api.Format, api.SampleCount, api.ProductionTicket, api.HasCommittedProduction);
+        RequireLuminanceTexture(api.Format, api.SampleCount, api.HasUncommittedProduction);
         int mip = averageBase ? 0 : XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height,
             texture.SmallestAllowedMipmapLevel);
         if ((uint)mip >= (uint)(texture.Mipmaps?.Length ?? 0))
@@ -194,14 +194,14 @@ public sealed partial class WebGpuRendererHost
             firstGeneratedMip, lastGeneratedMip, detailPreserving: false, strictEncodedSrgb: !averageBase,
             () => api.IsCurrentGpuAllocationForCopy && api.ResourceHandle == handle && api.ProductionTicket == productionTicket &&
                 texture.SmallestAllowedMipmapLevel == allowedMip && texture.LargestMipmapLevel == baseMip &&
-                (productionTicket == 0 || api.HasCommittedProduction), cancellationToken);
+                !api.HasUncommittedProduction, cancellationToken);
     }
 
-    private static void RequireLuminanceTexture(string format, uint samples, ulong productionTicket, bool committed)
+    private static void RequireLuminanceTexture(string format, uint samples, bool hasUncommittedProduction)
     {
         if (format is not ("rgba8unorm" or "rgba8unorm-srgb" or "rgba16float") || samples != 1)
             throw new NotSupportedException("WebGPU.Luminance.TextureUnsupported: reduction requires single-sample RGBA8, sRGB8 or RGBA16F.");
-        if (productionTicket != 0 && !committed)
+        if (hasUncommittedProduction)
             throw new InvalidOperationException("WebGPU.Luminance.TextureNotCommitted: the texture has no accepted producer frame.");
         // Strict encoded sRGB reads are lowered to a GPU raw-byte format copy.
     }
@@ -215,13 +215,14 @@ public sealed partial class WebGpuRendererHost
         if (lastGeneratedMip > firstGeneratedMip)
             await EnsureLuminanceMipmapReadyAsync(session, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        if (_engineRecording || !sourceIsCurrent())
+        if (_engineRecording || HasPendingEnginePreparation(handle) ||
+            lastGeneratedMip > firstGeneratedMip && HasPendingEngineTextureCopySource(handle) || !sourceIsCurrent())
             throw new InvalidOperationException("WebGPU.Luminance.ObsoleteProducer: the source changed or entered an uncommitted producer frame during shader preparation.");
         RequireReadbackResource(handle);
         int ticket = WebGpuImports.BeginTextureLuminance(session, handle, mip, width, height, layers,
             weights.X, weights.Y, weights.Z, firstGeneratedMip, lastGeneratedMip, detailPreserving, strictEncodedSrgb);
         byte[] bytes = await FinishReadbackAsync(session, ticket, sizeof(float), cancellationToken);
-        if (!sourceIsCurrent())
+        if (HasPendingEnginePreparation(handle) || !sourceIsCurrent())
             throw new InvalidOperationException("WebGPU.Luminance.ObsoleteProducer: the source changed before reduction completed.");
         return DecodeLuminance(bytes);
     }

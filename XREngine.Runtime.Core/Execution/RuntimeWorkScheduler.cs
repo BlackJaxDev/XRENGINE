@@ -21,6 +21,17 @@ public static class RuntimeWorkScheduler
     /// <summary>Observes the installed execution mode without creating a scheduler.</summary>
     public static bool IsCallerThread => Volatile.Read(ref _jobs)?.IsCallerThreadExecutor ?? false;
 
+    /// <summary>Captures the installed caller-thread manager without creating an implicit worker manager.</summary>
+    public static JobManager CaptureCallerThreadJobs()
+    {
+        lock (Sync)
+        {
+            if (!_configured || _jobs is not { IsCallerThreadExecutor: true } jobs)
+                throw new InvalidOperationException("Caller-thread jobs are not configured or have stopped.");
+            return jobs;
+        }
+    }
+
     public static EngineWorkScheduler? Scheduler
     {
         get
@@ -154,6 +165,7 @@ public static class RuntimeWorkScheduler
 
             _configurationState = 1;
             _configuringCallerThread = true;
+            XREngine.Data.RuntimeAssetReadServices.IsCallerThread = true;
             try
             {
                 configureHooks?.Invoke();
@@ -171,6 +183,7 @@ public static class RuntimeWorkScheduler
             catch
             {
                 _configurationState = 0;
+                XREngine.Data.RuntimeAssetReadServices.IsCallerThread = false;
                 throw;
             }
             finally
@@ -187,6 +200,8 @@ public static class RuntimeWorkScheduler
         JobManager? jobs;
         lock (Sync)
         {
+            if (_configurationState == 1 && _configuringCallerThread)
+                return false;
             scheduler = _scheduler;
             jobs = _jobs;
         }
@@ -205,6 +220,7 @@ public static class RuntimeWorkScheduler
             _createdImplicitly = false;
             _configurationState = 0;
             _configureHooks = null;
+            XREngine.Data.RuntimeAssetReadServices.IsCallerThread = false;
             Monitor.PulseAll(Sync);
         }
 

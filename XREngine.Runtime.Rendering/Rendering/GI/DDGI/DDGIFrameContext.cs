@@ -148,6 +148,8 @@ internal sealed partial class DDGIFrameContext
             _selectionFrameId = frameId;
             _selectionWorld = world;
             _hasSelectedVolume = DDGIVolumeComponent.Registry.TrySelectActive(world, out DDGIVolumeComponent? selected);
+            if (_pendingBakedLoad is { } pending && !ReferenceEquals(selected, pending.VolumeTarget))
+                CancelPendingBakedLoad();
             if (_hasSelectedVolume)
             {
                 if (_selectedVolume is null)
@@ -222,6 +224,9 @@ internal sealed partial class DDGIFrameContext
     {
         if (!TryClaimFrameOwner(volume))
             return false;
+
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            return PrepareBakedVolumeCallerThread(volume);
 
         if (!IsCurrentVolume(volume))
         {
@@ -945,6 +950,9 @@ internal sealed partial class DDGIFrameContext
 
     private void Clear()
     {
+        CancelPendingBakedLoad();
+        _bakedLoadEpoch++;
+        _attemptedBakedPathRevision = 0;
 #if !XRE_PUBLISHED
         ClearInterruptionDiagnostic();
 #endif

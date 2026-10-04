@@ -21,6 +21,14 @@ namespace XREngine
 {
     public partial class AssetManager
     {
+        private static void EnsureDirectHostAssetFileAccess()
+        {
+            if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread
+                || DirectStorageIO.Source is IRuntimeAssetCatalog
+                || DirectStorageIO.Source is { SupportsSynchronousReads: false })
+                throw new NotSupportedException("AssetSource.HostFileUnavailable: direct asset file deserialization requires a synchronous host-file source; load packaged assets through the owning asset catalog.");
+        }
+
         /// <summary>
         /// Deserializes an asset file of the specified type.
         /// </summary>
@@ -29,6 +37,7 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         private static T? DeserializeAssetFile<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            EnsureDirectHostAssetFileAccess();
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(typeof(T));
             if (codec?.TryReadDirectAssetFile(filePath, typeof(T), out XRAsset? directAsset) == true)
                 return (T)directAsset!;
@@ -50,6 +59,7 @@ namespace XREngine
         /// <returns>A <see cref="PrefabPartialLoadPlan"/> if the prefab can be partially loaded; otherwise, <c>null</c>.</returns>
         public static XRAsset? DeserializeAssetFile(string filePath, Type type)
         {
+            EnsureDirectHostAssetFileAccess();
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(type);
             if (codec?.TryReadDirectAssetFile(filePath, type, out XRAsset? directAsset) == true)
                 return directAsset;
@@ -80,6 +90,7 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         private static async Task<T?> DeserializeAssetFileAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            EnsureDirectHostAssetFileAccess();
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(typeof(T));
             if (codec is not null)
             {
@@ -112,6 +123,7 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         public static async Task<XRAsset?> DeserializeAssetFileAsync(string filePath, Type type)
         {
+            EnsureDirectHostAssetFileAccess();
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(type);
             if (codec is not null)
             {
@@ -422,6 +434,8 @@ namespace XREngine
             if (string.Equals(Path.GetExtension(normalizedPath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return normalizedPath;
 
+            EnsureHostFileAssetAccess();
+
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
@@ -469,6 +483,7 @@ namespace XREngine
             Type assetType,
             string? cacheVariantKey)
         {
+            EnsureHostFileAssetAccess();
             if (!_pendingFeatureCacheImports.TryAdd(sourcePath, 0))
                 return;
 
@@ -485,6 +500,7 @@ namespace XREngine
 
             IEnumerable CacheImportRoutine()
             {
+                EnsureHostFileAssetAccess();
                 if (!IsCacheAssetFresh(cachePath, sourcePath, assetType))
                     TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath);
 
@@ -519,6 +535,8 @@ namespace XREngine
             if (!ShouldUseThirdPartyCache(typeof(T)))
                 return normalizedPath;
 
+            EnsureHostFileAssetAccess();
+
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
@@ -549,7 +567,10 @@ namespace XREngine
         /// <param name="bypassJobThread">If set to <c>true</c>, the loading logic will be executed on the calling thread instead of being scheduled on a job thread. This can be useful in scenarios where the caller is already on a background thread or when job scheduling overhead needs to be avoided for very fast loads. However, it should be used with caution to avoid blocking critical threads.</param>
         /// <returns>The loaded asset, or <c>null</c> if loading fails.</returns>
         public T? Load3rdPartyVariantWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, object? importOptions, string cacheVariantKey, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false) where T : XRAsset, new()
-            => RunOnJobThreadBlocking(() => Load3rdPartyVariantWithCacheCore<T>(filePath, importOptions, cacheVariantKey), priority, bypassJobThread);
+        {
+            EnsureHostFileAssetAccess();
+            return RunOnJobThreadBlocking(() => Load3rdPartyVariantWithCacheCore<T>(filePath, importOptions, cacheVariantKey), priority, bypassJobThread);
+        }
 
         /// <summary>
         /// Core logic for loading a third-party asset with caching support. This method is intended to be run on a job thread and contains the actual implementation for checking cache validity, loading from cache or source, and writing to cache as needed. It is separated from the public API method to allow for flexibility in how the loading logic is executed (e.g., synchronously on the main thread or asynchronously on a job thread) while keeping the core functionality centralized in one place.
@@ -561,6 +582,7 @@ namespace XREngine
         /// <returns>The loaded asset, or <c>null</c> if loading fails.</returns>
         private T? Load3rdPartyVariantWithCacheCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, object? importOptions, string cacheVariantKey) where T : XRAsset, new()
         {
+            EnsureHostFileAssetAccess();
             filePath = Path.GetFullPath(filePath);
             if (!File.Exists(filePath))
             {

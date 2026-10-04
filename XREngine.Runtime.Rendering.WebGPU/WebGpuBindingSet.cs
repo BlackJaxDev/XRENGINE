@@ -28,6 +28,9 @@ internal sealed class WebGpuBindingSet : IDisposable
     }
 
     public ReadOnlySpan<int> GroupHandles => _groups;
+    internal ReadOnlySpan<int> ResourceHandles => _resources;
+    internal ReadOnlySpan<uint> ResourceSizes => _sizes;
+    internal ReadOnlySpan<AbstractRenderAPIObject?> ResourceOwners => _owners;
     public bool IsDisposed => _disposed;
     internal WebGpuOwnedStorageBuffer? CacheOwner { get; }
     internal uint CacheIndex { get; }

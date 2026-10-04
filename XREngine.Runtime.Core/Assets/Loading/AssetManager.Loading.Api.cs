@@ -18,6 +18,8 @@ public static class AssetManagerPrefabLoadingExtensions
         if (assets.UsesRuntimeAssetCatalog)
             throw new NotSupportedException("AssetSource.PartialYamlUnavailable: packaged prefabs are cooked graphs; use LoadPrefabWithReferencesAsync to load their catalog dependency closure.");
 
+        assets.EnsureHostFileAssetAccess();
+
         if (!File.Exists(filePath))
             _ = await assets.LoadAsync<XRPrefabSource>(filePath, priority, bypassJobThread).ConfigureAwait(false);
         if (!File.Exists(filePath))

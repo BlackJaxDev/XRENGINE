@@ -362,7 +362,7 @@ public static class AotRuntimeMetadataStore
         typeof(TimeSpan), typeof(DateTime), typeof(DateTimeOffset), typeof(DateOnly),
         typeof(TimeOnly), typeof(Half), typeof(Uri), typeof(System.Numerics.BigInteger),
         typeof(System.Numerics.Vector2), typeof(System.Numerics.Vector3),
-        typeof(System.Numerics.Vector4), typeof(System.Numerics.Quaternion),
+        typeof(System.Numerics.Vector4), typeof(System.Numerics.Quaternion), typeof(System.Drawing.Color),
         typeof(System.Numerics.Matrix4x4), typeof(System.Net.IPAddress), typeof(System.Net.IPEndPoint),
     ];
 

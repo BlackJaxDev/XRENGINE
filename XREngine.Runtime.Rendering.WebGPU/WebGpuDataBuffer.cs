@@ -7,34 +7,35 @@ namespace XREngine.Rendering.WebGPU;
 public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataBuffer data)
     : WebGpuObject<XRDataBuffer>(renderer, data), IApiDataBuffer
 {
-    private const int MaximumUploadBytes = 64 * 1024 * 1024;
     private int _handle;
+    private WebGpuResourceRequest? _allocationRequest;
     private int _allocatedBytes;
     private uint _uploadedBytes;
     private int _pendingStart = int.MaxValue;
     private int _pendingEnd;
+    private bool _initializationPending;
     private uint _replacementFrameSequence;
     private int _replacementCount;
 
     public int ResourceHandle => _handle;
-    public override bool IsGenerated => _handle != 0;
+    public override bool IsGenerated => _handle != 0 && _allocationRequest is null;
     public ulong BackendAllocatedByteSize => (ulong)_allocatedBytes;
     public ulong BackendUploadedByteCount => _uploadedBytes;
-    public bool BackendHasPendingUpload => !IsGenerated || _pendingStart != int.MaxValue;
+    public bool BackendHasPendingUpload => !IsGenerated || _initializationPending || _pendingStart != int.MaxValue;
     public bool BackendIsReadyForGpuUse => IsGenerated && _allocatedBytes >= Data.Length;
     public bool BackendIsPersistentlyMapped => false;
     public XRBufferResolvedRoute BackendResolvedRoute => XRBufferResolvedRoute.StagingUpload;
 
-    public override nint GetHandle() => _handle;
+    public override nint GetHandle() => IsGenerated ? _handle : 0;
 
     public override void Generate()
     {
         ValidateOwnerGeneration();
-        if (IsGenerated && _allocatedBytes >= Data.Length)
+        if (_handle != 0 && _allocatedBytes >= Data.Length && _allocationRequest is null)
             return;
-        if (IsGenerated && ((ResolveUsage(Data.Target) & BrowserBufferUsage.Storage) == 0 || Data.GpuProduced))
+        if (_handle != 0 && ((ResolveUsage(Data.Target) & BrowserBufferUsage.Storage) == 0 || Data.GpuProduced))
             throw Unsupported("Resize", "only CPU-backed storage-capable buffers may grow while dependent bindings exist");
-        if (IsGenerated && Renderer.IsRecordingEngineFrame && _replacementFrameSequence == Renderer.EngineFrameSequence && _replacementCount >= 32)
+        if (_handle != 0 && Renderer.IsRecordingEngineFrame && _replacementFrameSequence == Renderer.EngineFrameSequence && _replacementCount >= 32)
             throw Unsupported("Resize", "the active frame exceeds thirty-two storage generation replacements");
 
         int length = checked((int)Data.Length);
@@ -44,21 +45,48 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         int oldHandle = _handle, oldAllocated = _allocatedBytes;
         int oldPendingStart = _pendingStart, oldPendingEnd = _pendingEnd;
         uint oldUploadedBytes = _uploadedBytes;
-        int handle = Renderer.CreateBuffer(new BrowserBufferDescription(
-            allocationLength, ResolveUsage(Data.Target), Data.Name ?? Data.AttributeName));
-        SetField(ref _handle, handle);
-        SetField(ref _allocatedBytes, allocationLength);
-        try
+        bool oldInitializationPending = _initializationPending;
+        BrowserBufferDescription descriptor = new(allocationLength, ResolveUsage(Data.Target), Data.Name ?? Data.AttributeName);
+        if (_allocationRequest is { } obsolete && !obsolete.Descriptor.Equals(descriptor))
         {
+            Renderer.CancelEngineResourceRequest(obsolete);
+            _allocationRequest = null;
+        }
+        if (_allocationRequest is null)
+        {
+            VoidPtr snapshotAddress = VoidPtr.Zero;
             if (!Data.GpuProduced && length != 0)
             {
-                // This fresh physical candidate cannot occur in an earlier retained
-                // command. Prepare its complete image in bounded queue-write chunks;
-                // ordinary mutations still use copies at their ordered frame boundary.
-                Upload(0, length, candidateAllocation: true);
+                if (Data.ClientSideSource is not { } source || source.Length < Data.Length ||
+                    !Data.TryGetAddress(out VoidPtr address) || address == VoidPtr.Zero)
+                    throw Unsupported("Upload", "the complete engine CPU buffer source is unavailable");
+                snapshotAddress = address;
+            }
+            _allocationRequest = Renderer.RequestEngineResource(this, 1, descriptor);
+            if (snapshotAddress != VoidPtr.Zero)
+            {
+                try { Renderer.CaptureEngineResourceUpload(_allocationRequest, new ReadOnlySpan<byte>(snapshotAddress.Pointer, length)); }
+                catch { Renderer.CancelEngineResourceRequest(_allocationRequest); _allocationRequest = null; throw; }
+            }
+        }
+        int handle = Renderer.RequireEngineResource(_allocationRequest, claim: false);
+        SetField(ref _handle, handle, publishNotifications: false);
+        SetField(ref _allocatedBytes, allocationLength, publishNotifications: false);
+        try
+        {
+            if (_allocationRequest.Uploads is { Count: > 0 })
+            {
+                // The candidate image is owned until the shared acceptance import.
+                // Subsequent mutations still retain their exact command boundary.
+                Renderer.StageEngineResourceInitialUploads(_allocationRequest, handle);
+                if (!Data.GpuProduced) SetField(ref _uploadedBytes, (uint)length, publishNotifications: false);
+                SetField(ref _initializationPending, true, publishNotifications: false);
+                Renderer.RegisterInitializingBuffer(this);
                 SetField(ref _pendingStart, int.MaxValue, publishNotifications: false);
                 SetField(ref _pendingEnd, 0, publishNotifications: false);
             }
+            Renderer.ClaimEngineResource(_allocationRequest);
+            _allocationRequest = null;
             ReportState();
         }
         catch
@@ -68,7 +96,9 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             SetField(ref _pendingStart, oldPendingStart, publishNotifications: false);
             SetField(ref _pendingEnd, oldPendingEnd, publishNotifications: false);
             SetField(ref _uploadedBytes, oldUploadedBytes, publishNotifications: false);
+            SetField(ref _initializationPending, oldInitializationPending, publishNotifications: false);
             Renderer.RetireEngineResourceAfterFrame(handle);
+            _allocationRequest = null;
             throw;
         }
         if (oldHandle != 0)
@@ -88,17 +118,21 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
 
     public override void Destroy()
     {
+        Renderer.CancelEngineResourceRequests(this);
+        _allocationRequest = null;
         if (_handle == 0)
             return;
         Renderer.ReleaseEngineDrawDependencies(this);
         if (Renderer.State != BrowserRendererState.Disposed)
             Renderer.RetireEngineResourceAfterFrame(_handle);
         Renderer.UnregisterPendingStorage(this);
+        Renderer.UnregisterInitializingBuffer(this);
         SetField(ref _handle, 0);
         SetField(ref _allocatedBytes, 0);
         SetField(ref _uploadedBytes, 0u);
         SetField(ref _pendingStart, int.MaxValue);
         SetField(ref _pendingEnd, 0);
+        SetField(ref _initializationPending, false, publishNotifications: false);
         ReportState();
     }
 
@@ -107,13 +141,21 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         ValidateOwnerGeneration();
         if (!IsGenerated)
         {
-            Generate();
+            WebGpuResourceRequest? previous = _allocationRequest;
+            RefreshPendingInitialImage();
+            try { Generate(); }
+            catch (RenderResourcePreparationPendingException)
+            {
+                if (!ReferenceEquals(previous, _allocationRequest)) RefreshPendingInitialImage();
+                return;
+            }
             if (!Data.GpuProduced)
                 return;
         }
         if (Data.Length > _allocatedBytes)
         {
-            Generate();
+            try { Generate(); }
+            catch (RenderResourcePreparationPendingException) { RefreshPendingInitialImage(); }
             return;
         }
         Upload(0, checked((int)Data.Length));
@@ -129,16 +171,43 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             throw new ArgumentOutOfRangeException(nameof(offset));
         if (!IsGenerated)
         {
-            Generate();
+            WebGpuResourceRequest? previous = _allocationRequest;
+            RefreshPendingInitialImage(offset, checked((int)length));
+            try { Generate(); }
+            catch (RenderResourcePreparationPendingException)
+            {
+                if (!ReferenceEquals(previous, _allocationRequest)) RefreshPendingInitialImage(offset, checked((int)length));
+                return;
+            }
             if (!Data.GpuProduced)
                 return;
         }
         if (Data.Length > _allocatedBytes)
         {
-            Generate();
+            try { Generate(); }
+            catch (RenderResourcePreparationPendingException) { RefreshPendingInitialImage(offset, checked((int)length)); }
             return;
         }
         Upload(offset, checked((int)length));
+        ReportState();
+    }
+
+    private void RefreshPendingInitialImage(int offset = 0, int length = -1)
+    {
+        if (_allocationRequest is not { } request || Data.Length == 0) return;
+        if (Data.ClientSideSource is not { } source || source.Length < Data.Length ||
+            !Data.TryGetAddress(out VoidPtr address) || address == VoidPtr.Zero)
+            throw Unsupported("Upload", "the complete engine CPU buffer source is unavailable");
+        if (Data.GpuProduced)
+        {
+            if (length < 0) length = checked((int)Data.Length);
+            if ((offset | length) % 4 != 0)
+                throw Unsupported("Upload", "unaligned writes cannot replace adjacent GPU-produced bytes");
+            if (length != 0) Renderer.CaptureEngineResourceUpload(request,
+                new ReadOnlySpan<byte>((byte*)address.Pointer + offset, length), bufferOffset: offset);
+            SetField(ref _uploadedBytes, Math.Max(_uploadedBytes, checked((uint)(offset + length))), publishNotifications: false);
+        }
+        else Renderer.ReplaceEngineResourceBufferImage(request, new ReadOnlySpan<byte>(address.Pointer, checked((int)Data.Length)));
         ReportState();
     }
 
@@ -154,10 +223,9 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
 
         int start = offset & ~3;
         int end = checked(offset + length);
-        int alignedEnd = end & ~3;
+        int uploadEnd = checked((end + 3) & ~3);
         if (!candidateAllocation)
         {
-            int uploadEnd = checked((end + 3) & ~3);
             SnapshotBufferUpload(start, uploadEnd, (byte*)address.Pointer);
             SetField(ref _pendingStart, Math.Min(_pendingStart, start), publishNotifications: false);
             SetField(ref _pendingEnd, Math.Max(_pendingEnd, uploadEnd), publishNotifications: false);
@@ -165,45 +233,38 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
             SetField(ref _uploadedBytes, Math.Max(_uploadedBytes, (uint)end), publishNotifications: false);
             return;
         }
-        while (start < alignedEnd)
-        {
-            int bytes = Math.Min(alignedEnd - start, MaximumUploadBytes);
-            // The import copies this borrowed native span synchronously; no pointer or
-            // view survives the call. Padding never reads beyond the engine source.
-            Renderer.WriteBuffer(_handle, start, new Span<byte>((byte*)address.Pointer + start, bytes));
-            start += bytes;
-        }
-        if (end != alignedEnd)
-        {
-            Span<byte> tail = stackalloc byte[4];
-            tail.Clear();
-            int available = Math.Min(4, checked((int)Data.Length) - alignedEnd);
-            new ReadOnlySpan<byte>((byte*)address.Pointer + alignedEnd, available).CopyTo(tail);
-            Renderer.WriteBuffer(_handle, alignedEnd, tail);
-        }
+        SnapshotBufferUpload(start, uploadEnd, (byte*)address.Pointer, initialization: true);
         SetField(ref _uploadedBytes, Math.Max(_uploadedBytes, (uint)end), publishNotifications: false);
     }
 
-    private void SnapshotBufferUpload(int start, int end, byte* address)
+    private void SnapshotBufferUpload(int start, int end, byte* address, bool initialization = false)
     {
         int sourceLength = checked((int)Data.Length);
         int available = Math.Min(end, sourceLength) - start;
         int records = available == end - start || available < 4 ? 1 : 2;
-        if (records > 1)
+        if (initialization)
+            Renderer.PrepareEngineBufferInitialization(_handle, start, end - start, records);
+        else if (records > 1)
             Renderer.PrepareEngineBufferMutation(_handle, start, end - start, records);
         if (available == end - start)
         {
-            Renderer.StageEngineBufferUpload(_handle, start, new ReadOnlySpan<byte>(address + start, available));
+            StageSnapshot(start, new ReadOnlySpan<byte>(address + start, available), initialization);
             return;
         }
         // Only the final three bytes can be outside the CPU allocation.
         int aligned = available & ~3;
         if (aligned > 0)
-            Renderer.StageEngineBufferUpload(_handle, start, new ReadOnlySpan<byte>(address + start, aligned));
+            StageSnapshot(start, new ReadOnlySpan<byte>(address + start, aligned), initialization);
         Span<byte> tail = stackalloc byte[4];
         tail.Clear();
         new ReadOnlySpan<byte>(address + start + aligned, available - aligned).CopyTo(tail);
-        Renderer.StageEngineBufferUpload(_handle, start + aligned, tail);
+        StageSnapshot(start + aligned, tail, initialization);
+    }
+
+    private void StageSnapshot(int offset, ReadOnlySpan<byte> bytes, bool initialization)
+    {
+        if (initialization) Renderer.StageEngineBufferPreparation(_handle, offset, bytes);
+        else Renderer.StageEngineBufferUpload(_handle, offset, bytes);
     }
 
     /// <summary>Checks pending publication without borrowing mutable CPU bytes again on a retry.</summary>
@@ -222,11 +283,17 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
         ReportState();
     }
 
+    internal void AcceptSubmittedInitialization()
+    {
+        SetField(ref _initializationPending, false, publishNotifications: false);
+        ReportState();
+    }
+
     public void EnsureStorageAllocatedForGpuUse() => Generate();
 
     public bool TryGetBindingId(out uint bindingId)
     {
-        bindingId = (uint)_handle;
+        bindingId = IsGenerated ? (uint)_handle : 0;
         return IsGenerated;
     }
 

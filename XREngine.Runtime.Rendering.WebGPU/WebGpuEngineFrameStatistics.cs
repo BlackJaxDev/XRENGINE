@@ -10,7 +10,7 @@ namespace XREngine.Rendering.WebGPU;
 /// Recorded counts include incomplete and faulted frames. Submission bytes count spans passed
 /// to SubmitEngineFrame, including rejected or throwing calls, not confirmed GPU uploads.
 /// Returned submission results report canvas presentation, not GPU validation/completion;
-/// an unpresented submission can still enqueue offscreen or compute work.
+/// an unpresented submission can still enqueue offscreen, compute or preparation-only work.
 /// </remarks>
 public sealed record WebGpuEngineFrameStatistics
 {
@@ -26,11 +26,15 @@ public sealed record WebGpuEngineFrameStatistics
     public long CompletedFrames { get; internal set; }
     /// <summary>Managed import call attempts, including calls that throw during marshalling or JavaScript execution.</summary>
     public long SubmitEngineFrameInteropCalls { get; internal set; }
-    /// <summary>CPU-only queue receipt polling, independent of buffer/count readback.</summary>
+    /// <summary>Legacy standalone receipt polls; completion now returns with frame acceptance.</summary>
     public long CompletionPollInteropCalls { get; internal set; }
-    /// <summary>Cold or oversized complete-slot queue-write attempts, outside the bounded frame copy arena.</summary>
+    /// <summary>Legacy separate preparation imports; ordinary engine frames leave this counter at zero.</summary>
     public long AdvancedPreparationUploadInteropCalls { get; internal set; }
     public long AdvancedPreparationUploadBytes { get; internal set; }
+    /// <summary>Initialization and texture-transfer records passed to the shared acceptance import, including rejected attempts.</summary>
+    public long PreparationUploadRecords { get; internal set; }
+    /// <summary>Exact retained preparation payload extents; texture transport can include at most three padding bytes per mip.</summary>
+    public long PreparationUploadBytes { get; internal set; }
     public long ReturnedSubmissions { get; internal set; }
     public long PresentedSubmissions { get; internal set; }
     public long UnpresentedSubmissions { get; internal set; }
@@ -63,6 +67,8 @@ public sealed record WebGpuEngineFrameStatistics
     public int LastFrameCompletionPollInteropCalls { get; internal set; }
     public int LastFrameAdvancedPreparationUploadInteropCalls { get; internal set; }
     public long LastFrameAdvancedPreparationUploadBytes { get; internal set; }
+    public int LastFramePreparationUploadRecords { get; internal set; }
+    public int LastFramePreparationUploadBytes { get; internal set; }
     public bool LastFrameSubmissionReturned { get; internal set; }
     public bool LastFrameSubmissionPresented { get; internal set; }
     public int LastFrameSubmissionPacketBytes { get; internal set; }

@@ -17,6 +17,7 @@ public class RuntimeAssetSerializationServices(IAssetSerializationServices inner
         inner ?? throw new ArgumentNullException(nameof(inner));
 
     public string AssetExtension => _inner.AssetExtension;
+    public bool SupportsHostProjectDirectories => _inner.SupportsHostProjectDirectories;
     public string? GameAssetsPath => _inner.GameAssetsPath;
     public string? EngineAssetsPath => _inner.EngineAssetsPath;
     public string? CurrentDeserializationPath => _inner.CurrentDeserializationPath;

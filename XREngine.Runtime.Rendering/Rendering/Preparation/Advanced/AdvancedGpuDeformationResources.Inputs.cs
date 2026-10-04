@@ -46,6 +46,31 @@ public sealed partial class AdvancedGpuDeformationResources
     }
 
     /// <summary>
+    /// Resolves an already prepared immutable source slice without publishing or
+    /// scanning vertices. Browser companions retain their own raw source image.
+    /// </summary>
+    public bool TryGetPackedSourceMesh(in AdvancedDeformationJobRecord job, out XRMesh? mesh)
+    {
+        mesh = null;
+        if (!UsesPackedAggregateInputs)
+            return false;
+        foreach ((XRMesh candidate, AdvancedGpuDeformationMeshSlice slice) in _meshSlices)
+        {
+            if (slice.SourceVertexOffset != job.SourceVertexOffset)
+                continue;
+            if (candidate.IsDestroyed || slice.TopologyGeneration != job.TopologyGeneration ||
+                slice.VertexCount != candidate.VertexCount || job.VertexFirst > slice.VertexCount ||
+                job.VertexCount > slice.VertexCount - job.VertexFirst ||
+                !_staticGeneration.InputWitnesses.TryGetValue(candidate, out var witness) ||
+                !witness.Matches(candidate, _meshPreparationPolicy))
+                return false;
+            mesh = candidate;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Returns canonical CPU input storage and exact used bytes without mapping GPU output.
     /// Palette ranges covered by the publication's GPU copies have no authoritative CPU image.
     /// </summary>

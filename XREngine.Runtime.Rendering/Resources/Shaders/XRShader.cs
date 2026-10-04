@@ -179,6 +179,24 @@ namespace XREngine.Rendering
             return true;
         }
 
+        public override Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+        {
+            RequireHostSourceImport();
+            return base.Load3rdPartyAsync(filePath, context);
+        }
+
+        public override Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+        {
+            RequireHostSourceImport();
+            return base.Import3rdPartyAsync(filePath, importOptions);
+        }
+
+        public override Task ReloadAsync(string path)
+        {
+            RequireHostSourceImport();
+            return base.ReloadAsync(path);
+        }
+
         private static void RequireHostSourceImport()
         {
             if (!ShaderSourceResolver.CanAccessHostShaderFiles)

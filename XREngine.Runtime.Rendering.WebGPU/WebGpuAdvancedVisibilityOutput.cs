@@ -5,10 +5,11 @@ using XREngine.Rendering.Commands;
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Prepares output-local GPU work from the exact retained canonical scene and preparation publication.</summary>
-internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
+internal sealed partial class WebGpuAdvancedVisibilityOutput : IDisposable
 {
     private readonly WebGpuRendererHost _renderer;
     private readonly XRRenderPipelineInstance _owner;
+    private readonly WebGpuAdvancedUberRasterFrame _uberRaster;
     private readonly WebGpuAdvancedVisibilityFrame[] _frames;
     private readonly WebGpuAdvancedVisibilityInputStorage _inputs = new();
     private WebGpuAdvancedVisibilityFrame? _current;
@@ -18,9 +19,10 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
     {
         _renderer = renderer;
         _owner = owner;
+        _uberRaster = new(renderer);
         _frames = new WebGpuAdvancedVisibilityFrame[AdvancedFrameSlotContract.DefaultSlotCount];
         for (int index = 0; index < _frames.Length; index++)
-            _frames[index] = new(renderer, index);
+            _frames[index] = new(renderer, index, _uberRaster);
         owner.CacheClearing += OnCacheClearing;
     }
 
@@ -61,7 +63,12 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             reason = "WebGPU.Advanced.PreparationExtent: canonical candidates, payloads and producers disagree.";
             return false;
         }
+        if (!TryBuildTemporalOverlay(frame, scene.Snapshot, payloads, _inputs.DeformationSlices, out reason) ||
+            !TryPrepareNativeVertices(frame, scene.Snapshot, publication.FrameId, request.Views.GetView(0).ViewId, out reason))
+            return false;
         frame.BucketCount = 0;
+        frame.HasUberRaster = false;
+        frame.UberRaster.Invalidate();
         frame.CpuDrawCount = 0;
         BackendReadySubmissionResolution submission = request.BackendReadyPackage!.SubmissionResolution;
         if (submission.Downgraded && submission.Requested != submission.Resolved)
@@ -111,7 +118,8 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
                 return false;
             }
             if (!scene.Snapshot.Materials.TryGet(payload.Material, out AdvancedMaterialRecord material) ||
-                WebGpuAdvancedMaterialContract.GetVertexFeatureRejection(material.FeatureFlags) is not null)
+                WebGpuAdvancedMaterialContract.GetVertexFeatureRejection(material.FeatureFlags) is not null &&
+                !frame.NativeVertices.TryGet(index, out _))
             {
                 reason = "WebGPU.Advanced.VertexCohortUnsupported: material displacement requires its exact native vertex companion.";
                 return false;
@@ -126,11 +134,24 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
                 reason = $"WebGPU.Advanced.EngineSurfaceUnsupported: {companionReason}";
                 return false;
             }
+            if (WebGpuAdvancedUberBaseContract.GetRejection(in material, scene.Snapshot.MaterialPayloads) is { } uberReason)
+            { reason = $"WebGPU.Advanced.UberBaseUnsupported: {uberReason}"; return false; }
+            if (material.SourceContract == EAdvancedMaterialSourceContract.UberBaseSurface &&
+                UberModifierRejection(in request, scene.Snapshot, in retainedDraw) is { } modifierReason)
+            { reason = modifierReason; return false; }
             if (!TryResolveCoverage(scene.Snapshot, in payload, in material,
-                    out XRTexture2D? texture, out AdvancedGpuHandle textureHandle, out AdvancedGpuHandle samplerHandle, out reason))
+                    out XRTexture2D? texture, out AdvancedGpuHandle textureHandle, out AdvancedGpuHandle samplerHandle,
+                    out XRTexture2D? opacity, out AdvancedGpuHandle opacityHandle, out AdvancedGpuHandle opacitySampler, out reason))
                 return false;
+            scene.Snapshot.MaterialPayloads.TryGetEngineSurface(in material, out AdvancedEngineSurfaceRecord coverageSurface);
+            scene.Snapshot.MaterialPayloads.TryGetUberBaseSurface(in material, out AdvancedUberBaseSurfaceRecord uberCoverage);
+            bool uber = material.SourceContract == EAdvancedMaterialSourceContract.UberBaseSurface;
             WebGpuAdvancedVisibilityBucketKey key = new(payload.RasterStateClass, payload.CullMode,
-                payload.Coverage, producer, textureHandle, samplerHandle);
+                payload.Coverage, producer, textureHandle, samplerHandle, opacityHandle, opacitySampler,
+                texture is null ? 0 : uber ? uberCoverage.MainSampling : coverageSurface.BaseColorSampling,
+                opacity is null ? 0 : uber ? uberCoverage.AlphaMaskSampling : coverageSurface.OpacitySampling,
+                uber ? payload.Material : default);
+            frame.HasUberRaster |= uber;
             int bucketIndex = 0;
             while (bucketIndex < frame.BucketCount && frame.Buckets[bucketIndex].Key != key)
                 bucketIndex++;
@@ -141,8 +162,9 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
                     reason = "WebGPU.Advanced.RasterBucketCapacity: the output exceeds 64 exact raster/coverage buckets.";
                     return false;
                 }
-                frame.Buckets[frame.BucketCount++] = new() { Key = key, CoverageTexture = texture };
+                frame.Buckets[frame.BucketCount++] = new() { Key = key, CoverageTexture = texture, OpacityTexture = opacity };
             }
+            frame.Buckets[bucketIndex].UberSurface = uberCoverage;
             frame.ProducerRows[index * 2 + 1] = checked((uint)bucketIndex);
             uint triangles;
             if (!TryGetTriangleCapacity(scene.Snapshot, in payload, producer, out triangles))
@@ -173,8 +195,6 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             reason = "WebGPU.Advanced.TriangleCapacity: the complete candidate triangle stream exceeds the selected device storage range; no CPU count fallback is allowed.";
             return false;
         }
-        if (!TryBuildTemporalOverlay(frame, scene.Snapshot, payloads, _inputs.DeformationSlices, out reason))
-            return false;
         frame.Payloads.EnsureCapacity(Math.Max(16, checked(payloads.Length * 96)));
         frame.Candidates.EnsureCapacity(Math.Max(16, checked(candidates.Length * 80)));
         frame.Producers.EnsureCapacity(Math.Max(16, checked(producerWordCount * 4)));
@@ -221,12 +241,23 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
 
     private static bool TryResolveCoverage(AdvancedGpuScenePublicationSnapshot snapshot,
         in AdvancedVisibilityPayload payload, in AdvancedMaterialRecord material,
-        out XRTexture2D? texture, out AdvancedGpuHandle textureHandle, out AdvancedGpuHandle samplerHandle, out string reason)
+        out XRTexture2D? texture, out AdvancedGpuHandle textureHandle, out AdvancedGpuHandle samplerHandle,
+        out XRTexture2D? opacity, out AdvancedGpuHandle opacityHandle, out AdvancedGpuHandle opacitySampler, out string reason)
     {
-        texture = null;
+        texture = opacity = null;
         textureHandle = samplerHandle = default;
+        opacityHandle = opacitySampler = default;
         reason = string.Empty;
         if (payload.Coverage == EAdvancedMaterialCoverageMode.Opaque) return true;
+        if (material.SourceContract == EAdvancedMaterialSourceContract.UberBaseSurface)
+        {
+            if (!snapshot.MaterialPayloads.TryGetUberBaseSurface(in material, out AdvancedUberBaseSurfaceRecord uber))
+            { reason = "WebGPU.Advanced.UberCoverageMissing: the native cutout has no exact retained Uber surface."; return false; }
+            if (!TryResolveCoverageTexture(snapshot, in uber.MainTexture, out texture, out textureHandle, out samplerHandle, out reason, uber.MainSampling)) return false;
+            if ((uber.Features & UberBaseMaterialProfile.AlphaMasks) != 0 &&
+                !TryResolveCoverageTexture(snapshot, in uber.AlphaMask, out opacity, out opacityHandle, out opacitySampler, out reason, uber.AlphaMaskSampling)) return false;
+            return true;
+        }
         if (payload.Coverage != EAdvancedMaterialCoverageMode.Masked ||
             !WebGpuAdvancedStandardMaterialContract.IsStandard(in material) ||
             material.ConstantWordCount <= WebGpuAdvancedStandardMaterialContract.FlagsWord ||
@@ -236,6 +267,17 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             reason = "WebGPU.Advanced.CoverageLayoutUnsupported: masked visibility requires the canonical standard coverage schema.";
             return false;
         }
+        if (snapshot.MaterialPayloads.TryGetEngineSurface(in material, out AdvancedEngineSurfaceRecord surface) &&
+            surface.SchemaVersion != 0 && (surface.RoleFlags & 1u) != 0)
+        {
+            if (!TryResolveCoverageTexture(snapshot, in surface.BaseColor.Binding,
+                    out texture, out textureHandle, out samplerHandle, out reason, surface.BaseColorSampling))
+                return false;
+            if ((surface.RoleFlags & 16u) != 0 && !TryResolveCoverageTexture(snapshot, in surface.Opacity.Binding,
+                    out opacity, out opacityHandle, out opacitySampler, out reason, surface.OpacitySampling))
+                return false;
+            return true;
+        }
         uint flags = snapshot.MaterialPayloads.ConstantWords[checked((int)(material.ConstantWordOffset + WebGpuAdvancedStandardMaterialContract.FlagsWord))];
         if ((flags & 1u) == 0) return true;
         if (material.TextureReferenceCount == 0 || material.TextureReferenceOffset >= snapshot.MaterialPayloads.TextureBindings.Length)
@@ -244,20 +286,42 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
             return false;
         }
         AdvancedMaterialTextureBinding binding = snapshot.MaterialPayloads.TextureBindings[checked((int)material.TextureReferenceOffset)];
+        return TryResolveCoverageTexture(snapshot, in binding, out texture, out textureHandle, out samplerHandle, out reason);
+    }
+
+    private static bool TryResolveCoverageTexture(AdvancedGpuScenePublicationSnapshot snapshot,
+        in AdvancedMaterialTextureBinding binding, out XRTexture2D? texture,
+        out AdvancedGpuHandle textureHandle, out AdvancedGpuHandle samplerHandle, out string reason, uint samplingKey = 0)
+    {
+        texture = null;
         textureHandle = binding.Texture.Handle;
         samplerHandle = binding.Sampler.Handle;
         if (!snapshot.Textures.TryGet(textureHandle, out AdvancedTextureRecord record) || record.DefaultSampler != samplerHandle ||
+            !snapshot.Samplers.TryGet(samplerHandle, out AdvancedSamplerRecord retainedSampler) ||
             !snapshot.ResourcePayloads.TryGetTextureSource(textureHandle, out XRTexture source, out ulong generation) ||
             source is not XRTexture2D selected ||
             !AdvancedGpuResourceSourceEncoder.TryEncode(source, EAdvancedResourceFallback.Zero,
-                out AdvancedGpuResourceBindingSource current, out _, out reason) || current.SourceContentGeneration != generation)
+                out AdvancedGpuResourceBindingSource current, out _, out reason) || current.SourceContentGeneration != generation ||
+            (samplingKey == 0 ? !HasSameSamplerState(current.SamplerRecord, in retainedSampler) :
+                !new AdvancedEngineSurfaceSamplingKey(samplingKey).IsValid ||
+                new AdvancedEngineSurfaceSamplingKey(samplingKey).StorageMipCount != selected.Mipmaps.Length) ||
+            current.TextureRecord.Dimension != record.Dimension || current.TextureRecord.Width != record.Width ||
+            current.TextureRecord.Height != record.Height || current.TextureRecord.FormatClass != record.FormatClass ||
+            current.TextureRecord.Flags != record.Flags)
         {
             reason = "WebGPU.Advanced.CoverageBindingUnsupported: the exact retained 2D texture/default-sampler pair must remain current for masked coverage.";
             return false;
         }
         texture = selected;
+        reason = string.Empty;
         return true;
     }
+
+    private static bool HasSameSamplerState(in AdvancedSamplerRecord left, in AdvancedSamplerRecord right)
+        => left.Filter == right.Filter && left.Flags == right.Flags &&
+            left.AddressU == right.AddressU && left.AddressV == right.AddressV && left.AddressW == right.AddressW &&
+            left.CompareOperation == right.CompareOperation && left.LodBiasMinMaxAnisotropy == right.LodBiasMinMaxAnisotropy &&
+            left.BorderColor == right.BorderColor;
 
     private static bool TryBuildTemporalOverlay(WebGpuAdvancedVisibilityFrame frame,
         AdvancedGpuScenePublicationSnapshot snapshot, ReadOnlySpan<AdvancedVisibilityPayload> payloads,
@@ -358,5 +422,6 @@ internal sealed class WebGpuAdvancedVisibilityOutput : IDisposable
         _disposed = true;
         _owner.CacheClearing -= OnCacheClearing;
         foreach (WebGpuAdvancedVisibilityFrame frame in _frames) frame.Dispose();
+        _uberRaster.Dispose();
     }
 }

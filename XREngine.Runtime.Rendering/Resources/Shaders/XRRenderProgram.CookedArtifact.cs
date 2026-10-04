@@ -17,8 +17,12 @@ public partial class XRRenderProgram
         set
         {
             value = ShaderProgramArtifactCatalog.ValidateIdentity(value);
-            if (SetField(ref _cookedArtifactIdentity, value) && _cookedArtifact?.Identity != value)
-                SetField(ref _cookedArtifact, null, nameof(CookedArtifact));
+            if (SetField(ref _cookedArtifactIdentity, value))
+            {
+                _shaderInterfaceDirty = true;
+                if (_cookedArtifact?.Identity != value)
+                    SetField(ref _cookedArtifact, null, nameof(CookedArtifact));
+            }
         }
     }
 
@@ -30,7 +34,8 @@ public partial class XRRenderProgram
         set
         {
             ShaderProgramArtifactCatalog.ValidateIdentity(value?.Identity);
-            SetField(ref _cookedArtifact, value);
+            if (SetField(ref _cookedArtifact, value))
+                _shaderInterfaceDirty = true;
             CookedArtifactIdentity = value?.Identity;
         }
     }

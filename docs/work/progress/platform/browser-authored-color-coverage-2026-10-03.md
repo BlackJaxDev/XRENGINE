@@ -54,7 +54,7 @@ point and spot shadows. The same light capacities, atlas opt-out, storage,
 sequential point faces, PCSS settings, output formats and producer readiness
 checks remain in force. Cold package audit requires the relevant exact caster
 programs when opaque/masked authored materials coexist with casting lights.
-The old opaque authored V1 profile continues to reject shadowed worlds.
+At this coverage milestone the opaque authored V1 profile still rejected shadowed worlds. The subsequent [opaque authored-shadow implementation](browser-authored-opaque-shadows-2026-10-03.md) supplies its exact receiver and caster companions; that later source evidence does not establish live shadow pixels.
 
 The OpenGL change recognizes only the new authored identity when publishing
 the existing `StandardLitCoverage` uniform for source-owned shadows. Desktop

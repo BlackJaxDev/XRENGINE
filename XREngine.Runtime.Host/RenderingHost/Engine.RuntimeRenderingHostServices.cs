@@ -186,7 +186,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public float ElapsedTime => Engine.ElapsedTime;
     public string CollectVisibleLatePolicy => Engine.Time.Timer.CollectVisibleLatePolicy.ToString();
     public ulong UpdateFrameId => Engine.Time.Timer.UpdateFrameId;
-    public ulong CollectFrameId => Engine.Time.Timer.CollectFrameId;
+    public ulong CollectFrameId => Engine.Time.Timer.IsCallerThreadLoop
+        ? Engine.Time.Timer.CallerThreadCollectionRenderFrameId
+        : Engine.Time.Timer.CollectFrameId;
     public ulong SwapFrameId => Engine.Time.Timer.SwapFrameId;
     public ulong PresentFrameId => Engine.Time.Timer.PresentFrameId;
     public long RequestedCollectGeneration => Engine.Time.Timer.RequestedCollectGeneration;
@@ -326,6 +328,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
 
     public byte[] ReadAllBytes(string filePath)
         => DirectStorageIO.ReadAllBytes(filePath);
+
+    public bool SupportsSynchronousTextureSourceWork
+        => Engine.Assets.SupportsSynchronousAssetWork;
 
     public string ResolveTextureStreamingAuthorityPath(string filePath)
         => Engine.Assets?.ResolveTextureStreamingAuthorityPath(filePath) ?? Path.GetFullPath(filePath);

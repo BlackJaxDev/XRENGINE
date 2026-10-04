@@ -9,14 +9,39 @@ public static class WebPipelineRasterProgram
 {
     public static bool IsActive => OperatingSystem.IsBrowser() || AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
 
+    /// <summary>Uses the raster camera's captured projection and depth convention for fullscreen consumers.</summary>
+    public static RenderFrameViewSelection CaptureView(XRCamera camera, Vector2 viewportSize)
+        => RenderFrameViewSetCapture.SelectForDraw(
+            RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState, camera,
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection == true,
+            viewportSize, RuntimeRenderingHostServices.FrameTiming.ElapsedTime, requireCapturedView: false);
+
     public static XRShader[] CreateShaders(RenderPipeline pipeline, string bindingKey)
     {
         ShaderProgramArtifact artifact = pipeline.GetRequiredWebPipelineArtifact(bindingKey);
         if (!WebPipelineArtifactCatalog.IsCompleteRasterProgram(artifact))
             throw new NotSupportedException($"WebGPU.Pipeline.ProgramShape: '{bindingKey}' requires a complete raster program.");
+        ValidateDepthConvention(artifact);
         XRShader vertex = new(EShaderType.Vertex) { CookedArtifact = artifact };
         try { return [vertex, new XRShader(EShaderType.Fragment) { CookedArtifact = artifact }]; }
         catch { vertex.Destroy(true); throw; }
+    }
+
+    /// <summary>Rejects stale built-in depth consumers before their unchanged-size uniform buffers are bound.</summary>
+    public static void ValidateDepthConvention(ShaderProgramArtifact artifact)
+    {
+        if (artifact.Name != "engine-advanced-depth-of-field") return;
+        if (artifact.SemanticSchemaIdentity == "xrengine.engine.depth-of-field.v2")
+            foreach (ShaderStageResourceLayout resource in artifact.Resources)
+                if (resource.Contract.Set == 0 && resource.Contract.Binding == 0 &&
+                    resource.Contract.Name == "OutputUniforms" && resource.BindingType == "uniform" &&
+                    resource.Contract.ByteSize == 80 && resource.DynamicOffset &&
+                    resource.Visibility == ShaderStageVisibility.Fragment)
+                    foreach (ShaderAbiMemberContract member in resource.Contract.Members)
+                        if (member.ProviderName == "DepthMode" && member.Offset == 76 && member.Size == 4 &&
+                            member.PhysicalType == "i32" && member.ArrayCount == 0)
+                            return;
+        throw new NotSupportedException("WebGPU.Pipeline.DepthOfFieldContractMismatch: recook depth of field with the captured camera depth convention.");
     }
 
     /// <summary>Captures the current privately created material and stages, independently of later quad assignments.</summary>
