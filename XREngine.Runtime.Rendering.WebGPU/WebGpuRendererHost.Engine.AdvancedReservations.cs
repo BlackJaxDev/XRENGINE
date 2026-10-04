@@ -166,8 +166,10 @@ public sealed partial class WebGpuRendererHost
         ReclaimAdvancedReservations(_advancedCompletedSequence);
     }
 
-    private bool TryBeginAdvancedStage(in AdvancedVisibilityStageBackendRequest request, out string reason)
+    private bool TryBeginAdvancedStage(in AdvancedVisibilityStageBackendRequest request,
+        out RenderFrameViewSelection view, out string reason)
     {
+        view = default;
         reason = request.GetInvalidReason() ?? string.Empty;
         if (reason.Length != 0) return false;
         AdvancedVisibilityFamilyReservation reservation = request.Reservation;
@@ -206,10 +208,17 @@ public sealed partial class WebGpuRendererHost
             bank.NextOperation = 0;
             bank.ResourceGeneration = owner.ResourceGeneration;
             bank.Request = request;
+            // Freeze once for this recording's exact request. Native raster and
+            // shading share time, including the retained scene-capture override.
+            bank.FrozenView = new(request.Views.GetView(checked((int)request.NativeViewIndex)),
+                UseUnjitteredProjection: false, ViewportSize: new(request.Target.Width, request.Target.Height),
+                ElapsedTime: RenderFrameViewSetCapture.ResolveElapsedTime(RuntimeRenderingHostServices.FrameTiming.ElapsedTime),
+                ShadowPass: owner.RenderState.ShadowPass);
         }
         if (bank.RecordingSequence != _engineFrameSequence || operation != bank.NextOperation ||
             owner.ResourceGeneration != bank.ResourceGeneration || request.Publication != bank.Request.Publication ||
             request.RenderFrameId != bank.Request.RenderFrameId || !request.Views.Equals(bank.Request.Views) ||
+            request.NativeViewIndex != bank.Request.NativeViewIndex ||
             !ReferenceEquals(request.BackendReadyPackage, bank.Request.BackendReadyPackage) ||
             request.MsaaSampleCount != bank.Request.MsaaSampleCount || request.SampleEncoding != bank.Request.SampleEncoding ||
             request.EnableBuiltInAmbientOcclusion != bank.Request.EnableBuiltInAmbientOcclusion ||
@@ -219,6 +228,7 @@ public sealed partial class WebGpuRendererHost
             reason = "WebGPU.Advanced.FamilyChanged: the stage must preserve its frozen publication, view, output generation, and native stage order.";
             return false;
         }
+        view = bank.FrozenView;
         return true;
     }
 
@@ -253,6 +263,7 @@ public sealed partial class WebGpuRendererHost
             if (submitted) bank.SubmittedSequence = _engineFrameSequence;
             bank.RecordingSequence = 0;
             bank.Request = default;
+            bank.FrozenView = default;
         }
         ReclaimAdvancedReservations(_advancedCompletedSequence);
     }

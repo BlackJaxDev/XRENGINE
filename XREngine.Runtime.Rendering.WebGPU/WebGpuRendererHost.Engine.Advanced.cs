@@ -57,9 +57,13 @@ public sealed partial class WebGpuRendererHost : IAdvancedVisibilityStageBackend
     /// <summary>Records one shared native stage; a rejected producer prevents presentation of the entire frame.</summary>
     public bool TryEnqueueAdvancedVisibilityStage(in AdvancedVisibilityStageBackendRequest request, out string failureReason)
     {
-        bool accepted = TryBeginAdvancedStage(in request, out failureReason) &&
-            TryEnqueueAdvancedStageCore(in request, out failureReason);
-        if (accepted) CompleteAdvancedStage(in request);
+        bool accepted = TryBeginAdvancedStage(in request, out RenderFrameViewSelection view, out failureReason);
+        if (accepted)
+        {
+            using var frozenView = PushFrozenView(in view);
+            accepted = TryEnqueueAdvancedStageCore(in request, out failureReason);
+            if (accepted) CompleteAdvancedStage(in request);
+        }
         if (!accepted && _engineRecording) MarkEngineDrawPending();
         return accepted;
     }

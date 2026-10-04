@@ -139,6 +139,16 @@ passes, temporal/post-processing, and final output. Vulkan dispatches
 evaluate material lighting, and write HDR scene color; the Advanced command
 chain consumes that output through post-processing and presentation.
 
+WebGPU native stages enter the same immutable view scope as authored mesh draws.
+Visibility preparation freezes the request's selected view, target extent and
+elapsed time in its output's current recording reservation; every native stage
+reuses that selection after validating the exact frame, publication, view and
+resource identities. Scene captures retain their accepted elapsed-time override
+across retries. Recording completion or rejection retires the selection with
+the request, and stage exit restores any enclosing view even on pending work or
+exceptions. The source view rectangle and depth convention remain unchanged;
+the pass-local viewport uses the native target's extent.
+
 Advanced WebGPU honors the explicit browser GTAO quality gate. Disabling GTAO,
 the built-in AO setting, or the AO provider removes its native stage, full-size
 AO target, and required GTAO program. Native shading reuses the declared 1×1
