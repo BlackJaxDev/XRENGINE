@@ -335,7 +335,17 @@ unsupported-platform stub for that decoder. The
 defines that exact failure. AOT, trimming or native build switches do not enable
 this managed API in the browser pack.
 
-A versioned portable font encoding and retained legacy desktop reader have
-been proposed for owner approval. No codec or payload-format change is included
-here. Browser UI pixels, interaction and lifecycle remain unqualified until the
-font preload succeeds; Editor publication alone does not close that acceptance.
+The owner approved a versioned portable encoding on 2026-10-04. Font payload
+version 3 now stores each R8 mip as raw bytes or a block from the existing
+managed LZ4 dependency, choosing the smaller form. Desktop retains version 2
+reading; a browser loading version 2 receives the named
+`BrowserFont.CookedV2RequiresRecook` diagnostic. The reader preserves the
+4 MiB-minus-envelope payload limit, 64 MiB decoded-atlas limit, exact mip sizes
+and trailing-data rejection. Authored fonts and YAML are unchanged; normal
+publication recooks their derived payloads and hashes.
+
+Independent source review and whitespace checks pass. The local C# compiler is
+unavailable, so compilation, actual cooked size and browser font loading still
+require the next exact-commit CI run. Browser UI pixels, interaction and
+lifecycle remain unqualified until font preload and the existing live checks
+succeed; Editor publication alone does not close that acceptance.

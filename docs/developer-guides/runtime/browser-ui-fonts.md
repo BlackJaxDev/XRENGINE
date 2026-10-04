@@ -28,6 +28,11 @@ the asset hash, decodes with an explicitly scoped codec, and attaches each font
 to its text component before activating the world. Neither source fonts nor
 rasterizers run in the browser.
 
+The cooked bitmap font payload is version 3. Each R8 atlas mip is stored raw or
+as an LZ4 block, whichever is smaller, with an explicit per-mip encoding tag.
+Desktop readers still accept version 2 Brotli payloads. Browsers require version
+3; republish older browser bundles to recook their fonts before running them.
+
 The native shared-world package profile deliberately requires a self-contained
 world and rejects authored font dependencies until typed native package roots
 are supported. Other atlas modes and sources outside project `Assets` remain
