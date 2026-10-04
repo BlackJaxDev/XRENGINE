@@ -1,0 +1,366 @@
+import { createHash } from 'node:crypto';
+import { browserLaunchOptions } from './smoke.config.mjs';
+import { captureGpuProcessState } from './gpu-diagnostics.mjs';
+
+/** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
+export function installNativeCompileCapture() {
+    const adapters = new WeakMap(), devices = new WeakMap(), bindings = new WeakMap();
+    const layouts = new WeakMap(), modules = new WeakMap();
+    const evidence = { timeOriginMs: performance.timeOrigin, calls: 0, records: [], captureErrors: [] };
+    const clone = value => structuredClone(value);
+    const limits = value => {
+        const names = new Set();
+        for (let prototype = value; prototype; prototype = Object.getPrototypeOf(prototype))
+            for (const name of Object.getOwnPropertyNames(prototype)) names.add(name);
+        return Object.fromEntries([...names].sort().filter(name => typeof value[name] === 'number')
+            .map(name => [name, value[name]]));
+    };
+    const capabilities = value => ({ features: [...value.features].sort(), limits: limits(value.limits) });
+    const observe = action => {
+        try { action(); }
+        catch (error) {
+            if (evidence.captureErrors.length < 8) evidence.captureErrors.push(String(error).slice(0, 1024));
+        }
+    };
+    globalThis.advancedNativeCompileSnapshot = () => {
+        const now = performance.now();
+        return clone({ ...evidence, records: evidence.records.map(record => ({ ...record,
+            elapsedMs: record.elapsedMs ?? now - record.startedAtMs })) });
+    };
+    if (!globalThis.GPU || !globalThis.GPUAdapter || !globalThis.GPUDevice) return;
+    const requestAdapter = GPU.prototype.requestAdapter;
+    GPU.prototype.requestAdapter = function (...args) {
+        const startedAtMs = performance.now(), promise = requestAdapter.apply(this, args);
+        observe(() => {
+            const request = clone(args[0] ?? {});
+            void promise.then(adapter => observe(() => {
+                if (!adapter) return;
+                const info = adapter.info ?? {};
+                adapters.set(adapter, { request, startedAtMs, elapsedMs: performance.now() - startedAtMs,
+                    ...capabilities(adapter), info: { vendor: info.vendor ?? '', architecture: info.architecture ?? '',
+                        device: info.device ?? '', description: info.description ?? '',
+                        subgroupMinSize: info.subgroupMinSize ?? null, subgroupMaxSize: info.subgroupMaxSize ?? null,
+                        fallback: adapter.isFallbackAdapter ?? info.isFallbackAdapter ?? null } });
+            }), () => {});
+        });
+        return promise;
+    };
+    const requestDevice = GPUAdapter.prototype.requestDevice;
+    GPUAdapter.prototype.requestDevice = function (...args) {
+        const startedAtMs = performance.now(), promise = requestDevice.apply(this, args);
+        observe(() => {
+            const request = clone(args[0] ?? {}), adapter = adapters.get(this);
+            void promise.then(device => observe(() => devices.set(device, {
+                request, adapter, startedAtMs, elapsedMs: performance.now() - startedAtMs, ...capabilities(device),
+            })), () => {});
+        });
+        return promise;
+    };
+    const createBinding = GPUDevice.prototype.createBindGroupLayout;
+    GPUDevice.prototype.createBindGroupLayout = function (...args) {
+        const result = createBinding.apply(this, args);
+        observe(() => bindings.set(result, clone(args[0])));
+        return result;
+    };
+    const createLayout = GPUDevice.prototype.createPipelineLayout;
+    GPUDevice.prototype.createPipelineLayout = function (...args) {
+        const result = createLayout.apply(this, args);
+        observe(() => {
+            const { bindGroupLayouts, ...descriptor } = args[0];
+            layouts.set(result, { ...clone(descriptor), bindGroupLayouts: [...bindGroupLayouts].map(binding => {
+                const captured = bindings.get(binding);
+                if (!captured) throw new Error('Native compile capture is missing a bind-group layout.');
+                return captured;
+            }) });
+        });
+        return result;
+    };
+    const createModule = GPUDevice.prototype.createShaderModule;
+    GPUDevice.prototype.createShaderModule = function (...args) {
+        const startedAtMs = performance.now(), result = createModule.apply(this, args);
+        observe(() => {
+            const { code, ...descriptor } = args[0];
+            // GPU objects in compilation hints need a separate capture contract; do not approximate them.
+            if (Object.hasOwn(descriptor, 'compilationHints')) throw new Error('Native compile capture cannot replay compilation hints.');
+            modules.set(result, { code, descriptor: clone(descriptor), startedAtMs,
+                elapsedMs: performance.now() - startedAtMs });
+        });
+        return result;
+    };
+    const createCompute = GPUDevice.prototype.createComputePipelineAsync;
+    GPUDevice.prototype.createComputePipelineAsync = function (...args) {
+        const startedAtMs = performance.now();
+        const promise = createCompute.apply(this, args);
+        observe(() => {
+            if (args[0]?.label !== 'engine-advanced-shade-native') return;
+            evidence.calls++;
+            if (evidence.records.length >= 4) return;
+            const record = { startedAtMs, callReturnedAtMs: performance.now(), status: 'pending', elapsedMs: null,
+                recipeStatus: 'pending', recipe: null };
+            evidence.records.push(record);
+            void promise.then(() => {
+                record.status = 'fulfilled'; record.elapsedMs = performance.now() - startedAtMs;
+            }, () => {
+                record.status = 'rejected'; record.elapsedMs = performance.now() - startedAtMs;
+            });
+            const { layout, compute, ...pipeline } = args[0];
+            const { module, ...stage } = compute;
+            const shader = modules.get(module), device = devices.get(this), explicitLayout = layouts.get(layout);
+            if (!shader || typeof shader.code !== 'string' || !device?.adapter || !explicitLayout)
+                throw new Error('Native compile capture is missing the exact module, device, or explicit layout.');
+            record.recipe = { pipeline: clone(pipeline), compute: clone(stage), layout: clone(explicitLayout),
+                module: { descriptor: clone(shader.descriptor), startedAtMs: shader.startedAtMs,
+                    elapsedMs: shader.elapsedMs, sha256: null, byteLength: null }, device: clone(device) };
+            // Hash after the original compile was launched; no extra shader/module is created.
+            void Promise.resolve().then(async () => {
+                const bytes = new TextEncoder().encode(shader.code);
+                record.recipe.module.byteLength = bytes.byteLength;
+                const digest = await crypto.subtle.digest('SHA-256', bytes);
+                record.recipe.module.sha256 = [...new Uint8Array(digest)]
+                    .map(value => value.toString(16).padStart(2, '0')).join('');
+                record.recipeStatus = 'ready';
+            }).catch(() => { record.recipeStatus = 'hash-unavailable'; });
+        });
+        return promise;
+    };
+}
+
+/** Runs on a blank loopback page in a fresh Chromium process, using only the observed native recipe. */
+export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs }) {
+    const result = { status: 'preparing', stage: 'load-cooked-module', compileBudgetMs, timeOriginMs: performance.timeOrigin,
+        stages: [], compile: null, compilationInfo: null, deviceLoss: null, uncapturedErrors: [],
+        explicitDestroyRequested: false, cleanup: {} };
+    let device, loader, deadline, finished = false;
+    const controller = new AbortController();
+    const snapshot = () => JSON.parse(JSON.stringify(result));
+    const dispose = () => {
+        if (finished) return;
+        finished = true;
+        controller.abort();
+        loader?.dispose();
+        result.cleanup.loaderDisposed = !!loader;
+        if (device) { result.explicitDestroyRequested = true; device.destroy(); result.cleanup.deviceDestroyed = true; }
+    };
+    globalThis.nativeCompileIsolation = { snapshot, dispose };
+    const bounded = async (stage, budgetMs, action) => {
+        result.stage = stage;
+        const timing = { stage, startedAtMs: performance.now(), elapsedMs: null, status: 'pending' };
+        result.stages.push(timing);
+        let timer;
+        try {
+            const value = await Promise.race([Promise.resolve().then(action), new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    timing.status = 'timed-out';
+                    reject(new Error(`Native compile isolation ${stage} exceeded ${budgetMs} ms.`));
+                }, budgetMs);
+            })]);
+            timing.status = 'fulfilled';
+            return value;
+        } catch (error) {
+            if (timing.status === 'pending') timing.status = 'rejected';
+            throw error;
+        } finally { clearTimeout(timer); timing.elapsedMs = performance.now() - timing.startedAtMs; }
+    };
+    const limits = value => {
+        const names = new Set();
+        for (let prototype = value; prototype; prototype = Object.getPrototypeOf(prototype))
+            for (const name of Object.getOwnPropertyNames(prototype)) names.add(name);
+        return Object.fromEntries([...names].sort().filter(name => typeof value[name] === 'number')
+            .map(name => [name, value[name]]));
+    };
+    const capabilities = value => ({ features: [...value.features].sort(), limits: limits(value.limits) });
+    const same = (actual, expected, label) => {
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Native compile isolation ${label} differs from the application.`);
+    };
+    try {
+        // Transport, manifest graph validation, payload budgets, and SHA-256 verification use production helpers.
+        const source = await bounded('load-cooked-module', 45000, async () => {
+            const [{ BrowserContentLoader }, { validateEngineAssetManifest }] = await Promise.all([
+                import(new URL('../content-loader.js', manifestUrl).href),
+                import(new URL('../engine-assets.js', manifestUrl).href),
+            ]);
+            if (finished) throw new Error('Native compile isolation was disposed.');
+            loader = new BrowserContentLoader(new URL(manifestUrl), controller.signal);
+            const { manifest, assets } = validateEngineAssetManifest(await loader.readManifest(), new URL(manifestUrl));
+            const binding = manifest.pipelineArtifacts?.find(value => value.scope === 'advanced' && value.pass === 'shade-native');
+            const shader = manifest.shaderArtifacts?.find(value => value.identity === binding?.descriptorIdentity);
+            if (!shader) throw new Error('Native compile isolation requires the published advanced::shade-native artifact.');
+            const descriptorEntry = assets.get(shader.descriptor), sourceEntry = assets.get(shader.source);
+            const descriptorBytes = await loader.readVerifiedPayload(descriptorEntry.url, descriptorEntry.bytes,
+                shader.identity, shader.descriptor);
+            let descriptor;
+            try { descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(descriptorBytes)); }
+            finally { loader.releasePayload(descriptorBytes); }
+            if (descriptor.pass !== 'shade-native' || descriptor.target !== 'WebGPUWgsl'
+                || descriptor.entryPoints?.compute !== recipe.compute.entryPoint
+                || sourceEntry.hash !== recipe.module.sha256 || sourceEntry.bytes !== recipe.module.byteLength
+                || descriptor.source?.sha256 !== recipe.module.sha256 || descriptor.source?.byteLength !== recipe.module.byteLength)
+                throw new Error('Native compile isolation published descriptor/source does not match the observed module and entry point.');
+            const bytes = await loader.readVerifiedPayload(sourceEntry.url, sourceEntry.bytes, recipe.module.sha256, shader.source);
+            try {
+                result.cookedArtifact = { descriptorIdentity: shader.identity, descriptorPath: shader.descriptor,
+                    sourcePath: shader.source, sha256: sourceEntry.hash, byteLength: sourceEntry.bytes,
+                    entryPoint: descriptor.entryPoints.compute, specialization: descriptor.specialization };
+                return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+            } finally { loader.releasePayload(bytes); }
+        });
+        if (!navigator.gpu) throw new Error('Native compile isolation requires navigator.gpu.');
+        const adapter = await bounded('request-adapter', 10000, () => navigator.gpu.requestAdapter(recipe.device.adapter.request));
+        if (!adapter) throw new Error('Native compile isolation requestAdapter returned null.');
+        const info = adapter.info ?? {};
+        result.adapter = { ...capabilities(adapter), info: { vendor: info.vendor ?? '', architecture: info.architecture ?? '',
+            device: info.device ?? '', description: info.description ?? '',
+            subgroupMinSize: info.subgroupMinSize ?? null, subgroupMaxSize: info.subgroupMaxSize ?? null,
+            fallback: adapter.isFallbackAdapter ?? info.isFallbackAdapter ?? null } };
+        same(result.adapter.info, recipe.device.adapter.info, 'adapter');
+        same(result.adapter.features, recipe.device.adapter.features, 'adapter features');
+        same(result.adapter.limits, recipe.device.adapter.limits, 'adapter limits');
+        device = await bounded('request-device', 10000, async () => {
+            const requested = await adapter.requestDevice(recipe.device.request);
+            if (finished) { requested.destroy(); throw new Error('Native compile isolation device arrived after disposal.'); }
+            return requested;
+        });
+        result.device = capabilities(device);
+        same(result.device.features, recipe.device.features, 'enabled features');
+        same(result.device.limits, recipe.device.limits, 'device limits');
+        device.addEventListener('uncapturederror', event => {
+            // Driver messages may echo WGSL. Report classification only, never source text.
+            if (result.uncapturedErrors.length < 8) result.uncapturedErrors.push({ type: event.error?.constructor?.name ?? 'GPUError', stage: result.stage });
+        });
+        void device.lost.then(info => {
+            if (!result.explicitDestroyRequested) result.deviceLoss = { reason: info.reason, stage: result.stage };
+        });
+        const { bindGroupLayouts, ...layoutDescriptor } = recipe.layout;
+        const layout = device.createPipelineLayout({ ...layoutDescriptor,
+            bindGroupLayouts: bindGroupLayouts.map(value => device.createBindGroupLayout(value)) });
+        const moduleStart = performance.now();
+        const module = device.createShaderModule({ ...recipe.module.descriptor, code: source });
+        result.moduleCreationMs = performance.now() - moduleStart;
+        await bounded('shader-compilation-info', 45000, async () => {
+            const info = await module.getCompilationInfo();
+            result.compilationInfo = { messages: info.messages.map(message => ({ type: message.type,
+                lineNum: message.lineNum, linePos: message.linePos, offset: message.offset, length: message.length })) };
+            if (info.messages.some(message => message.type === 'error')) throw new Error('Native compile isolation module reported WGSL errors.');
+        });
+        // No application frames, uploads, other pipelines, or GPU submissions accompany this one native compile.
+        // Start an independent Node watchdog before entering the GPU API, including a wedged synchronous call.
+        await globalThis.nativeCompileStarting();
+        result.stage = 'create-compute-pipeline';
+        result.compile = { startedAtMs: performance.now(), callReturnedAtMs: null, elapsedMs: null, status: 'pending' };
+        const compile = result.compile;
+        let pending;
+        try { pending = device.createComputePipelineAsync({ ...recipe.pipeline, layout, compute: { ...recipe.compute, module } }); }
+        catch (error) {
+            compile.status = 'rejected'; compile.elapsedMs = performance.now() - compile.startedAtMs;
+            compile.error = { name: error?.name ?? 'Error', reason: error?.reason ?? null };
+            throw new Error('Native compute pipeline call rejected; see error classification.');
+        }
+        compile.callReturnedAtMs = performance.now();
+        deadline = setTimeout(() => {
+            if (compile.status === 'pending') { compile.status = 'timed-out'; compile.elapsedMs = performance.now() - compile.startedAtMs; }
+        }, compileBudgetMs);
+        await bounded('create-compute-pipeline', compileBudgetMs, async () => {
+            try { await pending; if (compile.status === 'pending') compile.status = 'fulfilled'; }
+            catch (error) {
+                if (compile.status === 'pending') compile.status = 'rejected';
+                compile.error = { name: error?.name ?? 'Error', reason: error?.reason ?? null };
+                throw new Error('Native compute pipeline compilation rejected; see error classification.');
+            } finally { if (compile.elapsedMs === null) compile.elapsedMs = performance.now() - compile.startedAtMs; }
+        });
+        result.status = compile.status === 'timed-out' ? 'compile-timeout'
+            : result.deviceLoss || result.uncapturedErrors.length ? 'gpu-error' : 'compiled';
+    } catch (error) {
+        result.status = result.compile?.status === 'timed-out' ? 'compile-timeout' : 'failed';
+        // Our explicit messages contain identities/classification, never compiler diagnostic text.
+        result.error = String(error?.message ?? error).startsWith('Native compile isolation ')
+            || String(error?.message ?? error).startsWith('Native compute pipeline ')
+            ? String(error.message).slice(0, 2048) : `Isolation stage failed (${error?.name ?? 'Error'}).`;
+    } finally { clearTimeout(deadline); dispose(); }
+    return snapshot();
+}
+
+/** Diagnostic only: called after the failed application's entire browser process has closed. */
+export async function runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage) {
+    const capture = report.advancedRenderingFailures?.find(value => value.nativeCompile)?.nativeCompile;
+    if (!capture) return;
+    const record = capture.records.find(value => value.status === 'pending');
+    const result = report.nativeCompileIsolation = { scope: 'Diagnostic only; does not change the failed application check.',
+        status: 'skipped', reason: null, compileBudgetMs: 45000, freshBrowserProcess: true,
+        applicationBrowserClosed: true, applicationCapture: capture, cleanup: {} };
+    if (capture.calls !== 1 || !record || record.recipeStatus !== 'ready') {
+        result.reason = 'Requires exactly one pending native compile with a complete captured recipe.';
+        return;
+    }
+    result.recipe = record.recipe;
+    result.recipeSha256 = createHash('sha256').update(JSON.stringify(record.recipe)).digest('hex');
+    result.launchOptions = browserLaunchOptions(config);
+    let browser, context, page, timer, compileTimer;
+    try {
+        browser = await chromium.launch(result.launchOptions);
+        result.browser = browser.version();
+        if (result.browser !== report.browser) throw new Error('Isolation browser version differs from the application.');
+        await captureGpuProcessState(browser, result, 'before-isolated-native-compile');
+        const backend = snapshot => {
+            if (!snapshot?.gpu) return null;
+            const gpu = snapshot.gpu;
+            return { devices: gpu.devices, attributes: Object.fromEntries(Object.entries(gpu.auxAttributes ?? {})
+                .filter(([key, value]) => /backend|renderer|vendor|version|displayType/i.test(key)
+                    && ['string', 'number', 'boolean'].includes(typeof value)).sort(([a], [b]) => a.localeCompare(b))) };
+        };
+        const application = backend(report.gpuProcessSnapshots?.find(value => value.stage === 'after-failed-advanced-application'));
+        const isolated = backend(result.gpuProcessSnapshots[0]);
+        result.backendComparison = { application, isolated,
+            status: !application || !isolated ? 'unavailable' : JSON.stringify(application) === JSON.stringify(isolated) ? 'matched' : 'different' };
+        if (result.backendComparison.status === 'different') throw new Error('Isolation GPU backend differs from the application.');
+        ({ page, context } = await instrumentedPage(browser, origin, report, 'advanced-native-compile-isolation', config));
+        await page.goto(`${origin}/__audio-probe/`, { waitUntil: 'domcontentloaded' });
+        // Driver console/page errors can quote shader text. Keep this diagnostic's logs source-free.
+        page.removeAllListeners('console');
+        page.removeAllListeners('pageerror');
+        const logs = report.browserLogs['advanced-native-compile-isolation'];
+        page.on('console', event => { if (logs.length < 2000) logs.push({ type: event.type(), text: 'Diagnostic console message omitted to avoid shader source disclosure.' }); });
+        page.on('pageerror', () => { if (logs.length < 2000) logs.push({ type: 'pageerror', text: 'Diagnostic page error; source text omitted.' }); });
+        let rejectCompileDeadline;
+        const compileDeadline = new Promise((_, reject) => { rejectCompileDeadline = reject; });
+        await page.exposeFunction('nativeCompileStarting', () => {
+            result.compileWatchdog = { startedUtc: new Date().toISOString(), budgetMs: result.compileBudgetMs };
+            compileTimer = setTimeout(() => {
+                result.compileWatchdog.expired = true;
+                rejectCompileDeadline(new Error('Native compile isolation exceeded its 45000 ms external compile deadline.'));
+            }, result.compileBudgetMs);
+        });
+        // Also bound a wedged page/GPU IPC path, whose in-page timer might never run.
+        const replay = page.evaluate(replayNativeCompile, { recipe: record.recipe,
+            manifestUrl: `${origin}/__game/content/manifest.json`, compileBudgetMs: result.compileBudgetMs });
+        result.replay = await Promise.race([replay, compileDeadline, new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Native compile isolation page exceeded its 160000 ms total envelope.')), 160000);
+        })]);
+        result.status = result.replay.status;
+    } catch (error) {
+        result.status = result.compileWatchdog?.expired ? 'compile-watchdog-timeout' : 'diagnostic-failed';
+        result.error = String(error).slice(0, 2048);
+    } finally {
+        clearTimeout(timer);
+        clearTimeout(compileTimer);
+        if (page && !result.replay) {
+            let cleanupTimer;
+            try {
+                result.replay = await Promise.race([page.evaluate(() => {
+                    const probe = globalThis.nativeCompileIsolation;
+                    probe?.dispose();
+                    return probe?.snapshot() ?? null;
+                }), new Promise(resolve => { cleanupTimer = setTimeout(() => resolve(null), 1000); })]);
+            } catch { /* Closing the owned process releases a wedged device. */ }
+            finally { clearTimeout(cleanupTimer); }
+        }
+        if (page && result.replay) result.cleanup.deviceDestroyed = result.replay.cleanup.deviceDestroyed === true;
+        if (context) {
+            let closeTimer;
+            try {
+                result.cleanup.contextClosed = await Promise.race([context.close().then(() => true, () => false),
+                    new Promise(resolve => { closeTimer = setTimeout(() => resolve(false), 1000); })]);
+            } finally { clearTimeout(closeTimer); }
+        }
+        if (browser) await browser.close().then(() => { result.cleanup.browserClosed = true; }, () => { result.cleanup.browserClosed = false; });
+    }
+}

@@ -11,6 +11,7 @@ import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 import { rollingBallGameCheck } from './rollingball-game.mjs';
 import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
+import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
 import { unlitMaterialsCheck } from './unlit-materials.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1213,7 +1214,7 @@ async function main() {
             : 'Renderer diagnostic correctness and selected runtime smoke checks; not full browser, desktop, physical-device or performance acceptance.' };
     const gameCheckName = config.gameKind === 'rollingball'
         ? 'rollingball-editor-published-game' : `${config.gameKind}-editor-published-world`;
-    let browser, server;
+    let browser, server, origin;
     const check = async (name, action) => {
         const start = performance.now();
         try { await action(); report.checks.push({ name, status: 'passed', milliseconds: performance.now() - start }); }
@@ -1225,6 +1226,7 @@ async function main() {
     try {
         const hosted = await startServer(config, report.requests);
         server = hosted.server;
+        origin = hosted.origin;
         report.launchArguments = browserLaunchOptions(config).args;
         browser = await chromium.launch(browserLaunchOptions(config));
         report.browser = browser.version();
@@ -1299,9 +1301,13 @@ async function main() {
         console.error(error);
     } finally {
         if (browser) {
+            if (report.advancedRenderingFailures?.length)
+                await captureGpuProcessState(browser, report, 'after-failed-advanced-application');
             report.browserCloseRequested = true;
             await browser.close().catch(error => { report.cleanupError = String(error); report.passed = false; });
         }
+        if (origin && !report.cleanupError && report.advancedRenderingFailures?.length)
+            await runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage);
         if (server) await new Promise(resolve => server.close(resolve));
         report.finishedUtc = new Date().toISOString();
         await fs.writeFile(path.join(config.output, 'smoke-report.json'), JSON.stringify(report, null, 2));
