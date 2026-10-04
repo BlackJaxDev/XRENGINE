@@ -280,3 +280,35 @@ establish GPU pixels or browser/device/assistive-technology/IME acceptance. The
 bounded UI carrier preserves omitted image settings for its admitted published
 materials. General standalone/raw texture metadata preservation remains a
 separate asset-cooking gap; this change does not migrate that texture schema.
+
+The saved `BrowserUiParity` fixture first reached the genuine Editor YAML loader
+on `5e42251` in
+[run 37219100537](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37219100537).
+It stopped before cooking because two canvas component discriminators used the
+UI transform/control namespace instead of the component's actual CLR namespace.
+Both now name `XREngine.Components.UICanvasComponent`. All 132 discriminator
+occurrences, covering 20 distinct names, were checked against source declarations
+and loader contracts; only those two scalar values changed. The aliases and 47
+polymorphic transform wrappers are preserved. Source checks do not establish a
+successful engine load, cook or browser UI result; the normal publisher rerun
+remains required.
+
+The same authoring-path audit also found text/layout and button-child access
+before `ComponentsSerialized` assigns component owners. Shared text now retains
+those property values while unattached and uses its normal activation refresh;
+button text lookup tolerates a missing owner. Text-input updates and focus keep
+their existing creation-capable sibling access once attached. Activation replays
+nonempty input text without inserting components into the activation collection,
+and explicitly refreshes a changed sibling layout if outer cooked hydration is
+still suppressing property notifications. Both sibling orders were reviewed.
+Initial empty input text preserves independently authored sibling text, matching
+the previous empty-default setter behavior; no new omission/explicit-empty
+storage distinction is introduced. Attached inactive/editor updates and live
+nonempty-to-empty edits retain their existing paths. Independent source review
+and whitespace checks pass; engine compilation and load/cook remain pending.
+
+A separate pre-existing cooked desktop limitation remains: parent-button
+activation can update an already-built child text color while notifications are
+suppressed, leaving the desktop material uniform stale. WebGPU batching reads
+the current color directly. That older desktop material refresh path is not
+changed by this bounded owner/activation repair.

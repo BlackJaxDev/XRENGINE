@@ -100,7 +100,7 @@ Scenes:
                 Width: 1280
                 Height: 720
             Components:
-              - __type: "XREngine.Rendering.UI.UICanvasComponent"
+              - __type: "XREngine.Components.UICanvasComponent"
                 ID: "c8ff385f-5967-823b-0dee-a7b9811bc0db"
                 PreferOffscreenRenderingForNonScreenSpaces: true
                 AutoDisableOffscreenForBackdropBlur: false
@@ -862,7 +862,7 @@ Scenes:
                 Width: 512
                 Height: 512
             Components:
-              - __type: "XREngine.Rendering.UI.UICanvasComponent"
+              - __type: "XREngine.Components.UICanvasComponent"
                 ID: "0ab11600-6127-7116-5464-de7766d8c95f"
                 PreferOffscreenRenderingForNonScreenSpaces: true
                 AutoDisableOffscreenForBackdropBlur: false

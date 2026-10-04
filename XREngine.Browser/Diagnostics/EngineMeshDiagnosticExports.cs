@@ -2,6 +2,7 @@ using System.Runtime.InteropServices.JavaScript;
 using System.Text;
 using System.Text.Json;
 using XREngine.Core.Files;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Shaders.Generation;
@@ -200,6 +201,7 @@ public static partial class EngineMeshDiagnosticExports
                 variants = new EngineMaterialVariantCatalog(entries, artifacts);
             }
             WebPipelineArtifactCatalog? effectArtifacts = null;
+            EngineUnlitDiagnosticProfile selectedUnlitProfile = unlitProfile ?? EngineUnlitDiagnosticProfile.Baseline;
             if (effects)
             {
                 stage = "load verified effect catalog";
@@ -246,14 +248,24 @@ public static partial class EngineMeshDiagnosticExports
                         "gtao-blur-horizontal", "gtao-blur-vertical" })
                         if (!effectArtifacts.TryResolve(pass, out _))
                             throw new InvalidDataException($"EngineMeshDiagnostic.UnlitProfilePassMissing: {pass}.");
+                if (selectedUnlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                    foreach (string pass in new[] { "indirect::cull-primitive", "meshlets::select-lod",
+                        "authored-indexed::rank-sources", "authored-indexed::mask-ranked-arguments" })
+                        if (!effectArtifacts.TryResolve(pass, out _))
+                            throw new InvalidDataException($"EngineMeshDiagnostic.UnlitIndirectCompanionMissing: {pass}.");
             }
             _renderer.BindShaderArtifacts(artifacts, variants);
+            if (unlit && selectedUnlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            {
+                stage = "bind indexed-indirect companions";
+                _renderer.BindAuthoredIndexedPipelineArtifacts(effectArtifacts);
+            }
             _artifact = artifact;
             _tonemapArtifact = tonemap;
             _shadow = shadow;
             _debug = debug;
             _unlit = unlit;
-            _unlitProfile = unlitProfile ?? EngineUnlitDiagnosticProfile.Baseline;
+            _unlitProfile = selectedUnlitProfile;
             _unlitVariants = unlit ? variants : null;
             _effectArtifacts = effectArtifacts;
             _session = checked(++_nextSession);

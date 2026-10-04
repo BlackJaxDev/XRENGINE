@@ -119,3 +119,36 @@ completed x4 qualification; subsequent AO, resize and restart checks did not
 run. The diagnostic now uses integral layout metrics and retains CSS bounds,
 bitmap extent and pixel ratio before each capture. The original exact extent
 and pixel assertions remain unchanged for the rerun.
+
+The `5e42251` rerun in
+[run 37219100537](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37219100537)
+passes all six no-AO x4 captures: two fresh sessions, each at 512×512,
+640×384 and restored 512×512. All 54 material-center comparisons pass with
+maximum HDR component error 0.00022978 and zero display-byte error. The overlap
+has 319 fractional-coverage pixels at 512×512 and 402 at 640×384, with zero
+coverage/color mismatches. Native modules/pipelines remain stable through each
+resize (six modules, 24 cached pipeline entries); sampled live resources remain
+143, with no retiring resources or retained readback tickets. The non-square
+restart image was also inspected. The disabled-AO stage correctly executes no
+depth/normal resolve or GTAO operations.
+
+The next AO profile rejects `DepthNormalMsaaResolve.wgsl` during real browser
+parsing: adjacent less-than and greater-than comparison arguments to `select`
+are interpreted as a template list. Parenthesizing both comparisons removes
+that ambiguity without changing their operands or selection. The same syntax
+was corrected in Advanced visibility resolve and authored source ranking.
+Their rendered acceptance, and Default x4 depth/normal/GTAO acceptance, remain
+pending. This partial no-AO result does not close the broad MSAA acceptance row.
+
+The ordinary authored indexed producer is now connected to this same diagnostic
+through explicit `gpu-indirect-x1` and `gpu-indirect-x4` startup selections. Its
+real `GpuIndirectZeroReadback` setting is selected before Default construction
+and retained through camera setup; original material and index sources remain
+the producer inputs. The verified catalog binds the production indexed route,
+with exact scoped primitive-cull, LOD-select and source-order dependencies added
+to the diagnostic cook and package. State reports the renderer's actual indexed
+strategy and rejection reason. No meshlet payload or substitute argument buffer
+is manufactured. The separate legacy browser packet strategy is unchanged.
+These connections have source and JavaScript checks; managed compilation and
+browser indirect output remain pending. Existing automated CPU cases continue
+to select their original profiles, and no additional acceptance row is closed.

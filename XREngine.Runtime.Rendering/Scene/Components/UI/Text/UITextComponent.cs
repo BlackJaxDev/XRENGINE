@@ -437,6 +437,11 @@ namespace XREngine.Rendering.UI
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            // YAML assigns properties before ComponentsSerialized gives the component an owner.
+            // OnComponentActivated builds the authored text after its transform is wired.
+            if (SceneNode is null)
+                return;
+
             switch (propName)
             {
                 case nameof(Font):
@@ -548,6 +553,13 @@ namespace XREngine.Rendering.UI
                 }
                 ResizeGlyphCount(count, invalidateLayout);
             //});
+        }
+
+        /// <summary>Rebuilds attached text after a restore changes its value without property notifications.</summary>
+        internal void RefreshTextLayoutAfterSuppressedChange()
+        {
+            if (SceneNode is not null)
+                UpdateText(forceRemake: false);
         }
 
         private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)
