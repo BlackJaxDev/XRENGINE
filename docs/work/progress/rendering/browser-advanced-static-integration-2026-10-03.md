@@ -288,3 +288,48 @@ retained task state only on an explicit status request, without changing
 compilation, frame acceptance, or successful-frame allocation behavior. The
 targeted WebGPU build passes with zero warnings and errors; the next CI run
 qualifies the browser caller and captures the software-only pending phase.
+
+## Retained native compilation on the updated runtime
+
+On `41f80ab50941c27dea48fdbf5217f0fb54aafd51`,
+[run 37204584966](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37204584966)
+builds and publishes all three saved worlds through the Windows Editor.
+RollingBall and RenderingParity pass Chromium. Advanced reaches native shading
+after its frozen-view scope repair, then reaches the unchanged 45-second
+first-frame deadline. The `engine-advanced-shade-native` shader module is ready;
+its native `createComputePipelineAsync` promise has been pending for 36.54
+seconds, while validation and memory scopes completed in about 0.4 ms. No
+resource failure is recorded. This does not establish that the native request
+itself exceeded 45 seconds: earlier startup work consumed the remaining time.
+
+Source tracing confirms that artifact-keyed managed and JavaScript caches retain
+the same pending pipeline task. Changing scene-publication generations does not
+recreate it. Native/background/export preparation already overlaps. Earlier
+stage acceptance reports authoring only; incomplete command arenas are discarded,
+so these labels do not prove visibility, AO or classification executed on the GPU.
+Preparation packets and completion receipts still progress during retries. Their
+potential CPU/driver contention is unmeasured in this failed run.
+
+The native authored-height evaluator previously contained eight calls into a
+ten-way texture/sampler bank selector. Surface and decal expansion can multiply
+those call sites. A bounded source change now takes the same eight samples in
+a loop, preserving TL/T/TR/L/R/BL/B/BR offsets, explicit gradients, texture
+selection and the unchanged Sobel formula. It changes no material profile,
+layout, schema, desktop GLSL or timeout. Reducing compiler expansion is a
+hypothesis, not a measured startup improvement. The shared include feeds sixteen
+ordinary/Uber, native/export, color/depth and mono/MSAA recipes, all recooked by
+the existing canonical cook. CI retains their exact descriptors and WGSL with
+hash/length checks for inspection of the emitted loop and ABI. The saved parity
+scene uses RGB normal mapping, so its output does not numerically exercise the
+Sobel branch.
+
+Failure handling now retains renderer/preparation statistics and selected-device
+capabilities before managed teardown retires the renderer. Adapter identity is
+included only when the browser exposes it on that device. The Advanced smoke
+retains this event and submission evidence even when screenshot or context
+cleanup fails. Its page-local instrumentation records bounded native compute
+creation counts, settlement times, and shader-module UTF-8 lengths/SHA-256s,
+returning the original WebGPU results without changing arguments or deadlines.
+These records will distinguish a retained native compile from repeated creation
+and compare the running module with the exact cook artifact. The new evidence
+path is source/lifecycle checked; live results remain pending.

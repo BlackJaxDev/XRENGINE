@@ -11,6 +11,7 @@ import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 import { rollingBallGameCheck } from './rollingball-game.mjs';
 import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
+import { unlitMaterialsCheck } from './unlit-materials.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -405,28 +406,62 @@ async function effectsCheck(browser, origin, report, config) {
         const depth = (u, v) => page.evaluate(({ u, v }) =>
             window.engineMeshDiagnostic.readEffectDepthAt(u, v), { u, v });
         const sample = async (sampleCase, full) => {
-            const state = await page.evaluate(() => window.engineMeshDiagnostic.effectsState());
-            const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
-            const result = { sampleCase, state, statistics, targets: {} };
-            const names = full
-                ? ['HDRSceneTex', 'WebNormalTexture', 'WebGtaoRawTexture', 'WebGtaoHorizontalTexture',
-                    'WebGtaoFinalTexture', 'WebBloomMip0', 'WebBloomMip1', 'WebBloomMip2',
-                    'WebBloomMip3', 'WebBloomMip4', 'WebBloomCombinedTexture']
-                : ['HDRSceneTex', 'WebGtaoFinalTexture', 'WebBloomMip0', 'WebBloomMip1', 'WebBloomCombinedTexture'];
-            for (const name of names) {
-                if (!state.targets.some(target => target.label === name)) continue;
-                result.targets[name] = {};
-                for (const [site, u, v] of [['contact', .36, .60], ['flat', .75, .75],
-                    ['emitter', .71, .44], ['halo', .78, .44]])
-                    result.targets[name][site] = await read(name, u, v);
-            }
-            if (full) {
-                result.depth = { occluder: await depth(.36, .5), flat: await depth(.75, .75) };
-                const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `effects-${sampleCase}.png`) });
-                result.display = await capturePixels(page, png, [
-                    { name: 'occluder', x: 184, y: 256 },
-                    { name: 'contact', x: 184, y: 307 }, { name: 'emitter', x: 364, y: 225 },
-                    { name: 'halo', x: 399, y: 225 }]);
+            const startedAt = performance.now();
+            // waitReady has already observed two accepted ready frames and drained retirements.
+            const pause = await page.evaluate(() => {
+                const host = window.engineMeshDiagnostic;
+                const id = host.pauseEffectsFrames();
+                return { id, readyFrames: host.readyFrames,
+                    frameSubmitCalls: host.statistics().frameSubmitCalls, startedAt: performance.now() };
+            });
+            let result;
+            let sampleFailed = false;
+            try {
+                const state = await page.evaluate(() => window.engineMeshDiagnostic.effectsState());
+                const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+                result = { sampleCase, state, statistics, targets: {} };
+                const names = full
+                    ? ['HDRSceneTex', 'WebNormalTexture', 'WebGtaoRawTexture', 'WebGtaoHorizontalTexture',
+                        'WebGtaoFinalTexture', 'WebBloomMip0', 'WebBloomMip1', 'WebBloomMip2',
+                        'WebBloomMip3', 'WebBloomMip4', 'WebBloomCombinedTexture']
+                    : ['HDRSceneTex', 'WebGtaoFinalTexture', 'WebBloomMip0', 'WebBloomMip1', 'WebBloomCombinedTexture'];
+                for (const name of names) {
+                    if (!state.targets.some(target => target.label === name)) continue;
+                    result.targets[name] = {};
+                    for (const [site, u, v] of [['contact', .36, .60], ['flat', .75, .75],
+                        ['emitter', .71, .44], ['halo', .78, .44]])
+                        result.targets[name][site] = await read(name, u, v);
+                }
+                if (full) {
+                    result.depth = { occluder: await depth(.36, .5), flat: await depth(.75, .75) };
+                    const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `effects-${sampleCase}.png`) });
+                    result.display = await capturePixels(page, png, [
+                        { name: 'occluder', x: 184, y: 256 },
+                        { name: 'contact', x: 184, y: 307 }, { name: 'emitter', x: 364, y: 225 },
+                        { name: 'halo', x: 399, y: 225 }]);
+                }
+            } catch (error) {
+                sampleFailed = true;
+                throw error;
+            } finally {
+                try {
+                    const sampling = await page.evaluate(({ id, readyFrames, frameSubmitCalls, startedAt }) => {
+                        const host = window.engineMeshDiagnostic;
+                        let timing, resumed;
+                        try {
+                            const statistics = host.statistics();
+                            timing = { pausedMs: performance.now() - startedAt,
+                                readyFramesDelta: host.readyFrames - readyFrames,
+                                frameSubmitCallsDelta: (statistics?.frameSubmitCalls ?? 0) - frameSubmitCalls };
+                        } finally { resumed = host.resumeEffectsFrames(id); }
+                        return { ...timing, resumed };
+                    }, pause);
+                    if (result) result.sampling = { ...sampling, elapsedMs: performance.now() - startedAt };
+                    assert(sampling.resumed, 'BrowserSmoke.EffectsResume: settled sampling did not resume its owning frame pump.');
+                } catch (resumeError) {
+                    if (!sampleFailed) throw resumeError;
+                    console.error('Engine effects diagnostic frame resume also failed:', resumeError);
+                }
             }
             return result;
         };
@@ -1212,10 +1247,12 @@ async function main() {
         else report.checks.push({ name: 'engine-texture-sampling-lifetime', status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.engineManifest) {
             await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
+            await check('engine-unlit-materials', () => unlitMaterialsCheck(browser, hosted.origin, report, config,
+                instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-shared-gtao-bloom', () => effectsCheck(browser, hosted.origin, report, config));
             await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
             await check('engine-shared-debug-overlay', () => debugOverlayCheck(browser, hosted.origin, report, config));
-        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-shared-gtao-bloom',
+        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-unlit-materials', 'engine-shared-gtao-bloom',
             'engine-directional-shadow', 'engine-shared-debug-overlay'])
             report.checks.push({ name, status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {

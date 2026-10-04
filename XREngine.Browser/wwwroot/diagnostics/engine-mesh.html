@@ -23,6 +23,7 @@ const lit=params.get('probe')==='lit';
 const shadow=params.get('probe')==='shadow';
 const debug=params.get('probe')==='debug';
 const effects=params.get('probe')==='effects';
+const unlit=params.get('probe')==='unlit';
 if(texture){
  document.title='Engine texture diagnostic';
  document.querySelector('h1').textContent='Engine texture diagnostic';
@@ -53,11 +54,17 @@ if(effects){
  document.querySelector('#description').textContent='Real ModelComponents and a shared DefaultRenderPipeline render a foreground occluder and bright emitter through cooked GTAO, bloom, and tonemap passes.';
  document.querySelector('#expected').textContent='Inspect the generation-owned normal, AO, HDR, and bloom targets while changing numeric camera settings. This static fixture does not start RuntimeWorld gameplay or physics.';
 }
+if(unlit){
+ document.title='Engine unlit material diagnostic';
+ document.querySelector('h1').textContent='Engine unlit material diagnostic';
+ document.querySelector('#description').textContent='Nine factory-created unlit surfaces and a discard background render together through the shared DefaultRenderPipeline.';
+ document.querySelector('#expected').textContent='The board checks color, linear and sRGB texture sampling, forced opacity, alpha cutoff, and the first layer of two reordered texture arrays in the engine HDR target and canvas.';
+}
 manifest.value=params.get('manifest') ?? '';
 assets.value=params.get('assets') ?? '';
 const createHost=await createBrowserRuntime();
 const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
-document.querySelector('#start').onclick=()=>host.start(new URL(manifest.value,location.href), assets.value ? new URL(assets.value,location.href) : null, effects?'engine-standard-lit-color-effects':debug?'engine-standard-lit-color-debug':shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
+document.querySelector('#start').onclick=()=>host.start(manifest.value ? new URL(manifest.value,location.href) : null, assets.value ? new URL(assets.value,location.href) : null, unlit?'engine-unlit-materials':effects?'engine-standard-lit-color-effects':debug?'engine-standard-lit-color-debug':shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
 document.querySelector('#stop').onclick=()=>host.stop().catch(error=>{status.textContent=String(error);});
 window.engineMeshDiagnostic=host;
 window.addEventListener('pagehide',()=>{void host.stop().catch(()=>{});});

@@ -278,8 +278,6 @@ public sealed class VulkanP1ValidationTests
         pipelineInstanceSource.ShouldContain("EnsureExternalSwapchainResourceGenerationForCurrentFrame");
         pipelineInstanceSource.ShouldContain("ExternalSwapchainFramePrepare");
         pushMainAttributes.ShouldContain("bool applyRenderArea = true");
-        pushMainAttributes.ShouldContain("_mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));");
-        renderStateSource.ShouldContain("if (_mainAttributeRenderAreaPushed.Count > 0 && _mainAttributeRenderAreaPushed.Pop())\n                PopRenderArea();");
         initialRenderArea.ShouldContain("renderer?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true");
         initialRenderArea.ShouldContain("PushRequiredRenderArea(externalRegion, \"OpenXR external swapchain target\");");
         initialRenderArea.ShouldContain("viewport?.RendersToExternalSwapchainTarget == true");
@@ -310,7 +308,6 @@ public sealed class VulkanP1ValidationTests
         string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs").Replace("\r\n", "\n");
 
         viewportSource.ShouldContain("meshRenderCommands: commandCollection,\n                applyRenderArea: false);");
-        renderStateSource.ShouldContain("applyRenderArea && PushInitialMainRenderArea(viewport, target)");
         renderStateSource.ShouldContain("FrameViewSet = null;");
         renderStateSource.ShouldContain("WorldSnapshot = null;");
         meshSource.ShouldContain("VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(currentPipeline, out var temporalData)");

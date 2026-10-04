@@ -12,6 +12,8 @@ export class EngineMeshDiagnosticHost {
         this.creation = null;
         this.pendingStop = Promise.resolve();
         this.request = 0;
+        this.effectsPause = null;
+        this.nextEffectsPauseId = 0;
         this.stage = 'idle';
         this.failure = null;
         this.partialSubmissions = 0;
@@ -24,7 +26,7 @@ export class EngineMeshDiagnosticHost {
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
             'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
-            'engine-standard-lit-color-effects'].includes(artifactName))
+            'engine-standard-lit-color-effects', 'engine-unlit-materials'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         const epoch = ++this.epoch;
         // Invalidate the previous visible completion before the first await.
@@ -38,7 +40,8 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
-        this.kind = artifactName === 'engine-standard-lit-color-effects' ? 'effects' :
+        this.kind = artifactName === 'engine-unlit-materials' ? 'unlit' :
+            artifactName === 'engine-standard-lit-color-effects' ? 'effects' :
             artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
             artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
             artifactName === 'engine-standard-lit-color' ? 'lit' : artifactName === 'engine-texture-probe' ? 'texture' : 'depth';
@@ -49,9 +52,9 @@ export class EngineMeshDiagnosticHost {
         const controller = new AbortController();
         this.controller = controller;
         try {
-            const manifestResponse = await fetch(manifestUrl, { signal: controller.signal });
-            if (!manifestResponse.ok) throw new Error(`Diagnostic shader manifest failed: ${manifestResponse.status}`);
-            const manifest = await manifestResponse.json();
+            const manifestResponse = this.kind === 'unlit' ? null : await fetch(manifestUrl, { signal: controller.signal });
+            if (manifestResponse && !manifestResponse.ok) throw new Error(`Diagnostic shader manifest failed: ${manifestResponse.status}`);
+            const manifest = manifestResponse ? await manifestResponse.json() : null;
             const loadArtifact = async name => {
                 const selected = manifest.artifacts?.find(artifact => artifact.name === name);
                 if (manifest.schemaVersion !== 3 || !selected) throw new Error(`Select a schema 3 manifest containing ${name}.`);
@@ -64,7 +67,7 @@ export class EngineMeshDiagnosticHost {
                 if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
                 return { descriptorJson, source: await sourceResponse.text() };
             };
-            const artifact = await loadArtifact(['debug', 'effects'].includes(this.kind) ? 'engine-standard-lit-color' : artifactName);
+            const artifact = this.kind === 'unlit' ? null : await loadArtifact(['debug', 'effects'].includes(this.kind) ? 'engine-standard-lit-color' : artifactName);
             const tonemap = ['lit', 'shadow', 'debug', 'effects'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
             const shadowDepth = this.kind === 'shadow' ? await loadArtifact('engine-shadow-depth') : null;
             const debug = this.kind === 'debug' ? {
@@ -74,7 +77,9 @@ export class EngineMeshDiagnosticHost {
             } : null;
             if (controller.signal.aborted || epoch !== this.epoch) return;
             this.stage = 'creating-engine-session';
-            const creation = this.kind === 'effects'
+            const creation = this.kind === 'unlit'
+                ? this.exports.CreateUnlitAsync(this.canvas.id, String(assetManifestUrl))
+                : this.kind === 'effects'
                 ? this.exports.CreateEffectsAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source)
                 : debug
@@ -124,7 +129,7 @@ export class EngineMeshDiagnosticHost {
 
     frame() {
         this.request = 0;
-        if (!this.session) return;
+        if (!this.session || this.effectsPause) return;
         try {
             this.stage = 'engine-frame';
             const submissionsBefore = ['shadow', 'debug'].includes(this.kind) ? this.statistics()?.frameSubmitCalls ?? 0 : 0;
@@ -148,6 +153,30 @@ export class EngineMeshDiagnosticHost {
 
     statistics() { return this.renderer?.getStatistics() ?? null; }
 
+    /** Holds only this diagnostic's scheduled frame while settled effects targets are sampled. */
+    pauseEffectsFrames() {
+        if (!this.session || this.kind !== 'effects' || !this.renderer || this.failure || this.effectsPause ||
+            this.readyFrames < 2 || this.statistics()?.resources?.retiring !== 0 || !this.request)
+            throw new Error('Settled engine effects frames are required before diagnostic sampling.');
+        const pause = { id: ++this.nextEffectsPauseId, epoch: this.epoch,
+            session: this.session, renderer: this.renderer };
+        this.effectsPause = pause;
+        cancelAnimationFrame(this.request);
+        this.request = 0;
+        return pause.id;
+    }
+
+    resumeEffectsFrames(id) {
+        const pause = this.effectsPause;
+        if (!pause || pause.id !== id || pause.epoch !== this.epoch ||
+            pause.session !== this.session || pause.renderer !== this.renderer ||
+            !this.session || this.failure || this.request) return false;
+        this.effectsPause = null;
+        this.startedAt = performance.now();
+        this.request = requestAnimationFrame(this.frame);
+        return true;
+    }
+
     setTextureCase(sampleCase) {
         if (!this.session || this.kind !== 'texture') throw new Error('An active engine texture diagnostic is required.');
         this.exports.SetTextureCase(this.session, sampleCase);
@@ -160,6 +189,26 @@ export class EngineMeshDiagnosticHost {
         this.exports.SetLitCase(this.session, sampleCase);
         this.startedAt = performance.now();
         this.onState('Preparing changed engine surface and light values');
+    }
+
+    setUnlitCase(sampleCase) {
+        if (!this.session || this.kind !== 'unlit') throw new Error('An active engine unlit diagnostic is required.');
+        this.exports.SetUnlitCase(this.session, sampleCase);
+    }
+
+    unlitState() {
+        if (!this.session || this.kind !== 'unlit') throw new Error('An active engine unlit diagnostic is required.');
+        const shaders = [], pipelines = [], hdrTargets = [];
+        this.renderer._resources.slots.forEach((entry, slot) => {
+            if (entry?.owner !== this.session) return;
+            const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
+            if (entry.kind === 'shader') shaders.push(identity);
+            if (entry.kind === 'render-pipeline') pipelines.push(identity);
+            if (entry.kind === 'texture' && entry.value.format === 'rgba16float' && entry.value.label === 'HDRSceneTex')
+                hdrTargets.push({ ...identity, width: entry.value.width, height: entry.value.height,
+                    format: entry.value.format, sampleCount: entry.value.sampleCount });
+        });
+        return { ...JSON.parse(this.exports.GetUnlitState(this.session)), shaders, pipelines, hdrTargets };
     }
 
     setEffectsCase(sampleCase) {
@@ -282,7 +331,7 @@ export class EngineMeshDiagnosticHost {
 
     /** Reads a five-pixel square at normalized canvas coordinates from the engine-owned HDR texture. */
     async readHdrAt(u, v) {
-        if (!this.session || !['lit', 'shadow', 'effects'].includes(this.kind))
+        if (!this.session || !['lit', 'shadow', 'effects', 'unlit'].includes(this.kind))
             throw new Error('An active engine HDR diagnostic is required.');
         return this.readColorTargetAt('HDRSceneTex', u, v);
     }
@@ -422,6 +471,7 @@ export class EngineMeshDiagnosticHost {
     stop(supersede = true, publishState = true) {
         if (supersede) this.epoch++;
         const stopEpoch = this.epoch;
+        this.effectsPause = null;
         if (publishState) {
             this.stage = 'stopping';
             this.onState('Stopping engine mesh diagnostic');

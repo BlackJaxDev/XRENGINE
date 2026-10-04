@@ -42,3 +42,32 @@ checks remain pending on the exact updated source. This source-selector
 admission evidence is not a cooked-payload integration or rendered GPU result.
 The disposable witness and report are under the existing investigation run's
 `scratch/catalog-admission/` directory.
+
+The subsequent exact-commit
+[CI run 37201737929](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37201737929)
+on `805dc8f513728d4c150b5327cc4b5596ac2a2ede` built the portable consumer,
+cooked the complete canonical shader set, and published RollingBall,
+RenderingParity and AdvancedRenderingParity through the Windows Editor CLI.
+RenderingParity and the Linux renderer diagnostics passed their browser checks.
+This supersedes the pending compile/package checks above; those worlds do not
+provide known-value output for the five ordinary Unlit factories.
+
+## Ordinary factory pixel cohort
+
+The static Unlit diagnostic uses the actual engine factories and the package's
+verified material and pipeline catalogs. A fixed nine-tile board covers HDR
+color and alpha, linear and sRGB texture interpretation, forced-opaque alpha,
+below/equal/above masked cutoff, and reordered two-layer textures. The canonical
+array factory samples layer zero, matching its desktop GLSL; this cohort does
+not introduce a layer selector. Masked tiles sit in front of a known-color
+background so discarded coverage has an independently defined result.
+
+The browser harness reads the generation-owned RGBA16F output and compares it
+with independent authored constants, then repeats the board after a non-square
+resize and a fresh session. It also captures the presented canvas and records
+actual shader/pipeline identities, single-sample target state and resource
+retirement. Case selection chooses which tile's metadata to inspect; it does
+not mutate the scene. This is a CPU-direct, single-sample factory cohort. Its
+new rendered result still awaits exact-commit CI; authored material hydration,
+transparent ordering, custom pipelines, GPU-indirect submission, MSAA and native
+Advanced output retain their separate acceptance requirements.

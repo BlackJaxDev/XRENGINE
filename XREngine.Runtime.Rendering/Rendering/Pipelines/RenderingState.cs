@@ -490,7 +490,7 @@ public sealed partial class XRRenderPipelineInstance
                 BoundingRectangle targetRegion = CreateFrameBufferRenderArea(target);
                 if (targetRegion.Width > 0 && targetRegion.Height > 0)
                 {
-                    PushRenderArea(targetRegion);
+                    PushRenderAreaState(targetRegion);
                     return true;
                 }
             }
@@ -505,7 +505,7 @@ public sealed partial class XRRenderPipelineInstance
             if (viewportRegion.Width <= 0 || viewportRegion.Height <= 0)
                 return false;
 
-            PushRenderArea(viewportRegion);
+            PushRenderAreaState(viewportRegion);
             return true;
         }
 
@@ -518,7 +518,7 @@ public sealed partial class XRRenderPipelineInstance
                     $"Region={region.X},{region.Y},{region.Width}x{region.Height}.");
             }
 
-            PushRenderArea(region);
+            PushRenderAreaState(region);
         }
 
         private static BoundingRectangle CreateFrameBufferRenderArea(XRFrameBuffer target)

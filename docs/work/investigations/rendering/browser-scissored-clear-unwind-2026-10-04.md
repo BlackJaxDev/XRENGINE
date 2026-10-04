@@ -49,6 +49,11 @@ Normal completion and aborted execution pop only regions added by that
 invocation. Enclosing entries remain present, and collection-only scopes with
 no area changes do not touch renderer state.
 
+Initial main-area setup uses the existing state-only push, because its outer
+main scope already owns restoration. This avoids taking and discarding an
+additional pooled scope object for every target, viewport or external-target
+invocation. The viewport and crop operations themselves are unchanged.
+
 Before an atomic container rethrows, it walks its entered framebuffer state
 commands in reverse order and executes their outstanding unbind/target-scope
 cleanup. Nested containers release their own entries first. Completed or
@@ -78,11 +83,24 @@ details are formatted only on the failure path.
 ## Validation boundary
 
 Source inspection confirms both leaks and the restoration ownership boundaries.
-`git diff --check` passes. No tests, workflows, dependencies, or shader programs
-were changed. The local .NET toolchain was unavailable, so compilation and live
-RollingBall startup/resize qualification require the exact updated CI source.
-`VulkanP1ValidationTests.ExternalSwapchainPlannerDisplayExtent_IsAuthoritativeWhileInternalExtentRemainsScaled`
-still asserts the removed single-pop implementation text. Those two source-text
-assertions need a separate permitted test update before that suite can pass.
-The source-proven leak explains a possible failing crop; it is not yet proof
-that the original RollingBall rejection used the shadow target described above.
+`git diff --check` passes. The repair changed no tests, workflows, dependencies,
+or shader programs. The local .NET toolchain was unavailable; exact-commit
+[CI run 37201737929](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37201737929)
+on `805dc8f513728d4c150b5327cc4b5596ac2a2ede` compiled the portable runtime,
+published all three worlds through the Windows Editor, and passed the Linux
+diagnostic suite including directional shadows. RollingBall and RenderingParity
+also passed their browser startup and resize checks. Advanced independently
+failed because its native stages lacked the frozen draw-view scope; that
+failure does not invalidate the observed scope cleanup results.
+The three obsolete private-field and initial-area-expression assertions in
+`VulkanP1ValidationTests`
+have been replaced by direct `RenderScopeOwnershipTests` against nested main
+scopes, outstanding render/crop pushes, both initial-area policies, and retained
+enclosing regions. Existing extent assertions remain. The Windows job runs
+these checks with the existing FBO-stack, thread-isolation and VulkanP1 checks
+after preserving the browser bundles. Their execution still awaits the updated
+CI commit. The atomic-container exception path is covered by the successful
+integrated browser flows, without a new mock renderer unit fixture.
+The corrected RollingBall run establishes successful startup and resize. It
+does not identify the original failing target, because the failing artifact
+predates the detailed crop diagnostic.
