@@ -19,6 +19,15 @@ Deferral therefore needs a concrete optional assembly, its transitive dependency
 and metadata boundary, and a qualified public loading route before byte savings
 can be claimed. Merely adding a Blazor item to this project does not implement it.
 
+The existing SharpZipLib 1.4.2 reference now belongs to the Desktop platform
+project, which owns archive extraction; the Editor's other archive importer also
+references that project. The portable package allowance was removed. CI will
+check the Browser restore graph and published files for the package, compile the
+Windows Editor consumer, and regenerate dependency attribution in a disposable
+source copy. Only the SharpZipLib attribution is admitted; unrelated generated
+differences are retained for review. Those checks have not yet run on this
+change, and no transfer-size reduction is claimed.
+
 The native-Jolt Browser Release build on 2026-10-04 produced 206 framework WASM
 resources totaling 58,060,183 bytes, with matching gzip resources totaling
 26,698,955 bytes, about 25.46 MiB. These are build resources, not a measured

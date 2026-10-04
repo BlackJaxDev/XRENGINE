@@ -346,3 +346,44 @@ identity correction remains pending on the next exact-commit CI run; no local
 workflows were changed for this correction. The retained failed runs are under
 `Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-f628183b-linux/`
 and `reports/ci-051c32f8-linux/` in the same validation run.
+
+## Lifecycle hooks and first draw deferral
+
+Linux job `111528803944` in run `37233797886`, at exact commit
+`23dde12cf306c095ae35cf740e0158b20e875aa5`, advances beyond the publication
+identity check. The indirect profile still submits no frames within the existing
+45-second qualification window. Its last indexed status is
+`WebGPU.AuthoredIndexed.CpuReplayPending`, while the renderer is ready, ten
+meshes are collected and the last JavaScript resource operation creates the
+`engine-unlit-color` binding layout. Earlier browser cases continue to pass.
+
+The fixture does not author CPU-owned mesh islands. Its materials set
+`ExcludeFromCpuOcclusion`, which is independent of `ExcludeFromGpuIndirect`,
+and its commands do not force CPU rendering. Source inspection identifies a
+different dispatch error: the Web Default command chain assigned its selected
+GPU strategy to `PreRender`, even though the shared Default contract keeps
+`PreRender` and `PostRender` CPU-only. `PreRender` is pass `-1`; the resident
+indexed selector interprets a negative requested pass as all passes. That code
+path selects scene geometry before the HDR framebuffer is bound; after program
+preparation, the existing Unlit output guard rejects the missing framebuffer.
+Subsequent empty GPU passes observe the same global pending bit and replace the
+visible status with the misleading CPU-replay reason. No resource-lifetime churn
+or implicit CPU fallback is established by this failure.
+
+The Web Default hooks now explicitly use `CpuDirect` and set the command-local
+`PreserveMeshSubmissionStrategy` option. This default-false option preserves
+only explicitly marked command strategies against a viewport's scene-geometry
+override; it does not reinterpret custom pass numbers or disable GPU overrides
+on ordinary geometry. Scene passes retain the selected indirect strategy,
+resident source ownership and all frame/output guards. Actual explicit CPU
+islands retain their original replay path.
+
+Indexed deferrals now supply their reason to the existing first-pending-draw
+capture. Fixture status includes that first owner/reason and existing program
+preparation diagnostics between frames, preserving the first captured deferral
+alongside the last indexed status. No timeout, submission gate, shader or test
+changes were made.
+Independent source review and `git diff --check` are the available validation;
+live indirect raster acceptance remains pending on the next exact-commit CI
+run. Failed-run evidence is under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-23dde12c-linux/`.

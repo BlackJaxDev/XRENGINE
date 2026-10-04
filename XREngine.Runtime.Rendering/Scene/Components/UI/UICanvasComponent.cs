@@ -70,6 +70,9 @@ namespace XREngine.Components
         private int _collectGeneration = 0;
         private int _lastSwappedGeneration = -1;
         private int _lastRenderObservedSwapGeneration = -1;
+        private ulong _nonScreenRenderAttempts;
+        private ulong _lastNonScreenCallbackRenderFrame;
+        private bool _nonScreenCommandChainCompleted;
         private bool _loggedStaleNonScreenFrameWarning = false;
         private bool _forceDirectRenderingForBackdropBlur = false;
         private bool _autoDisableOffscreenForBackdropBlur = true;
@@ -747,6 +750,9 @@ namespace XREngine.Components
 
         private void RenderNonScreenCanvasToTexture()
         {
+            SetField(ref _nonScreenRenderAttempts, _nonScreenRenderAttempts + 1, publishNotifications: false);
+            SetField(ref _lastNonScreenCallbackRenderFrame, RuntimeEngine.Rendering.State.RenderFrameId, publishNotifications: false);
+            SetField(ref _nonScreenCommandChainCompleted, false, publishNotifications: false);
             if (!IsActive)
                 return;
 
@@ -785,7 +791,7 @@ namespace XREngine.Components
             //    _renderDiagCount++;
             //}
 
-            _renderPipeline.Render(
+            bool completed = _renderPipeline.TryRender(
                 VisualScene2D,
                 Camera2D,
                 null,
@@ -794,6 +800,42 @@ namespace XREngine.Components
                 null,
                 false,
                 false);
+            SetField(ref _nonScreenCommandChainCompleted, completed, publishNotifications: false);
+            // Atomic consumers need this invocation's producer. Preserve a nested
+            // decline instead of losing its cause at the later texture readiness check.
+            if (!completed && AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                throw new RenderResourcePreparationPendingException(_renderPipeline.LastRenderDeclineReason
+                    ?? "UI.Canvas.ProducerPending: the offscreen canvas command chain did not execute.");
+        }
+
+        /// <summary>Formats offscreen producer state only when a host requests failure diagnostics.</summary>
+        public bool TryAppendOffscreenRenderingStatus(System.Text.StringBuilder output)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            if (CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen)
+                return false;
+            if (output.Length != 0)
+                output.Append(" | ");
+            output.Append(SceneNode?.Name ?? "unnamed canvas")
+                .Append(" active=").Append(IsActiveInHierarchy)
+                .Append(" hooks=").Append(_timerHooksInstalled)
+                .Append(" attempts=").Append(_nonScreenRenderAttempts)
+                .Append(" lastCallbackRenderFrame=").Append(_nonScreenRenderAttempts == 0 ? "none" : _lastNonScreenCallbackRenderFrame.ToString())
+                .Append(" commandChainCompleted=").Append(_nonScreenCommandChainCompleted)
+                .Append(" collect=").Append(_collectGeneration)
+                .Append(" swap=").Append(_lastSwappedGeneration)
+                .Append(" observedSwap=").Append(_lastRenderObservedSwapGeneration)
+                .Append(" package=").Append(_renderPipeline.MeshRenderCommands.RenderingBackendReadyPackage.State)
+                .Append(" commands=").Append(_renderPipeline.MeshRenderCommands.GetRenderingCommandCount())
+                .Append(" target=").Append(_offscreenFbo?.Width ?? 0).Append('x').Append(_offscreenFbo?.Height ?? 0)
+                .Append(" cachedTargetComplete=").Append(_offscreenFbo?.IsLastCheckComplete ?? false)
+                .Append(" targetMatchesSurface=").Append(_offscreenFbo?.Targets is { Length: 1 } targets &&
+                    _offscreenMaterial?.Textures is { Count: 1 } textures &&
+                    ReferenceEquals(targets[0].Target, textures[0]) &&
+                    ReferenceEquals(textures[0], _ownedOffscreenTexture))
+                .Append(" decline=").Append(_renderPipeline.LastRenderDeclineReason ?? "none")
+                .Append(" resourceFailure=").Append(_renderPipeline.LastResourceGenerationFailure ?? "none");
+            return true;
         }
 
         private void EnsureCameraSpaceBinding()

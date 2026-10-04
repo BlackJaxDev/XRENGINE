@@ -306,6 +306,8 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             (_unlit ? $"unlit case={_unlitCase}; " : "") +
             (_unlit && _unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
                 ? $"indexed strategy={_renderer.LastAuthoredIndexedSubmissionStrategy}; indexed reason={_renderer.LastAuthoredIndexedSubmissionReason}; " : "") +
+            $"draw preparation={_renderer.GetPendingEngineDrawStatus()}; " +
+            $"program preparation={_renderer.GetPendingEngineProgramStatus()}; " +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }

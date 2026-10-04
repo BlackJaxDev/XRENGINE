@@ -498,3 +498,95 @@ rendered overlapping-decal/shadow-helper behavior remain unverified. If native
 compilation again exceeds its bound, the next required evidence is a native
 compiler/driver profile of the owned browser processes; another structural
 rewrite is not justified by the current timeout-only evidence.
+
+The exact candidate is published on `23dde12c` in
+[run 37233797886, Advanced job 111533989798](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37233797886/job/111533989798).
+The isolated native and Uber arms verify the candidate hashes and byte lengths
+above, but both native pipeline creations still exceed their unchanged
+45-second bounds. Module information is clean in 140.1 ms and 123.2 ms,
+respectively. The two isolated backends match and every device/context/browser
+cleanup completes. The real Advanced application still misses its first-frame
+deadline. This establishes no demonstrated budget benefit; the censored results
+do not establish equal total compilation time or identify a native compiler stage.
+
+`AdvancedShadeDecals.slang` is restored byte-for-byte to its pre-candidate
+`051c32f8` source, SHA-256
+`8d9832bff1543b466e7d9ccd994aa595e78c9528b2a3d6bc31d62ecd069c24a0`.
+The candidate's source-equivalence, frontend and negative runtime evidence
+remain recorded. Local validation of this restoration is exact-source comparison
+and diff review; the restored integrated source still requires CI acceptance.
+Further shader restructuring stops at this profiling boundary.
+
+## Native-stage trace collection
+
+The failed CI uses locked Playwright 1.63.0 and managed Chromium 153.0.8010.12
+(Playwright browser build 1243), with the existing explicit SwiftShader/Vulkan launch
+arguments. The [exact Chromium dependency manifest](https://chromium.googlesource.com/codesearch/chromium/src/+/refs/tags/153.0.8010.12/DEPS)
+pins Dawn `50c9f7b4ee3fef0bdc9166056098271ea85ef9fc` and SwiftShader
+`5b0479bd2d15058aaa9eb490e364f920ff824a8c`. Existing smoke code already opens
+browser-wide CDP sessions for GPU/process metadata, and CI retains the complete
+evidence directory. The new `--native-compile-trace` opt-in is restricted to
+Advanced game-only qualification and records only its isolated native control
+arm. The ordinary `--gpu-diagnostics` restriction remains unchanged.
+
+The pinned [Dawn categories](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/platform/tracing/trace_categories.h)
+include `gpu.dawn` and its validation, recording and GPU-work siblings.
+[Async pipeline spans](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/native/CreatePipelineAsyncEvent.cpp)
+separate task scheduling from `InitializeImpl`.
+[Vulkan shader spans](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/native/vulkan/ShaderModuleVk.cpp)
+cover `GetHandleAndSpirv`, the combined Tint IR/SPIR-V generation region and
+`vkCreateShaderModule`. Their presence in the actual browser binary must still
+be checked. The pinned [compute-pipeline implementation](https://dawn.googlesource.com/dawn/+/50c9f7b4ee3fef0bdc9166056098271ea85ef9fc/src/dawn/native/vulkan/ComputePipelineVk.cpp)
+has no dedicated `vkCreateComputePipelines` trace span: its cache-hit/miss
+histograms are recorded after return. Time after shader preparation but inside
+`InitializeImpl` therefore cannot by itself be attributed to SwiftShader compilation.
+
+The bounded capture preserves the unchanged isolated native arm:
+
+1. Record the actual browser revision, available tracing categories, existing
+   device/backend data and exact shader/recipe identity. Start browser-wide
+   tracing before shader creation, restricted to `gpu.dawn`, which contains the
+   relevant native stage events. Sibling categories are inventoried but excluded
+   from capture to conserve the four-MiB trace buffer.
+2. Use the [pinned CDP Tracing protocol](https://chromium.googlesource.com/codesearch/chromium/src/+/refs/tags/153.0.8010.12/third_party/blink/public/devtools_protocol/domains/Tracing.pdl)
+   with `ReturnAsStream`, `json` and the Chrome tracing backend. JavaScript
+   sampling and system tracing are unnecessary for these native stage spans.
+   The existing 45-second compile result and application acceptance stay unchanged.
+3. Register `tracingComplete` before stopping; retain its data-loss status and
+   drain/close the stream through the [pinned IO protocol](https://chromium.googlesource.com/codesearch/chromium/src/+/refs/tags/153.0.8010.12/third_party/blink/public/devtools_protocol/domains/IO.pdl)
+   before closing the browser. Bound trace cleanup separately and report an
+   incomplete capture when flushing fails. Mark the deadline and cleanup
+   boundary. Best-effort clock-sync commands never block the compile callback
+   or watchdog. Matched sync IDs provide request/acknowledgement bounds; missing
+   IDs leave the Node/page and trace clocks uncorrelated. The summary derives no
+   pre-deadline durations and does not treat these markers as GPU barriers.
+   The current in-page `finally` destroys the device before Node cleanup,
+   so a strict pre-destruction boundary
+   requires explicit bounded coordination; a Node-only hook cannot guarantee it.
+4. Retain a raw JSON artifact of at most sixteen MiB through the existing CI
+   evidence path. Inspect at most 100,000 exported events and retain 256 known
+   native stage events in the report, without arbitrary event arguments.
+   Argument filtering is requested; protocol error text is omitted from reports.
+   [Pinned Perfetto scoped events](https://chromium.googlesource.com/external/github.com/google/perfetto/+/da65f7e907e0caf473ddec16e15427465f503d05/include/perfetto/tracing/internal/track_event_macros.h)
+   emit a begin immediately and an end on scope exit; an unmatched begin is
+   entered-stage/lower-bound evidence, not a completed duration. The actual
+   JSON export must first demonstrate that those shapes survive. Missing events,
+   data loss or the uninstrumented post-SPIR-V region must remain explicit limits.
+
+Stop/flush/drain shares a five-second diagnostic cleanup bound, followed by
+bounded stream/session cleanup. A late completion's IO handle remains owned
+until closed or the owned browser exits. Capture completeness requires an
+acknowledged start before replay, loss-free EOF, valid JSON and a written raw
+artifact; transport, summary truncation and resource cleanup are reported
+separately. Failure cannot promote the application or native compile verdict.
+
+Sixteen bounded local checks cover JSON/base64 transport, byte/event limits,
+loss, invalid JSON, missing categories, failed markers/start/stop, late starts/handles,
+hung reads and cleanup. The existing isolation and Uber comparison checks
+continue to pass. These are mocked CDP/lifecycle checks, not native tracing or
+rendering evidence. Exact pinned-browser event capture remains pending. This
+route installs no dependency, changes no OS security setting and uploads no
+trace to an external viewer. If native events cannot locate the delay more
+narrowly, report that boundary before proposing new native instrumentation or
+profiler tooling. JavaScript CPU profiles alone cannot answer the native-stage
+question.

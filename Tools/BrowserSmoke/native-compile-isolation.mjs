@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { browserLaunchOptions } from './smoke.config.mjs';
 import { captureGpuProcessState } from './gpu-diagnostics.mjs';
+import { startNativeCompileTrace } from './native-compile-trace.mjs';
 
 /** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
 export function installNativeCompileCapture() {
@@ -174,10 +175,17 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
     const dispose = () => {
         if (finished) return;
         finished = true;
+        result.cleanup.startedAtMs = performance.now();
         controller.abort();
         loader?.dispose();
         result.cleanup.loaderDisposed = !!loader;
-        if (device) { result.explicitDestroyRequested = true; device.destroy(); result.cleanup.deviceDestroyed = true; }
+        if (device) {
+            result.explicitDestroyRequested = true;
+            result.cleanup.deviceDestroyRequestedAtMs = performance.now();
+            device.destroy();
+            result.cleanup.deviceDestroyed = true;
+            result.cleanup.deviceDestroyedAtMs = performance.now();
+        }
     };
     globalThis.nativeCompileIsolation = { snapshot, dispose };
     const bounded = async (stage, budgetMs, action) => {
@@ -409,7 +417,7 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
 async function runNativeCompileArm(chromium, origin, report, config, instrumentedPage, result, recipe, logName,
     comparison = null, controlResult = null) {
     result.launchOptions = browserLaunchOptions(config);
-    let browser, context, page, timer, compileTimer;
+    let browser, context, page, timer, compileTimer, trace;
     try {
         browser = await chromium.launch(result.launchOptions);
         result.browser = browser.version();
@@ -441,14 +449,18 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         const logs = report.browserLogs[logName];
         page.on('console', event => { if (logs.length < 2000) logs.push({ type: event.type(), text: 'Diagnostic console message omitted to avoid shader source disclosure.' }); });
         page.on('pageerror', () => { if (logs.length < 2000) logs.push({ type: 'pageerror', text: 'Diagnostic page error; source text omitted.' }); });
+        if (config.nativeCompileTrace && !comparison)
+            trace = await startNativeCompileTrace(browser, config.output, result);
         let rejectCompileDeadline;
         const compileDeadline = new Promise((_, reject) => { rejectCompileDeadline = reject; });
         await page.exposeFunction('nativeCompileStarting', () => {
             result.compileWatchdog = { startedUtc: new Date().toISOString(), budgetMs: result.compileBudgetMs };
             compileTimer = setTimeout(() => {
                 result.compileWatchdog.expired = true;
+                trace?.mark('compile-deadline');
                 rejectCompileDeadline(new Error('Native compile isolation exceeded its 45000 ms external compile deadline.'));
             }, result.compileBudgetMs);
+            trace?.mark('compile-start');
         });
         // Also bound a wedged page/GPU IPC path, whose in-page timer might never run.
         const replay = page.evaluate(replayNativeCompile, { recipe,
@@ -463,6 +475,7 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
     } finally {
         clearTimeout(timer);
         clearTimeout(compileTimer);
+        trace?.mark('node-cleanup-started');
         if (page && !result.replay) {
             let cleanupTimer;
             try {
@@ -475,6 +488,7 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
             finally { clearTimeout(cleanupTimer); }
         }
         if (page && result.replay) result.cleanup.deviceDestroyed = result.replay.cleanup.deviceDestroyed === true;
+        if (trace) await trace.finish();
         if (context) {
             let closeTimer;
             try {
@@ -483,5 +497,6 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
             } finally { clearTimeout(closeTimer); }
         }
         if (browser) await browser.close().then(() => { result.cleanup.browserClosed = true; }, () => { result.cleanup.browserClosed = false; });
+        if (trace) await trace.browserClosed(result.cleanup.browserClosed === true);
     }
 }

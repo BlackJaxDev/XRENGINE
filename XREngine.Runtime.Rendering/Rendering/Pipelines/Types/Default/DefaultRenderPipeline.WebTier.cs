@@ -228,7 +228,9 @@ public partial class DefaultRenderPipeline
         commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
         commands.Add<VPRC_DepthWrite>().Allow = true;
         commands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, MeshSubmissionStrategy);
+        VPRC_RenderMeshesPass preRender = commands.Add<VPRC_RenderMeshesPass>();
+        preRender.SetOptions((int)EDefaultRenderPass.PreRender, EMeshSubmissionStrategy.CpuDirect);
+        preRender.PreserveMeshSubmissionStrategy = true;
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(command => command.UseInternalResolution = true))
         {
             VPRC_IfElse aoChoice = commands.Add<VPRC_IfElse>();
@@ -321,7 +323,9 @@ public partial class DefaultRenderPipeline
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = false;
             commands.Add<VPRC_RenderScreenSpaceUI>();
         }
-        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, MeshSubmissionStrategy);
+        VPRC_RenderMeshesPass postRender = commands.Add<VPRC_RenderMeshesPass>();
+        postRender.SetOptions((int)EDefaultRenderPass.PostRender, EMeshSubmissionStrategy.CpuDirect);
+        postRender.PreserveMeshSubmissionStrategy = true;
         return commands;
     }
 

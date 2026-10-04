@@ -94,6 +94,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
     public string GetRenderingStatus()
     {
         XRRenderPipelineInstance? pipeline = _renderViewport?.RenderPipelineInstance;
+        var outerCommands = _renderViewport?.MeshRenderCommandsOverride ?? pipeline?.MeshRenderCommands;
         string advancedStages = "none";
         string advancedPreparation = "unused";
         if (pipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
@@ -120,9 +121,12 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
         return $"Renderer={_renderer?.State.ToString() ?? "absent"}; " +
             $"pipeline={pipeline?.Pipeline?.GetType().Name ?? "absent"}; " +
             $"resource profile={(pipeline?.PendingGeneration ?? pipeline?.ActiveGeneration)?.Key.ToString() ?? "absent"}; " +
+            $"render frame={RuntimeEngine.Rendering.State.RenderFrameId}; " +
+            $"outer PreRender commands={outerCommands?.GetRenderingPassCommandCount((int)EDefaultRenderPass.PreRender) ?? 0}; " +
             $"draws={_renderer?.LastEngineMeshDrawCount ?? 0}; " +
             $"commands={_renderer?.LastEngineCommandCount ?? 0}; pending draw={_renderer?.HasPendingEngineDraw ?? false}; " +
             $"draw preparation={_renderer?.GetPendingEngineDrawStatus() ?? "none"}; " +
+            $"offscreen canvases={GetOffscreenCanvasRenderingStatus()}; " +
             $"pipeline decline={pipeline?.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}; " +
             $"advanced stages={advancedStages}; " +
@@ -130,6 +134,62 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             $"program preparation={_renderer?.GetPendingEngineProgramStatus() ?? "none"}; " +
             $"recovery={_graphicsRecoveryPending}; attempts={_graphicsRecoveryAttempts}; " +
             $"recovery failure={_graphicsRecoveryFailure ?? "none"}.";
+    }
+
+    private string GetOffscreenCanvasRenderingStatus()
+    {
+        if (_runtimeWorld is null)
+            return "absent";
+        System.Text.StringBuilder output = new();
+        HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
+        int canvases = 0;
+        int examinedNodes = 0;
+        int examinedComponents = 0;
+        bool truncated = false;
+        for (int index = 0; index < _runtimeWorld.RootNodes.Count; index++)
+        {
+            Visit(_runtimeWorld.RootNodes[index], 0);
+            if (truncated)
+                break;
+        }
+        if (truncated)
+            output.Append(" | additional canvas state omitted");
+        return output.Length == 0 ? "none" : output.ToString();
+
+        void Visit(SceneNode node, int depth)
+        {
+            if (canvases == 8 || examinedNodes == 8192 || depth == 128)
+            {
+                truncated = true;
+                return;
+            }
+            examinedNodes++;
+            if (!visited.Add(node))
+                return;
+            var components = node.Components;
+            for (int index = 0; index < components.Count; index++)
+            {
+                if (canvases == 8 || examinedComponents == 8192)
+                {
+                    truncated = true;
+                    return;
+                }
+                examinedComponents++;
+                XRComponent component = components[index];
+                if (component is UICanvasComponent canvas && canvas.TryAppendOffscreenRenderingStatus(output))
+                    canvases++;
+            }
+            if (node.IsTransformNull)
+                return;
+            var children = node.Transform.Children;
+            for (int index = 0; index < children.Count; index++)
+            {
+                if (children[index]?.SceneNode is { } childNode)
+                    Visit(childNode, depth + 1);
+                if (truncated)
+                    break;
+            }
+        }
     }
 
     /// <summary>Composes a fetched XRWorld through the shared world host and begins gameplay.</summary>

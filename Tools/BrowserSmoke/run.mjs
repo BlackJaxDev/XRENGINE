@@ -1225,7 +1225,7 @@ async function main() {
     const report = { schemaVersion: 1, passed: false, startedUtc: new Date().toISOString(),
         node: process.version, platform: process.platform, architecture: process.arch,
         playwright: require('playwright/package.json').version, gpuMode: config.gpuMode,
-        gpuDiagnostics: config.gpuDiagnostics,
+        gpuDiagnostics: config.gpuDiagnostics, nativeCompileTrace: config.nativeCompileTrace,
         executable: config.executablePath ? path.basename(config.executablePath) : 'playwright-managed-chromium',
         browserLogs: {}, externalRequests: [], requests: [], checks: [],
         scope: config.gameOnly
