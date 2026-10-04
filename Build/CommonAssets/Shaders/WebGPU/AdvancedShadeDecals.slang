@@ -110,44 +110,15 @@ void XR_ADV_ApplySelectedDecals(inout XRAdvancedSurface surface,
     inout float3 albedo, inout float3 normal, inout float roughness, inout float metallic,
     inout float specular, inout float3 emittedRadiance)
 {
-    uint index = 0u, offset = 0u, count = 0u;
-    bool authoredOrder = false;
-    // Visit generic decals before the authored list through one material
-    // evaluator call site, preserving each traversal's filtering and order.
-    [loop]
-    for (;;)
-    {
-        uint decalIndex;
-        if (!authoredOrder)
-        {
-            if (index >= SceneCount(15u))
-            {
-                // Validate the authored list only after generic decals finish,
-                // so a rejected list retains their updates and failure order.
-                if ((Parameters.flags & 16u) == 0u) return;
-                uint words, stride;
-                TextureBindings.GetDimensions(words, stride);
-                offset = Parameters.reserved0;
-                count = Parameters.reserved1;
-                if (offset > words || count > words - offset) { textureFailure |= 1u << 17u; return; }
-                authoredOrder = true;
-                index = 0u;
-                continue;
-            }
-            decalIndex = index;
-            // Generic material decals retain their distinct XY material contract.
-            if ((XR_ADV_LoadDecal(index).flags & (XR_ADV_DECAL_AUTHORED_ALBEDO | XR_ADV_DECAL_UNSUPPORTED_AUTHORED)) != 0u)
-            {
-                ++index;
-                continue;
-            }
-        }
-        else
-        {
-            if (index >= count) return;
-            decalIndex = TextureBindings[offset + index];
-        }
-        XR_ADV_ApplyDecalToSurface(decalIndex, surface, albedo, normal, roughness, metallic, specular, emittedRadiance);
-        ++index;
-    }
+    // Generic material decals retain their distinct XY material contract.
+    for (uint index = 0u; index < SceneCount(15u); ++index)
+        if ((XR_ADV_LoadDecal(index).flags & (XR_ADV_DECAL_AUTHORED_ALBEDO | XR_ADV_DECAL_UNSUPPORTED_AUTHORED)) == 0u)
+            XR_ADV_ApplyDecalToSurface(index, surface, albedo, normal, roughness, metallic, specular, emittedRadiance);
+    if ((Parameters.flags & 16u) == 0u) return;
+    uint words, stride;
+    TextureBindings.GetDimensions(words, stride);
+    uint offset = Parameters.reserved0, count = Parameters.reserved1;
+    if (offset > words || count > words - offset) { textureFailure |= 1u << 17u; return; }
+    for (uint index = 0u; index < count; ++index)
+        XR_ADV_ApplyDecalToSurface(TextureBindings[offset + index], surface, albedo, normal, roughness, metallic, specular, emittedRadiance);
 }

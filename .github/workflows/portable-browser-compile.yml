@@ -81,6 +81,48 @@ jobs:
       - name: Publish browser host
         run: dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1 --output "$VALIDATION_ROOT/browser" --artifacts-path "$VALIDATION_ROOT/browser-build" -p:WasmBuildNative=true -p:XREngineJoltBrowser=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
 
+      - name: Verify desktop archive dependency is absent from browser output
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          function* files(root) {
+            if (!fs.existsSync(root)) return;
+            for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+              const child = path.join(root, entry.name);
+              if (entry.isDirectory()) yield* files(child);
+              else if (entry.isFile()) yield child;
+            }
+          }
+
+          const validationRoot = path.resolve(process.env.VALIDATION_ROOT);
+          const assetRoots = [path.join(validationRoot, 'browser-build'), path.resolve('XREngine.Browser/obj')];
+          const graphs = [];
+          for (const root of assetRoots) {
+            for (const file of files(root)) {
+              if (path.basename(file) !== 'project.assets.json') continue;
+              const graph = JSON.parse(fs.readFileSync(file, 'utf8'));
+              const project = graph.project?.restore?.projectUniqueName?.replaceAll('\\', '/');
+              if (project && path.posix.basename(project) === 'XREngine.Browser.csproj')
+                graphs.push({ file, graph });
+            }
+          }
+          if (graphs.length === 0) throw new Error('Browser project.assets.json was not found');
+          for (const { file, graph } of graphs) {
+            if (/sharpziplib/i.test(JSON.stringify(graph)))
+              throw new Error(`SharpZipLib is still in the Browser restore graph: ${file}`);
+          }
+
+          const published = path.join(validationRoot, 'browser/wwwroot');
+          if (!fs.existsSync(published)) throw new Error('Browser publish output was not found');
+          const leaked = [...files(published)].filter(file => /sharpziplib/i.test(path.basename(file)));
+          if (leaked.length !== 0)
+            throw new Error(`SharpZipLib is still in Browser publish output: ${leaked.join(', ')}`);
+          console.log(`Verified ${graphs.length} Browser restore graph(s) and published output without SharpZipLib`);
+          NODE
+
       - name: Publish native physics lifecycle diagnostic
         run: dotnet publish Tools/Dependencies/JoltBrowser/Spike/JoltBrowserSpike.csproj -c Release -m:1 --output "$VALIDATION_ROOT/jolt-spike" --artifacts-path "$VALIDATION_ROOT/jolt-spike-build" -p:WasmBuildNative=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
 
@@ -235,6 +277,75 @@ jobs:
           name: windows-editor-rollingball-bundle
           path: ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify dependency attribution in a disposable source copy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE "$env:VALIDATION_ROOT/dependency-attribution"
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          $generatorLog = Join-Path $evidence 'generator.log'
+          $reportDiff = Join-Path $evidence 'report-and-licenses.diff'
+          $reportStatus = Join-Path $evidence 'report-and-licenses.status.txt'
+          $isolated = Join-Path $env:RUNNER_TEMP "xr-dependency-attribution-$([guid]::NewGuid().ToString('N'))"
+          $previousLfsSkipSmudge = $env:GIT_LFS_SKIP_SMUDGE
+          try {
+            $env:GIT_LFS_SKIP_SMUDGE = '1'
+            git worktree add --detach $isolated HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create the isolated dependency source copy.' }
+          }
+          finally {
+            $env:GIT_LFS_SKIP_SMUDGE = $previousLfsSkipSmudge
+          }
+          try {
+            foreach ($relative in @(
+              'XREngine.Data/XREngine.Data.csproj',
+              'XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj')) {
+              $workingHash = (Get-FileHash -LiteralPath (Join-Path $env:GITHUB_WORKSPACE $relative) -Algorithm SHA256).Hash
+              $isolatedHash = (Get-FileHash -LiteralPath (Join-Path $isolated $relative) -Algorithm SHA256).Hash
+              if ($workingHash -ne $isolatedHash) { throw "Isolated source differs from the checked-out project: $relative" }
+            }
+
+            & pwsh -NoProfile -File (Join-Path $isolated 'Tools/Reports/Generate-Dependencies.ps1') -NoPromptForUnknownLicenses *> $generatorLog
+            if ($LASTEXITCODE -ne 0) { throw 'Isolated dependency report generation failed; inspect generator.log.' }
+
+            $generated = Join-Path $isolated 'docs/DEPENDENCIES.md'
+            $rows = @(Select-String -LiteralPath $generated -Pattern '^\| SharpZipLib \|')
+            if ($rows.Count -ne 1) { throw 'Expected one SharpZipLib attribution row in the generated report.' }
+            $columns = $rows[0].Line.Split('|')
+            # Uninitialized submodules may change unrelated report rows in this source copy.
+            # Admit only this exact package version, desktop owner and MIT notice.
+            if ($columns[2].Trim() -ne '1.4.2' -or
+                $columns[5].Trim() -ne 'XREngine.Runtime.Platform.Desktop.csproj') {
+              throw "Unexpected SharpZipLib version or direct consumer: $($rows[0].Line)"
+            }
+            if (!(Test-Path -LiteralPath (Join-Path $isolated 'docs/licenses/nuget/SharpZipLib-1.4.2-MIT.txt') -PathType Leaf)) {
+              throw 'The generated SharpZipLib MIT notice is missing.'
+            }
+          }
+          finally {
+            try {
+              $generated = Join-Path $isolated 'docs/DEPENDENCIES.md'
+              if (Test-Path -LiteralPath $generated -PathType Leaf) {
+                Copy-Item -LiteralPath $generated -Destination (Join-Path $evidence 'DEPENDENCIES.snapshot.md')
+              }
+              git -C $isolated diff --binary -- docs/DEPENDENCIES.md docs/licenses > $reportDiff
+              git -C $isolated status --short -- docs/DEPENDENCIES.md docs/licenses > $reportStatus
+              Write-Output 'Full generated report and unrelated source-copy differences are retained as evidence, not accepted into canonical docs.'
+            }
+            finally {
+              git worktree remove --force $isolated
+            }
+          }
+
+      - name: Preserve isolated dependency attribution evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-dependency-attribution
+          path: ${{ env.VALIDATION_ROOT }}/dependency-attribution
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Prepare canonical RenderingParity browser inputs
@@ -564,7 +675,11 @@ jobs:
           GAME_KIND: ${{ matrix.kind }}
         run: |
           mkdir -p "$VALIDATION_ROOT/game-evidence"
-          node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)
+          trace_args=()
+          if [[ "$GAME_KIND" == "advanced-rendering-parity" ]]; then
+            trace_args+=(--native-compile-trace)
+          fi
+          node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" "${trace_args[@]}" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)
 
       - name: Preserve published game qualification evidence
         if: always()

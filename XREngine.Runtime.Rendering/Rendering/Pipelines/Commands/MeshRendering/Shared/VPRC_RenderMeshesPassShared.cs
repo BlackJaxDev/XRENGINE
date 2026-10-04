@@ -81,6 +81,17 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         }
     }
 
+    private bool _preserveMeshSubmissionStrategy;
+    /// <summary>Keeps this command's authored strategy when an output overrides scene geometry submission.</summary>
+    public bool PreserveMeshSubmissionStrategy
+    {
+        get => _preserveMeshSubmissionStrategy;
+        set
+        {
+            if (SetField(ref _preserveMeshSubmissionStrategy, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
+    }
+
     public bool GPUDispatch
     {
         get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
@@ -313,6 +324,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     private EMeshSubmissionStrategy ResolveEffectiveMeshSubmissionStrategy()
     {
+        if (PreserveMeshSubmissionStrategy)
+            return MeshSubmissionStrategy;
         XRViewport? viewport = ResolveActiveViewport();
         return viewport?.MeshSubmissionStrategyOverride ?? MeshSubmissionStrategy;
     }

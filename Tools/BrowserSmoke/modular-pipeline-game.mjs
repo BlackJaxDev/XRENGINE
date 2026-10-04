@@ -154,7 +154,7 @@ export async function modularPipelineGameCheck(browser, origin, report, config, 
             await page.waitForFunction(() => ['running', 'failed'].includes(document.querySelector('#status')?.dataset.state));
             const state = await page.locator('#status').getAttribute('data-state');
             const detail = await page.locator('#status').textContent();
-            assert(state === 'running' && /Modular Pipeline Parity World/i.test(detail),
+            assert(state === 'running' && detail?.startsWith('Engine world ready: ModularPipelineParityWorld: '),
                 `BrowserSmoke.ModularStartup: ${detail}`);
             const canvas = page.locator('#input-surface');
             await canvas.focus();

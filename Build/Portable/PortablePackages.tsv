@@ -4,7 +4,6 @@ XREngine.Data	K4os.Compression.LZ4	1.3.8	Managed LZ4 data compression.
 XREngine.Data	LZMA-SDK	22.1.1	Managed legacy LZMA archive decode and encode.
 XREngine.Data	MemoryPack	1.21.4	Generated managed serialization.
 XREngine.Data	NVorbis	0.10.5	Managed Vorbis decode for audio data.
-XREngine.Data	SharpZipLib	1.4.2	Managed archive extraction.
 XREngine.Data	System.IO.Hashing	10.0.10	Managed asset hash calculation.
 XREngine.Data	YamlDotNet	18.1.0	Managed asset YAML serialization.
 XREngine.Data	ZstdSharp.Port	0.8.8	Managed Zstandard compression.

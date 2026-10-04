@@ -1,7 +1,8 @@
 # Saved modular browser sample
 
-Status: source authored, pending normal shader cook, Editor publication and live
-WebGPU inspection. This is preparatory work for UR06.11a and does not close it.
+Status: normal shader cook and Editor publication passed in CI, and the published
+browser player reached the running world. Pixel and resize inspection remains
+pending. This is preparatory work for UR06.11a and does not close it.
 
 The pinned Slang 2026.8 frontend compiled the sample's two raster entries with
 the ShaderCooker argument order and flags, with no diagnostics. Reflection has
@@ -11,8 +12,9 @@ the reflection JSON hash is
 `0349a35e2a464cf4652f333e5e6e7fbd7bf53ab640a6ae764e3e4218322d6ed1`.
 Disposable outputs and a 17-file authored-source checksum list are under
 `Build/_AgentValidation/20261001-225000-lit-surface/scratch/modular-pipeline/frontend/`.
-This checks Slang frontend syntax and stage reflection only. The normal C#
-ShaderCooker recipe, immutable catalog and Editor publication have not run.
+This local check covers Slang frontend syntax and stage reflection only. The
+normal C# ShaderCooker recipe, immutable catalog and Editor publication later
+passed in the first CI run described below.
 
 `Samples/ModularPipelineParity` contains a project-owned portable game
 assembly, saved startup world, local game bootstrap, explicit camera selection,
@@ -28,15 +30,14 @@ The Editor publisher separately loads and audits the saved world and its cooked
 graph. On browser launch, the game bootstrap inspects a loaded asset graph;
 the runtime game mode inspects the actual hydrated world and selects the two
 shared-source cameras, then the independent quad camera, through the ordinary
-local player using keys 1, 2 and 3. These assertions are useful failures if serialization changes,
-but they are not evidence that the currently authored YAML has passed the
-actual Editor cook. The shipping browser host exposes one player viewport, so
+local player using keys 1, 2 and 3. These assertions are useful failures if
+serialization changes. The shipping browser host exposes one player viewport, so
 sequential switching does not prove simultaneous physical output isolation.
 
-The first qualification should run the sample's `Prepare-BrowserShaders.ps1`,
-then the documented Editor `--build-project` BrowserWebGPU command. Confirm the
-activated `Build/BrowserWebGPU/index.html` and immutable content catalog, then
-load that exact player in WebGPU Chromium. Record startup and switch logs,
+The first CI qualification ran the normal ShaderCooker directly against the
+sample's recipe and staged project, then ran the Editor `--build-project`
+BrowserWebGPU command and loaded the activated player in WebGPU Chromium.
+Follow-up qualification must record switch logs,
 pixel samples of the clear color and quad gradient, shader/module failures,
 source IDs, scoped artifact identity, and any operation-level rejection. A
 software adapter is labeled API/shader evidence; physical-device acceptance
@@ -53,5 +54,15 @@ source ID and AA mode, waits for a later acquisition of the player canvas and
 submission on its configured device queue, and checks clear/gradient pixels
 across two fresh starts and resize. The two shared-source clear cameras have
 identical output; this is evidence of sequential camera selection and frame
-publication, while simultaneous multi-viewport isolation remains open. The
-new CI route has not yet run.
+publication, while simultaneous multi-viewport isolation remains open.
+
+Run 37233797886 at commit `23dde12c` published the bundle successfully. The
+browser reached `running` with `Engine world ready: ModularPipelineParityWorld:
+1 root nodes playing` and logged the clear A marker with saved source ID
+`a09559ee-79e9-4bcc-9adf-43cf250bc1db` and AA None. The smoke case then
+failed its startup assertion because it expected spaces in the world name.
+The published world name follows the saved asset stem, so the assertion now
+matches `ModularPipelineParityWorld` exactly. A failure screenshot is under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-23dde12c-modular/`.
+No clear or quad pixels, camera switch, fresh second start or resize was
+captured before that failure.

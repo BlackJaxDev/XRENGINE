@@ -378,3 +378,42 @@ that UI rendering is fixed. Independent source review and whitespace checks cove
 change; the local C# compiler and browser execution are unavailable. The next
 exact-commit runtime run must identify the pending owner before a behavior fix
 can be justified and the original UI checks can complete.
+
+The next exact witness, `23dde12c` in
+[run 37233797886, UI job 111533989821](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37233797886/job/111533989821),
+identifies `PublishCanvasSurface=CanvasTextureProducerPending` with zero retained
+resource requests. The canvas texture allocation is current, but no producer
+has recorded it in the engine frame. The 34 draws and 35 commands remain
+unsubmitted because the complete producer/consumer frame is required.
+
+Source tracing confirms that the world canvas registers its producer as a
+PreRender method command. Its nested UI pipeline must clear the offscreen color
+attachment before drawing any UI, which marks the texture produced even when
+the canvas has no glyphs or material quads. The published legacy command-package
+path is admitted after swap; lack of explicit package preparation alone does
+not explain this failure. The runtime witness still cannot distinguish an
+absent callback from a nested pipeline decline before the clear.
+
+The canvas previously discarded the nested pipeline's boolean result through
+`Render()`. It now observes `TryRender()` and propagates a declined required
+producer through the existing preparation-pending exception on renderers that
+require atomic frame authoring. It does not mark a texture produced, accept an
+unsubmitted image or change previous-image admission. The startup diagnostic
+also reports the shared render-frame identity and outer viewport's published
+PreRender command count through the existing per-pass count API, honoring its
+command-collection override. It reports at most eight offscreen canvases with
+their callback attempts, last callback render frame, hook state, collect/swap
+generations, published package state, target size,
+cached framebuffer completeness, source/attachment identity and nested
+decline/resource failure. Indexed traversal avoids hidden collection snapshots.
+The tree walk is limited to 8192 node visits, 8192 components and
+depth 128 and runs only when status is requested; frame capture updates only
+scalar fields. Callback counters and frame identity are recorded at callback
+entry so an inactive or changed-draw-space guard cannot look like a missing
+invocation. This closes the missing nested-failure attribution, but the
+underlying producer failure and UI acceptance remain unresolved pending the
+next exact-commit browser run.
+
+Independent source review and whitespace validation pass. Local compilation
+and browser execution remain unavailable; no new tests or publication were
+performed for this correction.

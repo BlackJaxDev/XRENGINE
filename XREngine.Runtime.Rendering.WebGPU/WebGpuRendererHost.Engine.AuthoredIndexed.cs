@@ -388,7 +388,7 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
     private EAuthoredIndexedSubmissionStatus IndexedResult(EAuthoredIndexedSubmissionStatus status, string reason)
     {
         SetField(ref _lastIndexedSubmissionReason, reason, publishNotifications: false);
-        if (status != EAuthoredIndexedSubmissionStatus.Ready) MarkEngineDrawPending();
+        if (status != EAuthoredIndexedSubmissionStatus.Ready) MarkEngineDrawPending(reason);
         return status;
     }
 

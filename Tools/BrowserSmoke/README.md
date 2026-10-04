@@ -377,6 +377,29 @@ texture-bank difference, not a substitute application material. Two timeouts
 are censored observations, and any missing artifact or contract mismatch leaves
 the comparison unavailable rather than changing the failed application check.
 
+For `--game-only --game-kind advanced-rendering-parity`, the opt-in
+`--native-compile-trace` records browser-wide `gpu.dawn` events in the isolated
+native control process. It leaves the application and both compile deadlines
+unchanged and does not trace the Uber comparison. The existing artifact folder
+receives a raw JSON trace capped at 16 MiB; `nativeTrace` in the smoke report
+records browser revision, supported categories, verified module identity,
+backend, data loss, transport/setup completeness and cleanup outcomes.
+The trace buffer is 4 MiB; stop/flush/drain has a separate five-second bound.
+Summaries inspect at most 100,000 events and retain at most 256 known stage
+events, omitting arbitrary trace arguments. Argument filtering is requested
+for the raw capture; capture errors are reported without protocol error text.
+
+Clock-sync markers are best effort and never block the compile callback or its
+watchdog. Matched IDs provide request/acknowledgement bounds, not GPU barriers;
+missing or filtered markers leave cross-clock correlation unavailable.
+The page retains its existing device disposal before Node cleanup, and the
+trace is drained before context/browser closure, so evidence can include cleanup.
+The summary does not derive pre-deadline durations or pair begin/end events.
+Native event presence and unfinished-event JSON preservation require actual
+capture inspection. There is no verified span around `vkCreateComputePipelines`;
+residual native initialization time cannot be attributed to SwiftShader alone.
+Trace success never changes rendering acceptance.
+
 The diagnostic's static Core scene host creates no production `RuntimeWorld`,
 never begins play, and requests no physics backend. It validates engine rendering
 and shader interpretation only. Full `DefaultRenderPipeline`, textures, shadows,
