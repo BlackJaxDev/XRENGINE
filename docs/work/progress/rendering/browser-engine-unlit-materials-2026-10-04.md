@@ -101,3 +101,16 @@ requires unchanged logical handles. Prior-session native identities are retained
 weakly and rejected on restart. State, counters and comparison evidence are saved
 before assertions. Every HDR, canvas, extent, retirement and restart requirement
 remains in place for the next exact-commit run.
+
+The Linux job on `85a8b680c6fe88182282bc37589726ef69bbb0cd` now passes in
+[run 37211196939](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37211196939).
+Six boards cover two fresh sessions, each with 512×512 startup, 640×384 resize
+and return to 512×512. All 54 case comparisons pass: maximum observed HDR error
+is 0.00022978, and presented-color byte error is zero. Initial and non-square
+restart captures were inspected. Each session retains six native shader modules,
+36,962 bytes of cache keys, six cache misses and 24 native pipeline-cache entries
+through both resizes; cache hits increase from five to seven. Logical handles
+are generation-correct, actual native identities remain stable, and pending
+retirement/readback resources drain. All other existing Linux renderer/runtime
+checks pass. This closes the bounded CPU-direct x1 cohort, not the separately
+listed x4, GPU-driven, custom-pipeline or native Advanced acceptance.

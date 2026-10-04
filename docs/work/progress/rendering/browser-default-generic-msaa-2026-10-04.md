@@ -87,3 +87,25 @@ Browser acceptance remains pending: edge coverage and sample preservation, maske
 materials, normal and depth resolve, transparent ordering, GTAO on/off,
 CPU-direct/indexed-indirect/compute-meshlet variants, resize/profile replacement,
 and repeated generation retirement still need rendered evidence.
+
+## Default factory browser cohort
+
+The existing ordinary-Unlit diagnostic now exposes explicit `cpu-x1`, `cpu-x4`
+and `cpu-x4-ao` startup profiles. These select the real Default camera and
+resource profile before initialization. The original nine material centers are
+unchanged; x4 adds a gutter overlap with known front/rear colors, depths and
+oct-encoded normals. Quarter-step resolved coverage identifies partially
+covered pixels without assuming hardware sample positions. The AO profile
+requires nearest-covered depth and the normal from that same sample, plus the
+actual resolve/GTAO operation order and native attachment sample counts.
+The disabled-AO profile requires those unused sidecars to be absent.
+
+The harness retains source/camera/committed-generation identity, successful
+submitted packets, bounded canonical readbacks and failure evidence. It pauses
+only its own diagnostic frame pump during grouped samples and restores it with
+session/renderer ownership checks. Both x4 profiles repeat non-square resize,
+restoration and startup. The Linux cook adds the existing canonical resolve
+recipe and verifies the exact ten selected pipeline keys instead of only a
+catalog count. Source and JavaScript checks pass; C# compilation and the first
+rendered x4 result remain pending. This fixture does not qualify custom graphs,
+GPU-indirect/meshlet modes, reversed depth or transparent coverage.

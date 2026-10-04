@@ -109,3 +109,21 @@ integrated browser flows, without a new mock renderer unit fixture.
 The corrected RollingBall run establishes successful startup and resize. It
 does not identify the original failing target, because the failing artifact
 predates the detailed crop diagnostic.
+
+On `85a8b680c6fe88182282bc37589726ef69bbb0cd`,
+[run 37211196939](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37211196939)
+compiles the test project. Both new main-scope ownership cases and all five
+render-state thread-isolation cases pass. The broader 47-test selection reports
+11 passed, 35 failed and one skipped. The framebuffer behavioral test fails
+before starting its worker: it expects the old read/write bindings while a
+general `Bind()` is active, although that operation correctly binds the same
+framebuffer for all three targets. Its expectations are corrected to verify
+the general binding and subsequent restoration independently on both threads.
+
+The other 34 failures are Vulkan desktop source-text contracts expecting older
+member names, source ownership or exact statement forms. They remain reported
+failures; this browser repair does not establish their desktop invariants. The
+new browser workflow step now selects the three relevant behavioral ownership
+fixtures rather than the entire desktop Vulkan source-contract class. Those
+existing Vulkan tests are retained. The corrected framebuffer test and the
+focused selection await their next exact-commit execution.

@@ -23,6 +23,7 @@ public static partial class EngineMeshDiagnosticExports
     private static bool _shadow;
     private static bool _debug;
     private static bool _unlit;
+    private static EngineUnlitDiagnosticProfile _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
     private static EngineMaterialVariantCatalog? _unlitVariants;
     private static WebPipelineArtifactCatalog? _effectArtifacts;
     private static IDisposable? _materialConstruction;
@@ -51,6 +52,12 @@ public static partial class EngineMeshDiagnosticExports
     [JSExport]
     public static Task<int> CreateUnlitAsync(string canvasId, string assetManifestUrl)
         => CreateCoreAsync(canvasId, assetManifestUrl, null, null, null, null, null, null, null, unlit: true);
+
+    /// <summary>Selects the diagnostic's camera sample and AO profile before engine initialization.</summary>
+    [JSExport]
+    public static Task<int> CreateUnlitProfileAsync(string canvasId, string assetManifestUrl, string executionProfile)
+        => CreateCoreAsync(canvasId, assetManifestUrl, null, null, null, null, null, null, null,
+            unlit: true, unlitProfile: EngineUnlitDiagnosticProfile.Parse(executionProfile));
 
     [JSExport]
     public static Task<int> CreateLitAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
@@ -83,7 +90,8 @@ public static partial class EngineMeshDiagnosticExports
 
     private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string? descriptorJson, string? wgsl,
         string? tonemapDescriptorJson, string? tonemapWgsl, string? shadowDepthDescriptorJson, string? shadowDepthWgsl,
-        DebugShaderInputs? debugSources, bool effects = false, bool unlit = false)
+        DebugShaderInputs? debugSources, bool effects = false, bool unlit = false,
+        EngineUnlitDiagnosticProfile? unlitProfile = null)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
@@ -233,6 +241,11 @@ public static partial class EngineMeshDiagnosticExports
                         !variants.TryResolve(EngineUnlitMaterialShaderGenerator.CompanionKey(semantic, "depth-normal"), out _))
                         throw new InvalidDataException($"EngineMeshDiagnostic.UnlitVariantMissing: {semantic}.");
                 }
+                if (unlitProfile is { AmbientOcclusion: true })
+                    foreach (string pass in new[] { "depth-normal-msaa-resolve", "gtao-generate",
+                        "gtao-blur-horizontal", "gtao-blur-vertical" })
+                        if (!effectArtifacts.TryResolve(pass, out _))
+                            throw new InvalidDataException($"EngineMeshDiagnostic.UnlitProfilePassMissing: {pass}.");
             }
             _renderer.BindShaderArtifacts(artifacts, variants);
             _artifact = artifact;
@@ -240,6 +253,7 @@ public static partial class EngineMeshDiagnosticExports
             _shadow = shadow;
             _debug = debug;
             _unlit = unlit;
+            _unlitProfile = unlitProfile ?? EngineUnlitDiagnosticProfile.Baseline;
             _unlitVariants = unlit ? variants : null;
             _effectArtifacts = effectArtifacts;
             _session = checked(++_nextSession);
@@ -297,7 +311,7 @@ public static partial class EngineMeshDiagnosticExports
             _renderer.Initialize();
             stage = "construct engine fixture";
             _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact, checked((uint)width), checked((uint)height),
-                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit);
+                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit, _unlitProfile);
             if (_unlit)
                 _fixture.BindUnlitVariantIdentities(_unlitVariants!);
         }
@@ -500,6 +514,7 @@ public static partial class EngineMeshDiagnosticExports
         _shadow = false;
         _debug = false;
         _unlit = false;
+        _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
         _unlitVariants = null;
         _effectArtifacts = null;
         _session = 0;

@@ -27,7 +27,13 @@ assert.equal(base.format,'xrengine-assets');
 assert.equal(catalog.schemaVersion,3);
 assert.equal(catalog.backend,'WebGPU');
 assert(Array.isArray(catalog.artifacts) && catalog.artifacts.length >= 15);
-assert(Array.isArray(catalog.pipelineArtifacts) && catalog.pipelineArtifacts.length === 9);
+const expectedPipelinePasses = ['tonemap', 'depth-normal', 'depth-normal-msaa-resolve',
+    'gtao-generate', 'gtao-blur-horizontal', 'gtao-blur-vertical',
+    'bloom-copy', 'bloom-downsample', 'bloom-upsample', 'bloom-combine'];
+assert(Array.isArray(catalog.pipelineArtifacts), 'Cooked pipeline catalog is missing.');
+assert.deepEqual(catalog.pipelineArtifacts.map(entry => [entry.scope ?? '', entry.pass]).sort(),
+    expectedPipelinePasses.map(pass => ['', pass]).sort(),
+    'Cooked pipeline catalog differs from the selected default-effects and MSAA dependency set.');
 await fs.mkdir(outputDirectory,{recursive:true});
 const assets=new Map();
 for(const asset of base.assets) {

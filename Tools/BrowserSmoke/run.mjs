@@ -13,6 +13,7 @@ import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
 import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
 import { unlitMaterialsCheck } from './unlit-materials.mjs';
+import { unlitMsaaCheck } from './unlit-msaa.mjs';
 
 const require = createRequire(import.meta.url);
 const mime = {
@@ -1251,10 +1252,12 @@ async function main() {
             await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
             await check('engine-unlit-materials', () => unlitMaterialsCheck(browser, hosted.origin, report, config,
                 instrumentedPage, capturePixels, assertNoBrowserErrors));
+            await check('engine-unlit-msaa', () => unlitMsaaCheck(browser, hosted.origin, report, config,
+                instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-shared-gtao-bloom', () => effectsCheck(browser, hosted.origin, report, config));
             await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
             await check('engine-shared-debug-overlay', () => debugOverlayCheck(browser, hosted.origin, report, config));
-        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-unlit-materials', 'engine-shared-gtao-bloom',
+        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-unlit-materials', 'engine-unlit-msaa', 'engine-shared-gtao-bloom',
             'engine-directional-shadow', 'engine-shared-debug-overlay'])
             report.checks.push({ name, status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {

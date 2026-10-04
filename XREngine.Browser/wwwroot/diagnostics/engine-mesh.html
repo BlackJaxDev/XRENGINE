@@ -10,6 +10,7 @@ body{font:16px system-ui;background:#181b22;color:#f5f6fa;margin:2rem}canvas{dis
 <p id="description">Static engine ModelComponents, camera, viewport and cooked depth shader. No production world play or physics is started.</p>
 <label>Schema 3 shader manifest <input id="manifest" type="url" placeholder="URL of the cooked depth artifact manifest"></label>
 <label>Cooked engine asset manifest <input id="assets" type="url" placeholder="URL of the packaged engine asset manifest"></label>
+<label id="execution-profile-label" hidden>Unlit execution profile <select id="execution-profile"><option value="cpu-x1">Default CPU x1, AO off</option><option value="cpu-x4">Default CPU x4, AO off</option><option value="cpu-x4-ao">Default CPU x4, GTAO on</option></select></label>
 <button id="start">Start</button><button id="stop">Stop</button>
 <canvas id="engine-depth-canvas" width="512" height="512"></canvas>
 <p id="expected">Expected: left triangle depth 0.25 (red ≈64, blue ≈191); right triangle depth 0.75 (red ≈191, blue ≈64). A second far triangle behind the left one must remain occluded.</p>
@@ -59,12 +60,15 @@ if(unlit){
  document.querySelector('h1').textContent='Engine unlit material diagnostic';
  document.querySelector('#description').textContent='Nine factory-created unlit surfaces and a discard background render together through the shared DefaultRenderPipeline.';
  document.querySelector('#expected').textContent='The board checks color, linear and sRGB texture sampling, forced opacity, alpha cutoff, and the first layer of two reordered texture arrays in the engine HDR target and canvas.';
+ document.querySelector('#execution-profile-label').hidden=false;
+ document.querySelector('#execution-profile').value=params.get('profile') ?? 'cpu-x1';
+ document.querySelector('#expected').textContent+=' The x4 profiles add a separate sloping gutter edge for resolved HDR coverage and, with GTAO enabled, nearest-depth and matching-normal readback.';
 }
 manifest.value=params.get('manifest') ?? '';
 assets.value=params.get('assets') ?? '';
 const createHost=await createBrowserRuntime();
 const host=createHost.createEngineMeshDiagnostics(document.querySelector('canvas'), text=>{status.textContent=text;});
-document.querySelector('#start').onclick=()=>host.start(manifest.value ? new URL(manifest.value,location.href) : null, assets.value ? new URL(assets.value,location.href) : null, unlit?'engine-unlit-materials':effects?'engine-standard-lit-color-effects':debug?'engine-standard-lit-color-debug':shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe').catch(error=>{status.textContent=String(error);});
+document.querySelector('#start').onclick=()=>host.start(manifest.value ? new URL(manifest.value,location.href) : null, assets.value ? new URL(assets.value,location.href) : null, unlit?'engine-unlit-materials':effects?'engine-standard-lit-color-effects':debug?'engine-standard-lit-color-debug':shadow?'engine-standard-lit-color-directional-shadow':lit?'engine-standard-lit-color':texture?'engine-texture-probe':'engine-depth-probe', unlit?document.querySelector('#execution-profile').value:'cpu-x1').catch(error=>{status.textContent=String(error);});
 document.querySelector('#stop').onclick=()=>host.stop().catch(error=>{status.textContent=String(error);});
 window.engineMeshDiagnostic=host;
 window.addEventListener('pagehide',()=>{void host.stop().catch(()=>{});});

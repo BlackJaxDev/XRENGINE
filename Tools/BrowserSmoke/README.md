@@ -55,6 +55,19 @@ handles may rebuild with the surface generation. This qualifies
 the static, single-sample default-pipeline cohort; it does not qualify custom
 graphs, MSAA, GPU-driven submission, or authored serialized materials.
 
+The separate `engine-unlit-msaa` check selects `cpu-x4` and `cpu-x4-ao` before
+the same fixture initializes. The nine original center values stay unchanged.
+A sloping overlap in the gutter adds independently known colors, depths and
+normals: fractional HDR coverage must occur in quarter steps, and the enabled
+AO profile must resolve depth and normal from the same nearest covered sample.
+This avoids assuming fixed hardware sample positions. Submitted packet and
+native texture observations check the actual x4 attachments, x1 color resolve,
+enabled-only depth/normal resolve and GTAO stages. Grouped diagnostic copies
+pause that fixture's frame pump, then resume it before the next change. Both
+profiles exercise non-square resize, restoration and fresh-session restart.
+This is Default CPU-direct coverage; custom pipelines and GPU submission modes
+retain separate checks. The new x4 cohort awaits its first exact-commit run.
+
 The `engine-shared-gtao-bloom` check runs the static effects diagnostic through
 the real WebGPU default pipeline. It reads prepass depth and normal, GTAO stages,
 raw HDR, bloom mips and the combined target, then changes camera effects and

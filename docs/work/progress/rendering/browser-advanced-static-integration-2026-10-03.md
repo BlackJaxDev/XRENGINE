@@ -360,3 +360,32 @@ the same launch profile and hash-verified published WGSL, with a separate
 source and cannot turn the application failure into a pass. Focused Node checks
 cover forwarding, hash/capability rejection, error redaction and cleanup; the
 isolated browser result remains pending.
+
+The isolated replay now reproduces on `85a8b680` in
+[run 37211196939](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37211196939).
+The ordinary application still reaches its 45-second first-frame deadline with
+one native shading creation pending. After closing that browser, the replay
+verifies the same 393,523-byte module, explicit layouts, entry point, constants,
+adapter identity and device capabilities. Module creation takes 2 ms and
+compilation diagnostics complete in 142.5 ms without messages. The single native
+pipeline creation remains pending for 45,000.6 ms and both independent watchdogs
+expire. No engine frame loop or GPU submission accompanies that request, so
+application retries are not necessary to reproduce the delay. The CDP backend
+comparison is unavailable; the WebGPU adapter/device comparison succeeds.
+Loader, device, context and browser cleanup all complete. This establishes a
+standalone native-compile delay, not its exact compiler/driver cause.
+
+The next bounded change transposes each of the twelve matrices from the view
+record's existing value copy instead of rereading every matrix from its uniform
+block. All other fields, transpositions and interfaces remain unchanged. The
+approved Slang 2026.8 archive is verified against the existing workflow hash.
+Direct frontend checks using the production recipe arguments reproduce all
+sixteen retained baseline WGSL hashes exactly. Every candidate removes 11,808
+bytes, reducing the view loader's matrix constructors from 24 to 12 and uniform
+matrix-element loads from 384 to 192, while retaining twelve transposes and
+identical complete reflection JSON. All pairs compile without diagnostics.
+The ordinary native module becomes 381,715 bytes with SHA-256
+`2bc58ce18a4c0122b5edce3152215f67440fb3204fcb19db3607d9b60bac436d`.
+This proves emitted-code reduction and frontend interface preservation; full
+packaging, native compilation timing and rendered output await exact-commit CI.
+Neither the application nor isolated compilation budget changes.

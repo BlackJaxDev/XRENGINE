@@ -861,18 +861,18 @@ XRAdvancedPreparedDrawDeformationRecord PreparedXRAdvancedPreparedDrawDeformatio
 XRAdvancedViewRecord XR_ADV_LoadView(uint index)
 {
     XRAdvancedViewRecord result = FrozenView;
-    result.view = transpose(FrozenView.view);
-    result.projectionJittered = transpose(FrozenView.projectionJittered);
-    result.projectionUnjittered = transpose(FrozenView.projectionUnjittered);
-    result.viewProjectionJittered = transpose(FrozenView.viewProjectionJittered);
-    result.viewProjectionUnjittered = transpose(FrozenView.viewProjectionUnjittered);
-    result.previousView = transpose(FrozenView.previousView);
-    result.previousProjectionJittered = transpose(FrozenView.previousProjectionJittered);
-    result.previousProjectionUnjittered = transpose(FrozenView.previousProjectionUnjittered);
-    result.previousViewProjectionJittered = transpose(FrozenView.previousViewProjectionJittered);
-    result.previousViewProjectionUnjittered = transpose(FrozenView.previousViewProjectionUnjittered);
-    result.inverseViewProjectionJittered = transpose(FrozenView.inverseViewProjectionJittered);
-    result.inverseViewProjectionUnjittered = transpose(FrozenView.inverseViewProjectionUnjittered);
+    result.view = transpose(result.view);
+    result.projectionJittered = transpose(result.projectionJittered);
+    result.projectionUnjittered = transpose(result.projectionUnjittered);
+    result.viewProjectionJittered = transpose(result.viewProjectionJittered);
+    result.viewProjectionUnjittered = transpose(result.viewProjectionUnjittered);
+    result.previousView = transpose(result.previousView);
+    result.previousProjectionJittered = transpose(result.previousProjectionJittered);
+    result.previousProjectionUnjittered = transpose(result.previousProjectionUnjittered);
+    result.previousViewProjectionJittered = transpose(result.previousViewProjectionJittered);
+    result.previousViewProjectionUnjittered = transpose(result.previousViewProjectionUnjittered);
+    result.inverseViewProjectionJittered = transpose(result.inverseViewProjectionJittered);
+    result.inverseViewProjectionUnjittered = transpose(result.inverseViewProjectionUnjittered);
     return result;
 }
 uint XR_ADV_LoadMaterialConstant(XRAdvancedMaterialRecord material, uint relative) { return SceneArena[SceneRow(11u, material.constantWordOffset + relative)]; }
