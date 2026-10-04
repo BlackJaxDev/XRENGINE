@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
 using XREngine.Core.Attributes;
+using XREngine.Data.Core;
 using XREngine.Input.Devices;
 using XREngine.Input;
 using XREngine.Timers;
@@ -81,17 +82,34 @@ namespace XREngine.Rendering.UI
 
         protected override void OnGotFocus()
         {
-            TextComponent.Text = Text;
+            if (SceneNode is not null)
+                TextComponent.Text = Text;
             base.OnGotFocus();
         }
         protected override void OnLostFocus()
         {
-            TextComponent.Text = FormatText(Text);
+            if (SceneNode is not null)
+                TextComponent.Text = FormatText(Text);
             base.OnLostFocus();
         }
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            // Restore the authored input after both components are attached. An empty
+            // input leaves independently authored text on the sibling unchanged.
+            if (!string.IsNullOrEmpty(Text) &&
+                TryGetSiblingComponent<UITextComponent>(out var textComponent))
+            {
+                string displayText = IsFocused ? Text : FormatText(Text);
+                string? previousText = textComponent!.Text;
+                textComponent.Text = displayText;
+                // A nested cooked restore can activate the node while property
+                // notifications are suppressed by an ancestor's hydration scope.
+                if (XRBase.ArePropertyNotificationsSuppressed &&
+                    !string.Equals(previousText, displayText, StringComparison.Ordinal))
+                    textComponent.RefreshTextLayoutAfterSuppressedChange();
+            }
+
             if (InputPlatformServices.TryGetCapsLockState(out bool capsOn))
                 _capsLock = capsOn;
         }
@@ -527,8 +545,9 @@ namespace XREngine.Rendering.UI
                 case nameof(Text):
                     //Re-validate cursor position
                     CursorPosition = _cursorPosition;
-                    //Display updated text to the user
-                    TextComponent.Text = IsFocused ? Text : FormatText(Text);
+                    // YAML assigns input properties before the owning node is attached.
+                    if (SceneNode is not null)
+                        TextComponent.Text = IsFocused ? Text : FormatText(Text);
                     break;
             }
         }

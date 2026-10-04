@@ -154,8 +154,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
 
     private void ConfigureUnlitCamera(XRCamera camera)
     {
-        ConfigureLitCamera(camera);
-        RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
+        ConfigureLitCamera(camera, _unlitProfile.SubmissionStrategy);
         camera.AntiAliasingModeOverride = _unlitProfile.SampleCount > 1 ? EAntiAliasingMode.Msaa : EAntiAliasingMode.None;
         camera.MsaaSampleCountOverride = _unlitProfile.SampleCount;
         PipelinePostProcessState state = camera.GetPostProcessState(_pipeline)
@@ -198,6 +197,13 @@ internal sealed partial class EngineMeshDiagnosticFixture
             executionProfile = _unlitProfile.Name,
             pipeline = _pipeline.GetType().Name,
             submission = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(),
+            indexedSubmission = _unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+                ? new
+                {
+                    strategy = _renderer.LastAuthoredIndexedSubmissionStrategy.ToString(),
+                    reason = _renderer.LastAuthoredIndexedSubmissionReason,
+                    conservativeUnboundedDraws = _renderer.LastAuthoredIndexedConservativeUnboundedDraws,
+                } : null,
             target = DefaultRenderPipeline.HDRSceneTextureName,
             artifactIdentity = _unlitArtifactIdentities[index],
             source = new

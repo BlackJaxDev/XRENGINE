@@ -52,7 +52,7 @@ namespace XREngine.Rendering.UI
         }
 
         public UIMaterialComponent? BackgroundMaterialComponent => GetSiblingComponent<UIMaterialComponent>();
-        public UITextComponent? TextComponent => SceneNode.FirstChild?.GetComponent<UITextComponent>();
+        public UITextComponent? TextComponent => SceneNode?.FirstChild?.GetComponent<UITextComponent>();
 
         public ColorF4 DefaultBackgroundColor
         {

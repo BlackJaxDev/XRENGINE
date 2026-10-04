@@ -66,7 +66,20 @@ enabled-only depth/normal resolve and GTAO stages. Grouped diagnostic copies
 pause that fixture's frame pump, then resume it before the next change. Both
 profiles exercise non-square resize, restoration and fresh-session restart.
 This is Default CPU-direct coverage; custom pipelines and GPU submission modes
-retain separate checks. The new x4 cohort awaits its first exact-commit run.
+retain separate checks. On `5e42251`, both no-AO x4 sessions pass their initial,
+resized and restored captures. The AO profile stops at a WGSL comparison-argument
+parse error in its depth/normal resolve; that syntax is corrected for the next run.
+
+The same diagnostic page also exposes `gpu-indirect-x1` and `gpu-indirect-x4`
+for the ordinary authored indexed route. These select managed
+`GpuIndirectZeroReadback` before pipeline construction and bind the verified
+primitive-cull, LOD-select and source-order companions. Select the profile before
+starting **Unlit materials**; `unlitState()` reports the requested strategy and
+the actual indexed submission strategy/reason. The JavaScript renderer's legacy
+packet strategy is separate from these engine-frame commands. GPU qualification
+must inspect actual indirect work, rendered values and visibility/count readback
+activity; selecting the profile alone does not establish acceptance. The current
+automated Unlit checks still exercise the CPU profiles.
 
 The `engine-shared-gtao-bloom` check runs the static effects diagnostic through
 the real WebGPU default pipeline. It reads prepass depth and normal, GTAO stages,
@@ -345,6 +358,14 @@ requirements. This compile-only diagnostic has its own 45-second native compile
 bound and reports identity/timing without retaining shader source. It helps
 distinguish compilation cost from application activity; its result cannot change
 the failed application result or qualify a rendered frame.
+After that control process fully closes, one further fresh process compiles the
+existing published `advanced::shade-uber-native` consumer. It verifies the same
+manifest's control identity and the comparison's real schema, complete 40-entry
+binding contract, compiler and capability requirements. Both arms keep the same
+device requests and 45-second bounds. This compares a combined helper/body and
+texture-bank difference, not a substitute application material. Two timeouts
+are censored observations, and any missing artifact or contract mismatch leaves
+the comparison unavailable rather than changing the failed application check.
 
 The diagnostic's static Core scene host creates no production `RuntimeWorld`,
 never begins play, and requests no physics backend. It validates engine rendering

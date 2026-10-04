@@ -62,7 +62,7 @@ fn before(left: u32, right: u32) -> bool {
             return select(leftNan, rightNan, parameters.sortPolicy == 2u);
         }
         if (!leftNan && leftDistance != rightDistance) {
-            return select(leftDistance < rightDistance, leftDistance > rightDistance, parameters.sortPolicy == 2u);
+            return select((leftDistance < rightDistance), (leftDistance > rightDistance), parameters.sortPolicy == 2u);
         }
     }
     let leftHigh = sources[leftBase + 13u];

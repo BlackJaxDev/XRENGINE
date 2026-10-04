@@ -63,10 +63,10 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _renderer = renderer;
         if (_debug)
             _renderer.ConfigureEngineMeshResolutionTrace(true);
-        // Select submission before either the shadow viewport or ordinary-unlit
-        // pipeline can capture its command chain during construction.
-        if (_shadow || _unlit)
-            RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
+        // Every fixture selects its mode before a pipeline captures its command
+        // chain, including restarts after an authored-indirect Unlit session.
+        RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = _unlit
+            ? _unlitProfile.SubmissionStrategy : EMeshSubmissionStrategy.CpuDirect;
         using IDisposable suppressWrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
         try
         {
@@ -297,6 +297,8 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             (_debug ? $"debug callbacks={RuntimeEngine.Rendering.Debug.LastDebugDrawComponentCallbackCount}; case={_debugCase}; " : "") +
             (_effects ? $"effects case={_effectsCase}; AO target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebGtaoFinalTextureName) is not null}; bloom target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebBloomCombinedTextureName) is not null}; " : "") +
             (_unlit ? $"unlit case={_unlitCase}; " : "") +
+            (_unlit && _unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+                ? $"indexed strategy={_renderer.LastAuthoredIndexedSubmissionStrategy}; indexed reason={_renderer.LastAuthoredIndexedSubmissionReason}; " : "") +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }

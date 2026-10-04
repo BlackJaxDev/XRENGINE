@@ -31,7 +31,7 @@ fn advancedMsaaResolveFragment(@builtin(position) position: vec4<f32>) -> Resolv
         if (identity.x == 0u || identity.x == 0xffffffffu) { continue; }
         let depth = textureLoad(rawVisibilityDepth, pixel, sampleIndex);
         if ((bitcast<u32>(depth) & 0x7f800000u) == 0x7f800000u || depth < 0.0 || depth > 1.0) { continue; }
-        let closer = select(depth < result.depth, depth > result.depth, parameters.reversedDepth != 0u);
+        let closer = select((depth < result.depth), (depth > result.depth), parameters.reversedDepth != 0u);
         if (!found || closer) {
             found = true;
             let sidecars = unpackVisibilityPair(textureLoad(rawVisibilityMetadataSelection, pixel, sampleIndex));

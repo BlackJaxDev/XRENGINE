@@ -135,3 +135,12 @@ failures remain outside that result. RenderingParity passes its browser run.
 RollingBall renders both sessions, but its second resize exposes an independent
 pending-receipt capacity failure; it is not evidence of a framebuffer-stack
 regression.
+
+Run [37219100537](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37219100537)
+on `5e42251` again passes all eight ownership tests, all three existing Editor
+publications, RenderingParity and RollingBall. Both RollingBall sessions now
+complete resize with bounded frame-receipt admission enabled. The successful
+run does not retain saturation timing, so it establishes that repeated flow,
+not a measured receipt-pressure limit. Independent UI YAML and MSAA resolve
+shader failures, plus Advanced's software native-compile timeout, remain
+reported in their owning progress records.

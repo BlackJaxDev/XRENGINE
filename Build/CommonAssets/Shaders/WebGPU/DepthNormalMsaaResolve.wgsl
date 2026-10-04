@@ -29,7 +29,7 @@ fn resolveFragment(@builtin(position) position: vec4<f32>) -> ResolvedSurface {
         // All admitted depth/normal companions write alpha one; clear samples have alpha zero.
         if (normal.w <= 0.0 || (bitcast<u32>(depth) & 0x7f800000u) == 0x7f800000u ||
             depth < 0.0 || depth > 1.0) { continue; }
-        let closer = select(depth < result.depth, depth > result.depth, reversed);
+        let closer = select((depth < result.depth), (depth > result.depth), reversed);
         if (!found || closer) {
             found = true;
             result = ResolvedSurface(normal, depth);

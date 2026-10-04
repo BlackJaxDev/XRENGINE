@@ -125,8 +125,46 @@ export function installNativeCompileCapture() {
     };
 }
 
-/** Runs on a blank loopback page in a fresh Chromium process, using only the observed native recipe. */
-export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs }) {
+/** Complete compile-only ABI for the existing Uber consumer; never a substitute material pipeline. */
+export function uberNativeCompileContract() {
+    const name = 'engine-advanced-shade-uber-native', bindings = [];
+    const bindGroupLayouts = Array.from({ length: 3 }, () => ({ label: name, entries: [] }));
+    const add = (group, binding, resourceName, kind, shape, bytes = 0, dynamic = false) => {
+        bindings.push({ group, binding, name: resourceName, kind, bytes, dynamic, visibility: ['compute'] });
+        bindGroupLayouts[group].entries.push({ binding, visibility: 4, ...shape });
+    };
+    ['SceneArena', 'GeometryArena', 'PreparedDrawDeformations', 'MaterialGroups', 'ShadeTiles', 'ShadeCounts', 'TextureBindings']
+        .forEach((resourceName, binding) => add(0, binding, resourceName, 'read-only-storage',
+            { buffer: { type: 'read-only-storage', hasDynamicOffset: false, minBindingSize: 4 } }, 4));
+    for (const [binding, resourceName, bytes] of [[7, 'FrozenView', 944], [8, 'Parameters', 160]])
+        add(0, binding, resourceName, 'uniform', { buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: bytes } }, bytes, true);
+    const texture = (binding, resourceName, kind, sampleType, viewDimension = '2d') =>
+        add(1, binding, resourceName, kind, { texture: { sampleType, viewDimension, multisampled: false } });
+    texture(0, 'VisibilityIdentity', 'texture-2d-uint', 'uint');
+    texture(1, 'VisibilityMetadata', 'texture-2d-uint', 'uint');
+    texture(2, 'VisibilityDepth', 'texture-depth-2d', 'depth');
+    texture(3, 'AmbientOcclusion', 'texture-2d-unfilterable-float', 'unfilterable-float');
+    for (let slot = 0; slot < 12; slot++) {
+        if (slot === 8) {
+            texture(20, 'UberRasterSurface', 'texture-2d-array-unfilterable-float', 'unfilterable-float', '2d-array');
+            continue; // The load-only raster surface has no binding21 sampler.
+        }
+        const dimension = slot === 10 ? 'cube' : slot === 11 ? '2d-array' : '2d';
+        texture(4 + 2 * slot, `NativeTexture${slot}`, `texture-${dimension}-float`, 'float', dimension);
+        add(1, 5 + 2 * slot, `NativeTexture${slot}`, 'filtering-sampler', { sampler: { type: 'filtering' } });
+    }
+    ['HDRSceneColor', 'Velocity', 'ReactiveMask', 'ShadingDiagnostics'].forEach((resourceName, binding) => {
+        const format = ['rgba16float', 'rgba16float', 'r32float', 'r32uint'][binding];
+        add(2, binding, resourceName, `storage-texture-2d-write-${format}`,
+            { storageTexture: { access: 'write-only', format, viewDimension: '2d' } });
+    });
+    return { name, pass: 'shade-uber-native', semanticSchemaIdentity: 'xrengine.engine.uber-raster-consumer.v2',
+        entryPoints: { compute: 'advancedShadeNative' }, workgroupSize: [16, 16, 1], bindings,
+        layout: { bindGroupLayouts } };
+}
+
+/** Runs on a blank loopback page in a fresh process; the optional comparison uses its own verified published ABI. */
+export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs, comparison = null }) {
     const result = { status: 'preparing', stage: 'load-cooked-module', compileBudgetMs, timeOriginMs: performance.timeOrigin,
         stages: [], compile: null, compilationInfo: null, deviceLoss: null, uncapturedErrors: [],
         explicitDestroyRequested: false, cleanup: {} };
@@ -182,20 +220,71 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
             if (finished) throw new Error('Native compile isolation was disposed.');
             loader = new BrowserContentLoader(new URL(manifestUrl), controller.signal);
             const { manifest, assets } = validateEngineAssetManifest(await loader.readManifest(), new URL(manifestUrl));
-            const binding = manifest.pipelineArtifacts?.find(value => value.scope === 'advanced' && value.pass === 'shade-native');
-            const shader = manifest.shaderArtifacts?.find(value => value.identity === binding?.descriptorIdentity);
-            if (!shader) throw new Error('Native compile isolation requires the published advanced::shade-native artifact.');
-            const descriptorEntry = assets.get(shader.descriptor), sourceEntry = assets.get(shader.source);
-            const descriptorBytes = await loader.readVerifiedPayload(descriptorEntry.url, descriptorEntry.bytes,
-                shader.identity, shader.descriptor);
-            let descriptor;
-            try { descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(descriptorBytes)); }
-            finally { loader.releasePayload(descriptorBytes); }
+            const readArtifact = async pass => {
+                const binding = manifest.pipelineArtifacts?.find(value => value.scope === 'advanced' && value.pass === pass);
+                const shader = manifest.shaderArtifacts?.find(value => value.identity === binding?.descriptorIdentity);
+                if (!shader) throw new Error(`Native compile isolation requires the published advanced::${pass} artifact.`);
+                const descriptorEntry = assets.get(shader.descriptor), sourceEntry = assets.get(shader.source);
+                const bytes = await loader.readVerifiedPayload(descriptorEntry.url, descriptorEntry.bytes, shader.identity, shader.descriptor);
+                try { return { shader, sourceEntry, descriptor: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }; }
+                finally { loader.releasePayload(bytes); }
+            };
+            let { shader, sourceEntry, descriptor } = await readArtifact('shade-native');
             if (descriptor.pass !== 'shade-native' || descriptor.target !== 'WebGPUWgsl'
                 || descriptor.entryPoints?.compute !== recipe.compute.entryPoint
                 || sourceEntry.hash !== recipe.module.sha256 || sourceEntry.bytes !== recipe.module.byteLength
                 || descriptor.source?.sha256 !== recipe.module.sha256 || descriptor.source?.byteLength !== recipe.module.byteLength)
                 throw new Error('Native compile isolation published descriptor/source does not match the observed module and entry point.');
+            if (comparison) {
+                const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+                    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+                const requireEqual = (actual, expected, label) => {
+                    if (JSON.stringify(canonical(actual)) !== JSON.stringify(canonical(expected)))
+                        throw new Error(`Native compile isolation comparison ${label} mismatch.`);
+                };
+                // The current manifest must still identify the exact control that just ran, including its descriptor.
+                requireEqual({ descriptorIdentity: shader.identity, sha256: sourceEntry.hash, byteLength: sourceEntry.bytes },
+                    comparison.controlArtifact, 'same-manifest control identity');
+                result.controlArtifact = comparison.controlArtifact;
+                const controlDescriptor = descriptor, expected = comparison.contract;
+                ({ shader, sourceEntry, descriptor } = await readArtifact(expected.pass));
+                for (const key of ['name', 'pass', 'semanticSchemaIdentity', 'entryPoints', 'workgroupSize'])
+                    requireEqual(descriptor[key], expected[key], key);
+                for (const [key, value] of Object.entries({ schemaVersion: 3, target: 'WebGPUWgsl', sourceLanguage: 'Slang',
+                    matrixLayout: 'column-major', coordinates: 'xrengine.webgpu.coordinates.v1', specialization: {}, pipeline: {} }))
+                    requireEqual(descriptor[key], value, key);
+                requireEqual(descriptor.compilerIdentity, controlDescriptor.compilerIdentity, 'compiler identity');
+                requireEqual([...descriptor.defines].sort(), [...controlDescriptor.defines, 'XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION=2'].sort(), 'schema defines');
+                requireEqual(descriptor.includes, controlDescriptor.includes, 'includes');
+                requireEqual(descriptor.sourceMap, { kind: 'unmapped', path: 'WebGPU/AdvancedShadeNative.slang' }, 'entry source');
+                requireEqual(descriptor.sourceMap, controlDescriptor.sourceMap, 'shared entry source');
+                const sourceDependencies = value => value.dependencies.filter(dependency => !dependency.path.endsWith('.recipe.json'));
+                requireEqual(sourceDependencies(descriptor), sourceDependencies(controlDescriptor), 'source dependency revision');
+                requireEqual(descriptor.requiredFeatures, controlDescriptor.requiredFeatures, 'required features');
+                requireEqual(descriptor.requiredLimits, { ...controlDescriptor.requiredLimits, maxSamplersPerShaderStage: 11 }, 'required limits');
+                requireEqual(recipe.compute, { entryPoint: expected.entryPoints.compute }, 'constants-free control entry');
+                requireEqual(descriptor.layout?.vertexBuffers, [], 'vertex buffers');
+                const declared = descriptor.layout?.bindings;
+                if (!Array.isArray(declared) || declared.length !== 40)
+                    throw new Error('Native compile isolation comparison requires all 40 declared bindings.');
+                const sorted = values => [...values].sort((a, b) => a.group - b.group || a.binding - b.binding);
+                requireEqual(sorted(declared).map(({ group, binding, name, kind, bytes, dynamic, visibility }) =>
+                    ({ group, binding, name, kind, bytes, dynamic, visibility })), expected.bindings, 'complete explicit layout');
+                // Check shared uniform members/ownership and all other declared metadata against the verified control.
+                const expectedDeclared = controlDescriptor.layout.bindings.filter(value => !(value.group === 1 && value.binding === 21))
+                    .map(value => value.group === 1 && value.binding === 20 ? { ...value, name: 'UberRasterSurface',
+                        physicalName: 'UberRasterSurface_0', kind: 'texture-2d-array-unfilterable-float' } : value);
+                requireEqual(sorted(declared), sorted(expectedDeclared), 'shared binding contracts');
+                if (descriptor.source?.sha256 !== sourceEntry.hash || descriptor.source?.byteLength !== sourceEntry.bytes)
+                    throw new Error('Native compile isolation comparison source disagrees with its verified descriptor.');
+                recipe = { pipeline: { label: expected.name }, compute: { entryPoint: descriptor.entryPoints.compute },
+                    layout: expected.layout, module: { descriptor: { label: expected.name },
+                        sha256: sourceEntry.hash, byteLength: sourceEntry.bytes }, device: recipe.device };
+                result.recipe = recipe;
+                result.comparisonContract = { catalogKey: `advanced::${descriptor.pass}`, name: descriptor.name,
+                    semanticSchemaIdentity: descriptor.semanticSchemaIdentity, workgroupSize: descriptor.workgroupSize,
+                    bindingCount: declared.length, layoutVerified: true };
+            }
             const bytes = await loader.readVerifiedPayload(sourceEntry.url, sourceEntry.bytes, recipe.module.sha256, shader.source);
             try {
                 result.cookedArtifact = { descriptorIdentity: shader.identity, descriptorPath: shader.descriptor,
@@ -293,13 +382,39 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
     }
     result.recipe = record.recipe;
     result.recipeSha256 = createHash('sha256').update(JSON.stringify(record.recipe)).digest('hex');
+    await runNativeCompileArm(chromium, origin, report, config, instrumentedPage, result, record.recipe,
+        'advanced-native-compile-isolation');
+
+    const comparison = report.nativeCompileIsolationComparison = {
+        scope: 'Compile-only diagnostic for the existing Uber consumer; no application, material, or image acceptance.',
+        catalogKey: 'advanced::shade-uber-native', status: 'skipped', reason: null, compileBudgetMs: 45000,
+        freshBrowserProcess: true, applicationBrowserClosed: true, controlBrowserClosed: result.cleanup.browserClosed === true,
+        controlRecipeSha256: result.recipeSha256, cleanup: {},
+        interpretation: 'Compares the combined Uber helper/body and texture-bank difference. Timeouts are right-censored; neither result changes application checks.' };
+    const control = result.replay?.cookedArtifact;
+    if (!comparison.controlBrowserClosed || !control || !result.compileWatchdog) {
+        comparison.reason = 'Requires the verified native control to attempt compilation and fully close its owned browser.';
+        return;
+    }
+    comparison.controlArtifact = { descriptorIdentity: control.descriptorIdentity, sha256: control.sha256, byteLength: control.byteLength };
+    await runNativeCompileArm(chromium, origin, report, config, instrumentedPage, comparison, record.recipe,
+        'advanced-uber-native-compile-isolation', { controlArtifact: comparison.controlArtifact, contract: uberNativeCompileContract() }, result);
+    if (comparison.replay?.recipe) {
+        comparison.recipe = comparison.replay.recipe;
+        comparison.recipeSha256 = createHash('sha256').update(JSON.stringify(comparison.recipe)).digest('hex');
+    }
+}
+
+/** One owned browser/device lifecycle for both arms; no compilation overlaps another arm. */
+async function runNativeCompileArm(chromium, origin, report, config, instrumentedPage, result, recipe, logName,
+    comparison = null, controlResult = null) {
     result.launchOptions = browserLaunchOptions(config);
     let browser, context, page, timer, compileTimer;
     try {
         browser = await chromium.launch(result.launchOptions);
         result.browser = browser.version();
         if (result.browser !== report.browser) throw new Error('Isolation browser version differs from the application.');
-        await captureGpuProcessState(browser, result, 'before-isolated-native-compile');
+        await captureGpuProcessState(browser, result, comparison ? 'before-isolated-uber-native-compile' : 'before-isolated-native-compile');
         const backend = snapshot => {
             if (!snapshot?.gpu) return null;
             const gpu = snapshot.gpu;
@@ -312,12 +427,18 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
         result.backendComparison = { application, isolated,
             status: !application || !isolated ? 'unavailable' : JSON.stringify(application) === JSON.stringify(isolated) ? 'matched' : 'different' };
         if (result.backendComparison.status === 'different') throw new Error('Isolation GPU backend differs from the application.');
-        ({ page, context } = await instrumentedPage(browser, origin, report, 'advanced-native-compile-isolation', config));
+        if (controlResult) {
+            const control = backend(controlResult.gpuProcessSnapshots?.[0]);
+            result.controlBackendComparison = { control, isolated,
+                status: !control || !isolated ? 'unavailable' : JSON.stringify(control) === JSON.stringify(isolated) ? 'matched' : 'different' };
+            if (result.controlBackendComparison.status === 'different') throw new Error('Isolation GPU backend differs from the native control.');
+        }
+        ({ page, context } = await instrumentedPage(browser, origin, report, logName, config));
         await page.goto(`${origin}/__audio-probe/`, { waitUntil: 'domcontentloaded' });
         // Driver console/page errors can quote shader text. Keep this diagnostic's logs source-free.
         page.removeAllListeners('console');
         page.removeAllListeners('pageerror');
-        const logs = report.browserLogs['advanced-native-compile-isolation'];
+        const logs = report.browserLogs[logName];
         page.on('console', event => { if (logs.length < 2000) logs.push({ type: event.type(), text: 'Diagnostic console message omitted to avoid shader source disclosure.' }); });
         page.on('pageerror', () => { if (logs.length < 2000) logs.push({ type: 'pageerror', text: 'Diagnostic page error; source text omitted.' }); });
         let rejectCompileDeadline;
@@ -330,8 +451,8 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
             }, result.compileBudgetMs);
         });
         // Also bound a wedged page/GPU IPC path, whose in-page timer might never run.
-        const replay = page.evaluate(replayNativeCompile, { recipe: record.recipe,
-            manifestUrl: `${origin}/__game/content/manifest.json`, compileBudgetMs: result.compileBudgetMs });
+        const replay = page.evaluate(replayNativeCompile, { recipe,
+            manifestUrl: `${origin}/__game/content/manifest.json`, compileBudgetMs: result.compileBudgetMs, comparison });
         result.replay = await Promise.race([replay, compileDeadline, new Promise((_, reject) => {
             timer = setTimeout(() => reject(new Error('Native compile isolation page exceeded its 160000 ms total envelope.')), 160000);
         })]);

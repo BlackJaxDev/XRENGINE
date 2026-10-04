@@ -53,12 +53,13 @@ internal sealed partial class EngineMeshDiagnosticFixture
         return node;
     }
 
-    private void ConfigureLitCamera(XRCamera camera)
+    private void ConfigureLitCamera(XRCamera camera,
+        EMeshSubmissionStrategy submissionStrategy = EMeshSubmissionStrategy.CpuDirect)
     {
         ((DefaultRenderPipeline)_pipeline).GlobalIlluminationMode = EGlobalIlluminationMode.None;
         camera.AntiAliasingModeOverride = EAntiAliasingMode.None;
         camera.OutputHDROverride = false;
-        RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
+        RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = submissionStrategy;
         PipelinePostProcessState state = camera.GetPostProcessState(_pipeline)
             ?? throw new InvalidOperationException("EngineMeshDiagnostic.PostProcessStateMissing.");
         RequireSettings<BloomSettings>(state).Enabled = false;

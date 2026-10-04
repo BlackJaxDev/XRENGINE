@@ -245,92 +245,51 @@ bool XR_ADV_TryEvaluateEngineSurface(XRAdvancedMaterialRecord material, XRAdvanc
         return false;
     base = XR_ADV_EngineSurfaceVector(word + 4u);
     rmse = XR_ADV_EngineSurfaceVector(word + 8u);
-    bool unlit = kind >= XR_ADV_ENGINE_SURFACE_UNLIT_COLOR && kind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE;
-    if (kind == XR_ADV_ENGINE_SURFACE_UNLIT_COLOR)
+    if (kind >= XR_ADV_ENGINE_SURFACE_UNLIT_COLOR && kind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE)
     {
+        if (kind != XR_ADV_ENGINE_SURFACE_UNLIT_COLOR)
+            base = XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE, surface);
+        if (kind == XR_ADV_ENGINE_SURFACE_UNLIT_OPAQUE_TEXTURE) base.a = 1.0;
         emittedRadiance = float3(0.0);
         rmse = float4(0.0);
         return true;
     }
-    if (!unlit) emittedRadiance = base.rgb * rmse.w;
+    emittedRadiance = base.rgb * rmse.w;
     if (kind != XR_ADV_ENGINE_SURFACE_COLOR)
     {
-        float baseSampleAlpha = 0.0;
-        // One sampling call site preserves the base, opacity, specular, metallic,
-        // roughness, normal order without resolving or sampling absent roles.
-        [loop]
-        for (uint samplingStep = 0u; samplingStep < 6u; ++samplingStep)
+        // Opaque engine texture alpha and vertex color do not modulate the
+        // authored albedo/opacity, and emission is independent of this sample.
+        float4 baseSample = XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE, surface);
+        base.rgb *= baseSample.rgb;
+        if (kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED)
         {
-            uint role = XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE;
-            bool sampleRole = true;
-            switch (samplingStep)
-            {
-                case 1u:
-                    role = XR_ADV_ENGINE_SURFACE_OPACITY_ROLE;
-                    sampleRole = kind == XR_ADV_ENGINE_SURFACE_TEXTURE_ALPHA ||
-                        kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED && (roleFlags & (1u << role)) != 0u;
-                    break;
-                case 2u:
-                    role = XR_ADV_ENGINE_SURFACE_SPECULAR_ROLE;
-                    sampleRole = kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED && (roleFlags & (1u << role)) != 0u;
-                    break;
-                case 3u:
-                    role = XR_ADV_ENGINE_SURFACE_METALLIC_ROLE;
-                    sampleRole = (roleFlags & (1u << role)) != 0u;
-                    break;
-                case 4u:
-                    role = XR_ADV_ENGINE_SURFACE_ROUGHNESS_ROLE;
-                    sampleRole = (roleFlags & (1u << role)) != 0u;
-                    break;
-                case 5u:
-                    role = XR_ADV_ENGINE_SURFACE_NORMAL_ROLE;
-                    sampleRole = kind == XR_ADV_ENGINE_SURFACE_TEXTURE_NORMAL;
-                    // Keep this rejection after metallic/roughness and before the normal sample.
-                    if (sampleRole && !XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT)) return false;
-                    break;
-            }
-            if (sampleRole)
-            {
-                float4 roleSample = XR_ADV_SampleEngineSurfaceRole(word, role, surface);
-                switch (samplingStep)
-                {
-                    case 0u:
-                        if (unlit)
-                        {
-                            base = roleSample;
-                            if (kind == XR_ADV_ENGINE_SURFACE_UNLIT_OPAQUE_TEXTURE) base.a = 1.0;
-                            emittedRadiance = float3(0.0);
-                            rmse = float4(0.0);
-                            return true;
-                        }
-                        // Ordinary opaque texture alpha does not modulate the authored base.
-                        base.rgb *= roleSample.rgb;
-                        baseSampleAlpha = roleSample.a;
-                        if (kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED) base.a = baseSampleAlpha;
-                        break;
-                    case 1u:
-                        if (kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED) base.a *= roleSample.r;
-                        else
-                        {
-                            base.a = baseSampleAlpha * roleSample.r;
-                            emittedRadiance = base.rgb * rmse.w;
-                        }
-                        break;
-                    case 2u: rmse.z *= roleSample.r; break;
-                    case 3u: rmse.y *= roleSample.r; break;
-                    case 4u: rmse.x *= roleSample.r; break;
-                    case 5u: normal = XR_ADV_EngineSurfaceMappedNormal(roleSample.rgb, surface); break;
-                }
-            }
-            // Authored normal and emission work is required even when specular sampling is absent.
-            if (samplingStep == 2u && kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED)
-            {
-                if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_NORMAL_ROLE)) != 0u)
-                    normal = XR_ADV_AuthoredTexturedNormal(word, surface);
-                else
-                    normal = normalize(surface.shadingNormal);
-                emittedRadiance = base.rgb * rmse.w;
-            }
+            base.a = baseSample.a;
+            if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_OPACITY_ROLE)) != 0u)
+                base.a *= XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_OPACITY_ROLE, surface).r;
+            if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_SPECULAR_ROLE)) != 0u)
+                rmse.z *= XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_SPECULAR_ROLE, surface).r;
+            if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_NORMAL_ROLE)) != 0u)
+                normal = XR_ADV_AuthoredTexturedNormal(word, surface);
+            else
+                normal = normalize(surface.shadingNormal);
+            emittedRadiance = base.rgb * rmse.w;
+        }
+        else if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE_ALPHA)
+        {
+            // This family's exact forward surface uses diffuse alpha times the
+            // independent linear opacity red channel, with sampled emission.
+            base.a = baseSample.a * XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_OPACITY_ROLE, surface).r;
+            emittedRadiance = base.rgb * rmse.w;
+        }
+        if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_METALLIC_ROLE)) != 0u)
+            rmse.y *= XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_METALLIC_ROLE, surface).r;
+        if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_ROUGHNESS_ROLE)) != 0u)
+            rmse.x *= XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_ROUGHNESS_ROLE, surface).r;
+        if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE_NORMAL)
+        {
+            if (!XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT)) return false;
+            normal = XR_ADV_EngineSurfaceMappedNormal(
+                XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_NORMAL_ROLE, surface).rgb, surface);
         }
     }
     rmse.xy = saturate(rmse.xy);

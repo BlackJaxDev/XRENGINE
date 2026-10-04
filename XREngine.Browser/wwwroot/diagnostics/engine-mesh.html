@@ -21,7 +21,7 @@ pre{white-space:pre-wrap}
 <p id="description">Static engine ModelComponents, camera, viewport and cooked depth shader. No production world play or physics is started.</p>
 <label>Schema 3 shader manifest <input id="manifest" type="url" placeholder="URL of the cooked depth artifact manifest"></label>
 <label>Cooked engine asset manifest <input id="assets" type="url" placeholder="URL of the packaged engine asset manifest"></label>
-<label id="execution-profile-label" hidden>Unlit execution profile <select id="execution-profile"><option value="cpu-x1">Default CPU x1, AO off</option><option value="cpu-x4">Default CPU x4, AO off</option><option value="cpu-x4-ao">Default CPU x4, GTAO on</option></select></label>
+<label id="execution-profile-label" hidden>Unlit execution profile <select id="execution-profile"><option value="cpu-x1">Default CPU x1, AO off</option><option value="cpu-x4">Default CPU x4, AO off</option><option value="cpu-x4-ao">Default CPU x4, GTAO on</option><option value="gpu-indirect-x1">Default GPU indexed indirect x1, AO off</option><option value="gpu-indirect-x4">Default GPU indexed indirect x4, AO off</option></select></label>
 <button id="start">Start</button><button id="stop">Stop</button>
 <canvas id="engine-depth-canvas" width="512" height="512"></canvas>
 <p id="expected">Expected: left triangle depth 0.25 (red ≈64, blue ≈191); right triangle depth 0.75 (red ≈191, blue ≈64). A second far triangle behind the left one must remain occluded.</p>
