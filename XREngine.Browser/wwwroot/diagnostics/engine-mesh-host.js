@@ -1,4 +1,5 @@
 import { WebGpuCanvasRenderer } from '../webgpu/webgpu-renderer.js';
+import { captureSubmittedEngineFrame, readEngineDiagnosticRegion, requireEngineDiagnosticTarget } from './engine-mesh-readback.js';
 
 /** Isolated renderer/component qualification; this host never starts a production world or physics backend. */
 export class EngineMeshDiagnosticHost {
@@ -26,11 +27,14 @@ export class EngineMeshDiagnosticHost {
         this.frame = this.frame.bind(this);
     }
 
-    async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe') {
+    async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe', executionProfile = 'cpu-x1') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
             'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
             'engine-standard-lit-color-effects', 'engine-unlit-materials'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
+        if (!['cpu-x1', 'cpu-x4', 'cpu-x4-ao'].includes(executionProfile) ||
+            artifactName !== 'engine-unlit-materials' && executionProfile !== 'cpu-x1')
+            throw new Error('Select cpu-x1, cpu-x4, or cpu-x4-ao for the engine Unlit diagnostic.');
         const epoch = ++this.epoch;
         // Invalidate the previous visible completion before the first await.
         // A second Start may spend time canceling or loading while session is 0.
@@ -81,7 +85,9 @@ export class EngineMeshDiagnosticHost {
             if (controller.signal.aborted || epoch !== this.epoch) return;
             this.stage = 'creating-engine-session';
             const creation = this.kind === 'unlit'
-                ? this.exports.CreateUnlitAsync(this.canvas.id, String(assetManifestUrl))
+                ? executionProfile === 'cpu-x1'
+                    ? this.exports.CreateUnlitAsync(this.canvas.id, String(assetManifestUrl))
+                    : this.exports.CreateUnlitProfileAsync(this.canvas.id, String(assetManifestUrl), executionProfile)
                 : this.kind === 'effects'
                 ? this.exports.CreateEffectsAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source)
@@ -160,11 +166,22 @@ export class EngineMeshDiagnosticHost {
 
     statistics() { return this.renderer?.getStatistics() ?? null; }
 
-    /** Holds only this diagnostic's scheduled frame while settled effects targets are sampled. */
+    /** Holds only this diagnostic's scheduled frame while settled targets are sampled. */
     pauseEffectsFrames() {
-        if (!this.session || this.kind !== 'effects' || !this.renderer || this.failure || this.effectsPause ||
-            this.readyFrames < 2 || this.statistics()?.resources?.retiring !== 0 || !this.request)
-            throw new Error('Settled engine effects frames are required before diagnostic sampling.');
+        if (this.kind !== 'effects') throw new Error('An active engine effects diagnostic is required.');
+        return this.pauseDiagnosticFrames();
+    }
+
+    pauseUnlitFrames() {
+        if (this.kind !== 'unlit') throw new Error('An active engine Unlit diagnostic is required.');
+        return this.pauseDiagnosticFrames();
+    }
+
+    pauseDiagnosticFrames() {
+        if (!this.session || !['effects', 'unlit'].includes(this.kind) || !this.renderer || this.failure || this.effectsPause ||
+            this.readyFrames < 2 || this.lastReadySession !== this.session ||
+            this.statistics()?.resources?.retiring !== 0 || !this.request)
+            throw new Error('Settled engine frames are required before diagnostic sampling.');
         const pause = { id: ++this.nextEffectsPauseId, epoch: this.epoch,
             session: this.session, renderer: this.renderer };
         this.effectsPause = pause;
@@ -183,6 +200,8 @@ export class EngineMeshDiagnosticHost {
         this.request = requestAnimationFrame(this.frame);
         return true;
     }
+
+    resumeUnlitFrames(id) { return this.resumeEffectsFrames(id); }
 
     setTextureCase(sampleCase) {
         if (!this.session || this.kind !== 'texture') throw new Error('An active engine texture diagnostic is required.');
@@ -205,7 +224,7 @@ export class EngineMeshDiagnosticHost {
 
     unlitState() {
         if (!this.session || this.kind !== 'unlit') throw new Error('An active engine unlit diagnostic is required.');
-        const shaders = [], pipelines = [], hdrTargets = [];
+        const shaders = [], pipelines = [], hdrTargets = [], targets = [];
         const nativeId = native => {
             if (!native || typeof native !== 'object') throw new Error('An engine Unlit GPU program lacks its native object.');
             if (this.previousUnlitNatives.has(native))
@@ -218,15 +237,77 @@ export class EngineMeshDiagnosticHost {
             return id;
         };
         this.renderer._resources.slots.forEach((entry, slot) => {
-            if (entry?.owner !== this.session) return;
+            if (entry?.owner !== this.session || entry.value.retired) return;
             const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
             if (entry.kind === 'shader') shaders.push({ ...identity, nativeId: nativeId(entry.value.native) });
-            if (entry.kind === 'render-pipeline') pipelines.push({ ...identity, nativeId: nativeId(entry.value.native) });
-            if (entry.kind === 'texture' && entry.value.format === 'rgba16float' && entry.value.label === 'HDRSceneTex')
-                hdrTargets.push({ ...identity, width: entry.value.width, height: entry.value.height,
-                    format: entry.value.format, sampleCount: entry.value.sampleCount });
+            if (entry.kind === 'render-pipeline') pipelines.push({ ...identity, nativeId: nativeId(entry.value.native),
+                sampleCount: entry.value.descriptor.multisample?.count ?? 1 });
+            if (entry.kind === 'texture') {
+                const target = { ...identity, width: entry.value.width, height: entry.value.height,
+                    format: entry.value.format, sampleCount: entry.value.sampleCount,
+                    nativeSampleCount: entry.value.texture.sampleCount };
+                targets.push(target);
+                if (target.format === 'rgba16float' && target.label === 'HDRSceneTex') hdrTargets.push(target);
+            }
         });
-        return { ...JSON.parse(this.exports.GetUnlitState(this.session)), shaders, pipelines, hdrTargets };
+        return { ...JSON.parse(this.exports.GetUnlitState(this.session)), shaders, pipelines, hdrTargets, targets,
+            submittedFrame: captureSubmittedEngineFrame(this.renderer, this.session) };
+    }
+
+    /** Reads only a canonical x1 texture owned by the current ordinary-unlit generation. */
+    async readUnlitTarget(name, u, v) {
+        if (!this.session || this.kind !== 'unlit') throw new Error('An active engine Unlit diagnostic is required.');
+        if (!['HDRSceneTex', 'WebNormalTexture', 'WebGtaoRawTexture',
+            'WebGtaoHorizontalTexture', 'WebGtaoFinalTexture'].includes(name))
+            throw new Error(`Unknown engine Unlit target: ${name}`);
+        requireEngineDiagnosticTarget(this.renderer, this.session, name);
+        return this.readColorTargetAt(name, u, v);
+    }
+
+    async readUnlitDepthAt(u, v) {
+        if (!this.session || this.kind !== 'unlit') throw new Error('An active engine Unlit diagnostic is required.');
+        requireEngineDiagnosticTarget(this.renderer, this.session, 'DepthStencil');
+        return this.readEffectDepthAt(u, v);
+    }
+
+    /** Samples a fixed gutter region under one frame-pump pause, preserving cross-target pixel correspondence. */
+    async readUnlitWitness() {
+        const pause = this.effectsPause;
+        if (!this.session || this.kind !== 'unlit' || !pause || pause.session !== this.session ||
+            pause.renderer !== this.renderer || pause.epoch !== this.epoch)
+            throw new Error('Pause settled engine Unlit frames before grouped witness sampling.');
+        const state = this.unlitState(), metadata = state.witness;
+        if (!metadata) throw new Error('The selected Unlit profile has no multisample edge witness.');
+        const target = requireEngineDiagnosticTarget(this.renderer, this.session, 'HDRSceneTex');
+        const roi = metadata.roi;
+        const x = Math.ceil(roi.left * target.width), y = Math.ceil(roi.top * target.height);
+        const region = { x, y, width: Math.floor(roi.right * target.width) - x,
+            height: Math.floor(roi.bottom * target.height) - y, targetWidth: target.width, targetHeight: target.height };
+        const hasTarget = name => state.targets.some(item => item.label === name);
+        let readFailed = false, firstReadFailure;
+        const read = name => readEngineDiagnosticRegion(pause.renderer, pause.session, name, region).catch(error => {
+            if (!readFailed) { readFailed = true; firstReadFailure = error; }
+            throw error;
+        });
+        // Every plane owns a mapped GPU buffer. Keep the sampling pause until all
+        // siblings run their cleanup, including when one plane fails first.
+        const planes = await Promise.allSettled([
+            read('HDRSceneTex'), hasTarget('DepthStencil') ? read('DepthStencil') : null,
+            hasTarget('WebNormalTexture') ? read('WebNormalTexture') : null,
+            hasTarget('WebGtaoFinalTexture') ? read('WebGtaoFinalTexture') : null,
+        ]);
+        if (readFailed) throw firstReadFailure;
+        const [hdr, depth, normal, ao] = planes.map(result => result.value);
+        if (this.effectsPause !== pause || this.session !== pause.session || this.renderer !== pause.renderer ||
+            this.epoch !== pause.epoch || this.failure)
+            throw new Error('The engine Unlit session changed during grouped witness sampling.');
+        const after = this.unlitState();
+        if (after.resourceGeneration !== state.resourceGeneration ||
+            after.submittedFrame.sequence !== state.submittedFrame.sequence)
+            throw new Error('The engine Unlit frame changed during grouped witness sampling.');
+        return { session: pause.session, resourceGeneration: state.resourceGeneration,
+            executionProfile: state.executionProfile, frameSequence: state.submittedFrame.sequence,
+            metadata, region, hdr, depth, normal, ao };
     }
 
     setEffectsCase(sampleCase) {
@@ -329,6 +410,7 @@ export class EngineMeshDiagnosticHost {
 
     resize(width, height) {
         if (!this.session || !this.renderer) throw new Error('An active engine diagnostic is required.');
+        if (this.effectsPause) throw new Error('Resume diagnostic frames before resizing their targets.');
         const minimum = this.kind === 'effects' ? 1 : 64;
         if (![width, height].every(value => Number.isInteger(value) && value >= minimum && value <= 1024))
             throw new Error(`Diagnostic resize dimensions must be integers from ${minimum} through 1024.`);
@@ -336,6 +418,7 @@ export class EngineMeshDiagnosticHost {
         this.canvas.style.height = `${height}px`;
         const generation = this.renderer.resize(width, height);
         this.exports.ResizeGraphics(this.session, width, height, generation);
+        if (this.kind === 'unlit') this.lastReadySession = 0;
         if (this.kind === 'debug') this.settleFrames = 2;
         this.startedAt = performance.now();
         this.onState('Preparing resized engine render resources');
@@ -366,7 +449,7 @@ export class EngineMeshDiagnosticHost {
 
     /** Copies the complete depth32float subresource, as required by WebGPU, then samples a bounded neighborhood. */
     async readEffectDepthAt(u, v) {
-        if (!this.session || this.kind !== 'effects') throw new Error('An active engine effects diagnostic is required.');
+        if (!this.session || !['effects', 'unlit'].includes(this.kind)) throw new Error('An active engine depth/normal diagnostic is required.');
         if (![u, v].every(value => Number.isFinite(value) && value >= 0.02 && value <= 0.98))
             throw new Error('Engine depth sample coordinates must lie inside the render target.');
         const renderer = this.renderer;

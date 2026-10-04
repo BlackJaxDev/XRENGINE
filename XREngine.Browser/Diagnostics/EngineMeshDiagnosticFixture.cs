@@ -39,13 +39,15 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
 
     public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact? artifact, uint width, uint height,
         ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false,
-        WebPipelineArtifactCatalog? effectArtifacts = null, bool unlit = false)
+        WebPipelineArtifactCatalog? effectArtifacts = null, bool unlit = false,
+        EngineUnlitDiagnosticProfile? unlitProfile = null)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
         _ = RuntimeRenderingHostServices.Factories;
         bool textured = artifact?.Pass == "texture-probe";
         _unlit = unlit;
+        _unlitProfile = unlitProfile ?? EngineUnlitDiagnosticProfile.Baseline;
         _lit = tonemapArtifact is not null && !unlit;
         _shadow = shadow;
         _debug = debug;
@@ -61,9 +63,9 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _renderer = renderer;
         if (_debug)
             _renderer.ConfigureEngineMeshResolutionTrace(true);
-        // The shadow viewport captures its mesh-submission command chain when
-        // the light activates, before the diagnostic camera is configured.
-        if (_shadow)
+        // Select submission before either the shadow viewport or ordinary-unlit
+        // pipeline can capture its command chain during construction.
+        if (_shadow || _unlit)
             RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
         using IDisposable suppressWrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
         try
@@ -266,7 +268,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
-            _renderer.IsBackendReplacementFrameReady && (_unlit ? _renderer.LastEngineMeshDrawCount >= 10 :
+            _renderer.IsBackendReplacementFrameReady && (_unlit ? _renderer.LastEngineMeshDrawCount >= _unlitMaterials.Count :
                 (_shadow || _debug || _effects) ? _renderer.LastEngineMeshDrawCount >= 2 :
                 _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3)) &&
             (!_shadow || ShadowFrameReady());

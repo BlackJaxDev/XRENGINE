@@ -1,10 +1,13 @@
 using System.Numerics;
+using System.Text.Json;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Shaders.Generation;
 using XREngine.Scene;
@@ -16,6 +19,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
 {
     private readonly List<XRMaterial> _unlitMaterials = [];
     private readonly List<XRTexture> _unlitTextures = [];
+    private readonly EngineUnlitDiagnosticProfile _unlitProfile;
+    private readonly List<XRMesh> _unlitWitnessMeshes = [];
     private XRMesh? _unlitBackgroundMesh;
     private VisualScene3D? _unlitVisual;
     private int _unlitCase;
@@ -106,6 +111,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
 
         if (_unlitMaterials.Count != UnlitCaseMetadata.Length + 1)
             throw new InvalidOperationException("EngineMeshDiagnostic.UnlitCaseCountMismatch.");
+        if (_unlitProfile.SampleCount > 1)
+            InitializeUnlitWitness();
         foreach (XRMaterial material in _unlitMaterials)
             if (!EngineUnlitSurfaceBinding.TryRead(material, out _, out string? reason))
                 throw new InvalidOperationException($"EngineMeshDiagnostic.UnlitSurfaceInvalid: {material.Name}: {reason}");
@@ -149,6 +156,14 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         ConfigureLitCamera(camera);
         RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
+        camera.AntiAliasingModeOverride = _unlitProfile.SampleCount > 1 ? EAntiAliasingMode.Msaa : EAntiAliasingMode.None;
+        camera.MsaaSampleCountOverride = _unlitProfile.SampleCount;
+        PipelinePostProcessState state = camera.GetPostProcessState(_pipeline)
+            ?? throw new InvalidOperationException("EngineMeshDiagnostic.PostProcessStateMissing.");
+        AmbientOcclusionSettings ao = RequireSettings<AmbientOcclusionSettings>(state);
+        ao.Enabled = _unlitProfile.AmbientOcclusion;
+        ao.Type = AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
+        ao.GroundTruth.Resolution = GroundTruthAmbientOcclusionSettings.EResolution.Full;
     }
 
     public void SetUnlitCase(int sampleCase)
@@ -171,7 +186,58 @@ internal sealed partial class EngineMeshDiagnosticFixture
             throw new InvalidOperationException($"EngineMeshDiagnostic.UnlitSurfaceInvalid: {reason}");
         if (surface.Semantic != CaseSemantic(index))
             throw new InvalidOperationException("EngineMeshDiagnostic.UnlitSemanticChanged.");
-        return $"{{\"sampleCase\":{index},\"pipeline\":\"DefaultRenderPipeline\",\"submission\":\"CpuDirect\",\"target\":\"HDRSceneTex\",\"artifactIdentity\":\"{_unlitArtifactIdentities[index]}\"," +
+        XRRenderPipelineInstance instance = _viewport.RenderPipelineInstance;
+        XRCamera camera = _viewport.Camera ?? throw new InvalidOperationException("EngineMeshDiagnostic.CameraMissing.");
+        PipelinePostProcessState state = camera.GetPostProcessState(_pipeline)
+            ?? throw new InvalidOperationException("EngineMeshDiagnostic.PostProcessStateMissing.");
+        AmbientOcclusionSettings ao = RequireSettings<AmbientOcclusionSettings>(state);
+        ResourceGenerationKey? committed = instance.ActiveGeneration?.Key;
+        string observed = JsonSerializer.Serialize(new
+        {
+            sampleCase = index,
+            executionProfile = _unlitProfile.Name,
+            pipeline = _pipeline.GetType().Name,
+            submission = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(),
+            target = DefaultRenderPipeline.HDRSceneTextureName,
+            artifactIdentity = _unlitArtifactIdentities[index],
+            source = new
+            {
+                id = _pipeline.ID,
+                type = _pipeline.GetType().Name,
+                cameraOwnsSource = ReferenceEquals(camera.RenderPipeline, _pipeline),
+                instanceOwnsSource = ReferenceEquals(instance.Pipeline, _pipeline),
+                committedOwnsSource = ReferenceEquals(instance.ActiveGeneration?.OwnerPipeline, _pipeline),
+            },
+            camera = new
+            {
+                antiAliasing = camera.AntiAliasingModeOverride?.ToString(),
+                sampleCount = camera.MsaaSampleCountOverride,
+                reversedDepth = camera.IsReversedDepth,
+                aoEnabled = ao.Enabled,
+                aoType = ao.Type.ToString(),
+                aoResolution = ao.GroundTruth.Resolution.ToString(),
+                aoQualityEnabled = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableGtao,
+            },
+            committed = committed is { } key ? new
+            {
+                pipeline = key.PipelineName,
+                antiAliasing = key.AntiAliasingMode.ToString(),
+                sampleCount = key.MsaaSampleCount,
+                width = key.InternalWidth,
+                height = key.InternalHeight,
+                displayWidth = key.DisplayWidth,
+                displayHeight = key.DisplayHeight,
+                featureMask = key.FeatureMask,
+                outputHdr = key.OutputHDR,
+                stereo = key.Stereo,
+            } : null,
+            resourceGeneration = instance.ResourceGeneration,
+            pipelineInstanceId = instance.InstanceId,
+            renderDraws = _renderer.LastEngineMeshDrawCount,
+            pipelineDecline = instance.LastRenderDeclineReason,
+            resourceFailure = instance.LastResourceGenerationFailure,
+        });
+        return observed[..^1] + ",\"witness\":" + (_unlitProfile.SampleCount > 1 ? UnlitWitnessMetadata : "null") + "," +
             UnlitCaseMetadata[index][1..];
     }
 
@@ -204,6 +270,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         _unlitVisual?.Destroy();
         _unlitBackgroundMesh?.Destroy();
+        foreach (XRMesh mesh in _unlitWitnessMeshes)
+            mesh.Destroy();
         foreach (XRMaterial material in _unlitMaterials)
             if (!ReferenceEquals(material, _material)) material.Destroy();
         for (int i = _unlitTextures.Count - 1; i >= 0; i--)
@@ -236,6 +304,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
         Attempt(_scene.Dispose);
         if (_mesh is { } mesh) Attempt(() => mesh.Destroy());
         if (_unlitBackgroundMesh is { } background) Attempt(() => background.Destroy());
+        foreach (XRMesh witnessMesh in _unlitWitnessMeshes)
+            Attempt(() => witnessMesh.Destroy());
         foreach (XRMaterial material in _unlitMaterials)
             if (!ReferenceEquals(material, _material)) Attempt(() => material.Destroy());
         for (int i = _unlitTextures.Count - 1; i >= 0; i--)

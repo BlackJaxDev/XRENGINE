@@ -17,14 +17,14 @@ public sealed class XRFrameBufferBindingStackTests
         XRFrameBuffer workerWrite = new();
         XRFrameBuffer workerBind = new();
 
-        mainRead.BindForReading();
-        mainWrite.BindForWriting();
-        mainBind.Bind();
-
         try
         {
-            XRFrameBuffer.BoundForReading.ShouldBeSameAs(mainRead);
-            XRFrameBuffer.BoundForWriting.ShouldBeSameAs(mainWrite);
+            mainRead.BindForReading();
+            mainWrite.BindForWriting();
+            mainBind.Bind();
+
+            XRFrameBuffer.BoundForReading.ShouldBeSameAs(mainBind);
+            XRFrameBuffer.BoundForWriting.ShouldBeSameAs(mainBind);
             XRFrameBuffer.CurrentlyBound.ShouldBeSameAs(mainBind);
 
             Exception? workerException = null;
@@ -36,15 +36,20 @@ public sealed class XRFrameBufferBindingStackTests
                     XRFrameBuffer.BoundForWriting.ShouldBeNull();
                     XRFrameBuffer.CurrentlyBound.ShouldBeNull();
 
-                    workerRead.BindForReading();
-                    workerWrite.BindForWriting();
-                    workerBind.Bind();
-
                     try
                     {
+                        workerRead.BindForReading();
+                        workerWrite.BindForWriting();
+                        workerBind.Bind();
+
+                        XRFrameBuffer.BoundForReading.ShouldBeSameAs(workerBind);
+                        XRFrameBuffer.BoundForWriting.ShouldBeSameAs(workerBind);
+                        XRFrameBuffer.CurrentlyBound.ShouldBeSameAs(workerBind);
+
+                        workerBind.Unbind();
                         XRFrameBuffer.BoundForReading.ShouldBeSameAs(workerRead);
                         XRFrameBuffer.BoundForWriting.ShouldBeSameAs(workerWrite);
-                        XRFrameBuffer.CurrentlyBound.ShouldBeSameAs(workerBind);
+                        XRFrameBuffer.CurrentlyBound.ShouldBeNull();
                     }
                     finally
                     {
@@ -68,15 +73,30 @@ public sealed class XRFrameBufferBindingStackTests
             if (workerException is not null)
                 throw workerException;
 
+            XRFrameBuffer.BoundForReading.ShouldBeSameAs(mainBind);
+            XRFrameBuffer.BoundForWriting.ShouldBeSameAs(mainBind);
+            XRFrameBuffer.CurrentlyBound.ShouldBeSameAs(mainBind);
+
+            mainBind.Unbind();
             XRFrameBuffer.BoundForReading.ShouldBeSameAs(mainRead);
             XRFrameBuffer.BoundForWriting.ShouldBeSameAs(mainWrite);
-            XRFrameBuffer.CurrentlyBound.ShouldBeSameAs(mainBind);
+            XRFrameBuffer.CurrentlyBound.ShouldBeNull();
         }
         finally
         {
             mainBind.Unbind();
             mainWrite.UnbindFromWriting();
             mainRead.UnbindFromReading();
+            workerBind.Destroy(now: true);
+            workerWrite.Destroy(now: true);
+            workerRead.Destroy(now: true);
+            mainBind.Destroy(now: true);
+            mainWrite.Destroy(now: true);
+            mainRead.Destroy(now: true);
         }
+
+        XRFrameBuffer.BoundForReading.ShouldBeNull();
+        XRFrameBuffer.BoundForWriting.ShouldBeNull();
+        XRFrameBuffer.CurrentlyBound.ShouldBeNull();
     }
 }
