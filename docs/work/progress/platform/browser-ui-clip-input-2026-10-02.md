@@ -322,3 +322,20 @@ through that existing typed settings asset, and staging copies Config with
 the other authored inputs. The publisher guard, engine-wide default, font
 source/license and bitmap cooking algorithm are unchanged. Successful normal
 cook and browser interaction still require the next exact-commit run.
+
+The Windows job of
+[run 37225704827](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37225704827)
+on `f628183b` successfully loads, cooks and publishes the complete saved UI
+project, including its selected font/license and required UI shader variants.
+Its actual browser startup then stops while preloading that font:
+`IOCompressionBrotli_PlatformNotSupported`. Font payload version 2 uses Brotli
+for each atlas mip; the pinned .NET browser assembly deliberately provides an
+unsupported-platform stub for that decoder. The
+[.NET 10.0.12 project source](https://github.com/dotnet/runtime/blob/v10.0.12/src/libraries/System.IO.Compression.Brotli/src/System.IO.Compression.Brotli.csproj)
+defines that exact failure. AOT, trimming or native build switches do not enable
+this managed API in the browser pack.
+
+A versioned portable font encoding and retained legacy desktop reader have
+been proposed for owner approval. No codec or payload-format change is included
+here. Browser UI pixels, interaction and lifecycle remain unqualified until the
+font preload succeeds; Editor publication alone does not close that acceptance.

@@ -175,7 +175,7 @@ namespace XREngine.Rendering.Commands
                             meshCmd.GPUCommandIndex = index; // Store first index for legacy single-index usage
 
                         indices.Add(index);
-                        _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
+                        _commandIndexLookup.Add(index, (meshCmd, subMeshIndex, snapshot));
 
                         DrawMetadata commandValue = stageNativeRecords.Value.Metadata;
                         commandValue.DrawID = index;
@@ -501,7 +501,9 @@ namespace XREngine.Rendering.Commands
             return state.MeshOffsets.TryGetValue(mesh, out allocation);
         }
 
-        private readonly Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex)> _commandIndexLookup = [];
+        // Retain the exact source image accepted by Add/Update even before a
+        // material-independent projection is requested for these resident rows.
+        private readonly Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex, GpuSceneMeshCommandSnapshot snapshot)> _commandIndexLookup = [];
         private readonly Dictionary<XRMesh, uint> _meshToIndexRemap = []; // retained for future reverse lookups (unused by atlas sizing)
         private bool _meshDataDirty = false; // tracks pending GPU upload for mesh metadata
         // Dirty-range tracker for MeshDataBuffer. Updated by MarkMeshDataDirty and drained by

@@ -868,7 +868,7 @@ namespace XREngine.Rendering.Commands
         {
             _meshlets.Clear();
 
-            foreach ((uint commandIndex, (IRenderCommandMesh command, int subMeshIndex) entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
+            foreach (var (commandIndex, entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
             {
                 IRenderCommandMesh meshCommand = entry.command;
                 var subMeshes = meshCommand.Mesh?.GetMeshes();

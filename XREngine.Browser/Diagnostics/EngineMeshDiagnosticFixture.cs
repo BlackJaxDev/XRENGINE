@@ -61,6 +61,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null))
             throw new ArgumentException("The fixture requires an explicitly cooked engine raster diagnostic artifact.", nameof(artifact));
         _renderer = renderer;
+        using WebGpuRendererHost.OwnerScope rendererOwner = _renderer.EnterOwnerScope();
         if (_debug)
             _renderer.ConfigureEngineMeshResolutionTrace(true);
         // Every fixture selects its mode before a pipeline captures its command
@@ -266,6 +267,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     public bool Frame()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        using WebGpuRendererHost.OwnerScope rendererOwner = _renderer.EnterOwnerScope();
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
             _renderer.IsBackendReplacementFrameReady && (_unlit ? _renderer.LastEngineMeshDrawCount >= _unlitMaterials.Count :

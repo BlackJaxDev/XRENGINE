@@ -289,3 +289,38 @@ declaration mismatches and duplicate keys. The standalone content cooker builds
 without warnings. These packaging checks do not execute the shaders or establish
 physical browser pixel parity; their retained evidence is
 `authored-direct-gate/package-probe/` under the same validation run.
+
+## Ordinary indirect startup ownership
+
+The Linux browser job `111504788300` in run `37225704827`, at exact commit
+`f628183b852c071ec25b7d6ee8c9daa1010a5121`, reached the selected
+`engine-unlit-indirect` profile but failed at the first world swap, before any
+draw or frame submission. `GPUScene.MeshSubmission.RendererMissing` came from
+first-publication backfill reading a mesh command's render-buffer image before
+that command had swapped. Registration had already accepted a valid update-side
+renderer and written its resident row. The observed `CpuDirect` / `NeverSubmitted`
+status was the untouched renderer diagnostic state, not evidence of a fallback.
+
+The resident command lookup now retains the exact source snapshot supplied to
+each accepted Add/Update, alongside its command and primitive identity. Initial
+projection backfill uses that saved image with the existing resident metadata,
+geometry and material owners. It does not reread live command selectors or force
+a command swap. Row compaction moves the snapshot with its source; removal and
+scene destruction clear it through the existing lookup lifecycle. Warm updates
+replace value entries without allocating. The projection's existing capacity
+limit and lazy binding/resource capture remain unchanged, although each resident
+lookup entry now retains the additional source-snapshot value.
+
+The same failed frame also recorded `WebGPU.DefaultPipeline.OutputUnavailable`.
+The fixture assigned its camera pipeline and stepped collect/swap callbacks
+outside the output renderer's owner scope. It now enters the existing concrete
+`WebGpuRendererHost.OwnerScope` during construction and around the complete
+caller-thread frame, matching production browser lifecycle ownership without
+boxing the scope. `BindEngineViewport` only stores a viewport and cannot supply
+that ambient renderer context. Both missing-owner guards remain active, and the
+authored submission strategy and original Unlit raster sources are unchanged.
+
+Validation remains pending on the next exact-commit CI run. Source inspection and
+`git diff --check` pass; no local .NET build or browser execution was available,
+and no tests, shader sources or workflows were changed. The retained failed run
+is under `Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-f628183b-linux/`.
