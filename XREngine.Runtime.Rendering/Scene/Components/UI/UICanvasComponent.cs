@@ -544,14 +544,12 @@ namespace XREngine.Components
             if (_timerHooksInstalled)
                 return;
 
-            RuntimeEngine.Time.Timer.UpdateFrame -= UpdateLayout;
-            RuntimeEngine.Time.Timer.CollectVisible -= CollectVisibleItemsNonScreen;
-            RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffersNonScreen;
-
+            // The installed flag owns registration. An unmatched removal queued by
+            // the host event would cancel this new subscription on its first dispatch.
             RuntimeEngine.Time.Timer.UpdateFrame += UpdateLayout;
             RuntimeEngine.Time.Timer.CollectVisible += CollectVisibleItemsNonScreen;
             RuntimeEngine.Time.Timer.SwapBuffers += SwapBuffersNonScreen;
-            _timerHooksInstalled = true;
+            SetField(ref _timerHooksInstalled, true, publishNotifications: false);
         }
 
         private void RemoveTimerHooks()
@@ -562,7 +560,7 @@ namespace XREngine.Components
             RuntimeEngine.Time.Timer.UpdateFrame -= UpdateLayout;
             RuntimeEngine.Time.Timer.CollectVisible -= CollectVisibleItemsNonScreen;
             RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffersNonScreen;
-            _timerHooksInstalled = false;
+            SetField(ref _timerHooksInstalled, false, publishNotifications: false);
         }
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)

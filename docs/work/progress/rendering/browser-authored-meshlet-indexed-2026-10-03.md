@@ -387,3 +387,58 @@ Independent source review and `git diff --check` are the available validation;
 live indirect raster acceptance remains pending on the next exact-commit CI
 run. Failed-run evidence is under
 `Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-23dde12c-linux/`.
+
+## Submitted-packet diagnostic ownership
+
+Linux job `111543054028` in run `37238768014`, at exact commit
+`918b91af8fd569ff9d1383d4cf6c7fb68b728426`, reaches ordinary indexed-indirect
+raster submission. The first x1 sampling pause records two submitted frames,
+40 native compute dispatches, 20 native `drawIndexedIndirect` calls and zero
+read mappings. The failure screenshot shows the colored material grid. These
+observations establish that the earlier startup and lifecycle-hook blockers
+are passed; the color, resize, restart and x4 assertions have not passed for
+this route because the first execution-evidence snapshot fails.
+
+The snapshot used the executor's reusable import arena after returning from
+managed frame execution, and equated its packet sequence with `lastSequence`.
+That watermark also advances on preparation-only submissions, which do not
+replace the rendered scene. Managed frame cleanup can also retire retained
+command handles before the later snapshot resolves them. The failed CI record
+does not include the individual guard operands. A disposable witness through
+the actual JavaScript acceptance methods reproduces the sequence mismatch
+with one accepted scene followed by one accepted preparation-only packet.
+
+The Unlit diagnostic now wraps only its own engine-frame instance's synchronous
+scene-submission method. Immediately after successful submission and before
+the import returns to managed command retirement, it copies the bounded
+accepted packet's operation, raster-override and attachment metadata. Only the
+latest detached metadata snapshot survives; no packet arena, GPU resource or
+completion lease is retained. Sampling verifies the renderer owner, surface
+generation, exact frame/wrapper identity and actual scene-submission counter.
+Preparation-only work does not replace that evidence. Resize invalidates it,
+and stop restores the original submission method and releases the snapshot.
+
+A snapshot failure is retained for the sampling call instead of escaping from
+an already accepted submission. This preserves the managed acceptance receipt
+and completion-owned resource lifetime. Indirect argument values remain
+unknown; no count or visibility readback is added, and the existing pixel and
+raster assertions are unchanged. Production execution has no added observer,
+branch or allocation. The explicitly instrumented Unlit diagnostic does create
+bounded metadata snapshots for submitted frames and is not production timing
+evidence.
+
+Both touched JavaScript files pass syntax checks, `git diff --check` passes,
+and independent ownership review finds no blocking issue. The disposable
+JavaScript witness passes 15 focused checks using production acceptance and
+command-encoding methods with mocked native WebGPU calls: preparation-only
+sequence advancement, exact raster overrides, unknown indirect counts,
+detached evidence after handle retirement/arena overwrite, immutable sampling,
+latest-scene replacement, stale owner/generation/unobserved-submission rejection,
+resize invalidation, stop restoration, and capture/submission failure ownership.
+Evidence is under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/submitted-packet-evidence-witness.json`;
+failed browser artifacts are under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-918b91af-linux/`.
+This source-level validation does not establish corrected browser acceptance.
+Local browser launch remains blocked by the execution environment's Unix-socket
+restriction, so rendered x1/x4 acceptance remains pending on exact-commit CI.

@@ -1,8 +1,10 @@
 # Saved modular browser sample
 
-Status: normal shader cook and Editor publication passed in CI, and the published
-browser player reached the running world. Pixel and resize inspection remains
-pending. This is preparatory work for UR06.11a and does not close it.
+Status: normal shader cook, Editor publication and the bounded custom-pipeline
+browser case pass on exact commit `918b91af8fd569ff9d1383d4cf6c7fb68b728426`.
+Two fresh starts qualify clear/quad pixels, sequential shared-source camera
+selection and resize. This is partial evidence for UR06.11a; its wider pipeline,
+capability-rejection and output-isolation requirements remain open.
 
 The pinned Slang 2026.8 frontend compiled the sample's two raster entries with
 the ShaderCooker argument order and flags, with no diagnostics. Reflection has
@@ -64,5 +66,25 @@ failed its startup assertion because it expected spaces in the world name.
 The published world name follows the saved asset stem, so the assertion now
 matches `ModularPipelineParityWorld` exactly. A failure screenshot is under
 `Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-23dde12c-modular/`.
-No clear or quad pixels, camera switch, fresh second start or resize was
-captured before that failure.
+The failure screenshot shows the first clear output, but the numerical pixel,
+camera-switch, second-start and resize assertions had not run.
+
+The corrected case passed in
+[run 37238768014](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37238768014/job/111548627207).
+The real Windows Editor publication produced the bundle; Chromium then completed
+two fresh starts and twelve sampled states across the three saved camera
+selections and resize. Both clear cameras retained source ID
+`a09559ee-79e9-4bcc-9adf-43cf250bc1db` and produced RGBA `(10, 82, 173, 255)`.
+The independently authored quad retained source ID
+`8c583188-43ac-4cd4-8b54-9673cb216585`; its left and right samples were
+`(51, 46, 204, 255)` and `(204, 46, 51, 255)`, with the expected midpoint.
+The case observed actual player-canvas acquisitions and queue submissions after
+camera selection, and real quad draws. Initial and resized captures were also
+visually inspected. Browser error and local-delivery assertions passed.
+
+Artifact `11317192529` (`editor-modular-pipeline-parity-browser-qualification`)
+has SHA-256 `1e3e458ad276b2701c9a6d0af5c19b7e1c5162da7c45e58f5e24d41e3dfc495a`.
+This is software-adapter API/shader evidence with AA None and sequential use of
+one player viewport. It does not establish physical-device performance,
+simultaneous output isolation, custom x4/indirect/blended coverage or the complete
+Advanced acceptance matrix.

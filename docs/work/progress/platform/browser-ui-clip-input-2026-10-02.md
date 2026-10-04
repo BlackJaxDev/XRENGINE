@@ -417,3 +417,52 @@ next exact-commit browser run.
 Independent source review and whitespace validation pass. Local compilation
 and browser execution remain unavailable; no new tests or publication were
 performed for this correction.
+
+The exact `918b91af` witness in
+[run 37238768014, UI job 111548627233](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37238768014/job/111548627233)
+narrows the failure to missing offscreen collection and publication. At shared
+render frame 2662, the outer published PreRender pass has one command and the
+offscreen callback has run 2644 times, including that frame. Its canvas is
+active, claims installed hooks and has matching 512×512 target/surface texture
+identity, but collection remains 0, swap remains -1 and its package is Empty.
+The nested pipeline reports `NotPublished`; no draw or clear reaches recording.
+The one retained glyph-buffer request is already Ready and unclaimed.
+
+The shared caller-thread timer dispatches both visibility collection and buffer
+swap. Source tracing instead identifies an event-registration error:
+`EnsureTimerHooksInstalled()` removed each callback before its first addition,
+even though its installed flag was false. `RuntimeEngineTimer` forwards those
+removals to the host's `XREvent`. When that event already exists, an unmatched
+removal enters its removal queue. The first dispatch consumes additions before
+removals, so the queued removal deletes the newly installed callback. The saved
+Screen Canvas precedes Offscreen Canvas and establishes those events; a later
+canvas therefore loses its collect/swap callbacks while still reporting its
+installed flag as true. Private installation flags are not cooked fields.
+
+Canvas installation now adds its callbacks only after the existing installed
+guard. Deactivation removes only an installed registration. The change leaves
+shared event queue ordering, host rebinding and desktop/caller-thread phase
+dispatch intact. It also leaves nested package validation and atomic producer
+admission in place, so an absent collection cannot become a fabricated empty
+publication or an accepted previous image.
+
+The focused production-method reproduction is: keep one unrelated listener in
+an `XREvent`; remove a never-added canvas listener; add that listener; invoke.
+The existing event code invokes the unrelated listener and loses the canvas
+listener. With the corrected canvas installation, its first and repeated
+dispatches retain exactly one callback. Source review also covers repeated
+install, uninstall before first dispatch, uninstall/reinstall after dispatch,
+and host replacement with both pending and applied registrations. If an old
+listener is already applied, uninstall/reinstall before dispatch appends the
+replacement then removes the old occurrence. If its first addition is still
+pending, uninstall cancels that addition and reinstall queues one replacement.
+The installed guard prevents repeated installation/removal. These are
+source-level traces, not executed C# results. No installed .NET compiler or
+PowerShell executable is available locally; no substitute model, new harness
+or toolchain installation was used. The next genuine Editor publication and
+browser run must demonstrate advancing collect/swap generations, a Published
+nested package, an accepted first frame, and the original UI pixel/input checks.
+
+Independent source review approved this two-file correction and the lifecycle
+sequences above. Scoped whitespace validation passes. Actual C# reproduction,
+compilation and browser acceptance remain unexecuted for this correction.

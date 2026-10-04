@@ -21,12 +21,24 @@ can be claimed. Merely adding a Blazor item to this project does not implement i
 
 The existing SharpZipLib 1.4.2 reference now belongs to the Desktop platform
 project, which owns archive extraction; the Editor's other archive importer also
-references that project. The portable package allowance was removed. CI will
-check the Browser restore graph and published files for the package, compile the
-Windows Editor consumer, and regenerate dependency attribution in a disposable
-source copy. Only the SharpZipLib attribution is admitted; unrelated generated
-differences are retained for review. Those checks have not yet run on this
-change, and no transfer-size reduction is claimed.
+references that project. The portable package allowance was removed. On exact
+commit `918b91af8fd569ff9d1383d4cf6c7fb68b728426`, the
+[Linux publication](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37238768014/job/111543054028)
+verified that both the Browser restore graph and published files exclude the
+package. The
+[Windows Editor job](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37238768014/job/111543053855)
+built the consumer and published RollingBall, then regenerated dependency
+attribution in a disposable source copy. The generated row retains version
+1.4.2, the MIT notice and the Desktop project's direct ownership.
+
+The reviewed `browser-dependency-attribution` artifact `11317550704` has SHA-256
+`c60436d91bc0d619837756a49994c0a2c9ac40491131755cc14468b3d1173749`.
+Its generated diff contains no SharpZipLib notice-text change. Missing local
+NuGet metadata and uninitialized submodules produce unrelated report/license
+differences; those remain evidence from the disposable copy, not accepted
+canonical changes. The Linux runtime job separately fails while capturing
+indirect-draw evidence, so these dependency results are not a full CI pass.
+No measured transfer-size reduction is claimed.
 
 The native-Jolt Browser Release build on 2026-10-04 produced 206 framework WASM
 resources totaling 58,060,183 bytes, with matching gzip resources totaling
